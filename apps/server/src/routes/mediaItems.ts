@@ -18,8 +18,8 @@ interface MediaItem {
   linkedPartyIds?: string[];
   publishedAt?: string | null;
   status?: string;
-  duration?: number;
   source?: string;
+  durationSeconds?: number;
 }
 
 const router = Router();

@@ -3,8 +3,8 @@ import { persist } from 'zustand/middleware';
 
 export type OnboardingStepId =
   | 'overview'
-  | 'cruds'
   | 'parties'
+  | 'cruds'
   | 'done';
 
 export interface OnboardingCrudTask {
@@ -66,7 +66,7 @@ const DEFAULT_CRUD_TASKS: OnboardingCrudTask[] = [
   {
     id: 'race',
     label: 'Log a race entry',
-    description: 'Record a horse\'s race performance — track, placing, prize money.',
+    description: "Record a horse's race performance — track, placing, prize money.",
     completed: false,
   },
 ];

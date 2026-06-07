@@ -1,5 +1,5 @@
 import { useState, useMemo, useEffect } from 'react'
-import { Plus, Search, User, Building2, Edit, Trash, Users, MapPin, Globe, CalendarDays } from 'lucide-react';
+import { Plus, Search, User, Building2, Edit, Trash, Users, MapPin, Globe, CalendarDays, ExternalLink } from 'lucide-react';
 import { motion } from 'framer-motion';
 import { toast } from 'sonner';
 import { cn } from '@/lib/utils';
@@ -187,6 +187,86 @@ const FILTER_ROLES: Array<{ value: PartyRole | 'all'; label: string }> = [
   { value: 'syndicate manager', label: 'Syndicate Mgrs' },
   { value: 'personnel', label: 'Personnel' },
 ];
+
+/* ── Google Map section ──────────────────────────── */
+function PartiesMapSection() {
+  return (
+    <div className="mt-14 mb-2">
+      {/* Section header */}
+      <div className="flex items-center justify-between mb-4">
+        <div className="flex items-center gap-2.5">
+          <div className="w-8 h-8 rounded-md bg-primary/10 flex items-center justify-center flex-shrink-0">
+            <MapPin size={15} className="text-primary" />
+          </div>
+          <div>
+            <h2 className="font-[family-name:var(--font-display)] text-lg font-bold text-foreground leading-tight">
+              Parties Map
+            </h2>
+            <p className="text-[11px] text-muted-foreground mt-0.5">
+              Explore the global racing community
+            </p>
+          </div>
+        </div>
+        <a
+          href="https://www.google.com/maps"
+          target="_blank"
+          rel="noopener noreferrer"
+          className="flex items-center gap-1.5 text-[11px] uppercase tracking-[0.08em] font-semibold text-muted-foreground hover:text-primary transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring rounded"
+          aria-label="Open Google Maps"
+        >
+          <ExternalLink size={12} />
+          Open in Maps
+        </a>
+      </div>
+
+      {/* Map embed */}
+      <div className="rounded-md border border-border/60 overflow-hidden shadow-sm">
+        {/* Brand stripe at top */}
+        <div className="h-1 w-full bg-primary" />
+
+        <div className="relative">
+          {/* Overlay badge */}
+          <div className="absolute top-3 left-3 z-10 pointer-events-none">
+            <div className="px-3 py-1.5 bg-card/95 backdrop-blur-sm border border-border rounded-sm shadow-sm flex items-center gap-2">
+              <MapPin size={12} className="text-primary flex-shrink-0" />
+              <span className="font-[family-name:var(--font-display)] text-xs font-bold text-foreground">
+                Racing Connections — Worldwide
+              </span>
+            </div>
+          </div>
+
+          <iframe
+            title="Stable Press — Parties Map"
+            src="https://maps.google.com/maps?q=thoroughbred+racing&t=m&z=3&ie=UTF8&iwloc=B&output=embed"
+            width="100%"
+            height="480"
+            loading="lazy"
+            referrerPolicy="no-referrer-when-downgrade"
+            className="block border-0 w-full"
+            style={{ height: '480px' }}
+            aria-label="Google Map showing global racing locations"
+          />
+        </div>
+
+        {/* Footer */}
+        <div className="px-4 py-3 bg-muted/20 border-t border-border/60 flex items-center justify-between gap-3">
+          <p className="text-[11px] text-muted-foreground leading-relaxed">
+            Track where your owners, trainers, jockeys and breeders are based across the globe.
+          </p>
+          <a
+            href="https://www.google.com/maps"
+            target="_blank"
+            rel="noopener noreferrer"
+            className="flex-shrink-0 flex items-center gap-1.5 text-[10px] uppercase tracking-[0.1em] font-semibold text-primary hover:text-primary/80 transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring rounded"
+          >
+            <ExternalLink size={10} />
+            Full Map
+          </a>
+        </div>
+      </div>
+    </div>
+  );
+}
 
 /* ── Page ─────────────────────────────────────── */
 export default function Parties() {
@@ -399,6 +479,9 @@ export default function Parties() {
           </div>
         </>
       )}
+
+      {/* ── Google Map ── */}
+      <PartiesMapSection />
 
       {/* ── Forms & dialogs ── */}
       <PartyForm

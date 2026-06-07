@@ -1,10 +1,10 @@
-import { MongoClient as RealMongoClient, ObjectId as RealObjectId, Db as RealDb } from 'mongodb';
+import { Db as MongoDb, MongoClient as MongoMongoClient, ObjectId as MongoObjectId } from 'mongodb';
 
 declare global {
-  type Db = RealDb;
-  type MongoClient = RealMongoClient;
-  type ObjectId = RealObjectId;
+  type Db = MongoDb;
+  type MongoClient = MongoMongoClient;
+  type ObjectId = MongoObjectId;
 
-  var MongoClient: typeof RealMongoClient;
-  var ObjectId: typeof RealObjectId;
+  var MongoClient: typeof MongoMongoClient;
+  var ObjectId: typeof MongoObjectId;
 }

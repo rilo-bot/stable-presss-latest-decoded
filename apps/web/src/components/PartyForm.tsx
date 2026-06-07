@@ -1,4 +1,4 @@
-import { useState, useRef, useCallback, useMemo } from 'react';
+import { useState, useRef, useCallback, useMemo, useEffect } from 'react';
 import { toast } from 'sonner';
 import { User, Building2, Upload, X, Check, Camera, Calendar } from 'lucide-react';
 import { cn } from '@/lib/utils';
@@ -31,6 +31,11 @@ interface PartyFormProps {
   onOpenChange: (open: boolean) => void;
   /** When supplied, the form operates in edit mode. */
   party?: Party;
+  /**
+   * When supplied (and not in edit mode), the form opens with this role
+   * pre-selected so the user does not have to pick it manually.
+   */
+  defaultRole?: PartyRole;
   /** Called after a successful save so callers can react (e.g. navigate). */
   onSaved?: (id: string) => void;
 }
@@ -89,7 +94,7 @@ const CURRENT_YEAR = new Date().getFullYear();
 /* ─────────────────────────────────────────────
    Component
 ───────────────────────────────────────────── */
-export function PartyForm({ open, onOpenChange, party, onSaved }: PartyFormProps) {
+export function PartyForm({ open, onOpenChange, party, defaultRole, onSaved }: PartyFormProps) {
   const addParty = usePartyStore((s) => s.addParty);
   const updateParty = usePartyStore((s) => s.updateParty);
   const isEdit = !!party;
@@ -97,7 +102,10 @@ export function PartyForm({ open, onOpenChange, party, onSaved }: PartyFormProps
   /* ── Form state ── */
   const [partyType, setPartyType] = useState<PartyType>(party?.party_type ?? 'person');
   const [name, setName] = useState(party?.name ?? '');
-  const [roles, setRoles] = useState<PartyRole[]>(party?.roles ?? []);
+  // In create mode, honour defaultRole as the initial selection
+  const [roles, setRoles] = useState<PartyRole[]>(
+    party?.roles ?? (defaultRole ? [defaultRole] : [])
+  );
   const [photo, setPhoto] = useState<string | undefined>(party?.photo);
   const [photoFile, setPhotoFile] = useState<File | null>(null);
   const [photoPreview, setPhotoPreview] = useState<string | undefined>(party?.photo);
@@ -128,11 +136,12 @@ export function PartyForm({ open, onOpenChange, party, onSaved }: PartyFormProps
   /* ── Derived: show personnel subtype picker ── */
   const showPersonnelSubtype = roles.includes('personnel');
 
-  /* ── Reset when dialog re-opens ── */
+  /* ── Reset form to blank (with optional defaultRole) when the dialog opens ── */
   const resetForm = useCallback(() => {
     setPartyType(party?.party_type ?? 'person');
     setName(party?.name ?? '');
-    setRoles(party?.roles ?? []);
+    // In create mode, re-apply the defaultRole; in edit mode, restore existing roles
+    setRoles(party?.roles ?? (defaultRole ? [defaultRole] : []));
     setPhoto(party?.photo);
     setPhotoFile(null);
     setPhotoPreview(party?.photo);
@@ -144,7 +153,33 @@ export function PartyForm({ open, onOpenChange, party, onSaved }: PartyFormProps
     setBaseLocation(party?.base_location ?? '');
     setStartedYear(party?.started_year ? String(party.started_year) : '');
     setPersonnelSubtypes(party?.personnel_subtype ?? []);
-  }, [party]);
+  }, [party, defaultRole]);
+
+  /*
+   * When the dialog opens AND we are in create mode, sync the defaultRole
+   * into the form in case it changed between opens (e.g. the user clicked
+   * "Add Owner" then "Add Trainer" without ever submitting).
+   */
+  useEffect(() => {
+    if (open && !isEdit) {
+      setRoles(defaultRole ? [defaultRole] : []);
+      // Clear everything else back to blank
+      setPartyType('person');
+      setName('');
+      setPhoto(undefined);
+      setPhotoFile(null);
+      setPhotoPreview(undefined);
+      setErrors({});
+      setSaving(false);
+      setProfession('');
+      setDateOfBirth('');
+      setCountryOfBirth('');
+      setBaseLocation('');
+      setStartedYear('');
+      setPersonnelSubtypes([]);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [open, defaultRole]);
 
   /* ── Type toggle ── */
   const handleTypeChange = (type: PartyType) => {

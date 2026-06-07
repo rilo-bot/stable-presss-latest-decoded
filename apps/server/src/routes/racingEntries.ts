@@ -8,18 +8,16 @@ function project<T extends WithMongoId>(doc: T): Omit<T, '_id'> & { id: string }
 }
 
 interface RacingEntry {
-  horseId: string;
   raceId: string;
+  horseId: string;
   jockeyId?: string;
   trainerId?: string;
   saddleNumber?: number | string;
   barrierNumber?: number;
-  weight?: number;
-  handicap?: number;
+  weightKg?: number;
+  odds?: number;
   status?: string;
   finishPosition?: number | null;
-  finishTime?: string | null;
-  odds?: number | null;
   notes?: string;
 }
 
@@ -34,12 +32,12 @@ router.get('/', async (req, res) => {
 // create
 router.post('/', async (req, res) => {
   const body = req.body as Partial<RacingEntry>;
-  if (!body || !body.horseId) {
-    res.status(400).json({ error: 'horseId is required' });
+  if (!body || !body.raceId) {
+    res.status(400).json({ error: 'raceId is required' });
     return;
   }
-  if (!body.raceId) {
-    res.status(400).json({ error: 'raceId is required' });
+  if (!body.horseId) {
+    res.status(400).json({ error: 'horseId is required' });
     return;
   }
   const now = new Date().toISOString();
