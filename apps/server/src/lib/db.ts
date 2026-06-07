@@ -10,9 +10,8 @@
 // If MONGODB_URI leaks into a non-prod env, it is ignored.
 // ---------------------------------------------------------------------------
 
-import { MongoClient, ObjectId } from 'mongodb'
-import type { Db, Collection } from 'mongodb'
-
+// REMOVED: import { MongoClient, ObjectId } from 'mongodb' — no database in WebContainers
+// REMOVED: import type { Db, Collection } from 'mongodb' — no database in WebContainers
 // Using `any` for the index signature (not `unknown`) is deliberate. Routes
 // freely read `doc.createdAt`, `doc.title`, `doc.dueDate`, etc. and feed
 // them into `new Date()`, string ops, comparisons — strict `tsc` rejects

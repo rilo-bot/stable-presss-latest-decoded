@@ -43,6 +43,8 @@ import partiesRouter from './routes/parties.js'
 import podcastEpisodesRouter from './routes/podcastEpisodes.js'
 import racesRouter from './routes/races.js'
 import tipsRouter from './routes/tips.js'
+import mediaItemsRouter from './routes/mediaItems.js'
+import racingEntriesRouter from './routes/racingEntries.js'
 app.use('/api/articles', articlesRouter)
 app.use('/api/horses', horsesRouter)
 app.use('/api/horsePartyLinks', horsePartyLinksRouter)
@@ -50,6 +52,8 @@ app.use('/api/parties', partiesRouter)
 app.use('/api/podcastEpisodes', podcastEpisodesRouter)
 app.use('/api/races', racesRouter)
 app.use('/api/tips', tipsRouter)
+app.use('/api/mediaItems', mediaItemsRouter)
+app.use('/api/racingEntries', racingEntriesRouter)
 // === end auto-mounted routers ===
 
 

@@ -1,0 +1,44 @@
+export type MediaType = 'Article' | 'Photo' | 'Video' | 'Press Release' | 'Publication';
+
+export const MEDIA_TYPES: MediaType[] = [
+  'Article',
+  'Photo',
+  'Video',
+  'Press Release',
+  'Publication',
+];
+
+export interface MediaItem {
+  id: string;
+  createdAt: Date;
+
+  /** Required — Horse ID this media is attached to */
+  horse_id: string;
+
+  /** Required — Brief description of the media item */
+  subject: string;
+
+  /** Required — Type of media */
+  media_type: MediaType;
+
+  /** Required — Title of the media item */
+  title: string;
+
+  /** Optional — Publication or media source name */
+  source_publication?: string;
+
+  /** Optional — ISO date string YYYY-MM-DD */
+  published_date?: string;
+
+  /** Required — at least one of url or file_name must be provided */
+  url?: string;
+
+  /** Optional — uploaded file reference (filename/key after upload) */
+  file_name?: string;
+
+  /** Optional — Party IDs of individuals / organisations featured in the media */
+  featured_party_ids?: string[];
+
+  /** Optional — ID of a linked Stable Press Article record */
+  linked_article_id?: string;
+}

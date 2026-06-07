@@ -3,6 +3,8 @@ import { useArticleStore } from '@/stores/articleStore';
 import { useAuthStore } from '@/stores/authStore';
 import { useHorseStore } from '@/stores/horseStore';
 import { usePartyStore } from '@/stores/partyStore';
+import { useMediaStore } from '@/stores/mediaStore';
+import { useRacingEntryStore } from '@/stores/racingEntryStore';
 import {
   KanbanColumn,
   WORKFLOW_STAGES,
@@ -13,63 +15,21 @@ import { HorseForm } from '@/components/HorseForm';
 import { PartyForm } from '@/components/PartyForm';
 import { HorsePartyLinkPanel } from '@/components/HorsePartyLinkPanel';
 import { EmptyState } from '@/components/EmptyState';
+import { BulletinTemplateGallery } from '@/components/BulletinTemplateGallery';
+import { BulletinTemplateEditor } from '@/components/BulletinTemplateEditor';
+import { MediaDataForm } from '@/components/MediaDataForm';
+import { RacingDataForm } from '@/components/RacingDataForm';
+import type { BulletinTemplate } from '@/components/BulletinTemplateGallery';
 import type { Article, ArticleStatus } from '@/types/article';
 import type { Horse } from '@/types/horse';
 import type { Party, PartyRole } from '@/types/party';
 import { PARTY_ROLE_LABELS } from '@/types/party';
+import type { MediaItem, MediaType } from '@/types/mediaItem';
+import type { RacingEntry } from '@/types/racingEntry';
 import type { UserRole } from '@/stores/authStore';
 import { can, canEditArticle } from '@/lib/permissions';
 import { Button } from '@/components/ui/button';
-import {
-  Plus,
-  LayoutDashboard,
-  FileText,
-  CheckSquare,
-  Shield,
-  Send,
-  Users,
-  BarChart2,
-  Settings,
-  Bell,
-  Search,
-  ChevronDown,
-  AlertCircle,
-  Clock,
-  TrendingUp,
-  Eye,
-  Filter,
-  PenLine,
-  ChevronRight,
-  ArrowRight,
-  Scale,
-  BookOpen,
-  Mic,
-  TrendingDown,
-  CheckCircle,
-  AlertTriangle,
-  Star,
-  DollarSign,
-  Upload,
-  Lock,
-  Image,
-  Edit,
-  UserCheck,
-  CalendarClock,
-  FolderOpen,
-  Inbox,
-  RotateCcw,
-  ChevronLeft,
-  Check,
-  X,
-  Layers,
-  Trash,
-  User,
-  Building2,
-  MapPin,
-  Globe,
-  CalendarDays,
-  Link,
-} from 'lucide-react';
+import {Plus, LayoutDashboard, FileText, CheckSquare, Shield, Send, Users, BarChart2, Settings, Bell, Search, ChevronDown, AlertCircle, Clock, TrendingUp, Eye, Filter, PenLine, ChevronRight, ArrowRight, Scale, BookOpen, Mic, TrendingDown, CheckCircle, AlertTriangle, Star, DollarSign, Upload, Lock, Image, Edit, UserCheck, CalendarClock, FolderOpen, Inbox, RotateCcw, ChevronLeft, Check, X, Layers, Trash, User, Building2, MapPin, Globe, CalendarDays, Link, File, Newspaper, Flag} from 'lucide-react';
 import { articleToast } from '@/components/Toast';
 import { cn } from '@/lib/utils';
 import { toast } from 'sonner';
@@ -83,6 +43,22 @@ const ROLE_COLORS: Record<PartyRole, string> = {
   'bloodstock agent': 'bg-[hsl(var(--chart-5)/0.15)] text-[hsl(var(--chart-5))] border-[hsl(var(--chart-5)/0.3)]',
   'syndicate manager': 'bg-[hsl(var(--brand-accent)/0.15)] text-[hsl(var(--brand-accent))] border-[hsl(var(--brand-accent)/0.3)]',
   personnel: 'bg-muted text-muted-foreground border-border',
+};
+
+const MEDIA_TYPE_ICONS: Record<MediaType, React.ReactNode> = {
+  Article: <Newspaper size={11} />,
+  Photo: <Image size={11} />,
+  Video: <File size={11} />,
+  'Press Release': <FileText size={11} />,
+  Publication: <BookOpen size={11} />,
+};
+
+const MEDIA_TYPE_COLORS: Record<MediaType, string> = {
+  Article: 'bg-primary/10 text-primary border-primary/25',
+  Photo: 'bg-[hsl(var(--chart-2)/0.15)] text-[hsl(var(--chart-2))] border-[hsl(var(--chart-2)/0.3)]',
+  Video: 'bg-[hsl(var(--chart-3)/0.15)] text-[hsl(var(--chart-3))] border-[hsl(var(--chart-3)/0.3)]',
+  'Press Release': 'bg-[hsl(var(--chart-4)/0.15)] text-[hsl(var(--chart-4))] border-[hsl(var(--chart-4)/0.3)]',
+  Publication: 'bg-[hsl(var(--brand-accent)/0.15)] text-[hsl(var(--brand-accent))] border-[hsl(var(--brand-accent)/0.3)]',
 };
 
 /* ── Role definitions ─────────────────────────────────── */
@@ -170,6 +146,7 @@ interface SideNavItem {
   section?: string;
   requiresPermission?: Parameters<typeof can>[1];
   editorOnly?: boolean;
+  badge?: string;
 }
 
 const SIDE_NAV: SideNavItem[] = [
@@ -179,6 +156,13 @@ const SIDE_NAV: SideNavItem[] = [
   { id: 'all-stories', label: 'All Stories', icon: <FileText size={15} />, section: 'Content' },
   { id: 'drafts', label: 'Drafts', icon: <FileText size={15} />, section: 'Content' },
   { id: 'review', label: 'In Review', icon: <Eye size={15} />, section: 'Content' },
+  {
+    id: 'bulletin-templates',
+    label: 'Bulletin Templates',
+    icon: <BookOpen size={15} />,
+    section: 'Content',
+    badge: 'New',
+  },
   {
     id: 'editor-hub',
     label: 'Editor Hub',
@@ -191,6 +175,8 @@ const SIDE_NAV: SideNavItem[] = [
   { id: 'compensation', label: 'My Compensation', icon: <DollarSign size={15} />, section: 'Content', requiresPermission: 'compensation.view_own' },
   { id: 'horses', label: 'Thoroughbred CRM', icon: <Star size={15} />, section: 'Stables', requiresPermission: 'content.draft.create' },
   { id: 'parties', label: 'Parties CRM', icon: <Users size={15} />, section: 'Stables', requiresPermission: 'content.draft.create' },
+  { id: 'media-crm', label: 'Media Records CRM', icon: <File size={15} />, section: 'Stables', requiresPermission: 'content.draft.create' },
+  { id: 'racing-crm', label: 'Racing Data CRM', icon: <Flag size={15} />, section: 'Stables', requiresPermission: 'content.draft.create' },
   { id: 'team', label: 'Team Members', icon: <Users size={15} />, section: 'Management', requiresPermission: 'team.view' },
   { id: 'analytics', label: 'Analytics', icon: <BarChart2 size={15} />, section: 'Management', requiresPermission: 'analytics.view' },
   { id: 'settings', label: 'Settings', icon: <Settings size={15} />, section: 'Management', requiresPermission: 'settings.view' },
@@ -254,12 +240,11 @@ const EDITOR_TABS: EditorTabConfig[] = [
 /* ── Component ────────────────────────────────────────── */
 
 export default function Newsroom() {
-  // === auto fetch-on-mount (backend planner) ===
+  // === auto fetch-on-mount ===
   const fetchParties = usePartyStore((s) => s.fetchParties);
   useEffect(() => {
     fetchParties();
   }, [fetchParties]);
-  // === end auto fetch-on-mount ===
 
   const articles = useArticleStore((s) => s.articles);
   const setStatus = useArticleStore((s) => s.setStatus);
@@ -267,6 +252,20 @@ export default function Newsroom() {
   const horses = useHorseStore((s) => s.horses);
   const parties = usePartyStore((s) => s.parties);
   const removeParty = usePartyStore((s) => s.removeParty);
+
+  // Media store
+  const mediaItems = useMediaStore((s) => s.items);
+  const fetchMediaItems = useMediaStore((s) => s.fetchItems);
+  const removeMediaItem = useMediaStore((s) => s.removeItem);
+
+  useEffect(() => { fetchMediaItems(); }, [fetchMediaItems]);
+
+  // Racing store
+  const racingEntries = useRacingEntryStore((s) => s.entries);
+  const fetchRacingEntries = useRacingEntryStore((s) => s.fetchEntries);
+  const removeRacingEntry = useRacingEntryStore((s) => s.removeEntry);
+
+  useEffect(() => { fetchRacingEntries(); }, [fetchRacingEntries]);
 
   const [formOpen, setFormOpen] = useState(false);
   const [editArticle, setEditArticle] = useState<Article | null>(null);
@@ -279,11 +278,14 @@ export default function Newsroom() {
   const [assignDialogArticle, setAssignDialogArticle] = useState<Article | null>(null);
   const [assignNote, setAssignNote] = useState('');
 
+  // Bulletin template state
+  const [templateView, setTemplateView] = useState<'gallery' | 'editor'>('gallery');
+  const [selectedTemplate, setSelectedTemplate] = useState<BulletinTemplate | null>(null);
+
   // Horse CRM state
   const [horseFormOpen, setHorseFormOpen] = useState(false);
   const [editHorse, setEditHorse] = useState<Horse | null>(null);
   const [horseSearch, setHorseSearch] = useState('');
-  // Which horse row is expanded to show linked parties
   const [expandedHorseId, setExpandedHorseId] = useState<string | null>(null);
 
   // Parties CRM state
@@ -292,6 +294,23 @@ export default function Newsroom() {
   const [partySearch, setPartySearch] = useState('');
   const [partyDeleteTarget, setPartyDeleteTarget] = useState<Party | null>(null);
   const [partyDeleteConfirm, setPartyDeleteConfirm] = useState(false);
+
+  // Media CRM state
+  const [mediaFormOpen, setMediaFormOpen] = useState(false);
+  const [editMedia, setEditMedia] = useState<MediaItem | undefined>(undefined);
+  const [mediaSearch, setMediaSearch] = useState('');
+  const [mediaHorseFilter, setMediaHorseFilter] = useState('');
+  const [mediaTypeFilter, setMediaTypeFilter] = useState<MediaType | ''>('');
+  const [mediaDeleteTarget, setMediaDeleteTarget] = useState<MediaItem | null>(null);
+  const [mediaDeleteConfirm, setMediaDeleteConfirm] = useState(false);
+
+  // Racing CRM state
+  const [racingFormOpen, setRacingFormOpen] = useState(false);
+  const [editRacing, setEditRacing] = useState<RacingEntry | undefined>(undefined);
+  const [racingSearch, setRacingSearch] = useState('');
+  const [racingHorseFilter, setRacingHorseFilter] = useState('');
+  const [racingDeleteTarget, setRacingDeleteTarget] = useState<RacingEntry | null>(null);
+  const [racingDeleteConfirm, setRacingDeleteConfirm] = useState(false);
 
   const userRole = currentUser?.role ?? null;
   const currentRoleConfig = getRoleConfig(userRole);
@@ -354,6 +373,46 @@ export default function Newsroom() {
         (p.roles ?? []).some((r) => r.toLowerCase().includes(q))
     );
   }, [safeParties, partySearch]);
+
+  // Filtered media items
+  const filteredMediaItems = useMemo(() => {
+    let result = mediaItems ?? [];
+    if (mediaHorseFilter) {
+      result = result.filter((m) => m.horse_id === mediaHorseFilter);
+    }
+    if (mediaTypeFilter) {
+      result = result.filter((m) => m.media_type === mediaTypeFilter);
+    }
+    const q = mediaSearch.toLowerCase().trim();
+    if (q) {
+      result = result.filter(
+        (m) =>
+          m.title?.toLowerCase().includes(q) ||
+          m.subject?.toLowerCase().includes(q) ||
+          m.source_publication?.toLowerCase().includes(q)
+      );
+    }
+    return result;
+  }, [mediaItems, mediaHorseFilter, mediaTypeFilter, mediaSearch]);
+
+  // Filtered racing entries
+  const filteredRacingEntries = useMemo(() => {
+    let result = racingEntries ?? [];
+    if (racingHorseFilter) {
+      result = result.filter((r) => r.horse_id === racingHorseFilter);
+    }
+    const q = racingSearch.toLowerCase().trim();
+    if (q) {
+      result = result.filter(
+        (r) =>
+          r.race_name?.toLowerCase().includes(q) ||
+          r.venue?.toLowerCase().includes(q) ||
+          r.subject?.toLowerCase().includes(q) ||
+          r.country?.toLowerCase().includes(q)
+      );
+    }
+    return result;
+  }, [racingEntries, racingHorseFilter, racingSearch]);
 
   const handleAdvance = (articleId: string, toStatus: KanbanStatus) => {
     const article = (articles ?? []).find((a) => a.id === articleId);
@@ -420,6 +479,52 @@ export default function Newsroom() {
     setPartyDeleteConfirm(false);
   };
 
+  // Media handlers
+  const handleOpenMediaForm = (item?: MediaItem) => {
+    setEditMedia(item);
+    setMediaFormOpen(true);
+  };
+
+  const handleCloseMediaForm = () => {
+    setMediaFormOpen(false);
+    setEditMedia(undefined);
+  };
+
+  const handleMediaDelete = (item: MediaItem) => {
+    setMediaDeleteTarget(item);
+    setMediaDeleteConfirm(true);
+  };
+
+  const confirmMediaDelete = () => {
+    if (!mediaDeleteTarget) return;
+    removeMediaItem(mediaDeleteTarget.id);
+    setMediaDeleteTarget(null);
+    setMediaDeleteConfirm(false);
+  };
+
+  // Racing handlers
+  const handleOpenRacingForm = (entry?: RacingEntry) => {
+    setEditRacing(entry);
+    setRacingFormOpen(true);
+  };
+
+  const handleCloseRacingForm = () => {
+    setRacingFormOpen(false);
+    setEditRacing(undefined);
+  };
+
+  const handleRacingDelete = (entry: RacingEntry) => {
+    setRacingDeleteTarget(entry);
+    setRacingDeleteConfirm(true);
+  };
+
+  const confirmRacingDelete = () => {
+    if (!racingDeleteTarget) return;
+    removeRacingEntry(racingDeleteTarget.id);
+    setRacingDeleteTarget(null);
+    setRacingDeleteConfirm(false);
+  };
+
   const totalStories = (articles ?? []).length;
   const myStories = isContributor
     ? (articles ?? []).filter((a) => a.author === currentUser?.displayName).length
@@ -442,13 +547,45 @@ export default function Newsroom() {
     );
   }, [articles, searchQuery, isContributor, currentUser?.displayName]);
 
+  /* ── Bulletin Templates panel ─────────────────────────── */
+
+  function renderBulletinTemplates() {
+    if (templateView === 'editor' && selectedTemplate) {
+      return (
+        <div className="flex flex-col h-[calc(100vh-200px)] min-h-[500px] border border-border/60 rounded-sm overflow-hidden bg-card">
+          <BulletinTemplateEditor
+            template={selectedTemplate}
+            onBack={() => setTemplateView('gallery')}
+            onClose={() => { setTemplateView('gallery'); setSelectedTemplate(null); }}
+            onDone={(_id) => {
+              setTemplateView('gallery');
+              setSelectedTemplate(null);
+              setTimeout(() => setActiveNav('workflow'), 800);
+            }}
+          />
+        </div>
+      );
+    }
+
+    return (
+      <div className="flex flex-col h-[calc(100vh-200px)] min-h-[500px] border border-border/60 rounded-sm overflow-hidden bg-card">
+        <BulletinTemplateGallery
+          onSelectTemplate={(tpl) => {
+            setSelectedTemplate(tpl);
+            setTemplateView('editor');
+          }}
+          onClose={() => setActiveNav('workflow')}
+        />
+      </div>
+    );
+  }
+
   /* ── Horse CRM ─────────────────────────────────────── */
 
   function renderHorseCRM() {
     const safeHorses = horses ?? [];
     return (
       <div className="space-y-5">
-        {/* Header strip */}
         <div className="flex items-center justify-between gap-4 flex-wrap">
           <div>
             <p className="text-[10px] uppercase tracking-[0.14em] font-bold text-muted-foreground mb-0.5">
@@ -470,7 +607,6 @@ export default function Newsroom() {
           </Button>
         </div>
 
-        {/* Search */}
         {safeHorses.length > 0 && (
           <div className="relative max-w-sm">
             <Search size={13} className="absolute left-3 top-1/2 -translate-y-1/2 text-muted-foreground pointer-events-none" />
@@ -485,7 +621,6 @@ export default function Newsroom() {
           </div>
         )}
 
-        {/* Empty state */}
         {safeHorses.length === 0 ? (
           <EmptyState
             icon={Plus}
@@ -507,7 +642,6 @@ export default function Newsroom() {
             </button>
           </div>
         ) : (
-          /* Horse table */
           <div className="border border-border/60 rounded-sm overflow-hidden bg-card">
             <div className="px-4 py-2.5 border-b border-border/40 bg-muted/30 flex items-center justify-between">
               <p className="text-[10px] uppercase tracking-[0.12em] font-bold text-muted-foreground">
@@ -624,7 +758,6 @@ export default function Newsroom() {
                           </td>
                         </tr>
 
-                        {/* Expanded party links panel */}
                         {isExpanded && (
                           <tr key={`${horse.id}-links`} className="border-b border-primary/20">
                             <td colSpan={7} className="bg-primary/3 px-0 py-0">
@@ -659,7 +792,6 @@ export default function Newsroom() {
           </div>
         )}
 
-        {/* Info note */}
         {safeHorses.length > 0 && (
           <div className="flex items-start gap-2.5 px-4 py-3 rounded-sm border border-border/50 bg-muted/20">
             <Eye size={13} className="text-muted-foreground mt-0.5 flex-shrink-0" />
@@ -679,7 +811,6 @@ export default function Newsroom() {
     const currentYear = new Date().getFullYear();
     return (
       <div className="space-y-5">
-        {/* Header strip */}
         <div className="flex items-center justify-between gap-4 flex-wrap">
           <div>
             <p className="text-[10px] uppercase tracking-[0.14em] font-bold text-muted-foreground mb-0.5">
@@ -701,7 +832,6 @@ export default function Newsroom() {
           </Button>
         </div>
 
-        {/* Search */}
         {safeParties.length > 0 && (
           <div className="relative max-w-sm">
             <Search size={13} className="absolute left-3 top-1/2 -translate-y-1/2 text-muted-foreground pointer-events-none" />
@@ -716,7 +846,6 @@ export default function Newsroom() {
           </div>
         )}
 
-        {/* Empty state */}
         {safeParties.length === 0 ? (
           <EmptyState
             icon={Users}
@@ -738,7 +867,6 @@ export default function Newsroom() {
             </button>
           </div>
         ) : (
-          /* Parties table */
           <div className="border border-border/60 rounded-sm overflow-hidden bg-card">
             <div className="px-4 py-2.5 border-b border-border/40 bg-muted/30 flex items-center justify-between">
               <p className="text-[10px] uppercase tracking-[0.12em] font-bold text-muted-foreground">
@@ -773,7 +901,6 @@ export default function Newsroom() {
                           idx % 2 === 0 ? 'bg-card' : 'bg-background'
                         )}
                       >
-                        {/* Party name + profession */}
                         <td className="px-4 py-3 max-w-[200px]">
                           <div className="flex items-center gap-2.5">
                             {party.photo ? (
@@ -802,8 +929,6 @@ export default function Newsroom() {
                             </div>
                           </div>
                         </td>
-
-                        {/* Type pill */}
                         <td className="px-4 py-3">
                           <span
                             className={cn(
@@ -816,8 +941,6 @@ export default function Newsroom() {
                             {party.party_type === 'person' ? 'Individual' : 'Org'}
                           </span>
                         </td>
-
-                        {/* Roles */}
                         <td className="px-4 py-3">
                           <div className="flex flex-wrap gap-1 max-w-[180px]">
                             {(party.roles ?? []).slice(0, 2).map((role) => (
@@ -838,8 +961,6 @@ export default function Newsroom() {
                             )}
                           </div>
                         </td>
-
-                        {/* Location */}
                         <td className="px-4 py-3">
                           {party.base_location ? (
                             <div className="flex items-center gap-1 text-xs text-muted-foreground">
@@ -855,8 +976,6 @@ export default function Newsroom() {
                             <span className="text-muted-foreground/40 text-xs">—</span>
                           )}
                         </td>
-
-                        {/* Since year */}
                         <td className="px-4 py-3">
                           {party.started_year ? (
                             <div className="flex items-center gap-1 text-xs text-muted-foreground">
@@ -870,8 +989,6 @@ export default function Newsroom() {
                             <span className="text-muted-foreground/40 text-xs">—</span>
                           )}
                         </td>
-
-                        {/* Actions */}
                         <td className="px-4 py-3">
                           <div className="flex items-center gap-3">
                             <button
@@ -899,7 +1016,6 @@ export default function Newsroom() {
           </div>
         )}
 
-        {/* Delete confirm inline */}
         {partyDeleteConfirm && partyDeleteTarget && (
           <div className="border border-destructive/30 rounded-sm bg-destructive/5 px-4 py-3 flex items-center justify-between gap-4 flex-wrap">
             <p className="text-xs text-foreground">
@@ -928,7 +1044,6 @@ export default function Newsroom() {
           </div>
         )}
 
-        {/* Info note */}
         {safeParties.length > 0 && (
           <div className="flex items-start gap-2.5 px-4 py-3 rounded-sm border border-border/50 bg-muted/20">
             <Eye size={13} className="text-muted-foreground mt-0.5 flex-shrink-0" />
@@ -938,6 +1053,647 @@ export default function Newsroom() {
             </p>
           </div>
         )}
+      </div>
+    );
+  }
+
+  /* ── Media CRM ─────────────────────────────────────── */
+
+  function renderMediaCRM() {
+    const safeMedia = mediaItems ?? [];
+    const safeHorses = horses ?? [];
+
+    const mediaTypeCounts: Partial<Record<MediaType, number>> = {};
+    for (const m of safeMedia) {
+      mediaTypeCounts[m.media_type] = (mediaTypeCounts[m.media_type] ?? 0) + 1;
+    }
+
+    return (
+      <div className="space-y-5">
+        {/* Header strip */}
+        <div className="flex items-center justify-between gap-4 flex-wrap">
+          <div>
+            <p className="text-[10px] uppercase tracking-[0.14em] font-bold text-muted-foreground mb-0.5">
+              Stable Press CRM
+            </p>
+            <p className="text-sm text-muted-foreground">
+              {safeMedia.length === 0
+                ? 'No media records on file yet.'
+                : `${safeMedia.length} media record${safeMedia.length !== 1 ? 's' : ''} across all horses`}
+            </p>
+          </div>
+          <Button
+            size="sm"
+            className="bg-primary text-primary-foreground hover:bg-primary/90 gap-1.5 text-xs"
+            onClick={() => handleOpenMediaForm()}
+          >
+            <Plus size={13} />
+            Add Media Record
+          </Button>
+        </div>
+
+        {/* Stat pills */}
+        {safeMedia.length > 0 && (
+          <div className="flex flex-wrap gap-2">
+            {(Object.entries(mediaTypeCounts) as [MediaType, number][]).map(([type, count]) => (
+              <button
+                key={type}
+                onClick={() => setMediaTypeFilter(mediaTypeFilter === type ? '' : type)}
+                className={cn(
+                  'flex items-center gap-1.5 text-[10px] font-semibold uppercase tracking-[0.08em] px-2.5 py-1 rounded-full border transition-colors',
+                  mediaTypeFilter === type
+                    ? MEDIA_TYPE_COLORS[type]
+                    : 'border-border/50 text-muted-foreground hover:text-foreground bg-card'
+                )}
+              >
+                {MEDIA_TYPE_ICONS[type]}
+                {type}
+                <span className="tabular-nums font-bold">{count}</span>
+              </button>
+            ))}
+            {mediaTypeFilter && (
+              <button
+                onClick={() => setMediaTypeFilter('')}
+                className="text-[10px] text-muted-foreground hover:text-foreground transition-colors flex items-center gap-1"
+              >
+                <X size={10} /> Clear filter
+              </button>
+            )}
+          </div>
+        )}
+
+        {/* Search + Horse filter row */}
+        {safeMedia.length > 0 && (
+          <div className="flex flex-wrap gap-3">
+            <div className="relative flex-1 min-w-[180px]">
+              <Search size={13} className="absolute left-3 top-1/2 -translate-y-1/2 text-muted-foreground pointer-events-none" />
+              <input
+                type="search"
+                placeholder="Search title, subject, publication…"
+                value={mediaSearch}
+                onChange={(e) => setMediaSearch(e.target.value)}
+                className="w-full pl-8 pr-3 py-2 text-xs border border-input rounded-sm bg-card focus:outline-none focus:ring-1 focus:ring-ring"
+                aria-label="Search media records"
+              />
+            </div>
+            <select
+              value={mediaHorseFilter}
+              onChange={(e) => setMediaHorseFilter(e.target.value)}
+              className="px-3 py-2 text-xs border border-input rounded-sm bg-card focus:outline-none focus:ring-1 focus:ring-ring text-foreground"
+              aria-label="Filter by horse"
+            >
+              <option value="">All Horses</option>
+              {safeHorses.map((h) => (
+                <option key={h.id} value={h.id}>{h.name}</option>
+              ))}
+            </select>
+          </div>
+        )}
+
+        {/* Empty state */}
+        {safeMedia.length === 0 ? (
+          <EmptyState
+            icon={File}
+            heading="No media records on file yet."
+            description="Add articles, photos, videos, press releases, and publications linked to your thoroughbreds. Media records surface on horse profiles and across all featured parties."
+            ctaLabel="Add Your First Media Record"
+            onCta={() => handleOpenMediaForm()}
+            size="lg"
+          />
+        ) : filteredMediaItems.length === 0 ? (
+          <div className="flex flex-col items-center py-12 text-center">
+            <Search size={24} className="text-muted-foreground mb-3 opacity-40" />
+            <p className="text-sm font-semibold text-foreground mb-1">No media records match your filters</p>
+            <button
+              onClick={() => { setMediaSearch(''); setMediaHorseFilter(''); setMediaTypeFilter(''); }}
+              className="text-xs text-primary hover:text-primary/80 transition-colors mt-2"
+            >
+              Clear all filters
+            </button>
+          </div>
+        ) : (
+          /* Media table */
+          <div className="border border-border/60 rounded-sm overflow-hidden bg-card">
+            <div className="px-4 py-2.5 border-b border-border/40 bg-muted/30 flex items-center justify-between">
+              <p className="text-[10px] uppercase tracking-[0.12em] font-bold text-muted-foreground">
+                Media Records
+              </p>
+              <span className="text-[10px] text-muted-foreground tabular-nums">
+                {filteredMediaItems.length} {filteredMediaItems.length === 1 ? 'record' : 'records'}
+              </span>
+            </div>
+            <div className="overflow-x-auto">
+              <table className="w-full text-sm min-w-[700px]">
+                <thead>
+                  <tr className="border-b border-border/40 bg-muted/20">
+                    {['Title', 'Type', 'Horse', 'Source', 'Published', 'Actions'].map((h) => (
+                      <th
+                        key={h}
+                        className="text-left px-4 py-2.5 text-[10px] uppercase tracking-[0.1em] text-muted-foreground font-semibold"
+                      >
+                        {h}
+                      </th>
+                    ))}
+                  </tr>
+                </thead>
+                <tbody>
+                  {filteredMediaItems.map((item, idx) => {
+                    const horse = safeHorses.find((h) => h.id === item.horse_id);
+                    return (
+                      <tr
+                        key={item.id}
+                        className={cn(
+                          'border-b border-border/30 hover:bg-muted/10 transition-colors',
+                          idx % 2 === 0 ? 'bg-card' : 'bg-background'
+                        )}
+                      >
+                        {/* Title + subject */}
+                        <td className="px-4 py-3 max-w-[220px]">
+                          <span className="text-xs font-semibold text-foreground block line-clamp-1">
+                            {item.title}
+                          </span>
+                          {item.subject && (
+                            <span className="text-[10px] text-muted-foreground line-clamp-1 block italic mt-0.5">
+                              {item.subject}
+                            </span>
+                          )}
+                          {(item.url || item.file_name) && (
+                            <span className="text-[9px] text-primary/70 mt-0.5 block truncate">
+                              {item.url ? '🔗 URL' : '📎 File'}: {item.url ?? item.file_name}
+                            </span>
+                          )}
+                        </td>
+
+                        {/* Type badge */}
+                        <td className="px-4 py-3">
+                          <span
+                            className={cn(
+                              'inline-flex items-center gap-1 text-[9px] uppercase tracking-[0.08em] font-bold px-2 py-0.5 rounded-full border',
+                              MEDIA_TYPE_COLORS[item.media_type]
+                            )}
+                          >
+                            {MEDIA_TYPE_ICONS[item.media_type]}
+                            {item.media_type}
+                          </span>
+                        </td>
+
+                        {/* Horse */}
+                        <td className="px-4 py-3">
+                          {horse ? (
+                            <span className="text-xs text-foreground font-medium">{horse.name}</span>
+                          ) : (
+                            <span className="text-muted-foreground/40 text-xs">—</span>
+                          )}
+                        </td>
+
+                        {/* Source publication */}
+                        <td className="px-4 py-3">
+                          {item.source_publication ? (
+                            <span className="text-[10px] text-muted-foreground truncate block max-w-[120px]">
+                              {item.source_publication}
+                            </span>
+                          ) : (
+                            <span className="text-muted-foreground/40 text-xs">—</span>
+                          )}
+                        </td>
+
+                        {/* Published date */}
+                        <td className="px-4 py-3">
+                          {item.published_date ? (
+                            <div className="flex items-center gap-1 text-xs text-muted-foreground">
+                              <CalendarDays size={10} className="text-primary/50 flex-shrink-0" />
+                              <span>
+                                {new Date(item.published_date).toLocaleDateString('en-AU', {
+                                  day: '2-digit',
+                                  month: 'short',
+                                  year: 'numeric',
+                                })}
+                              </span>
+                            </div>
+                          ) : (
+                            <span className="text-muted-foreground/40 text-xs">—</span>
+                          )}
+                        </td>
+
+                        {/* Actions */}
+                        <td className="px-4 py-3">
+                          <div className="flex items-center gap-3">
+                            <button
+                              onClick={() => handleOpenMediaForm(item)}
+                              className="text-[10px] uppercase tracking-[0.08em] font-semibold text-primary hover:text-primary/80 transition-colors"
+                              aria-label={`Edit ${item.title}`}
+                            >
+                              Edit
+                            </button>
+                            <button
+                              onClick={() => handleMediaDelete(item)}
+                              className="text-[10px] uppercase tracking-[0.08em] font-semibold text-destructive hover:text-destructive/80 transition-colors"
+                              aria-label={`Remove ${item.title}`}
+                            >
+                              Remove
+                            </button>
+                          </div>
+                        </td>
+                      </tr>
+                    );
+                  })}
+                </tbody>
+              </table>
+            </div>
+          </div>
+        )}
+
+        {/* Delete confirm */}
+        {mediaDeleteConfirm && mediaDeleteTarget && (
+          <div className="border border-destructive/30 rounded-sm bg-destructive/5 px-4 py-3 flex items-center justify-between gap-4 flex-wrap">
+            <p className="text-xs text-foreground">
+              Remove{' '}
+              <span className="font-semibold">{mediaDeleteTarget.title}</span>
+              {' '}from Stable Press? This cannot be undone.
+            </p>
+            <div className="flex items-center gap-2 flex-shrink-0">
+              <Button
+                size="sm"
+                variant="outline"
+                className="text-xs"
+                onClick={() => { setMediaDeleteConfirm(false); setMediaDeleteTarget(null); }}
+              >
+                Cancel
+              </Button>
+              <Button
+                size="sm"
+                variant="destructive"
+                className="text-xs"
+                onClick={confirmMediaDelete}
+              >
+                Remove
+              </Button>
+            </div>
+          </div>
+        )}
+
+        {/* Info note */}
+        {safeMedia.length > 0 && (
+          <div className="flex items-start gap-2.5 px-4 py-3 rounded-sm border border-border/50 bg-muted/20">
+            <Eye size={13} className="text-muted-foreground mt-0.5 flex-shrink-0" />
+            <p className="text-[11px] text-muted-foreground leading-relaxed">
+              Media records added here are linked to their horse and surface on the <strong className="text-foreground">Thoroughbred Profile</strong> page.
+              Featured parties will also see the media item on their own records.
+            </p>
+          </div>
+        )}
+      </div>
+    );
+  }
+
+  /* ── Racing Data CRM ────────────────────────────────── */
+
+  function renderRacingCRM() {
+    const safeEntries = racingEntries ?? [];
+    const safeHorses = horses ?? [];
+
+    return (
+      <div className="space-y-5">
+        {/* Header */}
+        <div className="flex items-center justify-between gap-4 flex-wrap">
+          <div>
+            <p className="text-[10px] uppercase tracking-[0.14em] font-bold text-muted-foreground mb-0.5">
+              Stable Press CRM
+            </p>
+            <p className="text-sm text-muted-foreground">
+              {safeEntries.length === 0
+                ? 'No racing records on file yet.'
+                : `${safeEntries.length} racing record${safeEntries.length !== 1 ? 's' : ''} across all horses`}
+            </p>
+          </div>
+          <Button
+            size="sm"
+            className="bg-primary text-primary-foreground hover:bg-primary/90 gap-1.5 text-xs"
+            onClick={() => handleOpenRacingForm()}
+          >
+            <Plus size={13} />
+            Add Racing Record
+          </Button>
+        </div>
+
+        {/* Search + Horse filter */}
+        {safeEntries.length > 0 && (
+          <div className="flex flex-wrap gap-3">
+            <div className="relative flex-1 min-w-[180px]">
+              <Search size={13} className="absolute left-3 top-1/2 -translate-y-1/2 text-muted-foreground pointer-events-none" />
+              <input
+                type="search"
+                placeholder="Search race, venue, subject…"
+                value={racingSearch}
+                onChange={(e) => setRacingSearch(e.target.value)}
+                className="w-full pl-8 pr-3 py-2 text-xs border border-input rounded-sm bg-card focus:outline-none focus:ring-1 focus:ring-ring"
+                aria-label="Search racing records"
+              />
+            </div>
+            <select
+              value={racingHorseFilter}
+              onChange={(e) => setRacingHorseFilter(e.target.value)}
+              className="px-3 py-2 text-xs border border-input rounded-sm bg-card focus:outline-none focus:ring-1 focus:ring-ring text-foreground"
+              aria-label="Filter by horse"
+            >
+              <option value="">All Horses</option>
+              {safeHorses.map((h) => (
+                <option key={h.id} value={h.id}>{h.name}</option>
+              ))}
+            </select>
+          </div>
+        )}
+
+        {/* Empty state */}
+        {safeEntries.length === 0 ? (
+          <EmptyState
+            icon={Flag}
+            heading="No racing records on file yet."
+            description="Add race entries, results, and performance records for your thoroughbreds. Racing data surfaces on horse profiles and can be linked to jockeys and trainers."
+            ctaLabel="Add Your First Racing Record"
+            onCta={() => handleOpenRacingForm()}
+            size="lg"
+          />
+        ) : filteredRacingEntries.length === 0 ? (
+          <div className="flex flex-col items-center py-12 text-center">
+            <Search size={24} className="text-muted-foreground mb-3 opacity-40" />
+            <p className="text-sm font-semibold text-foreground mb-1">No racing records match your filters</p>
+            <button
+              onClick={() => { setRacingSearch(''); setRacingHorseFilter(''); }}
+              className="text-xs text-primary hover:text-primary/80 transition-colors mt-2"
+            >
+              Clear all filters
+            </button>
+          </div>
+        ) : (
+          <div className="border border-border/60 rounded-sm overflow-hidden bg-card">
+            <div className="px-4 py-2.5 border-b border-border/40 bg-muted/30 flex items-center justify-between">
+              <p className="text-[10px] uppercase tracking-[0.12em] font-bold text-muted-foreground">
+                Racing Records
+              </p>
+              <span className="text-[10px] text-muted-foreground tabular-nums">
+                {filteredRacingEntries.length} {filteredRacingEntries.length === 1 ? 'record' : 'records'}
+              </span>
+            </div>
+            <div className="overflow-x-auto">
+              <table className="w-full text-sm min-w-[760px]">
+                <thead>
+                  <tr className="border-b border-border/40 bg-muted/20">
+                    {['Horse', 'Race', 'Venue', 'Date', 'Status', 'Position', 'Actions'].map((h) => (
+                      <th
+                        key={h}
+                        className="text-left px-4 py-2.5 text-[10px] uppercase tracking-[0.1em] text-muted-foreground font-semibold"
+                      >
+                        {h}
+                      </th>
+                    ))}
+                  </tr>
+                </thead>
+                <tbody>
+                  {filteredRacingEntries.map((entry, idx) => {
+                    const horse = safeHorses.find((h) => h.id === entry.horse_id);
+                    return (
+                      <tr
+                        key={entry.id}
+                        className={cn(
+                          'border-b border-border/30 hover:bg-muted/10 transition-colors',
+                          idx % 2 === 0 ? 'bg-card' : 'bg-background'
+                        )}
+                      >
+                        {/* Horse */}
+                        <td className="px-4 py-3 max-w-[140px]">
+                          {horse ? (
+                            <span className="text-xs font-semibold text-foreground block line-clamp-1">{horse.name}</span>
+                          ) : (
+                            <span className="text-muted-foreground/40 text-xs">—</span>
+                          )}
+                        </td>
+
+                        {/* Race name + subject */}
+                        <td className="px-4 py-3 max-w-[200px]">
+                          <span className="text-xs font-semibold text-foreground block line-clamp-1">{entry.race_name}</span>
+                          {entry.subject && (
+                            <span className="text-[10px] text-muted-foreground italic block line-clamp-1 mt-0.5">{entry.subject}</span>
+                          )}
+                          {entry.class_grade && (
+                            <span
+                              className="text-[9px] uppercase tracking-[0.08em] font-bold px-1.5 py-0.5 rounded-sm mt-0.5 inline-block"
+                              style={{ background: 'hsl(var(--brand-accent) / 0.12)', color: 'hsl(var(--brand-accent))' }}
+                            >
+                              {entry.class_grade}
+                            </span>
+                          )}
+                        </td>
+
+                        {/* Venue */}
+                        <td className="px-4 py-3">
+                          <div className="flex flex-col gap-0.5">
+                            <span className="text-xs text-muted-foreground">{entry.venue}</span>
+                            {entry.country && (
+                              <span className="text-[9px] uppercase tracking-[0.08em] font-semibold text-muted-foreground/60">{entry.country}</span>
+                            )}
+                          </div>
+                        </td>
+
+                        {/* Date */}
+                        <td className="px-4 py-3">
+                          {entry.race_date ? (
+                            <div className="flex items-center gap-1 text-xs text-muted-foreground">
+                              <CalendarDays size={10} className="text-primary/50 flex-shrink-0" />
+                              <span>
+                                {new Date(entry.race_date).toLocaleDateString('en-AU', {
+                                  day: '2-digit',
+                                  month: 'short',
+                                  year: 'numeric',
+                                })}
+                              </span>
+                            </div>
+                          ) : (
+                            <span className="text-muted-foreground/40 text-xs">—</span>
+                          )}
+                        </td>
+
+                        {/* Status */}
+                        <td className="px-4 py-3">
+                          <RacingStatusBadge status={entry.status} />
+                        </td>
+
+                        {/* Finish position */}
+                        <td className="px-4 py-3">
+                          {entry.finish_position !== undefined && entry.finish_position !== null ? (
+                            <span
+                              className="text-sm font-bold tabular-nums"
+                              style={{ color: entry.finish_position === 1 ? 'hsl(var(--brand-accent))' : 'hsl(var(--foreground))' }}
+                            >
+                              {entry.finish_position === 1 ? '🥇' : ''} {entry.finish_position}
+                              {entry.margin ? <span className="text-[10px] text-muted-foreground ml-1 font-normal">({entry.margin})</span> : null}
+                            </span>
+                          ) : (
+                            <span className="text-muted-foreground/40 text-xs">—</span>
+                          )}
+                        </td>
+
+                        {/* Actions */}
+                        <td className="px-4 py-3">
+                          <div className="flex items-center gap-3">
+                            <button
+                              onClick={() => handleOpenRacingForm(entry)}
+                              className="text-[10px] uppercase tracking-[0.08em] font-semibold text-primary hover:text-primary/80 transition-colors"
+                              aria-label={`Edit ${entry.race_name}`}
+                            >
+                              Edit
+                            </button>
+                            <button
+                              onClick={() => handleRacingDelete(entry)}
+                              className="text-[10px] uppercase tracking-[0.08em] font-semibold text-destructive hover:text-destructive/80 transition-colors"
+                              aria-label={`Remove ${entry.race_name}`}
+                            >
+                              Remove
+                            </button>
+                          </div>
+                        </td>
+                      </tr>
+                    );
+                  })}
+                </tbody>
+              </table>
+            </div>
+          </div>
+        )}
+
+        {/* Delete confirm */}
+        {racingDeleteConfirm && racingDeleteTarget && (
+          <div className="border border-destructive/30 rounded-sm bg-destructive/5 px-4 py-3 flex items-center justify-between gap-4 flex-wrap">
+            <p className="text-xs text-foreground">
+              Remove{' '}
+              <span className="font-semibold">{racingDeleteTarget.race_name}</span>
+              {' '}from Stable Press? This cannot be undone.
+            </p>
+            <div className="flex items-center gap-2 flex-shrink-0">
+              <Button
+                size="sm"
+                variant="outline"
+                className="text-xs"
+                onClick={() => { setRacingDeleteConfirm(false); setRacingDeleteTarget(null); }}
+              >
+                Cancel
+              </Button>
+              <Button
+                size="sm"
+                variant="destructive"
+                className="text-xs"
+                onClick={confirmRacingDelete}
+              >
+                Remove
+              </Button>
+            </div>
+          </div>
+        )}
+
+        {/* Info note */}
+        {safeEntries.length > 0 && (
+          <div className="flex items-start gap-2.5 px-4 py-3 rounded-sm border border-border/50 bg-muted/20">
+            <Eye size={13} className="text-muted-foreground mt-0.5 flex-shrink-0" />
+            <p className="text-[11px] text-muted-foreground leading-relaxed">
+              Racing records added here surface on each <strong className="text-foreground">Thoroughbred Profile</strong>.
+              Records with linked jockeys and trainers will also appear on their party profiles.
+            </p>
+          </div>
+        )}
+      </div>
+    );
+  }
+
+  /* ── Media CRM form slide-over ─────────────────────── */
+
+  function renderMediaFormPanel() {
+    if (!mediaFormOpen) return null;
+    return (
+      <div
+        className="fixed inset-0 z-50 flex"
+        role="dialog"
+        aria-modal="true"
+        aria-label={editMedia ? 'Edit Media Record' : 'Add Media Record'}
+      >
+        {/* Backdrop */}
+        <div
+          className="absolute inset-0 bg-foreground/30 backdrop-blur-[1px]"
+          onClick={handleCloseMediaForm}
+        />
+        {/* Drawer panel */}
+        <div className="relative ml-auto w-full max-w-lg h-full overflow-y-auto bg-card border-l border-border/60 shadow-2xl flex flex-col">
+          {/* Panel header */}
+          <div className="sticky top-0 z-10 bg-primary text-primary-foreground px-5 py-4 flex items-center justify-between border-b-2"
+            style={{ borderBottomColor: 'hsl(var(--brand-accent))' }}
+          >
+            <div className="flex items-center gap-2.5">
+              <File size={15} style={{ color: 'hsl(var(--brand-accent))' }} />
+              <div>
+                <p className="text-[10px] uppercase tracking-[0.16em] font-bold opacity-70">
+                  Media Records CRM
+                </p>
+                <p className="font-[family-name:var(--font-display)] text-sm font-bold">
+                  {editMedia ? 'Edit Media Record' : 'Add New Media Record'}
+                </p>
+              </div>
+            </div>
+            <button
+              onClick={handleCloseMediaForm}
+              className="p-1.5 rounded-sm border border-primary-foreground/20 hover:border-primary-foreground/50 transition-colors"
+              aria-label="Close form"
+            >
+              <X size={14} />
+            </button>
+          </div>
+
+          {/* The form */}
+          <div className="flex-1 overflow-y-auto">
+            <MediaDataForm
+              initial={editMedia}
+              onSave={(_id) => {
+                handleCloseMediaForm();
+                fetchMediaItems();
+              }}
+              onCancel={handleCloseMediaForm}
+              compact
+            />
+          </div>
+        </div>
+      </div>
+    );
+  }
+
+  /* ── Racing CRM form slide-over ────────────────────── */
+
+  function renderRacingFormPanel() {
+    if (!racingFormOpen) return null;
+    return (
+      <div
+        className="fixed inset-0 z-50 flex"
+        role="dialog"
+        aria-modal="true"
+        aria-label={editRacing ? 'Edit Racing Record' : 'Add Racing Record'}
+      >
+        {/* Backdrop */}
+        <div
+          className="absolute inset-0 bg-foreground/30 backdrop-blur-[1px]"
+          onClick={handleCloseRacingForm}
+        />
+        {/* Drawer panel */}
+        <div className="relative ml-auto w-full max-w-lg h-full overflow-y-auto bg-card border-l border-border/60 shadow-2xl flex flex-col">
+          {/* The form — uses its own themed header/footer */}
+          <div className="flex-1 overflow-y-auto">
+            <RacingDataForm
+              initial={editRacing}
+              onSave={() => {
+                handleCloseRacingForm();
+                fetchRacingEntries();
+              }}
+              onCancel={handleCloseRacingForm}
+              compact
+            />
+          </div>
+        </div>
       </div>
     );
   }
@@ -1736,7 +2492,7 @@ export default function Newsroom() {
             <p className="text-[10px] uppercase tracking-[0.12em] font-bold text-muted-foreground">Library Stats</p>
             {[
               { label: 'Total Published Stories', value: publishedWithMedia.length },
-              { label: 'Stories with Assets', value: '—' },
+              { label: 'Media Records (CRM)', value: (mediaItems ?? []).length },
               { label: 'Storage Used', value: '—' },
             ].map((s) => (
               <div key={s.label} className="flex items-center justify-between">
@@ -1996,6 +2752,104 @@ export default function Newsroom() {
             >
               Open Editor Hub
               <ChevronRight size={11} />
+            </Button>
+          </div>
+        )}
+
+        {/* Bulletin Templates shortcut */}
+        <div
+          className="flex flex-wrap items-center justify-between gap-3 px-4 py-3 rounded-sm border"
+          style={{ borderColor: 'hsl(var(--brand-accent) / 0.3)', background: 'hsl(var(--brand-accent) / 0.05)' }}
+        >
+          <div className="flex items-center gap-2">
+            <BookOpen size={14} style={{ color: 'hsl(var(--brand-accent))' }} />
+            <span className="text-xs font-semibold text-foreground">Bulletin Templates</span>
+            <span
+              className="text-[8px] font-bold px-1.5 py-0.5 rounded-full uppercase tracking-[0.1em]"
+              style={{ background: 'hsl(var(--brand-accent))', color: 'hsl(var(--brand-accent-foreground))' }}
+            >
+              New
+            </span>
+            <span className="text-[11px] text-muted-foreground hidden sm:inline">
+              — 9 templates ready to use
+            </span>
+          </div>
+          <Button
+            size="sm"
+            variant="outline"
+            className="text-xs gap-1.5"
+            style={{ borderColor: 'hsl(var(--brand-accent) / 0.4)', color: 'hsl(var(--brand-accent))' }}
+            onClick={() => { setActiveNav('bulletin-templates'); setTemplateView('gallery'); }}
+          >
+            Browse Templates
+            <ArrowRight size={11} />
+          </Button>
+        </div>
+
+        {/* Media Records shortcut */}
+        {can(userRole, 'content.draft.create') && (
+          <div
+            className="flex flex-wrap items-center justify-between gap-3 px-4 py-3 rounded-sm border"
+            style={{ borderColor: 'hsl(var(--chart-3) / 0.3)', background: 'hsl(var(--chart-3) / 0.05)' }}
+          >
+            <div className="flex items-center gap-2">
+              <File size={14} style={{ color: 'hsl(var(--chart-3))' }} />
+              <span className="text-xs font-semibold text-foreground">Media Records CRM</span>
+              {(mediaItems ?? []).length > 0 && (
+                <span
+                  className="text-[9px] font-bold px-1.5 py-0.5 rounded-full"
+                  style={{ background: 'hsl(var(--chart-3) / 0.15)', color: 'hsl(var(--chart-3))' }}
+                >
+                  {(mediaItems ?? []).length} records
+                </span>
+              )}
+              <span className="text-[11px] text-muted-foreground hidden sm:inline">
+                — articles, photos, videos &amp; press releases
+              </span>
+            </div>
+            <Button
+              size="sm"
+              variant="outline"
+              className="text-xs gap-1.5"
+              style={{ borderColor: 'hsl(var(--chart-3) / 0.4)', color: 'hsl(var(--chart-3))' }}
+              onClick={() => setActiveNav('media-crm')}
+            >
+              Manage Media
+              <ArrowRight size={11} />
+            </Button>
+          </div>
+        )}
+
+        {/* Racing Data shortcut */}
+        {can(userRole, 'content.draft.create') && (
+          <div
+            className="flex flex-wrap items-center justify-between gap-3 px-4 py-3 rounded-sm border"
+            style={{ borderColor: 'hsl(var(--chart-1) / 0.3)', background: 'hsl(var(--chart-1) / 0.05)' }}
+          >
+            <div className="flex items-center gap-2">
+              <Flag size={14} style={{ color: 'hsl(var(--chart-1))' }} />
+              <span className="text-xs font-semibold text-foreground">Racing Data CRM</span>
+              {(racingEntries ?? []).length > 0 && (
+                <span
+                  className="text-[9px] font-bold px-1.5 py-0.5 rounded-full"
+                  style={{ background: 'hsl(var(--chart-1) / 0.15)', color: 'hsl(var(--chart-1))' }}
+                >
+                  {(racingEntries ?? []).length} records
+                </span>
+              )}
+              <span className="text-[11px] text-muted-foreground hidden sm:inline">
+                — race entries, results &amp; performance
+              </span>
+            </div>
+            <Button
+              size="sm"
+              variant="outline"
+              className="text-xs gap-1.5"
+              style={{ borderColor: 'hsl(var(--chart-1) / 0.4)', color: 'hsl(var(--chart-1))' }}
+              onClick={() => setActiveNav('racing-crm')}
+            >
+              Manage Racing
+              <ArrowRight size={11} />
             </Button>
           </div>
         )}
@@ -2436,7 +3290,13 @@ export default function Newsroom() {
                 {items.map((item) => (
                   <button
                     key={item.id}
-                    onClick={() => setActiveNav(item.id)}
+                    onClick={() => {
+                      setActiveNav(item.id);
+                      if (item.id === 'bulletin-templates') {
+                        setTemplateView('gallery');
+                        setSelectedTemplate(null);
+                      }
+                    }}
                     className={cn(
                       'w-full flex items-center gap-2.5 px-3 py-2 text-xs font-medium transition-colors rounded-sm mx-1',
                       sidebarCollapsed && 'justify-center',
@@ -2451,6 +3311,14 @@ export default function Newsroom() {
                       {item.icon}
                     </span>
                     {!sidebarCollapsed && <span className="flex-1 text-left">{item.label}</span>}
+                    {!sidebarCollapsed && item.badge && (
+                      <span
+                        className="text-[8px] font-bold px-1.5 py-0.5 rounded-full uppercase tracking-[0.1em] flex-shrink-0"
+                        style={{ background: 'hsl(var(--brand-accent))', color: 'hsl(var(--brand-accent-foreground))' }}
+                      >
+                        {item.badge}
+                      </span>
+                    )}
                     {!sidebarCollapsed && item.id === 'editor-hub' && pendingReview > 0 && (
                       <span className="text-[9px] font-bold px-1.5 py-0.5 rounded-full bg-primary text-primary-foreground">
                         {pendingReview}
@@ -2470,6 +3338,22 @@ export default function Newsroom() {
                         style={{ background: 'hsl(var(--primary) / 0.15)', color: 'hsl(var(--primary))' }}
                       >
                         {safeParties.length}
+                      </span>
+                    )}
+                    {!sidebarCollapsed && item.id === 'media-crm' && (mediaItems ?? []).length > 0 && (
+                      <span
+                        className="text-[9px] font-bold px-1.5 py-0.5 rounded-full"
+                        style={{ background: 'hsl(var(--chart-3) / 0.15)', color: 'hsl(var(--chart-3))' }}
+                      >
+                        {(mediaItems ?? []).length}
+                      </span>
+                    )}
+                    {!sidebarCollapsed && item.id === 'racing-crm' && (racingEntries ?? []).length > 0 && (
+                      <span
+                        className="text-[9px] font-bold px-1.5 py-0.5 rounded-full"
+                        style={{ background: 'hsl(var(--chart-1) / 0.15)', color: 'hsl(var(--chart-1))' }}
+                      >
+                        {(racingEntries ?? []).length}
                       </span>
                     )}
                   </button>
@@ -2562,7 +3446,42 @@ export default function Newsroom() {
               </Button>
             )}
 
-            {activeNav !== 'horses' && activeNav !== 'parties' && can(userRole, 'content.draft.create') && (
+            {activeNav === 'media-crm' && (
+              <Button
+                size="sm"
+                className="bg-primary text-primary-foreground hover:bg-primary/90 gap-1.5 text-xs"
+                onClick={() => handleOpenMediaForm()}
+              >
+                <Plus size={13} />
+                <span className="hidden sm:inline">Add Media Record</span>
+                <span className="sm:hidden">Add</span>
+              </Button>
+            )}
+
+            {activeNav === 'racing-crm' && (
+              <Button
+                size="sm"
+                className="bg-primary text-primary-foreground hover:bg-primary/90 gap-1.5 text-xs"
+                onClick={() => handleOpenRacingForm()}
+              >
+                <Plus size={13} />
+                <span className="hidden sm:inline">Add Racing Record</span>
+                <span className="sm:hidden">Add</span>
+              </Button>
+            )}
+
+            {activeNav === 'bulletin-templates' && templateView === 'gallery' && (
+              <Button
+                size="sm"
+                variant="outline"
+                className="text-xs gap-1.5"
+                onClick={() => setActiveNav('workflow')}
+              >
+                Back to Workflow
+              </Button>
+            )}
+
+            {activeNav !== 'horses' && activeNav !== 'parties' && activeNav !== 'media-crm' && activeNav !== 'racing-crm' && activeNav !== 'bulletin-templates' && can(userRole, 'content.draft.create') && (
               <Button
                 size="sm"
                 className="bg-primary text-primary-foreground hover:bg-primary/90 gap-1.5 text-xs"
@@ -2578,49 +3497,68 @@ export default function Newsroom() {
 
         {/* Page body */}
         <div className="flex-1 overflow-y-auto px-4 md:px-6 py-6">
-          <div className="mb-6">
-            <div className="flex items-center gap-3 flex-wrap">
-              <h1 className="font-[family-name:var(--font-display)] text-2xl font-bold text-foreground">
-                {visibleNav.find((n) => n.id === activeNav)?.label ?? 'Dashboard'}
-              </h1>
-              {publishedCount > 0 && (activeNav === 'workflow' || activeNav === 'overview') && (
-                <span className="flex items-baseline gap-1">
-                  <span
-                    className="font-[family-name:var(--font-display)] text-lg font-bold tabular-nums"
-                    style={{ color: 'hsl(var(--brand-accent))' }}
-                  >
-                    {publishedCount}
+          {/* Page title — not shown for bulletin-templates (has its own header) */}
+          {activeNav !== 'bulletin-templates' && (
+            <div className="mb-6">
+              <div className="flex items-center gap-3 flex-wrap">
+                <h1 className="font-[family-name:var(--font-display)] text-2xl font-bold text-foreground">
+                  {visibleNav.find((n) => n.id === activeNav)?.label ?? 'Dashboard'}
+                </h1>
+                {publishedCount > 0 && (activeNav === 'workflow' || activeNav === 'overview') && (
+                  <span className="flex items-baseline gap-1">
+                    <span
+                      className="font-[family-name:var(--font-display)] text-lg font-bold tabular-nums"
+                      style={{ color: 'hsl(var(--brand-accent))' }}
+                    >
+                      {publishedCount}
+                    </span>
+                    <span className="text-[10px] uppercase tracking-[0.1em] text-muted-foreground font-semibold">in print</span>
                   </span>
-                  <span className="text-[10px] uppercase tracking-[0.1em] text-muted-foreground font-semibold">in print</span>
-                </span>
-              )}
-              {activeNav === 'editor-hub' && pendingReview > 0 && (
-                <span
-                  className="text-[10px] font-bold px-2 py-0.5 rounded-full"
-                  style={{ background: 'hsl(var(--primary) / 0.12)', color: 'hsl(var(--primary))' }}
-                >
-                  {pendingReview} stories need attention
-                </span>
-              )}
-              {activeNav === 'horses' && (horses ?? []).length > 0 && (
-                <span
-                  className="text-[10px] font-bold px-2 py-0.5 rounded-full"
-                  style={{ background: 'hsl(var(--brand-accent) / 0.12)', color: 'hsl(var(--brand-accent))' }}
-                >
-                  {(horses ?? []).length} in the stables
-                </span>
-              )}
-              {activeNav === 'parties' && safeParties.length > 0 && (
-                <span
-                  className="text-[10px] font-bold px-2 py-0.5 rounded-full"
-                  style={{ background: 'hsl(var(--primary) / 0.12)', color: 'hsl(var(--primary))' }}
-                >
-                  {safeParties.length} {safeParties.length === 1 ? 'party' : 'parties'} registered
-                </span>
-              )}
+                )}
+                {activeNav === 'editor-hub' && pendingReview > 0 && (
+                  <span
+                    className="text-[10px] font-bold px-2 py-0.5 rounded-full"
+                    style={{ background: 'hsl(var(--primary) / 0.12)', color: 'hsl(var(--primary))' }}
+                  >
+                    {pendingReview} stories need attention
+                  </span>
+                )}
+                {activeNav === 'horses' && (horses ?? []).length > 0 && (
+                  <span
+                    className="text-[10px] font-bold px-2 py-0.5 rounded-full"
+                    style={{ background: 'hsl(var(--brand-accent) / 0.12)', color: 'hsl(var(--brand-accent))' }}
+                  >
+                    {(horses ?? []).length} in the stables
+                  </span>
+                )}
+                {activeNav === 'parties' && safeParties.length > 0 && (
+                  <span
+                    className="text-[10px] font-bold px-2 py-0.5 rounded-full"
+                    style={{ background: 'hsl(var(--primary) / 0.12)', color: 'hsl(var(--primary))' }}
+                  >
+                    {safeParties.length} {safeParties.length === 1 ? 'party' : 'parties'} registered
+                  </span>
+                )}
+                {activeNav === 'media-crm' && (mediaItems ?? []).length > 0 && (
+                  <span
+                    className="text-[10px] font-bold px-2 py-0.5 rounded-full"
+                    style={{ background: 'hsl(var(--chart-3) / 0.12)', color: 'hsl(var(--chart-3))' }}
+                  >
+                    {(mediaItems ?? []).length} media {(mediaItems ?? []).length === 1 ? 'record' : 'records'}
+                  </span>
+                )}
+                {activeNav === 'racing-crm' && (racingEntries ?? []).length > 0 && (
+                  <span
+                    className="text-[10px] font-bold px-2 py-0.5 rounded-full"
+                    style={{ background: 'hsl(var(--chart-1) / 0.12)', color: 'hsl(var(--chart-1))' }}
+                  >
+                    {(racingEntries ?? []).length} racing {(racingEntries ?? []).length === 1 ? 'record' : 'records'}
+                  </span>
+                )}
+              </div>
+              <div className="mt-2 h-px bg-border/50" />
             </div>
-            <div className="mt-2 h-px bg-border/50" />
-          </div>
+          )}
 
           {activeNav === 'workflow' &&
             userRole !== 'editor' &&
@@ -2650,7 +3588,10 @@ export default function Newsroom() {
           {activeNav === 'compensation' && renderCompensation()}
           {activeNav === 'horses' && renderHorseCRM()}
           {activeNav === 'parties' && renderPartiesCRM()}
+          {activeNav === 'media-crm' && renderMediaCRM()}
+          {activeNav === 'racing-crm' && renderRacingCRM()}
           {activeNav === 'team' && renderTeam()}
+          {activeNav === 'bulletin-templates' && renderBulletinTemplates()}
 
           {activeNav === 'analytics' && (
             <div className="space-y-6">
@@ -2728,6 +3669,12 @@ export default function Newsroom() {
         }}
         party={editParty}
       />
+
+      {/* Media form slide-over */}
+      {renderMediaFormPanel()}
+
+      {/* Racing form slide-over */}
+      {renderRacingFormPanel()}
     </div>
   );
 }
@@ -2895,6 +3842,27 @@ function StatusBadge({ status }: { status: string }) {
       style={c.style}
     >
       {c.label}
+    </span>
+  );
+}
+
+/* ── Racing status badge ──────────────────────────────── */
+
+function RacingStatusBadge({ status }: { status: string }) {
+  const configs: Record<string, { bg: string; text: string }> = {
+    Entered:   { bg: 'hsl(var(--primary) / 0.12)', text: 'hsl(var(--primary))' },
+    Accepted:  { bg: 'rgba(93,168,84,0.15)', text: '#5da854' },
+    Scratched: { bg: 'hsl(var(--destructive) / 0.12)', text: 'hsl(var(--destructive))' },
+    Declared:  { bg: 'hsl(var(--chart-2) / 0.15)', text: 'hsl(var(--chart-2))' },
+    Finished:  { bg: 'hsl(var(--brand-accent) / 0.15)', text: 'hsl(var(--brand-accent))' },
+  };
+  const c = configs[status] ?? configs['Entered'];
+  return (
+    <span
+      className="text-[9px] uppercase tracking-[0.1em] font-bold px-2 py-0.5 rounded-sm whitespace-nowrap"
+      style={{ background: c.bg, color: c.text }}
+    >
+      {status}
     </span>
   );
 }

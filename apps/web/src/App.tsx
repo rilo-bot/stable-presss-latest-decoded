@@ -1,6 +1,10 @@
 import '@/styles/theme.css';
 import '@/styles/brand.css';
 
+// Install the in-browser mock API before any fetch calls run
+import { installMockApi } from '@/lib/mockApi';
+installMockApi();
+
 import { useEffect } from 'react';
 import { Routes, Route } from 'react-router-dom';
 import { Toaster } from 'sonner';

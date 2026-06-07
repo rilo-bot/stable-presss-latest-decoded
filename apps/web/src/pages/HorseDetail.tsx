@@ -4,13 +4,18 @@ import { useHorseStore } from '@/stores/horseStore';
 import { usePartyStore } from '@/stores/partyStore';
 import { useArticleStore } from '@/stores/articleStore';
 import { useHorsePartyLinkStore } from '@/stores/horsePartyLinkStore';
+import { useMediaStore } from '@/stores/mediaStore';
+import { useRacingEntryStore } from '@/stores/racingEntryStore';
 import { isCurrentLink } from '@/types/horsePartyLink';
 import type { Party } from '@/types/party';
+import type { MediaItem, MediaType } from '@/types/mediaItem';
+import type { RacingEntry, RaceStatus } from '@/types/racingEntry';
 import {
   ChevronRight, ChevronDown, Camera, BookOpen, Trophy, Coins, Star, Newspaper,
   Heart, BarChart2, Flag, User, Users, Briefcase, Shield, FileText, Wand,
   TrendingUp, ShoppingCart, Binary, X, Image, DollarSign, BookMarked, Hash,
-  MapPin, UserCheck, Building2, Dumbbell, Contact, SidebarOpen,
+  MapPin, UserCheck, Building2, Dumbbell, Contact, SidebarOpen, Plus, Edit,
+  Trash, Link as LinkIcon, ExternalLink,
 } from 'lucide-react';
 
 /* ─── Fallback panel images (used ONLY when a party has no uploaded photo) ─── */
@@ -69,16 +74,11 @@ type ActivePanelKey =
   | 'left_jockey' | 'left_syndicate' | 'left_syndtowners'
   | 'media' | 'racing' | 'token' | 'breeding' | 'sales' | 'pedigree' | 'studbook';
 
-/* ────────────────────────────────────────────────────────────────────────────
-   partyPhoto — returns the party's own uploaded photo if present,
-   otherwise falls back to a role-keyed Pexels image.
-   ──────────────────────────────────────────────────────────────────────────── */
 function partyPhoto(party: Party | undefined, roleKey: string): string {
   if (party?.photo) return party.photo;
   return FALLBACK_IMAGES[roleKey] ?? FALLBACK_IMAGES['owner'];
 }
 
-/* ── Helper: format a date string ── */
 function fmtDate(iso?: string | null): string {
   if (!iso) return '—';
   try {
@@ -88,25 +88,17 @@ function fmtDate(iso?: string | null): string {
   }
 }
 
-/* ── Helper: format start year ── */
 function fmtYear(iso?: string | null): string {
   if (!iso) return '—';
   try { return String(new Date(iso).getFullYear()); } catch { return iso; }
 }
 
-/* ────────────────────────────────────────────────────────────────────────────
-   mergePanelParties — merges two PanelParty[] arrays, deduplicating by
-   party.id.
-   ──────────────────────────────────────────────────────────────────────────── */
 function mergePanelParties(linked: PanelParty[], direct: PanelParty[]): PanelParty[] {
   const seen = new Set(linked.map((pp) => pp.party.id));
   const extra = direct.filter((pp) => !seen.has(pp.party.id));
   return [...linked, ...extra].sort((a, b) => (b.isCurrent ? 1 : 0) - (a.isCurrent ? 1 : 0));
 }
 
-/* ──────────────────────────────────────────
-   LEFT COLUMN — profile data panel
-   ────────────────────────────────────────── */
 interface DataPanelProps {
   title: string; icon: React.ReactNode; rows: DataRow[]; badge?: string;
   defaultOpen?: boolean;
@@ -132,14 +124,8 @@ function DataPanel({ title, icon, rows, badge, defaultOpen = false, imgSrc, prim
       </button>
       {!open && (
         <button onClick={() => onPanelClick(panelKey)} aria-pressed={isHighlighted} aria-label={`${isHighlighted ? 'Close' : 'View'} ${title} in detail`} style={{ width: '100%', background: isHighlighted ? 'linear-gradient(90deg, var(--forest-light) 0%, var(--forest-mid) 100%)' : 'var(--parchment)', backgroundImage: isHighlighted ? undefined : 'repeating-linear-gradient(0deg, transparent, transparent 20px, rgba(0,0,0,0.022) 20px, rgba(0,0,0,0.022) 21px)', boxShadow: 'inset 0 2px 5px rgba(0,0,0,0.15)', padding: '8px 10px', display: 'flex', alignItems: 'center', gap: 10, border: 'none', cursor: 'pointer', transition: 'background 0.18s' }}>
-          {/* ── Thumbnail ── */}
           <div style={{ width: 44, height: 44, borderRadius: 3, border: `2px solid ${isHighlighted ? 'var(--gold-bright)' : 'var(--gold-mid)'}`, boxShadow: '0 2px 6px rgba(0,0,0,0.35)', overflow: 'hidden', flexShrink: 0, background: 'var(--forest-deep)', transition: 'border-color 0.18s' }}>
-            <img
-              src={imgSrc}
-              alt={primaryName}
-              crossOrigin="anonymous"
-              style={{ width: '100%', height: '100%', objectFit: 'cover', objectPosition: 'center center', display: 'block' }}
-            />
+            <img src={imgSrc} alt={primaryName} crossOrigin="anonymous" style={{ width: '100%', height: '100%', objectFit: 'cover', objectPosition: 'center center', display: 'block' }} />
           </div>
           <div style={{ flex: 1, minWidth: 0 }}>
             <div style={{ fontSize: '0.78rem', fontWeight: 700, color: isHighlighted ? 'var(--parchment)' : 'var(--forest-deep)', lineHeight: 1.2, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis', ...serifStyle, transition: 'color 0.18s' }}>{primaryName}</div>
@@ -154,14 +140,8 @@ function DataPanel({ title, icon, rows, badge, defaultOpen = false, imgSrc, prim
       {open && (
         <div style={{ background: 'var(--parchment)', backgroundImage: 'repeating-linear-gradient(0deg, transparent, transparent 18px, rgba(0,0,0,0.022) 18px, rgba(0,0,0,0.022) 19px)', boxShadow: 'inset 0 2px 5px rgba(0,0,0,0.15)' }}>
           <button onClick={() => onPanelClick(panelKey)} aria-pressed={isHighlighted} aria-label={`${isHighlighted ? 'Close' : 'Show'} ${title} in detail view`} style={{ width: '100%', display: 'flex', alignItems: 'center', gap: 10, padding: '10px 11px 10px', background: isHighlighted ? 'linear-gradient(90deg, var(--forest-light) 0%, var(--forest-mid) 100%)' : 'transparent', border: 'none', cursor: 'pointer', transition: 'background 0.18s', borderBottom: '1px solid var(--parchment-dark)' }}>
-            {/* ── Expanded thumbnail ── */}
             <div style={{ width: 56, height: 56, borderRadius: 3, border: `2px solid ${isHighlighted ? 'var(--gold-bright)' : 'var(--gold-mid)'}`, boxShadow: '0 2px 8px rgba(0,0,0,0.4), inset 0 0 0 1px rgba(255,224,154,0.15)', overflow: 'hidden', flexShrink: 0, background: 'var(--forest-deep)', position: 'relative', transition: 'border-color 0.18s' }}>
-              <img
-                src={imgSrc}
-                alt={primaryName}
-                crossOrigin="anonymous"
-                style={{ width: '100%', height: '100%', objectFit: 'cover', objectPosition: 'center center', display: 'block' }}
-              />
+              <img src={imgSrc} alt={primaryName} crossOrigin="anonymous" style={{ width: '100%', height: '100%', objectFit: 'cover', objectPosition: 'center center', display: 'block' }} />
               <div style={{ position: 'absolute', inset: 0, boxShadow: 'inset 0 0 8px rgba(0,0,0,0.35)', pointerEvents: 'none', borderRadius: 2 }} />
             </div>
             <div style={{ flex: 1, minWidth: 0, textAlign: 'left' }}>
@@ -193,7 +173,6 @@ function DataPanel({ title, icon, rows, badge, defaultOpen = false, imgSrc, prim
   );
 }
 
-/* ── OrnateCrest ── now accepts an optional partyName shown in big font below the horse name */
 function OrnateCrest({ name, subtitle, partyName }: { name: string; subtitle: string; partyName?: string }) {
   return (
     <div className="sku-crest" style={{ padding: '18px 20px 14px', textAlign: 'center', position: 'relative' }}>
@@ -204,9 +183,7 @@ function OrnateCrest({ name, subtitle, partyName }: { name: string; subtitle: st
         <Star size={22} style={{ color: 'var(--gold-bright)' }} strokeWidth={1.5} />
       </div>
       <div style={{ fontSize: '0.55rem', letterSpacing: '0.22em', textTransform: 'uppercase', color: 'var(--gold-mid)', textShadow: '0 1px 3px rgba(0,0,0,0.8)', marginBottom: 4, ...serifStyle }}>Stable Press · Thoroughbred Profile</div>
-      {/* Horse name */}
       <h1 style={{ fontSize: 'clamp(1.2rem, 3vw, 1.7rem)', fontWeight: 700, lineHeight: 1.15, color: 'var(--parchment)', textShadow: '0 2px 6px rgba(0,0,0,0.8)', margin: '4px 0', ...serifStyle }}>{name}</h1>
-      {/* Party name — shown when a party card is selected */}
       {partyName && (
         <>
           <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 8, margin: '6px 0 2px' }}>
@@ -430,11 +407,6 @@ function ArticlesPanel({ articles, horseName }: { articles: Array<{ id: string; 
   );
 }
 
-/* ────────────────────────────────────────────────────────────────────────────
-   PartyHeroImage — large centre-column photo for a left-panel party.
-   Uses object-cover + object-position center center so the uploaded image
-   fills the entire frame without any blank space or cropping artefacts.
-   ──────────────────────────────────────────────────────────────────────────── */
 interface PartyHeroImageProps {
   imgSrc: string;
   partyName: string;
@@ -445,92 +417,30 @@ interface PartyHeroImageProps {
 
 function PartyHeroImage({ imgSrc, partyName, roleLabel, secondaryLine, onClose }: PartyHeroImageProps) {
   return (
-    <div style={{
-      border: '3px solid var(--gold-mid)',
-      borderRadius: 4,
-      overflow: 'hidden',
-      boxShadow: '0 0 0 1px var(--gold-dark), 0 8px 32px rgba(0,0,0,0.75)',
-      position: 'relative',
-      background: 'var(--forest-deep)',
-    }}>
-      {/* ── Gold top stripe ── */}
+    <div style={{ border: '3px solid var(--gold-mid)', borderRadius: 4, overflow: 'hidden', boxShadow: '0 0 0 1px var(--gold-dark), 0 8px 32px rgba(0,0,0,0.75)', position: 'relative', background: 'var(--forest-deep)' }}>
       <div style={{ height: 3, background: 'linear-gradient(90deg, var(--gold-dark) 0%, var(--gold-bright) 50%, var(--gold-dark) 100%)' }} />
-
-      {/* ── Main photo: fills 100% width, tall enough to show the full image ── */}
       <div style={{ position: 'relative', width: '100%', height: 520 }}>
-        <img
-          src={imgSrc}
-          alt={partyName}
-          crossOrigin="anonymous"
-          style={{
-            position: 'absolute',
-            inset: 0,
-            width: '100%',
-            height: '100%',
-            objectFit: 'cover',
-            objectPosition: 'center center',
-            display: 'block',
-          }}
-        />
-        {/* Vignette overlay */}
+        <img src={imgSrc} alt={partyName} crossOrigin="anonymous" style={{ position: 'absolute', inset: 0, width: '100%', height: '100%', objectFit: 'cover', objectPosition: 'center center', display: 'block' }} />
         <div style={{ position: 'absolute', inset: 0, background: 'radial-gradient(ellipse at center top, transparent 40%, rgba(0,0,0,0.35) 100%)', pointerEvents: 'none' }} />
-        {/* Bottom gradient for text legibility */}
         <div style={{ position: 'absolute', bottom: 0, left: 0, right: 0, background: 'linear-gradient(0deg, rgba(14,36,22,0.97) 0%, rgba(14,36,22,0.55) 50%, transparent 100%)', padding: '48px 20px 20px', ...serifStyle }}>
-          <div style={{ fontSize: '0.5rem', letterSpacing: '0.22em', textTransform: 'uppercase', color: 'var(--gold-mid)', marginBottom: 4 }}>
-            Stable Press · {roleLabel}
-          </div>
-          <div style={{ fontSize: 'clamp(1.1rem, 2.5vw, 1.55rem)', fontWeight: 700, color: 'var(--parchment)', textShadow: '0 2px 8px rgba(0,0,0,0.9)', lineHeight: 1.15, ...serifStyle }}>
-            {partyName}
-          </div>
-          {secondaryLine && (
-            <div style={{ fontSize: '0.65rem', fontStyle: 'italic', color: 'var(--gold-bright)', marginTop: 4, textShadow: '0 1px 4px rgba(0,0,0,0.8)', ...serifStyle }}>
-              {secondaryLine}
-            </div>
-          )}
+          <div style={{ fontSize: '0.5rem', letterSpacing: '0.22em', textTransform: 'uppercase', color: 'var(--gold-mid)', marginBottom: 4 }}>Stable Press · {roleLabel}</div>
+          <div style={{ fontSize: 'clamp(1.1rem, 2.5vw, 1.55rem)', fontWeight: 700, color: 'var(--parchment)', textShadow: '0 2px 8px rgba(0,0,0,0.9)', lineHeight: 1.15, ...serifStyle }}>{partyName}</div>
+          {secondaryLine && <div style={{ fontSize: '0.65rem', fontStyle: 'italic', color: 'var(--gold-bright)', marginTop: 4, textShadow: '0 1px 4px rgba(0,0,0,0.8)', ...serifStyle }}>{secondaryLine}</div>}
         </div>
-        {/* Close button */}
-        <button
-          onClick={onClose}
-          aria-label="Close party profile"
-          style={{
-            position: 'absolute',
-            top: 10,
-            right: 10,
-            width: 30,
-            height: 30,
-            borderRadius: 3,
-            border: '1px solid var(--gold-mid)',
-            background: 'rgba(14,36,22,0.85)',
-            display: 'flex',
-            alignItems: 'center',
-            justifyContent: 'center',
-            cursor: 'pointer',
-            boxShadow: '0 2px 8px rgba(0,0,0,0.6)',
-          }}
-        >
+        <button onClick={onClose} aria-label="Close party profile" style={{ position: 'absolute', top: 10, right: 10, width: 30, height: 30, borderRadius: 3, border: '1px solid var(--gold-mid)', background: 'rgba(14,36,22,0.85)', display: 'flex', alignItems: 'center', justifyContent: 'center', cursor: 'pointer', boxShadow: '0 2px 8px rgba(0,0,0,0.6)' }}>
           <X size={14} style={{ color: 'var(--gold-bright)' }} />
         </button>
       </div>
-
-      {/* ── Gold bottom stripe ── */}
       <div style={{ height: 3, background: 'linear-gradient(90deg, var(--gold-dark) 0%, var(--gold-bright) 50%, var(--gold-dark) 100%)' }} />
     </div>
   );
 }
 
-/* ────────────────────────────────────────────────────────────────────────────
-   ProfileDetailPanel — the banner/header used by all left-panel detail views.
-   ──────────────────────────────────────────────────────────────────────────── */
 function ProfileDetailPanel({ title, icon, imgSrc, onClose, children }: { title: string; icon: React.ReactNode; imgSrc: string; onClose: () => void; children: React.ReactNode }) {
   return (
     <div className="sku-gold-card" style={{ ...serifStyle, overflow: 'hidden' }}>
       <div style={{ position: 'relative', height: 110, overflow: 'hidden', background: 'var(--forest-deep)' }}>
-        <img
-          src={imgSrc}
-          alt={title}
-          crossOrigin="anonymous"
-          style={{ width: '100%', height: '100%', objectFit: 'cover', objectPosition: 'center center', display: 'block', opacity: 0.72 }}
-        />
+        <img src={imgSrc} alt={title} crossOrigin="anonymous" style={{ width: '100%', height: '100%', objectFit: 'cover', objectPosition: 'center center', display: 'block', opacity: 0.72 }} />
         <div style={{ position: 'absolute', inset: 0, background: 'linear-gradient(180deg, rgba(0,0,0,0.08) 0%, rgba(14,36,22,0.9) 100%)', pointerEvents: 'none' }} />
         <div style={{ position: 'absolute', bottom: 0, left: 0, right: 0, padding: '8px 14px 10px', display: 'flex', alignItems: 'flex-end', justifyContent: 'space-between' }}>
           <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
@@ -564,9 +474,6 @@ function PSHeading({ children }: { children: React.ReactNode }) {
   return <p style={{ fontSize: '0.56rem', textTransform: 'uppercase', letterSpacing: '0.14em', color: 'var(--parchment-shadow)', fontWeight: 700, marginBottom: 8, marginTop: 14, borderTop: '1px solid var(--parchment-dark)', paddingTop: 10 }}>{children}</p>;
 }
 
-/* ────────────────────────────────────────────────────────────────────────────
-   PartyAvatarStrip
-   ──────────────────────────────────────────────────────────────────────────── */
 function PartyAvatarStrip({ parties, fallbackKey }: { parties: PanelParty[]; fallbackKey: string }) {
   if (parties.length === 0) return null;
   return (
@@ -574,24 +481,16 @@ function PartyAvatarStrip({ parties, fallbackKey }: { parties: PanelParty[]; fal
       {parties.map(({ party, isCurrent }) => (
         <div key={party.id} style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 3 }}>
           <div style={{ width: 40, height: 40, borderRadius: 3, border: `2px solid ${isCurrent ? 'var(--gold-bright)' : 'var(--gold-dark)'}`, overflow: 'hidden', background: 'var(--forest-deep)', boxShadow: '0 2px 6px rgba(0,0,0,0.4)', flexShrink: 0 }}>
-            <img
-              src={partyPhoto(party, fallbackKey)}
-              alt={party.name}
-              crossOrigin="anonymous"
-              style={{ width: '100%', height: '100%', objectFit: 'cover', objectPosition: 'center center' }}
-            />
+            <img src={partyPhoto(party, fallbackKey)} alt={party.name} crossOrigin="anonymous" style={{ width: '100%', height: '100%', objectFit: 'cover', objectPosition: 'center center' }} />
           </div>
           <div style={{ fontSize: '0.5rem', color: isCurrent ? 'var(--gold-bright)' : 'var(--parchment-shadow)', textAlign: 'center', maxWidth: 48, lineHeight: 1.2, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{party.name.split(' ')[0]}</div>
-          {isCurrent && (
-            <div style={{ background: 'var(--gold-mid)', color: 'var(--forest-deep)', fontSize: '0.42rem', fontWeight: 700, padding: '1px 4px', borderRadius: 2 }}>CUR</div>
-          )}
+          {isCurrent && <div style={{ background: 'var(--gold-mid)', color: 'var(--forest-deep)', fontSize: '0.42rem', fontWeight: 700, padding: '1px 4px', borderRadius: 2 }}>CUR</div>}
         </div>
       ))}
     </div>
   );
 }
 
-/* ── Context note ── */
 function ContextNote({ context }: { context?: string }) {
   if (!context) return null;
   return (
@@ -755,7 +654,7 @@ function PersonnelDetailPanel({ parties, agentParties, syndicateParties, horse, 
         <>
           <p style={{ fontSize: '0.56rem', textTransform: 'uppercase', letterSpacing: '0.14em', color: 'var(--parchment-shadow)', fontWeight: 700, marginBottom: 8 }}>Bloodstock Agents</p>
           <PartyAvatarStrip parties={agentParties} fallbackKey="personnel" />
-          {agentParties.map(({ party, startDate, endDate, context, isCurrent }, idx) => (
+          {agentParties.map(({ party, startDate, context, isCurrent }, idx) => (
             <div key={party.id} style={{ marginBottom: 10 }}>
               {agentParties.length > 1 && (
                 <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 6, paddingBottom: 4, borderBottom: '1px solid var(--parchment-dark)' }}>
@@ -781,7 +680,7 @@ function PersonnelDetailPanel({ parties, agentParties, syndicateParties, horse, 
         <>
           <PSHeading>Syndicate Managers</PSHeading>
           <PartyAvatarStrip parties={syndicateParties} fallbackKey="syndicate" />
-          {syndicateParties.map(({ party, startDate, endDate, context, isCurrent }, idx) => (
+          {syndicateParties.map(({ party, startDate, context, isCurrent }, idx) => (
             <div key={party.id} style={{ marginBottom: 10 }}>
               {syndicateParties.length > 1 && (
                 <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 6, paddingBottom: 4, borderBottom: '1px solid var(--parchment-dark)' }}>
@@ -807,7 +706,7 @@ function PersonnelDetailPanel({ parties, agentParties, syndicateParties, horse, 
         <>
           <PSHeading>Associated Personnel</PSHeading>
           <PartyAvatarStrip parties={parties} fallbackKey="personnel" />
-          {parties.map(({ party, startDate, endDate, context, isCurrent }, idx) => (
+          {parties.map(({ party, startDate, context, isCurrent }, idx) => (
             <div key={party.id} style={{ marginBottom: 10 }}>
               {parties.length > 1 && (
                 <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 6, paddingBottom: 4, borderBottom: '1px solid var(--parchment-dark)' }}>
@@ -1013,30 +912,281 @@ function SectionHeading({ children }: { children: React.ReactNode }) {
   return <p style={{ fontSize: '0.56rem', textTransform: 'uppercase', letterSpacing: '0.14em', color: 'var(--parchment-shadow)', fontWeight: 700, marginBottom: 8, marginTop: 14, borderTop: '1px solid var(--parchment-dark)', paddingTop: 10 }}>{children}</p>;
 }
 
-function MediaSection({ horse, onClose }: { horse: HorseData; onClose: () => void }) {
+/* ─────────────────────────────────────────────────────────────────────────────
+   MEDIA TYPE BADGE
+   ───────────────────────────────────────────────────────────────────────────── */
+const MEDIA_TYPE_BADGE_COLORS: Record<MediaType, React.CSSProperties> = {
+  Article:       { background: 'linear-gradient(90deg,#2d5a3d,#3a7050)', color: 'var(--gold-bright)' },
+  Photo:         { background: 'linear-gradient(90deg,#3b4a20,#516430)', color: 'var(--gold-bright)' },
+  Video:         { background: 'linear-gradient(90deg,#3d2d42,#5a3a68)', color: 'var(--gold-bright)' },
+  'Press Release': { background: 'linear-gradient(90deg,#3d2d20,#5a4030)', color: 'var(--gold-bright)' },
+  Publication:   { background: 'linear-gradient(90deg,#1e3d48,#2a5568)', color: 'var(--gold-bright)' },
+};
+
+const MEDIA_TYPE_ICONS: Record<MediaType, string> = {
+  Article: '📰', Photo: '📷', Video: '🎬', 'Press Release': '📢', Publication: '📖',
+};
+
+function MediaTypeBadge({ type }: { type: MediaType }) {
+  const style = MEDIA_TYPE_BADGE_COLORS[type] ?? {};
+  return (
+    <span style={{ ...style, fontSize: '0.5rem', fontWeight: 700, letterSpacing: '0.1em', textTransform: 'uppercase', padding: '2px 7px', borderRadius: 2, display: 'inline-flex', alignItems: 'center', gap: 3, border: '1px solid rgba(255,224,154,0.2)', flexShrink: 0 }}>
+      <span>{MEDIA_TYPE_ICONS[type]}</span>
+      <span>{type}</span>
+    </span>
+  );
+}
+
+/* ─────────────────────────────────────────────────────────────────────────────
+   RACE STATUS BADGE
+   ───────────────────────────────────────────────────────────────────────────── */
+function RaceStatusBadge({ status }: { status: RaceStatus }) {
+  const colors: Record<RaceStatus, { bg: string; text: string }> = {
+    Entered:   { bg: 'rgba(26,51,34,0.85)',  text: 'var(--gold-mid)' },
+    Accepted:  { bg: 'rgba(20,55,20,0.9)',   text: 'var(--gold-bright)' },
+    Scratched: { bg: 'rgba(80,20,20,0.6)',   text: '#e09090' },
+    Declared:  { bg: 'rgba(20,40,80,0.8)',   text: '#90b0e0' },
+    Finished:  { bg: 'rgba(40,30,10,0.85)',  text: 'var(--gold-bright)' },
+  };
+  const c = colors[status] ?? colors.Entered;
+  return (
+    <span style={{ background: c.bg, color: c.text, fontSize: '0.5rem', fontWeight: 700, padding: '2px 7px', borderRadius: 2, textTransform: 'uppercase', letterSpacing: '0.12em', border: '1px solid rgba(255,224,154,0.15)', flexShrink: 0 }}>
+      {status}
+    </span>
+  );
+}
+
+/* ─────────────────────────────────────────────────────────────────────────────
+   MEDIA SECTION — read-only view (add/edit only via CRM)
+   ───────────────────────────────────────────────────────────────────────────── */
+function MediaSection({ horseId, horseName, onClose }: { horseId: string; horseName: string; onClose: () => void }) {
+  const allItems = useMediaStore((s) => s.items);
+  const fetchItems = useMediaStore((s) => s.fetchItems);
+  const allParties = usePartyStore((s) => s.parties);
+
+  useEffect(() => { fetchItems(); }, [fetchItems]);
+
+  const items = useMemo(
+    () => allItems.filter((m) => m.horse_id === horseId).sort((a, b) => {
+      const da = a.published_date ?? String(a.createdAt);
+      const db = b.published_date ?? String(b.createdAt);
+      return db.localeCompare(da);
+    }),
+    [allItems, horseId],
+  );
+
   return (
     <SectionPanel title="Media Data" icon={<Camera size={14} strokeWidth={1.8} style={{ color: 'var(--gold-bright)' }} />} imgKey="media" onClose={onClose}>
-      <dl style={{ margin: 0, padding: 0 }}><SRow label="Horse Name" value={horse.isUnnamed ? 'Un-Named' : horse.name} /><SRow label="Profile Image" value={horse.imageUrl ? 'On file' : 'Not uploaded'} /><SRow label="Video Footage" value="Not on file" /><SRow label="Press Clippings" value="Not on file" /><SRow label="Photo Gallery" value="Not on file" /></dl>
-      <SectionHeading>Media Notes</SectionHeading>
-      <p style={{ fontSize: '0.72rem', color: 'var(--forest-mid)', lineHeight: 1.6, fontStyle: 'italic' }}>Media assets including race photos, winner photos, stable footage and press coverage can be filed here once uploaded through the newsroom.</p>
-      <div style={{ marginTop: 12, padding: '10px 12px', background: 'rgba(0,0,0,0.04)', border: '1px solid var(--parchment-dark)', borderRadius: 3, display: 'flex', alignItems: 'center', gap: 8 }}>
-        <Image size={14} style={{ color: 'var(--gold-mid)', flexShrink: 0 }} /><span style={{ fontSize: '0.64rem', color: 'var(--parchment-shadow)', fontStyle: 'italic' }}>No media assets currently on file for this horse.</span>
+      <SRow label="Horse" value={horseName} />
+      <SRow label="Media Records" value={String(items.length)} />
+
+      {items.length === 0 ? (
+        <div style={{ marginTop: 12, padding: '20px 14px', background: 'rgba(0,0,0,0.03)', border: '1px solid var(--parchment-dark)', borderRadius: 3, textAlign: 'center' }}>
+          <Camera size={28} style={{ color: 'var(--parchment-dark)', display: 'block', margin: '0 auto 8px' }} />
+          <p style={{ fontSize: '0.72rem', fontStyle: 'italic', color: 'var(--parchment-shadow)', marginBottom: 4 }}>No media coverage on file for {horseName} yet.</p>
+          <p style={{ fontSize: '0.62rem', color: 'var(--parchment-shadow)' }}>Media records are managed through the Stable Press CRM.</p>
+        </div>
+      ) : (
+        <ul style={{ listStyle: 'none', padding: 0, margin: '12px 0 0' }}>
+          {items.map((item, idx) => {
+            const featuredNames = (item.featured_party_ids ?? [])
+              .map((pid) => allParties.find((p) => p.id === pid)?.name)
+              .filter(Boolean) as string[];
+            const hasLink = item.url || item.file_name;
+            return (
+              <li key={item.id} style={{ borderBottom: idx < items.length - 1 ? '1px solid var(--parchment-dark)' : undefined, padding: '10px 0' }}>
+                <div style={{ display: 'flex', alignItems: 'flex-start', gap: 8, marginBottom: 5 }}>
+                  <div style={{ flexShrink: 0, marginTop: 1 }}><MediaTypeBadge type={item.media_type} /></div>
+                  <div style={{ flex: 1, minWidth: 0 }}>
+                    <div style={{ fontSize: '0.76rem', fontWeight: 700, color: 'var(--forest-deep)', lineHeight: 1.3, ...serifStyle }}>{item.title}</div>
+                    {item.subject && <div style={{ fontSize: '0.62rem', color: 'var(--forest-mid)', fontStyle: 'italic', marginTop: 2, lineHeight: 1.4 }}>{item.subject}</div>}
+                  </div>
+                </div>
+                <div style={{ display: 'flex', flexWrap: 'wrap', gap: '4px 12px', fontSize: '0.58rem', color: 'var(--parchment-shadow)' }}>
+                  {item.source_publication && <span style={{ display: 'flex', alignItems: 'center', gap: 3 }}><Newspaper size={9} style={{ color: 'var(--gold-dark)', flexShrink: 0 }} />{item.source_publication}</span>}
+                  {item.published_date && <span style={{ display: 'flex', alignItems: 'center', gap: 3 }}><span style={{ color: 'var(--gold-dark)' }}>·</span>{fmtDate(item.published_date)}</span>}
+                  {featuredNames.length > 0 && <span style={{ display: 'flex', alignItems: 'center', gap: 3 }}><Users size={9} style={{ color: 'var(--gold-dark)', flexShrink: 0 }} />{featuredNames.join(', ')}</span>}
+                </div>
+                {hasLink && (
+                  <div style={{ marginTop: 5 }}>
+                    {item.url ? (
+                      <a href={item.url} target={item.url.startsWith('/') ? '_self' : '_blank'} rel="noopener noreferrer" style={{ display: 'inline-flex', alignItems: 'center', gap: 4, fontSize: '0.6rem', color: 'var(--forest-mid)', textDecoration: 'none', background: 'rgba(0,0,0,0.04)', border: '1px solid var(--parchment-dark)', borderRadius: 2, padding: '2px 7px', maxWidth: '100%', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                        <ExternalLink size={9} style={{ color: 'var(--gold-dark)', flexShrink: 0 }} />
+                        {item.url.length > 52 ? item.url.substring(0, 52) + '…' : item.url}
+                      </a>
+                    ) : (
+                      <span style={{ display: 'inline-flex', alignItems: 'center', gap: 4, fontSize: '0.6rem', color: 'var(--forest-mid)', background: 'rgba(0,0,0,0.04)', border: '1px solid var(--parchment-dark)', borderRadius: 2, padding: '2px 7px' }}>
+                        <LinkIcon size={9} style={{ color: 'var(--gold-dark)', flexShrink: 0 }} />
+                        {item.file_name}
+                      </span>
+                    )}
+                  </div>
+                )}
+              </li>
+            );
+          })}
+        </ul>
+      )}
+
+      {items.length > 0 && (
+        <>
+          <SectionHeading>Coverage by Type</SectionHeading>
+          <dl style={{ margin: 0, padding: 0 }}>
+            {(['Article', 'Photo', 'Video', 'Press Release', 'Publication'] as MediaType[]).map((t) => {
+              const count = items.filter((m) => m.media_type === t).length;
+              if (count === 0) return null;
+              return <SRow key={t} label={t} value={String(count)} />;
+            })}
+          </dl>
+        </>
+      )}
+
+      <div style={{ marginTop: 14, padding: '10px 12px', background: 'rgba(0,0,0,0.04)', border: '1px solid var(--parchment-dark)', borderRadius: 3, display: 'flex', alignItems: 'center', gap: 8 }}>
+        <Image size={14} style={{ color: 'var(--gold-mid)', flexShrink: 0 }} />
+        <span style={{ fontSize: '0.62rem', color: 'var(--parchment-shadow)', fontStyle: 'italic' }}>
+          Media records are managed through the Stable Press CRM and linked to this horse automatically.
+        </span>
       </div>
     </SectionPanel>
   );
 }
 
-function RacingSection({ horse, onClose }: { horse: HorseData; onClose: () => void }) {
-  const rows = [['Melbourne Cup', 'Nov 2024', 'Flemington', '1st', '3:16.8', 'Gr.1'], ['Cox Plate', 'Oct 2024', 'Moonee Valley', '2nd', '2:02.4', 'Gr.1'], ['Caulfield Cup', 'Oct 2024', 'Caulfield', '1st', '2:23.7', 'Gr.1'], ['Turnbull Stakes', 'Sep 2024', 'Flemington', '1st', '2:00.1', 'Gr.2'], ['Dato Stakes', 'Aug 2024', 'Randwick', '3rd', '1:58.9', 'Gr.2']];
+/* ─────────────────────────────────────────────────────────────────────────────
+   RACING SECTION — read-only view (add/edit only via CRM)
+   ───────────────────────────────────────────────────────────────────────────── */
+function RacingSection({ horseId, horseName, horse, onClose }: { horseId: string; horseName: string; horse: HorseData; onClose: () => void }) {
+  const allEntries = useRacingEntryStore((s) => s.entries);
+  const fetchEntries = useRacingEntryStore((s) => s.fetchEntries);
+  const allParties = usePartyStore((s) => s.parties);
+
+  useEffect(() => { fetchEntries(); }, [fetchEntries]);
+
+  const entries = useMemo(
+    () => allEntries
+      .filter((e) => e.horse_id === horseId)
+      .sort((a, b) => b.race_date.localeCompare(a.race_date)),
+    [allEntries, horseId],
+  );
+
+  const statusCounts = useMemo(() => {
+    const counts: Partial<Record<RaceStatus, number>> = {};
+    entries.forEach((e) => { counts[e.status] = (counts[e.status] ?? 0) + 1; });
+    return counts;
+  }, [entries]);
+
   return (
     <SectionPanel title="Racing Data" icon={<TrendingUp size={14} strokeWidth={1.8} style={{ color: 'var(--gold-bright)' }} />} imgKey="racing" onClose={onClose}>
-      <dl style={{ margin: 0, padding: 0 }}><SRow label="Career" value={horse.careerRecord || '—'} /><SRow label="Winnings" value={horse.careerWinnings ? '$' + horse.careerWinnings.toLocaleString('en-AU') : '—'} highlight /><SRow label="Last 10 Form" value={horse.lastTenForm || '—'} /><SRow label="Season" value={horse.seasonRecord || '—'} /><SRow label="Rating" value={horse.currentRating ? String(horse.currentRating) : '—'} highlight /><SRow label="Jockey" value={horse.jockeyDisplay || '—'} /><SRow label="Trainer" value={horse.trainerDisplay || '—'} /></dl>
-      <SectionHeading>Recent Runs</SectionHeading>
-      <div style={{ overflowX: 'auto', marginTop: 4 }}>
-        <table style={{ width: '100%', borderCollapse: 'collapse', ...serifStyle, fontSize: '0.6rem' }}>
-          <thead><tr style={{ background: 'var(--forest-deep)' }}>{['Race', 'Date', 'Track', 'Pos', 'Time', 'Class'].map((h) => <th key={h} style={{ padding: '4px 6px', textAlign: 'left', color: 'var(--gold-bright)', fontWeight: 700, letterSpacing: '0.1em', textTransform: 'uppercase', whiteSpace: 'nowrap', borderBottom: '1px solid var(--gold-dark)' }}>{h}</th>)}</tr></thead>
-          <tbody>{rows.map((row, ri) => <tr key={ri} style={{ background: ri % 2 === 0 ? 'rgba(0,0,0,0.025)' : 'transparent' }}>{row.map((cell, ci) => <td key={ci} style={{ padding: '4px 6px', color: ci === 3 && cell === '1st' ? 'var(--gold-bright)' : 'var(--forest-deep)', fontWeight: ci === 3 && cell === '1st' ? 700 : 500, whiteSpace: 'nowrap', borderBottom: '1px solid var(--parchment-dark)', fontSize: '0.62rem' }}>{cell}</td>)}</tr>)}</tbody>
-        </table>
+      {/* ── Summary ── */}
+      <SRow label="Horse" value={horseName} />
+      <SRow label="Race Records" value={String(entries.length)} />
+      <SRow label="Career" value={horse.careerRecord || '—'} />
+      <SRow label="Winnings" value={horse.careerWinnings ? '$' + horse.careerWinnings.toLocaleString('en-AU') : '—'} highlight />
+
+      {/* ── Empty state ── */}
+      {entries.length === 0 ? (
+        <div style={{ marginTop: 12, padding: '20px 14px', background: 'rgba(0,0,0,0.03)', border: '1px solid var(--parchment-dark)', borderRadius: 3, textAlign: 'center' }}>
+          <Flag size={28} style={{ color: 'var(--parchment-dark)', display: 'block', margin: '0 auto 8px' }} />
+          <p style={{ fontSize: '0.72rem', fontStyle: 'italic', color: 'var(--parchment-shadow)', marginBottom: 4 }}>No racing records on file for {horseName} yet.</p>
+          <p style={{ fontSize: '0.62rem', color: 'var(--parchment-shadow)' }}>Racing records are managed through the Stable Press CRM.</p>
+        </div>
+      ) : (
+        <ul style={{ listStyle: 'none', padding: 0, margin: '12px 0 0' }}>
+          {entries.map((entry, idx) => {
+            const jockeyName = entry.jockey_id ? allParties.find((p) => p.id === entry.jockey_id)?.name : undefined;
+            const trainerName = entry.trainer_id ? allParties.find((p) => p.id === entry.trainer_id)?.name : undefined;
+            return (
+              <li key={entry.id} style={{ borderBottom: idx < entries.length - 1 ? '1px solid var(--parchment-dark)' : undefined, padding: '10px 0' }}>
+                {/* Header: status badge + race name */}
+                <div style={{ display: 'flex', alignItems: 'flex-start', gap: 8, marginBottom: 5 }}>
+                  <div style={{ flexShrink: 0, marginTop: 1 }}><RaceStatusBadge status={entry.status} /></div>
+                  <div style={{ flex: 1, minWidth: 0 }}>
+                    <div style={{ fontSize: '0.76rem', fontWeight: 700, color: 'var(--forest-deep)', lineHeight: 1.3, ...serifStyle }}>{entry.race_name}</div>
+                    {entry.subject && <div style={{ fontSize: '0.62rem', color: 'var(--forest-mid)', fontStyle: 'italic', marginTop: 2, lineHeight: 1.4 }}>{entry.subject}</div>}
+                  </div>
+                </div>
+
+                {/* Meta row: date, venue, class */}
+                <div style={{ display: 'flex', flexWrap: 'wrap', gap: '4px 12px', fontSize: '0.58rem', color: 'var(--parchment-shadow)', marginBottom: 4 }}>
+                  {entry.race_date && (
+                    <span style={{ display: 'flex', alignItems: 'center', gap: 3 }}>
+                      <Flag size={9} style={{ color: 'var(--gold-dark)', flexShrink: 0 }} />
+                      {fmtDate(entry.race_date)}
+                    </span>
+                  )}
+                  {entry.venue && (
+                    <span style={{ display: 'flex', alignItems: 'center', gap: 3 }}>
+                      <span style={{ color: 'var(--gold-dark)' }}>·</span>
+                      {entry.venue}{entry.country ? `, ${entry.country}` : ''}
+                    </span>
+                  )}
+                  {entry.class_grade && (
+                    <span style={{ display: 'flex', alignItems: 'center', gap: 3 }}>
+                      <span style={{ color: 'var(--gold-dark)' }}>·</span>
+                      {entry.class_grade}
+                    </span>
+                  )}
+                  {entry.distance && (
+                    <span style={{ display: 'flex', alignItems: 'center', gap: 3 }}>
+                      <span style={{ color: 'var(--gold-dark)' }}>·</span>
+                      {entry.distance}
+                    </span>
+                  )}
+                </div>
+
+                {/* Result row (if Finished) */}
+                {entry.status === 'Finished' && (
+                  <div style={{ display: 'flex', flexWrap: 'wrap', gap: '4px 12px', fontSize: '0.58rem', color: 'var(--parchment-shadow)' }}>
+                    {entry.finish_position !== undefined && (
+                      <span style={{ color: entry.finish_position === 1 ? 'var(--gold-bright)' : 'var(--forest-mid)', fontWeight: entry.finish_position === 1 ? 700 : 500 }}>
+                        {entry.finish_position === 1 ? '🏆' : ''} {entry.finish_position}{entry.finish_position === 1 ? 'st' : entry.finish_position === 2 ? 'nd' : entry.finish_position === 3 ? 'rd' : 'th'}
+                      </span>
+                    )}
+                    {entry.margin && <span style={{ display: 'flex', alignItems: 'center', gap: 3 }}><span style={{ color: 'var(--gold-dark)' }}>·</span>{entry.margin}</span>}
+                    {entry.time && <span style={{ display: 'flex', alignItems: 'center', gap: 3 }}><span style={{ color: 'var(--gold-dark)' }}>·</span>{entry.time}</span>}
+                    {entry.prize_money && <span style={{ display: 'flex', alignItems: 'center', gap: 3, color: 'var(--gold-bright)' }}><span style={{ color: 'var(--gold-dark)' }}>·</span>${entry.prize_money.toLocaleString('en-AU')}</span>}
+                  </div>
+                )}
+
+                {/* Connections row */}
+                {(entry.barrier !== undefined || entry.weight_carried || jockeyName || trainerName) && (
+                  <div style={{ display: 'flex', flexWrap: 'wrap', gap: '4px 12px', fontSize: '0.57rem', color: 'var(--parchment-shadow)', marginTop: 4 }}>
+                    {entry.barrier !== undefined && <span>Barrier {entry.barrier}</span>}
+                    {entry.weight_carried && <span style={{ display: 'flex', alignItems: 'center', gap: 3 }}><span style={{ color: 'var(--gold-dark)' }}>·</span>{entry.weight_carried}</span>}
+                    {jockeyName && <span style={{ display: 'flex', alignItems: 'center', gap: 3 }}><Users size={8} style={{ color: 'var(--gold-dark)' }} />J: {jockeyName}</span>}
+                    {trainerName && <span style={{ display: 'flex', alignItems: 'center', gap: 3 }}><Briefcase size={8} style={{ color: 'var(--gold-dark)' }} />T: {trainerName}</span>}
+                  </div>
+                )}
+              </li>
+            );
+          })}
+        </ul>
+      )}
+
+      {/* Status breakdown */}
+      {entries.length > 0 && (
+        <>
+          <SectionHeading>Records by Status</SectionHeading>
+          <dl style={{ margin: 0, padding: 0 }}>
+            {(['Entered', 'Accepted', 'Declared', 'Scratched', 'Finished'] as RaceStatus[]).map((s) => {
+              const count = statusCounts[s] ?? 0;
+              if (count === 0) return null;
+              return <SRow key={s} label={s} value={String(count)} />;
+            })}
+          </dl>
+          <SectionHeading>Connections</SectionHeading>
+          <dl style={{ margin: 0, padding: 0 }}>
+            <SRow label="Jockey" value={horse.jockeyDisplay || '—'} />
+            <SRow label="Trainer" value={horse.trainerDisplay || '—'} />
+            <SRow label="Rating" value={horse.currentRating ? String(horse.currentRating) : '—'} highlight />
+          </dl>
+        </>
+      )}
+
+      <div style={{ marginTop: 14, padding: '10px 12px', background: 'rgba(0,0,0,0.04)', border: '1px solid var(--parchment-dark)', borderRadius: 3, display: 'flex', alignItems: 'center', gap: 8 }}>
+        <TrendingUp size={14} style={{ color: 'var(--gold-mid)', flexShrink: 0 }} />
+        <span style={{ fontSize: '0.62rem', color: 'var(--parchment-shadow)', fontStyle: 'italic' }}>
+          Racing records are managed through the Stable Press CRM and surface automatically on this profile.
+        </span>
       </div>
     </SectionPanel>
   );
@@ -1135,12 +1285,8 @@ function DataCategoryCard({ label, sublabel, icon, imgKey, active, onClick }: Om
    MAIN PAGE
    ══════════════════════════════════════════ */
 export default function HorseDetail() {
-  // === auto fetch-on-mount (backend planner) ===
   const fetchParties = usePartyStore((s) => s.fetchParties);
-  useEffect(() => {
-    fetchParties();
-  }, [fetchParties]);
-  // === end auto fetch-on-mount ===
+  useEffect(() => { fetchParties(); }, [fetchParties]);
 
   const { id } = useParams<{ id: string }>();
   const navigate = useNavigate();
@@ -1156,7 +1302,6 @@ export default function HorseDetail() {
   const rawHorse = useMemo(() => horses.find((h) => h.id === id), [horses, id]);
   const linkedArticles = useMemo(() => articles.filter((a) => a.linkedHorseIds?.includes(id) && a.status === 'published'), [articles, id]);
 
-  /* ── Build party link maps from the HorsePartyLink store ── */
   const horseLinks = useMemo(() => allLinks.filter((l) => l.horse_id === id), [allLinks, id]);
 
   const resolveFromLinks = useMemo(() => {
@@ -1166,13 +1311,7 @@ export default function HorseDetail() {
         .map((l) => {
           const party = allParties.find((p) => p.id === l.party_id);
           if (!party) return null;
-          return {
-            party,
-            startDate: l.start_date,
-            endDate: l.end_date,
-            context: l.context,
-            isCurrent: isCurrentLink(l),
-          } as PanelParty;
+          return { party, startDate: l.start_date, endDate: l.end_date, context: l.context, isCurrent: isCurrentLink(l) } as PanelParty;
         })
         .filter(Boolean as unknown as <T>(v: T | null) => v is T)
         .sort((a, b) => (b.isCurrent ? 1 : 0) - (a.isCurrent ? 1 : 0));
@@ -1194,65 +1333,29 @@ export default function HorseDetail() {
     return resolve;
   }, [allParties]);
 
-  /* ── Merge link-store parties with direct-ID parties (deduped) ── */
-  const ownerParties = useMemo(() => mergePanelParties(
-    resolveFromLinks('ownership'),
-    resolveFromIds(rawHorse?.ownerIds),
-  ), [resolveFromLinks, resolveFromIds, rawHorse?.ownerIds]);
+  const ownerParties = useMemo(() => mergePanelParties(resolveFromLinks('ownership'), resolveFromIds(rawHorse?.ownerIds)), [resolveFromLinks, resolveFromIds, rawHorse?.ownerIds]);
+  const trainerParties = useMemo(() => mergePanelParties(resolveFromLinks('training'), resolveFromIds(rawHorse?.trainerIds)), [resolveFromLinks, resolveFromIds, rawHorse?.trainerIds]);
+  const jockeyParties = useMemo(() => mergePanelParties(resolveFromLinks('riding'), resolveFromIds(rawHorse?.jockeyIds)), [resolveFromLinks, resolveFromIds, rawHorse?.jockeyIds]);
+  const breederParties = useMemo(() => mergePanelParties(resolveFromLinks('bred-by'), resolveFromIds(rawHorse?.breederIds)), [resolveFromLinks, resolveFromIds, rawHorse?.breederIds]);
+  const agentParties = useMemo(() => mergePanelParties(resolveFromLinks('agent'), resolveFromIds(rawHorse?.bloodstockAgentIds)), [resolveFromLinks, resolveFromIds, rawHorse?.bloodstockAgentIds]);
+  const personnelParties = useMemo(() => mergePanelParties(resolveFromLinks('personnel'), resolveFromIds(rawHorse?.personnelIds)), [resolveFromLinks, resolveFromIds, rawHorse?.personnelIds]);
 
-  const trainerParties = useMemo(() => mergePanelParties(
-    resolveFromLinks('training'),
-    resolveFromIds(rawHorse?.trainerIds),
-  ), [resolveFromLinks, resolveFromIds, rawHorse?.trainerIds]);
-
-  const jockeyParties = useMemo(() => mergePanelParties(
-    resolveFromLinks('riding'),
-    resolveFromIds(rawHorse?.jockeyIds),
-  ), [resolveFromLinks, resolveFromIds, rawHorse?.jockeyIds]);
-
-  const breederParties = useMemo(() => mergePanelParties(
-    resolveFromLinks('bred-by'),
-    resolveFromIds(rawHorse?.breederIds),
-  ), [resolveFromLinks, resolveFromIds, rawHorse?.breederIds]);
-
-  const agentParties = useMemo(() => mergePanelParties(
-    resolveFromLinks('agent'),
-    resolveFromIds(rawHorse?.bloodstockAgentIds),
-  ), [resolveFromLinks, resolveFromIds, rawHorse?.bloodstockAgentIds]);
-
-  const personnelParties = useMemo(() => mergePanelParties(
-    resolveFromLinks('personnel'),
-    resolveFromIds(rawHorse?.personnelIds),
-  ), [resolveFromLinks, resolveFromIds, rawHorse?.personnelIds]);
-
-  /* Syndicate managers: from link store by role, then from direct IDs */
   const syndicateFromLinks = useMemo(() => {
     return horseLinks
       .map((l) => {
         const party = allParties.find((p) => p.id === l.party_id);
         if (!party) return null;
         if (!party.roles.includes('syndicate manager')) return null;
-        return {
-          party,
-          startDate: l.start_date,
-          endDate: l.end_date,
-          context: l.context,
-          isCurrent: isCurrentLink(l),
-        } as PanelParty;
+        return { party, startDate: l.start_date, endDate: l.end_date, context: l.context, isCurrent: isCurrentLink(l) } as PanelParty;
       })
       .filter(Boolean as unknown as <T>(v: T | null) => v is T)
       .sort((a, b) => (b.isCurrent ? 1 : 0) - (a.isCurrent ? 1 : 0));
   }, [horseLinks, allParties]);
 
-  const syndicateParties = useMemo(() => mergePanelParties(
-    syndicateFromLinks,
-    resolveFromIds(rawHorse?.syndicateManagerIds),
-  ), [syndicateFromLinks, resolveFromIds, rawHorse?.syndicateManagerIds]);
+  const syndicateParties = useMemo(() => mergePanelParties(syndicateFromLinks, resolveFromIds(rawHorse?.syndicateManagerIds)), [syndicateFromLinks, resolveFromIds, rawHorse?.syndicateManagerIds]);
 
-  /* ── Resolve display strings ── */
   const horse = useMemo((): HorseData | null => {
     if (!rawHorse) return null;
-
     const resolveNames = (linked: PanelParty[], ids: string[] | undefined, fallback: string | undefined): string => {
       if (linked.length > 0) return linked.map((p) => p.party.name).join(', ');
       if (ids && ids.length > 0) {
@@ -1261,7 +1364,6 @@ export default function HorseDetail() {
       }
       return fallback ?? '';
     };
-
     return {
       ...rawHorse,
       ownerDisplay: resolveNames(ownerParties, rawHorse.ownerIds, rawHorse.owner),
@@ -1279,7 +1381,6 @@ export default function HorseDetail() {
 
   const handlePanelClick = (key: ActivePanelKey) => setActivePanel((prev) => (prev === key ? null : key));
 
-  /* ── Resolved images for DataPanel thumbnails ── */
   const ownerImg       = ownerParties[0]     ? partyPhoto(ownerParties[0].party, 'owner')         : FALLBACK_IMAGES.owner;
   const breederImg     = breederParties[0]   ? partyPhoto(breederParties[0].party, 'breeder')      : FALLBACK_IMAGES.breeder;
   const trainerImg     = trainerParties[0]   ? partyPhoto(trainerParties[0].party, 'trainer')      : FALLBACK_IMAGES.trainer;
@@ -1290,7 +1391,6 @@ export default function HorseDetail() {
   const syndicateImg   = syndicateParties[0] ? partyPhoto(syndicateParties[0].party, 'syndicate')  : FALLBACK_IMAGES.syndicate;
   const syndtImg       = ownerParties[0]     ? partyPhoto(ownerParties[0].party, 'owner')          : FALLBACK_IMAGES.syndtowners;
 
-  /* ── Secondary lines per panel ── */
   const ownerSecondary   = ownerParties[0]     ? [ownerParties[0].party.base_location, ownerParties[0].party.country_of_birth].filter(Boolean).join(' · ') || 'Registered owner'     : 'Not Recorded';
   const breederSecondary = breederParties[0]   ? [breederParties[0].party.base_location, breederParties[0].party.country_of_birth].filter(Boolean).join(' · ') || 'Registered breeder' : 'Not Recorded';
   const trainerSecondary = trainerParties[0]   ? [trainerParties[0].party.base_location, trainerParties[0].party.country_of_birth].filter(Boolean).join(' · ') || 'Licensed trainer'   : 'Not Recorded';
@@ -1303,7 +1403,6 @@ export default function HorseDetail() {
     ? `${allPersonnelCount} parties on file`
     : (agentParties[0] ?? syndicateParties[0] ?? personnelParties[0])?.party.base_location ?? 'Agents · Breaker · Associates';
 
-  /* ── Panel row data ── */
   const ownerRows: DataRow[] = ownerParties.length > 0
     ? ownerParties.flatMap(({ party, startDate, isCurrent }) => [
         { label: 'Owner', value: party.name },
@@ -1367,7 +1466,7 @@ export default function HorseDetail() {
 
   const dataCategories: DataCategoryDef[] = [
     { key: 'media',    label: 'Media Data',     sublabel: 'Photos, video & press',      icon: <Camera       size={11} strokeWidth={1.8} style={{ color: 'var(--gold-bright)' }} />, imgKey: 'media' },
-    { key: 'racing',   label: 'Racing Data',    sublabel: 'Form, results & records',    icon: <TrendingUp   size={11} strokeWidth={1.8} style={{ color: 'var(--gold-bright)' }} />, imgKey: 'racing' },
+    { key: 'racing',   label: 'Racing Data',    sublabel: 'Entries, results & form',    icon: <TrendingUp   size={11} strokeWidth={1.8} style={{ color: 'var(--gold-bright)' }} />, imgKey: 'racing' },
     { key: 'token',    label: 'Token Data',     sublabel: 'Ownership tokens & ledger',  icon: <Coins        size={11} strokeWidth={1.8} style={{ color: 'var(--gold-bright)' }} />, imgKey: 'token' },
     { key: 'breeding', label: 'Breeding Data',  sublabel: 'Foaling & paddock history',  icon: <Heart        size={11} strokeWidth={1.8} style={{ color: 'var(--gold-bright)' }} />, imgKey: 'breeding' },
     { key: 'sales',    label: 'Sales Data',     sublabel: 'Auction & transfer history', icon: <ShoppingCart size={11} strokeWidth={1.8} style={{ color: 'var(--gold-bright)' }} />, imgKey: 'sales' },
@@ -1375,59 +1474,26 @@ export default function HorseDetail() {
     { key: 'studbook', label: 'Stud Book Data', sublabel: 'Official registry entries',  icon: <Binary       size={11} strokeWidth={1.8} style={{ color: 'var(--gold-bright)' }} />, imgKey: 'studbook' },
   ];
 
-  /* ────────────────────────────────────────────────────────────────────────
-     Derive the party hero meta for left-panel selections.
-     The partyName here is also passed to OrnateCrest.
-     ──────────────────────────────────────────────────────────────────────── */
   type PartyHeroMeta = { imgSrc: string; partyName: string; roleLabel: string; secondaryLine: string } | null;
 
   const getPartyHeroMeta = (): PartyHeroMeta => {
     switch (activePanel) {
-      case 'left_owner': {
-        const p = ownerParties[0];
-        if (!p) return null;
-        return { imgSrc: partyPhoto(p.party, 'owner'), partyName: p.party.name, roleLabel: 'Owner', secondaryLine: ownerSecondary };
-      }
-      case 'left_breeder': {
-        const p = breederParties[0];
-        if (!p) return null;
-        return { imgSrc: partyPhoto(p.party, 'breeder'), partyName: p.party.name, roleLabel: 'Breeder', secondaryLine: breederSecondary };
-      }
-      case 'left_trainer': {
-        const p = trainerParties[0];
-        if (!p) return null;
-        return { imgSrc: partyPhoto(p.party, 'trainer'), partyName: p.party.name, roleLabel: 'Trainer', secondaryLine: trainerSecondary };
-      }
-      case 'left_personnel': {
-        const p = agentParties[0] ?? syndicateParties[0] ?? personnelParties[0];
-        if (!p) return null;
-        return { imgSrc: partyPhoto(p.party, 'personnel'), partyName: p.party.name, roleLabel: p.party.roles[0] ?? 'Personnel', secondaryLine: personnelSecondary };
-      }
-      case 'left_jockey': {
-        const p = jockeyParties[0];
-        if (!p) return null;
-        return { imgSrc: partyPhoto(p.party, 'jockey'), partyName: p.party.name, roleLabel: 'Jockey', secondaryLine: jockeySecondary };
-      }
-      case 'left_syndicate': {
-        const p = syndicateParties[0];
-        if (!p) return null;
-        return { imgSrc: partyPhoto(p.party, 'syndicate'), partyName: p.party.name, roleLabel: 'Syndicate Manager', secondaryLine: syndicateSecondary };
-      }
-      case 'left_syndtowners': {
-        const p = ownerParties[0];
-        if (!p) return null;
-        return { imgSrc: partyPhoto(p.party, 'owner'), partyName: p.party.name, roleLabel: 'Syndicate Owner', secondaryLine: ownerParties.length > 1 ? `${ownerParties.length} ownership parties` : ownerSecondary };
-      }
-      default:
-        return null;
+      case 'left_owner': { const p = ownerParties[0]; if (!p) return null; return { imgSrc: partyPhoto(p.party, 'owner'), partyName: p.party.name, roleLabel: 'Owner', secondaryLine: ownerSecondary }; }
+      case 'left_breeder': { const p = breederParties[0]; if (!p) return null; return { imgSrc: partyPhoto(p.party, 'breeder'), partyName: p.party.name, roleLabel: 'Breeder', secondaryLine: breederSecondary }; }
+      case 'left_trainer': { const p = trainerParties[0]; if (!p) return null; return { imgSrc: partyPhoto(p.party, 'trainer'), partyName: p.party.name, roleLabel: 'Trainer', secondaryLine: trainerSecondary }; }
+      case 'left_personnel': { const p = agentParties[0] ?? syndicateParties[0] ?? personnelParties[0]; if (!p) return null; return { imgSrc: partyPhoto(p.party, 'personnel'), partyName: p.party.name, roleLabel: p.party.roles[0] ?? 'Personnel', secondaryLine: personnelSecondary }; }
+      case 'left_jockey': { const p = jockeyParties[0]; if (!p) return null; return { imgSrc: partyPhoto(p.party, 'jockey'), partyName: p.party.name, roleLabel: 'Jockey', secondaryLine: jockeySecondary }; }
+      case 'left_syndicate': { const p = syndicateParties[0]; if (!p) return null; return { imgSrc: partyPhoto(p.party, 'syndicate'), partyName: p.party.name, roleLabel: 'Syndicate Manager', secondaryLine: syndicateSecondary }; }
+      case 'left_syndtowners': { const p = ownerParties[0]; if (!p) return null; return { imgSrc: partyPhoto(p.party, 'owner'), partyName: p.party.name, roleLabel: 'Syndicate Owner', secondaryLine: ownerParties.length > 1 ? `${ownerParties.length} ownership parties` : ownerSecondary }; }
+      default: return null;
     }
   };
 
   const partyHeroMeta = getPartyHeroMeta();
-
-  /* ── The party name to show in the crest — only for left-panel selections ── */
   const isLeftPanel = activePanel?.startsWith('left_') ?? false;
   const crestPartyName = isLeftPanel ? (partyHeroMeta?.partyName ?? undefined) : undefined;
+
+  const horseName = horse.isUnnamed ? 'Un-Named' : horse.name;
 
   const renderCentreContent = () => {
     const close = () => setActivePanel(null);
@@ -1439,8 +1505,8 @@ export default function HorseDetail() {
       case 'left_jockey':      return <JockeyDetailPanel parties={jockeyParties} horse={horse} onClose={close} />;
       case 'left_syndicate':   return <SyndicateManagerDetailPanel parties={syndicateParties} horse={horse} onClose={close} />;
       case 'left_syndtowners': return <SyndtOwnersDetailPanel parties={ownerParties} horse={horse} onClose={close} />;
-      case 'media':     return <MediaSection horse={horse} onClose={close} />;
-      case 'racing':    return <RacingSection horse={horse} onClose={close} />;
+      case 'media':   return <MediaSection horseId={id} horseName={horseName} onClose={close} />;
+      case 'racing':  return <RacingSection horseId={id} horseName={horseName} horse={horse} onClose={close} />;
       case 'token':     return <TokenSection horse={horse} onClose={close} />;
       case 'breeding':  return <BreedingSection horse={horse} onClose={close} />;
       case 'sales':     return <SalesSection horse={horse} onClose={close} />;
@@ -1471,7 +1537,7 @@ export default function HorseDetail() {
       <div style={{ background: 'linear-gradient(90deg, var(--forest-deep) 0%, var(--forest-mid) 100%)', borderBottom: '2px solid var(--gold-dark)', padding: '8px 20px', display: 'flex', alignItems: 'center', gap: 6, ...serifStyle }}>
         <button onClick={() => navigate('/horses')} style={{ fontSize: '0.62rem', textTransform: 'uppercase', letterSpacing: '0.12em', color: 'var(--gold-mid)', background: 'none', border: 'none', cursor: 'pointer', ...serifStyle }} onMouseEnter={(e) => { (e.currentTarget as HTMLElement).style.color = 'var(--gold-bright)'; }} onMouseLeave={(e) => { (e.currentTarget as HTMLElement).style.color = 'var(--gold-mid)'; }}>Thoroughbreds</button>
         <ChevronRight size={10} style={{ color: 'var(--gold-dark)' }} />
-        <button onClick={() => setActivePanel(null)} style={{ fontSize: '0.62rem', textTransform: 'uppercase', letterSpacing: '0.12em', color: activePanel ? 'var(--gold-mid)' : 'var(--parchment)', background: 'none', border: 'none', cursor: activePanel ? 'pointer' : 'default', ...serifStyle }} onMouseEnter={(e) => { if (activePanel) (e.currentTarget as HTMLElement).style.color = 'var(--gold-bright)'; }} onMouseLeave={(e) => { if (activePanel) (e.currentTarget as HTMLElement).style.color = 'var(--gold-mid)'; }}>{horse.isUnnamed ? 'Un-Named' : horse.name}</button>
+        <button onClick={() => setActivePanel(null)} style={{ fontSize: '0.62rem', textTransform: 'uppercase', letterSpacing: '0.12em', color: activePanel ? 'var(--gold-mid)' : 'var(--parchment)', background: 'none', border: 'none', cursor: activePanel ? 'pointer' : 'default', ...serifStyle }} onMouseEnter={(e) => { if (activePanel) (e.currentTarget as HTMLElement).style.color = 'var(--gold-bright)'; }} onMouseLeave={(e) => { if (activePanel) (e.currentTarget as HTMLElement).style.color = 'var(--gold-mid)'; }}>{horseName}</button>
         {activePanelLabel && (<><ChevronRight size={10} style={{ color: 'var(--gold-dark)' }} /><span style={{ fontSize: '0.62rem', textTransform: 'uppercase', letterSpacing: '0.12em', color: 'var(--gold-bright)', ...serifStyle }}>{activePanelLabel}</span></>)}
         <div style={{ flex: 1 }} />
         <span style={{ fontSize: '0.5rem', letterSpacing: '0.18em', textTransform: 'uppercase', color: 'var(--gold-dark)', ...serifStyle }}>Stable Press · Racing Almanac</span>
@@ -1487,87 +1553,13 @@ export default function HorseDetail() {
             <span style={{ fontSize: '0.5rem', color: 'var(--gold-dark)', ...serifStyle }}>✦</span>
           </div>
 
-          <DataPanel
-            title="Owners Data"
-            icon={<User size={12} strokeWidth={1.8} />}
-            rows={ownerRows}
-            badge={ownerParties.length > 0 ? `${ownerParties.length} linked` : 'Cur + Past'}
-            imgSrc={ownerImg}
-            primaryName={horse.ownerDisplay || 'Not Recorded'}
-            secondaryLine={ownerSecondary}
-            panelKey="left_owner"
-            activePanel={activePanel}
-            onPanelClick={(k) => handlePanelClick(k as ActivePanelKey)}
-          />
-          <DataPanel
-            title="Breeders Data"
-            icon={<BookOpen size={12} strokeWidth={1.8} />}
-            rows={breederRows}
-            imgSrc={breederImg}
-            primaryName={horse.breederDisplay || 'Not Recorded'}
-            secondaryLine={breederSecondary}
-            panelKey="left_breeder"
-            activePanel={activePanel}
-            onPanelClick={(k) => handlePanelClick(k as ActivePanelKey)}
-          />
-          <DataPanel
-            title="Trainers Data"
-            icon={<Briefcase size={12} strokeWidth={1.8} />}
-            rows={trainerRows}
-            badge={trainerParties.length > 0 ? `${trainerParties.length} linked` : 'Cur + Past'}
-            imgSrc={trainerImg}
-            primaryName={horse.trainerDisplay || 'Not Recorded'}
-            secondaryLine={trainerSecondary}
-            panelKey="left_trainer"
-            activePanel={activePanel}
-            onPanelClick={(k) => handlePanelClick(k as ActivePanelKey)}
-          />
-          <DataPanel
-            title="Personnel Data"
-            icon={<Users size={12} strokeWidth={1.8} />}
-            rows={personnelRows}
-            imgSrc={personnelImg}
-            primaryName={personnelPrimaryName}
-            secondaryLine={personnelSecondary}
-            panelKey="left_personnel"
-            activePanel={activePanel}
-            onPanelClick={(k) => handlePanelClick(k as ActivePanelKey)}
-          />
-          <DataPanel
-            title="Jockey(s) Data"
-            icon={<Flag size={12} strokeWidth={1.8} />}
-            rows={jockeyRows}
-            badge={jockeyParties.length > 0 ? `${jockeyParties.length} rides` : 'All Rides'}
-            imgSrc={jockeyImg}
-            primaryName={horse.jockeyDisplay || 'Not Recorded'}
-            secondaryLine={jockeySecondary}
-            panelKey="left_jockey"
-            activePanel={activePanel}
-            onPanelClick={(k) => handlePanelClick(k as ActivePanelKey)}
-          />
-          <DataPanel
-            title="Syndicate Manager"
-            icon={<Shield size={12} strokeWidth={1.8} />}
-            rows={syndicateMgrRows}
-            imgSrc={syndicateImg}
-            primaryName={horse.syndicateManagerDisplay || 'Not Recorded'}
-            secondaryLine={syndicateSecondary}
-            panelKey="left_syndicate"
-            activePanel={activePanel}
-            onPanelClick={(k) => handlePanelClick(k as ActivePanelKey)}
-          />
-          <DataPanel
-            title="Syndt Owners Data"
-            icon={<Users size={12} strokeWidth={1.8} />}
-            rows={syndtOwnerRows}
-            badge={ownerParties.length > 0 ? `${ownerParties.length} owners` : 'Full Record'}
-            imgSrc={syndtImg}
-            primaryName={horse.ownerDisplay || 'Not Recorded'}
-            secondaryLine={ownerParties.length > 1 ? `${ownerParties.length} ownership parties` : 'Registered Ownership'}
-            panelKey="left_syndtowners"
-            activePanel={activePanel}
-            onPanelClick={(k) => handlePanelClick(k as ActivePanelKey)}
-          />
+          <DataPanel title="Owners Data" icon={<User size={12} strokeWidth={1.8} />} rows={ownerRows} badge={ownerParties.length > 0 ? `${ownerParties.length} linked` : 'Cur + Past'} imgSrc={ownerImg} primaryName={horse.ownerDisplay || 'Not Recorded'} secondaryLine={ownerSecondary} panelKey="left_owner" activePanel={activePanel} onPanelClick={(k) => handlePanelClick(k as ActivePanelKey)} />
+          <DataPanel title="Breeders Data" icon={<BookOpen size={12} strokeWidth={1.8} />} rows={breederRows} imgSrc={breederImg} primaryName={horse.breederDisplay || 'Not Recorded'} secondaryLine={breederSecondary} panelKey="left_breeder" activePanel={activePanel} onPanelClick={(k) => handlePanelClick(k as ActivePanelKey)} />
+          <DataPanel title="Trainers Data" icon={<Briefcase size={12} strokeWidth={1.8} />} rows={trainerRows} badge={trainerParties.length > 0 ? `${trainerParties.length} linked` : 'Cur + Past'} imgSrc={trainerImg} primaryName={horse.trainerDisplay || 'Not Recorded'} secondaryLine={trainerSecondary} panelKey="left_trainer" activePanel={activePanel} onPanelClick={(k) => handlePanelClick(k as ActivePanelKey)} />
+          <DataPanel title="Personnel Data" icon={<Users size={12} strokeWidth={1.8} />} rows={personnelRows} imgSrc={personnelImg} primaryName={personnelPrimaryName} secondaryLine={personnelSecondary} panelKey="left_personnel" activePanel={activePanel} onPanelClick={(k) => handlePanelClick(k as ActivePanelKey)} />
+          <DataPanel title="Jockey(s) Data" icon={<Flag size={12} strokeWidth={1.8} />} rows={jockeyRows} badge={jockeyParties.length > 0 ? `${jockeyParties.length} rides` : 'All Rides'} imgSrc={jockeyImg} primaryName={horse.jockeyDisplay || 'Not Recorded'} secondaryLine={jockeySecondary} panelKey="left_jockey" activePanel={activePanel} onPanelClick={(k) => handlePanelClick(k as ActivePanelKey)} />
+          <DataPanel title="Syndicate Manager" icon={<Shield size={12} strokeWidth={1.8} />} rows={syndicateMgrRows} imgSrc={syndicateImg} primaryName={horse.syndicateManagerDisplay || 'Not Recorded'} secondaryLine={syndicateSecondary} panelKey="left_syndicate" activePanel={activePanel} onPanelClick={(k) => handlePanelClick(k as ActivePanelKey)} />
+          <DataPanel title="Syndt Owners Data" icon={<Users size={12} strokeWidth={1.8} />} rows={syndtOwnerRows} badge={ownerParties.length > 0 ? `${ownerParties.length} owners` : 'Full Record'} imgSrc={syndtImg} primaryName={horse.ownerDisplay || 'Not Recorded'} secondaryLine={ownerParties.length > 1 ? `${ownerParties.length} ownership parties` : 'Registered Ownership'} panelKey="left_syndtowners" activePanel={activePanel} onPanelClick={(k) => handlePanelClick(k as ActivePanelKey)} />
 
           <button onClick={() => {}} aria-label="Reports and Forms" style={{ marginTop: 2, width: '100%', border: '2px solid var(--gold-dark)', borderRadius: 4, overflow: 'hidden', cursor: 'pointer', boxShadow: '0 0 0 1px var(--gold-dark), 0 3px 10px rgba(0,0,0,0.4)', display: 'flex', flexDirection: 'column', background: 'none', padding: 0, ...serifStyle }}>
             <div style={{ background: 'linear-gradient(180deg, var(--forest-mid) 0%, var(--forest-deep) 100%)', boxShadow: '0 2px 4px rgba(0,0,0,0.4), inset 0 1px 0 rgba(255,255,255,0.06)', padding: '6px 10px', display: 'flex', alignItems: 'center', gap: 6 }}><FileText size={12} strokeWidth={1.8} style={{ color: 'var(--gold-bright)' }} /><span style={{ fontSize: '0.58rem', letterSpacing: '0.14em', textTransform: 'uppercase', fontWeight: 700, color: 'var(--gold-bright)', textShadow: '0 1px 2px rgba(0,0,0,0.7)' }}>Reports / Forms</span></div>
@@ -1581,29 +1573,21 @@ export default function HorseDetail() {
 
         {/* CENTER */}
         <div style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
-          {/* ── Crest card: always shown, party name injected when a left-panel is active ── */}
           <div className="sku-gold-card">
             <OrnateCrest
-              name={horse.isUnnamed ? 'Un-Named' : horse.name}
+              name={horseName}
               subtitle={[horse.sex, horse.colour, horse.country, horse.dob ? new Date(horse.dob).getFullYear() + ' foal' : undefined].filter(Boolean).join(' · ')}
               partyName={crestPartyName}
             />
           </div>
           {activePanel ? (
             <>
-              {/* ── Large party photo hero for left-panel selections ── */}
               {partyHeroMeta && (
-                <PartyHeroImage
-                  imgSrc={partyHeroMeta.imgSrc}
-                  partyName={partyHeroMeta.partyName}
-                  roleLabel={partyHeroMeta.roleLabel}
-                  secondaryLine={partyHeroMeta.secondaryLine}
-                  onClose={() => setActivePanel(null)}
-                />
+                <PartyHeroImage imgSrc={partyHeroMeta.imgSrc} partyName={partyHeroMeta.partyName} roleLabel={partyHeroMeta.roleLabel} secondaryLine={partyHeroMeta.secondaryLine} onClose={() => setActivePanel(null)} />
               )}
               {centreContent}
               <ConnectionsPanel horse={horse} />
-              <ArticlesPanel articles={linkedArticles} horseName={horse.isUnnamed ? 'Un-Named' : horse.name} />
+              <ArticlesPanel articles={linkedArticles} horseName={horseName} />
             </>
           ) : (
             <>
@@ -1615,7 +1599,7 @@ export default function HorseDetail() {
               </div>
               <PedigreePanel horse={horse} />
               <ConnectionsPanel horse={horse} />
-              <ArticlesPanel articles={linkedArticles} horseName={horse.isUnnamed ? 'Un-Named' : horse.name} />
+              <ArticlesPanel articles={linkedArticles} horseName={horseName} />
             </>
           )}
         </div>

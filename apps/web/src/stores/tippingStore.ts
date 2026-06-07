@@ -5,6 +5,25 @@ import { toast } from 'sonner';
 
 const STARTING_BALANCE = 500;
 
+// ─── Seed leaderboard profiles ────────────────────────────────────────────────
+// These dummy tippers populate the leaderboard on first load.
+const SEED_PROFILES: TipperProfile[] = [
+  { userId: 'demo-tipper-1',  displayName: 'HorseWhisperer88',    coinBalance: 1840, totalWon: 2340, totalWagered: 1000, tipsPlaced: 12 },
+  { userId: 'demo-tipper-2',  displayName: 'FlemingtonFrank',      coinBalance: 1620, totalWon: 1920, totalWagered: 800,  tipsPlaced: 10 },
+  { userId: 'demo-tipper-3',  displayName: 'RacingRosie',          coinBalance: 2080, totalWon: 2760, totalWagered: 1100, tipsPlaced: 17 },
+  { userId: 'demo-tipper-4',  displayName: 'CaulfielderKing',      coinBalance: 1250, totalWon: 1450, totalWagered: 700,  tipsPlaced: 9  },
+  { userId: 'demo-tipper-5',  displayName: 'TheBloodstockBoss',    coinBalance: 980,  totalWon: 1280, totalWagered: 800,  tipsPlaced: 11 },
+  { userId: 'demo-tipper-6',  displayName: 'MooneeValleyMike',     coinBalance: 1140, totalWon: 1520, totalWagered: 780,  tipsPlaced: 9  },
+  { userId: 'demo-tipper-7',  displayName: 'DesertQueenFan',       coinBalance: 1390, totalWon: 1588, totalWagered: 700,  tipsPlaced: 13 },
+  { userId: 'demo-tipper-8',  displayName: 'SprintSpecialist',     coinBalance: 610,  totalWon: 810,  totalWagered: 700,  tipsPlaced: 6  },
+  { userId: 'demo-tipper-9',  displayName: 'NorthernStarNancy',    coinBalance: 1720, totalWon: 2100, totalWagered: 880,  tipsPlaced: 14 },
+  { userId: 'demo-tipper-10', displayName: 'BrisbanePunter',       coinBalance: 890,  totalWon: 1090, totalWagered: 700,  tipsPlaced: 8  },
+  { userId: 'demo-tipper-11', displayName: 'IronMonarchIan',       coinBalance: 1430, totalWon: 1930, totalWagered: 1000, tipsPlaced: 16 },
+  { userId: 'demo-tipper-12', displayName: 'SaddleClothSarah',     coinBalance: 760,  totalWon: 960,  totalWagered: 700,  tipsPlaced: 7  },
+  { userId: 'demo-tipper-13', displayName: 'WetTrackWalter',       coinBalance: 2240, totalWon: 2940, totalWagered: 1100, tipsPlaced: 19 },
+  { userId: 'demo-tipper-14', displayName: 'SpringCarnivalSteve',  coinBalance: 1080, totalWon: 1380, totalWagered: 800,  tipsPlaced: 10 },
+];
+
 interface TippingState {
   races: Race[];
   tips: Tip[];
@@ -31,7 +50,7 @@ export const useTippingStore = create<TippingState>()(
   (set, get) => ({
     races: [],
     tips: [],
-    profiles: [],
+    profiles: SEED_PROFILES,
     loading: false,
     error: null,
     loaded: false,
