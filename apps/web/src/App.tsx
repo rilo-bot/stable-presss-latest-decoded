@@ -11,6 +11,7 @@ import { Toaster } from 'sonner';
 
 import { NavBar } from '@/components/NavBar';
 import { ProtectedRoute } from '@/components/ProtectedRoute';
+import { OnboardingOverlay } from '@/components/OnboardingOverlay';
 
 import Landing from '@/pages/Landing';
 import Login from '@/pages/Login';
@@ -199,6 +200,9 @@ export default function App() {
           }
         />
       </Routes>
+
+      {/* Global onboarding overlay — renders on top of everything */}
+      <OnboardingOverlay />
       <Toaster richColors position="top-right" />
     </>
   );

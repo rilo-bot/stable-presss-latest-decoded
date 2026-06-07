@@ -18,8 +18,8 @@ interface MediaItem {
   linkedPartyIds?: string[];
   publishedAt?: string | null;
   status?: string;
+  duration?: number;
   source?: string;
-  durationSeconds?: number;
 }
 
 const router = Router();
@@ -40,7 +40,7 @@ router.post('/', async (req, res) => {
   const now = new Date().toISOString();
   const doc: Record<string, unknown> = {
     ...body,
-    status: body.status ?? 'active',
+    status: body.status ?? 'draft',
     createdAt: now,
     updatedAt: now,
   };

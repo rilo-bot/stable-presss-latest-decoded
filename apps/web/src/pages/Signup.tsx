@@ -2,6 +2,7 @@ import { useState, useRef, useEffect } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import { useAuthStore } from '@/stores/authStore';
 import type { UserRole } from '@/stores/authStore';
+import { useOnboardingStore } from '@/stores/onboardingStore';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
@@ -67,6 +68,7 @@ export default function Signup() {
 
   const requestSignupOtp = useAuthStore((s) => s.requestSignupOtp);
   const verifyOtp = useAuthStore((s) => s.verifyOtp);
+  const startOnboarding = useOnboardingStore((s) => s.startOnboarding);
   const navigate = useNavigate();
 
   const digitRefs = useRef<(HTMLInputElement | null)[]>([]);
@@ -157,6 +159,12 @@ export default function Signup() {
       setLoading(false);
       if (result.ok) {
         toast.success('Your account is ready. Welcome to Stable Press.');
+        // Get the newly created user from the auth store to start onboarding
+        // We read it via the zustand store directly after verifyOtp sets currentUser
+        const currentUser = useAuthStore.getState().currentUser;
+        if (currentUser) {
+          startOnboarding(currentUser.id);
+        }
         navigate('/newsroom');
       } else {
         toast.error(result.error ?? 'Verification failed. Please try again.');
@@ -244,7 +252,7 @@ export default function Signup() {
           </div>
           <div className="border-t border-primary-foreground/10 pt-6">
             <p className="text-xs text-primary-foreground/40 italic font-[family-name:var(--font-display)]">
-              "The form is everything. The rest is conversation."
+              &ldquo;The form is everything. The rest is conversation.&rdquo;
             </p>
           </div>
         </div>
@@ -272,7 +280,7 @@ export default function Signup() {
                 </h2>
                 <div className="h-px w-full bg-foreground/10 mt-3 mb-4" />
                 <p className="text-sm text-muted-foreground">
-                  Tell us who you are and we'll send a verification code to confirm your email.
+                  Tell us who you are and we will send a verification code to confirm your email.
                 </p>
               </div>
 

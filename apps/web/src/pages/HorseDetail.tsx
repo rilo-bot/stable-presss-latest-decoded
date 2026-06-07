@@ -15,7 +15,7 @@ import {
   Heart, BarChart2, Flag, User, Users, Briefcase, Shield, FileText, Wand,
   TrendingUp, ShoppingCart, Binary, X, Image, DollarSign, BookMarked, Hash,
   MapPin, UserCheck, Building2, Dumbbell, Contact, SidebarOpen, Plus, Edit,
-  Trash, Link as LinkIcon, ExternalLink,
+  Trash, Link as LinkIcon, ExternalLink, Info,
 } from 'lucide-react';
 
 /* ─── Fallback panel images (used ONLY when a party has no uploaded photo) ─── */
@@ -74,6 +74,20 @@ type ActivePanelKey =
   | 'left_jockey' | 'left_syndicate' | 'left_syndtowners'
   | 'media' | 'racing' | 'token' | 'breeding' | 'sales' | 'pedigree' | 'studbook';
 
+/** Which party IDs are "active" given the current left-panel selection */
+interface PartyContext {
+  /** The primary selected PanelParty (first of the role) */
+  primaryParty: PanelParty | null;
+  /** All parties in the selected role */
+  allParties: PanelParty[];
+  /** Flat list of party IDs for filtering */
+  partyIds: string[];
+  /** Human-readable role name */
+  roleLabel: string;
+  /** Whether the context is a left-panel party (vs horse default or right-panel) */
+  isPartyContext: boolean;
+}
+
 function partyPhoto(party: Party | undefined, roleKey: string): string {
   if (party?.photo) return party.photo;
   return FALLBACK_IMAGES[roleKey] ?? FALLBACK_IMAGES['owner'];
@@ -97,6 +111,36 @@ function mergePanelParties(linked: PanelParty[], direct: PanelParty[]): PanelPar
   const seen = new Set(linked.map((pp) => pp.party.id));
   const extra = direct.filter((pp) => !seen.has(pp.party.id));
   return [...linked, ...extra].sort((a, b) => (b.isCurrent ? 1 : 0) - (a.isCurrent ? 1 : 0));
+}
+
+/* ── Party Context Banner — shown at the top of right-side sections ── */
+function PartyContextBanner({ partyContext, onClear }: { partyContext: PartyContext; onClear: () => void }) {
+  if (!partyContext.isPartyContext || !partyContext.primaryParty) return null;
+  const party = partyContext.primaryParty.party;
+  return (
+    <div style={{
+      display: 'flex', alignItems: 'center', gap: 8, padding: '7px 10px',
+      background: 'linear-gradient(90deg, rgba(180,140,30,0.18) 0%, rgba(26,51,34,0.5) 100%)',
+      border: '1px solid var(--gold-mid)', borderRadius: 3, marginBottom: 10, flexWrap: 'wrap',
+    }}>
+      <div style={{ width: 28, height: 28, borderRadius: 2, overflow: 'hidden', border: '1px solid var(--gold-mid)', flexShrink: 0 }}>
+        <img src={partyPhoto(party, partyContext.roleLabel.toLowerCase())} alt={party.name} crossOrigin="anonymous"
+          style={{ width: '100%', height: '100%', objectFit: 'cover', objectPosition: 'center' }} />
+      </div>
+      <div style={{ flex: 1, minWidth: 0 }}>
+        <div style={{ fontSize: '0.56rem', textTransform: 'uppercase', letterSpacing: '0.12em', color: 'var(--gold-mid)', ...serifStyle }}>
+          Showing {partyContext.roleLabel} data for
+        </div>
+        <div style={{ fontSize: '0.72rem', fontWeight: 700, color: 'var(--parchment)', ...serifStyle, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+          {party.name}
+        </div>
+      </div>
+      <button onClick={onClear} aria-label="Clear party filter — show horse data"
+        style={{ width: 20, height: 20, borderRadius: 2, border: '1px solid var(--gold-dark)', background: 'rgba(26,51,34,0.8)', display: 'flex', alignItems: 'center', justifyContent: 'center', cursor: 'pointer', flexShrink: 0 }}>
+        <X size={10} style={{ color: 'var(--gold-bright)' }} />
+      </button>
+    </div>
+  );
 }
 
 interface DataPanelProps {
@@ -958,15 +1002,23 @@ function RaceStatusBadge({ status }: { status: RaceStatus }) {
 
 /* ─────────────────────────────────────────────────────────────────────────────
    MEDIA SECTION — read-only view (add/edit only via CRM)
+   Supports party context: when partyContext is active, shows only media
+   where the party appears in featured_party_ids.
    ───────────────────────────────────────────────────────────────────────────── */
-function MediaSection({ horseId, horseName, onClose }: { horseId: string; horseName: string; onClose: () => void }) {
+function MediaSection({ horseId, horseName, onClose, partyContext }: {
+  horseId: string;
+  horseName: string;
+  onClose: () => void;
+  partyContext: PartyContext;
+}) {
   const allItems = useMediaStore((s) => s.items);
   const fetchItems = useMediaStore((s) => s.fetchItems);
   const allParties = usePartyStore((s) => s.parties);
 
   useEffect(() => { fetchItems(); }, [fetchItems]);
 
-  const items = useMemo(
+  // Base: all media for this horse
+  const horseItems = useMemo(
     () => allItems.filter((m) => m.horse_id === horseId).sort((a, b) => {
       const da = a.published_date ?? String(a.createdAt);
       const db = b.published_date ?? String(b.createdAt);
@@ -975,16 +1027,46 @@ function MediaSection({ horseId, horseName, onClose }: { horseId: string; horseN
     [allItems, horseId],
   );
 
+  // When a party is selected: filter further to items featuring that party
+  const items = useMemo(() => {
+    if (!partyContext.isPartyContext || partyContext.partyIds.length === 0) return horseItems;
+    return horseItems.filter((m) =>
+      (m.featured_party_ids ?? []).some((pid) => partyContext.partyIds.includes(pid))
+    );
+  }, [horseItems, partyContext]);
+
+  const contextName = partyContext.primaryParty?.party.name;
+  const showingAll = !partyContext.isPartyContext;
+  const displayName = showingAll ? horseName : contextName ?? horseName;
+
   return (
     <SectionPanel title="Media Data" icon={<Camera size={14} strokeWidth={1.8} style={{ color: 'var(--gold-bright)' }} />} imgKey="media" onClose={onClose}>
-      <SRow label="Horse" value={horseName} />
+      <PartyContextBanner partyContext={partyContext} onClear={onClose} />
+
+      <SRow label={showingAll ? 'Horse' : 'Party'} value={displayName} />
       <SRow label="Media Records" value={String(items.length)} />
+      {partyContext.isPartyContext && (
+        <SRow label="Horse Total" value={String(horseItems.length)} />
+      )}
 
       {items.length === 0 ? (
         <div style={{ marginTop: 12, padding: '20px 14px', background: 'rgba(0,0,0,0.03)', border: '1px solid var(--parchment-dark)', borderRadius: 3, textAlign: 'center' }}>
           <Camera size={28} style={{ color: 'var(--parchment-dark)', display: 'block', margin: '0 auto 8px' }} />
-          <p style={{ fontSize: '0.72rem', fontStyle: 'italic', color: 'var(--parchment-shadow)', marginBottom: 4 }}>No media coverage on file for {horseName} yet.</p>
-          <p style={{ fontSize: '0.62rem', color: 'var(--parchment-shadow)' }}>Media records are managed through the Stable Press CRM.</p>
+          {partyContext.isPartyContext ? (
+            <>
+              <p style={{ fontSize: '0.72rem', fontStyle: 'italic', color: 'var(--parchment-shadow)', marginBottom: 4 }}>
+                No media featuring {contextName} has been filed yet.
+              </p>
+              <p style={{ fontSize: '0.62rem', color: 'var(--parchment-shadow)' }}>
+                Media records are managed through the Stable Press CRM.
+              </p>
+            </>
+          ) : (
+            <>
+              <p style={{ fontSize: '0.72rem', fontStyle: 'italic', color: 'var(--parchment-shadow)', marginBottom: 4 }}>No media coverage on file for {horseName} yet.</p>
+              <p style={{ fontSize: '0.62rem', color: 'var(--parchment-shadow)' }}>Media records are managed through the Stable Press CRM.</p>
+            </>
+          )}
         </div>
       ) : (
         <ul style={{ listStyle: 'none', padding: 0, margin: '12px 0 0' }}>
@@ -1044,7 +1126,10 @@ function MediaSection({ horseId, horseName, onClose }: { horseId: string; horseN
       <div style={{ marginTop: 14, padding: '10px 12px', background: 'rgba(0,0,0,0.04)', border: '1px solid var(--parchment-dark)', borderRadius: 3, display: 'flex', alignItems: 'center', gap: 8 }}>
         <Image size={14} style={{ color: 'var(--gold-mid)', flexShrink: 0 }} />
         <span style={{ fontSize: '0.62rem', color: 'var(--parchment-shadow)', fontStyle: 'italic' }}>
-          Media records are managed through the Stable Press CRM and linked to this horse automatically.
+          {partyContext.isPartyContext
+            ? `Showing media featuring ${contextName}. Full records are managed through the Stable Press CRM.`
+            : 'Media records are managed through the Stable Press CRM and linked to this horse automatically.'
+          }
         </span>
       </div>
     </SectionPanel>
@@ -1053,20 +1138,46 @@ function MediaSection({ horseId, horseName, onClose }: { horseId: string; horseN
 
 /* ─────────────────────────────────────────────────────────────────────────────
    RACING SECTION — read-only view (add/edit only via CRM)
+   Party context filtering:
+   - jockey selected: filter by jockey_id
+   - trainer selected: filter by trainer_id
+   - other party: show all horse races, with a context note
    ───────────────────────────────────────────────────────────────────────────── */
-function RacingSection({ horseId, horseName, horse, onClose }: { horseId: string; horseName: string; horse: HorseData; onClose: () => void }) {
+function RacingSection({ horseId, horseName, horse, onClose, partyContext }: {
+  horseId: string;
+  horseName: string;
+  horse: HorseData;
+  onClose: () => void;
+  partyContext: PartyContext;
+}) {
   const allEntries = useRacingEntryStore((s) => s.entries);
   const fetchEntries = useRacingEntryStore((s) => s.fetchEntries);
   const allParties = usePartyStore((s) => s.parties);
 
   useEffect(() => { fetchEntries(); }, [fetchEntries]);
 
-  const entries = useMemo(
+  const horseEntries = useMemo(
     () => allEntries
       .filter((e) => e.horse_id === horseId)
       .sort((a, b) => b.race_date.localeCompare(a.race_date)),
     [allEntries, horseId],
   );
+
+  // Determine how to filter by party context
+  const isJockeyContext = partyContext.isPartyContext && partyContext.roleLabel === 'Jockey';
+  const isTrainerContext = partyContext.isPartyContext && partyContext.roleLabel === 'Trainer';
+
+  const entries = useMemo(() => {
+    if (!partyContext.isPartyContext || partyContext.partyIds.length === 0) return horseEntries;
+    if (isJockeyContext) {
+      return horseEntries.filter((e) => e.jockey_id && partyContext.partyIds.includes(e.jockey_id));
+    }
+    if (isTrainerContext) {
+      return horseEntries.filter((e) => e.trainer_id && partyContext.partyIds.includes(e.trainer_id));
+    }
+    // For owner/breeder/other: show all horse races but note the party context
+    return horseEntries;
+  }, [horseEntries, partyContext, isJockeyContext, isTrainerContext]);
 
   const statusCounts = useMemo(() => {
     const counts: Partial<Record<RaceStatus, number>> = {};
@@ -1074,20 +1185,49 @@ function RacingSection({ horseId, horseName, horse, onClose }: { horseId: string
     return counts;
   }, [entries]);
 
+  const contextName = partyContext.primaryParty?.party.name;
+  const showingAll = !partyContext.isPartyContext;
+  const isFilteredByParty = partyContext.isPartyContext && (isJockeyContext || isTrainerContext);
+  const isContextualAll = partyContext.isPartyContext && !isJockeyContext && !isTrainerContext;
+
   return (
     <SectionPanel title="Racing Data" icon={<TrendingUp size={14} strokeWidth={1.8} style={{ color: 'var(--gold-bright)' }} />} imgKey="racing" onClose={onClose}>
+      <PartyContextBanner partyContext={partyContext} onClear={onClose} />
+
       {/* ── Summary ── */}
       <SRow label="Horse" value={horseName} />
       <SRow label="Race Records" value={String(entries.length)} />
+      {isFilteredByParty && <SRow label="Horse Total" value={String(horseEntries.length)} />}
       <SRow label="Career" value={horse.careerRecord || '—'} />
       <SRow label="Winnings" value={horse.careerWinnings ? '$' + horse.careerWinnings.toLocaleString('en-AU') : '—'} highlight />
+
+      {/* Context note for non-jockey/trainer parties */}
+      {isContextualAll && (
+        <div style={{ marginTop: 8, marginBottom: 4, padding: '7px 10px', background: 'rgba(180,140,30,0.08)', border: '1px solid var(--gold-dark)', borderRadius: 3, display: 'flex', alignItems: 'flex-start', gap: 7 }}>
+          <Info size={12} style={{ color: 'var(--gold-mid)', flexShrink: 0, marginTop: 2 }} />
+          <span style={{ fontSize: '0.62rem', color: 'var(--parchment-shadow)', fontStyle: 'italic', lineHeight: 1.5 }}>
+            Showing all races for this horse while viewing {contextName}. Racing records for this party are linked via jockey or trainer roles.
+          </span>
+        </div>
+      )}
 
       {/* ── Empty state ── */}
       {entries.length === 0 ? (
         <div style={{ marginTop: 12, padding: '20px 14px', background: 'rgba(0,0,0,0.03)', border: '1px solid var(--parchment-dark)', borderRadius: 3, textAlign: 'center' }}>
           <Flag size={28} style={{ color: 'var(--parchment-dark)', display: 'block', margin: '0 auto 8px' }} />
-          <p style={{ fontSize: '0.72rem', fontStyle: 'italic', color: 'var(--parchment-shadow)', marginBottom: 4 }}>No racing records on file for {horseName} yet.</p>
-          <p style={{ fontSize: '0.62rem', color: 'var(--parchment-shadow)' }}>Racing records are managed through the Stable Press CRM.</p>
+          {isFilteredByParty ? (
+            <>
+              <p style={{ fontSize: '0.72rem', fontStyle: 'italic', color: 'var(--parchment-shadow)', marginBottom: 4 }}>
+                No races on file with {contextName} as {partyContext.roleLabel.toLowerCase()}.
+              </p>
+              <p style={{ fontSize: '0.62rem', color: 'var(--parchment-shadow)' }}>Racing records are managed through the Stable Press CRM.</p>
+            </>
+          ) : (
+            <>
+              <p style={{ fontSize: '0.72rem', fontStyle: 'italic', color: 'var(--parchment-shadow)', marginBottom: 4 }}>No racing records on file for {horseName} yet.</p>
+              <p style={{ fontSize: '0.62rem', color: 'var(--parchment-shadow)' }}>Racing records are managed through the Stable Press CRM.</p>
+            </>
+          )}
         </div>
       ) : (
         <ul style={{ listStyle: 'none', padding: 0, margin: '12px 0 0' }}>
@@ -1105,7 +1245,7 @@ function RacingSection({ horseId, horseName, horse, onClose }: { horseId: string
                   </div>
                 </div>
 
-                {/* Meta row: date, venue, class */}
+                {/* Meta row */}
                 <div style={{ display: 'flex', flexWrap: 'wrap', gap: '4px 12px', fontSize: '0.58rem', color: 'var(--parchment-shadow)', marginBottom: 4 }}>
                   {entry.race_date && (
                     <span style={{ display: 'flex', alignItems: 'center', gap: 3 }}>
@@ -1133,7 +1273,7 @@ function RacingSection({ horseId, horseName, horse, onClose }: { horseId: string
                   )}
                 </div>
 
-                {/* Result row (if Finished) */}
+                {/* Result row */}
                 {entry.status === 'Finished' && (
                   <div style={{ display: 'flex', flexWrap: 'wrap', gap: '4px 12px', fontSize: '0.58rem', color: 'var(--parchment-shadow)' }}>
                     {entry.finish_position !== undefined && (
@@ -1152,8 +1292,8 @@ function RacingSection({ horseId, horseName, horse, onClose }: { horseId: string
                   <div style={{ display: 'flex', flexWrap: 'wrap', gap: '4px 12px', fontSize: '0.57rem', color: 'var(--parchment-shadow)', marginTop: 4 }}>
                     {entry.barrier !== undefined && <span>Barrier {entry.barrier}</span>}
                     {entry.weight_carried && <span style={{ display: 'flex', alignItems: 'center', gap: 3 }}><span style={{ color: 'var(--gold-dark)' }}>·</span>{entry.weight_carried}</span>}
-                    {jockeyName && <span style={{ display: 'flex', alignItems: 'center', gap: 3 }}><Users size={8} style={{ color: 'var(--gold-dark)' }} />J: {jockeyName}</span>}
-                    {trainerName && <span style={{ display: 'flex', alignItems: 'center', gap: 3 }}><Briefcase size={8} style={{ color: 'var(--gold-dark)' }} />T: {trainerName}</span>}
+                    {jockeyName && <span style={{ display: 'flex', alignItems: 'center', gap: 3, color: isJockeyContext ? 'var(--gold-bright)' : 'var(--parchment-shadow)', fontWeight: isJockeyContext ? 700 : 400 }}><Users size={8} style={{ color: 'var(--gold-dark)' }} />J: {jockeyName}</span>}
+                    {trainerName && <span style={{ display: 'flex', alignItems: 'center', gap: 3, color: isTrainerContext ? 'var(--gold-bright)' : 'var(--parchment-shadow)', fontWeight: isTrainerContext ? 700 : 400 }}><Briefcase size={8} style={{ color: 'var(--gold-dark)' }} />T: {trainerName}</span>}
                   </div>
                 )}
               </li>
@@ -1185,70 +1325,184 @@ function RacingSection({ horseId, horseName, horse, onClose }: { horseId: string
       <div style={{ marginTop: 14, padding: '10px 12px', background: 'rgba(0,0,0,0.04)', border: '1px solid var(--parchment-dark)', borderRadius: 3, display: 'flex', alignItems: 'center', gap: 8 }}>
         <TrendingUp size={14} style={{ color: 'var(--gold-mid)', flexShrink: 0 }} />
         <span style={{ fontSize: '0.62rem', color: 'var(--parchment-shadow)', fontStyle: 'italic' }}>
-          Racing records are managed through the Stable Press CRM and surface automatically on this profile.
+          {partyContext.isPartyContext
+            ? `Racing records are managed through the Stable Press CRM and surface automatically on this profile.`
+            : 'Racing records are managed through the Stable Press CRM and surface automatically on this profile.'
+          }
         </span>
       </div>
     </SectionPanel>
   );
 }
 
-function TokenSection({ horse, onClose }: { horse: HorseData; onClose: () => void }) {
+function TokenSection({ horse, onClose, partyContext }: { horse: HorseData; onClose: () => void; partyContext: PartyContext }) {
+  const contextName = partyContext.primaryParty?.party.name;
   return (
     <SectionPanel title="Token Data" icon={<Coins size={14} strokeWidth={1.8} style={{ color: 'var(--gold-bright)' }} />} imgKey="token" onClose={onClose}>
-      <dl style={{ margin: 0, padding: 0 }}><SRow label="Horse Name" value={horse.isUnnamed ? 'Un-Named' : horse.name} /><SRow label="Token Status" value="Not Tokenised" /><SRow label="Total Tokens" value="—" /><SRow label="Tokens Issued" value="—" /><SRow label="Tokens Held" value="—" /><SRow label="Token Price" value="—" /><SRow label="Ledger Hash" value="Not on file" /></dl>
+      <PartyContextBanner partyContext={partyContext} onClear={onClose} />
+      <dl style={{ margin: 0, padding: 0 }}>
+        <SRow label="Horse Name" value={horse.isUnnamed ? 'Un-Named' : horse.name} />
+        {partyContext.isPartyContext && <SRow label="Party" value={contextName ?? '—'} />}
+        <SRow label="Token Status" value="Not Tokenised" />
+        <SRow label="Total Tokens" value="—" />
+        <SRow label="Tokens Issued" value="—" />
+        <SRow label="Tokens Held" value="—" />
+        <SRow label="Token Price" value="—" />
+        <SRow label="Ledger Hash" value="Not on file" />
+      </dl>
       <SectionHeading>Ownership Ledger</SectionHeading>
-      <p style={{ fontSize: '0.72rem', color: 'var(--forest-mid)', lineHeight: 1.6, fontStyle: 'italic' }}>Fractional ownership tokens and blockchain ledger entries will be displayed here once this horse is registered on the Stable Press token platform.</p>
+      <p style={{ fontSize: '0.72rem', color: 'var(--forest-mid)', lineHeight: 1.6, fontStyle: 'italic' }}>
+        {partyContext.isPartyContext
+          ? `Token holdings and ledger entries for ${contextName} will be displayed here once this horse is registered on the Stable Press token platform.`
+          : 'Fractional ownership tokens and blockchain ledger entries will be displayed here once this horse is registered on the Stable Press token platform.'
+        }
+      </p>
       <div style={{ marginTop: 12, padding: '10px 12px', background: 'rgba(0,0,0,0.04)', border: '1px solid var(--parchment-dark)', borderRadius: 3, display: 'flex', alignItems: 'center', gap: 8 }}>
-        <Hash size={14} style={{ color: 'var(--gold-mid)', flexShrink: 0 }} /><span style={{ fontSize: '0.64rem', color: 'var(--parchment-shadow)', fontStyle: 'italic' }}>No token records on file. Contact Stable Press to register.</span>
+        <Hash size={14} style={{ color: 'var(--gold-mid)', flexShrink: 0 }} />
+        <span style={{ fontSize: '0.64rem', color: 'var(--parchment-shadow)', fontStyle: 'italic' }}>No token records on file. Contact Stable Press to register.</span>
       </div>
     </SectionPanel>
   );
 }
 
-function BreedingSection({ horse, onClose }: { horse: HorseData; onClose: () => void }) {
+function BreedingSection({ horse, onClose, partyContext }: { horse: HorseData; onClose: () => void; partyContext: PartyContext }) {
+  const contextName = partyContext.primaryParty?.party.name;
+  const primary = partyContext.primaryParty;
   return (
     <SectionPanel title="Breeding Data" icon={<Heart size={14} strokeWidth={1.8} style={{ color: 'var(--gold-bright)' }} />} imgKey="breeding" onClose={onClose}>
-      <dl style={{ margin: 0, padding: 0 }}><SRow label="Horse Name" value={horse.isUnnamed ? 'Un-Named' : horse.name} /><SRow label="Sex" value={horse.sex || '—'} /><SRow label="Colour" value={horse.colour || '—'} /><SRow label="Date of Birth" value={horse.dob ? new Date(horse.dob).toLocaleDateString('en-AU', { day: 'numeric', month: 'long', year: 'numeric' }) : '—'} /><SRow label="Breeder" value={horse.breederDisplay || '—'} /><SRow label="Country of Birth" value={horse.country || '—'} /><SRow label="Sire" value={horse.sire || '—'} /><SRow label="Dam" value={horse.dam || '—'} /><SRow label="Dam YOB" value={horse.damYob ? String(horse.damYob) : '—'} /></dl>
+      <PartyContextBanner partyContext={partyContext} onClear={onClose} />
+      <dl style={{ margin: 0, padding: 0 }}>
+        <SRow label="Horse Name" value={horse.isUnnamed ? 'Un-Named' : horse.name} />
+        {partyContext.isPartyContext && <SRow label="Party" value={contextName ?? '—'} />}
+        <SRow label="Sex" value={horse.sex || '—'} />
+        <SRow label="Colour" value={horse.colour || '—'} />
+        <SRow label="Date of Birth" value={horse.dob ? new Date(horse.dob).toLocaleDateString('en-AU', { day: 'numeric', month: 'long', year: 'numeric' }) : '—'} />
+        <SRow label="Breeder" value={horse.breederDisplay || '—'} />
+        <SRow label="Country of Birth" value={horse.country || '—'} />
+        <SRow label="Sire" value={horse.sire || '—'} />
+        <SRow label="Dam" value={horse.dam || '—'} />
+        <SRow label="Dam YOB" value={horse.damYob ? String(horse.damYob) : '—'} />
+      </dl>
+      {partyContext.isPartyContext && primary && (
+        <>
+          <SectionHeading>Breeder Details</SectionHeading>
+          <dl style={{ margin: 0, padding: 0 }}>
+            <SRow label="Name" value={primary.party.name} />
+            {primary.party.base_location && <SRow label="Location" value={primary.party.base_location} />}
+            {primary.party.started_year && <SRow label="Est." value={String(primary.party.started_year)} />}
+            {primary.startDate && <SRow label="Bred Since" value={fmtDate(primary.startDate)} />}
+            <SRow label="Status" value={primary.isCurrent ? 'Current' : 'Past'} />
+          </dl>
+        </>
+      )}
       <SectionHeading>Breeding Record</SectionHeading>
-      <dl style={{ margin: 0, padding: 0 }}><SRow label="Breeding Status" value="Not recorded" /><SRow label="Foals on Record" value="0" /><SRow label="Paddock History" value="Not on file" /></dl>
+      <dl style={{ margin: 0, padding: 0 }}>
+        <SRow label="Breeding Status" value="Not recorded" />
+        <SRow label="Foals on Record" value="0" />
+        <SRow label="Paddock History" value="Not on file" />
+      </dl>
       <p style={{ fontSize: '0.72rem', color: 'var(--forest-mid)', lineHeight: 1.6, fontStyle: 'italic', marginTop: 10 }}>Full paddock history, foaling records, and breeding partnerships will be displayed here once registered.</p>
     </SectionPanel>
   );
 }
 
-function SalesSection({ horse, onClose }: { horse: HorseData; onClose: () => void }) {
+function SalesSection({ horse, onClose, partyContext }: { horse: HorseData; onClose: () => void; partyContext: PartyContext }) {
+  const contextName = partyContext.primaryParty?.party.name;
+  const primary = partyContext.primaryParty;
   return (
     <SectionPanel title="Sales Data" icon={<ShoppingCart size={14} strokeWidth={1.8} style={{ color: 'var(--gold-bright)' }} />} imgKey="sales" onClose={onClose}>
-      <dl style={{ margin: 0, padding: 0 }}><SRow label="Horse Name" value={horse.isUnnamed ? 'Un-Named' : horse.name} /><SRow label="Current Owner" value={horse.ownerDisplay || '—'} /><SRow label="Sale Status" value="Not listed" /><SRow label="Asking Price" value="—" /><SRow label="Bloodstock Agent" value={horse.bloodstockAgentDisplay || '—'} /></dl>
+      <PartyContextBanner partyContext={partyContext} onClear={onClose} />
+      <dl style={{ margin: 0, padding: 0 }}>
+        <SRow label="Horse Name" value={horse.isUnnamed ? 'Un-Named' : horse.name} />
+        {partyContext.isPartyContext && <SRow label="Party" value={contextName ?? '—'} />}
+        <SRow label="Current Owner" value={horse.ownerDisplay || '—'} />
+        <SRow label="Sale Status" value="Not listed" />
+        <SRow label="Asking Price" value="—" />
+        <SRow label="Bloodstock Agent" value={horse.bloodstockAgentDisplay || '—'} />
+      </dl>
+      {partyContext.isPartyContext && primary && partyContext.roleLabel === 'Owner' && (
+        <>
+          <SectionHeading>Owner Acquisition</SectionHeading>
+          <dl style={{ margin: 0, padding: 0 }}>
+            <SRow label="Owner" value={primary.party.name} />
+            {primary.startDate && <SRow label="Owner Since" value={fmtDate(primary.startDate)} />}
+            {primary.endDate && <SRow label="Owner Until" value={fmtDate(primary.endDate)} />}
+            <SRow label="Status" value={primary.isCurrent ? 'Current' : 'Past'} />
+          </dl>
+        </>
+      )}
       <SectionHeading>Auction History</SectionHeading>
-      <dl style={{ margin: 0, padding: 0 }}><SRow label="Last Sale Price" value="Not on file" /><SRow label="Sale Venue" value="Not on file" /><SRow label="Sale Year" value="Not on file" /><SRow label="Buyer" value={horse.ownerDisplay || '—'} /></dl>
+      <dl style={{ margin: 0, padding: 0 }}>
+        <SRow label="Last Sale Price" value="Not on file" />
+        <SRow label="Sale Venue" value="Not on file" />
+        <SRow label="Sale Year" value="Not on file" />
+        <SRow label="Buyer" value={horse.ownerDisplay || '—'} />
+      </dl>
       <div style={{ marginTop: 12, padding: '10px 12px', background: 'rgba(0,0,0,0.04)', border: '1px solid var(--parchment-dark)', borderRadius: 3, display: 'flex', alignItems: 'center', gap: 8 }}>
-        <DollarSign size={14} style={{ color: 'var(--gold-mid)', flexShrink: 0 }} /><span style={{ fontSize: '0.64rem', color: 'var(--parchment-shadow)', fontStyle: 'italic' }}>No full sales history on file. Records will appear here once a transaction is registered.</span>
+        <DollarSign size={14} style={{ color: 'var(--gold-mid)', flexShrink: 0 }} />
+        <span style={{ fontSize: '0.64rem', color: 'var(--parchment-shadow)', fontStyle: 'italic' }}>No full sales history on file. Records will appear here once a transaction is registered.</span>
       </div>
     </SectionPanel>
   );
 }
 
-function PedigreeSection({ horse, onClose }: { horse: HorseData; onClose: () => void }) {
+function PedigreeSection({ horse, onClose, partyContext }: { horse: HorseData; onClose: () => void; partyContext: PartyContext }) {
   const hasFamilyTree = horse.sire || horse.dam || horse.sireSire || horse.sireDam || horse.damSire || horse.damDam;
+  const contextName = partyContext.primaryParty?.party.name;
   return (
     <SectionPanel title="Pedigree Data" icon={<Wand size={14} strokeWidth={1.8} style={{ color: 'var(--gold-bright)' }} />} imgKey="pedigree" onClose={onClose}>
+      <PartyContextBanner partyContext={partyContext} onClear={onClose} />
+      {partyContext.isPartyContext && (
+        <div style={{ marginBottom: 10, padding: '6px 10px', background: 'rgba(0,0,0,0.03)', border: '1px solid var(--parchment-dark)', borderRadius: 3 }}>
+          <span style={{ fontSize: '0.62rem', color: 'var(--parchment-shadow)', fontStyle: 'italic' }}>
+            Pedigree data for this horse — context: {contextName}
+          </span>
+        </div>
+      )}
       {horse.pullQuote && <blockquote style={{ borderLeft: '3px solid var(--gold-mid)', paddingLeft: 10, marginBottom: 12, fontStyle: 'italic', fontSize: '0.78rem', color: 'var(--forest-deep)', lineHeight: 1.5 }}>"{horse.pullQuote}"</blockquote>}
-      <dl style={{ margin: 0, padding: 0 }}><SRow label="Sire (Father)" value={horse.sire || '—'} /><SRow label="Sire's Sire" value={horse.sireSire || '—'} /><SRow label="Sire's Dam" value={horse.sireDam || '—'} /><SRow label="Dam (Mother)" value={horse.dam || '—'} /><SRow label="Dam YOB" value={horse.damYob ? String(horse.damYob) : '—'} /><SRow label="Dam's Sire" value={horse.damSire || '—'} /><SRow label="Dam's Dam" value={horse.damDam || '—'} /></dl>
+      <dl style={{ margin: 0, padding: 0 }}>
+        <SRow label="Sire (Father)" value={horse.sire || '—'} />
+        <SRow label="Sire's Sire" value={horse.sireSire || '—'} />
+        <SRow label="Sire's Dam" value={horse.sireDam || '—'} />
+        <SRow label="Dam (Mother)" value={horse.dam || '—'} />
+        <SRow label="Dam YOB" value={horse.damYob ? String(horse.damYob) : '—'} />
+        <SRow label="Dam's Sire" value={horse.damSire || '—'} />
+        <SRow label="Dam's Dam" value={horse.damDam || '—'} />
+      </dl>
       {horse.pedigreeNotes && <><SectionHeading>Pedigree Notes</SectionHeading><p style={{ fontSize: '0.72rem', color: 'var(--forest-mid)', lineHeight: 1.6 }}>{horse.pedigreeNotes}</p></>}
       {!hasFamilyTree && !horse.pedigreeNotes && <div style={{ marginTop: 12, padding: '10px 12px', background: 'rgba(0,0,0,0.04)', border: '1px solid var(--parchment-dark)', borderRadius: 3, display: 'flex', alignItems: 'center', gap: 8 }}><BookMarked size={14} style={{ color: 'var(--gold-mid)', flexShrink: 0 }} /><span style={{ fontSize: '0.64rem', color: 'var(--parchment-shadow)', fontStyle: 'italic' }}>No pedigree data on file.</span></div>}
     </SectionPanel>
   );
 }
 
-function StudBookSection({ horse, onClose }: { horse: HorseData; onClose: () => void }) {
+function StudBookSection({ horse, onClose, partyContext }: { horse: HorseData; onClose: () => void; partyContext: PartyContext }) {
+  const contextName = partyContext.primaryParty?.party.name;
   return (
     <SectionPanel title="Stud Book Data" icon={<Binary size={14} strokeWidth={1.8} style={{ color: 'var(--gold-bright)' }} />} imgKey="studbook" onClose={onClose}>
-      <dl style={{ margin: 0, padding: 0 }}><SRow label="Horse Name" value={horse.isUnnamed ? 'Un-Named' : horse.name} /><SRow label="Sex" value={horse.sex || '—'} /><SRow label="Date of Birth" value={horse.dob ? new Date(horse.dob).toLocaleDateString('en-AU', { day: 'numeric', month: 'long', year: 'numeric' }) : '—'} /><SRow label="Colour" value={horse.colour || '—'} /><SRow label="Country" value={horse.country || '—'} /><SRow label="Sire" value={horse.sire || '—'} /><SRow label="Dam" value={horse.dam || '—'} /><SRow label="Dam YOB" value={horse.damYob ? String(horse.damYob) : '—'} /><SRow label="Breeder" value={horse.breederDisplay || '—'} /></dl>
+      <PartyContextBanner partyContext={partyContext} onClear={onClose} />
+      <dl style={{ margin: 0, padding: 0 }}>
+        <SRow label="Horse Name" value={horse.isUnnamed ? 'Un-Named' : horse.name} />
+        {partyContext.isPartyContext && <SRow label="Party" value={contextName ?? '—'} />}
+        <SRow label="Sex" value={horse.sex || '—'} />
+        <SRow label="Date of Birth" value={horse.dob ? new Date(horse.dob).toLocaleDateString('en-AU', { day: 'numeric', month: 'long', year: 'numeric' }) : '—'} />
+        <SRow label="Colour" value={horse.colour || '—'} />
+        <SRow label="Country" value={horse.country || '—'} />
+        <SRow label="Sire" value={horse.sire || '—'} />
+        <SRow label="Dam" value={horse.dam || '—'} />
+        <SRow label="Dam YOB" value={horse.damYob ? String(horse.damYob) : '—'} />
+        <SRow label="Breeder" value={horse.breederDisplay || '—'} />
+      </dl>
       <SectionHeading>Registry Details</SectionHeading>
-      <dl style={{ margin: 0, padding: 0 }}><SRow label="Stud Book" value="Australian Stud Book" /><SRow label="Registration No." value="Not on file" /><SRow label="Microchip" value="Not on file" /><SRow label="Brand / Freeze" value="Not on file" /><SRow label="Passport No." value="Not on file" /></dl>
+      <dl style={{ margin: 0, padding: 0 }}>
+        <SRow label="Stud Book" value="Australian Stud Book" />
+        <SRow label="Registration No." value="Not on file" />
+        <SRow label="Microchip" value="Not on file" />
+        <SRow label="Brand / Freeze" value="Not on file" />
+        <SRow label="Passport No." value="Not on file" />
+      </dl>
       <div style={{ marginTop: 12, padding: '10px 12px', background: 'rgba(0,0,0,0.04)', border: '1px solid var(--parchment-dark)', borderRadius: 3, display: 'flex', alignItems: 'center', gap: 8 }}>
-        <MapPin size={14} style={{ color: 'var(--gold-mid)', flexShrink: 0 }} /><span style={{ fontSize: '0.64rem', color: 'var(--parchment-shadow)', fontStyle: 'italic' }}>Official stud book registration details as held by Racing Australia.</span>
+        <MapPin size={14} style={{ color: 'var(--gold-mid)', flexShrink: 0 }} />
+        <span style={{ fontSize: '0.64rem', color: 'var(--parchment-shadow)', fontStyle: 'italic' }}>Official stud book registration details as held by Racing Australia.</span>
       </div>
     </SectionPanel>
   );
@@ -1290,7 +1544,10 @@ export default function HorseDetail() {
 
   const { id } = useParams<{ id: string }>();
   const navigate = useNavigate();
-  const [activePanel, setActivePanel] = useState<ActivePanelKey | null>(null);
+
+  // Two independent state pieces: which left panel and which right panel
+  const [leftPanel, setLeftPanel] = useState<string | null>(null);
+  const [rightPanel, setRightPanel] = useState<string | null>(null);
 
   if (!id) return <Navigate to="/horses" replace />;
 
@@ -1379,7 +1636,46 @@ export default function HorseDetail() {
 
   if (!horse) return <Navigate to="/horses" replace />;
 
-  const handlePanelClick = (key: ActivePanelKey) => setActivePanel((prev) => (prev === key ? null : key));
+  // Derive PartyContext from the active left panel
+  const partyContext = useMemo((): PartyContext => {
+    const none: PartyContext = { primaryParty: null, allParties: [], partyIds: [], roleLabel: '', isPartyContext: false };
+    if (!leftPanel) return none;
+    const mapRole: Record<string, { parties: PanelParty[]; roleLabel: string }> = {
+      left_owner:      { parties: ownerParties,     roleLabel: 'Owner' },
+      left_breeder:    { parties: breederParties,   roleLabel: 'Breeder' },
+      left_trainer:    { parties: trainerParties,   roleLabel: 'Trainer' },
+      left_jockey:     { parties: jockeyParties,    roleLabel: 'Jockey' },
+      left_syndicate:  { parties: syndicateParties, roleLabel: 'Syndicate Manager' },
+      left_syndtowners:{ parties: ownerParties,     roleLabel: 'Owner' },
+      left_personnel:  { parties: [...agentParties, ...syndicateParties, ...personnelParties], roleLabel: 'Personnel' },
+    };
+    const info = mapRole[leftPanel];
+    if (!info) return none;
+    return {
+      primaryParty: info.parties[0] ?? null,
+      allParties: info.parties,
+      partyIds: info.parties.map((pp) => pp.party.id),
+      roleLabel: info.roleLabel,
+      isPartyContext: info.parties.length > 0,
+    };
+  }, [leftPanel, ownerParties, breederParties, trainerParties, jockeyParties, syndicateParties, agentParties, personnelParties]);
+
+  // Combined active panel for breadcrumb / centre detection
+  const activePanel = leftPanel ?? rightPanel;
+
+  const handleLeftPanelClick = (key: string) => {
+    setLeftPanel((prev) => (prev === key ? null : key));
+    // Don't close right panel — it just gets re-contextualized
+  };
+
+  const handleRightPanelClick = (key: string) => {
+    setRightPanel((prev) => (prev === key ? null : key));
+  };
+
+  const handleCloseAll = () => {
+    setLeftPanel(null);
+    setRightPanel(null);
+  };
 
   const ownerImg       = ownerParties[0]     ? partyPhoto(ownerParties[0].party, 'owner')         : FALLBACK_IMAGES.owner;
   const breederImg     = breederParties[0]   ? partyPhoto(breederParties[0].party, 'breeder')      : FALLBACK_IMAGES.breeder;
@@ -1477,7 +1773,8 @@ export default function HorseDetail() {
   type PartyHeroMeta = { imgSrc: string; partyName: string; roleLabel: string; secondaryLine: string } | null;
 
   const getPartyHeroMeta = (): PartyHeroMeta => {
-    switch (activePanel) {
+    if (!leftPanel) return null;
+    switch (leftPanel) {
       case 'left_owner': { const p = ownerParties[0]; if (!p) return null; return { imgSrc: partyPhoto(p.party, 'owner'), partyName: p.party.name, roleLabel: 'Owner', secondaryLine: ownerSecondary }; }
       case 'left_breeder': { const p = breederParties[0]; if (!p) return null; return { imgSrc: partyPhoto(p.party, 'breeder'), partyName: p.party.name, roleLabel: 'Breeder', secondaryLine: breederSecondary }; }
       case 'left_trainer': { const p = trainerParties[0]; if (!p) return null; return { imgSrc: partyPhoto(p.party, 'trainer'), partyName: p.party.name, roleLabel: 'Trainer', secondaryLine: trainerSecondary }; }
@@ -1490,45 +1787,76 @@ export default function HorseDetail() {
   };
 
   const partyHeroMeta = getPartyHeroMeta();
-  const isLeftPanel = activePanel?.startsWith('left_') ?? false;
-  const crestPartyName = isLeftPanel ? (partyHeroMeta?.partyName ?? undefined) : undefined;
+  const isLeftPanelActive = leftPanel !== null;
+  const crestPartyName = isLeftPanelActive ? (partyHeroMeta?.partyName ?? undefined) : undefined;
 
   const horseName = horse.isUnnamed ? 'Un-Named' : horse.name;
 
+  const closeLeft = () => setLeftPanel(null);
+  const closeRight = () => setRightPanel(null);
+
+  /* Centre content — left panel shows party detail, right panel shows section data */
   const renderCentreContent = () => {
-    const close = () => setActivePanel(null);
-    switch (activePanel) {
-      case 'left_owner':       return <OwnerDetailPanel parties={ownerParties} horse={horse} onClose={close} />;
-      case 'left_breeder':     return <BreederDetailPanel parties={breederParties} horse={horse} onClose={close} />;
-      case 'left_trainer':     return <TrainerDetailPanel parties={trainerParties} horse={horse} onClose={close} />;
-      case 'left_personnel':   return <PersonnelDetailPanel parties={personnelParties} agentParties={agentParties} syndicateParties={syndicateParties} horse={horse} onClose={close} />;
-      case 'left_jockey':      return <JockeyDetailPanel parties={jockeyParties} horse={horse} onClose={close} />;
-      case 'left_syndicate':   return <SyndicateManagerDetailPanel parties={syndicateParties} horse={horse} onClose={close} />;
-      case 'left_syndtowners': return <SyndtOwnersDetailPanel parties={ownerParties} horse={horse} onClose={close} />;
-      case 'media':   return <MediaSection horseId={id} horseName={horseName} onClose={close} />;
-      case 'racing':  return <RacingSection horseId={id} horseName={horseName} horse={horse} onClose={close} />;
-      case 'token':     return <TokenSection horse={horse} onClose={close} />;
-      case 'breeding':  return <BreedingSection horse={horse} onClose={close} />;
-      case 'sales':     return <SalesSection horse={horse} onClose={close} />;
-      case 'pedigree':  return <PedigreeSection horse={horse} onClose={close} />;
-      case 'studbook':  return <StudBookSection horse={horse} onClose={close} />;
-      default:          return null;
+    // Left panel (party detail) takes precedence
+    if (leftPanel) {
+      switch (leftPanel) {
+        case 'left_owner':       return <OwnerDetailPanel parties={ownerParties} horse={horse} onClose={closeLeft} />;
+        case 'left_breeder':     return <BreederDetailPanel parties={breederParties} horse={horse} onClose={closeLeft} />;
+        case 'left_trainer':     return <TrainerDetailPanel parties={trainerParties} horse={horse} onClose={closeLeft} />;
+        case 'left_personnel':   return <PersonnelDetailPanel parties={personnelParties} agentParties={agentParties} syndicateParties={syndicateParties} horse={horse} onClose={closeLeft} />;
+        case 'left_jockey':      return <JockeyDetailPanel parties={jockeyParties} horse={horse} onClose={closeLeft} />;
+        case 'left_syndicate':   return <SyndicateManagerDetailPanel parties={syndicateParties} horse={horse} onClose={closeLeft} />;
+        case 'left_syndtowners': return <SyndtOwnersDetailPanel parties={ownerParties} horse={horse} onClose={closeLeft} />;
+      }
     }
+    // Right panel section (no left panel active)
+    if (rightPanel) {
+      switch (rightPanel) {
+        case 'media':    return <MediaSection horseId={id} horseName={horseName} onClose={closeRight} partyContext={partyContext} />;
+        case 'racing':   return <RacingSection horseId={id} horseName={horseName} horse={horse} onClose={closeRight} partyContext={partyContext} />;
+        case 'token':    return <TokenSection horse={horse} onClose={closeRight} partyContext={partyContext} />;
+        case 'breeding': return <BreedingSection horse={horse} onClose={closeRight} partyContext={partyContext} />;
+        case 'sales':    return <SalesSection horse={horse} onClose={closeRight} partyContext={partyContext} />;
+        case 'pedigree': return <PedigreeSection horse={horse} onClose={closeRight} partyContext={partyContext} />;
+        case 'studbook': return <StudBookSection horse={horse} onClose={closeRight} partyContext={partyContext} />;
+      }
+    }
+    return null;
   };
 
   const centreContent = renderCentreContent();
+  const anythingOpen = leftPanel !== null || rightPanel !== null;
+
+  // Right panel section content — shown alongside party detail when left panel active
+  const renderRightPanelSectionWhenLeftActive = () => {
+    if (!leftPanel || !rightPanel) return null;
+    switch (rightPanel) {
+      case 'media':    return <MediaSection horseId={id} horseName={horseName} onClose={closeRight} partyContext={partyContext} />;
+      case 'racing':   return <RacingSection horseId={id} horseName={horseName} horse={horse} onClose={closeRight} partyContext={partyContext} />;
+      case 'token':    return <TokenSection horse={horse} onClose={closeRight} partyContext={partyContext} />;
+      case 'breeding': return <BreedingSection horse={horse} onClose={closeRight} partyContext={partyContext} />;
+      case 'sales':    return <SalesSection horse={horse} onClose={closeRight} partyContext={partyContext} />;
+      case 'pedigree': return <PedigreeSection horse={horse} onClose={closeRight} partyContext={partyContext} />;
+      case 'studbook': return <StudBookSection horse={horse} onClose={closeRight} partyContext={partyContext} />;
+      default: return null;
+    }
+  };
+
+  const rightSectionContent = renderRightPanelSectionWhenLeftActive();
 
   const activePanelLabel = (() => {
-    if (!activePanel) return null;
-    if (activePanel.startsWith('left_')) {
+    if (leftPanel) {
       const map: Record<string, string> = {
         left_owner: 'Owners Data', left_breeder: 'Breeders Data', left_trainer: 'Trainers Data',
         left_personnel: 'Personnel Data', left_jockey: "Jockey(s) Data",
         left_syndicate: 'Syndicate Manager', left_syndtowners: 'Syndt Owners Data',
       };
-      return map[activePanel] ?? activePanel;
+      return map[leftPanel] ?? leftPanel;
     }
-    return dataCategories.find((c) => c.key === activePanel)?.label ?? activePanel;
+    if (rightPanel) {
+      return dataCategories.find((c) => c.key === rightPanel)?.label ?? rightPanel;
+    }
+    return null;
   })();
 
   return (
@@ -1537,8 +1865,17 @@ export default function HorseDetail() {
       <div style={{ background: 'linear-gradient(90deg, var(--forest-deep) 0%, var(--forest-mid) 100%)', borderBottom: '2px solid var(--gold-dark)', padding: '8px 20px', display: 'flex', alignItems: 'center', gap: 6, ...serifStyle }}>
         <button onClick={() => navigate('/horses')} style={{ fontSize: '0.62rem', textTransform: 'uppercase', letterSpacing: '0.12em', color: 'var(--gold-mid)', background: 'none', border: 'none', cursor: 'pointer', ...serifStyle }} onMouseEnter={(e) => { (e.currentTarget as HTMLElement).style.color = 'var(--gold-bright)'; }} onMouseLeave={(e) => { (e.currentTarget as HTMLElement).style.color = 'var(--gold-mid)'; }}>Thoroughbreds</button>
         <ChevronRight size={10} style={{ color: 'var(--gold-dark)' }} />
-        <button onClick={() => setActivePanel(null)} style={{ fontSize: '0.62rem', textTransform: 'uppercase', letterSpacing: '0.12em', color: activePanel ? 'var(--gold-mid)' : 'var(--parchment)', background: 'none', border: 'none', cursor: activePanel ? 'pointer' : 'default', ...serifStyle }} onMouseEnter={(e) => { if (activePanel) (e.currentTarget as HTMLElement).style.color = 'var(--gold-bright)'; }} onMouseLeave={(e) => { if (activePanel) (e.currentTarget as HTMLElement).style.color = 'var(--gold-mid)'; }}>{horseName}</button>
+        <button onClick={handleCloseAll} style={{ fontSize: '0.62rem', textTransform: 'uppercase', letterSpacing: '0.12em', color: anythingOpen ? 'var(--gold-mid)' : 'var(--parchment)', background: 'none', border: 'none', cursor: anythingOpen ? 'pointer' : 'default', ...serifStyle }} onMouseEnter={(e) => { if (anythingOpen) (e.currentTarget as HTMLElement).style.color = 'var(--gold-bright)'; }} onMouseLeave={(e) => { if (anythingOpen) (e.currentTarget as HTMLElement).style.color = 'var(--gold-mid)'; }}>{horseName}</button>
         {activePanelLabel && (<><ChevronRight size={10} style={{ color: 'var(--gold-dark)' }} /><span style={{ fontSize: '0.62rem', textTransform: 'uppercase', letterSpacing: '0.12em', color: 'var(--gold-bright)', ...serifStyle }}>{activePanelLabel}</span></>)}
+        {/* Party context indicator in breadcrumb when a right section is active */}
+        {partyContext.isPartyContext && rightPanel && (
+          <>
+            <ChevronRight size={10} style={{ color: 'var(--gold-dark)' }} />
+            <span style={{ fontSize: '0.58rem', letterSpacing: '0.1em', color: 'var(--gold-mid)', ...serifStyle, fontStyle: 'italic' }}>
+              {partyContext.primaryParty?.party.name}
+            </span>
+          </>
+        )}
         <div style={{ flex: 1 }} />
         <span style={{ fontSize: '0.5rem', letterSpacing: '0.18em', textTransform: 'uppercase', color: 'var(--gold-dark)', ...serifStyle }}>Stable Press · Racing Almanac</span>
       </div>
@@ -1553,13 +1890,13 @@ export default function HorseDetail() {
             <span style={{ fontSize: '0.5rem', color: 'var(--gold-dark)', ...serifStyle }}>✦</span>
           </div>
 
-          <DataPanel title="Owners Data" icon={<User size={12} strokeWidth={1.8} />} rows={ownerRows} badge={ownerParties.length > 0 ? `${ownerParties.length} linked` : 'Cur + Past'} imgSrc={ownerImg} primaryName={horse.ownerDisplay || 'Not Recorded'} secondaryLine={ownerSecondary} panelKey="left_owner" activePanel={activePanel} onPanelClick={(k) => handlePanelClick(k as ActivePanelKey)} />
-          <DataPanel title="Breeders Data" icon={<BookOpen size={12} strokeWidth={1.8} />} rows={breederRows} imgSrc={breederImg} primaryName={horse.breederDisplay || 'Not Recorded'} secondaryLine={breederSecondary} panelKey="left_breeder" activePanel={activePanel} onPanelClick={(k) => handlePanelClick(k as ActivePanelKey)} />
-          <DataPanel title="Trainers Data" icon={<Briefcase size={12} strokeWidth={1.8} />} rows={trainerRows} badge={trainerParties.length > 0 ? `${trainerParties.length} linked` : 'Cur + Past'} imgSrc={trainerImg} primaryName={horse.trainerDisplay || 'Not Recorded'} secondaryLine={trainerSecondary} panelKey="left_trainer" activePanel={activePanel} onPanelClick={(k) => handlePanelClick(k as ActivePanelKey)} />
-          <DataPanel title="Personnel Data" icon={<Users size={12} strokeWidth={1.8} />} rows={personnelRows} imgSrc={personnelImg} primaryName={personnelPrimaryName} secondaryLine={personnelSecondary} panelKey="left_personnel" activePanel={activePanel} onPanelClick={(k) => handlePanelClick(k as ActivePanelKey)} />
-          <DataPanel title="Jockey(s) Data" icon={<Flag size={12} strokeWidth={1.8} />} rows={jockeyRows} badge={jockeyParties.length > 0 ? `${jockeyParties.length} rides` : 'All Rides'} imgSrc={jockeyImg} primaryName={horse.jockeyDisplay || 'Not Recorded'} secondaryLine={jockeySecondary} panelKey="left_jockey" activePanel={activePanel} onPanelClick={(k) => handlePanelClick(k as ActivePanelKey)} />
-          <DataPanel title="Syndicate Manager" icon={<Shield size={12} strokeWidth={1.8} />} rows={syndicateMgrRows} imgSrc={syndicateImg} primaryName={horse.syndicateManagerDisplay || 'Not Recorded'} secondaryLine={syndicateSecondary} panelKey="left_syndicate" activePanel={activePanel} onPanelClick={(k) => handlePanelClick(k as ActivePanelKey)} />
-          <DataPanel title="Syndt Owners Data" icon={<Users size={12} strokeWidth={1.8} />} rows={syndtOwnerRows} badge={ownerParties.length > 0 ? `${ownerParties.length} owners` : 'Full Record'} imgSrc={syndtImg} primaryName={horse.ownerDisplay || 'Not Recorded'} secondaryLine={ownerParties.length > 1 ? `${ownerParties.length} ownership parties` : 'Registered Ownership'} panelKey="left_syndtowners" activePanel={activePanel} onPanelClick={(k) => handlePanelClick(k as ActivePanelKey)} />
+          <DataPanel title="Owners Data" icon={<User size={12} strokeWidth={1.8} />} rows={ownerRows} badge={ownerParties.length > 0 ? `${ownerParties.length} linked` : 'Cur + Past'} imgSrc={ownerImg} primaryName={horse.ownerDisplay || 'Not Recorded'} secondaryLine={ownerSecondary} panelKey="left_owner" activePanel={leftPanel} onPanelClick={handleLeftPanelClick} />
+          <DataPanel title="Breeders Data" icon={<BookOpen size={12} strokeWidth={1.8} />} rows={breederRows} imgSrc={breederImg} primaryName={horse.breederDisplay || 'Not Recorded'} secondaryLine={breederSecondary} panelKey="left_breeder" activePanel={leftPanel} onPanelClick={handleLeftPanelClick} />
+          <DataPanel title="Trainers Data" icon={<Briefcase size={12} strokeWidth={1.8} />} rows={trainerRows} badge={trainerParties.length > 0 ? `${trainerParties.length} linked` : 'Cur + Past'} imgSrc={trainerImg} primaryName={horse.trainerDisplay || 'Not Recorded'} secondaryLine={trainerSecondary} panelKey="left_trainer" activePanel={leftPanel} onPanelClick={handleLeftPanelClick} />
+          <DataPanel title="Personnel Data" icon={<Users size={12} strokeWidth={1.8} />} rows={personnelRows} imgSrc={personnelImg} primaryName={personnelPrimaryName} secondaryLine={personnelSecondary} panelKey="left_personnel" activePanel={leftPanel} onPanelClick={handleLeftPanelClick} />
+          <DataPanel title="Jockey(s) Data" icon={<Flag size={12} strokeWidth={1.8} />} rows={jockeyRows} badge={jockeyParties.length > 0 ? `${jockeyParties.length} rides` : 'All Rides'} imgSrc={jockeyImg} primaryName={horse.jockeyDisplay || 'Not Recorded'} secondaryLine={jockeySecondary} panelKey="left_jockey" activePanel={leftPanel} onPanelClick={handleLeftPanelClick} />
+          <DataPanel title="Syndicate Manager" icon={<Shield size={12} strokeWidth={1.8} />} rows={syndicateMgrRows} imgSrc={syndicateImg} primaryName={horse.syndicateManagerDisplay || 'Not Recorded'} secondaryLine={syndicateSecondary} panelKey="left_syndicate" activePanel={leftPanel} onPanelClick={handleLeftPanelClick} />
+          <DataPanel title="Syndt Owners Data" icon={<Users size={12} strokeWidth={1.8} />} rows={syndtOwnerRows} badge={ownerParties.length > 0 ? `${ownerParties.length} owners` : 'Full Record'} imgSrc={syndtImg} primaryName={horse.ownerDisplay || 'Not Recorded'} secondaryLine={ownerParties.length > 1 ? `${ownerParties.length} ownership parties` : 'Registered Ownership'} panelKey="left_syndtowners" activePanel={leftPanel} onPanelClick={handleLeftPanelClick} />
 
           <button onClick={() => {}} aria-label="Reports and Forms" style={{ marginTop: 2, width: '100%', border: '2px solid var(--gold-dark)', borderRadius: 4, overflow: 'hidden', cursor: 'pointer', boxShadow: '0 0 0 1px var(--gold-dark), 0 3px 10px rgba(0,0,0,0.4)', display: 'flex', flexDirection: 'column', background: 'none', padding: 0, ...serifStyle }}>
             <div style={{ background: 'linear-gradient(180deg, var(--forest-mid) 0%, var(--forest-deep) 100%)', boxShadow: '0 2px 4px rgba(0,0,0,0.4), inset 0 1px 0 rgba(255,255,255,0.06)', padding: '6px 10px', display: 'flex', alignItems: 'center', gap: 6 }}><FileText size={12} strokeWidth={1.8} style={{ color: 'var(--gold-bright)' }} /><span style={{ fontSize: '0.58rem', letterSpacing: '0.14em', textTransform: 'uppercase', fontWeight: 700, color: 'var(--gold-bright)', textShadow: '0 1px 2px rgba(0,0,0,0.7)' }}>Reports / Forms</span></div>
@@ -1580,12 +1917,24 @@ export default function HorseDetail() {
               partyName={crestPartyName}
             />
           </div>
-          {activePanel ? (
+
+          {anythingOpen ? (
             <>
-              {partyHeroMeta && (
-                <PartyHeroImage imgSrc={partyHeroMeta.imgSrc} partyName={partyHeroMeta.partyName} roleLabel={partyHeroMeta.roleLabel} secondaryLine={partyHeroMeta.secondaryLine} onClose={() => setActivePanel(null)} />
+              {/* Party hero image when left panel active */}
+              {partyHeroMeta && leftPanel && (
+                <PartyHeroImage imgSrc={partyHeroMeta.imgSrc} partyName={partyHeroMeta.partyName} roleLabel={partyHeroMeta.roleLabel} secondaryLine={partyHeroMeta.secondaryLine} onClose={closeLeft} />
               )}
+
+              {/* Main centre content (party detail or section detail) */}
               {centreContent}
+
+              {/* When left panel is active AND a right section is also open, show section below party detail */}
+              {leftPanel && rightSectionContent && (
+                <div style={{ marginTop: 4 }}>
+                  {rightSectionContent}
+                </div>
+              )}
+
               <ConnectionsPanel horse={horse} />
               <ArticlesPanel articles={linkedArticles} horseName={horseName} />
             </>
@@ -1610,9 +1959,29 @@ export default function HorseDetail() {
             <span style={{ fontSize: '0.58rem', letterSpacing: '0.2em', textTransform: 'uppercase', color: 'var(--gold-bright)', fontWeight: 700, ...serifStyle }}>Data Sections</span>
             <span style={{ fontSize: '0.5rem', color: 'var(--gold-dark)', ...serifStyle }}>✦</span>
           </div>
+
+          {/* Party context indicator on right column when party selected */}
+          {partyContext.isPartyContext && (
+            <div style={{ padding: '5px 8px', background: 'linear-gradient(90deg, rgba(180,140,30,0.2) 0%, rgba(26,51,34,0.6) 100%)', border: '1px solid var(--gold-mid)', borderRadius: 3, display: 'flex', alignItems: 'center', gap: 5 }}>
+              <div style={{ width: 6, height: 6, borderRadius: '50%', background: 'var(--gold-bright)', flexShrink: 0 }} />
+              <span style={{ fontSize: '0.52rem', color: 'var(--gold-bright)', ...serifStyle, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                {partyContext.primaryParty?.party.name}
+              </span>
+            </div>
+          )}
+
           {dataCategories.map((cat) => (
-            <DataCategoryCard key={cat.key} label={cat.label} sublabel={cat.sublabel} icon={cat.icon} imgKey={cat.imgKey} active={activePanel === cat.key} onClick={() => handlePanelClick(cat.key as ActivePanelKey)} />
+            <DataCategoryCard key={cat.key} label={cat.label} sublabel={cat.sublabel} icon={cat.icon} imgKey={cat.imgKey} active={rightPanel === cat.key} onClick={() => handleRightPanelClick(cat.key)} />
           ))}
+
+          {/* Clear party context button */}
+          {partyContext.isPartyContext && (
+            <button onClick={() => setLeftPanel(null)} style={{ marginTop: 2, padding: '6px 8px', background: 'rgba(180,140,30,0.12)', border: '1px solid var(--gold-dark)', borderRadius: 3, cursor: 'pointer', display: 'flex', alignItems: 'center', gap: 5, ...serifStyle }}>
+              <X size={10} style={{ color: 'var(--gold-mid)', flexShrink: 0 }} />
+              <span style={{ fontSize: '0.5rem', color: 'var(--gold-mid)', textTransform: 'uppercase', letterSpacing: '0.1em' }}>Clear Party Filter</span>
+            </button>
+          )}
+
           <div style={{ marginTop: 6, padding: '8px 10px', border: '1px solid var(--gold-dark)', borderRadius: 3, background: 'rgba(26,51,34,0.5)', textAlign: 'center', ...serifStyle }}>
             <span style={{ fontSize: '0.5rem', letterSpacing: '0.14em', textTransform: 'uppercase', color: 'var(--gold-dark)', display: 'block' }}>✦ Stable Press ✦</span>
             <span style={{ fontSize: '0.52rem', fontStyle: 'italic', color: 'var(--parchment-shadow)', display: 'block', marginTop: 3 }}>Racing Almanac</span>
