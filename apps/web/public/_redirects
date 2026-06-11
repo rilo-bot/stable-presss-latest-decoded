@@ -1,0 +1,4 @@
+# SPA fallback: serve index.html for every path (200, not a redirect) so
+# client-side routes like /horses/123 resolve instead of 404-ing on refresh
+# or direct/deep links. Vite copies this file from public/ into dist/.
+/*    /index.html   200

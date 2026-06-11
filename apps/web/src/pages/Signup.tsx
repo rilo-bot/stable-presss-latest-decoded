@@ -156,12 +156,11 @@ export default function Signup() {
     setLoading(false);
     if (result.ok) {
       toast.success('Your account is ready. Welcome to Stable Press.');
-      // Get the newly created user from the auth store to start onboarding
-      // We read it via the zustand store directly after verifyOtp sets currentUser
-      const currentUser = useAuthStore.getState().currentUser;
-      if (currentUser) {
-        startOnboarding(currentUser.id);
-      }
+      // Onboarding disabled — skip startOnboarding trigger.
+      // const currentUser = useAuthStore.getState().currentUser;
+      // if (currentUser) {
+      //   startOnboarding(currentUser.id);
+      // }
       navigate('/newsroom');
     } else {
       toast.error(result.error ?? 'Verification failed. Please try again.');

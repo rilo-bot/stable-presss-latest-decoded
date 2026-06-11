@@ -232,17 +232,25 @@ export default function Bulletins() {
       {/* ── Broadsheet masthead ──────────────────────── */}
       <div
         className="relative w-full overflow-hidden"
-        style={{ background: 'hsl(var(--primary))' }}
+        style={{ background: 'hsl(222 39% 10%)' }}
       >
         <img
           src="https://images.pexels.com/photos/11341144/pexels-photo-11341144.jpeg?auto=compress&cs=tinysrgb&h=400&w=940"
           alt="Print bulletin editorial"
           crossOrigin="anonymous"
-          className="absolute inset-0 w-full h-full object-cover opacity-10"
+          className="absolute inset-0 w-full h-full object-cover opacity-40"
+        />
+        {/* Dark editorial scrim — keeps copy legible over the photo */}
+        <div
+          className="absolute inset-0"
+          style={{
+            background:
+              'linear-gradient(90deg, hsl(222 44% 7% / 0.92) 0%, hsl(222 44% 7% / 0.60) 55%, hsl(222 44% 7% / 0.28) 100%)',
+          }}
         />
 
         {/* Broadsheet column rules overlay */}
-        <div className="absolute inset-0 pointer-events-none" style={{ opacity: 0.04 }}>
+        <div className="absolute inset-0 pointer-events-none" style={{ opacity: 0.05 }}>
           {[1, 2, 3, 4, 5].map((i) => (
             <div
               key={i}

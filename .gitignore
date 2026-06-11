@@ -5,10 +5,13 @@ node_modules/
 dist/
 apps/*/dist/
 
-# Env / secrets
+# Env / secrets (the bare ".env" rule already matches these in every folder,
+# listed explicitly for clarity)
 .env
 .env.*
 !.env.example
+apps/server/.env
+apps/web/.env
 
 # Deploy script + credentials (kept local, not deployed)
 deploy.ps1
