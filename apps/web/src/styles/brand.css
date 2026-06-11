@@ -1,0 +1,300 @@
+/**
+ * brand.css — Stable Press custom tokens
+ * Imported after theme.css in App.tsx
+ */
+
+:root {
+  /* Ticker / breaking band */
+  --ticker-height: 32px;
+
+  /* Sponsor strip tint */
+  --sponsor-tint: hsl(var(--brand-accent) / 0.06);
+
+  /* Bulletin cover overlay depth */
+  --bulletin-scrim: linear-gradient(
+    to top,
+    hsl(var(--primary) / 0.92) 0%,
+    hsl(var(--primary) / 0.55) 50%,
+    transparent 100%
+  );
+
+  /* CMS sidebar width */
+  --cms-sidebar-w: 224px;
+  --cms-sidebar-w-collapsed: 56px;
+
+  /* Editorial rule: 1px gold hairline */
+  --rule-gold: 1px solid hsl(var(--brand-accent) / 0.35);
+
+  /* Section divider */
+  --rule-light: 1px solid hsl(var(--border) / 0.5);
+
+  /* Masthead font size override for display-large headings */
+  --text-masthead: clamp(2rem, 5vw, 3.5rem);
+
+  /* Podcast waveform bar color */
+  --waveform-active: hsl(var(--brand-accent));
+  --waveform-track: hsl(var(--border) / 0.6);
+
+  /* ─── Magazine / Bulletin builder palette (NZTROF print look) ─── */
+
+  /* Deep navy masthead/headlines (~#0a2342) */
+  --magazine-navy: 218 71% 15%;
+  --magazine-navy-soft: 216 55% 24%;
+  /* Warm cream page stock */
+  --magazine-cream: 42 46% 95%;
+  --magazine-cream-deep: 40 38% 90%;
+  /* Magazine gold accent (aligns with --gold-bright) */
+  --magazine-gold: 40 64% 52%;
+  --magazine-gold-deep: 38 67% 42%;
+  /* Maroon used for "Women in Racing" header accents */
+  --magazine-maroon: 338 32% 32%;
+  /* Forest accent for welfare pages */
+  --magazine-forest: 150 32% 22%;
+  /* Script signature font (loaded by useEditorFonts) */
+  --font-script: 'Dancing Script', 'Great Vibes', cursive;
+
+  /* ─── Vintage / Skeuomorphic Horse Detail Tokens ─── */
+
+  /* Parchment paper surface */
+  --parchment: #f5edda;
+  --parchment-dark: #e8dcc4;
+  --parchment-shadow: #c9b99a;
+
+  /* Forest green surfaces */
+  --forest-deep: #1a3322;
+  --forest-mid: #234432;
+  --forest-light: #2d5840;
+  --forest-felt: #1f3d2c;
+
+  /* Metallic gold */
+  --gold-bright: #d4a843;
+  --gold-mid: #b8922e;
+  --gold-dark: #8a6b1e;
+  --gold-light: #f0c96e;
+  --gold-shine: #ffe09a;
+
+  /* Embossed 3D gold border */
+  --border-gold-3d:
+    3px solid #d4a843;
+  --shadow-gold-outer:
+    0 0 0 1px #8a6b1e,
+    0 4px 16px rgba(0,0,0,0.55),
+    inset 0 1px 0 rgba(255, 224, 154, 0.45),
+    inset 0 -1px 0 rgba(0,0,0,0.3);
+
+  /* Card inset / letterpress */
+  --shadow-inset-parchment:
+    inset 0 2px 6px rgba(0,0,0,0.25),
+    inset 0 0 0 1px rgba(0,0,0,0.08);
+
+  /* Embossed green header */
+  --shadow-green-header:
+    0 2px 4px rgba(0,0,0,0.45),
+    inset 0 1px 0 rgba(255,255,255,0.08);
+
+  /* Table row inset */
+  --shadow-table-row:
+    inset 0 1px 0 rgba(255,255,255,0.04);
+
+  /* Right column icon button */
+  --shadow-icon-btn:
+    0 0 0 1px #8a6b1e,
+    0 3px 12px rgba(0,0,0,0.6),
+    inset 0 1px 0 rgba(255,224,154,0.3),
+    inset 0 -1px 0 rgba(0,0,0,0.4);
+
+  /* Ornate crest gradient */
+  --crest-bg: radial-gradient(ellipse at 50% 0%, #2d5840 0%, #1a3322 70%);
+}
+
+/* Ticker scroll animation */
+@keyframes ticker-scroll {
+  0%   { transform: translateX(0); }
+  100% { transform: translateX(-50%); }
+}
+
+.ticker-scroll {
+  animation: ticker-scroll 24s linear infinite;
+  white-space: nowrap;
+  will-change: transform;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .ticker-scroll {
+    animation: none;
+  }
+}
+
+/* Masthead rule accent — thin gold line above sections */
+.rule-gold {
+  border-top: var(--rule-gold);
+}
+
+/* Editorial pull-quote style */
+.pull-quote {
+  border-left: 3px solid hsl(var(--brand-accent));
+  padding-left: 1rem;
+  font-family: var(--font-display);
+  font-style: italic;
+  color: hsl(var(--foreground) / 0.75);
+}
+
+/* Sponsor badge */
+.sponsor-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.25rem;
+  font-size: 0.625rem;
+  text-transform: uppercase;
+  letter-spacing: 0.14em;
+  font-weight: 700;
+  color: hsl(var(--brand-accent));
+  border: 1px solid hsl(var(--brand-accent) / 0.3);
+  padding: 0.125rem 0.5rem;
+  border-radius: 2px;
+}
+
+/* Article card hover lift — respects reduced motion */
+.card-lift {
+  transition: transform 0.14s ease, box-shadow 0.14s ease;
+}
+.card-lift:hover {
+  transform: translateY(-2px);
+  box-shadow: 0 4px 16px hsl(var(--foreground) / 0.07);
+}
+@media (prefers-reduced-motion: reduce) {
+  .card-lift:hover { transform: none; }
+}
+
+/* Kanban workflow accent colors */
+.kanban-draft   { --col-accent: hsl(var(--muted-foreground)); }
+.kanban-review  { --col-accent: hsl(var(--chart-2)); }
+.kanban-legal   { --col-accent: hsl(var(--chart-3)); }
+.kanban-publish { --col-accent: hsl(var(--brand-accent)); }
+
+/* ─── Skeuomorphic / Vintage horse dashboard specific ─── */
+
+/* 3D gold frame card */
+.sku-gold-card {
+  border: 3px solid var(--gold-mid);
+  box-shadow: var(--shadow-gold-outer);
+  border-radius: 4px;
+  overflow: hidden;
+}
+
+/* Parchment body texture */
+.sku-parchment {
+  background: var(--parchment);
+  background-image:
+    repeating-linear-gradient(
+      0deg,
+      transparent,
+      transparent 28px,
+      rgba(0,0,0,0.03) 28px,
+      rgba(0,0,0,0.03) 29px
+    );
+  box-shadow: var(--shadow-inset-parchment);
+}
+
+/* Green header band with emboss */
+.sku-green-header {
+  background: linear-gradient(180deg, var(--forest-light) 0%, var(--forest-deep) 100%);
+  box-shadow: var(--shadow-green-header);
+}
+
+/* Gold arrow button */
+.sku-gold-btn {
+  background: linear-gradient(180deg, var(--gold-bright) 0%, var(--gold-dark) 100%);
+  box-shadow: var(--shadow-icon-btn);
+  border: 1px solid var(--gold-dark);
+  border-radius: 3px;
+  transition: filter 0.12s ease;
+}
+.sku-gold-btn:hover {
+  filter: brightness(1.12);
+}
+.sku-gold-btn:active {
+  filter: brightness(0.92);
+  box-shadow:
+    0 0 0 1px #8a6b1e,
+    0 1px 4px rgba(0,0,0,0.6),
+    inset 0 2px 4px rgba(0,0,0,0.35);
+}
+
+/* Skeuomorphic data table */
+.sku-table {
+  background: var(--forest-felt);
+  border-top: 2px solid var(--gold-mid);
+}
+.sku-table th {
+  background: linear-gradient(180deg, var(--forest-light) 0%, var(--forest-deep) 100%);
+  color: var(--gold-bright);
+  font-family: 'IM Fell English', 'Palatino Linotype', serif;
+  font-size: 0.7rem;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  padding: 0.5rem 0.75rem;
+  border-bottom: 1px solid var(--gold-dark);
+  text-shadow: 0 1px 2px rgba(0,0,0,0.7);
+}
+.sku-table td {
+  color: var(--parchment);
+  font-family: 'IM Fell English', 'Palatino Linotype', serif;
+  font-size: 0.82rem;
+  padding: 0.45rem 0.75rem;
+  border-bottom: 1px solid rgba(212, 168, 67, 0.12);
+  text-shadow: 0 1px 1px rgba(0,0,0,0.5);
+}
+.sku-table tr:hover td {
+  background: rgba(212, 168, 67, 0.07);
+}
+
+/* Ornate divider line */
+.sku-divider {
+  height: 2px;
+  background: linear-gradient(90deg,
+    transparent 0%,
+    var(--gold-dark) 15%,
+    var(--gold-bright) 40%,
+    var(--gold-shine) 50%,
+    var(--gold-bright) 60%,
+    var(--gold-dark) 85%,
+    transparent 100%
+  );
+  margin: 0.5rem 0;
+}
+
+/* Icon button right column */
+.sku-icon-btn {
+  background: linear-gradient(160deg, var(--forest-light) 0%, var(--forest-deep) 100%);
+  box-shadow: var(--shadow-icon-btn);
+  border: 2px solid var(--gold-mid);
+  border-radius: 4px;
+  cursor: pointer;
+  transition: filter 0.12s ease;
+}
+.sku-icon-btn:hover {
+  filter: brightness(1.15);
+}
+.sku-icon-btn:active {
+  filter: brightness(0.9);
+}
+
+/* Crest / ornate title bg */
+.sku-crest {
+  background: var(--crest-bg);
+  border-bottom: 3px solid var(--gold-mid);
+  box-shadow: 0 4px 24px rgba(0,0,0,0.6), inset 0 1px 0 rgba(255,255,255,0.06);
+}
+
+/* Corner ornament pseudo via utility */
+.sku-corner::before,
+.sku-corner::after {
+  content: '✦';
+  position: absolute;
+  color: var(--gold-mid);
+  font-size: 0.6rem;
+  line-height: 1;
+}
+.sku-corner::before { top: 6px; left: 8px; }
+.sku-corner::after  { top: 6px; right: 8px; }

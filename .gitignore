@@ -1,0 +1,25 @@
+# Dependencies
+node_modules/
+
+# Build output
+dist/
+apps/*/dist/
+
+# Env / secrets
+.env
+.env.*
+!.env.example
+
+# Deploy script + credentials (kept local, not deployed)
+deploy.ps1
+deploy.secrets.ps1
+
+# Logs
+*.log
+npm-debug.log*
+
+# OS / editor
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/

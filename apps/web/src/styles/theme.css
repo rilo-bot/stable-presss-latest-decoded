@@ -1,0 +1,84 @@
+@import url('https://fonts.googleapis.com/css2?family=Playfair+Display:wght@400;500;600;700&family=Source+Sans+3:wght@400;500;600;700&display=swap');
+/**
+ * theme.css — pre-written by the design pipeline (server-controlled).
+ *
+ * Tier: style-minimal
+ * Mode: light (default)
+ * Primary source: preset
+ * Accent source:  preset
+ * Tier origin:    style-preset
+ *
+ * This file overrides EVERY semantic shadcn variable so the brand hue
+ * carries through cards, borders, muted surfaces, focus rings, and
+ * sidebars — not just the primary CTA. These overrides win via an
+ * UNLAYERED :root block (index.css declares its tokens in @layer base,
+ * and unlayered styles beat layered ones) — do NOT wrap this in @layer.
+ *
+ * Format: shadcn space-separated HSL ("H S% L%"), read via
+ * `hsl(var(--primary))` in Tailwind utilities.
+ */
+
+:root {
+  --background: 220 12% 97%;
+  --foreground: 220 25% 8%;
+  --card: 0 0% 100%;
+  --card-foreground: 220 25% 8%;
+  --popover: 0 0% 100%;
+  --popover-foreground: 220 25% 8%;
+  --primary: 220 28% 48%;
+  --primary-foreground: 220 15% 99%;
+  --secondary: 40 27% 95%;
+  --secondary-foreground: 40 30% 22%;
+  --muted: 220 12% 94%;
+  --muted-foreground: 220 14% 42%;
+  --accent: 40 18% 92%;
+  --accent-foreground: 40 35% 22%;
+  --border: 220 12% 89%;
+  --input: 220 12% 89%;
+  --ring: 220 28% 48%;
+  --brand: 220 28% 48%;
+  --brand-foreground: 220 15% 99%;
+  --brand-accent: 40 60% 55%;
+  --brand-accent-foreground: 40 25% 9%;
+  --chart-1: 220 68% 52%;
+  --chart-2: 40 68% 52%;
+  --chart-3: 4 68% 52%;
+  --chart-4: 76 68% 52%;
+  --chart-5: 148 68% 52%;
+}
+
+.dark {
+  --background: 220 10% 9%;
+  --foreground: 220 18% 96%;
+  --card: 220 12% 12%;
+  --card-foreground: 220 18% 96%;
+  --popover: 220 12% 12%;
+  --popover-foreground: 220 18% 96%;
+  --primary: 220 28% 54%;
+  --primary-foreground: 220 25% 9%;
+  --secondary: 40 18% 16%;
+  --secondary-foreground: 40 30% 92%;
+  --muted: 220 10% 18%;
+  --muted-foreground: 220 16% 65%;
+  --accent: 40 15% 18%;
+  --accent-foreground: 40 30% 92%;
+  --border: 220 12% 22%;
+  --input: 220 12% 22%;
+  --ring: 220 28% 54%;
+  --brand: 220 28% 54%;
+  --brand-foreground: 220 25% 9%;
+  --brand-accent: 40 60% 61%;
+  --brand-accent-foreground: 40 25% 9%;
+  --chart-1: 220 70% 62%;
+  --chart-2: 40 70% 62%;
+  --chart-3: 4 70% 62%;
+  --chart-4: 76 70% 62%;
+  --chart-5: 148 70% 62%;
+}
+
+:root {
+  --font-display: 'Playfair Display', serif;
+  --font-body: 'Source Sans 3', sans-serif;
+}
+body { font-family: var(--font-body); }
+h1, h2, h3, h4, h5, h6 { font-family: var(--font-display); }
