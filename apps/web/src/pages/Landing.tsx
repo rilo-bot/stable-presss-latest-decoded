@@ -235,14 +235,14 @@ export default function Landing() {
             className="absolute inset-0"
             style={{
               background:
-                'linear-gradient(90deg, hsl(222 47% 6% / 0.94) 0%, hsl(222 47% 6% / 0.72) 45%, hsl(222 47% 6% / 0.20) 100%)',
+                'linear-gradient(90deg, hsl(150 36% 6% / 0.94) 0%, hsl(150 36% 6% / 0.72) 45%, hsl(150 36% 6% / 0.20) 100%)',
             }}
           />
           <div
             className="absolute inset-0"
             style={{
               background:
-                'linear-gradient(0deg, hsl(222 47% 6% / 0.85) 0%, transparent 45%)',
+                'linear-gradient(0deg, hsl(150 36% 6% / 0.85) 0%, transparent 45%)',
             }}
           />
 
@@ -308,7 +308,7 @@ export default function Landing() {
               to={`/articles/${heroArticle.id}`}
               className="hidden lg:flex absolute bottom-8 right-8 max-w-[19rem] flex-col gap-2 p-4 rounded-sm backdrop-blur-md group transition-colors"
               style={{
-                background: 'hsl(222 47% 6% / 0.55)',
+                background: 'hsl(150 36% 6% / 0.55)',
                 border: '1px solid hsl(0 0% 100% / 0.14)',
               }}
             >

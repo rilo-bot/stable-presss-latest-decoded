@@ -19,58 +19,58 @@
  */
 
 :root {
-  /* White / Gold / Standard-Blue (#1D4ED8) palette */
-  --background: 0 0% 100%;
-  --foreground: 222 47% 11%;
-  --card: 0 0% 100%;
-  --card-foreground: 222 47% 11%;
-  --popover: 0 0% 100%;
-  --popover-foreground: 222 47% 11%;
-  --primary: 222 82% 52%;            /* royal / standard blue (#2563EB-ish) */
-  --primary-foreground: 0 0% 100%;   /* pure white */
-  --secondary: 220 23% 96%;
-  --secondary-foreground: 222 35% 20%;
-  --muted: 220 20% 96%;
-  --muted-foreground: 220 12% 42%;
-  --accent: 222 70% 96%;             /* faint blue tint */
-  --accent-foreground: 222 60% 30%;
-  --border: 220 16% 90%;
-  --input: 220 16% 90%;
-  --ring: 222 82% 52%;
-  --brand: 222 82% 52%;
-  --brand-foreground: 0 0% 100%;
-  --brand-accent: 40 64% 52%;        /* gold */
-  --brand-accent-foreground: 40 45% 11%;
-  --chart-1: 222 82% 52%;            /* blue */
-  --chart-2: 40 64% 52%;             /* gold */
-  --chart-3: 4 70% 52%;
-  --chart-4: 152 45% 40%;
-  --chart-5: 270 55% 55%;
+  /* Forest-Green / Gold / Warm-Cream palette (NZTROF ownership) */
+  --background: 45 33% 95%;          /* warm cream page */
+  --foreground: 156 20% 13%;         /* dark green-black text */
+  --card: 48 45% 98%;                /* near-white warm surface */
+  --card-foreground: 156 20% 13%;
+  --popover: 48 45% 98%;
+  --popover-foreground: 156 20% 13%;
+  --primary: 152 36% 18%;            /* deep forest green */
+  --primary-foreground: 44 44% 95%;  /* cream on green */
+  --secondary: 45 24% 92%;
+  --secondary-foreground: 156 18% 20%;
+  --muted: 45 22% 92%;
+  --muted-foreground: 150 8% 38%;
+  --accent: 150 24% 91%;             /* faint green tint */
+  --accent-foreground: 152 30% 20%;
+  --border: 44 18% 85%;
+  --input: 44 18% 85%;
+  --ring: 152 36% 28%;
+  --brand: 152 36% 18%;
+  --brand-foreground: 44 44% 95%;
+  --brand-accent: 42 64% 53%;        /* gold (#D4A843) */
+  --brand-accent-foreground: 150 35% 12%;
+  --chart-1: 152 36% 30%;            /* green */
+  --chart-2: 42 64% 53%;             /* gold */
+  --chart-3: 4 60% 50%;
+  --chart-4: 200 40% 40%;
+  --chart-5: 270 40% 50%;
 }
 
 .dark {
-  --background: 222 47% 7%;
-  --foreground: 220 18% 96%;
-  --card: 222 40% 11%;
-  --card-foreground: 220 18% 96%;
-  --popover: 222 40% 11%;
-  --popover-foreground: 220 18% 96%;
-  --primary: 222 82% 62%;            /* brighter royal blue on dark */
-  --primary-foreground: 0 0% 100%;
-  --secondary: 222 30% 18%;
-  --secondary-foreground: 220 20% 92%;
-  --muted: 222 26% 18%;
-  --muted-foreground: 220 16% 65%;
-  --accent: 222 40% 22%;
-  --accent-foreground: 220 20% 92%;
-  --border: 222 26% 22%;
-  --input: 222 26% 22%;
-  --ring: 222 82% 62%;
-  --brand: 222 82% 62%;
-  --brand-foreground: 0 0% 100%;
-  --brand-accent: 40 64% 58%;
-  --brand-accent-foreground: 40 45% 11%;
-  --chart-1: 222 82% 66%;
+  --background: 152 30% 7%;
+  --foreground: 44 30% 92%;
+  --card: 152 24% 11%;
+  --card-foreground: 44 30% 92%;
+  --popover: 152 24% 11%;
+  --popover-foreground: 44 30% 92%;
+  --primary: 150 32% 34%;            /* lifted forest green on dark */
+  --primary-foreground: 44 44% 95%;
+  --secondary: 152 18% 18%;
+  --secondary-foreground: 44 30% 90%;
+  --muted: 152 14% 18%;
+  --muted-foreground: 150 10% 62%;
+  --accent: 152 22% 22%;
+  --accent-foreground: 44 30% 90%;
+  --border: 152 14% 22%;
+  --input: 152 14% 22%;
+  --ring: 150 32% 42%;
+  --brand: 150 32% 34%;
+  --brand-foreground: 44 44% 95%;
+  --brand-accent: 42 66% 58%;
+  --brand-accent-foreground: 150 35% 10%;
+  --chart-1: 150 36% 44%;
   --chart-2: 40 70% 62%;
   --chart-3: 4 70% 62%;
   --chart-4: 152 50% 52%;

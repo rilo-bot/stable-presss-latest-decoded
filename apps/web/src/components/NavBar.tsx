@@ -220,9 +220,12 @@ export function NavBar() {
   };
 
   return (
-    <header className="sticky top-0 z-50 bg-card border-b border-border/60">
+    <header
+      className="sticky top-0 z-50 bg-primary text-primary-foreground border-b"
+      style={{ borderColor: 'hsl(var(--brand-accent) / 0.22)' }}
+    >
       {/* ── Masthead strip ── */}
-      <div className="bg-primary text-primary-foreground">
+      <div className="border-b border-primary-foreground/10">
         <div className="max-w-7xl mx-auto px-4 md:px-8 py-1.5 flex items-center justify-between">
           <div className="flex items-center gap-4 text-[10px] uppercase tracking-[0.12em]">
             <span className="opacity-60 hidden sm:block">The Thoroughbred Racing Record</span>
@@ -288,11 +291,14 @@ export function NavBar() {
             className="flex flex-col leading-none group"
             aria-label="Stable Press — home"
           >
-            <span className="font-[family-name:var(--font-display)] text-xl font-bold tracking-tight text-foreground group-hover:text-primary transition-colors duration-150 leading-none">
+            <span className="font-[family-name:var(--font-display)] text-xl font-bold tracking-tight text-primary-foreground group-hover:text-[hsl(var(--brand-accent))] transition-colors duration-150 leading-none">
               Stable Press
             </span>
-            <span className="text-[9px] uppercase tracking-[0.22em] text-muted-foreground mt-0.5">
-              Thoroughbred Racing Record
+            <span
+              className="text-[9px] uppercase tracking-[0.22em] mt-0.5"
+              style={{ color: 'hsl(var(--brand-accent))' }}
+            >
+              NZTROF Ownership
             </span>
           </Link>
 
@@ -300,9 +306,9 @@ export function NavBar() {
           <div className="hidden md:flex items-center gap-3">
             {currentUser ? (
               <div className="flex items-center gap-3">
-                <div className="flex items-center gap-1.5 px-3 py-1 rounded-full bg-primary/10 border border-primary/20">
-                  <User size={12} className="text-primary" />
-                  <span className="text-xs font-medium text-foreground">{currentUser.displayName}</span>
+                <div className="flex items-center gap-1.5 px-3 py-1 rounded-full bg-primary-foreground/10 border border-primary-foreground/20">
+                  <User size={12} className="text-primary-foreground/80" />
+                  <span className="text-xs font-medium text-primary-foreground">{currentUser.displayName}</span>
                   <span
                     className="text-[9px] uppercase tracking-wider px-1.5 py-0.5 rounded-full font-bold"
                     style={{
@@ -317,7 +323,7 @@ export function NavBar() {
                   variant="ghost"
                   size="sm"
                   onClick={handleLogout}
-                  className="gap-1.5 text-xs"
+                  className="gap-1.5 text-xs text-primary-foreground/80 hover:text-primary-foreground hover:bg-primary-foreground/10"
                 >
                   <LogOut size={13} />
                   Sign Out
@@ -325,13 +331,22 @@ export function NavBar() {
               </div>
             ) : (
               <div className="flex items-center gap-2">
-                <Button variant="ghost" size="sm" asChild>
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  asChild
+                  className="text-primary-foreground/85 hover:text-primary-foreground hover:bg-primary-foreground/10"
+                >
                   <Link to="/login" className="text-sm">Sign In</Link>
                 </Button>
                 <Button
                   size="sm"
                   asChild
-                  className="bg-primary text-primary-foreground hover:bg-primary/90 text-sm"
+                  className="text-sm font-semibold hover:opacity-90"
+                  style={{
+                    background: 'hsl(var(--brand-accent))',
+                    color: 'hsl(var(--brand-accent-foreground))',
+                  }}
                 >
                   <Link to="/signup">Subscribe</Link>
                 </Button>
@@ -341,7 +356,7 @@ export function NavBar() {
 
           {/* Mobile hamburger */}
           <button
-            className="md:hidden p-2 rounded-md text-muted-foreground hover:text-foreground transition-colors"
+            className="md:hidden p-2 rounded-md text-primary-foreground/80 hover:text-primary-foreground transition-colors"
             onClick={() => setMobileOpen((v) => !v)}
             aria-label={mobileOpen ? 'Close menu' : 'Open menu'}
           >
@@ -351,7 +366,7 @@ export function NavBar() {
       </div>
 
       {/* ── Section navigation row ── */}
-      <div className="hidden md:block border-t border-border/40 bg-card/80">
+      <div className="hidden md:block border-t border-primary-foreground/10">
         <div className="max-w-7xl mx-auto px-4 md:px-8">
           <nav className="flex items-center overflow-x-auto" aria-label="Section navigation">
             {NAV_SECTIONS.map((section) => {
@@ -369,8 +384,8 @@ export function NavBar() {
                     className={cn(
                       'flex items-center gap-1.5 px-3 py-2.5 text-[11px] uppercase tracking-[0.1em] font-semibold transition-colors duration-150 border-b-2 whitespace-nowrap',
                       isActive
-                        ? 'text-foreground border-b-2'
-                        : 'text-muted-foreground hover:text-foreground border-transparent'
+                        ? 'text-primary-foreground border-b-2'
+                        : 'text-primary-foreground/65 hover:text-primary-foreground border-transparent'
                     )}
                     style={
                       isActive
@@ -426,8 +441,8 @@ export function NavBar() {
                 className={cn(
                   'flex items-center gap-1.5 px-3 py-2.5 text-[11px] uppercase tracking-[0.1em] font-semibold transition-colors border-b-2 flex-shrink-0',
                   location.pathname === '/podcast/workflow'
-                    ? 'text-foreground'
-                    : 'text-muted-foreground hover:text-foreground border-transparent'
+                    ? 'text-primary-foreground'
+                    : 'text-primary-foreground/65 hover:text-primary-foreground border-transparent'
                 )}
                 style={
                   location.pathname === '/podcast/workflow'
@@ -445,8 +460,8 @@ export function NavBar() {
               className={cn(
                 'flex items-center gap-1.5 px-3 py-2.5 text-[11px] uppercase tracking-[0.1em] font-semibold transition-colors border-b-2 flex-shrink-0',
                 location.pathname === '/newsroom'
-                  ? 'text-foreground'
-                  : 'text-muted-foreground hover:text-foreground border-transparent'
+                  ? 'text-primary-foreground'
+                  : 'text-primary-foreground/65 hover:text-primary-foreground border-transparent'
               )}
               style={
                 location.pathname === '/newsroom'

@@ -232,7 +232,7 @@ export default function Bulletins() {
       {/* ── Broadsheet masthead ──────────────────────── */}
       <div
         className="relative w-full overflow-hidden"
-        style={{ background: 'hsl(222 39% 10%)' }}
+        style={{ background: 'hsl(150 34% 9%)' }}
       >
         <img
           src="https://images.pexels.com/photos/11341144/pexels-photo-11341144.jpeg?auto=compress&cs=tinysrgb&h=400&w=940"
@@ -245,7 +245,7 @@ export default function Bulletins() {
           className="absolute inset-0"
           style={{
             background:
-              'linear-gradient(90deg, hsl(222 44% 7% / 0.92) 0%, hsl(222 44% 7% / 0.60) 55%, hsl(222 44% 7% / 0.28) 100%)',
+              'linear-gradient(90deg, hsl(150 36% 7% / 0.92) 0%, hsl(150 36% 7% / 0.60) 55%, hsl(150 36% 7% / 0.28) 100%)',
           }}
         />
 
