@@ -1,4 +1,5 @@
 import { useState, useMemo, useEffect } from 'react'
+import { useNavigate } from 'react-router-dom';
 import { Plus, Search, User, Building2, Edit, Trash, Users, MapPin, Globe, CalendarDays, ExternalLink } from 'lucide-react';
 import { motion } from 'framer-motion';
 import { toast } from 'sonner';
@@ -30,12 +31,12 @@ const ROLE_COLORS: Record<PartyRole, string> = {
 };
 
 /* ── Party card ─────────────────────────────────── */
-function PartyCard({ party, onEdit, onDelete }: { party: Party; onEdit: () => void; onDelete: () => void }) {
+function PartyCard({ party, onEdit, onDelete, onOpen }: { party: Party; onEdit: () => void; onDelete: () => void; onOpen: () => void }) {
   const currentYear = new Date().getFullYear();
   const yearsActive = party.started_year ? currentYear - party.started_year : null;
 
   return (
-    <div className="bg-card border border-border/60 rounded-md overflow-hidden flex flex-col hover:border-primary/40 hover:shadow-sm transition-all group">
+    <div onClick={onOpen} role="link" tabIndex={0} onKeyDown={(e) => { if (e.key === 'Enter') onOpen(); }} className="bg-card border border-border/60 rounded-md overflow-hidden flex flex-col hover:border-primary/40 hover:shadow-sm transition-all group cursor-pointer focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring">
       {/* Photo / Avatar area */}
       <div className="relative bg-muted/30 h-40 flex items-center justify-center overflow-hidden">
         {party.photo ? (
@@ -279,6 +280,7 @@ export default function Parties() {
 
   const parties = usePartyStore((s) => s.parties);
   const removeParty = usePartyStore((s) => s.removeParty);
+  const navigate = useNavigate();
 
   const [query, setQuery] = useState('');
   const [roleFilter, setRoleFilter] = useState<PartyRole | 'all'>('all');
@@ -473,6 +475,7 @@ export default function Parties() {
                   party={party}
                   onEdit={() => openEdit(party)}
                   onDelete={() => openDelete(party)}
+                  onOpen={() => navigate(`/parties/${party.id}`)}
                 />
               </motion.div>
             ))}

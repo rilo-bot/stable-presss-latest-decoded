@@ -17,6 +17,8 @@ import {
   podcastEpisodes,
   mediaItems,
   racingEntries,
+  sales,
+  reports,
   nextId,
 } from '@/lib/mockDb';
 
@@ -309,6 +311,58 @@ function handleRacingEntries(method: string, id: string | null, body: Record<str
   return notFound();
 }
 
+// Sales
+function handleSales(method: string, id: string | null, body: Record<string, unknown>): Response {
+  if (method === 'GET' && !id) return ok(sales);
+  if (method === 'GET' && id) {
+    const item = sales.find((s) => s.id === id);
+    return item ? ok(item) : notFound();
+  }
+  if (method === 'POST') {
+    const newItem = { ...body, id: nextId('sale'), createdAt: new Date() };
+    sales.unshift(newItem as typeof sales[0]);
+    return created(newItem);
+  }
+  if (method === 'PUT' && id) {
+    const idx = sales.findIndex((s) => s.id === id);
+    if (idx === -1) return notFound();
+    sales[idx] = { ...sales[idx], ...body };
+    return ok(sales[idx]);
+  }
+  if (method === 'DELETE' && id) {
+    const idx = sales.findIndex((s) => s.id === id);
+    if (idx !== -1) sales.splice(idx, 1);
+    return noContent();
+  }
+  return notFound();
+}
+
+// Reports / Forms
+function handleReports(method: string, id: string | null, body: Record<string, unknown>): Response {
+  if (method === 'GET' && !id) return ok(reports);
+  if (method === 'GET' && id) {
+    const item = reports.find((r) => r.id === id);
+    return item ? ok(item) : notFound();
+  }
+  if (method === 'POST') {
+    const newItem = { ...body, id: nextId('report'), createdAt: new Date() };
+    reports.unshift(newItem as typeof reports[0]);
+    return created(newItem);
+  }
+  if (method === 'PUT' && id) {
+    const idx = reports.findIndex((r) => r.id === id);
+    if (idx === -1) return notFound();
+    reports[idx] = { ...reports[idx], ...body };
+    return ok(reports[idx]);
+  }
+  if (method === 'DELETE' && id) {
+    const idx = reports.findIndex((r) => r.id === id);
+    if (idx !== -1) reports.splice(idx, 1);
+    return noContent();
+  }
+  return notFound();
+}
+
 // ─── Main interceptor ─────────────────────────────────────────────────────────
 
 const originalFetch = globalThis.fetch.bind(globalThis);
@@ -345,6 +399,8 @@ async function mockFetch(input: RequestInfo | URL, init?: RequestInit): Promise<
       case 'podcastEpisodes': return handlePodcasts(method, id, body);
       case 'mediaItems':      return handleMediaItems(method, id, body);
       case 'racingEntries':   return handleRacingEntries(method, id, body);
+      case 'sales':           return handleSales(method, id, body);
+      case 'reports':         return handleReports(method, id, body);
       default:
         return new Response(JSON.stringify({ error: `Unknown resource: ${resource}` }), {
           status: 404,

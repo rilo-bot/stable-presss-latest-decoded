@@ -17,6 +17,12 @@ import { HorsePartyLinkPanel } from '@/components/HorsePartyLinkPanel';
 import { EmptyState } from '@/components/EmptyState';
 import { MediaDataForm } from '@/components/MediaDataForm';
 import { RacingDataForm } from '@/components/RacingDataForm';
+import { SalesDataForm } from '@/components/SalesDataForm';
+import { ReportsDataForm } from '@/components/ReportsDataForm';
+import { useSaleStore } from '@/stores/saleStore';
+import { useReportStore } from '@/stores/reportStore';
+import type { Sale } from '@/types/sale';
+import type { HorseReport } from '@/types/horseReport';
 import { MagazineEditor } from '@/editor/MagazineEditor';
 import { useMagazineStore } from '@/stores/magazineStore';
 import type { Article, ArticleStatus } from '@/types/article';
@@ -188,7 +194,8 @@ type EditorTab =
   | 'assignments'
   | 'approval-routing'
   | 'scheduling'
-  | 'media-library';
+  | 'media-library'
+  | 'horse-records';
 
 interface EditorTabConfig {
   id: EditorTab;
@@ -234,6 +241,13 @@ const EDITOR_TABS: EditorTabConfig[] = [
     description: 'Full media asset management',
     permission: 'media.manage_all',
   },
+  {
+    id: 'horse-records',
+    label: 'Horse Records',
+    icon: <File size={14} />,
+    description: 'Sales & document records for horse profiles',
+    permission: 'media.manage_all',
+  },
 ];
 
 /* ── Component ────────────────────────────────────────── */
@@ -263,6 +277,14 @@ export default function Newsroom() {
   const racingEntries = useRacingEntryStore((s) => s.entries);
   const fetchRacingEntries = useRacingEntryStore((s) => s.fetchEntries);
   const removeRacingEntry = useRacingEntryStore((s) => s.removeEntry);
+
+  const salesRecords = useSaleStore((s) => s.sales);
+  const fetchSales = useSaleStore((s) => s.fetchSales);
+  const removeSale = useSaleStore((s) => s.removeSale);
+  const reportRecords = useReportStore((s) => s.reports);
+  const fetchReports = useReportStore((s) => s.fetchReports);
+  const removeReport = useReportStore((s) => s.removeReport);
+  useEffect(() => { fetchSales(); fetchReports(); }, [fetchSales, fetchReports]);
 
   useEffect(() => { fetchRacingEntries(); }, [fetchRacingEntries]);
 
@@ -309,6 +331,10 @@ export default function Newsroom() {
   // Racing CRM state
   const [racingFormOpen, setRacingFormOpen] = useState(false);
   const [editRacing, setEditRacing] = useState<RacingEntry | undefined>(undefined);
+  const [salesFormOpen, setSalesFormOpen] = useState(false);
+  const [editSale, setEditSale] = useState<Sale | undefined>(undefined);
+  const [reportFormOpen, setReportFormOpen] = useState(false);
+  const [editReport, setEditReport] = useState<HorseReport | undefined>(undefined);
   const [racingSearch, setRacingSearch] = useState('');
   const [racingHorseFilter, setRacingHorseFilter] = useState('');
   const [racingDeleteTarget, setRacingDeleteTarget] = useState<RacingEntry | null>(null);
@@ -1733,6 +1759,77 @@ export default function Newsroom() {
     );
   }
 
+  /* ── Horse Records (Sales & Documents) tab ─────────── */
+
+  function horseName(id: string) {
+    const h = horses.find((x) => x.id === id);
+    return h ? (h.isUnnamed ? 'Un-Named' : h.name) : id;
+  }
+
+  function renderHorseRecords() {
+    return (
+      <div className="space-y-8">
+        {/* Sales */}
+        <div>
+          <div className="flex items-center justify-between mb-3">
+            <div>
+              <p className="text-[10px] uppercase tracking-[0.14em] font-bold text-muted-foreground">Sales Records</p>
+              <p className="text-xs text-muted-foreground/70">Auction & transfer history — surfaces on the horse's Sales Data module.</p>
+            </div>
+            <Button size="sm" className="gap-1.5 text-xs bg-primary text-primary-foreground hover:bg-primary/90" onClick={() => { setEditSale(undefined); setSalesFormOpen(true); }}>
+              <Plus size={13} /> Add Sale
+            </Button>
+          </div>
+          {salesRecords.length === 0 ? (
+            <EmptyState icon={DollarSign} heading="No sale records yet." description="Add auction or transfer records and they will appear on the matching horse profile." ctaLabel="Add Sale" onCta={() => { setEditSale(undefined); setSalesFormOpen(true); }} />
+          ) : (
+            <div className="border border-border/60 rounded-sm overflow-hidden bg-card divide-y divide-border/50">
+              {salesRecords.map((s) => (
+                <div key={s.id} className="flex items-center gap-3 px-4 py-2.5">
+                  <div className="flex-1 min-w-0">
+                    <p className="text-sm font-medium text-foreground truncate">{horseName(s.horse_id)} — {s.venue}{s.lot ? ` · ${s.lot}` : ''}</p>
+                    <p className="text-[11px] text-muted-foreground">{s.sale_type} · {s.sale_date}{s.price ? ` · ${s.currency === 'NZD' ? 'NZ$' : '$'}${s.price.toLocaleString('en-AU')}` : ''}</p>
+                  </div>
+                  <button className="text-xs text-primary hover:underline" onClick={() => { setEditSale(s); setSalesFormOpen(true); }}>Edit</button>
+                  <button className="text-xs text-destructive hover:underline" onClick={() => removeSale(s.id)}>Delete</button>
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+
+        {/* Reports / Forms */}
+        <div>
+          <div className="flex items-center justify-between mb-3">
+            <div>
+              <p className="text-[10px] uppercase tracking-[0.14em] font-bold text-muted-foreground">Reports / Forms</p>
+              <p className="text-xs text-muted-foreground/70">Registration, passport, vet & other documents. Restricted docs show to members only.</p>
+            </div>
+            <Button size="sm" className="gap-1.5 text-xs bg-primary text-primary-foreground hover:bg-primary/90" onClick={() => { setEditReport(undefined); setReportFormOpen(true); }}>
+              <Plus size={13} /> Add Document
+            </Button>
+          </div>
+          {reportRecords.length === 0 ? (
+            <EmptyState icon={File} heading="No documents yet." description="Add registration, passport, or veterinary documents for a horse." ctaLabel="Add Document" onCta={() => { setEditReport(undefined); setReportFormOpen(true); }} />
+          ) : (
+            <div className="border border-border/60 rounded-sm overflow-hidden bg-card divide-y divide-border/50">
+              {reportRecords.map((r) => (
+                <div key={r.id} className="flex items-center gap-3 px-4 py-2.5">
+                  <div className="flex-1 min-w-0">
+                    <p className="text-sm font-medium text-foreground truncate">{horseName(r.horse_id)} — {r.title}</p>
+                    <p className="text-[11px] text-muted-foreground">{r.doc_type} · {r.visibility === 'restricted' ? 'Restricted' : 'Public'}{r.issued_date ? ` · ${r.issued_date}` : ''}</p>
+                  </div>
+                  <button className="text-xs text-primary hover:underline" onClick={() => { setEditReport(r); setReportFormOpen(true); }}>Edit</button>
+                  <button className="text-xs text-destructive hover:underline" onClick={() => removeReport(r.id)}>Delete</button>
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+      </div>
+    );
+  }
+
   /* ── Racing CRM form slide-over ────────────────────── */
 
   function renderRacingFormPanel() {
@@ -2676,6 +2773,7 @@ export default function Newsroom() {
           {activeTab === 'approval-routing' && renderEditorApprovalRouting()}
           {activeTab === 'scheduling' && renderEditorScheduling()}
           {activeTab === 'media-library' && renderEditorMediaLibrary()}
+          {activeTab === 'horse-records' && renderHorseRecords()}
         </div>
       </div>
     );
@@ -3741,6 +3839,20 @@ export default function Newsroom() {
 
       {/* Racing form slide-over */}
       {renderRacingFormPanel()}
+      {salesFormOpen && (
+        <SalesDataForm
+          initial={editSale}
+          onSave={() => { setSalesFormOpen(false); setEditSale(undefined); fetchSales(); }}
+          onCancel={() => { setSalesFormOpen(false); setEditSale(undefined); }}
+        />
+      )}
+      {reportFormOpen && (
+        <ReportsDataForm
+          initial={editReport}
+          onSave={() => { setReportFormOpen(false); setEditReport(undefined); fetchReports(); }}
+          onCancel={() => { setReportFormOpen(false); setEditReport(undefined); }}
+        />
+      )}
 
       {/* Full-screen Magazine Studio editor */}
       {editorMagId && (

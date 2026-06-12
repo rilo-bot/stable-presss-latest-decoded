@@ -1,11 +1,12 @@
 import { useState, useMemo, useEffect } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { useNavigate, Link } from 'react-router-dom';
 import { useHorseStore } from '@/stores/horseStore';
+import { useFollowStore, followerCount } from '@/stores/followStore';
 import { HorseCard } from '@/components/HorseCard';
 import { HorseSkeletonCard } from '@/components/SkeletonCard';
 import { EmptyState } from '@/components/EmptyState';
 import { Input } from '@/components/ui/input';
-import { Search, Plus } from 'lucide-react';
+import { Search, Plus, Heart, ChevronRight } from 'lucide-react';
 import { motion } from 'framer-motion';
 
 export default function HorseProfiles() {
@@ -27,7 +28,14 @@ export default function HorseProfiles() {
     return () => clearTimeout(t);
   }, []);
 
+  const followedIds = useFollowStore((s) => s.followedHorseIds);
+
   const safeHorses = horses ?? [];
+
+  const myStable = useMemo(
+    () => safeHorses.filter((h) => followedIds.includes(h.id)),
+    [safeHorses, followedIds]
+  );
 
   const filtered = useMemo(() => {
     const q = query.toLowerCase().trim();
@@ -89,6 +97,46 @@ export default function HorseProfiles() {
           )}
         </div>
       </div>
+
+      {/* My Stable — followed horses (gamification) */}
+      {!loading && myStable.length > 0 && (
+        <div className="mb-8 rounded-sm border border-primary/20 bg-primary/5 p-4">
+          <div className="flex items-center gap-2 mb-3">
+            <Heart size={13} className="text-primary" fill="hsl(var(--primary))" />
+            <span className="text-[10px] uppercase tracking-[0.16em] font-bold text-primary">
+              My Stable
+            </span>
+            <span className="text-[10px] text-muted-foreground">
+              {myStable.length} followed
+            </span>
+          </div>
+          <div className="flex gap-3 overflow-x-auto pb-1">
+            {myStable.map((h) => (
+              <Link
+                key={h.id}
+                to={`/horses/${h.id}`}
+                className="group flex-shrink-0 w-44 rounded-sm border border-border/60 bg-card hover:border-primary/40 transition-colors overflow-hidden"
+              >
+                <div className="h-20 overflow-hidden bg-muted">
+                  {h.imageUrl && (
+                    <img src={h.imageUrl} alt={h.name} crossOrigin="anonymous" className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-300" />
+                  )}
+                </div>
+                <div className="p-2.5">
+                  <div className="font-[family-name:var(--font-display)] text-sm font-bold text-foreground truncate">{h.name}</div>
+                  <div className="flex items-center justify-between mt-1">
+                    <span className="text-[10px] text-muted-foreground flex items-center gap-1">
+                      <Heart size={9} style={{ color: 'hsl(var(--brand-accent))' }} fill="hsl(var(--brand-accent))" />
+                      {followerCount(h.id, true).toLocaleString('en-AU')}
+                    </span>
+                    <ChevronRight size={12} className="text-muted-foreground group-hover:text-primary transition-colors" />
+                  </div>
+                </div>
+              </Link>
+            ))}
+          </div>
+        </div>
+      )}
 
       {/* Skeleton phase */}
       {loading ? (

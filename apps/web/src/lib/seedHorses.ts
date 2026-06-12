@@ -146,6 +146,9 @@ export const SAVILE_ROW: Horse = {
   colour: 'Dark Bay / Brown',
   country: 'Australia',
 
+  handsSize: 16.2,
+  metricSize: 1.65,
+
   /* ── Section 2: Pedigree (Bloodline) ── */
   sire: 'MAKFI (GB)',
   sireSire: 'DUBAWI (IRE)',
@@ -153,7 +156,23 @@ export const SAVILE_ROW: Horse = {
   dam: 'FLEECE (GB)',
   damYob: 2002,
   damSire: 'DAYLAMI (IRE)',
-  damDam: 'GOLD DODGER (IRE)',
+  damDam: 'GOLD DODGER (USA)',
+  /* Generation 3 — great-grandparents (from the FR pedigree grid) */
+  sireSireSire: 'Dubai Millennium',
+  sireSireDam: 'Zomeradah',
+  sireDamSire: 'Green Desert',
+  sireDamDam: 'Irish Valley',
+  damSireSire: 'Doyoun',
+  damSireDam: 'Daltawa',
+  damDamSire: "Slew o' Gold",
+  damDamDam: "Brooklyn's Dance",
+
+  /* ── Stud Book registry ── */
+  studBook: 'Australian Stud Book',
+  registrationNumber: '2013603145',
+  microchip: '985112003456789',
+  brandFreeze: 'Near shoulder: SR / 13',
+  passportNumber: 'ASB-2013-60314',
 
   /* ── Section 3: Connections — Party ID arrays ── */
   ownerIds: [P_OWNER_MC],

@@ -1,4 +1,5 @@
 import { useMemo, useState, useEffect } from 'react'
+import { motion, AnimatePresence } from 'framer-motion';
 import { useParams, useNavigate, Navigate, Link } from 'react-router-dom';
 import { useHorseStore } from '@/stores/horseStore';
 import { usePartyStore } from '@/stores/partyStore';
@@ -7,15 +8,23 @@ import { useHorsePartyLinkStore } from '@/stores/horsePartyLinkStore';
 import { useMediaStore } from '@/stores/mediaStore';
 import { useRacingEntryStore } from '@/stores/racingEntryStore';
 import { isCurrentLink } from '@/types/horsePartyLink';
+import { useSaleStore } from '@/stores/saleStore';
+import { useReportStore } from '@/stores/reportStore';
+import { useAuthStore } from '@/stores/authStore';
 import type { Party } from '@/types/party';
-import type { MediaItem, MediaType } from '@/types/mediaItem';
-import type { RacingEntry, RaceStatus } from '@/types/racingEntry';
+import type { Horse } from '@/types/horse';
+import type { MediaType } from '@/types/mediaItem';
+import type { RaceStatus } from '@/types/racingEntry';
+import type { ReportVisibility } from '@/types/horseReport';
+import { PedigreeGrid } from '@/components/PedigreeGrid';
+import { FollowButton } from '@/components/FollowButton';
+import { DossierMeter } from '@/components/DossierMeter';
 import {
   ChevronRight, ChevronDown, Camera, BookOpen, Trophy, Star, Newspaper,
   Heart, Flag, User, Users, Briefcase, Shield, FileText, Wand,
   TrendingUp, ShoppingCart, Binary, X, Image, DollarSign, BookMarked, Hash,
   MapPin, UserCheck, Building2, Dumbbell, Contact, SidebarOpen, Plus, Edit,
-  Trash, Link as LinkIcon, ExternalLink, Info,
+  Trash, Link as LinkIcon, ExternalLink, Info, Lock,
 } from 'lucide-react';
 
 /* ─── Fallback panel images (used ONLY when a party has no uploaded photo) ─── */
@@ -44,17 +53,10 @@ const goldStyle: React.CSSProperties = { color: 'var(--gold-bright)', textShadow
 
 interface DataRow { label: string; value: string; }
 
-type HorseData = {
-  name: string; imageUrl?: string; isUnnamed?: boolean;
+type HorseData = Horse & {
   jockeyDisplay: string; trainerDisplay: string; ownerDisplay: string;
   breederDisplay: string; syndicateManagerDisplay: string;
   bloodstockAgentDisplay: string; horseBreakersDisplay: string; personnelDisplay: string;
-  sire?: string; dam?: string; careerRecord?: string; careerWinnings?: number;
-  lastTenForm?: string; seasonRecord?: string; currentRating?: number;
-  sex?: string; dob?: string; colour?: string; country?: string;
-  pedigreeNotes?: string; pullQuote?: string; sireSire?: string; sireDam?: string;
-  damYob?: number; damSire?: string; damDam?: string;
-  ownerSince?: string; trainerSince?: string; handsSize?: number; metricSize?: number;
 };
 
 /* Resolved party for a panel slot */
@@ -238,16 +240,11 @@ function OrnateCrest({ name, subtitle, partyName }: { name: string; subtitle: st
   );
 }
 
-function HeroImage({ horse }: { horse: { name: string; imageUrl?: string } }) {
-  const src = horse.imageUrl || HERO_IMAGE;
+function PedCell({ name, label, strong }: { name?: string; label: string; strong?: boolean }) {
   return (
-    <div style={{ position: 'relative', borderTop: '3px solid var(--gold-mid)', borderBottom: '3px solid var(--gold-mid)', boxShadow: 'inset 0 0 0 3px rgba(0,0,0,0.3)', overflow: 'hidden', background: 'var(--forest-deep)' }}>
-      <img src={src} alt={horse.name} crossOrigin="anonymous" style={{ width: '100%', height: 840, objectFit: 'cover', display: 'block', opacity: 0.92 }} />
-      <div style={{ position: 'absolute', inset: 0, background: 'radial-gradient(ellipse at center, transparent 40%, rgba(0,0,0,0.55) 100%)', pointerEvents: 'none' }} />
-      <div style={{ position: 'absolute', bottom: 0, left: 0, right: 0, background: 'linear-gradient(0deg, rgba(26,51,34,0.92) 0%, rgba(26,51,34,0.6) 70%, transparent 100%)', padding: '28px 16px 12px', ...serifStyle }}>
-        <div style={{ fontSize: '0.55rem', letterSpacing: '0.18em', textTransform: 'uppercase', color: 'var(--gold-bright)', marginBottom: 2 }}>Featured Thoroughbred</div>
-        <div style={{ fontSize: '0.9rem', fontWeight: 700, color: 'var(--parchment)', textShadow: '0 1px 4px rgba(0,0,0,0.8)' }}>{horse.name}</div>
-      </div>
+    <div style={{ flex: 1, minHeight: 0, display: 'flex', flexDirection: 'column', justifyContent: 'center', padding: '3px 8px', border: '1px solid var(--gold-dark)', borderRadius: 2, background: name ? 'rgba(0,0,0,0.04)' : 'rgba(0,0,0,0.015)', boxShadow: 'inset 0 1px 2px rgba(0,0,0,0.06)' }}>
+      <span style={{ fontSize: '0.46rem', textTransform: 'uppercase', letterSpacing: '0.1em', color: 'var(--parchment-shadow)', fontWeight: 700, ...serifStyle }}>{label}</span>
+      <span style={{ fontSize: strong ? '0.72rem' : '0.6rem', fontWeight: strong ? 700 : 600, color: name ? 'var(--forest-deep)' : 'var(--parchment-shadow)', fontStyle: name ? 'normal' : 'italic', lineHeight: 1.15, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', ...serifStyle }}>{name || '—'}</span>
     </div>
   );
 }
@@ -1205,41 +1202,74 @@ function BreedingSection({ horse, onClose, partyContext }: { horse: HorseData; o
   );
 }
 
+function fmtMoney(amount?: number, currency = 'AUD'): string {
+  if (amount === undefined || amount === null) return '—';
+  return `${currency === 'NZD' ? 'NZ$' : '$'}${amount.toLocaleString('en-AU')}`;
+}
+
 function SalesSection({ horse, onClose, partyContext }: { horse: HorseData; onClose: () => void; partyContext: PartyContext }) {
+  const allSales = useSaleStore((s) => s.sales);
+  const fetchSales = useSaleStore((s) => s.fetchSales);
+  const allParties = usePartyStore((s) => s.parties);
+  useEffect(() => { fetchSales(); }, [fetchSales]);
+
+  const horseSales = useMemo(
+    () => allSales.filter((s) => s.horse_id === horse.id).sort((a, b) => b.sale_date.localeCompare(a.sale_date)),
+    [allSales, horse.id],
+  );
+
+  const isOwnerContext = partyContext.isPartyContext && partyContext.roleLabel === 'Owner';
+  const sales = useMemo(() => {
+    if (!isOwnerContext) return horseSales;
+    return horseSales.filter((s) => s.buyer_party_id && partyContext.partyIds.includes(s.buyer_party_id));
+  }, [horseSales, isOwnerContext, partyContext]);
+
   const contextName = partyContext.primaryParty?.party.name;
-  const primary = partyContext.primaryParty;
+  const topPrice = horseSales.reduce((m, s) => (s.price && s.price > m ? s.price : m), 0);
+
   return (
     <SectionPanel title="Sales Data" icon={<ShoppingCart size={14} strokeWidth={1.8} style={{ color: 'var(--gold-bright)' }} />} imgKey="sales" onClose={onClose}>
       <PartyContextBanner partyContext={partyContext} onClear={onClose} />
-      <dl style={{ margin: 0, padding: 0 }}>
-        <SRow label="Horse Name" value={horse.isUnnamed ? 'Un-Named' : horse.name} />
-        {partyContext.isPartyContext && <SRow label="Party" value={contextName ?? '—'} />}
-        <SRow label="Current Owner" value={horse.ownerDisplay || '—'} />
-        <SRow label="Sale Status" value="Not listed" />
-        <SRow label="Asking Price" value="—" />
-        <SRow label="Bloodstock Agent" value={horse.bloodstockAgentDisplay || '—'} />
-      </dl>
-      {partyContext.isPartyContext && primary && partyContext.roleLabel === 'Owner' && (
-        <>
-          <SectionHeading>Owner Acquisition</SectionHeading>
-          <dl style={{ margin: 0, padding: 0 }}>
-            <SRow label="Owner" value={primary.party.name} />
-            {primary.startDate && <SRow label="Owner Since" value={fmtDate(primary.startDate)} />}
-            {primary.endDate && <SRow label="Owner Until" value={fmtDate(primary.endDate)} />}
-            <SRow label="Status" value={primary.isCurrent ? 'Current' : 'Past'} />
-          </dl>
-        </>
+      <SRow label="Horse" value={horse.isUnnamed ? 'Un-Named' : horse.name} />
+      <SRow label="Sale Records" value={String(sales.length)} />
+      {isOwnerContext && <SRow label="Horse Total" value={String(horseSales.length)} />}
+      {topPrice > 0 && <SRow label="Top Price" value={fmtMoney(topPrice)} highlight />}
+
+      {sales.length === 0 ? (
+        <div style={{ marginTop: 12, padding: '20px 14px', background: 'rgba(0,0,0,0.03)', border: '1px solid var(--parchment-dark)', borderRadius: 3, textAlign: 'center' }}>
+          <ShoppingCart size={28} style={{ color: 'var(--parchment-dark)', display: 'block', margin: '0 auto 8px' }} />
+          <p style={{ fontSize: '0.72rem', fontStyle: 'italic', color: 'var(--parchment-shadow)', marginBottom: 4 }}>
+            {isOwnerContext ? `No purchases by ${contextName} on file.` : `No sales history on file for ${horse.name} yet.`}
+          </p>
+          <p style={{ fontSize: '0.62rem', color: 'var(--parchment-shadow)' }}>Sales records are managed through the Stable Press CRM.</p>
+        </div>
+      ) : (
+        <ul style={{ listStyle: 'none', padding: 0, margin: '12px 0 0' }}>
+          {sales.map((sale, idx) => {
+            const buyerName = sale.buyer_party_id ? allParties.find((p) => p.id === sale.buyer_party_id)?.name : undefined;
+            return (
+              <li key={sale.id} style={{ borderBottom: idx < sales.length - 1 ? '1px solid var(--parchment-dark)' : undefined, padding: '10px 0' }}>
+                <div style={{ display: 'flex', alignItems: 'flex-start', gap: 8, marginBottom: 5 }}>
+                  <span style={{ background: 'linear-gradient(90deg,#3d2d20,#5a4030)', color: 'var(--gold-bright)', fontSize: '0.5rem', fontWeight: 700, letterSpacing: '0.08em', textTransform: 'uppercase', padding: '2px 7px', borderRadius: 2, border: '1px solid rgba(255,224,154,0.2)', flexShrink: 0, marginTop: 1 }}>{sale.sale_type}</span>
+                  <div style={{ flex: 1, minWidth: 0 }}>
+                    <div style={{ fontSize: '0.76rem', fontWeight: 700, color: 'var(--forest-deep)', lineHeight: 1.3, ...serifStyle }}>{sale.venue}{sale.lot ? ` · ${sale.lot}` : ''}</div>
+                    {sale.price !== undefined && <div style={{ fontSize: '0.74rem', color: 'var(--gold-dark)', fontWeight: 700, marginTop: 1 }}>{fmtMoney(sale.price, sale.currency)}</div>}
+                  </div>
+                </div>
+                <div style={{ display: 'flex', flexWrap: 'wrap', gap: '4px 12px', fontSize: '0.58rem', color: 'var(--parchment-shadow)' }}>
+                  <span style={{ display: 'flex', alignItems: 'center', gap: 3 }}><DollarSign size={9} style={{ color: 'var(--gold-dark)', flexShrink: 0 }} />{fmtDate(sale.sale_date)}</span>
+                  {sale.vendor && <span><span style={{ color: 'var(--gold-dark)' }}>· </span>Vendor: {sale.vendor}</span>}
+                  {buyerName && <span><span style={{ color: 'var(--gold-dark)' }}>· </span>Buyer: {buyerName}</span>}
+                </div>
+                {sale.notes && <div style={{ fontSize: '0.62rem', color: 'var(--forest-mid)', fontStyle: 'italic', marginTop: 3, lineHeight: 1.4 }}>{sale.notes}</div>}
+              </li>
+            );
+          })}
+        </ul>
       )}
-      <SectionHeading>Auction History</SectionHeading>
-      <dl style={{ margin: 0, padding: 0 }}>
-        <SRow label="Last Sale Price" value="Not on file" />
-        <SRow label="Sale Venue" value="Not on file" />
-        <SRow label="Sale Year" value="Not on file" />
-        <SRow label="Buyer" value={horse.ownerDisplay || '—'} />
-      </dl>
       <div style={{ marginTop: 12, padding: '10px 12px', background: 'rgba(0,0,0,0.04)', border: '1px solid var(--parchment-dark)', borderRadius: 3, display: 'flex', alignItems: 'center', gap: 8 }}>
         <DollarSign size={14} style={{ color: 'var(--gold-mid)', flexShrink: 0 }} />
-        <span style={{ fontSize: '0.64rem', color: 'var(--parchment-shadow)', fontStyle: 'italic' }}>No full sales history on file. Records will appear here once a transaction is registered.</span>
+        <span style={{ fontSize: '0.64rem', color: 'var(--parchment-shadow)', fontStyle: 'italic' }}>Sales &amp; auction records are managed through the Stable Press CRM.</span>
       </div>
     </SectionPanel>
   );
@@ -1259,14 +1289,13 @@ function PedigreeSection({ horse, onClose, partyContext }: { horse: HorseData; o
         </div>
       )}
       {horse.pullQuote && <blockquote style={{ borderLeft: '3px solid var(--gold-mid)', paddingLeft: 10, marginBottom: 12, fontStyle: 'italic', fontSize: '0.78rem', color: 'var(--forest-deep)', lineHeight: 1.5 }}>"{horse.pullQuote}"</blockquote>}
+      {hasFamilyTree && (
+        <div style={{ marginBottom: 12 }}>
+          <PedigreeGrid horse={horse} />
+        </div>
+      )}
       <dl style={{ margin: 0, padding: 0 }}>
-        <SRow label="Sire (Father)" value={horse.sire || '—'} />
-        <SRow label="Sire's Sire" value={horse.sireSire || '—'} />
-        <SRow label="Sire's Dam" value={horse.sireDam || '—'} />
-        <SRow label="Dam (Mother)" value={horse.dam || '—'} />
         <SRow label="Dam YOB" value={horse.damYob ? String(horse.damYob) : '—'} />
-        <SRow label="Dam's Sire" value={horse.damSire || '—'} />
-        <SRow label="Dam's Dam" value={horse.damDam || '—'} />
       </dl>
       {horse.pedigreeNotes && <><SectionHeading>Pedigree Notes</SectionHeading><p style={{ fontSize: '0.72rem', color: 'var(--forest-mid)', lineHeight: 1.6 }}>{horse.pedigreeNotes}</p></>}
       {!hasFamilyTree && !horse.pedigreeNotes && <div style={{ marginTop: 12, padding: '10px 12px', background: 'rgba(0,0,0,0.04)', border: '1px solid var(--parchment-dark)', borderRadius: 3, display: 'flex', alignItems: 'center', gap: 8 }}><BookMarked size={14} style={{ color: 'var(--gold-mid)', flexShrink: 0 }} /><span style={{ fontSize: '0.64rem', color: 'var(--parchment-shadow)', fontStyle: 'italic' }}>No pedigree data on file.</span></div>}
@@ -1293,17 +1322,98 @@ function StudBookSection({ horse, onClose, partyContext }: { horse: HorseData; o
       </dl>
       <SectionHeading>Registry Details</SectionHeading>
       <dl style={{ margin: 0, padding: 0 }}>
-        <SRow label="Stud Book" value="Australian Stud Book" />
-        <SRow label="Registration No." value="Not on file" />
-        <SRow label="Microchip" value="Not on file" />
-        <SRow label="Brand / Freeze" value="Not on file" />
-        <SRow label="Passport No." value="Not on file" />
+        <SRow label="Stud Book" value={horse.studBook || 'Australian Stud Book'} />
+        <SRow label="Registration No." value={horse.registrationNumber || 'Not on file'} highlight={!!horse.registrationNumber} />
+        <SRow label="Microchip" value={horse.microchip || 'Not on file'} />
+        <SRow label="Brand / Freeze" value={horse.brandFreeze || 'Not on file'} />
+        <SRow label="Passport No." value={horse.passportNumber || 'Not on file'} />
       </dl>
       <div style={{ marginTop: 12, padding: '10px 12px', background: 'rgba(0,0,0,0.04)', border: '1px solid var(--parchment-dark)', borderRadius: 3, display: 'flex', alignItems: 'center', gap: 8 }}>
         <MapPin size={14} style={{ color: 'var(--gold-mid)', flexShrink: 0 }} />
         <span style={{ fontSize: '0.64rem', color: 'var(--parchment-shadow)', fontStyle: 'italic' }}>Official stud book registration details as held by Racing Australia.</span>
       </div>
     </SectionPanel>
+  );
+}
+
+/* ─── REPORTS / FORMS SECTION ─── */
+function ReportsSection({ horse, onClose }: { horse: HorseData; onClose: () => void }) {
+  const allReports = useReportStore((s) => s.reports);
+  const fetchReports = useReportStore((s) => s.fetchReports);
+  const currentUser = useAuthStore((s) => s.currentUser);
+  useEffect(() => { fetchReports(); }, [fetchReports]);
+
+  const horseReports = useMemo(
+    () => allReports.filter((r) => r.horse_id === horse.id),
+    [allReports, horse.id],
+  );
+
+  // Restricted documents only show to authenticated users.
+  const visible = useMemo(
+    () => horseReports.filter((r) => (r.visibility as ReportVisibility) === 'public' || !!currentUser),
+    [horseReports, currentUser],
+  );
+  const hiddenCount = horseReports.length - visible.length;
+
+  return (
+    <ProfileDetailPanel title="Reports / Forms" icon={<FileText size={14} strokeWidth={1.8} style={{ color: 'var(--gold-bright)' }} />} imgSrc={DATA_CARD_IMAGES.studbook} onClose={onClose}>
+      <SRow label="Horse" value={horse.isUnnamed ? 'Un-Named' : horse.name} />
+      <SRow label="Documents" value={String(visible.length)} />
+
+      {visible.length === 0 ? (
+        <div style={{ marginTop: 12, padding: '20px 14px', background: 'rgba(0,0,0,0.03)', border: '1px solid var(--parchment-dark)', borderRadius: 3, textAlign: 'center' }}>
+          <FileText size={28} style={{ color: 'var(--parchment-dark)', display: 'block', margin: '0 auto 8px' }} />
+          <p style={{ fontSize: '0.72rem', fontStyle: 'italic', color: 'var(--parchment-shadow)' }}>No documents on file for {horse.name}.</p>
+        </div>
+      ) : (
+        <ul style={{ listStyle: 'none', padding: 0, margin: '12px 0 0' }}>
+          {visible.map((r, idx) => {
+            const restricted = (r.visibility as ReportVisibility) === 'restricted';
+            const hasLink = r.url || r.file_name;
+            return (
+              <li key={r.id} style={{ borderBottom: idx < visible.length - 1 ? '1px solid var(--parchment-dark)' : undefined, padding: '10px 0' }}>
+                <div style={{ display: 'flex', alignItems: 'flex-start', gap: 8, marginBottom: 4 }}>
+                  <span style={{ background: 'linear-gradient(90deg,#2d5a3d,#3a7050)', color: 'var(--gold-bright)', fontSize: '0.5rem', fontWeight: 700, letterSpacing: '0.08em', textTransform: 'uppercase', padding: '2px 7px', borderRadius: 2, border: '1px solid rgba(255,224,154,0.2)', flexShrink: 0, marginTop: 1 }}>{r.doc_type}</span>
+                  <div style={{ flex: 1, minWidth: 0 }}>
+                    <div style={{ fontSize: '0.76rem', fontWeight: 700, color: 'var(--forest-deep)', lineHeight: 1.3, ...serifStyle, display: 'flex', alignItems: 'center', gap: 5 }}>
+                      {restricted && <Lock size={10} style={{ color: 'var(--gold-dark)', flexShrink: 0 }} />}
+                      {r.title}
+                    </div>
+                    <div style={{ display: 'flex', flexWrap: 'wrap', gap: '4px 12px', fontSize: '0.58rem', color: 'var(--parchment-shadow)', marginTop: 2 }}>
+                      {r.issuing_body && <span>{r.issuing_body}</span>}
+                      {r.issued_date && <span><span style={{ color: 'var(--gold-dark)' }}>· </span>{fmtDate(r.issued_date)}</span>}
+                      {restricted && <span style={{ color: 'var(--gold-dark)', textTransform: 'uppercase', letterSpacing: '0.08em' }}>· Restricted</span>}
+                    </div>
+                  </div>
+                </div>
+                {hasLink && (
+                  <div style={{ marginTop: 4 }}>
+                    {r.url ? (
+                      <a href={r.url} target={r.url.startsWith('/') ? '_self' : '_blank'} rel="noopener noreferrer" style={{ display: 'inline-flex', alignItems: 'center', gap: 4, fontSize: '0.6rem', color: 'var(--forest-mid)', textDecoration: 'none', background: 'rgba(0,0,0,0.04)', border: '1px solid var(--parchment-dark)', borderRadius: 2, padding: '2px 7px' }}>
+                        <ExternalLink size={9} style={{ color: 'var(--gold-dark)', flexShrink: 0 }} />Open document
+                      </a>
+                    ) : (
+                      <span style={{ display: 'inline-flex', alignItems: 'center', gap: 4, fontSize: '0.6rem', color: 'var(--forest-mid)', background: 'rgba(0,0,0,0.04)', border: '1px solid var(--parchment-dark)', borderRadius: 2, padding: '2px 7px' }}>
+                        <LinkIcon size={9} style={{ color: 'var(--gold-dark)', flexShrink: 0 }} />{r.file_name}
+                      </span>
+                    )}
+                  </div>
+                )}
+              </li>
+            );
+          })}
+        </ul>
+      )}
+
+      {hiddenCount > 0 && !currentUser && (
+        <div style={{ marginTop: 12, padding: '10px 12px', background: 'rgba(180,140,30,0.08)', border: '1px solid var(--gold-dark)', borderRadius: 3, display: 'flex', alignItems: 'center', gap: 8 }}>
+          <Lock size={14} style={{ color: 'var(--gold-mid)', flexShrink: 0 }} />
+          <span style={{ fontSize: '0.64rem', color: 'var(--parchment-shadow)', fontStyle: 'italic' }}>
+            {hiddenCount} restricted document{hiddenCount !== 1 ? 's' : ''} hidden — sign in as an authorised member to view.
+          </span>
+        </div>
+      )}
+    </ProfileDetailPanel>
   );
 }
 
@@ -1353,6 +1463,17 @@ export default function HorseDetail() {
   const allParties = usePartyStore((s) => s.parties);
   const articles = useArticleStore((s) => s.articles);
   const allLinks = useHorsePartyLinkStore((s) => s.links);
+
+  // Pulled for the dossier-completeness meter (stores guard against double-fetch)
+  const fetchMedia = useMediaStore((s) => s.fetchItems);
+  const mediaItems = useMediaStore((s) => s.items);
+  const fetchRacing = useRacingEntryStore((s) => s.fetchEntries);
+  const racingEntries = useRacingEntryStore((s) => s.entries);
+  const fetchSales = useSaleStore((s) => s.fetchSales);
+  const sales = useSaleStore((s) => s.sales);
+  const fetchReports = useReportStore((s) => s.fetchReports);
+  const reports = useReportStore((s) => s.reports);
+  useEffect(() => { fetchMedia(); fetchRacing(); fetchSales(); fetchReports(); }, [fetchMedia, fetchRacing, fetchSales, fetchReports]);
 
   const rawHorse = useMemo(() => horses.find((h) => h.id === id), [horses, id]);
   const linkedArticles = useMemo(() => articles.filter((a) => a.linkedHorseIds?.includes(id) && a.status === 'published'), [articles, id]);
@@ -1459,6 +1580,18 @@ export default function HorseDetail() {
   const activePanel = leftPanel ?? rightPanel;
 
   const handleLeftPanelClick = (key: string) => {
+    // Re-point the whole screen to the connected party's own profile when we
+    // have a structured party; fall back to the in-page panel for free-text.
+    const partyForKey: Record<string, PanelParty | undefined> = {
+      left_owner: ownerParties[0],
+      left_breeder: breederParties[0],
+      left_trainer: trainerParties[0],
+      left_jockey: jockeyParties[0],
+      left_syndicate: syndicateParties[0],
+      left_personnel: agentParties[0] ?? syndicateParties[0] ?? personnelParties[0],
+    };
+    const target = partyForKey[key];
+    if (target) { navigate(`/parties/${target.party.id}`); return; }
     setLeftPanel((prev) => (prev === key ? null : key));
   };
 
@@ -1575,6 +1708,31 @@ export default function HorseDetail() {
 
   const horseName = horse.isUnnamed ? 'Un-Named' : horse.name;
 
+  // ── Dossier completeness (gamification) ──
+  const hasStudBook = !!(rawHorse?.registrationNumber || rawHorse?.microchip || rawHorse?.passportNumber || rawHorse?.brandFreeze);
+  const hasFamilyTreeMain = !!(rawHorse?.sire || rawHorse?.dam || rawHorse?.sireSire || rawHorse?.damSire);
+  const dossierFlags = [
+    ownerParties.length > 0,
+    breederParties.length > 0,
+    trainerParties.length > 0,
+    jockeyParties.length > 0,
+    (agentParties.length + syndicateParties.length + personnelParties.length) > 0,
+    hasFamilyTreeMain,
+    mediaItems.filter((m) => m.horse_id === id).length > 0,
+    racingEntries.filter((e) => e.horse_id === id).length > 0,
+    sales.filter((s) => s.horse_id === id).length > 0,
+    hasStudBook,
+    reports.filter((r) => r.horse_id === id).length > 0,
+    linkedArticles.length > 0,
+  ];
+  const dossierFilled = dossierFlags.filter(Boolean).length;
+  const dossierTotal = dossierFlags.length;
+
+  // Size string (hands + metric) for the crest subtitle
+  const sizeStr = rawHorse?.handsSize
+    ? `${rawHorse.handsSize}hh${rawHorse.metricSize ? ` · ${rawHorse.metricSize}m` : ''}`
+    : undefined;
+
   const closeLeft = () => setLeftPanel(null);
   const closeRight = () => setRightPanel(null);
 
@@ -1597,6 +1755,7 @@ export default function HorseDetail() {
         case 'sales':    return <SalesSection horse={horse} onClose={closeRight} partyContext={partyContext} />;
         case 'pedigree': return <PedigreeSection horse={horse} onClose={closeRight} partyContext={partyContext} />;
         case 'studbook': return <StudBookSection horse={horse} onClose={closeRight} partyContext={partyContext} />;
+        case 'reports':  return <ReportsSection horse={horse} onClose={closeRight} />;
       }
     }
     return null;
@@ -1614,6 +1773,7 @@ export default function HorseDetail() {
       case 'sales':    return <SalesSection horse={horse} onClose={closeRight} partyContext={partyContext} />;
       case 'pedigree': return <PedigreeSection horse={horse} onClose={closeRight} partyContext={partyContext} />;
       case 'studbook': return <StudBookSection horse={horse} onClose={closeRight} partyContext={partyContext} />;
+      case 'reports':  return <ReportsSection horse={horse} onClose={closeRight} />;
       default: return null;
     }
   };
@@ -1630,13 +1790,14 @@ export default function HorseDetail() {
       return map[leftPanel] ?? leftPanel;
     }
     if (rightPanel) {
+      if (rightPanel === 'reports') return 'Reports / Forms';
       return dataCategories.find((c) => c.key === rightPanel)?.label ?? rightPanel;
     }
     return null;
   })();
 
   return (
-    <div style={{ background: 'linear-gradient(180deg, var(--forest-deep) 0%, #111e17 100%)', minHeight: '100vh', padding: '0 0 48px' }}>
+    <div className="horse-page">
       {/* Breadcrumb */}
       <div style={{ background: 'linear-gradient(90deg, var(--forest-deep) 0%, var(--forest-mid) 100%)', borderBottom: '2px solid var(--gold-dark)', padding: '8px 20px', display: 'flex', alignItems: 'center', gap: 6, ...serifStyle }}>
         <button onClick={() => navigate('/horses')} style={{ fontSize: '0.62rem', textTransform: 'uppercase', letterSpacing: '0.12em', color: 'var(--gold-mid)', background: 'none', border: 'none', cursor: 'pointer', ...serifStyle }} onMouseEnter={(e) => { (e.currentTarget as HTMLElement).style.color = 'var(--gold-bright)'; }} onMouseLeave={(e) => { (e.currentTarget as HTMLElement).style.color = 'var(--gold-mid)'; }}>Thoroughbreds</button>
@@ -1656,10 +1817,10 @@ export default function HorseDetail() {
       </div>
 
       {/* 3-column grid */}
-      <div style={{ display: 'grid', gridTemplateColumns: 'minmax(200px, 260px) 1fr minmax(130px, 160px)', gap: 16, padding: '20px 20px 0', maxWidth: 1320, margin: '0 auto', alignItems: 'start' }}>
+      <div className="horse-grid">
 
         {/* LEFT — Profile Data */}
-        <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
+        <div className="horse-col" style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
           <div style={{ borderBottom: '2px solid var(--gold-dark)', paddingBottom: 6, marginBottom: 2, display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
             <span style={{ fontSize: '0.58rem', letterSpacing: '0.2em', textTransform: 'uppercase', color: 'var(--gold-bright)', fontWeight: 700, ...serifStyle }}>Profile Data</span>
             <span style={{ fontSize: '0.5rem', color: 'var(--gold-dark)', ...serifStyle }}>✦</span>
@@ -1672,9 +1833,9 @@ export default function HorseDetail() {
           <DataPanel title="Jockey(s) Data" icon={<Flag size={12} strokeWidth={1.8} />} rows={jockeyRows} badge={jockeyParties.length > 0 ? `${jockeyParties.length} rides` : 'All Rides'} imgSrc={jockeyImg} primaryName={horse.jockeyDisplay || 'Not Recorded'} secondaryLine={jockeySecondary} panelKey="left_jockey" activePanel={leftPanel} onPanelClick={handleLeftPanelClick} />
           <DataPanel title="Syndicate Manager" icon={<Shield size={12} strokeWidth={1.8} />} rows={syndicateMgrRows} imgSrc={syndicateImg} primaryName={horse.syndicateManagerDisplay || 'Not Recorded'} secondaryLine={syndicateSecondary} panelKey="left_syndicate" activePanel={leftPanel} onPanelClick={handleLeftPanelClick} />
 
-          <button onClick={() => {}} aria-label="Reports and Forms" style={{ marginTop: 2, width: '100%', border: '2px solid var(--gold-dark)', borderRadius: 4, overflow: 'hidden', cursor: 'pointer', boxShadow: '0 0 0 1px var(--gold-dark), 0 3px 10px rgba(0,0,0,0.4)', display: 'flex', flexDirection: 'column', background: 'none', padding: 0, ...serifStyle }}>
+          <button onClick={() => handleRightPanelClick('reports')} aria-label="Reports and Forms" aria-pressed={rightPanel === 'reports'} style={{ marginTop: 2, width: '100%', border: `2px solid ${rightPanel === 'reports' ? 'var(--gold-bright)' : 'var(--gold-dark)'}`, borderRadius: 4, overflow: 'hidden', cursor: 'pointer', boxShadow: rightPanel === 'reports' ? '0 0 0 1px var(--gold-bright), 0 4px 16px rgba(180,140,30,0.35)' : '0 0 0 1px var(--gold-dark), 0 3px 10px rgba(0,0,0,0.4)', display: 'flex', flexDirection: 'column', background: 'none', padding: 0, ...serifStyle }}>
             <div style={{ background: 'linear-gradient(180deg, var(--forest-mid) 0%, var(--forest-deep) 100%)', boxShadow: '0 2px 4px rgba(0,0,0,0.4), inset 0 1px 0 rgba(255,255,255,0.06)', padding: '6px 10px', display: 'flex', alignItems: 'center', gap: 6 }}><FileText size={12} strokeWidth={1.8} style={{ color: 'var(--gold-bright)' }} /><span style={{ fontSize: '0.58rem', letterSpacing: '0.14em', textTransform: 'uppercase', fontWeight: 700, color: 'var(--gold-bright)', textShadow: '0 1px 2px rgba(0,0,0,0.7)' }}>Reports / Forms</span></div>
-            <div style={{ background: 'var(--parchment)', padding: '8px 11px', display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}><span style={{ fontSize: '0.64rem', color: 'var(--forest-deep)', fontWeight: 600, fontStyle: 'italic', ...serifStyle }}>Official documents &amp; reports</span><ChevronRight size={13} style={{ color: 'var(--gold-mid)', flexShrink: 0 }} /></div>
+            <div style={{ background: 'var(--parchment)', padding: '8px 11px', display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}><span style={{ fontSize: '0.64rem', color: 'var(--forest-deep)', fontWeight: 600, fontStyle: 'italic', ...serifStyle }}>Official documents &amp; reports</span>{rightPanel === 'reports' ? <X size={13} style={{ color: 'var(--gold-mid)', flexShrink: 0 }} /> : <ChevronRight size={13} style={{ color: 'var(--gold-mid)', flexShrink: 0 }} />}</div>
           </button>
           <button onClick={() => navigate('/horses')} className="sku-gold-btn" style={{ marginTop: 4, padding: '7px 0', width: '100%', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 6, ...serifStyle }}>
             <ChevronRight size={12} style={{ color: 'var(--forest-deep)', transform: 'rotate(180deg)' }} />
@@ -1683,13 +1844,18 @@ export default function HorseDetail() {
         </div>
 
         {/* CENTER */}
-        <div style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
+        <div className="horse-col" style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
           <div className="sku-gold-card">
             <OrnateCrest
               name={horseName}
-              subtitle={[horse.sex, horse.colour, horse.country, horse.dob ? new Date(horse.dob).getFullYear() + ' foal' : undefined].filter(Boolean).join(' · ')}
+              subtitle={[horse.sex, horse.colour, sizeStr, horse.country, horse.dob ? new Date(horse.dob).getFullYear() + ' foal' : undefined].filter(Boolean).join(' · ')}
               partyName={crestPartyName}
             />
+            {/* Gamification bar: Follow + dossier completeness */}
+            <div style={{ background: 'linear-gradient(180deg, var(--forest-mid) 0%, var(--forest-deep) 100%)', borderTop: '2px solid var(--gold-dark)', padding: '10px 14px', display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12, flexWrap: 'wrap' }}>
+              <FollowButton horseId={horse.id} />
+              <DossierMeter filled={dossierFilled} total={dossierTotal} />
+            </div>
           </div>
 
           {anythingOpen ? (
@@ -1698,7 +1864,17 @@ export default function HorseDetail() {
                 <PartyHeroImage imgSrc={partyHeroMeta.imgSrc} partyName={partyHeroMeta.partyName} roleLabel={partyHeroMeta.roleLabel} secondaryLine={partyHeroMeta.secondaryLine} onClose={closeLeft} />
               )}
 
-              {centreContent}
+              <AnimatePresence mode="wait">
+                <motion.div
+                  key={activePanel ?? 'none'}
+                  initial={{ opacity: 0, y: 8, scale: 0.99 }}
+                  animate={{ opacity: 1, y: 0, scale: 1 }}
+                  exit={{ opacity: 0 }}
+                  transition={{ duration: 0.2, ease: 'easeOut' }}
+                >
+                  {centreContent}
+                </motion.div>
+              </AnimatePresence>
 
               {leftPanel && rightSectionContent && (
                 <div style={{ marginTop: 4 }}>
@@ -1711,16 +1887,95 @@ export default function HorseDetail() {
             </>
           ) : (
             <>
-              {/* Default view: horse image only — no tables, no stats, no listed data below */}
-              <div style={{ border: '3px solid var(--gold-mid)', boxShadow: '0 0 0 1px var(--gold-dark), 0 6px 24px rgba(0,0,0,0.7)', borderRadius: 4, overflow: 'hidden' }}>
-                <HeroImage horse={horse} />
+              {/* Identity card + Pedigree preview row (matches FR reference) */}
+              <div style={{ display: 'grid', gridTemplateColumns: '0.85fr 1.15fr', gap: 14, alignItems: 'stretch' }}>
+                {/* Identity card */}
+                <div className="sku-gold-card" style={{ ...serifStyle, display: 'flex', flexDirection: 'column' }}>
+                  <div className="sku-green-header" style={{ padding: '7px 12px', textAlign: 'center' }}>
+                    <span style={{ ...goldStyle, fontSize: '0.9rem', fontWeight: 700, letterSpacing: '0.04em', ...serifStyle }}>{horseName}</span>
+                  </div>
+                  <div className="sku-parchment" style={{ padding: '10px 14px', flex: 1, display: 'flex', flexDirection: 'column', justifyContent: 'center' }}>
+                    {[
+                      { label: 'DOB', value: horse.dob ? fmtDate(horse.dob) : '—' },
+                      { label: 'Sex', value: horse.sex || '—' },
+                      { label: 'Colour', value: horse.colour || '—' },
+                      ...(sizeStr ? [{ label: 'Size', value: sizeStr }] : []),
+                      { label: 'Country', value: horse.country || '—' },
+                    ].map(({ label, value }, i, arr) => (
+                      <div key={label} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline', borderBottom: i < arr.length - 1 ? '1px solid var(--parchment-shadow)' : undefined, paddingBottom: 5, marginBottom: 5, gap: 8 }}>
+                        <dt style={{ fontSize: '0.56rem', textTransform: 'uppercase', letterSpacing: '0.1em', color: 'var(--parchment-shadow)', fontWeight: 700, flexShrink: 0 }}>{label}</dt>
+                        <dd style={{ fontSize: '0.72rem', color: 'var(--forest-deep)', fontWeight: 700, textAlign: 'right', margin: 0 }}>{value}</dd>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+
+                {/* Pedigree preview */}
+                <div className="sku-gold-card" style={{ ...serifStyle, display: 'flex', flexDirection: 'column' }}>
+                  <div className="sku-green-header" style={{ padding: '7px 12px', display: 'flex', alignItems: 'center', gap: 6 }}>
+                    <BookMarked size={12} style={{ color: 'var(--gold-bright)' }} />
+                    <span style={{ ...goldStyle, fontSize: '0.6rem', letterSpacing: '0.14em', textTransform: 'uppercase', fontWeight: 700 }}>Pedigree of {horseName}</span>
+                  </div>
+                  <div className="sku-parchment" style={{ padding: 8, flex: 1, display: 'flex', flexDirection: 'column', justifyContent: 'center' }}>
+                    {hasFamilyTreeMain ? (
+                      <div style={{ display: 'flex', height: '100%', minHeight: 96 }}>
+                        {/* Sire branch */}
+                        <div style={{ flex: 1, display: 'flex', flexDirection: 'column', gap: 4 }}>
+                          <PedCell name={horse.sire} label="Sire" strong />
+                          <PedCell name={horse.sireSire} label="Sire's Sire" />
+                          <PedCell name={horse.sireDam} label="Sire's Dam" />
+                        </div>
+                        {/* Dam branch */}
+                        <div style={{ flex: 1, display: 'flex', flexDirection: 'column', gap: 4, marginLeft: 6 }}>
+                          <PedCell name={horse.dam} label="Dam" strong />
+                          <PedCell name={horse.damSire} label="Dam's Sire" />
+                          <PedCell name={horse.damDam} label="Dam's Dam" />
+                        </div>
+                      </div>
+                    ) : (
+                      <p style={{ fontSize: '0.68rem', fontStyle: 'italic', color: 'var(--parchment-shadow)', textAlign: 'center', margin: 'auto' }}>Pedigree not on file.</p>
+                    )}
+                  </div>
+                </div>
+              </div>
+
+              {/* Horse photo — fixed, prominent height; page scrolls if needed */}
+              <div style={{ height: 'clamp(300px, 44vh, 500px)', minHeight: 300, position: 'relative', border: '3px solid var(--gold-mid)', boxShadow: '0 0 0 1px var(--gold-dark), 0 6px 24px rgba(0,0,0,0.7)', borderRadius: 4, overflow: 'hidden', background: 'var(--forest-deep)' }}>
+                <img src={horse.imageUrl || HERO_IMAGE} alt={horseName} crossOrigin="anonymous" style={{ position: 'absolute', inset: 0, width: '100%', height: '100%', objectFit: 'cover', display: 'block' }} />
+                <div style={{ position: 'absolute', inset: 0, background: 'radial-gradient(ellipse at center, transparent 45%, rgba(0,0,0,0.5) 100%)', pointerEvents: 'none' }} />
+                <div style={{ position: 'absolute', bottom: 0, left: 0, right: 0, background: 'linear-gradient(0deg, rgba(26,51,34,0.92) 0%, rgba(26,51,34,0.55) 65%, transparent 100%)', padding: '24px 16px 10px', ...serifStyle }}>
+                  <div style={{ fontSize: '0.5rem', letterSpacing: '0.18em', textTransform: 'uppercase', color: 'var(--gold-bright)', marginBottom: 2 }}>Featured Thoroughbred</div>
+                  <div style={{ fontSize: '0.9rem', fontWeight: 700, color: 'var(--parchment)', textShadow: '0 1px 4px rgba(0,0,0,0.8)' }}>{horseName}</div>
+                </div>
+              </div>
+
+              {/* Racing Summary */}
+              <div className="sku-gold-card" style={{ ...serifStyle }}>
+                <div className="sku-green-header" style={{ padding: '7px 12px', display: 'flex', alignItems: 'center', gap: 6 }}>
+                  <Trophy size={12} style={{ color: 'var(--gold-bright)' }} />
+                  <span style={{ ...goldStyle, fontSize: '0.6rem', letterSpacing: '0.16em', textTransform: 'uppercase', fontWeight: 700 }}>Racing Summary</span>
+                </div>
+                <div className="sku-parchment" style={{ padding: '10px 12px', display: 'grid', gridTemplateColumns: 'repeat(5, 1fr)', gap: 6 }}>
+                  {[
+                    { label: 'Career', value: horse.careerRecord || '—' },
+                    { label: 'Winnings', value: horse.careerWinnings ? '$' + horse.careerWinnings.toLocaleString('en-AU') : '—' },
+                    { label: 'Last 10', value: horse.lastTenForm || '—' },
+                    { label: 'Season', value: horse.seasonRecord || '—' },
+                    { label: 'Rating', value: horse.currentRating ? String(horse.currentRating) : '—' },
+                  ].map((s) => (
+                    <div key={s.label} style={{ textAlign: 'center', padding: '4px 2px', borderRight: s.label !== 'Rating' ? '1px solid var(--parchment-dark)' : undefined }}>
+                      <div style={{ fontSize: '0.78rem', fontWeight: 700, color: 'var(--forest-deep)', ...serifStyle, lineHeight: 1.1, wordBreak: 'break-word' }}>{s.value}</div>
+                      <div style={{ fontSize: '0.5rem', textTransform: 'uppercase', letterSpacing: '0.1em', color: 'var(--parchment-shadow)', fontWeight: 700, marginTop: 3 }}>{s.label}</div>
+                    </div>
+                  ))}
+                </div>
               </div>
             </>
           )}
         </div>
 
         {/* RIGHT — Data Sections */}
-        <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
+        <div className="horse-col" style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
           <div style={{ borderBottom: '2px solid var(--gold-dark)', paddingBottom: 6, marginBottom: 2, display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
             <span style={{ fontSize: '0.58rem', letterSpacing: '0.2em', textTransform: 'uppercase', color: 'var(--gold-bright)', fontWeight: 700, ...serifStyle }}>Data Sections</span>
             <span style={{ fontSize: '0.5rem', color: 'var(--gold-dark)', ...serifStyle }}>✦</span>
@@ -1753,7 +2008,31 @@ export default function HorseDetail() {
         </div>
       </div>
 
-      <style>{`@media (max-width: 900px) { .horse-detail-grid { grid-template-columns: 1fr !important; } }`}</style>
+      <style>{`
+        .horse-page {
+          background: linear-gradient(180deg, var(--forest-deep) 0%, #111e17 100%);
+          min-height: calc(100vh - var(--navbar-h, 112px));
+          display: flex;
+          flex-direction: column;
+        }
+        .horse-grid {
+          display: grid;
+          grid-template-columns: minmax(200px, 260px) 1fr minmax(130px, 170px);
+          gap: 16px;
+          padding: 14px 20px 32px;
+          max-width: 1320px;
+          margin: 0 auto;
+          width: 100%;
+          flex: 1;
+          align-items: start;
+        }
+        .horse-col {
+          min-width: 0;
+        }
+        @media (max-width: 900px) {
+          .horse-grid { grid-template-columns: 1fr; }
+        }
+      `}</style>
     </div>
   );
 }

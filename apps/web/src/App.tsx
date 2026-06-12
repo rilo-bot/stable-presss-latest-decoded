@@ -29,6 +29,7 @@ import Newsletter from '@/pages/Newsletter';
 import Bulletins from '@/pages/Bulletins';
 import BulletinViewer from '@/pages/BulletinViewer';
 import Parties from '@/pages/Parties';
+import PartyDetail from '@/pages/PartyDetail';
 
 /* Inject Google Fonts for vintage skeuomorphic horse dashboard */
 function useVintageFonts() {
@@ -177,6 +178,14 @@ export default function App() {
           element={
             <AppLayout>
               <Parties />
+            </AppLayout>
+          }
+        />
+        <Route
+          path="/parties/:id"
+          element={
+            <AppLayout>
+              <PartyDetail />
             </AppLayout>
           }
         />

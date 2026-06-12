@@ -48,6 +48,21 @@ const empty = (): FormData => ({
   damYob: undefined,
   damSire: '',
   damDam: '',
+  // Generation 3 — great-grandparents
+  sireSireSire: '',
+  sireSireDam: '',
+  sireDamSire: '',
+  sireDamDam: '',
+  damSireSire: '',
+  damSireDam: '',
+  damDamSire: '',
+  damDamDam: '',
+  // Stud Book registry
+  studBook: '',
+  registrationNumber: '',
+  microchip: '',
+  brandFreeze: '',
+  passportNumber: '',
   // Party ID arrays
   ownerIds: [],
   trainerIds: [],
@@ -534,6 +549,19 @@ export function HorseForm({ open, onClose, editHorse }: HorseFormProps) {
               damYob: editHorse.damYob,
               damSire: editHorse.damSire ?? '',
               damDam: editHorse.damDam ?? '',
+              sireSireSire: editHorse.sireSireSire ?? '',
+              sireSireDam: editHorse.sireSireDam ?? '',
+              sireDamSire: editHorse.sireDamSire ?? '',
+              sireDamDam: editHorse.sireDamDam ?? '',
+              damSireSire: editHorse.damSireSire ?? '',
+              damSireDam: editHorse.damSireDam ?? '',
+              damDamSire: editHorse.damDamSire ?? '',
+              damDamDam: editHorse.damDamDam ?? '',
+              studBook: editHorse.studBook ?? '',
+              registrationNumber: editHorse.registrationNumber ?? '',
+              microchip: editHorse.microchip ?? '',
+              brandFreeze: editHorse.brandFreeze ?? '',
+              passportNumber: editHorse.passportNumber ?? '',
               // Party IDs
               ownerIds: editHorse.ownerIds ?? [],
               trainerIds: editHorse.trainerIds ?? [],
@@ -918,6 +946,59 @@ export function HorseForm({ open, onClose, editHorse }: HorseFormProps) {
                       placeholder="e.g. Danehill Lady"
                       className="text-sm"
                     />
+                  </div>
+                </div>
+              </div>
+
+              {/* Great-grandparents (generation 3) */}
+              <div className="mt-4">
+                <Label className="text-[11px] font-semibold uppercase tracking-[0.08em] text-muted-foreground">
+                  Great-Grandparents <span className="text-[9px] font-normal normal-case">(generation 3 — optional)</span>
+                </Label>
+                <div className="grid grid-cols-2 md:grid-cols-4 gap-3 mt-2">
+                  {([
+                    ['sireSireSire', "Sire's Sire's Sire"],
+                    ['sireSireDam', "Sire's Sire's Dam"],
+                    ['sireDamSire', "Sire's Dam's Sire"],
+                    ['sireDamDam', "Sire's Dam's Dam"],
+                    ['damSireSire', "Dam's Sire's Sire"],
+                    ['damSireDam', "Dam's Sire's Dam"],
+                    ['damDamSire', "Dam's Dam's Sire"],
+                    ['damDamDam', "Dam's Dam's Dam"],
+                  ] as const).map(([key, label]) => (
+                    <div key={key} className="space-y-1">
+                      <Label className="text-[10px] text-muted-foreground">{label}</Label>
+                      <Input value={(form[key] as string) ?? ''} onChange={(e) => setField(key, e.target.value)} className="text-xs" />
+                    </div>
+                  ))}
+                </div>
+              </div>
+
+              {/* Stud Book registry */}
+              <div className="mt-5 pt-4 border-t border-border/50">
+                <Label className="text-[11px] font-semibold uppercase tracking-[0.08em] text-muted-foreground">
+                  Stud Book Registry
+                </Label>
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-3 mt-2">
+                  <div className="space-y-1">
+                    <Label htmlFor="horse-studbook" className="text-[10px] text-muted-foreground">Stud Book</Label>
+                    <Input id="horse-studbook" value={form.studBook ?? ''} onChange={(e) => setField('studBook', e.target.value)} placeholder="Australian Stud Book" className="text-xs" />
+                  </div>
+                  <div className="space-y-1">
+                    <Label htmlFor="horse-regno" className="text-[10px] text-muted-foreground">Registration No.</Label>
+                    <Input id="horse-regno" value={form.registrationNumber ?? ''} onChange={(e) => setField('registrationNumber', e.target.value)} className="text-xs" />
+                  </div>
+                  <div className="space-y-1">
+                    <Label htmlFor="horse-microchip" className="text-[10px] text-muted-foreground">Microchip</Label>
+                    <Input id="horse-microchip" value={form.microchip ?? ''} onChange={(e) => setField('microchip', e.target.value)} className="text-xs" />
+                  </div>
+                  <div className="space-y-1">
+                    <Label htmlFor="horse-passport" className="text-[10px] text-muted-foreground">Passport No.</Label>
+                    <Input id="horse-passport" value={form.passportNumber ?? ''} onChange={(e) => setField('passportNumber', e.target.value)} className="text-xs" />
+                  </div>
+                  <div className="space-y-1 md:col-span-2">
+                    <Label htmlFor="horse-brand" className="text-[10px] text-muted-foreground">Brand / Freeze Mark</Label>
+                    <Input id="horse-brand" value={form.brandFreeze ?? ''} onChange={(e) => setField('brandFreeze', e.target.value)} className="text-xs" />
                   </div>
                 </div>
               </div>

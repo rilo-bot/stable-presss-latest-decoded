@@ -51,6 +51,8 @@ import partiesRouter from './routes/parties.js'
 import podcastEpisodesRouter from './routes/podcastEpisodes.js'
 import racesRouter from './routes/races.js'
 import tipsRouter from './routes/tips.js'
+import salesRouter from './routes/sales.js'
+import reportsRouter from './routes/reports.js'
 app.use('/api/auth', authRouter)
 app.use('/api/articles', articlesRouter)
 app.use('/api/horses', horsesRouter)
@@ -59,6 +61,8 @@ app.use('/api/parties', partiesRouter)
 app.use('/api/podcastEpisodes', podcastEpisodesRouter)
 app.use('/api/races', racesRouter)
 app.use('/api/tips', tipsRouter)
+app.use('/api/sales', salesRouter)
+app.use('/api/reports', reportsRouter)
 // === end auto-mounted routers ===
 
 

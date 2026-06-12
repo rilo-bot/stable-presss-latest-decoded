@@ -12,6 +12,8 @@ import type { PodcastEpisode } from '@/types/podcast';
 import type { HorsePartyLink } from '@/types/horsePartyLink';
 import type { MediaItem } from '@/types/mediaItem';
 import type { RacingEntry } from '@/types/racingEntry';
+import type { Sale } from '@/types/sale';
+import type { HorseReport } from '@/types/horseReport';
 import { SEED_HORSES, SEED_PARTIES_ALL } from '@/lib/seedAll';
 
 // ─── Counter for ID generation ───────────────────────────────────────────────
@@ -654,6 +656,92 @@ export const mediaItems: MediaItem[] = [
     url: 'https://images.pexels.com/photos/1995842/pexels-photo-1995842.jpeg',
     featured_party_ids: ['seed-party-charlie-whitfield-001'],
     linked_article_id: 'art-009',
+  },
+];
+
+// ─── Sales ──────────────────────────────────────────────────────────────────
+export const sales: Sale[] = [
+  {
+    id: 'sale-001',
+    createdAt: new Date('2021-08-15T00:00:00Z'),
+    horse_id: 'seed-savile-row-001',
+    sale_date: '2021-08-15',
+    sale_type: 'Yearling Sale',
+    venue: 'Magic Millions Gold Coast',
+    lot: 'Lot 412',
+    price: 420000,
+    currency: 'AUD',
+    buyer_party_id: 'seed-party-michael-christian-001',
+    vendor: 'Newgate Stud',
+    notes: 'Knocked down to Porter Pelchen Bloodstock on behalf of the Christian family.',
+  },
+  {
+    id: 'sale-002',
+    createdAt: new Date('2020-05-10T00:00:00Z'),
+    horse_id: 'seed-savile-row-001',
+    sale_date: '2020-05-10',
+    sale_type: 'Weanling Sale',
+    venue: 'Inglis Easter',
+    lot: 'Lot 88',
+    price: 165000,
+    currency: 'AUD',
+    vendor: 'Trelawny Stud',
+  },
+  {
+    id: 'sale-003',
+    createdAt: new Date('2022-11-01T00:00:00Z'),
+    horse_id: 'seed-desert-queen-001',
+    sale_date: '2022-11-01',
+    sale_type: 'Yearling Sale',
+    venue: 'Karaka Book 1',
+    lot: 'Lot 204',
+    price: 280000,
+    currency: 'NZD',
+    vendor: "O'Shea Bloodstock",
+  },
+];
+
+// ─── Reports / Forms ──────────────────────────────────────────────────────────
+export const reports: HorseReport[] = [
+  {
+    id: 'report-001',
+    createdAt: new Date('2013-10-01T00:00:00Z'),
+    horse_id: 'seed-savile-row-001',
+    doc_type: 'Registration',
+    title: 'Australian Stud Book Certificate of Registration',
+    issued_date: '2013-10-01',
+    issuing_body: 'Racing Australia',
+    visibility: 'public',
+  },
+  {
+    id: 'report-002',
+    createdAt: new Date('2025-08-01T00:00:00Z'),
+    horse_id: 'seed-savile-row-001',
+    doc_type: 'Passport',
+    title: 'Thoroughbred Identification Passport',
+    issued_date: '2014-01-15',
+    issuing_body: 'Racing Australia',
+    visibility: 'public',
+  },
+  {
+    id: 'report-003',
+    createdAt: new Date('2025-09-08T00:00:00Z'),
+    horse_id: 'seed-savile-row-001',
+    doc_type: 'Vet Report',
+    title: 'Pre-Cox Plate Veterinary Soundness Examination',
+    issued_date: '2025-09-08',
+    issuing_body: 'Flemington Equine Clinic',
+    visibility: 'restricted',
+  },
+  {
+    id: 'report-004',
+    createdAt: new Date('2025-09-10T00:00:00Z'),
+    horse_id: 'seed-savile-row-001',
+    doc_type: 'X-Ray / Scan',
+    title: 'Off-fore fetlock radiograph series',
+    issued_date: '2025-09-10',
+    issuing_body: 'Flemington Equine Clinic',
+    visibility: 'restricted',
   },
 ];
 

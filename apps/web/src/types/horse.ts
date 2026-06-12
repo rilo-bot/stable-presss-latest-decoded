@@ -20,6 +20,22 @@ export interface Horse {
   damYob?: number;
   damSire?: string;
   damDam?: string;
+  /* Generation 3 — great-grandparents (all optional, back-compatible) */
+  sireSireSire?: string;
+  sireSireDam?: string;
+  sireDamSire?: string;
+  sireDamDam?: string;
+  damSireSire?: string;
+  damSireDam?: string;
+  damDamSire?: string;
+  damDamDam?: string;
+
+  /* ── Stud Book registry (1:1 with the horse) ── */
+  studBook?: string;
+  registrationNumber?: string;
+  microchip?: string;
+  brandFreeze?: string;
+  passportNumber?: string;
 
   /* ── Section 3: Connections & Personnel — Party ID references ── */
   /**
