@@ -62,7 +62,7 @@ export function RaceCard({ race, userTip, onTipped }: RaceCardProps) {
     ? race.entrants.find((e) => e.horseId === race.winnerHorseId)
     : null;
 
-  const handlePlaceTip = () => {
+  const handlePlaceTip = async () => {
     if (!currentUser) {
       toast.error('You must be signed in to place a tip.');
       return;
@@ -79,9 +79,9 @@ export function RaceCard({ race, userTip, onTipped }: RaceCardProps) {
 
     setIsSubmitting(true);
     // Ensure profile exists before placing
-    getOrCreateProfile(currentUser.id, currentUser.displayName);
+    await getOrCreateProfile(currentUser.id, currentUser.displayName);
 
-    const result = placeTip(
+    const result = await placeTip(
       currentUser.id,
       currentUser.displayName,
       race.id,

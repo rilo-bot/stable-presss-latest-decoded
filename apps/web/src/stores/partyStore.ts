@@ -1,6 +1,6 @@
 import { create } from 'zustand';
 import type { Party } from '@/types/party';
-import { apiUrl } from '@/lib/api';
+import { authFetch } from '@/lib/api';
 import { toast } from 'sonner';
 
 interface PartyState {
@@ -24,7 +24,7 @@ export const usePartyStore = create<PartyState>()((set, get) => ({
     if (get().loading || get().loaded) return;
     set({ loading: true, error: null });
     try {
-      const res = await fetch(apiUrl('/api/parties'));
+      const res = await authFetch('/api/parties');
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
       const parties = await res.json();
       set({ parties, loading: false, loaded: true });
@@ -37,7 +37,7 @@ export const usePartyStore = create<PartyState>()((set, get) => ({
 
   addParty: async (party) => {
     try {
-      const res = await fetch(apiUrl('/api/parties'), {
+      const res = await authFetch('/api/parties', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(party),
@@ -60,7 +60,7 @@ export const usePartyStore = create<PartyState>()((set, get) => ({
       parties: state.parties.map((p) => (p.id === id ? { ...p, ...updates } : p)),
     }));
     try {
-      const res = await fetch(apiUrl(`/api/parties/${id}`), {
+      const res = await authFetch(`/api/parties/${id}`, {
         method: 'PUT',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(updates),
@@ -81,7 +81,7 @@ export const usePartyStore = create<PartyState>()((set, get) => ({
     const previous = get().parties;
     set((state) => ({ parties: state.parties.filter((p) => p.id !== id) }));
     try {
-      const res = await fetch(apiUrl(`/api/parties/${id}`), { method: 'DELETE' });
+      const res = await authFetch(`/api/parties/${id}`, { method: 'DELETE' });
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
     } catch (err) {
       const message = err instanceof Error ? err.message : 'Could not delete the party — restoring it';

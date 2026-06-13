@@ -1,28 +1,9 @@
 import { create } from 'zustand';
 import type { Race, Tip, TipperProfile, RaceEntrant } from '@/types/tip';
-import { apiUrl } from '@/lib/api';
+import { authFetch } from '@/lib/api';
 import { toast } from 'sonner';
 
 const STARTING_BALANCE = 500;
-
-// ─── Seed leaderboard profiles ────────────────────────────────────────────────
-// These dummy tippers populate the leaderboard on first load.
-const SEED_PROFILES: TipperProfile[] = [
-  { userId: 'demo-tipper-1',  displayName: 'HorseWhisperer88',    coinBalance: 1840, totalWon: 2340, totalWagered: 1000, tipsPlaced: 12 },
-  { userId: 'demo-tipper-2',  displayName: 'FlemingtonFrank',      coinBalance: 1620, totalWon: 1920, totalWagered: 800,  tipsPlaced: 10 },
-  { userId: 'demo-tipper-3',  displayName: 'RacingRosie',          coinBalance: 2080, totalWon: 2760, totalWagered: 1100, tipsPlaced: 17 },
-  { userId: 'demo-tipper-4',  displayName: 'CaulfielderKing',      coinBalance: 1250, totalWon: 1450, totalWagered: 700,  tipsPlaced: 9  },
-  { userId: 'demo-tipper-5',  displayName: 'TheBloodstockBoss',    coinBalance: 980,  totalWon: 1280, totalWagered: 800,  tipsPlaced: 11 },
-  { userId: 'demo-tipper-6',  displayName: 'MooneeValleyMike',     coinBalance: 1140, totalWon: 1520, totalWagered: 780,  tipsPlaced: 9  },
-  { userId: 'demo-tipper-7',  displayName: 'DesertQueenFan',       coinBalance: 1390, totalWon: 1588, totalWagered: 700,  tipsPlaced: 13 },
-  { userId: 'demo-tipper-8',  displayName: 'SprintSpecialist',     coinBalance: 610,  totalWon: 810,  totalWagered: 700,  tipsPlaced: 6  },
-  { userId: 'demo-tipper-9',  displayName: 'NorthernStarNancy',    coinBalance: 1720, totalWon: 2100, totalWagered: 880,  tipsPlaced: 14 },
-  { userId: 'demo-tipper-10', displayName: 'BrisbanePunter',       coinBalance: 890,  totalWon: 1090, totalWagered: 700,  tipsPlaced: 8  },
-  { userId: 'demo-tipper-11', displayName: 'IronMonarchIan',       coinBalance: 1430, totalWon: 1930, totalWagered: 1000, tipsPlaced: 16 },
-  { userId: 'demo-tipper-12', displayName: 'SaddleClothSarah',     coinBalance: 760,  totalWon: 960,  totalWagered: 700,  tipsPlaced: 7  },
-  { userId: 'demo-tipper-13', displayName: 'WetTrackWalter',       coinBalance: 2240, totalWon: 2940, totalWagered: 1100, tipsPlaced: 19 },
-  { userId: 'demo-tipper-14', displayName: 'SpringCarnivalSteve',  coinBalance: 1080, totalWon: 1380, totalWagered: 800,  tipsPlaced: 10 },
-];
 
 interface TippingState {
   races: Race[];
@@ -34,7 +15,7 @@ interface TippingState {
 
   // Actions
   fetchRaces: () => Promise<void>;
-  getOrCreateProfile: (userId: string, displayName: string) => TipperProfile;
+  getOrCreateProfile: (userId: string, displayName: string) => Promise<TipperProfile>;
   placeTip: (
     userId: string,
     displayName: string,
@@ -50,19 +31,27 @@ export const useTippingStore = create<TippingState>()(
   (set, get) => ({
     races: [],
     tips: [],
-    profiles: SEED_PROFILES,
+    profiles: [],
     loading: false,
     error: null,
     loaded: false,
 
+    // Loads everything the tipping ring needs from the real backend: open races,
+    // all placed tips, and the persisted tipper leaderboard.
     fetchRaces: async () => {
       if (get().loading || get().loaded) return;
       set({ loading: true, error: null });
       try {
-        const res = await fetch(apiUrl('/api/races'));
-        if (!res.ok) throw new Error(`HTTP ${res.status}`);
-        const races = await res.json();
-        set({ races, loading: false, loaded: true });
+        const [racesRes, tipsRes, profilesRes] = await Promise.all([
+          authFetch('/api/races'),
+          authFetch('/api/tips'),
+          authFetch('/api/tipperProfiles'),
+        ]);
+        if (!racesRes.ok) throw new Error(`HTTP ${racesRes.status}`);
+        const races = await racesRes.json();
+        const tips = tipsRes.ok ? await tipsRes.json() : [];
+        const profiles = profilesRes.ok ? await profilesRes.json() : [];
+        set({ races, tips, profiles, loading: false, loaded: true });
       } catch (err) {
         const message = err instanceof Error ? err.message : 'Failed to load races';
         set({ loading: false, error: message });
@@ -70,19 +59,37 @@ export const useTippingStore = create<TippingState>()(
       }
     },
 
-    getOrCreateProfile: (userId, displayName) => {
+    // Returns the user's persisted profile, creating it on the backend if needed.
+    getOrCreateProfile: async (userId, displayName) => {
       const existing = get().profiles.find((p) => p.userId === userId);
-      if (existing) return existing;
-      const newProfile: TipperProfile = {
-        userId,
-        displayName,
-        coinBalance: STARTING_BALANCE,
-        totalWon: 0,
-        totalWagered: 0,
-        tipsPlaced: 0,
-      };
-      set((state) => ({ profiles: [...state.profiles, newProfile] }));
-      return newProfile;
+      if (existing?.id) return existing;
+      try {
+        const res = await authFetch('/api/tipperProfiles', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            userId,
+            displayName,
+            coinBalance: STARTING_BALANCE,
+            totalWon: 0,
+            totalWagered: 0,
+            tipsPlaced: 0,
+          }),
+        });
+        if (!res.ok) throw new Error(`HTTP ${res.status}`);
+        const profile: TipperProfile = await res.json();
+        set((s) => ({
+          profiles: [...s.profiles.filter((p) => p.userId !== userId), profile],
+        }));
+        return profile;
+      } catch {
+        // Offline / unauthenticated fallback — local-only profile (no id).
+        const fallback: TipperProfile = {
+          userId, displayName, coinBalance: STARTING_BALANCE, totalWon: 0, totalWagered: 0, tipsPlaced: 0,
+        };
+        set((s) => ({ profiles: [...s.profiles.filter((p) => p.userId !== userId), fallback] }));
+        return fallback;
+      }
     },
 
     placeTip: async (userId, displayName, raceId, entrant, wager) => {
@@ -94,24 +101,11 @@ export const useTippingStore = create<TippingState>()(
       if (!race) return { ok: false, error: 'Race not found.' };
       if (race.status !== 'open') return { ok: false, error: 'This race is not open for tipping.' };
 
-      const existing = state.tips.find(
-        (t) => t.userId === userId && t.raceId === raceId
-      );
-      if (existing) return { ok: false, error: 'You have already placed a tip on this race.' };
-
-      let profile = state.profiles.find((p) => p.userId === userId);
-      const isNewProfile = !profile;
-      if (!profile) {
-        profile = {
-          userId,
-          displayName,
-          coinBalance: STARTING_BALANCE,
-          totalWon: 0,
-          totalWagered: 0,
-          tipsPlaced: 0,
-        };
+      if (state.tips.find((t) => t.userId === userId && t.raceId === raceId)) {
+        return { ok: false, error: 'You have already placed a tip on this race.' };
       }
 
+      const profile = await get().getOrCreateProfile(userId, displayName);
       if (profile.coinBalance < wager) {
         return { ok: false, error: 'Insufficient coins in your balance.' };
       }
@@ -127,7 +121,7 @@ export const useTippingStore = create<TippingState>()(
       };
 
       try {
-        const res = await fetch(apiUrl('/api/tips'), {
+        const res = await authFetch('/api/tips', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
@@ -137,18 +131,30 @@ export const useTippingStore = create<TippingState>()(
             horseId: entrant.horseId,
             wager,
             odds: entrant.odds,
+            payout: null,
+            result: 'pending',
           }),
         });
         if (!res.ok) throw new Error(`HTTP ${res.status}`);
         const newTip: Tip = await res.json();
 
-        set((state) => ({
-          tips: [...state.tips, newTip],
-          profiles: isNewProfile
-            ? [...state.profiles, updatedProfile]
-            : state.profiles.map((p) => (p.userId === userId ? updatedProfile : p)),
-        }));
+        // Persist the debited balance (best-effort — profile already exists).
+        if (updatedProfile.id) {
+          await authFetch(`/api/tipperProfiles/${updatedProfile.id}`, {
+            method: 'PUT',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              coinBalance: updatedProfile.coinBalance,
+              totalWagered: updatedProfile.totalWagered,
+              tipsPlaced: updatedProfile.tipsPlaced,
+            }),
+          });
+        }
 
+        set((s) => ({
+          tips: [...s.tips, newTip],
+          profiles: s.profiles.map((p) => (p.userId === userId ? updatedProfile : p)),
+        }));
         return { ok: true };
       } catch (err) {
         const message = err instanceof Error ? err.message : 'Failed to place tip';
@@ -167,16 +173,15 @@ export const useTippingStore = create<TippingState>()(
       const previousTips = state.tips;
       const previousProfiles = state.profiles;
 
-      // Optimistically update
+      // Compute results + payouts.
       const raceTips = state.tips.filter((t) => t.raceId === raceId);
       const updatedTipsMap = new Map<string, Tip>();
       raceTips.forEach((tip) => {
         const won = tip.horseId === winnerHorseId;
-        const payout = won ? Math.floor(tip.wager * tip.odds) : 0;
         updatedTipsMap.set(tip.id, {
           ...tip,
           result: won ? 'won' : 'lost',
-          payout,
+          payout: won ? Math.floor(tip.wager * tip.odds) : 0,
         });
       });
 
@@ -187,37 +192,51 @@ export const useTippingStore = create<TippingState>()(
         }
       });
 
-      set((state) => ({
-        races: state.races.map((r) =>
+      const creditedProfiles = state.profiles.map((p) => {
+        const credit = profileCredits[p.userId] ?? 0;
+        if (credit <= 0) return p;
+        return { ...p, coinBalance: p.coinBalance + credit, totalWon: p.totalWon + credit };
+      });
+
+      // Optimistic update.
+      set((s) => ({
+        races: s.races.map((r) =>
           r.id === raceId ? { ...r, status: 'resolved' as const, winnerHorseId } : r
         ),
-        tips: state.tips.map((t) => updatedTipsMap.get(t.id) ?? t),
-        profiles: state.profiles.map((p) => {
-          const credit = profileCredits[p.userId] ?? 0;
-          if (credit <= 0) return p;
-          return {
-            ...p,
-            coinBalance: p.coinBalance + credit,
-            totalWon: p.totalWon + credit,
-          };
-        }),
+        tips: s.tips.map((t) => updatedTipsMap.get(t.id) ?? t),
+        profiles: creditedProfiles,
       }));
 
       try {
-        const res = await fetch(apiUrl(`/api/races/${raceId}`), {
-          method: 'PUT',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ winnerHorseId }),
-        });
-        if (!res.ok) throw new Error(`HTTP ${res.status}`);
-        const updatedRace: Race = await res.json();
-        set((state) => ({
-          races: state.races.map((r) => (r.id === raceId ? updatedRace : r)),
-        }));
+        await Promise.all([
+          // The race result.
+          authFetch(`/api/races/${raceId}`, {
+            method: 'PUT',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ winnerHorseId }),
+          }).then((r) => { if (!r.ok) throw new Error(`HTTP ${r.status}`); }),
+          // Each tip's result/payout.
+          ...Array.from(updatedTipsMap.values()).map((tip) =>
+            authFetch(`/api/tips/${tip.id}`, {
+              method: 'PUT',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ result: tip.result, payout: tip.payout }),
+            })
+          ),
+          // Each credited tipper's new balance.
+          ...creditedProfiles
+            .filter((p) => (profileCredits[p.userId] ?? 0) > 0 && p.id)
+            .map((p) =>
+              authFetch(`/api/tipperProfiles/${p.id}`, {
+                method: 'PUT',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ coinBalance: p.coinBalance, totalWon: p.totalWon }),
+              })
+            ),
+        ]);
       } catch (err) {
-        const message = err instanceof Error ? err.message : 'Failed to resolve race';
-        set({ races: previousRaces, tips: previousTips, profiles: previousProfiles, error: message });
-        toast.error(`Could not resolve race — rolling back changes`);
+        set({ races: previousRaces, tips: previousTips, profiles: previousProfiles });
+        toast.error('Could not resolve race — rolling back changes');
       }
     },
 

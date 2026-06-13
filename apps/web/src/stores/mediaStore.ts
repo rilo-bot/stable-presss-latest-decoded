@@ -1,7 +1,7 @@
 import { create } from 'zustand';
 import { toast } from 'sonner';
 import type { MediaItem } from '@/types/mediaItem';
-import { apiUrl } from '@/lib/api';
+import { authFetch } from '@/lib/api';
 
 interface MediaState {
   items: MediaItem[];
@@ -24,7 +24,7 @@ export const useMediaStore = create<MediaState>()((set, get) => ({
     if (get().loading || get().loaded) return;
     set({ loading: true, error: null });
     try {
-      const res = await fetch(apiUrl('/api/mediaItems'));
+      const res = await authFetch('/api/mediaItems');
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
       const items = await res.json();
       set({ items, loading: false, loaded: true });
@@ -37,7 +37,7 @@ export const useMediaStore = create<MediaState>()((set, get) => ({
 
   addItem: async (item) => {
     try {
-      const res = await fetch(apiUrl('/api/mediaItems'), {
+      const res = await authFetch('/api/mediaItems', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(item),
@@ -60,7 +60,7 @@ export const useMediaStore = create<MediaState>()((set, get) => ({
       items: state.items.map((m) => (m.id === id ? { ...m, ...updates } : m)),
     }));
     try {
-      const res = await fetch(apiUrl(`/api/mediaItems/${id}`), {
+      const res = await authFetch(`/api/mediaItems/${id}`, {
         method: 'PUT',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(updates),
@@ -81,7 +81,7 @@ export const useMediaStore = create<MediaState>()((set, get) => ({
     const previous = get().items;
     set((state) => ({ items: state.items.filter((m) => m.id !== id) }));
     try {
-      const res = await fetch(apiUrl(`/api/mediaItems/${id}`), { method: 'DELETE' });
+      const res = await authFetch(`/api/mediaItems/${id}`, { method: 'DELETE' });
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
       toast.success('Media record removed');
     } catch (err) {

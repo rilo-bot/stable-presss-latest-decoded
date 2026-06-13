@@ -54,15 +54,30 @@ declare global {
   }
 }
 
-/** Reject requests without a valid Bearer token; attaches req.user otherwise. */
-export function requireAuth(req: Request, res: Response, next: NextFunction): void {
+/** Extract a valid Bearer token's claims, or null. */
+function claimsFromHeader(req: Request): TokenClaims | null {
   const header = req.headers.authorization ?? ''
   const token = header.startsWith('Bearer ') ? header.slice(7).trim() : ''
-  const claims = token ? verifyToken(token) : null
+  return token ? verifyToken(token) : null
+}
+
+/** Reject requests without a valid Bearer token; attaches req.user otherwise. */
+export function requireAuth(req: Request, res: Response, next: NextFunction): void {
+  const claims = claimsFromHeader(req)
   if (!claims) {
     res.status(401).json({ error: 'Authentication required' })
     return
   }
   req.user = claims
+  next()
+}
+
+/**
+ * Attach req.user if a valid token is present, but never reject. Lets a route
+ * serve anonymous and authenticated callers differently (e.g. hide drafts).
+ */
+export function optionalAuth(req: Request, _res: Response, next: NextFunction): void {
+  const claims = claimsFromHeader(req)
+  if (claims) req.user = claims
   next()
 }

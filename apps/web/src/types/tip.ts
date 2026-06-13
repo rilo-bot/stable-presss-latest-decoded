@@ -37,6 +37,8 @@ export interface Tip {
 }
 
 export interface TipperProfile {
+  /** Backend record id (present once persisted to /api/tipperProfiles). */
+  id?: string;
   userId: string;
   displayName: string;
   coinBalance: number;

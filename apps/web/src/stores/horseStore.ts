@@ -1,7 +1,7 @@
 import { create } from 'zustand';
 import { toast } from 'sonner';
 import type { Horse } from '@/types/horse';
-import { apiUrl } from '@/lib/api';
+import { authFetch } from '@/lib/api';
 
 interface HorseState {
   horses: Horse[];
@@ -24,7 +24,7 @@ export const useHorseStore = create<HorseState>()((set, get) => ({
     if (get().loading || get().loaded) return;
     set({ loading: true, error: null });
     try {
-      const res = await fetch(apiUrl('/api/horses'));
+      const res = await authFetch('/api/horses');
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
       const horses = await res.json();
       set({ horses, loading: false, loaded: true });
@@ -37,7 +37,7 @@ export const useHorseStore = create<HorseState>()((set, get) => ({
 
   addHorse: async (horse) => {
     try {
-      const res = await fetch(apiUrl('/api/horses'), {
+      const res = await authFetch('/api/horses', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(horse),
@@ -58,7 +58,7 @@ export const useHorseStore = create<HorseState>()((set, get) => ({
       horses: state.horses.map((h) => (h.id === id ? { ...h, ...updates } : h)),
     }));
     try {
-      const res = await fetch(apiUrl(`/api/horses/${id}`), {
+      const res = await authFetch(`/api/horses/${id}`, {
         method: 'PUT',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(updates),
@@ -79,7 +79,7 @@ export const useHorseStore = create<HorseState>()((set, get) => ({
     const previous = get().horses;
     set((state) => ({ horses: state.horses.filter((h) => h.id !== id) }));
     try {
-      const res = await fetch(apiUrl(`/api/horses/${id}`), { method: 'DELETE' });
+      const res = await authFetch(`/api/horses/${id}`, { method: 'DELETE' });
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
     } catch (err) {
       const message = err instanceof Error ? err.message : 'Could not delete the horse — restoring it';

@@ -1,7 +1,7 @@
 import { create } from 'zustand';
 import { toast } from 'sonner';
 import type { HorseReport } from '@/types/horseReport';
-import { apiUrl } from '@/lib/api';
+import { authFetch } from '@/lib/api';
 
 interface ReportState {
   reports: HorseReport[];
@@ -24,7 +24,7 @@ export const useReportStore = create<ReportState>()((set, get) => ({
     if (get().loading || get().loaded) return;
     set({ loading: true, error: null });
     try {
-      const res = await fetch(apiUrl('/api/reports'));
+      const res = await authFetch('/api/reports');
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
       const reports = await res.json();
       set({ reports, loading: false, loaded: true });
@@ -37,7 +37,7 @@ export const useReportStore = create<ReportState>()((set, get) => ({
 
   addReport: async (report) => {
     try {
-      const res = await fetch(apiUrl('/api/reports'), {
+      const res = await authFetch('/api/reports', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(report),
@@ -58,7 +58,7 @@ export const useReportStore = create<ReportState>()((set, get) => ({
     const previous = get().reports;
     set((state) => ({ reports: state.reports.map((r) => (r.id === id ? { ...r, ...updates } : r)) }));
     try {
-      const res = await fetch(apiUrl(`/api/reports/${id}`), {
+      const res = await authFetch(`/api/reports/${id}`, {
         method: 'PUT',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(updates),
@@ -77,7 +77,7 @@ export const useReportStore = create<ReportState>()((set, get) => ({
     const previous = get().reports;
     set((state) => ({ reports: state.reports.filter((r) => r.id !== id) }));
     try {
-      const res = await fetch(apiUrl(`/api/reports/${id}`), { method: 'DELETE' });
+      const res = await authFetch(`/api/reports/${id}`, { method: 'DELETE' });
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
       toast.success('Document removed');
     } catch (err) {

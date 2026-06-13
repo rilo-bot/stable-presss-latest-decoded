@@ -1,5 +1,8 @@
 import { Router } from 'express';
+import type { Request } from 'express';
 import { db } from '../lib/db.js';
+import { requireAuth, optionalAuth } from '../lib/auth.js';
+import { canPodcast } from '../lib/permissions.js';
 
 type WithMongoId = { _id: string; [key: string]: unknown };
 function project<T extends WithMongoId>(doc: T): Omit<T, '_id'> & { id: string } {
@@ -20,6 +23,7 @@ interface PodcastEpisode {
   coverUrl?: string;
   season?: number;
   episodeNumber?: number;
+  status?: string;
   guests?: object[];
   scheduledFor?: string;
   distributionChannels?: string[];
@@ -27,12 +31,27 @@ interface PodcastEpisode {
   producedBy?: string;
 }
 
-router.get('/', async (req, res) => {
+/** Look up the acting user's display name (token only carries id/email/role). */
+async function actingDisplayName(req: Request): Promise<string | null> {
+  if (!req.user?.sub) return null;
+  const user = await db.collection('users').findById(req.user.sub);
+  return user ? String(user.displayName ?? '') : null;
+}
+
+// ── List — drafts/unpublished are visible only to podcast roles ──────────────
+router.get('/', optionalAuth, async (req, res) => {
   const items = await db.collection('podcastEpisodes').find();
-  res.json(items.map(project));
+  const seesAll = canPodcast(req.user?.role, 'podcast.read_all');
+  const visible = seesAll ? items : items.filter((e) => e.status === 'published');
+  res.json(visible.map(project));
 });
 
-router.post('/', async (req, res) => {
+// ── Create — producers/admins only ───────────────────────────────────────────
+router.post('/', requireAuth, async (req, res) => {
+  if (!canPodcast(req.user!.role, 'podcast.episode.create')) {
+    res.status(403).json({ error: 'You do not have permission to create episodes.' });
+    return;
+  }
   const body = req.body as Partial<PodcastEpisode>;
   if (!body || !body.title) {
     res.status(400).json({ error: 'title is required' });
@@ -41,6 +60,7 @@ router.post('/', async (req, res) => {
   const now = new Date().toISOString();
   const doc: Record<string, unknown> = {
     ...body,
+    status: body.status ?? 'draft',
     createdAt: now,
     updatedAt: now,
   };
@@ -54,15 +74,48 @@ router.post('/', async (req, res) => {
   res.status(201).json(project(created));
 });
 
-router.put('/:id', async (req, res) => {
+// ── Update — edit_any, or edit_own when you produced it; approve gates publish ─
+router.put('/:id', requireAuth, async (req, res) => {
   const body = req.body as Partial<PodcastEpisode>;
-  const now = new Date().toISOString();
-  const updated_check = await db.collection('podcastEpisodes').updateOne(req.params.id, { ...body, updatedAt: now });
-  if (!updated_check) {
+  const role = req.user!.role;
+  const id = String(req.params.id);
+
+  const existing = await db.collection('podcastEpisodes').findById(id);
+  if (!existing) {
     res.status(404).json({ error: 'Not found' });
     return;
   }
-  const updated = await db.collection('podcastEpisodes').findById(req.params.id);
+
+  const displayName = await actingDisplayName(req);
+  const isOwn = !!existing.producedBy && existing.producedBy === displayName;
+
+  // Publishing / un-publishing requires approval authority.
+  const isApprovalMove =
+    body.status === 'published' ||
+    (existing.status === 'in_review' && body.status === 'scheduled');
+
+  let allowed: boolean;
+  if (isApprovalMove) {
+    allowed = canPodcast(role, 'podcast.episode.approve');
+  } else {
+    allowed =
+      canPodcast(role, 'podcast.episode.edit_any') ||
+      (canPodcast(role, 'podcast.episode.edit_own') && isOwn);
+  }
+  if (!allowed) {
+    res.status(403).json({ error: 'You do not have permission to modify this episode.' });
+    return;
+  }
+
+  const update: Record<string, unknown> = { ...body, updatedAt: new Date().toISOString() };
+  delete (update as { id?: unknown }).id;
+  // Stamp the publish date authoritatively the first time it goes live.
+  if (body.status === 'published' && !existing.publishedAt) {
+    update.publishedAt = new Date().toISOString();
+  }
+
+  await db.collection('podcastEpisodes').updateOne(id, update);
+  const updated = await db.collection('podcastEpisodes').findById(id);
   if (!updated) {
     res.status(404).json({ error: 'Not found' });
     return;
@@ -70,12 +123,28 @@ router.put('/:id', async (req, res) => {
   res.json(project(updated));
 });
 
-router.delete('/:id', async (req, res) => {
-  const deleted = await db.collection('podcastEpisodes').deleteOne(req.params.id);
-  if (!deleted) {
+// ── Delete — delete permission, not published, and own (or edit_any) ──────────
+router.delete('/:id', requireAuth, async (req, res) => {
+  const role = req.user!.role;
+  const id = String(req.params.id);
+  const existing = await db.collection('podcastEpisodes').findById(id);
+  if (!existing) {
     res.status(404).json({ error: 'Not found' });
     return;
   }
+
+  const displayName = await actingDisplayName(req);
+  const isOwn = !!existing.producedBy && existing.producedBy === displayName;
+  const allowed =
+    canPodcast(role, 'podcast.episode.delete') &&
+    existing.status !== 'published' &&
+    (isOwn || canPodcast(role, 'podcast.episode.edit_any'));
+  if (!allowed) {
+    res.status(403).json({ error: 'You do not have permission to delete this episode.' });
+    return;
+  }
+
+  await db.collection('podcastEpisodes').deleteOne(id);
   res.json({ success: true });
 });
 

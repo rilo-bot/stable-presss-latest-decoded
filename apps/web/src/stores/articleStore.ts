@@ -1,5 +1,5 @@
 import { create } from 'zustand';
-import { apiUrl } from '@/lib/api';
+import { authFetch } from '@/lib/api';
 import { toast } from 'sonner';
 import type { Article, ArticleStatus } from '@/types/article';
 
@@ -26,7 +26,7 @@ export const useArticleStore = create<ArticleState>()((set, get) => ({
     if (get().loading || get().loaded) return;
     set({ loading: true, error: null });
     try {
-      const res = await fetch(apiUrl('/api/articles'));
+      const res = await authFetch('/api/articles');
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
       const articles = await res.json();
       set({ articles, loading: false, loaded: true });
@@ -39,7 +39,7 @@ export const useArticleStore = create<ArticleState>()((set, get) => ({
 
   addArticle: async (article) => {
     try {
-      const res = await fetch(apiUrl('/api/articles'), {
+      const res = await authFetch('/api/articles', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(article),
@@ -60,7 +60,7 @@ export const useArticleStore = create<ArticleState>()((set, get) => ({
       articles: previous.map((a) => (a.id === id ? { ...a, ...updates } : a)),
     });
     try {
-      const res = await fetch(apiUrl(`/api/articles/${id}`), {
+      const res = await authFetch(`/api/articles/${id}`, {
         method: 'PUT',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(updates),
@@ -81,7 +81,7 @@ export const useArticleStore = create<ArticleState>()((set, get) => ({
     const previous = get().articles;
     set({ articles: previous.filter((a) => a.id !== id) });
     try {
-      const res = await fetch(apiUrl(`/api/articles/${id}`), {
+      const res = await authFetch(`/api/articles/${id}`, {
         method: 'DELETE',
       });
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
@@ -100,7 +100,7 @@ export const useArticleStore = create<ArticleState>()((set, get) => ({
       ),
     });
     try {
-      const res = await fetch(apiUrl(`/api/articles/${id}`), {
+      const res = await authFetch(`/api/articles/${id}`, {
         method: 'PUT',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ status: 'published', publishedAt: new Date() }),
@@ -123,7 +123,7 @@ export const useArticleStore = create<ArticleState>()((set, get) => ({
       articles: previous.map((a) => (a.id === id ? { ...a, status } : a)),
     });
     try {
-      const res = await fetch(apiUrl(`/api/articles/${id}`), {
+      const res = await authFetch(`/api/articles/${id}`, {
         method: 'PUT',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ status }),

@@ -1,7 +1,7 @@
 import { create } from 'zustand';
 import { toast } from 'sonner';
 import type { RacingEntry } from '@/types/racingEntry';
-import { apiUrl } from '@/lib/api';
+import { authFetch } from '@/lib/api';
 
 interface RacingEntryState {
   entries: RacingEntry[];
@@ -24,7 +24,7 @@ export const useRacingEntryStore = create<RacingEntryState>()((set, get) => ({
     if (get().loading || get().loaded) return;
     set({ loading: true, error: null });
     try {
-      const res = await fetch(apiUrl('/api/racingEntries'));
+      const res = await authFetch('/api/racingEntries');
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
       const entries = await res.json();
       set({ entries, loading: false, loaded: true });
@@ -37,7 +37,7 @@ export const useRacingEntryStore = create<RacingEntryState>()((set, get) => ({
 
   addEntry: async (entry) => {
     try {
-      const res = await fetch(apiUrl('/api/racingEntries'), {
+      const res = await authFetch('/api/racingEntries', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(entry),
@@ -60,7 +60,7 @@ export const useRacingEntryStore = create<RacingEntryState>()((set, get) => ({
       entries: state.entries.map((e) => (e.id === id ? { ...e, ...updates } : e)),
     }));
     try {
-      const res = await fetch(apiUrl(`/api/racingEntries/${id}`), {
+      const res = await authFetch(`/api/racingEntries/${id}`, {
         method: 'PUT',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(updates),
@@ -81,7 +81,7 @@ export const useRacingEntryStore = create<RacingEntryState>()((set, get) => ({
     const previous = get().entries;
     set((state) => ({ entries: state.entries.filter((e) => e.id !== id) }));
     try {
-      const res = await fetch(apiUrl(`/api/racingEntries/${id}`), { method: 'DELETE' });
+      const res = await authFetch(`/api/racingEntries/${id}`, { method: 'DELETE' });
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
       toast.success('Racing record removed');
     } catch (err) {

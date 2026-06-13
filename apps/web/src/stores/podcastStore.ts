@@ -1,6 +1,6 @@
 import { create } from 'zustand';
 import { toast } from 'sonner';
-import { apiUrl } from '@/lib/api';
+import { authFetch } from '@/lib/api';
 import type { PodcastEpisode, EpisodeStatus, EpisodeGuest, DistributionChannel } from '@/types/podcast';
 
 interface PodcastState {
@@ -20,12 +20,17 @@ interface PodcastState {
   createEpisode: (data: Omit<PodcastEpisode, 'id' | 'createdAt' | 'status' | 'guests' | 'distributionChannels'>) => Promise<string | undefined>;
   updateEpisode: (id: string, data: Partial<PodcastEpisode>) => Promise<void>;
   advanceStatus: (id: string, nextStatus: EpisodeStatus) => Promise<void>;
-  addGuest: (episodeId: string, guest: Omit<EpisodeGuest, 'id'>) => void;
-  removeGuest: (episodeId: string, guestId: string) => void;
-  setDistributionChannels: (episodeId: string, channels: DistributionChannel[]) => void;
-  setSchedule: (episodeId: string, isoDate: string) => void;
-  addReviewNote: (episodeId: string, note: string) => void;
+  addGuest: (episodeId: string, guest: Omit<EpisodeGuest, 'id'>) => Promise<void>;
+  removeGuest: (episodeId: string, guestId: string) => Promise<void>;
+  setDistributionChannels: (episodeId: string, channels: DistributionChannel[]) => Promise<void>;
+  setSchedule: (episodeId: string, isoDate: string) => Promise<void>;
+  addReviewNote: (episodeId: string, note: string) => Promise<void>;
   deleteEpisode: (id: string) => Promise<void>;
+}
+
+function guestId(): string {
+  if (typeof crypto !== 'undefined' && 'randomUUID' in crypto) return crypto.randomUUID();
+  return `g-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`;
 }
 
 export const usePodcastStore = create<PodcastState>()(
@@ -40,7 +45,7 @@ export const usePodcastStore = create<PodcastState>()(
       if (get().loading || get().loaded) return;
       set({ loading: true, error: null });
       try {
-        const res = await fetch(apiUrl('/api/podcastEpisodes'));
+        const res = await authFetch('/api/podcastEpisodes');
         if (!res.ok) throw new Error(`HTTP ${res.status}`);
         const episodes = await res.json();
         set({ episodes, loading: false, loaded: true });
@@ -55,7 +60,7 @@ export const usePodcastStore = create<PodcastState>()(
 
     createEpisode: async (data) => {
       try {
-        const res = await fetch(apiUrl('/api/podcastEpisodes'), {
+        const res = await authFetch('/api/podcastEpisodes', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
@@ -78,13 +83,15 @@ export const usePodcastStore = create<PodcastState>()(
       }
     },
 
+    // Optimistic PUT — also the single persistence path for every field edit
+    // below (guests, channels, schedule, notes all route through here).
     updateEpisode: async (id, data) => {
       const previous = get().episodes;
       set((s) => ({
         episodes: s.episodes.map((ep) => (ep.id === id ? { ...ep, ...data } : ep)),
       }));
       try {
-        const res = await fetch(apiUrl(`/api/podcastEpisodes/${id}`), {
+        const res = await authFetch(`/api/podcastEpisodes/${id}`, {
           method: 'PUT',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify(data),
@@ -107,7 +114,7 @@ export const usePodcastStore = create<PodcastState>()(
         episodes: s.episodes.map((ep) => (ep.id === id ? { ...ep, status: nextStatus } : ep)),
       }));
       try {
-        const res = await fetch(apiUrl(`/api/podcastEpisodes/${id}`), {
+        const res = await authFetch(`/api/podcastEpisodes/${id}`, {
           method: 'PUT',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ status: nextStatus }),
@@ -124,46 +131,31 @@ export const usePodcastStore = create<PodcastState>()(
       }
     },
 
-    addGuest: (episodeId, guest) => {
-      set((s) => ({
-        episodes: s.episodes.map((ep) =>
-          ep.id === episodeId ? { ...ep, guests: [...(ep.guests ?? []), guest as EpisodeGuest] } : ep
-        ),
-      }));
+    addGuest: async (episodeId, guest) => {
+      const ep = get().episodes.find((e) => e.id === episodeId);
+      if (!ep) return;
+      const newGuest: EpisodeGuest = { ...guest, id: guestId() };
+      await get().updateEpisode(episodeId, { guests: [...(ep.guests ?? []), newGuest] });
     },
 
-    removeGuest: (episodeId, guestId) => {
-      set((s) => ({
-        episodes: s.episodes.map((ep) =>
-          ep.id === episodeId
-            ? { ...ep, guests: (ep.guests ?? []).filter((g) => g.id !== guestId) }
-            : ep
-        ),
-      }));
+    removeGuest: async (episodeId, targetId) => {
+      const ep = get().episodes.find((e) => e.id === episodeId);
+      if (!ep) return;
+      await get().updateEpisode(episodeId, {
+        guests: (ep.guests ?? []).filter((g) => g.id !== targetId),
+      });
     },
 
-    setDistributionChannels: (episodeId, channels) => {
-      set((s) => ({
-        episodes: s.episodes.map((ep) =>
-          ep.id === episodeId ? { ...ep, distributionChannels: channels } : ep
-        ),
-      }));
+    setDistributionChannels: async (episodeId, channels) => {
+      await get().updateEpisode(episodeId, { distributionChannels: channels });
     },
 
-    setSchedule: (episodeId, isoDate) => {
-      set((s) => ({
-        episodes: s.episodes.map((ep) =>
-          ep.id === episodeId ? { ...ep, scheduledFor: isoDate } : ep
-        ),
-      }));
+    setSchedule: async (episodeId, isoDate) => {
+      await get().updateEpisode(episodeId, { scheduledFor: isoDate });
     },
 
-    addReviewNote: (episodeId, note) => {
-      set((s) => ({
-        episodes: s.episodes.map((ep) =>
-          ep.id === episodeId ? { ...ep, reviewNotes: note } : ep
-        ),
-      }));
+    addReviewNote: async (episodeId, note) => {
+      await get().updateEpisode(episodeId, { reviewNotes: note });
     },
 
     deleteEpisode: async (id) => {
@@ -172,7 +164,7 @@ export const usePodcastStore = create<PodcastState>()(
       set((s) => ({ episodes: s.episodes.filter((ep) => ep.id !== id) }));
       if (activeEpisodeId === id) set({ activeEpisodeId: null });
       try {
-        const res = await fetch(apiUrl(`/api/podcastEpisodes/${id}`), { method: 'DELETE' });
+        const res = await authFetch(`/api/podcastEpisodes/${id}`, { method: 'DELETE' });
         if (!res.ok) throw new Error(`HTTP ${res.status}`);
       } catch (err) {
         const message = err instanceof Error ? err.message : 'Failed to delete episode';

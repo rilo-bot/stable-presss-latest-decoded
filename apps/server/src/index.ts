@@ -43,6 +43,7 @@ app.get('/api/health', (_req, res) => {
 // --- Add your API routes below ---
 
 // === auto-mounted routers (backend planner) ===
+import { requireAuth } from './lib/auth.js'
 import authRouter from './routes/auth.js'
 import articlesRouter from './routes/articles.js'
 import horsesRouter from './routes/horses.js'
@@ -53,16 +54,35 @@ import racesRouter from './routes/races.js'
 import tipsRouter from './routes/tips.js'
 import salesRouter from './routes/sales.js'
 import reportsRouter from './routes/reports.js'
+import mediaItemsRouter from './routes/mediaItems.js'
+import racingEntriesRouter from './routes/racingEntries.js'
+import tipperProfilesRouter from './routes/tipperProfiles.js'
+
+// Reads are public (the public website needs them); any write (POST/PUT/DELETE/
+// PATCH) requires a valid session. Entity routes therefore carry no per-handler
+// auth — this single gate covers them uniformly. (auth + podcastEpisodes manage
+// their own finer-grained rules and are mounted without it.)
+function requireAuthForWrites(req: express.Request, res: express.Response, next: express.NextFunction): void {
+  if (req.method === 'GET') {
+    next()
+    return
+  }
+  requireAuth(req, res, next)
+}
+
 app.use('/api/auth', authRouter)
-app.use('/api/articles', articlesRouter)
-app.use('/api/horses', horsesRouter)
-app.use('/api/horsePartyLinks', horsePartyLinksRouter)
-app.use('/api/parties', partiesRouter)
 app.use('/api/podcastEpisodes', podcastEpisodesRouter)
-app.use('/api/races', racesRouter)
-app.use('/api/tips', tipsRouter)
-app.use('/api/sales', salesRouter)
-app.use('/api/reports', reportsRouter)
+app.use('/api/articles', requireAuthForWrites, articlesRouter)
+app.use('/api/horses', requireAuthForWrites, horsesRouter)
+app.use('/api/horsePartyLinks', requireAuthForWrites, horsePartyLinksRouter)
+app.use('/api/parties', requireAuthForWrites, partiesRouter)
+app.use('/api/races', requireAuthForWrites, racesRouter)
+app.use('/api/tips', requireAuthForWrites, tipsRouter)
+app.use('/api/sales', requireAuthForWrites, salesRouter)
+app.use('/api/reports', requireAuthForWrites, reportsRouter)
+app.use('/api/mediaItems', requireAuthForWrites, mediaItemsRouter)
+app.use('/api/racingEntries', requireAuthForWrites, racingEntriesRouter)
+app.use('/api/tipperProfiles', requireAuthForWrites, tipperProfilesRouter)
 // === end auto-mounted routers ===
 
 

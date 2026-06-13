@@ -1,6 +1,6 @@
 import { create } from 'zustand';
 import { toast } from 'sonner';
-import { apiUrl } from '@/lib/api';
+import { authFetch } from '@/lib/api';
 import type { HorsePartyLink } from '@/types/horsePartyLink';
 
 interface HorsePartyLinkState {
@@ -34,7 +34,7 @@ export const useHorsePartyLinkStore = create<HorsePartyLinkState>()(
       if (get().loading || get().loaded) return;
       set({ loading: true, error: null });
       try {
-        const res = await fetch(apiUrl('/api/horsePartyLinks'));
+        const res = await authFetch('/api/horsePartyLinks');
         if (!res.ok) throw new Error(`HTTP ${res.status}`);
         const links = await res.json();
         set({ links, loading: false, loaded: true });
@@ -47,7 +47,7 @@ export const useHorsePartyLinkStore = create<HorsePartyLinkState>()(
 
     addLink: async (link) => {
       try {
-        const res = await fetch(apiUrl('/api/horsePartyLinks'), {
+        const res = await authFetch('/api/horsePartyLinks', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify(link),
@@ -72,7 +72,7 @@ export const useHorsePartyLinkStore = create<HorsePartyLinkState>()(
         ),
       }));
       try {
-        const res = await fetch(apiUrl(`/api/horsePartyLinks/${id}`), {
+        const res = await authFetch(`/api/horsePartyLinks/${id}`, {
           method: 'PUT',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify(updates),
@@ -93,7 +93,7 @@ export const useHorsePartyLinkStore = create<HorsePartyLinkState>()(
       const previous = get().links;
       set((state) => ({ links: state.links.filter((l) => l.id !== id) }));
       try {
-        const res = await fetch(apiUrl(`/api/horsePartyLinks/${id}`), {
+        const res = await authFetch(`/api/horsePartyLinks/${id}`, {
           method: 'DELETE',
         });
         if (!res.ok) throw new Error(`HTTP ${res.status}`);

@@ -1,7 +1,7 @@
 import { create } from 'zustand';
 import { toast } from 'sonner';
 import type { Sale } from '@/types/sale';
-import { apiUrl } from '@/lib/api';
+import { authFetch } from '@/lib/api';
 
 interface SaleState {
   sales: Sale[];
@@ -24,7 +24,7 @@ export const useSaleStore = create<SaleState>()((set, get) => ({
     if (get().loading || get().loaded) return;
     set({ loading: true, error: null });
     try {
-      const res = await fetch(apiUrl('/api/sales'));
+      const res = await authFetch('/api/sales');
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
       const sales = await res.json();
       set({ sales, loading: false, loaded: true });
@@ -37,7 +37,7 @@ export const useSaleStore = create<SaleState>()((set, get) => ({
 
   addSale: async (sale) => {
     try {
-      const res = await fetch(apiUrl('/api/sales'), {
+      const res = await authFetch('/api/sales', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(sale),
@@ -58,7 +58,7 @@ export const useSaleStore = create<SaleState>()((set, get) => ({
     const previous = get().sales;
     set((state) => ({ sales: state.sales.map((s) => (s.id === id ? { ...s, ...updates } : s)) }));
     try {
-      const res = await fetch(apiUrl(`/api/sales/${id}`), {
+      const res = await authFetch(`/api/sales/${id}`, {
         method: 'PUT',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(updates),
@@ -77,7 +77,7 @@ export const useSaleStore = create<SaleState>()((set, get) => ({
     const previous = get().sales;
     set((state) => ({ sales: state.sales.filter((s) => s.id !== id) }));
     try {
-      const res = await fetch(apiUrl(`/api/sales/${id}`), { method: 'DELETE' });
+      const res = await authFetch(`/api/sales/${id}`, { method: 'DELETE' });
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
       toast.success('Sale record removed');
     } catch (err) {
