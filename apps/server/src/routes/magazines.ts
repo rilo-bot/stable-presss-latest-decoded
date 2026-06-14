@@ -121,15 +121,11 @@ router.get('/', async (req, res) => {
 // Declared before '/:id' so the literal path isn't captured as a magazine id.
 router.get('/staff-directory', async (_req, res) => {
   const users = await db.collection('users').find();
+  // Only the fields the Share picker needs — no staff-role enumeration.
   const staff = users
     .map((u) => withIdentityDefaults({ id: u._id, ...u }))
     .filter((u) => u.roles.some((r) => (STAFF_ROLES as string[]).includes(r)))
-    .map((u) => ({
-      userId: u.id,
-      displayName: u.displayName,
-      email: u.email,
-      staffRoles: u.roles.filter((r) => (STAFF_ROLES as string[]).includes(r)),
-    }))
+    .map((u) => ({ userId: u.id, displayName: u.displayName, email: u.email }))
     .sort((a, b) => (a.displayName || a.email).localeCompare(b.displayName || b.email));
   res.json(staff);
 });
@@ -265,8 +261,8 @@ router.post('/:id/collaborators', async (req, res) => {
     res.status(404).json({ error: 'Not found' });
     return;
   }
-  if (!canManage(roleOnMagazine(doc, uid))) {
-    res.status(403).json({ error: 'Only the owner or an editor can manage collaborators.' });
+  if (!isOwner(roleOnMagazine(doc, uid))) {
+    res.status(403).json({ error: 'Only the owner can manage collaborators.' });
     return;
   }
 
@@ -326,8 +322,8 @@ router.delete('/:id/collaborators/:userId', async (req, res) => {
     res.status(404).json({ error: 'Not found' });
     return;
   }
-  if (!canManage(roleOnMagazine(doc, uid))) {
-    res.status(403).json({ error: 'Only the owner or an editor can manage collaborators.' });
+  if (!isOwner(roleOnMagazine(doc, uid))) {
+    res.status(403).json({ error: 'Only the owner can manage collaborators.' });
     return;
   }
   await db.collection('magazines').updateOne(req.params.id, {

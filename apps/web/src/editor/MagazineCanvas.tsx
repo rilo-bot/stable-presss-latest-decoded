@@ -163,7 +163,7 @@ export function MagazineCanvas({ magazineId, scale }: { magazineId: string; scal
   const select = useMagazineStore((s) => s.select);
 
   const editableIds = access?.editablePageIds ?? 'all';
-  const canManage = access?.role === 'owner' || access?.role === 'editor';
+  const canManage = access?.role === 'owner'; // publish-selection is owner-only
   const isEditable = (pageId: string) => editableIds === 'all' || editableIds.includes(pageId);
 
   return (

@@ -12,9 +12,6 @@ import type { StaffOption } from '@/types/magazine';
 import { X, UserPlus, Trash2, Loader2, Crown, ShieldCheck, PencilLine } from 'lucide-react';
 import { cn } from '@/lib/utils';
 
-// Staff roles that grant full magazine editing (mirror of the server derivation).
-const EDITOR_STAFF_ROLES = ['administrator', 'publisher', 'editor'];
-
 export function ShareDialog({ magazineId, onClose }: { magazineId: string; onClose: () => void }) {
   const magazine = useMagazineStore((s) => s.magazines.find((m) => m.id === magazineId));
   const fetchStaffDirectory = useMagazineStore((s) => s.fetchStaffDirectory);
@@ -46,12 +43,10 @@ export function ShareDialog({ magazineId, onClose }: { magazineId: string; onClo
     [directory, magazine?.ownerId, collaborators]
   );
 
-  // The chosen person's capability is derived from their existing staff role.
   const selectedStaff = useMemo(
     () => directory.find((o) => o.email === selectedEmail),
     [directory, selectedEmail]
   );
-  const selectedIsEditor = !!selectedStaff?.staffRoles.some((r) => EDITOR_STAFF_ROLES.includes(r));
 
   if (!magazine) return null;
 
@@ -76,12 +71,11 @@ export function ShareDialog({ magazineId, onClose }: { magazineId: string; onClo
     }
   };
 
+  // Always reflect the real assigned scope (page assignment applies to everyone).
   const scopeLabel = (c: (typeof collaborators)[number]) =>
-    c.role === 'editor'
-      ? 'All pages · can manage'
-      : c.pageIds === 'all'
-        ? 'All pages'
-        : `${c.pageIds.length} page${c.pageIds.length !== 1 ? 's' : ''}`;
+    c.pageIds === 'all'
+      ? 'All pages'
+      : `${c.pageIds.length} page${c.pageIds.length !== 1 ? 's' : ''}`;
 
   return (
     <div className="fixed inset-0 z-[70] flex items-center justify-center bg-black/60 p-4" onMouseDown={onClose}>
@@ -157,20 +151,11 @@ export function ShareDialog({ magazineId, onClose }: { magazineId: string; onClo
               </select>
             )}
 
-            {/* Capability — derived from the selected member's staff role */}
+            {/* Capability — collaborators edit assigned pages; only you (owner) manage/publish. */}
             {selectedStaff && (
               <p className="text-[10px] leading-relaxed text-white/50">
-                {selectedIsEditor ? (
-                  <>
-                    Joins as an <span className="font-semibold text-sky-200">Editor</span> (their staff role) — can also
-                    publish and manage collaborators. Choose which pages they edit below.
-                  </>
-                ) : (
-                  <>
-                    Joins as a <span className="font-semibold text-emerald-200">Contributor</span> (their staff role) —
-                    can edit the pages you assign below.
-                  </>
-                )}
+                They'll be able to edit the pages you assign below. Publishing and managing collaborators stay with you,
+                the owner.
               </p>
             )}
 

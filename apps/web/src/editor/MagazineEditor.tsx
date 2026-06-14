@@ -37,9 +37,9 @@ export function MagazineEditor({ magazineId, onClose }: { magazineId: string; on
   const selectedCount = useMagazineStore(
     (s) => s.magazines.find((m) => m.id === magazineId)?.pages.filter((p) => p.selectedForPublish).length ?? 0
   );
-  // Owner/editor may publish, change settings + manage collaborators; contributors only edit their pages.
+  // Management (publish, settings, share) is owner-only; collaborators only edit assigned pages.
   const myRole = useMagazineStore((s) => s.access[magazineId]?.role);
-  const canManage = myRole === 'owner' || myRole === 'editor';
+  const canManage = myRole === 'owner';
 
   const [scale, setScale] = useState(0.62);
   const [pubOpen, setPubOpen] = useState(false);
@@ -161,7 +161,7 @@ export function MagazineEditor({ magazineId, onClose }: { magazineId: string; on
 
         {!canManage && (
           <span className="rounded-sm border border-white/15 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wider text-amber-300/80">
-            Contributor · your pages only
+            Shared with you · editing your assigned pages
           </span>
         )}
 

@@ -158,11 +158,16 @@ export const useMagazineStore = create<MagazineState>()((set, get) => {
   }
 
   let lastSaveErrorAt = 0;
-  function noteSaveError() {
+  function noteSaveError(status?: number) {
     const t = Date.now();
     if (t - lastSaveErrorAt > 5000) {
       lastSaveErrorAt = t;
-      toast.error("Couldn't save your latest change — check your connection.");
+      // 403 = this page is no longer shared with you (access changed mid-session).
+      toast.error(
+        status === 403
+          ? "This page isn't shared with you anymore — reload the magazine to see the latest."
+          : "Couldn't save your latest change — check your connection."
+      );
     }
   }
 
@@ -174,7 +179,7 @@ export const useMagazineStore = create<MagazineState>()((set, get) => {
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ content: page.content }),
     })
-      .then((res) => { if (!res.ok) noteSaveError(); })
+      .then((res) => { if (!res.ok) noteSaveError(res.status); })
       .catch(() => noteSaveError());
   }
 

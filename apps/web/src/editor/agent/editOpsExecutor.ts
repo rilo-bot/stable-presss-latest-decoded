@@ -16,6 +16,15 @@ import type { EditPayload, StagedEdit } from './types';
 /* eslint-disable @typescript-eslint/no-explicit-any */
 const arg = (input: unknown): Record<string, any> => (input ?? {}) as Record<string, any>;
 
+// The tools executed IN THE BROWSER. Server-executed grounding tools
+// (searchHorses/searchArticles/getHorseDossier) resolve server-side and must NOT
+// be handled here — onToolCall checks this so we never double-resolve them.
+export const EDITOR_CLIENT_TOOLS = new Set<string>([
+  'getMagazine', 'getPage', 'getRegion', 'listTemplates', 'pageCatalog', 'suggestImageOptions', 'undoLastEdit',
+  'setRegionText', 'setRegionImage', 'setRegionQr', 'patchRegionStyle', 'applyPageFill', 'clearRegion', 'setPageSelected',
+]);
+export const isEditorClientTool = (name: string): boolean => EDITOR_CLIENT_TOOLS.has(name);
+
 function currentMag(): Magazine | undefined {
   const ms = useMagazineStore.getState();
   return ms.currentId ? ms.getMagazine(ms.currentId) : undefined;

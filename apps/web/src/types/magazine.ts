@@ -121,7 +121,12 @@ export interface MagazinePage {
 
 export type MagazineStatus = 'draft' | 'published';
 
-/** A user's role on a single magazine (server-persisted drafts are collaborative). */
+/**
+ * A user's role on a single magazine. Only the `owner` manages (publish,
+ * settings, collaborators, delete); every collaborator edits only their assigned
+ * pages. `editor`/`contributor` is derived from the collaborator's staff role and
+ * is informational only — it does NOT grant management.
+ */
 export type MagazineRole = 'owner' | 'editor' | 'contributor';
 
 /** A staff member granted access to a magazine, scoped to specific pages. */
@@ -129,7 +134,7 @@ export interface MagazineCollaborator {
   userId: string;
   email: string;
   displayName: string;
-  /** editor = edit any page + manage; contributor = edit only `pageIds`. */
+  /** Informational staff-role badge (derived); edit scope is governed by `pageIds`. */
   role: 'editor' | 'contributor';
   /** Page ids this person may edit, or 'all'. */
   pageIds: string[] | 'all';
@@ -181,7 +186,6 @@ export interface StaffOption {
   userId: string;
   displayName: string;
   email: string;
-  staffRoles: string[];
 }
 
 /**

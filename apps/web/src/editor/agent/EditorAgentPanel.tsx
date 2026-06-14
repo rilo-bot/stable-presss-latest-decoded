@@ -11,7 +11,7 @@ import { Sparkles, Send, Square, Undo2, Check, X } from 'lucide-react';
 import { MarkdownMessage } from '@/components/MarkdownMessage';
 import { useEditorAgentUi } from '@/stores/editorAgentUiStore';
 import { createEditorTransport } from './editorTransport';
-import { executeEditorTool } from './editOpsExecutor';
+import { executeEditorTool, isEditorClientTool } from './editOpsExecutor';
 import { previewOf } from './editorContext';
 import { applyStagedEdit, applyBatch, applyAllStaged, discardStaged, discardBatch, discardAll, undoLast } from './applyEdits';
 import type { StagedEdit } from './types';
@@ -80,6 +80,8 @@ export function EditorAgentPanel() {
     transport,
     sendAutomaticallyWhen: lastAssistantMessageIsCompleteWithToolCalls,
     onToolCall: async ({ toolCall }) => {
+      // Server-executed grounding tools resolve on the server — don't touch them.
+      if (!isEditorClientTool(toolCall.toolName)) return;
       let output: unknown;
       try {
         output = await executeEditorTool(toolCall.toolName, toolCall.input);
