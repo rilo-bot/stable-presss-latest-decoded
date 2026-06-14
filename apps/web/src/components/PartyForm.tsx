@@ -15,7 +15,7 @@ import {
 } from '@/components/ui/dialog';
 import { usePartyStore } from '@/stores/partyStore';
 import { uploadImage } from '@/lib/upload';
-import type { Party, PartyType, PartyRole, PersonnelSubtype } from '@/types/party';
+import type { Party, PartyRole, PersonnelSubtype } from '@/types/party';
 import {
   PARTY_ROLES,
   PARTY_ROLE_LABELS,
@@ -70,8 +70,7 @@ export function PartyForm({ open, onOpenChange, party, defaultRole, onSaved }: P
   const updateParty = usePartyStore((s) => s.updateParty);
   const isEdit = !!party;
 
-  /* ── Form state ── */
-  const [partyType, setPartyType] = useState<PartyType>(party?.party_type ?? 'person');
+  /* ── Form state ── (parties are always individuals; orgs live in their own collection) */
   const [name, setName] = useState(party?.name ?? '');
   // In create mode, honour defaultRole as the initial selection
   const [roles, setRoles] = useState<PartyRole[]>(
@@ -109,7 +108,6 @@ export function PartyForm({ open, onOpenChange, party, defaultRole, onSaved }: P
 
   /* ── Reset form to blank (with optional defaultRole) when the dialog opens ── */
   const resetForm = useCallback(() => {
-    setPartyType(party?.party_type ?? 'person');
     setName(party?.name ?? '');
     // In create mode, re-apply the defaultRole; in edit mode, restore existing roles
     setRoles(party?.roles ?? (defaultRole ? [defaultRole] : []));
@@ -135,7 +133,6 @@ export function PartyForm({ open, onOpenChange, party, defaultRole, onSaved }: P
     if (open && !isEdit) {
       setRoles(defaultRole ? [defaultRole] : []);
       // Clear everything else back to blank
-      setPartyType('person');
       setName('');
       setPhoto(undefined);
       setPhotoFile(null);
@@ -151,14 +148,6 @@ export function PartyForm({ open, onOpenChange, party, defaultRole, onSaved }: P
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [open, defaultRole]);
-
-  /* ── Type toggle ── */
-  const handleTypeChange = (type: PartyType) => {
-    setPartyType(type);
-    if (type === 'organisation') {
-      setErrors((prev) => { const n = { ...prev }; delete n.photo; return n; });
-    }
-  };
 
   /* ── Role toggle ── */
   const toggleRole = (role: PartyRole) => {
@@ -236,7 +225,7 @@ export function PartyForm({ open, onOpenChange, party, defaultRole, onSaved }: P
     const next: Record<string, string> = {};
     if (!name.trim()) next.name = 'Name is required.';
     if (roles.length === 0) next.roles = 'Select at least one role.';
-    if (partyType === 'person' && !photo) next.photo = 'A photo is required for individuals.';
+    if (!photo) next.photo = 'A photo is required.';
     if (startedYear) {
       const yr = parseInt(startedYear, 10);
       if (isNaN(yr) || yr < 1900 || yr > CURRENT_YEAR) {
@@ -264,7 +253,6 @@ export function PartyForm({ open, onOpenChange, party, defaultRole, onSaved }: P
     setSaving(true);
     try {
       const payload: Omit<Party, 'id' | 'createdAt'> = {
-        party_type: partyType,
         roles,
         name: name.trim(),
         photo,
@@ -327,59 +315,10 @@ export function PartyForm({ open, onOpenChange, party, defaultRole, onSaved }: P
         {/* ── Scrollable body ── */}
         <div className="flex-1 overflow-y-auto px-6 py-5 space-y-6">
 
-          {/* ── Party Type Toggle ── */}
-          <div className="space-y-2">
-            <Label className="text-xs uppercase tracking-[0.1em] font-semibold text-muted-foreground">
-              Party Type <span className="text-destructive">*</span>
-            </Label>
-            <div className="grid grid-cols-2 gap-3">
-              {(['person', 'organisation'] as PartyType[]).map((type) => {
-                const Icon = type === 'person' ? User : Building2;
-                const label = type === 'person' ? 'Individual' : 'Organisation';
-                const desc = type === 'person'
-                  ? 'Jockey, trainer, owner…'
-                  : 'Stud farm, syndicate, bloodstock…';
-                const selected = partyType === type;
-                return (
-                  <button
-                    key={type}
-                    type="button"
-                    aria-pressed={selected}
-                    onClick={() => handleTypeChange(type)}
-                    className={cn(
-                      'relative flex items-start gap-3 rounded-md border-2 p-4 text-left transition-all',
-                      selected
-                        ? 'border-primary bg-primary/5'
-                        : 'border-border bg-card hover:border-primary/40 hover:bg-muted/40'
-                    )}
-                  >
-                    <div
-                      className={cn(
-                        'mt-0.5 flex h-8 w-8 flex-shrink-0 items-center justify-center rounded-full transition-colors',
-                        selected ? 'bg-primary text-primary-foreground' : 'bg-muted text-muted-foreground'
-                      )}
-                    >
-                      <Icon size={16} />
-                    </div>
-                    <div>
-                      <p className="text-sm font-semibold text-foreground leading-tight">{label}</p>
-                      <p className="text-[11px] text-muted-foreground mt-0.5 leading-snug">{desc}</p>
-                    </div>
-                    {selected && (
-                      <span className="absolute top-3 right-3 flex h-4 w-4 items-center justify-center rounded-full bg-primary text-primary-foreground">
-                        <Check size={10} strokeWidth={3} />
-                      </span>
-                    )}
-                  </button>
-                );
-              })}
-            </div>
-          </div>
-
           {/* ── Name ── */}
           <div className="space-y-1.5">
             <Label htmlFor="party-name" className="text-xs uppercase tracking-[0.1em] font-semibold text-muted-foreground">
-              {partyType === 'person' ? 'Full Name' : 'Organisation Name'}{' '}
+              Full Name{' '}
               <span className="text-destructive">*</span>
             </Label>
             <Input
@@ -389,7 +328,7 @@ export function PartyForm({ open, onOpenChange, party, defaultRole, onSaved }: P
                 setName(e.target.value);
                 if (e.target.value.trim()) setErrors((prev) => { const n = { ...prev }; delete n.name; return n; });
               }}
-              placeholder={partyType === 'person' ? 'e.g. Ciaron Maher' : 'e.g. Trelawny Stud'}
+              placeholder="e.g. Ciaron Maher"
               className={cn(errors.name && 'border-destructive ring-destructive')}
               aria-invalid={!!errors.name}
               aria-describedby={errors.name ? 'party-name-error' : undefined}
@@ -408,7 +347,7 @@ export function PartyForm({ open, onOpenChange, party, defaultRole, onSaved }: P
               id="party-profession"
               value={profession}
               onChange={(e) => setProfession(e.target.value)}
-              placeholder={partyType === 'person' ? 'e.g. Thoroughbred Trainer' : 'e.g. Bloodstock Agency'}
+              placeholder="e.g. Thoroughbred Trainer"
             />
           </div>
 
@@ -488,9 +427,8 @@ export function PartyForm({ open, onOpenChange, party, defaultRole, onSaved }: P
             </div>
           )}
 
-          {/* ── Date of Birth + Auto Age (person only) ── */}
-          {partyType === 'person' && (
-            <div className="space-y-1.5">
+          {/* ── Date of Birth + Auto Age ── */}
+          <div className="space-y-1.5">
               <Label htmlFor="party-dob" className="text-xs uppercase tracking-[0.1em] font-semibold text-muted-foreground">
                 Date of Birth
               </Label>
@@ -526,8 +464,7 @@ export function PartyForm({ open, onOpenChange, party, defaultRole, onSaved }: P
               {errors.date_of_birth && (
                 <p id="party-dob-error" className="text-xs text-destructive mt-1">{errors.date_of_birth}</p>
               )}
-            </div>
-          )}
+          </div>
 
           {/* ── Country of Birth ── */}
           <div className="space-y-1.5">
@@ -585,9 +522,8 @@ export function PartyForm({ open, onOpenChange, party, defaultRole, onSaved }: P
             )}
           </div>
 
-          {/* ── Photo Upload (person only) ── */}
-          {partyType === 'person' && (
-            <div className="space-y-2">
+          {/* ── Photo Upload ── */}
+          <div className="space-y-2">
               <Label className="text-xs uppercase tracking-[0.1em] font-semibold text-muted-foreground">
                 Photo <span className="text-destructive">*</span>
               </Label>
@@ -686,8 +622,7 @@ export function PartyForm({ open, onOpenChange, party, defaultRole, onSaved }: P
                 tabIndex={-1}
                 onChange={handleFileInputChange}
               />
-            </div>
-          )}
+          </div>
         </div>
 
         {/* ── Sticky footer ── */}

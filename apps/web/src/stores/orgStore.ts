@@ -6,7 +6,6 @@ import type { OrgRole, PartyRole } from '@/rbac/roles';
 export interface OrgSummary {
   id: string;
   name: string;
-  party_type: string;
   base_location?: string;
   myRole: OrgRole;
 }
@@ -21,7 +20,6 @@ export interface OrgMember {
 export interface ManagedParty {
   id: string;
   name: string;
-  party_type: string;
   roles: PartyRole[];
   managedByOrgId: string;
 }

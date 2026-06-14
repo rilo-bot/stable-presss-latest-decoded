@@ -18,7 +18,7 @@ import type { ReportVisibility } from '@/types/horseReport';
 import { PedigreeGrid } from '@/components/PedigreeGrid';
 import {
   serifStyle, fmtDate, fmtMoney, SectionPanel, SRow, SectionHeading,
-  ProfileDetailPanel, MediaTypeBadge, RaceStatusBadge, DATA_CARD_IMAGES,
+  ProfileDetailPanel, MediaTypeBadge, RaceStatusBadge,
 } from '@/components/profile/kit';
 
 /** Common props for every generalised module section. */
@@ -291,7 +291,7 @@ export function ReportsSection({ horseIds, subjectName, onClose, onOpenHorse }: 
   const multi = horseIds.length > 1;
 
   return (
-    <ProfileDetailPanel title="Reports / Forms" icon={<FileText size={14} strokeWidth={1.8} style={{ color: 'var(--gold-bright)' }} />} imgSrc={DATA_CARD_IMAGES.studbook} onClose={onClose}>
+    <ProfileDetailPanel title="Reports / Forms" icon={<FileText size={14} strokeWidth={1.8} style={{ color: 'var(--gold-bright)' }} />} onClose={onClose}>
       <SRow label="Subject" value={subjectName} />
       <SRow label="Documents" value={String(visible.length)} />
       {visible.length === 0 ? (

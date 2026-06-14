@@ -1,5 +1,6 @@
 import { Router } from 'express';
 import { db } from '../lib/db.js';
+import { isStaff } from '../lib/rbac.js';
 
 type WithMongoId = { _id: string; [key: string]: unknown };
 function project<T extends WithMongoId>(doc: T): Omit<T, '_id'> & { id: string } {
@@ -20,6 +21,11 @@ router.post('/', async (req, res) => {
   const body = req.body as Partial<{ userId: string; displayName: string }>;
   if (!body || !body.userId) {
     res.status(400).json({ error: 'userId is required' });
+    return;
+  }
+  // A member may only create their own tipper profile (staff may seed any).
+  if (!isStaff(req.account) && body.userId !== req.account?.id) {
+    res.status(403).json({ error: 'You can only create your own tipper profile.' });
     return;
   }
   // One profile per user — return the existing one if already present.
@@ -48,7 +54,19 @@ router.put('/:id', async (req, res) => {
     res.status(404).json({ error: 'Not found' });
     return;
   }
+  // Owner-only: a member may update their own profile (e.g. debit on placing a
+  // tip). Winnings are credited server-side by /api/tipping/resolve, never here,
+  // so no one can inflate another tipper's balance.
+  if (!isStaff(req.account) && String(found.userId) !== req.account?.id) {
+    res.status(403).json({ error: 'You can only update your own tipper profile.' });
+    return;
+  }
+  // Balances are credited only by server-side race resolution; block client
+  // attempts to set winnings fields directly on the self-service PUT path.
   const updateData: Record<string, unknown> = { ...req.body, updatedAt: new Date().toISOString() };
+  if (!isStaff(req.account)) {
+    delete (updateData as { totalWon?: unknown }).totalWon;
+  }
   delete (updateData as { id?: unknown }).id;
   await db.collection('tipperProfiles').updateOne(id, updateData);
   const updated = await db.collection('tipperProfiles').findById(id);

@@ -6,6 +6,7 @@ import { Routes, Route } from 'react-router-dom';
 import { Toaster } from 'sonner';
 
 import { NavBar } from '@/components/NavBar';
+import { AgentWidget } from '@/components/AgentWidget';
 import { RequireAuth, RequireStaff, RequireRole } from '@/rbac/guards';
 // import { OnboardingOverlay } from '@/components/OnboardingOverlay'; // onboarding disabled
 import { useAuthStore } from '@/stores/authStore';
@@ -29,6 +30,7 @@ import PartyDetail from '@/pages/PartyDetail';
 import ClaimsQueue from '@/pages/ClaimsQueue';
 import OrgDashboard from '@/pages/OrgDashboard';
 import Dashboard from '@/pages/Dashboard';
+import Studio from '@/pages/Studio';
 import StaffAdmin from '@/pages/StaffAdmin';
 import SiteContent from '@/pages/SiteContent';
 
@@ -241,6 +243,14 @@ export default function App() {
               </AppLayout>
             }
           />
+          <Route
+            path="/studio/:id"
+            element={
+              <AppLayout>
+                <Studio />
+              </AppLayout>
+            }
+          />
         </Route>
 
         {/* Admin-only routes */}
@@ -276,6 +286,10 @@ export default function App() {
 
       {/* Global onboarding overlay — disabled */}
       {/* <OnboardingOverlay /> */}
+
+      {/* AI concierge — available on every page */}
+      <AgentWidget />
+
       <Toaster richColors position="top-right" />
     </>
   );

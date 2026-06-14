@@ -198,7 +198,7 @@ export default function Signup() {
     // until verified). Drop them straight into their hub to add details + horses.
     toast.success('Profile created — add your details and horses next.');
     const partyId = primaryPartyId(useAuthStore.getState().currentUser);
-    navigate(partyId ? `/parties/${partyId}` : '/dashboard');
+    navigate(partyId ? `/studio/${partyId}` : '/dashboard');
   };
 
   const handleOrgSubmit = async () => {

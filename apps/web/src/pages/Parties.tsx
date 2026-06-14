@@ -1,6 +1,6 @@
 import { useState, useMemo, useEffect } from 'react'
 import { useNavigate } from 'react-router-dom';
-import { Plus, Search, User, Building2, Edit, Trash, Users, MapPin, Globe, CalendarDays, ExternalLink } from 'lucide-react';
+import { Plus, Search, User, Edit, Trash, Users, MapPin, Globe, CalendarDays, ExternalLink } from 'lucide-react';
 import { motion } from 'framer-motion';
 import { toast } from 'sonner';
 import { cn } from '@/lib/utils';
@@ -48,24 +48,9 @@ function PartyCard({ party, onEdit, onDelete, onOpen }: { party: Party; onEdit: 
           />
         ) : (
           <div className="flex flex-col items-center gap-2 text-muted-foreground">
-            {party.party_type === 'person' ? (
-              <User size={36} strokeWidth={1.25} />
-            ) : (
-              <Building2 size={36} strokeWidth={1.25} />
-            )}
+            <User size={36} strokeWidth={1.25} />
           </div>
         )}
-        {/* Type pill */}
-        <span
-          className={cn(
-            'absolute top-2 left-2 text-[9px] uppercase tracking-[0.12em] font-bold px-2 py-0.5 rounded-full border',
-            party.party_type === 'person'
-              ? 'bg-primary/90 text-primary-foreground border-primary'
-              : 'bg-[hsl(var(--brand-accent)/0.9)] text-[hsl(var(--brand-accent-foreground))] border-[hsl(var(--brand-accent)/0.5)]'
-          )}
-        >
-          {party.party_type === 'person' ? 'Individual' : 'Organisation'}
-        </span>
         {/* Action buttons (visible on hover) */}
         <div className="absolute top-2 right-2 flex gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
           <button
@@ -284,7 +269,6 @@ export default function Parties() {
 
   const [query, setQuery] = useState('');
   const [roleFilter, setRoleFilter] = useState<PartyRole | 'all'>('all');
-  const [typeFilter, setTypeFilter] = useState<'all' | 'person' | 'organisation'>('all');
 
   const [formOpen, setFormOpen] = useState(false);
   const [editParty, setEditParty] = useState<Party | undefined>(undefined);
@@ -296,12 +280,11 @@ export default function Parties() {
   const filtered = useMemo(() => {
     const q = query.toLowerCase().trim();
     return safeParties.filter((p) => {
-      if (typeFilter !== 'all' && p.party_type !== typeFilter) return false;
       if (roleFilter !== 'all' && !(p.roles ?? []).includes(roleFilter)) return false;
       if (q && !p.name?.toLowerCase().includes(q)) return false;
       return true;
     });
-  }, [safeParties, query, roleFilter, typeFilter]);
+  }, [safeParties, query, roleFilter]);
 
   const openEdit = (party: Party) => {
     setEditParty(party);
@@ -373,23 +356,6 @@ export default function Parties() {
             />
           </div>
 
-          {/* Type filter */}
-          <div className="flex items-center gap-1.5 flex-wrap">
-            {(['all', 'person', 'organisation'] as const).map((t) => (
-              <button
-                key={t}
-                onClick={() => setTypeFilter(t)}
-                className={cn(
-                  'text-[10px] uppercase tracking-[0.08em] font-semibold px-3 py-1.5 rounded-sm border transition-all',
-                  typeFilter === t
-                    ? 'bg-primary text-primary-foreground border-primary'
-                    : 'bg-card text-muted-foreground border-border hover:border-primary/50 hover:text-foreground'
-                )}
-              >
-                {t === 'all' ? 'All Types' : t === 'person' ? 'Individuals' : 'Organisations'}
-              </button>
-            ))}
-          </div>
         </div>
 
         {/* ── Role filter chips ── */}
@@ -450,7 +416,7 @@ export default function Parties() {
             Try adjusting your search or filter to find the right party.
           </p>
           <button
-            onClick={() => { setQuery(''); setRoleFilter('all'); setTypeFilter('all'); }}
+            onClick={() => { setQuery(''); setRoleFilter('all'); }}
             className="mt-5 text-xs uppercase tracking-[0.1em] font-semibold text-primary hover:text-primary/80 transition-colors"
           >
             Clear filters
@@ -458,7 +424,7 @@ export default function Parties() {
         </div>
       ) : (
         <>
-          {(query || roleFilter !== 'all' || typeFilter !== 'all') && (
+          {(query || roleFilter !== 'all') && (
             <p className="text-xs text-muted-foreground uppercase tracking-[0.08em] mb-4">
               {filtered.length} {filtered.length === 1 ? 'party' : 'parties'} found
             </p>

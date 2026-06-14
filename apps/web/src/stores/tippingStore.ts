@@ -23,7 +23,7 @@ interface TippingState {
     entrant: RaceEntrant,
     wager: number
   ) => Promise<{ ok: boolean; error?: string }>;
-  resolveRace: (raceId: string, winnerHorseId: string) => Promise<void>;
+  resolveRace: (raceId: string) => Promise<void>;
   simulateResolve: (raceId: string) => void;
 }
 
@@ -164,99 +164,40 @@ export const useTippingStore = create<TippingState>()(
       }
     },
 
-    resolveRace: async (raceId, winnerHorseId) => {
-      const state = get();
-      const race = state.races.find((r) => r.id === raceId);
+    // Resolution is performed server-side: the winner is chosen authoritatively
+    // and winning tippers' balances are credited on the backend. Clients never
+    // write balances (see /api/tipperProfiles owner-only gate) — we just trigger
+    // the resolve and refetch the authoritative state.
+    resolveRace: async (raceId) => {
+      const race = get().races.find((r) => r.id === raceId);
       if (!race || race.status === 'resolved') return;
-
-      const previousRaces = state.races;
-      const previousTips = state.tips;
-      const previousProfiles = state.profiles;
-
-      // Compute results + payouts.
-      const raceTips = state.tips.filter((t) => t.raceId === raceId);
-      const updatedTipsMap = new Map<string, Tip>();
-      raceTips.forEach((tip) => {
-        const won = tip.horseId === winnerHorseId;
-        updatedTipsMap.set(tip.id, {
-          ...tip,
-          result: won ? 'won' : 'lost',
-          payout: won ? Math.floor(tip.wager * tip.odds) : 0,
-        });
-      });
-
-      const profileCredits: Record<string, number> = {};
-      updatedTipsMap.forEach((tip) => {
-        if (tip.result === 'won' && tip.payout) {
-          profileCredits[tip.userId] = (profileCredits[tip.userId] ?? 0) + tip.payout;
-        }
-      });
-
-      const creditedProfiles = state.profiles.map((p) => {
-        const credit = profileCredits[p.userId] ?? 0;
-        if (credit <= 0) return p;
-        return { ...p, coinBalance: p.coinBalance + credit, totalWon: p.totalWon + credit };
-      });
-
-      // Optimistic update.
-      set((s) => ({
-        races: s.races.map((r) =>
-          r.id === raceId ? { ...r, status: 'resolved' as const, winnerHorseId } : r
-        ),
-        tips: s.tips.map((t) => updatedTipsMap.get(t.id) ?? t),
-        profiles: creditedProfiles,
-      }));
-
       try {
-        await Promise.all([
-          // The race result.
-          authFetch(`/api/races/${raceId}`, {
-            method: 'PUT',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ winnerHorseId }),
-          }).then((r) => { if (!r.ok) throw new Error(`HTTP ${r.status}`); }),
-          // Each tip's result/payout.
-          ...Array.from(updatedTipsMap.values()).map((tip) =>
-            authFetch(`/api/tips/${tip.id}`, {
-              method: 'PUT',
-              headers: { 'Content-Type': 'application/json' },
-              body: JSON.stringify({ result: tip.result, payout: tip.payout }),
-            })
-          ),
-          // Each credited tipper's new balance.
-          ...creditedProfiles
-            .filter((p) => (profileCredits[p.userId] ?? 0) > 0 && p.id)
-            .map((p) =>
-              authFetch(`/api/tipperProfiles/${p.id}`, {
-                method: 'PUT',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ coinBalance: p.coinBalance, totalWon: p.totalWon }),
-              })
-            ),
+        const res = await authFetch('/api/tipping/resolve', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ raceId }),
+        });
+        if (!res.ok) throw new Error(`HTTP ${res.status}`);
+        // Refetch authoritative state (bypasses the load-once guard in fetchRaces).
+        const [racesRes, tipsRes, profilesRes] = await Promise.all([
+          authFetch('/api/races'),
+          authFetch('/api/tips'),
+          authFetch('/api/tipperProfiles'),
         ]);
-      } catch (err) {
-        set({ races: previousRaces, tips: previousTips, profiles: previousProfiles });
-        toast.error('Could not resolve race — rolling back changes');
+        const prev = get();
+        const races = racesRes.ok ? await racesRes.json() : prev.races;
+        const tips = tipsRes.ok ? await tipsRes.json() : prev.tips;
+        const profiles = profilesRes.ok ? await profilesRes.json() : prev.profiles;
+        set({ races, tips, profiles });
+      } catch {
+        toast.error('Could not resolve race — please try again');
       }
     },
 
     simulateResolve: (raceId) => {
       const race = get().races.find((r) => r.id === raceId);
       if (!race || race.status !== 'open') return;
-      const entrants = race.entrants;
-      const weights = entrants.map((e) => 1 / e.odds);
-      const totalWeight = weights.reduce((a, b) => a + b, 0);
-      let rand = Math.random() * totalWeight;
-      let winner: RaceEntrant | null = null;
-      for (let i = 0; i < entrants.length; i++) {
-        rand -= weights[i];
-        if (rand <= 0) {
-          winner = entrants[i];
-          break;
-        }
-      }
-      if (!winner) winner = entrants[0];
-      get().resolveRace(raceId, winner.horseId);
+      void get().resolveRace(raceId);
     },
   })
 );

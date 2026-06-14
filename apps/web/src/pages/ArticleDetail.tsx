@@ -21,6 +21,7 @@ import type { ArticleStatus } from '@/types/article';
 import { useAuthStore } from '@/stores/authStore';
 import { canViewPremium } from '@/rbac/can';
 import { Paywall } from '@/components/Paywall';
+import { AskAgentButton } from '@/components/AskAgentButton';
 
 const STATUS_LABELS: Record<ArticleStatus, string> = {
   draft: 'Draft — not yet published',
@@ -280,6 +281,10 @@ export default function ArticleDetail() {
               </button>
 
               <div className="flex items-center gap-3">
+                <AskAgentButton
+                  prompt="Give me a quick summary of this article and why it matters."
+                  label="Ask"
+                />
                 {article.tags && article.tags.length > 0 && (
                   <div className="hidden sm:flex items-center gap-1.5">
                     {article.tags.slice(0, 3).map((tag) => (

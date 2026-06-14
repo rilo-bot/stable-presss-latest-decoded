@@ -103,7 +103,6 @@ router.post('/', async (req, res) => {
       // A self-registered party is provisional: unverified (hidden from the public
       // site) and owned by its creator until staff verify the claim.
       partyId = await db.collection('parties').insertOne({
-        party_type: 'person',
         roles: [role],
         name: partyName,
         verificationStatus: 'unverified',

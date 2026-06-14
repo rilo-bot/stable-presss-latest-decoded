@@ -10,7 +10,8 @@ import { useIssueStore } from '@/stores/issueStore';
 import { useEditorFonts } from './fonts/useEditorFonts';
 import { MagazineCanvas } from './MagazineCanvas';
 import { Inspector } from './inspector/Inspector';
-import { X, ZoomIn, ZoomOut, Send, CheckSquare, Square, ChevronDown, Loader2 } from 'lucide-react';
+import { ShareDialog } from './ShareDialog';
+import { X, ZoomIn, ZoomOut, Send, CheckSquare, Square, ChevronDown, Loader2, Users } from 'lucide-react';
 import { toast } from 'sonner';
 
 export function MagazineEditor({ magazineId, onClose }: { magazineId: string; onClose: () => void }) {
@@ -18,6 +19,7 @@ export function MagazineEditor({ magazineId, onClose }: { magazineId: string; on
   const navigate = useNavigate();
 
   const loadMagazine = useMagazineStore((s) => s.loadMagazine);
+  const flushPending = useMagazineStore((s) => s.flushPending);
   const updateMeta = useMagazineStore((s) => s.updateMagazineMeta);
   const setAllSelected = useMagazineStore((s) => s.setAllPagesSelected);
   const buildIssuePayload = useMagazineStore((s) => s.buildIssuePayload);
@@ -31,14 +33,29 @@ export function MagazineEditor({ magazineId, onClose }: { magazineId: string; on
   const selectedCount = useMagazineStore(
     (s) => s.magazines.find((m) => m.id === magazineId)?.pages.filter((p) => p.selectedForPublish).length ?? 0
   );
+  // Owner/editor may publish, change settings + manage collaborators; contributors only edit their pages.
+  const myRole = useMagazineStore((s) => s.access[magazineId]?.role);
+  const canManage = myRole === 'owner' || myRole === 'editor';
 
   const [scale, setScale] = useState(0.62);
   const [pubOpen, setPubOpen] = useState(false);
   const [publishing, setPublishing] = useState(false);
+  const [shareOpen, setShareOpen] = useState(false);
+  const [loadState, setLoadState] = useState<'loading' | 'ready' | 'notfound'>('loading');
 
   useEffect(() => {
-    loadMagazine(magazineId);
+    let active = true;
+    setLoadState('loading');
+    loadMagazine(magazineId).then((ok) => {
+      if (active) setLoadState(ok ? 'ready' : 'notfound');
+    });
+    return () => {
+      active = false;
+    };
   }, [magazineId, loadMagazine]);
+
+  // Persist any debounced edits when the editor unmounts.
+  useEffect(() => () => flushPending(), [flushPending]);
 
   // Lock body scroll while the full-screen editor is open.
   useEffect(() => {
@@ -49,11 +66,23 @@ export function MagazineEditor({ magazineId, onClose }: { magazineId: string; on
     };
   }, []);
 
-  if (!meta) {
+  const handleClose = () => {
+    flushPending();
+    onClose();
+  };
+
+  if (loadState === 'loading' || !meta) {
+    if (loadState === 'notfound') {
+      return (
+        <div className="fixed inset-0 z-[60] flex items-center justify-center bg-[#0b1220] text-white/70">
+          Magazine not found, or you don’t have access.
+          <button onClick={onClose} className="ml-3 underline">Close</button>
+        </div>
+      );
+    }
     return (
-      <div className="fixed inset-0 z-[60] flex items-center justify-center bg-[#0b1220] text-white/70">
-        Magazine not found.
-        <button onClick={onClose} className="ml-3 underline">Close</button>
+      <div className="fixed inset-0 z-[60] flex items-center justify-center bg-[#0b1220] text-white/60">
+        <Loader2 className="mr-2 animate-spin" size={18} /> Loading magazine…
       </div>
     );
   }
@@ -86,7 +115,7 @@ export function MagazineEditor({ magazineId, onClose }: { magazineId: string; on
       {/* Toolbar */}
       <div className="flex items-center gap-3 border-b border-white/10 bg-[#0d1626] px-4 py-2.5">
         <button
-          onClick={onClose}
+          onClick={handleClose}
           className="flex h-8 w-8 items-center justify-center rounded-sm text-white/60 hover:bg-white/10 hover:text-white"
           aria-label="Close editor"
         >
@@ -96,16 +125,24 @@ export function MagazineEditor({ magazineId, onClose }: { magazineId: string; on
           <input
             value={meta.title}
             onChange={(e) => updateMeta(magazineId, { title: e.target.value })}
-            className="w-[260px] max-w-[40vw] truncate bg-transparent text-sm font-bold text-white outline-none"
+            disabled={!canManage}
+            className="w-[260px] max-w-[40vw] truncate bg-transparent text-sm font-bold text-white outline-none disabled:opacity-100"
             aria-label="Magazine title"
           />
           <input
             value={meta.edition}
             onChange={(e) => updateMeta(magazineId, { edition: e.target.value })}
+            disabled={!canManage}
             className="block w-[260px] max-w-[40vw] truncate bg-transparent text-[11px] text-white/45 outline-none"
             aria-label="Magazine edition"
           />
         </div>
+
+        {!canManage && (
+          <span className="rounded-sm border border-white/15 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wider text-amber-300/80">
+            Contributor · your pages only
+          </span>
+        )}
 
         <div className="ml-auto flex items-center gap-1.5">
           {/* zoom */}
@@ -115,11 +152,19 @@ export function MagazineEditor({ magazineId, onClose }: { magazineId: string; on
             <button onClick={() => setScale((z) => Math.min(1.1, +(z + 0.08).toFixed(2)))} className="px-2 py-1.5 text-white/70 hover:bg-white/10" aria-label="Zoom in"><ZoomIn size={14} /></button>
           </div>
 
-          {/* select all / none */}
-          <button onClick={() => setAllSelected(magazineId, true)} className="flex items-center gap-1 rounded-sm border border-white/15 px-2 py-1.5 text-[11px] text-white/70 hover:bg-white/10"><CheckSquare size={13} /> All</button>
-          <button onClick={() => setAllSelected(magazineId, false)} className="flex items-center gap-1 rounded-sm border border-white/15 px-2 py-1.5 text-[11px] text-white/70 hover:bg-white/10"><Square size={13} /> None</button>
+          {canManage && (
+            <>
+              {/* share */}
+              <button onClick={() => setShareOpen(true)} className="flex items-center gap-1 rounded-sm border border-white/15 px-2 py-1.5 text-[11px] text-white/70 hover:bg-white/10"><Users size={13} /> Share</button>
+
+              {/* select all / none */}
+              <button onClick={() => setAllSelected(magazineId, true)} className="flex items-center gap-1 rounded-sm border border-white/15 px-2 py-1.5 text-[11px] text-white/70 hover:bg-white/10"><CheckSquare size={13} /> All</button>
+              <button onClick={() => setAllSelected(magazineId, false)} className="flex items-center gap-1 rounded-sm border border-white/15 px-2 py-1.5 text-[11px] text-white/70 hover:bg-white/10"><Square size={13} /> None</button>
+            </>
+          )}
 
           {/* publish */}
+          {canManage && (
           <div className="relative">
             <button
               onClick={() => setPubOpen((o) => !o)}
@@ -148,6 +193,7 @@ export function MagazineEditor({ magazineId, onClose }: { magazineId: string; on
               </div>
             )}
           </div>
+          )}
         </div>
       </div>
 
@@ -160,6 +206,8 @@ export function MagazineEditor({ magazineId, onClose }: { magazineId: string; on
           <Inspector />
         </div>
       </div>
+
+      {shareOpen && <ShareDialog magazineId={magazineId} onClose={() => setShareOpen(false)} />}
     </div>
   );
 }

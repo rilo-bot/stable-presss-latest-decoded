@@ -121,7 +121,21 @@ export interface MagazinePage {
 
 export type MagazineStatus = 'draft' | 'published';
 
-/** The editable working draft. */
+/** A user's role on a single magazine (server-persisted drafts are collaborative). */
+export type MagazineRole = 'owner' | 'editor' | 'contributor';
+
+/** A staff member granted access to a magazine, scoped to specific pages. */
+export interface MagazineCollaborator {
+  userId: string;
+  email: string;
+  displayName: string;
+  /** editor = edit any page + manage; contributor = edit only `pageIds`. */
+  role: 'editor' | 'contributor';
+  /** Page ids this person may edit, or 'all'. */
+  pageIds: string[] | 'all';
+}
+
+/** The editable working draft (server-persisted, collaborative). */
 export interface Magazine {
   id: string;
   title: string;
@@ -134,6 +148,32 @@ export interface Magazine {
   updatedAt: string;
   /** Back-links to issues spawned from this draft. */
   publishedIssueIds: string[];
+  /** Creator — full control. */
+  ownerId: string;
+  ownerName?: string;
+  collaborators: MagazineCollaborator[];
+}
+
+/** Lightweight studio list row from `GET /api/magazines`. */
+export interface MagazineSummary {
+  id: string;
+  title: string;
+  edition: string;
+  coverImage: string;
+  status: MagazineStatus;
+  pageCount: number;
+  ownerId: string;
+  ownerName?: string;
+  collaborators: MagazineCollaborator[];
+  /** The caller's role on this magazine. */
+  myRole: MagazineRole;
+  updatedAt: string;
+}
+
+/** The caller's access to a loaded magazine (returned alongside the full doc). */
+export interface MagazineAccess {
+  role: MagazineRole;
+  editablePageIds: string[] | 'all';
 }
 
 /**

@@ -30,4 +30,6 @@ export interface Article {
   createdAt: Date;
   /** Minimum subscription tier to read the full article. Defaults to free. */
   minTier?: SubscriptionTier;
+  /** Editorial assignment / instruction note attached by an editor. */
+  assignmentNote?: string;
 }

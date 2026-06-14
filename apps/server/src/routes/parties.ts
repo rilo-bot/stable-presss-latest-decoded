@@ -33,7 +33,6 @@ router.get('/', async (req, res) => {
 
 router.post('/', async (req, res) => {
   const body = req.body as Partial<{
-    party_type: string;
     roles: string[];
     name: string;
     photo?: string;
@@ -69,7 +68,6 @@ router.post('/', async (req, res) => {
 
 router.put('/:id', async (req, res) => {
   const body = req.body as Partial<{
-    party_type: string;
     roles: string[];
     name: string;
     photo?: string;

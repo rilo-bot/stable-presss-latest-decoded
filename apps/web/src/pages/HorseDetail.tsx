@@ -19,6 +19,7 @@ import type { ReportVisibility } from '@/types/horseReport';
 import { PedigreeGrid } from '@/components/PedigreeGrid';
 import { FollowButton } from '@/components/FollowButton';
 import { DossierMeter } from '@/components/DossierMeter';
+import { AskAgentButton } from '@/components/AskAgentButton';
 import {
   ChevronRight, ChevronDown, Camera, BookOpen, Trophy, Star, Newspaper,
   Heart, Flag, User, Users, Briefcase, Shield, FileText, Wand,
@@ -1853,6 +1854,13 @@ export default function HorseDetail() {
             <div style={{ background: 'linear-gradient(180deg, var(--forest-mid) 0%, var(--forest-deep) 100%)', borderTop: '2px solid var(--gold-dark)', padding: '10px 14px', display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12, flexWrap: 'wrap' }}>
               <FollowButton horseId={horse.id} />
               <DossierMeter filled={dossierFilled} total={dossierTotal} />
+            </div>
+            <div style={{ padding: '10px 14px 12px', display: 'flex', justifyContent: 'center', background: 'var(--forest-deep)' }}>
+              <AskAgentButton
+                variant="ornate"
+                prompt="Tell me about this horse — its connections, recent form, and anything notable."
+                label="Ask about this horse"
+              />
             </div>
           </div>
 

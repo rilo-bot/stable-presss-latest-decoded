@@ -252,7 +252,6 @@ export function HorsePartyLinkPanel({ horseId, horseName }: HorsePartyLinkPanelP
                     return (
                       <option key={current.id} value={current.id}>
                         {current.name}
-                        {current.party_type === 'organisation' ? ' (Org)' : ''}
                       </option>
                     );
                   }
@@ -261,7 +260,6 @@ export function HorsePartyLinkPanel({ horseId, horseName }: HorsePartyLinkPanelP
                 {availableParties.map((p) => (
                   <option key={p.id} value={p.id}>
                     {p.name}
-                    {p.party_type === 'organisation' ? ' (Org)' : ''}
                   </option>
                 ))}
               </select>

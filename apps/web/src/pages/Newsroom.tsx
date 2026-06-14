@@ -34,6 +34,9 @@ import { PARTY_ROLE_LABELS } from '@/types/party';
 import type { MediaItem, MediaType } from '@/types/mediaItem';
 import type { RacingEntry } from '@/types/racingEntry';
 import type { UserRole } from '@/stores/authStore';
+import { useStaffStore } from '@/stores/staffStore';
+import { STAFF_ROLES } from '@/rbac/roles';
+import type { StaffRole } from '@/rbac/roles';
 import { can, canEditArticle } from '@/lib/permissions';
 import { Button } from '@/components/ui/button';
 import {Plus, LayoutDashboard, FileText, CheckSquare, Shield, Send, Users, BarChart2, Settings, Bell, Search, ChevronDown, AlertCircle, Clock, TrendingUp, Eye, Filter, PenLine, ChevronRight, ArrowRight, Scale, BookOpen, Mic, TrendingDown, CheckCircle, AlertTriangle, Star, DollarSign, Upload, Lock, Image, Edit, UserCheck, CalendarClock, FolderOpen, Inbox, RotateCcw, ChevronLeft, Check, X, Layers, Trash, User, Building2, MapPin, Globe, CalendarDays, Link, File, Newspaper, Flag, EyeOff} from 'lucide-react';
@@ -144,6 +147,15 @@ function getRoleConfig(role: UserRole | undefined | null): RoleConfig {
   return ROLES.find((r) => r.id === role) ?? ROLES[0];
 }
 
+const STAFF_ROLE_LABELS: Record<StaffRole, string> = {
+  contributor: 'Contributor',
+  editor: 'Editor',
+  legal_reviewer: 'Legal Reviewer',
+  podcast_producer: 'Podcast Producer',
+  publisher: 'Publisher',
+  administrator: 'Administrator',
+};
+
 /* ── Sidebar navigation ───────────────────────────────── */
 
 interface SideNavItem {
@@ -184,7 +196,7 @@ const SIDE_NAV: SideNavItem[] = [
   { id: 'parties', label: 'Parties CRM', icon: <Users size={15} />, section: 'Stables', requiresPermission: 'content.draft.create' },
   { id: 'media-crm', label: 'Media Records CRM', icon: <File size={15} />, section: 'Stables', requiresPermission: 'content.draft.create' },
   { id: 'racing-crm', label: 'Racing Data CRM', icon: <Flag size={15} />, section: 'Stables', requiresPermission: 'content.draft.create' },
-  { id: 'team', label: 'Team Members', icon: <Users size={15} />, section: 'Management', requiresPermission: 'team.view' },
+  { id: 'team', label: 'Team Members', icon: <Users size={15} />, section: 'Management', requiresPermission: 'team.manage' },
   { id: 'analytics', label: 'Analytics', icon: <BarChart2 size={15} />, section: 'Management', requiresPermission: 'analytics.view' },
   { id: 'settings', label: 'Settings', icon: <Settings size={15} />, section: 'Management', requiresPermission: 'settings.view' },
 ];
@@ -263,6 +275,7 @@ export default function Newsroom() {
 
   const articles = useArticleStore((s) => s.articles);
   const setStatus = useArticleStore((s) => s.setStatus);
+  const updateArticle = useArticleStore((s) => s.updateArticle);
   const currentUser = useAuthStore((s) => s.currentUser);
   const horses = useHorseStore((s) => s.horses);
   const parties = usePartyStore((s) => s.parties);
@@ -302,12 +315,17 @@ export default function Newsroom() {
   const [assignDialogArticle, setAssignDialogArticle] = useState<Article | null>(null);
   const [assignNote, setAssignNote] = useState('');
 
-  // Magazine Studio state
+  // Magazine Studio state — drafts are server-persisted + collaborative.
   const [editorMagId, setEditorMagId] = useState<string | null>(null);
-  const magazines = useMagazineStore((s) => s.magazines);
+  const magazines = useMagazineStore((s) => s.summaries);
   const createMagazine = useMagazineStore((s) => s.createMagazine);
   const deleteMagazine = useMagazineStore((s) => s.deleteMagazine);
+  const loadMagazine = useMagazineStore((s) => s.loadMagazine);
+  const fetchMagazines = useMagazineStore((s) => s.fetchMagazines);
   const buildIssuePayload = useMagazineStore((s) => s.buildIssuePayload);
+  useEffect(() => {
+    fetchMagazines();
+  }, [fetchMagazines]);
   // Published issues are server-persisted (see issueStore). The studio loads them
   // with includeUnpublished so staff can manage hidden editions too.
   const magIssues = useIssueStore((s) => s.issues);
@@ -321,6 +339,8 @@ export default function Newsroom() {
 
   // Magazine edition (issue) management — wired to the server issueStore.
   const handleUpdateEdition = async (magId: string, issue: { id: string; scope: 'full' | 'selected' }) => {
+    // Pull the latest draft into cache so the snapshot reflects current content.
+    await loadMagazine(magId);
     const payload = buildIssuePayload(magId, issue.scope) ?? undefined;
     if (await republishIssue(issue.id, payload)) {
       toast.success(payload ? 'Edition updated from the current draft.' : 'Edition republished.');
@@ -368,11 +388,43 @@ export default function Newsroom() {
   const [racingDeleteTarget, setRacingDeleteTarget] = useState<RacingEntry | null>(null);
   const [racingDeleteConfirm, setRacingDeleteConfirm] = useState(false);
 
+  // Team management (admin) — reuses the same staff store as the /staff page.
+  const teamStaff = useStaffStore((s) => s.staff);
+  const teamPending = useStaffStore((s) => s.pending);
+  const teamLoading = useStaffStore((s) => s.loading);
+  const fetchTeam = useStaffStore((s) => s.fetchStaff);
+  const grantStaff = useStaffStore((s) => s.grant);
+  const revokeStaff = useStaffStore((s) => s.revoke);
+  const [teamEmail, setTeamEmail] = useState('');
+  const [teamRole, setTeamRole] = useState<StaffRole>('contributor');
+  const [teamBusy, setTeamBusy] = useState(false);
+
   const userRole = currentUser?.role ?? null;
   const currentRoleConfig = getRoleConfig(userRole);
 
   const isContributor = userRole === 'contributor';
   const isEditor = userRole === 'editor' || userRole === 'administrator';
+  const canManageTeam = can(userRole, 'team.manage');
+
+  // Load the team roster when the Team Members tab is opened (admins only).
+  useEffect(() => {
+    if (activeNav === 'team' && canManageTeam) void fetchTeam();
+  }, [activeNav, canManageTeam, fetchTeam]);
+
+  const onGrantStaff = async () => {
+    if (!teamEmail.trim()) return;
+    setTeamBusy(true);
+    const r = await grantStaff(teamEmail.trim(), teamRole);
+    setTeamBusy(false);
+    if (r.ok) { toast.success('Role granted.'); setTeamEmail(''); }
+    else toast.error(r.error ?? 'Could not grant the role.');
+  };
+
+  const onRevokeStaff = async (userId: string, role: StaffRole) => {
+    const r = await revokeStaff(userId, role);
+    if (r.ok) toast.success('Role revoked.');
+    else toast.error(r.error ?? 'Could not revoke the role.');
+  };
 
   const buckets = useMemo(() => {
     const map: Record<KanbanStatus, Article[]> = {
@@ -607,9 +659,15 @@ export default function Newsroom() {
 
   /* ── Magazine Studio panel ────────────────────────────── */
 
-  const handleNewMagazine = () => {
-    const id = createMagazine();
-    setEditorMagId(id);
+  const handleNewMagazine = async () => {
+    const id = await createMagazine();
+    if (id) setEditorMagId(id);
+  };
+
+  // Returning to the studio: refresh the server-backed list (new drafts, edition counts).
+  const handleCloseEditor = () => {
+    setEditorMagId(null);
+    void fetchMagazines();
   };
 
   function renderBulletinTemplates() {
@@ -666,19 +724,37 @@ export default function Newsroom() {
                   className="border border-border/60 rounded-sm bg-card overflow-hidden flex flex-col"
                 >
                   <div className="px-4 py-3 border-b border-border/40 bg-muted/20">
-                    <p className="font-[family-name:var(--font-display)] text-sm font-bold text-foreground line-clamp-1">
-                      {mag.title}
-                    </p>
+                    <div className="flex items-start gap-2">
+                      <p className="font-[family-name:var(--font-display)] text-sm font-bold text-foreground line-clamp-1 flex-1">
+                        {mag.title}
+                      </p>
+                      {mag.myRole !== 'owner' && (
+                        <span className="flex-shrink-0 rounded-full bg-sky-500/15 px-2 py-0.5 text-[9px] font-bold uppercase tracking-[0.08em] text-sky-600">
+                          {mag.myRole === 'editor' ? 'Shared · Editor' : 'Shared · Contributor'}
+                        </span>
+                      )}
+                    </div>
                     <p className="text-[10px] text-muted-foreground line-clamp-1 mt-0.5">{mag.edition}</p>
                   </div>
-                  <div className="px-4 py-3 flex items-center gap-3 text-[10px] text-muted-foreground">
+                  <div className="px-4 py-3 flex flex-wrap items-center gap-x-3 gap-y-1 text-[10px] text-muted-foreground">
                     <span className="inline-flex items-center gap-1">
-                      <FileText size={11} /> {mag.pages.length} pages
+                      <FileText size={11} /> {mag.pageCount} pages
                     </span>
                     {liveCount > 0 && (
                       <span className="inline-flex items-center gap-1 text-emerald-600">
                         <CheckCircle size={11} /> {liveCount} live
                       </span>
+                    )}
+                    {mag.collaborators.length > 0 && (
+                      <span className="inline-flex items-center gap-1">
+                        <Users size={11} /> {mag.collaborators.length} collaborator{mag.collaborators.length !== 1 ? 's' : ''}
+                      </span>
+                    )}
+                    {mag.myRole === 'owner' && mag.ownerName && (
+                      <span className="inline-flex items-center gap-1 text-muted-foreground/70">You own this</span>
+                    )}
+                    {mag.myRole !== 'owner' && mag.ownerName && (
+                      <span className="inline-flex items-center gap-1 text-muted-foreground/70">by {mag.ownerName}</span>
                     )}
                   </div>
 
@@ -754,15 +830,17 @@ export default function Newsroom() {
                       className="bg-primary text-primary-foreground hover:bg-primary/90 gap-1.5 text-xs flex-1"
                       onClick={() => setEditorMagId(mag.id)}
                     >
-                      <Edit size={12} /> Open
+                      <Edit size={12} /> {mag.myRole === 'contributor' ? 'Open my pages' : 'Open'}
                     </Button>
-                    <button
-                      onClick={() => deleteMagazine(mag.id)}
-                      className="text-[10px] uppercase tracking-[0.08em] font-semibold text-destructive hover:text-destructive/80 transition-colors px-2"
-                      aria-label={`Delete ${mag.title}`}
-                    >
-                      <Trash size={13} />
-                    </button>
+                    {mag.myRole === 'owner' && (
+                      <button
+                        onClick={() => deleteMagazine(mag.id)}
+                        className="text-[10px] uppercase tracking-[0.08em] font-semibold text-destructive hover:text-destructive/80 transition-colors px-2"
+                        aria-label={`Delete ${mag.title}`}
+                      >
+                        <Trash size={13} />
+                      </button>
+                    )}
                   </div>
                 </div>
               );
@@ -1115,9 +1193,7 @@ export default function Newsroom() {
                               />
                             ) : (
                               <div className="w-7 h-7 rounded-full bg-primary/10 flex items-center justify-center flex-shrink-0 border border-primary/20">
-                                {party.party_type === 'person'
-                                  ? <User size={12} className="text-primary" />
-                                  : <Building2 size={12} className="text-primary" />}
+                                <User size={12} className="text-primary" />
                               </div>
                             )}
                             <div className="min-w-0">
@@ -1133,15 +1209,8 @@ export default function Newsroom() {
                           </div>
                         </td>
                         <td className="px-4 py-3">
-                          <span
-                            className={cn(
-                              'text-[9px] uppercase tracking-[0.1em] font-bold px-2 py-0.5 rounded-full border',
-                              party.party_type === 'person'
-                                ? 'bg-primary/10 text-primary border-primary/25'
-                                : 'bg-[hsl(var(--brand-accent)/0.12)] text-[hsl(var(--brand-accent))] border-[hsl(var(--brand-accent)/0.3)]'
-                            )}
-                          >
-                            {party.party_type === 'person' ? 'Individual' : 'Org'}
+                          <span className="text-[9px] uppercase tracking-[0.1em] font-bold px-2 py-0.5 rounded-full border bg-primary/10 text-primary border-primary/25">
+                            Individual
                           </span>
                         </td>
                         <td className="px-4 py-3">
@@ -2399,10 +2468,15 @@ export default function Newsroom() {
               <Button
                 size="sm"
                 className="text-xs bg-primary text-primary-foreground hover:bg-primary/90 gap-1.5"
-                onClick={() => {
-                  toast.success('Assignment note saved. Story flagged for action.');
-                  setAssignDialogArticle(null);
-                  setAssignNote('');
+                onClick={async () => {
+                  try {
+                    await updateArticle(assignDialogArticle.id, { assignmentNote: assignNote.trim() || undefined });
+                    toast.success('Assignment note saved. Story flagged for action.');
+                    setAssignDialogArticle(null);
+                    setAssignNote('');
+                  } catch {
+                    toast.error('Could not save the note — please try again.');
+                  }
                 }}
               >
                 <Check size={12} />
@@ -2481,7 +2555,7 @@ export default function Newsroom() {
                             Edit
                           </button>
                           <button
-                            onClick={() => { setAssignDialogArticle(article); setAssignNote(''); }}
+                            onClick={() => { setAssignDialogArticle(article); setAssignNote(article.assignmentNote ?? ''); }}
                             className="text-[10px] uppercase tracking-[0.08em] font-semibold text-muted-foreground hover:text-foreground transition-colors"
                           >
                             Note
@@ -2748,7 +2822,7 @@ export default function Newsroom() {
             tabIndex={0}
             aria-label="Upload media asset"
             onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') e.currentTarget.click(); }}
-            onClick={() => toast.success('Media asset storage connects to your provider in production.')}
+            onClick={() => handleOpenMediaForm()}
           >
             <div className="w-10 h-10 rounded-full bg-primary/15 flex items-center justify-center">
               <Upload size={18} className="text-primary" />
@@ -2781,18 +2855,18 @@ export default function Newsroom() {
           <div className="px-4 py-3 border-b border-border/40 bg-muted/30 flex items-center justify-between">
             <div className="flex items-center gap-2">
               <FolderOpen size={13} className="text-muted-foreground" />
-              <p className="text-[10px] uppercase tracking-[0.12em] font-bold text-muted-foreground">All Story Media</p>
+              <p className="text-[10px] uppercase tracking-[0.12em] font-bold text-muted-foreground">Media Records</p>
             </div>
             <p className="text-[10px] text-muted-foreground italic">Editor view — full access</p>
           </div>
-          {allArticles.length === 0 ? (
+          {(mediaItems ?? []).length === 0 ? (
             <div className="p-8">
               <EmptyState
                 icon={FolderOpen}
-                heading="No stories in the system yet."
-                description="Media assets are tied to stories. Once stories are filed and published, their media will appear here."
-                ctaLabel="File a Story"
-                onCta={() => handleNewInColumn('draft')}
+                heading="No media records yet."
+                description="Add photos, video, press and publications here. Each record links to a horse and surfaces automatically on that horse's profile."
+                ctaLabel="Add Media"
+                onCta={() => handleOpenMediaForm()}
               />
             </div>
           ) : (
@@ -2800,30 +2874,42 @@ export default function Newsroom() {
               <table className="w-full text-sm min-w-[480px]">
                 <thead>
                   <tr className="border-b border-border/40 bg-muted/20">
-                    {['Story', 'Author', 'Stage', 'Assets', 'Manage'].map((h) => (
+                    {['Title', 'Type', 'Horse', 'Source', 'Manage'].map((h) => (
                       <th key={h} className="text-left px-4 py-2.5 text-[10px] uppercase tracking-[0.1em] text-muted-foreground font-semibold">{h}</th>
                     ))}
                   </tr>
                 </thead>
                 <tbody>
-                  {allArticles.slice(0, 20).map((article, idx) => (
-                    <tr key={article.id} className={cn('border-b border-border/30 hover:bg-muted/10 transition-colors', idx % 2 === 0 ? 'bg-card' : 'bg-background')}>
-                      <td className="px-4 py-3 max-w-[200px]">
-                        <span className="text-xs font-medium text-foreground line-clamp-1 block">{article.title}</span>
-                      </td>
-                      <td className="px-4 py-3"><span className="text-xs text-muted-foreground">{article.author}</span></td>
-                      <td className="px-4 py-3"><StatusBadge status={article.status} /></td>
-                      <td className="px-4 py-3"><span className="text-[10px] text-muted-foreground italic">—</span></td>
-                      <td className="px-4 py-3">
-                        <button
-                          onClick={() => toast.success('Media management connects to your storage provider in production.')}
-                          className="text-[10px] uppercase tracking-[0.08em] font-semibold text-primary hover:text-primary/80 transition-colors"
-                        >
-                          Manage
-                        </button>
-                      </td>
-                    </tr>
-                  ))}
+                  {(mediaItems ?? []).map((item, idx) => {
+                    const horse = horses.find((h) => h.id === item.horse_id);
+                    return (
+                      <tr key={item.id} className={cn('border-b border-border/30 hover:bg-muted/10 transition-colors', idx % 2 === 0 ? 'bg-card' : 'bg-background')}>
+                        <td className="px-4 py-3 max-w-[200px]">
+                          <span className="text-xs font-medium text-foreground line-clamp-1 block">{item.title}</span>
+                          {item.subject && <span className="text-[10px] text-muted-foreground line-clamp-1 block">{item.subject}</span>}
+                        </td>
+                        <td className="px-4 py-3"><span className="text-[10px] uppercase tracking-[0.08em] font-semibold text-primary">{item.media_type}</span></td>
+                        <td className="px-4 py-3"><span className="text-xs text-muted-foreground">{horse ? (horse.isUnnamed ? 'Un-Named' : horse.name) : '—'}</span></td>
+                        <td className="px-4 py-3"><span className="text-xs text-muted-foreground">{item.source_publication ?? '—'}</span></td>
+                        <td className="px-4 py-3">
+                          <div className="flex items-center gap-3">
+                            <button
+                              onClick={() => handleOpenMediaForm(item)}
+                              className="text-[10px] uppercase tracking-[0.08em] font-semibold text-primary hover:text-primary/80 transition-colors"
+                            >
+                              Edit
+                            </button>
+                            <button
+                              onClick={() => handleMediaDelete(item)}
+                              className="text-[10px] uppercase tracking-[0.08em] font-semibold text-destructive hover:text-destructive/80 transition-colors"
+                            >
+                              Delete
+                            </button>
+                          </div>
+                        </td>
+                      </tr>
+                    );
+                  })}
                 </tbody>
               </table>
             </div>
@@ -3500,14 +3586,139 @@ export default function Newsroom() {
   /* ── Team ── */
 
   function renderTeam() {
+    if (!canManageTeam) {
+      return (
+        <EmptyState
+          icon={Lock}
+          heading="Administrator access required"
+          description="Only administrators can invite team members and manage their staff roles."
+        />
+      );
+    }
     return (
-      <EmptyState
-        icon={Users}
-        heading="Your team roster is waiting to be built."
-        description="Team member management connects to your authentication records in production. Invite contributors, editors, legal reviewers, and publishers to populate this view."
-        ctaLabel="File a Story"
-        onCta={() => { setActiveNav('workflow'); handleNewInColumn('draft'); }}
-      />
+      <div className="space-y-5">
+        {/* Header */}
+        <div className="flex items-center justify-between gap-4 flex-wrap">
+          <div>
+            <p className="text-[10px] uppercase tracking-[0.14em] font-bold text-muted-foreground mb-0.5">
+              Newsroom Team
+            </p>
+            <p className="text-sm text-muted-foreground">
+              {teamStaff.length === 0
+                ? 'No team members on record yet.'
+                : `${teamStaff.length} team member${teamStaff.length !== 1 ? 's' : ''}`}
+            </p>
+          </div>
+        </div>
+
+        {/* Grant / invite */}
+        <div className="border border-dashed border-border/60 rounded-sm p-4 space-y-3 bg-card">
+          <p className="text-[10px] uppercase tracking-[0.12em] font-bold text-muted-foreground">
+            Invite or grant a staff role (by email)
+          </p>
+          <div className="flex flex-col sm:flex-row gap-2">
+            <input
+              type="email"
+              value={teamEmail}
+              onChange={(e) => setTeamEmail(e.target.value)}
+              placeholder="person@example.com"
+              className="flex-1 px-3 py-2 text-sm border border-input rounded-sm bg-background focus:outline-none focus:ring-1 focus:ring-ring"
+              aria-label="Team member email"
+            />
+            <select
+              value={teamRole}
+              onChange={(e) => setTeamRole(e.target.value as StaffRole)}
+              className="px-2 py-2 text-sm border border-input rounded-sm bg-background"
+              aria-label="Staff role"
+            >
+              {STAFF_ROLES.map((r) => (
+                <option key={r} value={r}>{STAFF_ROLE_LABELS[r]}</option>
+              ))}
+            </select>
+            <Button
+              size="sm"
+              className="bg-primary text-primary-foreground hover:bg-primary/90 gap-1.5 text-xs"
+              onClick={onGrantStaff}
+              disabled={teamBusy || !teamEmail.trim()}
+            >
+              <Plus size={13} /> {teamBusy ? 'Granting…' : 'Grant'}
+            </Button>
+          </div>
+          <p className="text-[11px] text-muted-foreground/70 flex items-center gap-1.5">
+            <Shield size={12} /> Granting <span className="font-medium">Administrator</span> lets that
+            person manage the team too. If the email has no account yet, the grant applies automatically on their first sign-in.
+          </p>
+        </div>
+
+        {/* Pending invites */}
+        {teamPending.length > 0 && (
+          <div>
+            <p className="flex items-center gap-2 text-[10px] uppercase tracking-[0.12em] font-bold text-muted-foreground mb-2">
+              <Clock size={13} /> Pending invites ({teamPending.length})
+            </p>
+            <ul className="space-y-2">
+              {teamPending.map((p, i) => (
+                <li
+                  key={`${p.email}-${p.role}-${i}`}
+                  className="flex items-center gap-3 p-3 border border-border/60 rounded-sm bg-card text-sm"
+                >
+                  <span className="flex-1 text-foreground truncate">{p.email}</span>
+                  <span className="text-[10px] uppercase tracking-wide font-bold text-muted-foreground">
+                    {STAFF_ROLE_LABELS[p.role] ?? p.role}
+                  </span>
+                  <span className="text-[10px] text-muted-foreground/60 italic">applies on sign-in</span>
+                </li>
+              ))}
+            </ul>
+          </div>
+        )}
+
+        {/* Staff roster */}
+        {teamLoading && teamStaff.length === 0 ? (
+          <p className="text-sm text-muted-foreground py-8 text-center">Loading team…</p>
+        ) : teamStaff.length === 0 ? (
+          <EmptyState
+            icon={Users}
+            heading="No team members yet."
+            description="Invite contributors, editors, legal reviewers and publishers using the form above."
+          />
+        ) : (
+          <div className="border border-border/60 rounded-sm overflow-hidden bg-card">
+            <div className="px-4 py-2.5 border-b border-border/40 bg-muted/30">
+              <p className="text-[10px] uppercase tracking-[0.12em] font-bold text-muted-foreground">
+                Current staff ({teamStaff.length})
+              </p>
+            </div>
+            <ul className="divide-y divide-border/40">
+              {teamStaff.map((u) => (
+                <li key={u.userId} className="flex items-center gap-3 px-4 py-3">
+                  <div className="flex-1 min-w-0">
+                    <span className="block text-sm font-medium text-foreground truncate">{u.displayName}</span>
+                    <span className="block text-xs text-muted-foreground truncate">{u.email}</span>
+                  </div>
+                  <div className="flex flex-wrap gap-1.5 justify-end">
+                    {u.staffRoles.map((r) => (
+                      <span
+                        key={r}
+                        className="inline-flex items-center gap-1 text-[10px] uppercase tracking-wide font-bold px-2 py-0.5 rounded-full bg-primary/8 text-primary"
+                      >
+                        {STAFF_ROLE_LABELS[r] ?? r}
+                        <button
+                          onClick={() => onRevokeStaff(u.userId, r)}
+                          className="hover:text-destructive transition-colors"
+                          aria-label={`Revoke ${r}`}
+                        >
+                          <X size={11} />
+                        </button>
+                      </span>
+                    ))}
+                  </div>
+                </li>
+              ))}
+            </ul>
+          </div>
+        )}
+      </div>
     );
   }
 
@@ -3963,7 +4174,7 @@ export default function Newsroom() {
 
       {/* Full-screen Magazine Studio editor */}
       {editorMagId && (
-        <MagazineEditor magazineId={editorMagId} onClose={() => setEditorMagId(null)} />
+        <MagazineEditor magazineId={editorMagId} onClose={handleCloseEditor} />
       )}
     </div>
   );

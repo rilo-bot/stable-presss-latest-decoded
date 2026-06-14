@@ -78,48 +78,35 @@ function blobToDataUrl(blob: Blob): Promise<string> {
   });
 }
 
-interface SignResponse {
-  configured: boolean;
-  uploadUrl?: string;
-  publicUrl?: string;
-  key?: string;
-}
-
-async function sign(body: {
-  fileName: string; contentType: string; size: number; kind: UploadKind;
-}): Promise<SignResponse> {
-  const res = await authFetch('/api/uploads/sign', {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify(body),
-  });
-  if (res.status === 501) return { configured: false };
-  if (!res.ok) {
-    const msg = await res.json().catch(() => ({} as { error?: string }));
-    throw new Error(msg.error || `Could not start upload (HTTP ${res.status}).`);
-  }
-  return { configured: true, ...(await res.json()) };
-}
-
-/** Upload an arbitrary Blob of a known content type. */
+/**
+ * Upload an arbitrary Blob of a known content type.
+ *
+ * Proxied upload: the bytes go to our OWN API (same-origin via the dev proxy /
+ * the deployed backend), which streams them to S3. The browser never PUTs to
+ * the S3 host directly, so there is no bucket-CORS preflight to satisfy.
+ */
 async function uploadBlob(
   blob: Blob,
   fileName: string,
   contentType: string,
   kind: UploadKind,
 ): Promise<UploadResult> {
-  const signed = await sign({ fileName, contentType, size: blob.size, kind });
-  if (!signed.configured) {
-    // S3 not set up on this server — inline as a data URL (legacy behaviour).
-    return { url: await blobToDataUrl(blob), fallback: true };
-  }
-  const put = await fetch(signed.uploadUrl!, {
-    method: 'PUT',
+  const qs = new URLSearchParams({ kind, filename: fileName }).toString();
+  const res = await authFetch(`/api/uploads/direct?${qs}`, {
+    method: 'POST',
     headers: { 'Content-Type': contentType },
     body: blob,
   });
-  if (!put.ok) throw new Error(`Upload failed (HTTP ${put.status}).`);
-  return { url: signed.publicUrl!, key: signed.key, fallback: false };
+  if (res.status === 501) {
+    // S3 not set up on this server — inline as a data URL (legacy behaviour).
+    return { url: await blobToDataUrl(blob), fallback: true };
+  }
+  if (!res.ok) {
+    const msg = await res.json().catch(() => ({} as { error?: string }));
+    throw new Error(msg.error || `Upload failed (HTTP ${res.status}).`);
+  }
+  const data = (await res.json()) as { url: string; key?: string };
+  return { url: data.url, key: data.key, fallback: false };
 }
 
 /** Compress an image File and upload it. Returns the stored URL. */

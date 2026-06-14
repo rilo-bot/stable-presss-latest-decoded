@@ -9,11 +9,9 @@ import { usePartyStore } from '@/stores/partyStore';
 import { useHorseStore } from '@/stores/horseStore';
 import { useArticleStore } from '@/stores/articleStore';
 import { useAuthStore } from '@/stores/authStore';
-import { canManageParty, isStaff } from '@/rbac/can';
-import { PartyForm } from '@/components/PartyForm';
+import { canManageParty } from '@/rbac/can';
 import { HorseForm } from '@/components/HorseForm';
 import { HorseStudio } from '@/components/HorseStudio';
-import { PartyStudio } from '@/components/PartyStudio';
 import type { Party, PartyRole } from '@/types/party';
 import { PARTY_ROLE_LABELS } from '@/types/party';
 import { useProfileScope } from '@/hooks/useProfileScope';
@@ -21,9 +19,10 @@ import { ROLE_BINDINGS, PROFILE_ROLES, resolveActiveRole } from '@/lib/profile/r
 import type { PanelParty } from '@/lib/profile/types';
 import { FollowButton } from '@/components/FollowButton';
 import { DossierMeter } from '@/components/DossierMeter';
+import { AskAgentButton } from '@/components/AskAgentButton';
 import {
   serifStyle, goldStyle, partyPhoto, fmtMoney, fmtDate, OrnateCrest,
-  DataCategoryCard, EntityTile, FALLBACK_IMAGES,
+  DataCategoryCard, EntityTile,
   type DataCategoryDef, type DataCardImgKey,
 } from '@/components/profile/kit';
 import {
@@ -70,7 +69,6 @@ export default function PartyDetail() {
   const navigate = useNavigate();
   const [searchParams, setSearchParams] = useSearchParams();
   const [activeModule, setActiveModule] = useState<string | null>(null);
-  const [editProfileOpen, setEditProfileOpen] = useState(false);
   const [registerHorseOpen, setRegisterHorseOpen] = useState(false);
   const [studioHorseId, setStudioHorseId] = useState<string | null>(null);
   const currentUser = useAuthStore((s) => s.currentUser);
@@ -99,17 +97,10 @@ export default function PartyDetail() {
   // Loading / not-found: parties may still be fetching.
   if (parties.length > 0 && !party) return <Navigate to="/parties" replace />;
 
-  // Member-owners get the form-first studio (their editable hub); the public and
-  // staff see the magazine profile below. `?public=1` lets an owner preview it.
-  const viewPublic = searchParams.get('public') === '1';
-  if (!isStaff(currentUser) && canManageParty(currentUser, id) && !viewPublic) {
-    return <PartyStudio partyId={id} />;
-  }
-
   const roleLabel = ROLE_BINDINGS[activeRole]?.label ?? 'Profile';
   const isOwner = canManageParty(currentUser, id);
   const partyName = party?.name ?? 'Loading…';
-  const heroImg = party ? partyPhoto(party, ROLE_IMG_KEY[activeRole]) : FALLBACK_IMAGES.owner;
+  const heroImg = party ? partyPhoto(party, ROLE_IMG_KEY[activeRole]) : undefined;
 
   const switchableRoles = (party?.roles ?? []).filter((r) => PROFILE_ROLES.includes(r));
 
@@ -179,6 +170,11 @@ export default function PartyDetail() {
         <button onClick={closeModule} style={{ fontSize: '0.62rem', textTransform: 'uppercase', letterSpacing: '0.12em', color: moduleOpen ? 'var(--gold-mid)' : 'var(--parchment)', background: 'none', border: 'none', cursor: moduleOpen ? 'pointer' : 'default', ...serifStyle }}>{partyName}</button>
         {activeLabel && (<><ChevronRight size={10} style={{ color: 'var(--gold-dark)' }} /><span style={{ fontSize: '0.62rem', textTransform: 'uppercase', letterSpacing: '0.12em', color: 'var(--gold-bright)', ...serifStyle }}>{activeLabel}</span></>)}
         <div style={{ flex: 1 }} />
+        <AskAgentButton
+          variant="ornate"
+          prompt="Tell me about this party — who they are and the horses they're connected to."
+          label="Ask"
+        />
         <span style={{ fontSize: '0.5rem', letterSpacing: '0.18em', textTransform: 'uppercase', color: 'var(--gold-dark)', ...serifStyle }}>Stable Press · {roleLabel}</span>
       </div>
 
@@ -250,7 +246,7 @@ export default function PartyDetail() {
                 </span>
               )}
               {isOwner && (
-                <button onClick={() => setEditProfileOpen(true)} style={{ display: 'flex', alignItems: 'center', gap: 5, padding: '5px 11px', borderRadius: 3, border: '1px solid var(--gold-mid)', background: 'linear-gradient(135deg, var(--gold-bright), var(--gold-mid))', color: 'var(--forest-deep)', fontWeight: 700, fontSize: '0.56rem', textTransform: 'uppercase', letterSpacing: '0.1em', cursor: 'pointer', ...serifStyle }}>
+                <button onClick={() => navigate(`/studio/${id}`)} style={{ display: 'flex', alignItems: 'center', gap: 5, padding: '5px 11px', borderRadius: 3, border: '1px solid var(--gold-mid)', background: 'linear-gradient(135deg, var(--gold-bright), var(--gold-mid))', color: 'var(--forest-deep)', fontWeight: 700, fontSize: '0.56rem', textTransform: 'uppercase', letterSpacing: '0.1em', cursor: 'pointer', ...serifStyle }}>
                   <Pencil size={11} /> Edit Profile
                 </button>
               )}
@@ -282,14 +278,20 @@ export default function PartyDetail() {
                   </div>
                 </div>
                 <div style={{ position: 'relative', minHeight: 180, border: '3px solid var(--gold-mid)', boxShadow: '0 0 0 1px var(--gold-dark), 0 6px 24px rgba(0,0,0,0.7)', borderRadius: 4, overflow: 'hidden', background: 'var(--forest-deep)' }}>
-                  <img src={heroImg} alt={partyName} crossOrigin="anonymous" style={{ position: 'absolute', inset: 0, width: '100%', height: '100%', objectFit: 'cover' }} />
+                  {heroImg ? (
+                    <img src={heroImg} alt={partyName} crossOrigin="anonymous" style={{ position: 'absolute', inset: 0, width: '100%', height: '100%', objectFit: 'cover' }} />
+                  ) : (
+                    <div style={{ position: 'absolute', inset: 0, display: 'flex', alignItems: 'center', justifyContent: 'center', background: 'linear-gradient(135deg, var(--forest-mid) 0%, var(--forest-deep) 100%)' }}>
+                      <User size={56} strokeWidth={1.3} style={{ color: 'var(--gold-dark)' }} />
+                    </div>
+                  )}
                   <div style={{ position: 'absolute', inset: 0, background: 'radial-gradient(ellipse at center, transparent 45%, rgba(0,0,0,0.5) 100%)' }} />
                   <div style={{ position: 'absolute', bottom: 0, left: 0, right: 0, background: 'linear-gradient(0deg, rgba(26,51,34,0.92) 0%, transparent 100%)', padding: '24px 14px 10px', ...serifStyle }}>
                     <div style={{ fontSize: '0.5rem', letterSpacing: '0.18em', textTransform: 'uppercase', color: 'var(--gold-bright)' }}>{roleLabel}</div>
                     <div style={{ fontSize: '0.9rem', fontWeight: 700, color: 'var(--parchment)' }}>{partyName}</div>
                   </div>
                   {isOwner && (
-                    <button onClick={() => setEditProfileOpen(true)} title="Upload your photo" style={{ position: 'absolute', top: 8, right: 8, display: 'flex', alignItems: 'center', gap: 4, padding: '4px 8px', borderRadius: 3, border: '1px solid var(--gold-mid)', background: 'rgba(14,36,22,0.85)', color: 'var(--gold-bright)', cursor: 'pointer', fontSize: '0.52rem', textTransform: 'uppercase', letterSpacing: '0.1em', ...serifStyle }}>
+                    <button onClick={() => navigate(`/studio/${id}`)} title="Upload your photo" style={{ position: 'absolute', top: 8, right: 8, display: 'flex', alignItems: 'center', gap: 4, padding: '4px 8px', borderRadius: 3, border: '1px solid var(--gold-mid)', background: 'rgba(14,36,22,0.85)', color: 'var(--gold-bright)', cursor: 'pointer', fontSize: '0.52rem', textTransform: 'uppercase', letterSpacing: '0.1em', ...serifStyle }}>
                       <Camera size={11} /> Photo
                     </button>
                   )}
@@ -369,10 +371,7 @@ export default function PartyDetail() {
       </div>
 
       {party && isOwner && (
-        <>
-          <PartyForm open={editProfileOpen} onOpenChange={setEditProfileOpen} party={party} />
-          <HorseForm open={registerHorseOpen} onClose={() => setRegisterHorseOpen(false)} defaultOwnerId={id} memberMode />
-        </>
+        <HorseForm open={registerHorseOpen} onClose={() => setRegisterHorseOpen(false)} defaultOwnerId={id} memberMode />
       )}
 
       {studioHorseId && (

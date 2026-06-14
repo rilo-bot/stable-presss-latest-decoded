@@ -1,5 +1,3 @@
-export type PartyType = 'person' | 'organisation';
-
 export type PartyRole =
   | 'owner'
   | 'trainer'
@@ -77,13 +75,16 @@ export function getStartedYearLabel(roles: PartyRole[]): string {
 export interface Party {
   id: string;
   createdAt: Date;
-  party_type: PartyType;
+  /** A party is always an individual person. Organisations live in their own
+   *  collection (see orgStore) and are not parties. */
   roles: PartyRole[];
   name: string;
-  /** Required when party_type === 'person'. Base64 data URL or remote URL. */
+  /** Required for all parties. Base64 data URL or remote URL. */
   photo?: string;
-  /** Person or organisation profession / job title */
+  /** Profession / job title */
   profession?: string;
+  /** Set when an organisation manages this party (no separate login). */
+  managedByOrgId?: string;
   /** ISO date string YYYY-MM-DD — person only */
   date_of_birth?: string;
   /** Country where born / incorporated */

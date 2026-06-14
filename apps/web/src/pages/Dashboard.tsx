@@ -94,7 +94,7 @@ export default function Dashboard() {
     if (!r.ok) { toast.error(r.error ?? 'Could not create your profile.'); return; }
     toast.success('Profile created — add your details and horses next.');
     const pid = primaryPartyId(useAuthStore.getState().currentUser);
-    navigate(pid ? `/parties/${pid}` : '/dashboard');
+    navigate(pid ? `/studio/${pid}` : '/dashboard');
   };
 
   const onCreateOrg = async () => {
@@ -291,7 +291,7 @@ export default function Dashboard() {
 
           {myPartyId && (
             <Link
-              to={`/parties/${myPartyId}`}
+              to={`/studio/${myPartyId}`}
               className="inline-flex items-center gap-1.5 mb-3 px-3 py-1.5 rounded-sm bg-primary text-primary-foreground text-sm font-medium hover:opacity-90 transition-opacity"
             >
               <PlusCircle size={14} /> Register a horse

@@ -32,13 +32,13 @@ app.use(cors({ origin: '*' }))
 // was silently 413-ing those; 2 MB is a comfortable headroom without inviting
 // multi-MB base64 payloads back into Mongo.
 //
-// Exception: /api/issues aggregates a whole magazine into one frozen snapshot
-// and, in local dev (no S3), embeds inline data-URL images — so it parses its
-// body with a larger limit at its own mount point below. The global parser
-// must skip it here, otherwise it would 413 the large body first.
+// Exception: /api/issues + /api/magazines aggregate a whole magazine and, in
+// local dev (no S3), embed inline data-URL images — so they parse their bodies
+// with a larger limit at their own mount points below. The global parser must
+// skip them here, otherwise it would 413 the large body first.
 const jsonSmall = express.json({ limit: '2mb' })
 app.use((req, res, next) => {
-  if (req.path.startsWith('/api/issues')) return next()
+  if (req.path.startsWith('/api/issues') || req.path.startsWith('/api/magazines')) return next()
   return jsonSmall(req, res, next)
 })
 
@@ -79,11 +79,14 @@ import reportsRouter from './routes/reports.js'
 import mediaItemsRouter from './routes/mediaItems.js'
 import racingEntriesRouter from './routes/racingEntries.js'
 import tipperProfilesRouter from './routes/tipperProfiles.js'
+import tippingRouter from './routes/tipping.js'
 import uploadsRouter from './routes/uploads.js'
 import issuesRouter from './routes/issues.js'
+import magazinesRouter from './routes/magazines.js'
 import sponsorsRouter from './routes/sponsors.js'
 import breakingNewsRouter from './routes/breakingNews.js'
 import metricsRouter from './routes/metrics.js'
+import agentRouter from './routes/agent.js'
 
 // Reads stay public (the public website needs them). Writes are gated by role:
 //   - articles  → editorial matrix (create / edit_own w/ author match / edit_any)
@@ -112,17 +115,25 @@ app.use('/api/reports', horseScopedWriteGate({ collection: 'reports', optionalGe
 app.use('/api/mediaItems', horseScopedWriteGate({ collection: 'mediaItems' }), mediaItemsRouter)
 app.use('/api/racingEntries', horseScopedWriteGate({ collection: 'racingEntries' }), racingEntriesRouter)
 app.use('/api/tipperProfiles', authedWriteGate, tipperProfilesRouter)
+// Race resolution credits winners server-side (clients never write balances).
+app.use('/api/tipping', authedWriteGate, tippingRouter)
 app.use('/api/uploads', uploadsRouter)         // presigned S3 PUT URLs (auth inside)
 // Published magazine issues. Public read (incl. unpublished for staff), staff
 // write. A frozen issue aggregates a whole magazine's pages; in local dev its
 // images are inline data URLs, so it needs more headroom than the global 2 MB
 // body cap (in deployment, page images are S3 URLs and bodies stay small).
 app.use('/api/issues', express.json({ limit: '30mb' }), issuesGate, issuesRouter)
+// Magazine DRAFTS — staff-only, server-persisted so multiple staff can collaborate.
+// Self-gated (attachAccount + staff + per-magazine access checks inside the route).
+app.use('/api/magazines', express.json({ limit: '30mb' }), magazinesRouter)
 // Public landing-page content: read is public, writes are staff-only.
 app.use('/api/sponsors', staffWriteGate, sponsorsRouter)
 app.use('/api/breakingNews', staffWriteGate, breakingNewsRouter)
 // Computed site metrics — public, read-only (no writes).
 app.use('/api/metrics', metricsRouter)
+// AI concierge ("the Stablehand"). Read-only tools, RBAC-scoped to the caller
+// (attachAccountOptional inside the route); answers stream back to the browser.
+app.use('/api/agent', agentRouter)
 // === end auto-mounted routers ===
 
 

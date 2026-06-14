@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { ChevronRight, X } from 'lucide-react';
+import { ChevronRight, X, User } from 'lucide-react';
 import type { Party } from '@/types/party';
 import type { MediaType } from '@/types/mediaItem';
 import type { RaceStatus } from '@/types/racingEntry';
@@ -9,36 +9,15 @@ import type { PanelParty } from '@/lib/profile/types';
 export const serifStyle: React.CSSProperties = { fontFamily: "'IM Fell English', 'Palatino Linotype', Georgia, serif" };
 export const goldStyle: React.CSSProperties = { color: 'var(--gold-bright)', textShadow: '0 1px 3px rgba(0,0,0,0.7)' };
 
-/* ─── Imagery ─── */
-export const FALLBACK_IMAGES: Record<string, string> = {
-  owner:     'https://images.pexels.com/photos/1059180/pexels-photo-1059180.jpeg?auto=compress&cs=tinysrgb&h=130',
-  breeder:   'https://images.pexels.com/photos/28469948/pexels-photo-28469948.jpeg?auto=compress&cs=tinysrgb&h=130',
-  trainer:   'https://images.pexels.com/photos/29930438/pexels-photo-29930438.jpeg?auto=compress&cs=tinysrgb&h=130',
-  personnel: 'https://images.pexels.com/photos/14132978/pexels-photo-14132978.jpeg?auto=compress&cs=tinysrgb&h=130',
-  jockey:    'https://images.pexels.com/photos/1559386/pexels-photo-1559386.jpeg?auto=compress&cs=tinysrgb&h=130',
-  syndicate: 'https://images.pexels.com/photos/20157010/pexels-photo-20157010.jpeg?auto=compress&cs=tinysrgb&h=130',
-};
-
-export const DATA_CARD_IMAGES = {
-  media:    'https://images.pexels.com/photos/28825866/pexels-photo-28825866.jpeg?auto=compress&cs=tinysrgb&h=350',
-  racing:   'https://images.pexels.com/photos/34942801/pexels-photo-34942801.jpeg?auto=compress&cs=tinysrgb&h=350',
-  breeding: 'https://images.pexels.com/photos/5454159/pexels-photo-5454159.jpeg?auto=compress&cs=tinysrgb&h=350',
-  sales:    'https://images.pexels.com/photos/6640385/pexels-photo-6640385.jpeg?auto=compress&cs=tinysrgb&h=350',
-  pedigree: 'https://images.pexels.com/photos/34042427/pexels-photo-34042427.jpeg?auto=compress&cs=tinysrgb&h=350',
-  studbook: 'https://images.pexels.com/photos/35098073/pexels-photo-35098073.jpeg?auto=compress&cs=tinysrgb&h=350',
-  horses:   'https://images.pexels.com/photos/11341116/pexels-photo-11341116.jpeg?auto=compress&cs=tinysrgb&h=350',
-} as const;
-
-export type DataCardImgKey = keyof typeof DATA_CARD_IMAGES;
-
-export const HERO_IMAGE = 'https://images.pexels.com/photos/11341116/pexels-photo-11341116.jpeg?auto=compress&cs=tinysrgb&h=1300&w=940';
+/* ─── Data-card image keys (kept as a TYPE only — no stock imagery is rendered) ─── */
+export type DataCardImgKey = 'media' | 'racing' | 'breeding' | 'sales' | 'pedigree' | 'studbook' | 'horses';
 
 export interface DataRow { label: string; value: string; }
 
 /* ─── Helpers ─── */
-export function partyPhoto(party: Party | undefined, roleKey: string): string {
-  if (party?.photo) return party.photo;
-  return FALLBACK_IMAGES[roleKey] ?? FALLBACK_IMAGES['owner'];
+/** A party's real uploaded photo, or undefined — callers render an icon placeholder (no stock images). */
+export function partyPhoto(party: Party | undefined, _roleKey?: string): string | undefined {
+  return party?.photo || undefined;
 }
 
 export function fmtDate(iso?: string | null): string {
@@ -55,6 +34,34 @@ export function fmtYear(iso?: string | null): string {
 export function fmtMoney(amount?: number, currency = 'AUD'): string {
   if (amount === undefined || amount === null) return '—';
   return `${currency === 'NZD' ? 'NZ$' : '$'}${amount.toLocaleString('en-AU')}`;
+}
+
+/* ─── Avatar — real photo, else a clean icon placeholder (never a stock image) ─── */
+export function Avatar({ src, alt, size, icon, radius = 3 }: { src?: string; alt: string; size: number; icon?: React.ReactNode; radius?: number }) {
+  return (
+    <div style={{ width: size, height: size, borderRadius: radius, overflow: 'hidden', border: '1px solid var(--gold-mid)', background: 'linear-gradient(135deg, var(--forest-mid) 0%, var(--forest-deep) 100%)', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
+      {src
+        ? <img src={src} alt={alt} crossOrigin="anonymous" style={{ width: '100%', height: '100%', objectFit: 'cover', objectPosition: 'center center', display: 'block' }} />
+        : <span style={{ color: 'var(--gold-mid)', display: 'flex' }}>{icon ?? <User size={Math.round(size * 0.5)} strokeWidth={1.6} />}</span>}
+    </div>
+  );
+}
+
+/* ─── Decorative card header band (gradient + icon — replaces stock photo headers) ─── */
+function HeaderBand({ icon, title, eyebrow, onClose, height = 110 }: { icon: React.ReactNode; title: string; eyebrow: string; onClose: () => void; height?: number }) {
+  return (
+    <div style={{ position: 'relative', height, overflow: 'hidden', background: 'linear-gradient(135deg, var(--forest-mid) 0%, var(--forest-deep) 100%)' }}>
+      <div style={{ position: 'absolute', inset: 0, opacity: 0.5, backgroundImage: 'radial-gradient(circle at 1px 1px, rgba(255,224,154,0.12) 1px, transparent 0)', backgroundSize: '14px 14px' }} />
+      <div style={{ position: 'absolute', bottom: 0, left: 0, right: 0, padding: '8px 14px 10px', display: 'flex', alignItems: 'flex-end', justifyContent: 'space-between' }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+          <div style={{ width: 28, height: 28, borderRadius: 3, background: 'rgba(26,51,34,0.85)', border: '1px solid var(--gold-mid)', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>{icon}</div>
+          <div><div style={{ fontSize: '0.52rem', letterSpacing: '0.18em', textTransform: 'uppercase', color: 'var(--gold-mid)', marginBottom: 1 }}>{eyebrow}</div><div style={{ fontSize: '0.95rem', fontWeight: 700, color: 'var(--parchment)', textShadow: '0 1px 4px rgba(0,0,0,0.9)', lineHeight: 1, ...serifStyle }}>{title}</div></div>
+        </div>
+        <button onClick={onClose} aria-label="Close" style={{ width: 26, height: 26, borderRadius: 2, border: '1px solid var(--gold-dark)', background: 'rgba(26,51,34,0.8)', display: 'flex', alignItems: 'center', justifyContent: 'center', cursor: 'pointer', flexShrink: 0 }}><X size={13} style={{ color: 'var(--gold-bright)' }} /></button>
+      </div>
+      <div style={{ position: 'absolute', bottom: 0, left: 0, right: 0, height: 2, background: 'linear-gradient(90deg, var(--gold-dark) 0%, var(--gold-bright) 50%, var(--gold-dark) 100%)' }} />
+    </div>
+  );
 }
 
 /* ─── Ornate crest header ─── */
@@ -85,22 +92,10 @@ export function OrnateCrest({ name, subtitle, partyName }: { name: string; subti
 }
 
 /* ─── Section panel shell (record modules) ─── */
-export function SectionPanel({ title, icon, imgKey, onClose, children }: { title: string; icon: React.ReactNode; imgKey: DataCardImgKey; onClose: () => void; children: React.ReactNode }) {
-  const imgSrc = DATA_CARD_IMAGES[imgKey];
+export function SectionPanel({ title, icon, onClose, children }: { title: string; icon: React.ReactNode; imgKey?: DataCardImgKey; onClose: () => void; children: React.ReactNode }) {
   return (
     <div className="sku-gold-card" style={{ ...serifStyle, overflow: 'hidden' }}>
-      <div style={{ position: 'relative', height: 110, overflow: 'hidden', background: 'var(--forest-deep)' }}>
-        <img src={imgSrc} alt={title} crossOrigin="anonymous" style={{ width: '100%', height: '100%', objectFit: 'cover', objectPosition: 'center center', display: 'block', opacity: 0.75 }} />
-        <div style={{ position: 'absolute', inset: 0, background: 'linear-gradient(180deg, rgba(0,0,0,0.1) 0%, rgba(14,36,22,0.88) 100%)', pointerEvents: 'none' }} />
-        <div style={{ position: 'absolute', bottom: 0, left: 0, right: 0, padding: '8px 14px 10px', display: 'flex', alignItems: 'flex-end', justifyContent: 'space-between' }}>
-          <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-            <div style={{ width: 28, height: 28, borderRadius: 3, background: 'rgba(26,51,34,0.85)', border: '1px solid var(--gold-mid)', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>{icon}</div>
-            <div><div style={{ fontSize: '0.52rem', letterSpacing: '0.18em', textTransform: 'uppercase', color: 'var(--gold-mid)', marginBottom: 1 }}>Stable Press · Data Hub</div><div style={{ fontSize: '0.95rem', fontWeight: 700, color: 'var(--parchment)', textShadow: '0 1px 4px rgba(0,0,0,0.9)', lineHeight: 1, ...serifStyle }}>{title}</div></div>
-          </div>
-          <button onClick={onClose} aria-label="Close section" style={{ width: 26, height: 26, borderRadius: 2, border: '1px solid var(--gold-dark)', background: 'rgba(26,51,34,0.8)', display: 'flex', alignItems: 'center', justifyContent: 'center', cursor: 'pointer', flexShrink: 0 }}><X size={13} style={{ color: 'var(--gold-bright)' }} /></button>
-        </div>
-        <div style={{ position: 'absolute', bottom: 0, left: 0, right: 0, height: 2, background: 'linear-gradient(90deg, var(--gold-dark) 0%, var(--gold-bright) 50%, var(--gold-dark) 100%)' }} />
-      </div>
+      <HeaderBand icon={icon} title={title} eyebrow="Stable Press · Data Hub" onClose={onClose} />
       <div className="sku-parchment" style={{ padding: '14px 14px 16px' }}>{children}</div>
     </div>
   );
@@ -120,26 +115,10 @@ export function SectionHeading({ children }: { children: React.ReactNode }) {
 }
 
 /* ─── Profile detail panel shell (entity / reports) ─── */
-export function ProfileDetailPanel({ title, icon, imgSrc, onClose, children }: { title: string; icon: React.ReactNode; imgSrc: string; onClose: () => void; children: React.ReactNode }) {
+export function ProfileDetailPanel({ title, icon, onClose, children }: { title: string; icon: React.ReactNode; onClose: () => void; children: React.ReactNode }) {
   return (
     <div className="sku-gold-card" style={{ ...serifStyle, overflow: 'hidden' }}>
-      <div style={{ position: 'relative', height: 110, overflow: 'hidden', background: 'var(--forest-deep)' }}>
-        <img src={imgSrc} alt={title} crossOrigin="anonymous" style={{ width: '100%', height: '100%', objectFit: 'cover', objectPosition: 'center center', display: 'block', opacity: 0.72 }} />
-        <div style={{ position: 'absolute', inset: 0, background: 'linear-gradient(180deg, rgba(0,0,0,0.08) 0%, rgba(14,36,22,0.9) 100%)', pointerEvents: 'none' }} />
-        <div style={{ position: 'absolute', bottom: 0, left: 0, right: 0, padding: '8px 14px 10px', display: 'flex', alignItems: 'flex-end', justifyContent: 'space-between' }}>
-          <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-            <div style={{ width: 28, height: 28, borderRadius: 3, background: 'rgba(26,51,34,0.85)', border: '1px solid var(--gold-mid)', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>{icon}</div>
-            <div>
-              <div style={{ fontSize: '0.52rem', letterSpacing: '0.18em', textTransform: 'uppercase', color: 'var(--gold-mid)', marginBottom: 1 }}>Stable Press · Profile Hub</div>
-              <div style={{ fontSize: '0.95rem', fontWeight: 700, color: 'var(--parchment)', textShadow: '0 1px 4px rgba(0,0,0,0.9)', lineHeight: 1, ...serifStyle }}>{title}</div>
-            </div>
-          </div>
-          <button onClick={onClose} aria-label="Close panel" style={{ width: 26, height: 26, borderRadius: 2, border: '1px solid var(--gold-dark)', background: 'rgba(26,51,34,0.8)', display: 'flex', alignItems: 'center', justifyContent: 'center', cursor: 'pointer', flexShrink: 0 }}>
-            <X size={13} style={{ color: 'var(--gold-bright)' }} />
-          </button>
-        </div>
-        <div style={{ position: 'absolute', bottom: 0, left: 0, right: 0, height: 2, background: 'linear-gradient(90deg, var(--gold-dark) 0%, var(--gold-bright) 50%, var(--gold-dark) 100%)' }} />
-      </div>
+      <HeaderBand icon={icon} title={title} eyebrow="Stable Press · Profile Hub" onClose={onClose} />
       <div className="sku-parchment" style={{ padding: '14px 14px 16px' }}>{children}</div>
     </div>
   );
@@ -194,8 +173,8 @@ export function PartyAvatarStrip({ parties, fallbackKey }: { parties: PanelParty
     <div style={{ display: 'flex', gap: 6, marginBottom: 10, flexWrap: 'wrap' }}>
       {parties.map(({ party, isCurrent }) => (
         <div key={party.id} style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 3 }}>
-          <div style={{ width: 40, height: 40, borderRadius: 3, border: `2px solid ${isCurrent ? 'var(--gold-bright)' : 'var(--gold-dark)'}`, overflow: 'hidden', background: 'var(--forest-deep)', boxShadow: '0 2px 6px rgba(0,0,0,0.4)', flexShrink: 0 }}>
-            <img src={partyPhoto(party, fallbackKey)} alt={party.name} crossOrigin="anonymous" style={{ width: '100%', height: '100%', objectFit: 'cover', objectPosition: 'center center' }} />
+          <div style={{ border: `2px solid ${isCurrent ? 'var(--gold-bright)' : 'var(--gold-dark)'}`, borderRadius: 3, boxShadow: '0 2px 6px rgba(0,0,0,0.4)' }}>
+            <Avatar src={partyPhoto(party, fallbackKey)} alt={party.name} size={36} radius={2} />
           </div>
           <div style={{ fontSize: '0.5rem', color: isCurrent ? 'var(--gold-bright)' : 'var(--parchment-shadow)', textAlign: 'center', maxWidth: 48, lineHeight: 1.2, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{party.name.split(' ')[0]}</div>
           {isCurrent && <div style={{ background: 'var(--gold-mid)', color: 'var(--forest-deep)', fontSize: '0.42rem', fontWeight: 700, padding: '1px 4px', borderRadius: 2 }}>CUR</div>}
@@ -205,21 +184,19 @@ export function PartyAvatarStrip({ parties, fallbackKey }: { parties: PanelParty
   );
 }
 
-/* ─── Data Category Card (right column tile) ─── */
+/* ─── Data Category Card (right column tile) — gradient + icon, no stock photo ─── */
 export interface DataCategoryDef { key: string; label: string; sublabel: string; icon: React.ReactNode; imgKey: DataCardImgKey; }
 
-export function DataCategoryCard({ label, sublabel, icon, imgKey, active, onClick }: Omit<DataCategoryDef, 'key'> & { active: boolean; onClick: () => void }) {
-  const imgSrc = DATA_CARD_IMAGES[imgKey];
+export function DataCategoryCard({ label, sublabel, icon, active, onClick }: Omit<DataCategoryDef, 'key'> & { active: boolean; onClick: () => void }) {
   const [hovered, setHovered] = useState(false);
   const lit = hovered || active;
   return (
     <button onClick={onClick} onMouseEnter={() => setHovered(true)} onMouseLeave={() => setHovered(false)} aria-label={`${active ? 'Close' : 'View'} ${label} data`} aria-pressed={active} style={{ width: '100%', border: `2px solid ${lit ? 'var(--gold-bright)' : 'var(--gold-dark)'}`, borderRadius: 4, overflow: 'hidden', cursor: 'pointer', background: 'none', padding: 0, display: 'flex', flexDirection: 'column', boxShadow: lit ? '0 0 0 1px var(--gold-bright), 0 6px 20px rgba(0,0,0,0.6)' : '0 0 0 1px var(--gold-dark), 0 3px 10px rgba(0,0,0,0.45)', transition: 'border-color 0.18s, box-shadow 0.18s', outline: active ? '2px solid var(--gold-bright)' : 'none', outlineOffset: 2, ...serifStyle }}>
-      <div style={{ position: 'relative', width: '100%', height: 68, overflow: 'hidden', background: 'var(--forest-deep)' }}>
-        <img src={imgSrc} alt={label} crossOrigin="anonymous" style={{ width: '100%', height: '100%', objectFit: 'cover', objectPosition: 'center center', display: 'block', opacity: lit ? 0.88 : 0.68, transform: lit ? 'scale(1.04)' : 'scale(1)', transition: 'opacity 0.22s, transform 0.28s ease' }} />
-        <div style={{ position: 'absolute', inset: 0, background: active ? 'linear-gradient(180deg, rgba(180,140,30,0.18) 0%, rgba(14,36,22,0.55) 100%)' : 'linear-gradient(180deg, rgba(0,0,0,0.15) 0%, rgba(14,36,22,0.72) 100%)', pointerEvents: 'none', transition: 'background 0.2s' }} />
+      <div style={{ position: 'relative', width: '100%', height: 64, overflow: 'hidden', background: active ? 'linear-gradient(135deg, var(--forest-light) 0%, var(--forest-mid) 100%)' : 'linear-gradient(135deg, var(--forest-mid) 0%, var(--forest-deep) 100%)', display: 'flex', alignItems: 'center', justifyContent: 'center', transition: 'background 0.2s' }}>
+        <div style={{ position: 'absolute', inset: 0, opacity: 0.5, backgroundImage: 'radial-gradient(circle at 1px 1px, rgba(255,224,154,0.1) 1px, transparent 0)', backgroundSize: '13px 13px' }} />
+        <div style={{ width: 32, height: 32, borderRadius: '50%', background: 'rgba(14,36,22,0.65)', border: `1px solid ${active ? 'var(--gold-bright)' : 'var(--gold-dark)'}`, display: 'flex', alignItems: 'center', justifyContent: 'center', transform: lit ? 'scale(1.08)' : 'scale(1)', transition: 'transform 0.25s, border-color 0.18s' }}>{icon}</div>
         {active && <div style={{ position: 'absolute', top: 5, right: 6, width: 16, height: 16, borderRadius: 2, background: 'var(--gold-bright)', display: 'flex', alignItems: 'center', justifyContent: 'center', boxShadow: '0 1px 4px rgba(0,0,0,0.5)' }}><X size={9} strokeWidth={3} style={{ color: 'var(--forest-deep)' }} /></div>}
-        <div style={{ position: 'absolute', top: 6, left: 7, width: 20, height: 20, borderRadius: 2, background: 'rgba(26,51,34,0.82)', border: `1px solid ${active ? 'var(--gold-bright)' : 'var(--gold-dark)'}`, display: 'flex', alignItems: 'center', justifyContent: 'center', transition: 'border-color 0.18s' }}>{icon}</div>
-        <div style={{ position: 'absolute', bottom: 0, left: 0, right: 0, padding: '4px 7px 4px', background: 'linear-gradient(0deg, rgba(14,36,22,0.88) 0%, transparent 100%)' }}><span style={{ fontSize: '0.56rem', letterSpacing: '0.18em', textTransform: 'uppercase', fontWeight: 700, color: 'var(--gold-bright)', textShadow: '0 1px 3px rgba(0,0,0,0.9)', display: 'block' }}>{label}</span></div>
+        <div style={{ position: 'absolute', bottom: 0, left: 0, right: 0, padding: '4px 7px 4px', background: 'linear-gradient(0deg, rgba(14,36,22,0.88) 0%, transparent 100%)' }}><span style={{ fontSize: '0.56rem', letterSpacing: '0.18em', textTransform: 'uppercase', fontWeight: 700, color: 'var(--gold-bright)', textShadow: '0 1px 3px rgba(0,0,0,0.9)', display: 'block', textAlign: 'center' }}>{label}</span></div>
       </div>
       <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '5px 8px 5px', background: lit ? 'linear-gradient(90deg, var(--forest-mid) 0%, var(--forest-light) 100%)' : 'linear-gradient(90deg, var(--forest-deep) 0%, var(--forest-mid) 100%)', borderTop: `1px solid ${active ? 'var(--gold-bright)' : 'var(--gold-dark)'}`, transition: 'background 0.18s', minHeight: 30 }}>
         <span style={{ fontSize: '0.52rem', color: lit ? 'var(--parchment)' : 'var(--parchment-shadow)', fontStyle: 'italic', letterSpacing: '0.06em', ...serifStyle, transition: 'color 0.18s', flex: 1, textAlign: 'left', paddingRight: 4 }}>{active ? 'Tap to hide' : sublabel}</span>
@@ -234,7 +211,7 @@ export function DataCategoryCard({ label, sublabel, icon, imgKey, active, onClic
 
 /* ─── Left-rail entity tile (relationship modules) — navigates on click ─── */
 export function EntityTile({ title, icon, primaryName, secondaryLine, count, imgSrc, onClick }: {
-  title: string; icon: React.ReactNode; primaryName: string; secondaryLine: string; count: number; imgSrc: string; onClick?: () => void;
+  title: string; icon: React.ReactNode; primaryName: string; secondaryLine: string; count: number; imgSrc?: string; onClick?: () => void;
 }) {
   const interactive = !!onClick && count > 0;
   return (
@@ -244,8 +221,8 @@ export function EntityTile({ title, icon, primaryName, secondaryLine, count, img
         <span style={{ fontSize: '0.58rem', letterSpacing: '0.14em', textTransform: 'uppercase', fontWeight: 700, color: 'var(--gold-bright)', textShadow: '0 1px 2px rgba(0,0,0,0.7)' }}>{title}</span>
       </div>
       <button onClick={interactive ? onClick : undefined} aria-label={interactive ? `View ${primaryName}` : title} style={{ width: '100%', background: 'var(--parchment)', backgroundImage: 'repeating-linear-gradient(0deg, transparent, transparent 20px, rgba(0,0,0,0.022) 20px, rgba(0,0,0,0.022) 21px)', boxShadow: 'inset 0 2px 5px rgba(0,0,0,0.15)', padding: '8px 10px', display: 'flex', alignItems: 'center', gap: 10, border: 'none', cursor: interactive ? 'pointer' : 'default', textAlign: 'left' }}>
-        <div style={{ width: 44, height: 44, borderRadius: 3, border: '2px solid var(--gold-mid)', boxShadow: '0 2px 6px rgba(0,0,0,0.35)', overflow: 'hidden', flexShrink: 0, background: 'var(--forest-deep)' }}>
-          <img src={imgSrc} alt={primaryName} crossOrigin="anonymous" style={{ width: '100%', height: '100%', objectFit: 'cover', objectPosition: 'center center', display: 'block' }} />
+        <div style={{ boxShadow: '0 2px 6px rgba(0,0,0,0.35)', borderRadius: 3 }}>
+          <Avatar src={imgSrc} alt={primaryName} size={44} icon={icon} />
         </div>
         <div style={{ flex: 1, minWidth: 0 }}>
           <div style={{ fontSize: '0.78rem', fontWeight: 700, color: 'var(--forest-deep)', lineHeight: 1.2, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis', ...serifStyle }}>{primaryName}</div>

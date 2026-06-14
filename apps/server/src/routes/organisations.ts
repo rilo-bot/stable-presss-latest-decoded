@@ -24,9 +24,10 @@ router.post('/', async (req, res) => {
     return;
   }
 
-  const orgId = await db.collection('parties').insertOne({
-    party_type: 'organisation',
-    roles: [],
+  // Organisations live in their OWN collection — they are not parties. An org can
+  // add individual parties it manages (see /managed-parties); those stay in the
+  // parties collection with a managedByOrgId pointer.
+  const orgId = await db.collection('organisations').insertOne({
     name,
     profession: typeof req.body?.profession === 'string' ? req.body.profession.trim() : undefined,
     base_location: typeof req.body?.base_location === 'string' ? req.body.base_location.trim() : undefined,
@@ -41,7 +42,7 @@ router.post('/', async (req, res) => {
     orgMemberships: [...memberships, { orgId, orgRole: 'org_owner' }],
   });
 
-  const org = await db.collection('parties').findById(orgId);
+  const org = await db.collection('organisations').findById(orgId);
   const fresh = await db.collection('users').findById(account.id);
   res.status(201).json({
     org: project(org!),
@@ -54,7 +55,7 @@ router.get('/mine', async (req, res) => {
   const account = req.account!;
   const out: Array<Record<string, unknown>> = [];
   for (const m of account.orgMemberships) {
-    const org = await db.collection('parties').findById(m.orgId);
+    const org = await db.collection('organisations').findById(m.orgId);
     if (org) out.push({ ...project(org), myRole: m.orgRole });
   }
   res.json(out);
@@ -68,8 +69,8 @@ router.get('/:id', async (req, res) => {
     res.status(403).json({ error: 'You are not a member of this organisation.' });
     return;
   }
-  const org = await db.collection('parties').findById(orgId);
-  if (!org || org.party_type !== 'organisation') {
+  const org = await db.collection('organisations').findById(orgId);
+  if (!org) {
     res.status(404).json({ error: 'Organisation not found.' });
     return;
   }
@@ -176,7 +177,6 @@ router.post('/:id/managed-parties', async (req, res) => {
     ? req.body.roles.filter((r: unknown) => PARTY_ROLES.includes(r as never))
     : [];
   const id = await db.collection('parties').insertOne({
-    party_type: req.body?.party_type === 'organisation' ? 'organisation' : 'person',
     roles,
     name,
     managedByOrgId: orgId,
