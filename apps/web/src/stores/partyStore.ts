@@ -8,7 +8,7 @@ interface PartyState {
   loading: boolean;
   error: string | null;
   loaded: boolean;
-  fetchParties: () => Promise<void>;
+  fetchParties: (force?: boolean) => Promise<void>;
   addParty: (party: Omit<Party, 'id' | 'createdAt'>) => Promise<string>;
   updateParty: (id: string, updates: Partial<Omit<Party, 'id' | 'createdAt'>>) => Promise<void>;
   removeParty: (id: string) => Promise<void>;
@@ -20,8 +20,9 @@ export const usePartyStore = create<PartyState>()((set, get) => ({
   error: null,
   loaded: false,
 
-  fetchParties: async () => {
-    if (get().loading || get().loaded) return;
+  fetchParties: async (force?: boolean) => {
+    if (get().loading) return;
+    if (get().loaded && !force) return;
     set({ loading: true, error: null });
     try {
       const res = await authFetch('/api/parties');

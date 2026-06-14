@@ -105,7 +105,10 @@ export function PartyStudio({ partyId, onBack }: PartyStudioProps) {
   const dismissedWelcome = useMemberOnboardingStore((s) => !!s.dismissedByUser[currentUser?.id ?? '']);
   const dismissWelcome = useMemberOnboardingStore((s) => s.dismiss);
 
-  useEffect(() => { fetchParties(); fetchHorses(); fetchLinks(); }, [fetchParties, fetchHorses, fetchLinks]);
+  // Force a fresh parties pull on entry: a just-signed-up member's party was
+  // minted after the store last loaded, so a cached fetch would miss it (the
+  // infinite "Loading your profile…" on first visit).
+  useEffect(() => { fetchParties(true); fetchHorses(); fetchLinks(); }, [fetchParties, fetchHorses, fetchLinks]);
 
   const [studioHorseId, setStudioHorseId] = useState<string | null>(null);
   const [activeModule, setActiveModule] = useState<string | null>(null);

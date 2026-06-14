@@ -15,6 +15,20 @@ export function uid(prefix = 'e'): string {
   return prefix + Date.now().toString(36) + Math.random().toString(36).slice(2, 7);
 }
 
+/**
+ * If the user is actively typing in THIS region's contentEditable, blur it so
+ * EditableText re-syncs the DOM from the store after our write. We blur only the
+ * target node (matched by data-region-id), never the chat input or other fields.
+ * EditableText only writes store→DOM when its own node is unfocused (see
+ * components/EditableText.tsx), so without this an AI edit to the focused region
+ * would persist to the store but not appear until the user clicked away.
+ */
+function blurRegionIfActive(regionId: string): void {
+  if (typeof document === 'undefined') return;
+  const el = document.querySelector<HTMLElement>(`[data-region-id="${CSS.escape(regionId)}"]`);
+  if (el && document.activeElement === el) el.blur();
+}
+
 export function regionContentOf(magId: string, pageId: string, regionId: string): RegionContent | undefined {
   const m = useMagazineStore.getState().getMagazine(magId);
   return m?.pages.find((p) => p.id === pageId)?.content[regionId];
@@ -47,7 +61,7 @@ export function applyPayload(
 ): RegionContent | null {
   const ms = useMagazineStore.getState();
   const before = regionContentOf(magId, pageId, regionId) ?? null;
-  ms.select(null); // blur any focused contentEditable so the DOM re-syncs
+  blurRegionIfActive(regionId); // re-sync the DOM if the user is typing in this region
   switch (payload.kind) {
     case 'text':
       ms.setText(magId, pageId, regionId, payload.html);
@@ -73,7 +87,7 @@ export function applyPayload(
 /** Restore a region to a captured content snapshot (used by undo). */
 function restoreContent(magId: string, pageId: string, regionId: string, content: RegionContent): void {
   const ms = useMagazineStore.getState();
-  ms.select(null);
+  blurRegionIfActive(regionId);
   if (content.kind === 'text') {
     ms.setText(magId, pageId, regionId, content.html);
     ms.setTextStyle(magId, pageId, regionId, content.style);
