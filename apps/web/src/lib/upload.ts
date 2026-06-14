@@ -1,16 +1,21 @@
 /**
- * Client-side upload helper — presigned S3 PUT.
+ * Client-side upload helper — server-proxied S3 upload.
  *
- * Flow: ask our API to sign a short-lived PUT URL → upload the bytes DIRECTLY
- * to S3 → store the returned public URL on the record. Images are compressed to
- * a JPEG Blob first (keeps stored assets small and uniform).
+ * Flow: POST the file to our own API (same-origin in dev via the Vite proxy;
+ * the VITE_API_URL backend in prod) → the server streams it to S3 → we store
+ * the URL the server returns. Images are compressed to a JPEG Blob first.
+ *
+ * The server returns a RELATIVE file URL ('/api/uploads/file/<key>'); we run it
+ * through apiUrl() so it becomes absolute against the API origin in production
+ * (a stored <img src> can't go through apiUrl() at render time, unlike fetch).
+ * In dev apiUrl() is a no-op and the relative path resolves via the proxy.
  *
  * Graceful fallback: when the server reports S3 is NOT configured (HTTP 501),
  * we fall back to an inline base64 data URL — identical to the app's previous
  * behaviour — so local/WebContainer dev keeps working with zero setup. The
  * `fallback` flag on the result tells callers which path was taken.
  */
-import { authFetch } from '@/lib/api';
+import { apiUrl, authFetch } from '@/lib/api';
 
 export type UploadKind = 'party' | 'horse' | 'media' | 'evidence' | 'avatar' | 'podcast' | 'misc';
 
@@ -106,7 +111,10 @@ async function uploadBlob(
     throw new Error(msg.error || `Upload failed (HTTP ${res.status}).`);
   }
   const data = (await res.json()) as { url: string; key?: string };
-  return { url: data.url, key: data.key, fallback: false };
+  // Server returns a relative '/api/...' URL; make it absolute against the API
+  // origin (no-op in dev, prefixes VITE_API_URL in prod) so it loads in <img>.
+  const url = data.url.startsWith('/') ? apiUrl(data.url) : data.url;
+  return { url, key: data.key, fallback: false };
 }
 
 /** Compress an image File and upload it. Returns the stored URL. */

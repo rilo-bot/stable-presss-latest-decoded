@@ -13,7 +13,7 @@ import { useEditorAgentUi } from '@/stores/editorAgentUiStore';
 import { createEditorTransport } from './editorTransport';
 import { executeEditorTool } from './editOpsExecutor';
 import { previewOf } from './editorContext';
-import { applyStagedEdit, applyBatch, discardStaged, discardBatch, undoLast } from './applyEdits';
+import { applyStagedEdit, applyBatch, applyAllStaged, discardStaged, discardBatch, discardAll, undoLast } from './applyEdits';
 import type { StagedEdit } from './types';
 
 function messageText(m: UIMessage): string {
@@ -171,8 +171,19 @@ export function EditorAgentPanel() {
 
       {/* Staged edits awaiting approval */}
       {groups.length > 0 && (
-        <div className="max-h-[40%] space-y-2 overflow-y-auto border-t border-amber-400/20 bg-black/20 px-3 py-2.5">
-          <div className="text-[10px] font-semibold uppercase tracking-wider text-amber-300/80">Review &amp; apply</div>
+        <div className="max-h-[46%] space-y-2 overflow-y-auto border-t-2 border-amber-400/50 bg-amber-400/[0.07] px-3 py-2.5">
+          <div className="flex items-center justify-between gap-2">
+            <span className="flex items-center gap-1.5 text-[11px] font-bold uppercase tracking-wider text-amber-300">
+              <span className="flex h-4 min-w-4 items-center justify-center rounded-full bg-amber-400 px-1 text-[10px] font-bold text-[#0b1220]">{staged.length}</span>
+              Review &amp; apply
+            </span>
+            {groups.length > 1 && (
+              <div className="flex items-center gap-1">
+                <button onClick={() => applyAllStaged()} className="rounded-sm bg-emerald-500 px-2 py-0.5 text-[10px] font-semibold text-white hover:bg-emerald-600">Apply all</button>
+                <button onClick={() => discardAll()} className="rounded-sm border border-white/15 px-2 py-0.5 text-[10px] text-white/60 hover:bg-white/10">Discard all</button>
+              </div>
+            )}
+          </div>
           {groups.map((g) => (
             <StagedCard key={g[0].batchId ?? g[0].id} group={g} />
           ))}

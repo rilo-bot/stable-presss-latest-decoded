@@ -64,9 +64,8 @@ export function ShareDialog({ magazineId, onClose }: { magazineId: string; onClo
 
   const submit = async () => {
     if (!selectedEmail) return;
-    const pageIds: string[] | 'all' =
-      selectedIsEditor || pageMode === 'all' ? 'all' : Array.from(picked);
-    if (!selectedIsEditor && pageMode === 'specific' && picked.size === 0) return;
+    const pageIds: string[] | 'all' = pageMode === 'all' ? 'all' : Array.from(picked);
+    if (pageMode === 'specific' && picked.size === 0) return;
     setBusy(true);
     const ok = await addCollaborator(magazineId, { email: selectedEmail, pageIds });
     setBusy(false);
@@ -163,20 +162,20 @@ export function ShareDialog({ magazineId, onClose }: { magazineId: string; onClo
               <p className="text-[10px] leading-relaxed text-white/50">
                 {selectedIsEditor ? (
                   <>
-                    Joins as an <span className="font-semibold text-sky-200">Editor</span> (their staff role) — can edit
-                    every page, publish, and manage collaborators.
+                    Joins as an <span className="font-semibold text-sky-200">Editor</span> (their staff role) — can also
+                    publish and manage collaborators. Choose which pages they edit below.
                   </>
                 ) : (
                   <>
                     Joins as a <span className="font-semibold text-emerald-200">Contributor</span> (their staff role) —
-                    can edit only the pages you assign below.
+                    can edit the pages you assign below.
                   </>
                 )}
               </p>
             )}
 
-            {/* Page scope (contributor-type only) */}
-            {selectedStaff && !selectedIsEditor && (
+            {/* Page scope — assign pages to anyone you share with */}
+            {selectedStaff && (
               <div className="space-y-2">
                 <div className="flex gap-1.5">
                   {(['all', 'specific'] as const).map((m) => (
@@ -218,7 +217,7 @@ export function ShareDialog({ magazineId, onClose }: { magazineId: string; onClo
             <button
               type="button"
               onClick={submit}
-              disabled={busy || !selectedEmail || (!selectedIsEditor && pageMode === 'specific' && picked.size === 0)}
+              disabled={busy || !selectedEmail || (pageMode === 'specific' && picked.size === 0)}
               className="flex w-full items-center justify-center gap-2 rounded-sm bg-sky-500 px-3 py-2 text-xs font-semibold text-white hover:bg-sky-600 disabled:opacity-50"
             >
               {busy ? <Loader2 size={13} className="animate-spin" /> : <UserPlus size={13} />}

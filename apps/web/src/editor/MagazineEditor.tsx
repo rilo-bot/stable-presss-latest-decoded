@@ -232,6 +232,11 @@ export function MagazineEditor({ magazineId, onClose }: { magazineId: string; on
 
       {/* Body */}
       <div className="flex min-h-0 flex-1">
+        {aiOpen && (
+          <div className="w-[340px] flex-shrink-0 overflow-hidden border-r border-white/10">
+            <EditorAgentPanel />
+          </div>
+        )}
         <div className="relative min-w-0 flex-1">
           <div ref={canvasScrollRef} className="absolute inset-0 overflow-auto bg-[#0b1220]">
             <MagazineCanvas magazineId={magazineId} scale={scale} />
@@ -242,11 +247,6 @@ export function MagazineEditor({ magazineId, onClose }: { magazineId: string; on
         <div className="w-[300px] flex-shrink-0 overflow-hidden border-l border-white/10 bg-[#0d1626]">
           <Inspector />
         </div>
-        {aiOpen && (
-          <div className="w-[340px] flex-shrink-0 overflow-hidden border-l border-white/10">
-            <EditorAgentPanel />
-          </div>
-        )}
       </div>
 
       {shareOpen && <ShareDialog magazineId={magazineId} onClose={() => setShareOpen(false)} />}

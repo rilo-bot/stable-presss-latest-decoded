@@ -29,6 +29,21 @@ function blurRegionIfActive(regionId: string): void {
   if (el && document.activeElement === el) el.blur();
 }
 
+/**
+ * Bring an edited region/page into view so the user actually SEES the change
+ * (without this, edits to an off-screen/zoomed page look like "nothing happened").
+ * Deferred a frame so the DOM has re-synced from the store first.
+ */
+export function scrollRegionIntoView(pageId: string, regionId?: string): void {
+  if (typeof document === 'undefined') return;
+  requestAnimationFrame(() => {
+    const target =
+      (regionId ? document.querySelector<HTMLElement>(`[data-region-id="${CSS.escape(regionId)}"]`) : null) ??
+      document.querySelector<HTMLElement>(`[data-page-id="${CSS.escape(pageId)}"]`);
+    target?.scrollIntoView({ behavior: 'smooth', block: 'center' });
+  });
+}
+
 export function regionContentOf(magId: string, pageId: string, regionId: string): RegionContent | undefined {
   const m = useMagazineStore.getState().getMagazine(magId);
   return m?.pages.find((p) => p.id === pageId)?.content[regionId];
@@ -120,6 +135,7 @@ export function applyStagedEdit(edit: StagedEdit): void {
     ui.pushUndo(entry);
   }
   ui.removeStaged(edit.id);
+  scrollRegionIntoView(edit.pageId, edit.regionId);
 }
 
 export function applyAllStaged(): void {
@@ -141,5 +157,6 @@ export function undoLast(): boolean {
   const entry = useEditorAgentUi.getState().popUndo();
   if (!entry) return false;
   restoreContent(entry.magId, entry.pageId, entry.regionId, entry.before);
+  scrollRegionIntoView(entry.pageId, entry.regionId);
   return true;
 }

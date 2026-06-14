@@ -10,7 +10,7 @@ import { BLUEPRINT_BY_TYPE, BLUEPRINTS } from '@/editor/templates/blueprints';
 import { STOCK } from '@/editor/templates/helpers';
 import type { Magazine, MagazinePage, TextStyle } from '@/types/magazine';
 import { filledOf, previewOf, resolveCurrentPageId } from './editorContext';
-import { applyPayload, computeAfter, uid, undoLast } from './applyEdits';
+import { applyPayload, computeAfter, uid, undoLast, scrollRegionIntoView } from './applyEdits';
 import type { EditPayload, StagedEdit } from './types';
 
 /* eslint-disable @typescript-eslint/no-explicit-any */
@@ -51,6 +51,7 @@ function autoApply(magId: string, pageId: string, regionId: string, payload: Edi
   if (before) {
     useEditorAgentUi.getState().pushUndo({ id: uid('u'), magId, pageId, regionId, before, summary });
   }
+  scrollRegionIntoView(pageId, regionId);
 }
 
 function stage(edit: StagedEdit) {

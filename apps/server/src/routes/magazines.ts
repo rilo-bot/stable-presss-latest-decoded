@@ -3,14 +3,21 @@
 // magazine. (Published, frozen, public copies live in routes/issues.ts.)
 //
 // Collaboration model (page-assigned, staff-only):
-//   - owner       — the creator: edit any page, manage collaborators, publish, delete.
-//   - editor      — edit any page, manage collaborators, publish.
-//   - contributor — edit ONLY the pages shared with them (pageIds, or 'all').
+//   - owner       — the creator: runs the magazine. Edits ANY page, manages
+//                   collaborators, changes settings, publishes, and deletes.
+//   - collaborator — anyone the owner shares with: edits ONLY the pages assigned
+//                   to them (pageIds, or 'all'). No management/publish rights.
+//
+// `role` ('editor'|'contributor') on a collaborator is derived from the staff
+// role they already hold and is shown as an informational badge — it does NOT
+// grant management. Management is OWNER-ONLY (so a collaborator can never widen
+// their own page scope or remove peers); the only thing the sharer chooses is
+// which pages each collaborator may edit.
 //
 // Conflict handling is last-write-wins per page, which is safe in practice
-// because collaborators are assigned different pages. Edits persist via the
-// per-page PATCH below (debounced on the client); structural changes (title,
-// cover, publish-selection) go through PATCH /:id and are owner/editor-only.
+// because collaborators are assigned different pages. Content edits persist via
+// the per-page PATCH below (debounced on the client); structural changes (title,
+// cover, publish-selection) go through PATCH /:id and are owner-only.
 //
 // All routes require a STAFF account (the editor is staff-gated); per-magazine
 // access is then checked against owner/collaborator membership.
@@ -53,20 +60,22 @@ function roleOnMagazine(doc: WithMongoId, userId: string): MagRole | null {
   return c ? c.role : null;
 }
 
-const canEditAll = (role: MagRole | null) => role === 'owner' || role === 'editor';
-const canManage = (role: MagRole | null) => role === 'owner' || role === 'editor';
+// Two independent axes:
+//   - WHICH PAGES a person may edit = the pages assigned to them (owner = all).
+//   - Management (publish / settings / add+remove collaborators / delete) is
+//     OWNER-ONLY. A non-owner collaborator therefore can never widen their own
+//     page scope or strip peers — page assignment is a real boundary for everyone.
+// The stored editor/contributor role is derived from staff role for display only.
+const isOwner = (role: MagRole | null) => role === 'owner';
 
-// A collaborator's magazine capability follows the staff role they already hold:
-// content editors/publishers/admins edit everything; everyone else is page-scoped.
 const MAG_EDITOR_ROLES = ['administrator', 'publisher', 'editor'];
 function magRoleForStaff(roles: string[]): 'editor' | 'contributor' {
   return roles.some((r) => MAG_EDITOR_ROLES.includes(r)) ? 'editor' : 'contributor';
 }
 
-/** The set of page ids a user may edit: 'all' for owner/editor, else their assignment. */
+/** The set of page ids a user may edit: 'all' for the owner, else their assignment. */
 function editablePageIds(doc: WithMongoId, userId: string): string[] | 'all' {
-  const role = roleOnMagazine(doc, userId);
-  if (canEditAll(role)) return 'all';
+  if (doc.ownerId === userId) return 'all';
   const c = collaborators(doc).find((x) => x.userId === userId);
   return c ? c.pageIds : [];
 }
@@ -181,8 +190,8 @@ router.patch('/:id', async (req, res) => {
     res.status(404).json({ error: 'Not found' });
     return;
   }
-  if (!canManage(roleOnMagazine(doc, uid))) {
-    res.status(403).json({ error: 'Only the owner or an editor can change magazine settings.' });
+  if (!isOwner(roleOnMagazine(doc, uid))) {
+    res.status(403).json({ error: 'Only the owner can change magazine settings.' });
     return;
   }
 
@@ -283,10 +292,11 @@ router.post('/:id/collaborators', async (req, res) => {
     return;
   }
 
-  // Capability is derived from their staff role; only page scope is chosen here.
+  // Manage/publish capability follows their staff role; the editable page scope
+  // is whatever the sharer assigned (all pages, or a specific set).
   const role = magRoleForStaff(acct.roles);
   const pageIds: string[] | 'all' =
-    role === 'editor' || rawPageIds === 'all' || rawPageIds == null
+    rawPageIds === 'all' || rawPageIds == null
       ? 'all'
       : Array.isArray(rawPageIds)
         ? rawPageIds.map(String)
