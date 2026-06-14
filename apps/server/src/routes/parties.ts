@@ -1,5 +1,7 @@
 import { Router } from 'express';
 import { db } from '../lib/db.js';
+import { isStaff } from '../lib/rbac.js';
+import { manageablePartyIds } from '../lib/scope.js';
 
 type WithMongoId = { _id: string; [key: string]: unknown };
 function project<T extends WithMongoId>(doc: T): Omit<T, '_id'> & { id: string } {
@@ -11,7 +13,22 @@ const router = Router();
 
 router.get('/', async (req, res) => {
   const items = await db.collection('parties').find();
-  res.json(items.map(project));
+  const account = req.account;
+  if (isStaff(account)) {
+    res.json(items.map(project));
+    return;
+  }
+  // Non-staff callers: hide provisional (unverified) parties — except the
+  // viewer's own (created by them or a party they manage), so a member can see
+  // and edit the provisional profile they just registered.
+  const own = new Set<string>(account ? manageablePartyIds(account) : []);
+  const visible = items.filter(
+    (p) =>
+      p.verificationStatus !== 'unverified' ||
+      (account ? p.createdByUserId === account.id : false) ||
+      own.has(String(p._id)),
+  );
+  res.json(visible.map(project));
 });
 
 router.post('/', async (req, res) => {
@@ -70,6 +87,10 @@ router.put('/:id', async (req, res) => {
     updatedAt: now,
   };
   delete (updateData as { id?: unknown }).id;
+  delete (updateData as { createdByUserId?: unknown }).createdByUserId; // never client-settable
+  // Members editing their own provisional profile can't self-promote to public;
+  // only staff verification (the claim flow) flips verificationStatus.
+  if (!isStaff(req.account)) delete (updateData as { verificationStatus?: unknown }).verificationStatus;
 
   const found = await db.collection('parties').updateOne(req.params.id, updateData);
   if (!found) {

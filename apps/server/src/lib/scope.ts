@@ -65,13 +65,26 @@ export function horsesLinkedToParty(partyId: string, data: ScopeData, currentOnl
 }
 
 /**
+ * Party-ids the account may act through (write). A claim qualifies when it is
+ * VERIFIED, or PENDING but self-registered (provisional access to one's own
+ * party — see PartyClaim.selfRegistered).
+ */
+export function manageablePartyIds(account: AccountUser): string[] {
+  // `selfRegistered` unset counts as self-registered (every legacy/dashboard claim
+  // is one); only an explicit `false` (claiming a pre-existing party) opts out.
+  return account.partyClaims
+    .filter((c) => c.status === 'verified' || (c.status === 'pending' && c.selfRegistered !== false))
+    .map((c) => c.partyId)
+}
+
+/**
  * Horse ids the account currently has authorised access to — the union of horses
- * linked to any VERIFIED party claim they hold and any organisation they belong
+ * linked to any manageable party claim they hold and any organisation they belong
  * to. Current links only (a past relationship grants no write access).
  */
 export function authorisedHorseIds(account: AccountUser, data: ScopeData): string[] {
   const partyIds = [
-    ...account.partyClaims.filter((c) => c.status === 'verified').map((c) => c.partyId),
+    ...manageablePartyIds(account),
     ...account.orgMemberships.map((m) => m.orgId),
   ]
   const ids = new Set<string>()

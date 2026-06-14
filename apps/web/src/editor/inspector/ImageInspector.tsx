@@ -1,9 +1,9 @@
 import { useRef, useState } from 'react';
 import type { ImageContent } from '@/types/magazine';
 import { useMagazineStore } from '@/stores/magazineStore';
-import { compressImageFile } from '@/lib/imageCompress';
+import { uploadImage } from '@/lib/upload';
 import { Section, Segmented } from './controls';
-import { Upload, ExternalLink, Trash2, Loader2 } from 'lucide-react';
+import { Upload, Trash2, Loader2 } from 'lucide-react';
 import { toast } from 'sonner';
 
 export function ImageInspector({
@@ -18,19 +18,18 @@ export function ImageInspector({
   content: ImageContent;
 }) {
   const setImage = useMagazineStore((s) => s.setImage);
-  const addImageDataUrl = useMagazineStore((s) => s.addImageDataUrl);
-  const addImageUrl = useMagazineStore((s) => s.addImageUrl);
   const fileRef = useRef<HTMLInputElement>(null);
   const [busy, setBusy] = useState(false);
-  const [unsplashUrl, setUnsplashUrl] = useState('');
 
   const onFile = async (file: File | undefined) => {
     if (!file) return;
     setBusy(true);
     try {
-      const dataUrl = await compressImageFile(file, { maxDim: 1280, quality: 0.72 });
-      const key = addImageDataUrl(dataUrl);
-      setImage(magazineId, pageId, regionId, { src: key });
+      // Compress + upload to object storage (S3 URL), falling back to an inline
+      // data URL in local dev. Either way the URL is stored straight on the region,
+      // so a published issue is self-contained.
+      const { url } = await uploadImage(file, { kind: 'media', maxDim: 1280, quality: 0.72 });
+      setImage(magazineId, pageId, regionId, { src: url });
       toast.success('Photo updated.');
     } catch (err) {
       toast.error(err instanceof Error ? err.message : 'Could not load that image.');
@@ -38,18 +37,6 @@ export function ImageInspector({
       setBusy(false);
       if (fileRef.current) fileRef.current.value = '';
     }
-  };
-
-  const applyUnsplash = () => {
-    const url = unsplashUrl.trim();
-    if (!/^https?:\/\//i.test(url)) {
-      toast.error('Paste a valid image URL (it should start with http).');
-      return;
-    }
-    const key = addImageUrl(url);
-    setImage(magazineId, pageId, regionId, { src: key });
-    setUnsplashUrl('');
-    toast.success('Photo updated from URL.');
   };
 
   return (
@@ -72,38 +59,6 @@ export function ImageInspector({
           {busy ? 'Processing…' : 'Choose image…'}
         </button>
       </Section>
-
-      {/* <Section title="Upload from Unsplash">
-        <button
-          type="button"
-          onClick={() => window.open('https://unsplash.com', '_blank', 'noopener,noreferrer')}
-          className="mb-2 flex w-full items-center justify-center gap-2 rounded-sm border border-white/15 bg-white/5 px-3 py-2 text-xs font-semibold text-white hover:bg-white/10"
-        >
-          <ExternalLink size={13} /> Open Unsplash
-        </button>
-        <div className="flex gap-1.5">
-          <input
-            type="text"
-            value={unsplashUrl}
-            placeholder="Paste image URL…"
-            onChange={(e) => setUnsplashUrl(e.target.value)}
-            onKeyDown={(e) => e.key === 'Enter' && applyUnsplash()}
-            className="flex-1 rounded-sm border border-white/15 bg-white/5 px-2 py-1.5 text-xs text-white outline-none"
-            spellCheck={false}
-          />
-          <button
-            type="button"
-            onClick={applyUnsplash}
-            className="rounded-sm bg-sky-500 px-3 py-1.5 text-xs font-semibold text-white hover:bg-sky-600"
-          >
-            OK
-          </button>
-        </div>
-        <p className="mt-2 text-[10px] leading-relaxed text-white/40">
-          Tip: open Unsplash, right-click the photo you like, choose <em>Copy Image Address</em>,
-          then paste the URL here and press OK.
-        </p>
-      </Section> */}
 
       <Section title="Fit">
         <Segmented<ImageContent['fit']>

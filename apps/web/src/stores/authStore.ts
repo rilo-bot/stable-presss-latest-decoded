@@ -23,6 +23,12 @@ export interface PartyClaim {
   verifierType?: 'admin' | 'org';
   verifiedAt?: string;
   rejectionReason?: string;
+  /**
+   * True when this claim registered the account's OWN person-party (vs. claiming
+   * a pre-existing one). Self-registered claims get PROVISIONAL editing access
+   * while still pending — see manageablePartyIds in rbac/can.ts.
+   */
+  selfRegistered?: boolean;
 }
 
 /** Membership of one organisation, with a scoped org role. */

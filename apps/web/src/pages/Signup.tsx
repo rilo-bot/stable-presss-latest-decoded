@@ -3,6 +3,7 @@ import { Link, useNavigate } from 'react-router-dom';
 import { useAuthStore } from '@/stores/authStore';
 import { useClaimStore } from '@/stores/claimStore';
 import { useOrgStore } from '@/stores/orgStore';
+import { primaryPartyId } from '@/rbac/can';
 import { PARTY_ROLES, PARTY_ROLE_LABELS } from '@/types/party';
 import type { PartyRole } from '@/types/party';
 import { Button } from '@/components/ui/button';
@@ -11,6 +12,7 @@ import { Label } from '@/components/ui/label';
 import { toast } from 'sonner';
 import { Mail, ArrowRight, RotateCcw, BookOpen, Star, Building2, Check, Upload, Loader2 } from 'lucide-react';
 import { cn } from '@/lib/utils';
+import { uploadRawFile } from '@/lib/upload';
 
 type Step = 'details' | 'otp' | 'claim' | 'org';
 type AccountType = 'reader' | 'individual' | 'organisation';
@@ -36,6 +38,7 @@ export default function Signup() {
   const [selectedRoles, setSelectedRoles] = useState<PartyRole[]>([]);
   const [evidenceDataUrl, setEvidenceDataUrl] = useState<string | undefined>();
   const [evidenceName, setEvidenceName] = useState<string | null>(null);
+  const [uploadingEvidence, setUploadingEvidence] = useState(false);
 
   // Step 3 (org) state — organisations create an org and become its owner.
   const [orgName, setOrgName] = useState('');
@@ -156,19 +159,24 @@ export default function Signup() {
     );
   };
 
-  const handleEvidenceFile = (e: React.ChangeEvent<HTMLInputElement>) => {
+  const handleEvidenceFile = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
+    e.target.value = '';
     if (!file) return;
     if (file.size > 4 * 1024 * 1024) {
       toast.error('Please choose a file under 4 MB.');
       return;
     }
-    const reader = new FileReader();
-    reader.onload = () => {
-      setEvidenceDataUrl(typeof reader.result === 'string' ? reader.result : undefined);
+    setUploadingEvidence(true);
+    try {
+      const { url } = await uploadRawFile(file, 'evidence');
+      setEvidenceDataUrl(url);
       setEvidenceName(file.name);
-    };
-    reader.readAsDataURL(file);
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : 'Could not upload that file. Please try again.');
+    } finally {
+      setUploadingEvidence(false);
+    }
   };
 
   const handleClaimSubmit = async () => {
@@ -182,12 +190,15 @@ export default function Signup() {
     );
     setLoading(false);
     const failed = results.filter((r) => !r.ok);
-    if (failed.length === 0) {
-      toast.success('Claim submitted. An administrator will review and verify it shortly.');
-    } else {
+    if (failed.length > 0) {
       toast.error(failed[0].error ?? 'Some claims could not be submitted.');
+      return;
     }
-    navigate('/');
+    // Provisional access: the profile is live for them now (hidden from the public
+    // until verified). Drop them straight into their hub to add details + horses.
+    toast.success('Profile created — add your details and horses next.');
+    const partyId = primaryPartyId(useAuthStore.getState().currentUser);
+    navigate(partyId ? `/parties/${partyId}` : '/dashboard');
   };
 
   const handleOrgSubmit = async () => {
@@ -583,14 +594,19 @@ export default function Signup() {
                     Evidence (optional)
                   </Label>
                   <label className="flex items-center gap-2 px-3 py-2.5 rounded-md border border-dashed border-input hover:border-primary/50 cursor-pointer text-sm text-muted-foreground transition-colors">
-                    <Upload size={15} className="flex-shrink-0" />
+                    {uploadingEvidence
+                      ? <Loader2 size={15} className="flex-shrink-0 animate-spin" />
+                      : <Upload size={15} className="flex-shrink-0" />}
                     <span className="truncate">
-                      {evidenceName ?? 'Attach a licence or document (image/PDF, ≤4 MB)'}
+                      {uploadingEvidence
+                        ? 'Uploading…'
+                        : evidenceName ?? 'Attach a licence or document (image/PDF, ≤4 MB)'}
                     </span>
                     <input
                       type="file"
                       className="hidden"
                       accept="image/*,application/pdf"
+                      disabled={uploadingEvidence}
                       onChange={handleEvidenceFile}
                     />
                   </label>
@@ -615,7 +631,7 @@ export default function Signup() {
 
                 <button
                   type="button"
-                  onClick={() => navigate('/')}
+                  onClick={() => navigate('/dashboard')}
                   className="w-full text-center text-sm text-muted-foreground hover:text-foreground transition-colors"
                 >
                   Skip for now — I&rsquo;ll do this later

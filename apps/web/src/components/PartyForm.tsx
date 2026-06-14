@@ -14,6 +14,7 @@ import {
   DialogClose,
 } from '@/components/ui/dialog';
 import { usePartyStore } from '@/stores/partyStore';
+import { uploadImage } from '@/lib/upload';
 import type { Party, PartyType, PartyRole, PersonnelSubtype } from '@/types/party';
 import {
   PARTY_ROLES,
@@ -43,36 +44,6 @@ interface PartyFormProps {
 /* ─────────────────────────────────────────────
    Helpers
 ───────────────────────────────────────────── */
-
-/**
- * Compress an image File to a small JPEG data URL.
- * Max dimension is capped and JPEG quality is set low enough that
- * the result comfortably fits in localStorage even for many records.
- */
-function compressImage(file: File, maxDim = 320, quality = 0.55): Promise<string> {
-  return new Promise((resolve, reject) => {
-    const reader = new FileReader();
-    reader.onerror = () => reject(new Error('Failed to read file'));
-    reader.onload = (evt) => {
-      const src = evt.target?.result as string;
-      const img = new Image();
-      img.onerror = () => reject(new Error('Failed to decode image'));
-      img.onload = () => {
-        const { naturalWidth: w, naturalHeight: h } = img;
-        const scale = Math.min(1, maxDim / Math.max(w, h));
-        const canvas = document.createElement('canvas');
-        canvas.width = Math.round(w * scale);
-        canvas.height = Math.round(h * scale);
-        const ctx = canvas.getContext('2d');
-        if (!ctx) { reject(new Error('Canvas not supported')); return; }
-        ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
-        resolve(canvas.toDataURL('image/jpeg', quality));
-      };
-      img.src = src;
-    };
-    reader.readAsDataURL(file);
-  });
-}
 
 const ACCEPTED_IMAGE_TYPES = ['image/jpeg', 'image/png', 'image/webp', 'image/gif'];
 const MAX_FILE_SIZE_MB = 5;
@@ -219,21 +190,18 @@ export function PartyForm({ open, onOpenChange, party, defaultRole, onSaved }: P
       toast.error(`Image must be under ${MAX_FILE_SIZE_MB} MB.`);
       return;
     }
+    // Show a full-res preview immediately for good UX while the upload runs.
+    const previewReader = new FileReader();
+    previewReader.onload = (e) => setPhotoPreview(e.target?.result as string);
+    previewReader.readAsDataURL(file);
     try {
-      // Show a full-res preview immediately for good UX
-      const previewReader = new FileReader();
-      previewReader.onload = (e) => {
-        setPhotoPreview(e.target?.result as string);
-      };
-      previewReader.readAsDataURL(file);
-
-      // Compress to a small JPEG for storage — prevents localStorage quota errors
-      const compressed = await compressImage(file, 320, 0.55);
+      // Compress to a small JPEG and upload to S3; store the returned URL.
+      const { url } = await uploadImage(file, { kind: 'party', maxDim: 320, quality: 0.6 });
       setPhotoFile(file);
-      setPhoto(compressed);
+      setPhoto(url);
       setErrors((prev) => { const n = { ...prev }; delete n.photo; return n; });
-    } catch {
-      toast.error('Could not process the image file. Please try again.');
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : 'Could not upload the image. Please try again.');
     }
   };
 

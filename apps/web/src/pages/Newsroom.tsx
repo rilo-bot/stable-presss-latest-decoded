@@ -26,6 +26,7 @@ import type { Sale } from '@/types/sale';
 import type { HorseReport } from '@/types/horseReport';
 import { MagazineEditor } from '@/editor/MagazineEditor';
 import { useMagazineStore } from '@/stores/magazineStore';
+import { useIssueStore } from '@/stores/issueStore';
 import type { Article, ArticleStatus } from '@/types/article';
 import type { Horse } from '@/types/horse';
 import type { Party, PartyRole } from '@/types/party';
@@ -35,7 +36,7 @@ import type { RacingEntry } from '@/types/racingEntry';
 import type { UserRole } from '@/stores/authStore';
 import { can, canEditArticle } from '@/lib/permissions';
 import { Button } from '@/components/ui/button';
-import {Plus, LayoutDashboard, FileText, CheckSquare, Shield, Send, Users, BarChart2, Settings, Bell, Search, ChevronDown, AlertCircle, Clock, TrendingUp, Eye, Filter, PenLine, ChevronRight, ArrowRight, Scale, BookOpen, Mic, TrendingDown, CheckCircle, AlertTriangle, Star, DollarSign, Upload, Lock, Image, Edit, UserCheck, CalendarClock, FolderOpen, Inbox, RotateCcw, ChevronLeft, Check, X, Layers, Trash, User, Building2, MapPin, Globe, CalendarDays, Link, File, Newspaper, Flag} from 'lucide-react';
+import {Plus, LayoutDashboard, FileText, CheckSquare, Shield, Send, Users, BarChart2, Settings, Bell, Search, ChevronDown, AlertCircle, Clock, TrendingUp, Eye, Filter, PenLine, ChevronRight, ArrowRight, Scale, BookOpen, Mic, TrendingDown, CheckCircle, AlertTriangle, Star, DollarSign, Upload, Lock, Image, Edit, UserCheck, CalendarClock, FolderOpen, Inbox, RotateCcw, ChevronLeft, Check, X, Layers, Trash, User, Building2, MapPin, Globe, CalendarDays, Link, File, Newspaper, Flag, EyeOff} from 'lucide-react';
 import { articleToast } from '@/components/Toast';
 import { cn } from '@/lib/utils';
 import { toast } from 'sonner';
@@ -304,9 +305,34 @@ export default function Newsroom() {
   // Magazine Studio state
   const [editorMagId, setEditorMagId] = useState<string | null>(null);
   const magazines = useMagazineStore((s) => s.magazines);
-  const magIssues = useMagazineStore((s) => s.issues);
   const createMagazine = useMagazineStore((s) => s.createMagazine);
   const deleteMagazine = useMagazineStore((s) => s.deleteMagazine);
+  const buildIssuePayload = useMagazineStore((s) => s.buildIssuePayload);
+  // Published issues are server-persisted (see issueStore). The studio loads them
+  // with includeUnpublished so staff can manage hidden editions too.
+  const magIssues = useIssueStore((s) => s.issues);
+  const fetchIssues = useIssueStore((s) => s.fetchIssues);
+  const republishIssue = useIssueStore((s) => s.republish);
+  const unpublishIssue = useIssueStore((s) => s.unpublish);
+  const removeIssue = useIssueStore((s) => s.deleteIssue);
+  useEffect(() => {
+    fetchIssues({ includeUnpublished: true });
+  }, [fetchIssues]);
+
+  // Magazine edition (issue) management — wired to the server issueStore.
+  const handleUpdateEdition = async (magId: string, issue: { id: string; scope: 'full' | 'selected' }) => {
+    const payload = buildIssuePayload(magId, issue.scope) ?? undefined;
+    if (await republishIssue(issue.id, payload)) {
+      toast.success(payload ? 'Edition updated from the current draft.' : 'Edition republished.');
+    }
+  };
+  const handleUnpublishEdition = async (id: string) => {
+    if (await unpublishIssue(id)) toast.success('Edition hidden from the public Bulletins page.');
+  };
+  const handleDeleteEdition = async (id: string) => {
+    if (!window.confirm('Delete this published edition permanently? This cannot be undone.')) return;
+    if (await removeIssue(id)) toast.success('Edition deleted.');
+  };
 
   // Horse CRM state
   const [horseFormOpen, setHorseFormOpen] = useState(false);
@@ -587,8 +613,15 @@ export default function Newsroom() {
   };
 
   function renderBulletinTemplates() {
-    const issueCountFor = (magId: string) =>
+    // magIssues is loaded with includeUnpublished, so it holds both live + hidden editions.
+    const editionsFor = (magId: string) =>
+      magIssues
+        .filter((i) => i.magazineId === magId)
+        .sort((a, b) => (a.publishedAt < b.publishedAt ? 1 : -1));
+    const liveCountFor = (magId: string) =>
       magIssues.filter((i) => i.magazineId === magId && !i.unpublishedAt).length;
+    const fmtDate = (iso: string) =>
+      new Date(iso).toLocaleDateString('en-NZ', { day: 'numeric', month: 'short' });
 
     return (
       <div className="space-y-5">
@@ -625,7 +658,8 @@ export default function Newsroom() {
         ) : (
           <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
             {magazines.map((mag) => {
-              const issues = issueCountFor(mag.id);
+              const editions = editionsFor(mag.id);
+              const liveCount = liveCountFor(mag.id);
               return (
                 <div
                   key={mag.id}
@@ -641,12 +675,79 @@ export default function Newsroom() {
                     <span className="inline-flex items-center gap-1">
                       <FileText size={11} /> {mag.pages.length} pages
                     </span>
-                    {issues > 0 && (
+                    {liveCount > 0 && (
                       <span className="inline-flex items-center gap-1 text-emerald-600">
-                        <CheckCircle size={11} /> {issues} published
+                        <CheckCircle size={11} /> {liveCount} live
                       </span>
                     )}
                   </div>
+
+                  {/* Published editions — manage what readers see */}
+                  {editions.length > 0 && (
+                    <div className="px-4 pb-3 space-y-1.5 border-t border-border/40 pt-2.5">
+                      <p className="text-[9px] uppercase tracking-[0.12em] font-bold text-muted-foreground">
+                        Editions
+                      </p>
+                      {editions.map((issue) => {
+                        const live = !issue.unpublishedAt;
+                        return (
+                          <div key={issue.id} className="flex items-center gap-1.5 text-[10px]">
+                            <span
+                              className={cn(
+                                'h-1.5 w-1.5 rounded-full flex-shrink-0',
+                                live ? 'bg-emerald-500' : 'bg-muted-foreground/40'
+                              )}
+                              title={live ? 'Live on Bulletins' : 'Hidden from the public'}
+                            />
+                            <span className="font-semibold text-foreground tabular-nums">v{issue.version}</span>
+                            <span className="text-muted-foreground truncate">
+                              {issue.scope === 'selected' ? `${issue.pageCount}p` : 'full'} · {fmtDate(issue.publishedAt)}
+                            </span>
+                            <span className="ml-auto flex items-center gap-0.5">
+                              {live && (
+                                <a
+                                  href={`/bulletins/${issue.id}`}
+                                  target="_blank"
+                                  rel="noopener noreferrer"
+                                  title="View on Bulletins"
+                                  className="p-1 rounded-sm text-muted-foreground hover:text-foreground hover:bg-muted/60"
+                                >
+                                  <Eye size={12} />
+                                </a>
+                              )}
+                              <button
+                                type="button"
+                                onClick={() => handleUpdateEdition(mag.id, issue)}
+                                title={live ? 'Update from current draft' : 'Republish (make live again)'}
+                                className="p-1 rounded-sm text-muted-foreground hover:text-primary hover:bg-muted/60"
+                              >
+                                <RotateCcw size={12} />
+                              </button>
+                              {live && (
+                                <button
+                                  type="button"
+                                  onClick={() => handleUnpublishEdition(issue.id)}
+                                  title="Unpublish (hide from public)"
+                                  className="p-1 rounded-sm text-muted-foreground hover:text-amber-600 hover:bg-muted/60"
+                                >
+                                  <EyeOff size={12} />
+                                </button>
+                              )}
+                              <button
+                                type="button"
+                                onClick={() => handleDeleteEdition(issue.id)}
+                                title="Delete edition permanently"
+                                className="p-1 rounded-sm text-muted-foreground hover:text-destructive hover:bg-muted/60"
+                              >
+                                <Trash size={12} />
+                              </button>
+                            </span>
+                          </div>
+                        );
+                      })}
+                    </div>
+                  )}
+
                   <div className="mt-auto flex items-center gap-2 px-4 py-3 border-t border-border/40">
                     <Button
                       size="sm"
@@ -673,7 +774,9 @@ export default function Newsroom() {
           <Eye size={13} className="text-muted-foreground mt-0.5 flex-shrink-0" />
           <p className="text-[11px] text-muted-foreground leading-relaxed">
             Magazines you publish appear on the public <strong className="text-foreground">Bulletins</strong> page as
-            readable editions. Edit text, swap photos (device or Unsplash) and set QR links live — changes save automatically.
+            readable editions. Edit text, swap photos and set QR links live in the studio. Under each magazine you can
+            view, <strong className="text-foreground">update</strong> an edition from the current draft,{' '}
+            <strong className="text-foreground">unpublish</strong> it to hide it from readers, or delete it.
           </p>
         </div>
       </div>

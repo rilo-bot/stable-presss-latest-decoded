@@ -10,6 +10,7 @@ import { Textarea } from '@/components/ui/textarea';
 import { X, Share as HorseIcon, Save, Trash, ChevronDown, Users, Plus, Check, Upload, Link, Image, AlertTriangle } from 'lucide-react';
 import { toast } from 'sonner';
 import { cn } from '@/lib/utils';
+import { uploadImage } from '@/lib/upload';
 
 interface HorseFormProps {
   open: boolean;
@@ -326,30 +327,28 @@ function ImageUploader({
 }) {
   const [mode, setMode] = useState<'url' | 'upload'>('url');
   const [dragging, setDragging] = useState(false);
+  const [uploading, setUploading] = useState(false);
   const fileRef = useRef<HTMLInputElement>(null);
 
-  const handleFile = (file: File) => {
+  const handleFile = async (file: File) => {
     if (!file.type.startsWith('image/')) {
       toast.error('Please select an image file (JPG, PNG, WebP, etc.)');
       return;
     }
-    // 5 MB limit — prevents localStorage quota errors
     if (file.size > 5 * 1024 * 1024) {
       toast.error('Image must be under 5 MB. For larger photos, paste a URL instead.');
       return;
     }
-    const reader = new FileReader();
-    reader.onload = (e) => {
-      const result = e.target?.result;
-      if (typeof result === 'string') {
-        onChange(result);
-        toast.success('Image loaded. It will display this session — use a URL for permanent storage.');
-      }
-    };
-    reader.onerror = () => {
-      toast.error('Could not read the file. Try a different image.');
-    };
-    reader.readAsDataURL(file);
+    setUploading(true);
+    try {
+      const { url } = await uploadImage(file, { kind: 'horse', maxDim: 1280, quality: 0.72 });
+      onChange(url);
+      toast.success('Image uploaded.');
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : 'Could not upload the image. Try a different file.');
+    } finally {
+      setUploading(false);
+    }
   };
 
   const handleDrop = (e: React.DragEvent<HTMLDivElement>) => {
@@ -447,7 +446,7 @@ function ImageUploader({
             </div>
             <div className="text-center">
               <p className="text-xs font-semibold text-foreground">
-                {dragging ? 'Drop the image here' : 'Click to browse or drag & drop'}
+                {uploading ? 'Uploading…' : dragging ? 'Drop the image here' : 'Click to browse or drag & drop'}
               </p>
               <p className="text-[10px] text-muted-foreground mt-0.5">
                 JPG, PNG, WebP, GIF — max 5 MB
@@ -463,13 +462,13 @@ function ImageUploader({
             />
           </div>
 
-          {/* Session-only notice */}
+          {/* Upload info */}
           <div className="flex items-start gap-1.5 p-2 rounded-sm bg-[hsl(var(--brand-accent)/0.08)] border border-[hsl(var(--brand-accent)/0.2)]">
             <AlertTriangle size={11} className="text-[hsl(var(--brand-accent))] mt-0.5 flex-shrink-0" />
             <p className="text-[10px] text-muted-foreground leading-relaxed">
-              <span className="font-semibold text-foreground">Session only.</span>{' '}
-              Uploaded images display during this session but are not saved between page reloads
-              (browser storage limits). For a permanent photo, paste a URL instead.
+              <span className="font-semibold text-foreground">Stored permanently.</span>{' '}
+              The image is optimised and uploaded to secure cloud storage when you save.
+              You can also paste a URL instead.
             </p>
           </div>
         </div>
@@ -493,7 +492,7 @@ function ImageUploader({
             <div className="flex items-center gap-1.5">
               <Image size={11} className="text-primary-foreground" />
               <span className="text-[10px] text-primary-foreground font-medium">
-                {isDataUrl ? 'Uploaded image (session only)' : 'Image URL preview'}
+                {isDataUrl ? 'Uploaded image' : 'Image preview'}
               </span>
             </div>
             <button

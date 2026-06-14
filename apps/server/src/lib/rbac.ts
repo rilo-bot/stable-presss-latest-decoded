@@ -14,7 +14,7 @@ import type { Request, Response, NextFunction } from 'express'
 import { db } from './db.js'
 import { attachAccount, attachAccountOptional } from './auth.js'
 import { STAFF_ROLES, type AccountUser, type OrgRole, type StaffRole } from './identity.js'
-import { authorisedHorseIds } from './scope.js'
+import { authorisedHorseIds, manageablePartyIds } from './scope.js'
 
 type ContentAction =
   | 'content.draft.create'
@@ -161,6 +161,45 @@ function firstSegment(req: Request): string | undefined {
   return req.url.split('?')[0].split('/').filter(Boolean)[0]
 }
 
+/**
+ * Can the account edit this party's profile? Staff always; otherwise the account
+ * that manages it — a verified or provisional (pending self-registered) claim on
+ * it, or the creator of a self-registered party. Mirror of the web `canManageParty`.
+ */
+export async function accountCanManageParty(
+  account: AccountUser | undefined,
+  partyId: string,
+): Promise<boolean> {
+  if (!account) return false
+  if (isStaff(account)) return true
+  if (manageablePartyIds(account).includes(partyId)) return true
+  const party = await db.collection('parties').findById(partyId)
+  return !!party && party.createdByUserId === account.id
+}
+
+/**
+ * Party write gate. GET is account-aware (so the handler can hide unverified
+ * parties from the public). Creation/deletion of register entries stays staff-only
+ * — member parties are minted by the claim flow. A member may PUT only their OWN
+ * party profile (provisional self-service); the handler strips verify fields so
+ * they can't self-promote to the public site.
+ */
+export function partyScopedWriteGate(req: Request, res: Response, next: NextFunction): void {
+  if (req.method === 'GET') {
+    void attachAccountOptional(req, res, next)
+    return
+  }
+  void attachAccount(req, res, async () => {
+    const account = req.account
+    if (isStaff(account)) return next()
+    if (req.method === 'POST') return forbid(res, 'Staff maintain the party register.')
+    if (req.method === 'DELETE') return forbid(res, 'You cannot delete a party.')
+    const id = firstSegment(req)
+    if (id && (await accountCanManageParty(account, id))) return next()
+    return forbid(res, 'You can only edit your own party profile.')
+  })
+}
+
 /** Editorial gate for /api/articles: create/edit_own(author match)/edit_any. */
 export function articlesWriteGate(req: Request, res: Response, next: NextFunction): void {
   if (req.method === 'GET') return next()
@@ -190,6 +229,25 @@ export function articlesWriteGate(req: Request, res: Response, next: NextFunctio
  * filter private records by visibility); writes are staff-only.
  */
 export function reportsGate(req: Request, res: Response, next: NextFunction): void {
+  if (req.method === 'GET') {
+    void attachAccountOptional(req, res, next)
+    return
+  }
+  void attachAccount(req, res, () => {
+    if (!isStaff(req.account)) {
+      forbid(res, 'Staff access required.')
+      return
+    }
+    next()
+  })
+}
+
+/**
+ * Gate for /api/issues (published magazine bulletins): GET is public but loads
+ * the account optionally (so staff can also see unpublished issues for
+ * management); publishing/unpublishing/deleting is staff-only.
+ */
+export function issuesGate(req: Request, res: Response, next: NextFunction): void {
   if (req.method === 'GET') {
     void attachAccountOptional(req, res, next)
     return

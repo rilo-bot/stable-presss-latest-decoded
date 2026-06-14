@@ -53,37 +53,6 @@ function splitIntoParagraphs(text: string): string[] {
   return groups.filter(Boolean);
 }
 
-/* Static "related reading" editorial fallback (shown in sidebar) */
-const RELATED_FALLBACK = [
-  {
-    id: 'rf1',
-    category: 'Analysis',
-    title: 'The Flemington Straight: Why the 1000m Bias Has Shifted',
-    author: 'Sarah Ellison',
-    time: '10 min',
-    imageUrl:
-      'https://images.pexels.com/photos/27305774/pexels-photo-27305774.jpeg?auto=compress&cs=tinysrgb&h=400&w=600',
-  },
-  {
-    id: 'rf2',
-    category: 'Interview',
-    title: 'Trainer Evelyn Cross: Twelve Group Ones and Counting',
-    author: 'Catherine Darragh',
-    time: '8 min',
-    imageUrl:
-      'https://images.pexels.com/photos/7882582/pexels-photo-7882582.jpeg?auto=compress&cs=tinysrgb&h=400&w=600',
-  },
-  {
-    id: 'rf3',
-    category: 'Bloodstock',
-    title: 'Northern Hemisphere Stallions and Their Australian Influence',
-    author: 'James Whitfield',
-    time: '12 min',
-    imageUrl:
-      'https://images.pexels.com/photos/11341144/pexels-photo-11341144.jpeg?auto=compress&cs=tinysrgb&h=400&w=600',
-  },
-];
-
 /* Default fallback hero when the article has no image */
 const DEFAULT_HERO =
   'https://images.pexels.com/photos/11341108/pexels-photo-11341108.jpeg?auto=compress&cs=tinysrgb&h=650&w=940';
@@ -618,59 +587,67 @@ export default function ArticleDetail() {
               </Link>
             </div>
 
-            {/* Also in this edition — editorial fallback */}
-            <div>
-              <div className="flex items-center gap-3 mb-4">
-                <h3 className="text-[9px] uppercase tracking-[0.2em] font-bold text-muted-foreground whitespace-nowrap">
-                  Also in this edition
-                </h3>
-                <div className="flex-1 h-px bg-border/50" />
-              </div>
+            {/* Also in this edition — real related articles (same category) */}
+            {relatedArticles.length > 0 && (
+              <div>
+                <div className="flex items-center gap-3 mb-4">
+                  <h3 className="text-[9px] uppercase tracking-[0.2em] font-bold text-muted-foreground whitespace-nowrap">
+                    Also in this edition
+                  </h3>
+                  <div className="flex-1 h-px bg-border/50" />
+                </div>
 
-              <div className="space-y-0">
-                {RELATED_FALLBACK.map((item, idx) => (
-                  <Link
-                    key={item.id}
-                    to="/news"
-                    className={cn(
-                      'group flex gap-3 py-3.5 hover:bg-muted/20 transition-colors -mx-2 px-2 rounded-sm',
-                      idx < RELATED_FALLBACK.length - 1 && 'border-b border-border/40'
-                    )}
-                  >
-                    <div className="flex-shrink-0 w-16 h-16 overflow-hidden rounded-sm">
-                      <img
-                        src={item.imageUrl}
-                        alt={item.title}
-                        crossOrigin="anonymous"
-                        className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-300"
-                      />
-                    </div>
-                    <div className="flex-1 min-w-0">
-                      <span
-                        className="text-[8px] uppercase tracking-[0.14em] font-bold"
-                        style={{ color: 'hsl(var(--brand-accent))' }}
-                      >
-                        {item.category}
-                      </span>
-                      <h4 className="font-[family-name:var(--font-display)] text-xs font-bold text-foreground line-clamp-2 leading-snug group-hover:opacity-80 transition-opacity mt-0.5">
-                        {item.title}
-                      </h4>
-                      <p className="text-[10px] text-muted-foreground mt-1 flex items-center gap-1">
-                        <Clock size={9} />
-                        {item.time} read
-                      </p>
-                    </div>
-                  </Link>
-                ))}
-              </div>
+                <div className="space-y-0">
+                  {relatedArticles.map((item, idx) => (
+                    <Link
+                      key={item.id}
+                      to={`/articles/${item.id}`}
+                      className={cn(
+                        'group flex gap-3 py-3.5 hover:bg-muted/20 transition-colors -mx-2 px-2 rounded-sm',
+                        idx < relatedArticles.length - 1 && 'border-b border-border/40'
+                      )}
+                    >
+                      {item.imageUrl && (
+                        <div className="flex-shrink-0 w-16 h-16 overflow-hidden rounded-sm">
+                          <img
+                            src={item.imageUrl}
+                            alt={item.title}
+                            crossOrigin="anonymous"
+                            className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-300"
+                          />
+                        </div>
+                      )}
+                      <div className="flex-1 min-w-0">
+                        {item.category && (
+                          <span
+                            className="text-[8px] uppercase tracking-[0.14em] font-bold"
+                            style={{ color: 'hsl(var(--brand-accent))' }}
+                          >
+                            {item.category}
+                          </span>
+                        )}
+                        <h4 className="font-[family-name:var(--font-display)] text-xs font-bold text-foreground line-clamp-2 leading-snug group-hover:opacity-80 transition-opacity mt-0.5">
+                          {item.title}
+                        </h4>
+                        {item.readingTime && (
+                          <p className="text-[10px] text-muted-foreground mt-1 flex items-center gap-1">
+                            <Clock size={9} />
+                            {item.readingTime} min read
+                          </p>
+                        )}
+                      </div>
+                    </Link>
+                  ))}
+                </div>
 
-              <Link
-                to="/news"
-                className="mt-4 flex items-center gap-1 text-[10px] uppercase tracking-[0.1em] font-semibold text-muted-foreground hover:text-foreground transition-colors"
-              >
-                All editorial <ChevronRight size={10} />
-              </Link>
-            </div>
+                <Link
+                  to="/news"
+                  className="mt-4 flex items-center gap-1 text-[10px] uppercase tracking-[0.1em] font-semibold text-muted-foreground hover:text-foreground transition-colors"
+                >
+                  All editorial <ChevronRight size={10} />
+                </Link>
+              </div>
+            )}
 
             {/* Podcast promo */}
             <div className="bg-primary rounded-sm overflow-hidden">

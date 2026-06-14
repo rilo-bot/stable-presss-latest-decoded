@@ -60,6 +60,15 @@ export interface PartyClaim {
   verifierType?: 'admin' | 'org'
   verifiedAt?: string
   rejectionReason?: string
+  /**
+   * True when this claim registered the account's OWN person-party (minted for
+   * them), rather than claiming a pre-existing party. Self-registered claims get
+   * PROVISIONAL access immediately — the member may manage their own party + the
+   * horses/data they create while still `pending`. Their work stays `unverified`
+   * (hidden from the public) until staff verification flips it live. A claim on an
+   * EXISTING party (selfRegistered=false) stays view-only until verified.
+   */
+  selfRegistered?: boolean
 }
 
 export interface OrgMembership {

@@ -2,7 +2,7 @@ import { useMemo, useState, useEffect } from 'react';
 import { Link, useSearchParams } from 'react-router-dom';
 import { motion, AnimatePresence } from 'framer-motion';
 import { useArticleStore } from '@/stores/articleStore';
-import { useMagazineStore } from '@/stores/magazineStore';
+import { useIssueStore } from '@/stores/issueStore';
 import { CATEGORIES } from '@/pages/NewsIndex';
 import { cn } from '@/lib/utils';
 import {
@@ -18,88 +18,6 @@ import {
   MapPin,
 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
-
-/* ── Static fallback bulletin items ─────────────────── */
-
-interface FallbackBulletin {
-  id: string;
-  category: string;
-  title: string;
-  summary: string;
-  author: string;
-  readingTime: number;
-  imageUrl: string;
-  publishedAt: Date;
-  edition: string;
-}
-
-const FALLBACK_BULLETINS: FallbackBulletin[] = [
-  {
-    id: 'bl1',
-    category: 'bloodstock',
-    title: 'Northern Hemisphere Stallions and Their Australian Influence',
-    summary:
-      "A data-driven look at how Northern Hemisphere sire lines have reshaped the breeding priorities of Australia's top studs over the past decade. We examine the numbers behind the migration of European and American bloodlines into Southern Hemisphere programmes, and what the next cycle of Group One winners tells us about the direction of the thoroughbred.",
-    author: 'James Whitfield',
-    readingTime: 12,
-    imageUrl:
-      'https://images.pexels.com/photos/11341144/pexels-photo-11341144.jpeg?auto=compress&cs=tinysrgb&h=650&w=940',
-    publishedAt: new Date('2025-06-01'),
-    edition: 'Vol. 47 · Fortnightly Edition',
-  },
-  {
-    id: 'bl2',
-    category: 'trainer-profiles',
-    title: 'Trainer Evelyn Cross: Twelve Group Ones and Counting',
-    summary:
-      'We sat down with Evelyn Cross at her Flemington stables for a two-hour conversation on patience, preparation, and the moment she knew thoroughbred training was her calling. From her first winner at Ballarat to the Group One stage — this is the unedited record of a remarkable career in the saddle of management.',
-    author: 'Catherine Darragh',
-    readingTime: 14,
-    imageUrl:
-      'https://images.pexels.com/photos/7882582/pexels-photo-7882582.jpeg?auto=compress&cs=tinysrgb&h=650&w=940',
-    publishedAt: new Date('2025-06-01'),
-    edition: 'Vol. 47 · Fortnightly Edition',
-  },
-  {
-    id: 'bl3',
-    category: 'form-guide',
-    title: 'Sectional Intelligence: The Case for Finishing Speed Over Early Position',
-    summary:
-      "Modern race timing has changed how we evaluate thoroughbred performance. In this deep-dive, our sectional analysis team makes the case that the final 400m — not gate speed — is the defining predictor of a horse's class ceiling. We examine five seasons of data across Sydney and Melbourne to build the argument.",
-    author: 'Sarah Ellison',
-    readingTime: 18,
-    imageUrl:
-      'https://images.pexels.com/photos/27305774/pexels-photo-27305774.jpeg?auto=compress&cs=tinysrgb&h=650&w=940',
-    publishedAt: new Date('2025-05-18'),
-    edition: 'Vol. 46 · Fortnightly Edition',
-  },
-  {
-    id: 'bl4',
-    category: 'owner-stories',
-    title: 'The Syndicate Model: How Group Ownership Is Democratising Racing',
-    summary:
-      'Racing ownership was once the preserve of pastoral families and corporation accounts. A new generation of syndicators is changing that — and the industry is better for it. We speak to four syndicate managers and a dozen members about what draws people into shared ownership and what keeps them there.',
-    author: 'Rebecca Frame',
-    readingTime: 11,
-    imageUrl:
-      'https://images.pexels.com/photos/18913040/pexels-photo-18913040.jpeg?auto=compress&cs=tinysrgb&h=350',
-    publishedAt: new Date('2025-05-18'),
-    edition: 'Vol. 46 · Fortnightly Edition',
-  },
-  {
-    id: 'bl5',
-    category: 'track-notes',
-    title: 'The Science of Track Preparation: A Conversation With the Flemington Curator',
-    summary:
-      "Few people shape a race meeting more profoundly than the track curator — and few are less visible. We spent three days at Flemington with head curator Michael Hardie, following the preparation process from Monday morning to race day. What emerges is a picture of extraordinary precision in an unpredictable environment.",
-    author: 'Tom McAllister',
-    readingTime: 16,
-    imageUrl:
-      'https://images.pexels.com/photos/12995066/pexels-photo-12995066.jpeg?auto=compress&cs=tinysrgb&h=650&w=940',
-    publishedAt: new Date('2025-05-04'),
-    edition: 'Vol. 45 · Fortnightly Edition',
-  },
-];
 
 /* ── Section icon map ────────────────────────────────── */
 
@@ -138,16 +56,13 @@ export default function Bulletins() {
   const [loading, setLoading] = useState(true);
   const [selectedVenueIdx, setSelectedVenueIdx] = useState(0);
 
-  // Published magazine issues (the new bulletin builder output)
-  const [magHydrated, setMagHydrated] = useState(() => useMagazineStore.persist.hasHydrated());
+  // Published magazine issues (server-persisted bulletin builder output). The
+  // list endpoint already returns non-unpublished issues sorted newest-first.
+  const publishedIssues = useIssueStore((s) => s.issues);
+  const fetchIssues = useIssueStore((s) => s.fetchIssues);
   useEffect(() => {
-    if (magHydrated) return;
-    return useMagazineStore.persist.onFinishHydration(() => setMagHydrated(true));
-  }, [magHydrated]);
-  const publishedIssues = useMagazineStore((s) =>
-    s.issues.filter((i) => !i.unpublishedAt).sort((a, b) => (a.publishedAt < b.publishedAt ? 1 : -1))
-  );
-  const resolveImage = useMagazineStore((s) => s.resolveImage);
+    fetchIssues();
+  }, [fetchIssues]);
 
   useEffect(() => {
     const t = setTimeout(() => setLoading(false), 600);
@@ -172,22 +87,9 @@ export default function Bulletins() {
 
   const hasCmsArticles = bulletinArticles.length > 0;
 
-  // Fallback items
-  const fallbackItems = useMemo(() => {
-    let base = FALLBACK_BULLETINS;
-    if (categoryParam) base = base.filter((i) => i.category === categoryParam);
-    if (search.trim()) {
-      const q = search.toLowerCase();
-      base = base.filter(
-        (i) => i.title.toLowerCase().includes(q) || i.author.toLowerCase().includes(q)
-      );
-    }
-    return base;
-  }, [categoryParam, search]);
+  type AnyItem = (typeof bulletinArticles)[0];
 
-  type AnyItem = (typeof bulletinArticles)[0] | FallbackBulletin;
-
-  const source: AnyItem[] = hasCmsArticles ? bulletinArticles : fallbackItems;
+  const source: AnyItem[] = bulletinArticles;
 
   // Group by category section
   const sections = useMemo(() => {
@@ -413,7 +315,7 @@ export default function Bulletins() {
       </div>
 
       {/* ── Published magazine issues (newsstand) ────── */}
-      {magHydrated && publishedIssues.length > 0 && (
+      {publishedIssues.length > 0 && (
         <div className="max-w-7xl mx-auto px-4 md:px-8 pt-10 md:pt-14">
           <div className="flex items-center gap-3 mb-5">
             <div className="flex-shrink-0 w-1 h-5 rounded-full" style={{ background: 'hsl(var(--brand-accent))' }} />
@@ -427,7 +329,7 @@ export default function Bulletins() {
           </div>
           <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 gap-5">
             {publishedIssues.map((issue) => {
-              const cover = resolveImage(issue.coverImage);
+              const cover = issue.coverImageUrl;
               return (
                 <Link
                   key={issue.id}
@@ -448,7 +350,7 @@ export default function Bulletins() {
                       </div>
                     )}
                     <span className="absolute top-2 left-2 text-[9px] uppercase tracking-[0.14em] font-bold px-2 py-0.5 rounded-sm text-white" style={{ background: 'hsl(var(--brand-accent))' }}>
-                      {issue.pages.length} pages
+                      {issue.pageCount} pages
                     </span>
                   </div>
                   <div className="p-3">
@@ -468,7 +370,7 @@ export default function Bulletins() {
       )}
 
       {/* ── Main content (legacy bulletin articles — shown when no issues yet) ── */}
-      {!(magHydrated && publishedIssues.length > 0) && (
+      {publishedIssues.length === 0 && (
       <div className="max-w-7xl mx-auto px-4 md:px-8 py-10 md:py-14">
 
         {loading ? (
@@ -547,7 +449,7 @@ export default function Bulletins() {
                   </span>
                   <div className="flex-1 h-px bg-border/50" />
                   <span className="text-[9px] uppercase tracking-[0.14em] text-muted-foreground font-semibold">
-                    {(heroItem as FallbackBulletin).edition ?? 'Current Edition'}
+                    {(heroItem as any).edition ?? 'Current Edition'}
                   </span>
                 </div>
 

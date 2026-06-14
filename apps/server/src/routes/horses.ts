@@ -1,7 +1,7 @@
 import { Router } from 'express';
 import { db } from '../lib/db.js';
 import { isStaff } from '../lib/rbac.js';
-import { authorisedHorseIds } from '../lib/scope.js';
+import { authorisedHorseIds, manageablePartyIds } from '../lib/scope.js';
 
 type WithMongoId = { _id: string; [key: string]: unknown };
 function project<T extends WithMongoId>(doc: T): Omit<T, '_id'> & { id: string } {
@@ -98,12 +98,15 @@ router.post('/', async (req, res) => {
 
   const id = await db.collection('horses').insertOne(doc);
 
-  // A member registering a horse becomes its owner: auto-link their verified
-  // owner party (or first verified party) so the horse joins the connection
-  // graph and they keep authorised access via the standard scope rules.
+  // A member registering a horse becomes its owner: auto-link their manageable
+  // owner party (or first manageable party — incl. a provisional self-registered
+  // one) so the horse joins the connection graph and they keep authorised access
+  // via the standard scope rules.
   if (account && !staff) {
-    const verified = account.partyClaims.filter((c) => c.status === 'verified');
-    const ownerClaim = verified.find((c) => c.role === 'owner') ?? verified[0];
+    const manageable = account.partyClaims.filter(
+      (c) => c.status === 'verified' || (c.status === 'pending' && c.selfRegistered !== false),
+    );
+    const ownerClaim = manageable.find((c) => c.role === 'owner') ?? manageable[0];
     if (ownerClaim) {
       await db.collection('horsePartyLinks').insertOne({
         horse_id: id,

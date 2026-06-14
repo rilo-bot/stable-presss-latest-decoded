@@ -136,13 +136,22 @@ export interface Magazine {
   publishedIssueIds: string[];
 }
 
-/** A frozen, public-facing snapshot produced by publishing. */
+/**
+ * A frozen, public-facing snapshot produced by publishing. Persisted server-side
+ * (collection `issues`) so published bulletins are visible to every reader on any
+ * device — not just the editor's browser. Every image is referenced by URL inside
+ * the page content (S3 in deployment, inline data URL in local dev), so the issue
+ * is fully self-contained and the public viewer needs no access to the draft store.
+ */
 export interface PublishedIssue {
   id: string;
   magazineId: string;
   title: string;
   edition: string;
+  /** Cover image key/URL, preserved for re-publish fidelity. */
   coverImage: string;
+  /** Resolved cover image URL (or data URL) for thumbnails — set at publish time. */
+  coverImageUrl: string;
   /** Snapshot of ONLY the published pages (all, or the selected subset). */
   pages: MagazinePage[];
   scope: 'full' | 'selected';
@@ -150,6 +159,31 @@ export interface PublishedIssue {
   publishedAt: string;
   /** Soft-unpublish marker; non-null = hidden from the public list. */
   unpublishedAt: string | null;
+}
+
+/** Lightweight list row returned by `GET /api/issues` (omits the heavy `pages`). */
+export interface IssueSummary {
+  id: string;
+  magazineId: string;
+  title: string;
+  edition: string;
+  coverImageUrl: string;
+  scope: 'full' | 'selected';
+  version: number;
+  publishedAt: string;
+  unpublishedAt: string | null;
+  pageCount: number;
+}
+
+/** Body POSTed to publish a new issue (server stamps id/version/timestamps). */
+export interface PublishPayload {
+  magazineId: string;
+  title: string;
+  edition: string;
+  coverImage: string;
+  coverImageUrl: string;
+  pages: MagazinePage[];
+  scope: 'full' | 'selected';
 }
 
 /** Deduplicated image payload. Pages/issues reference these by `key`. */

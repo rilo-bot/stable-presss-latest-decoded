@@ -2,6 +2,7 @@ import 'dotenv/config'
 import express from 'express'
 import cors from 'cors'
 import { db } from './lib/db.js'
+import { storage } from './lib/storage.js'
 
 // ── Environment validation ──
 const isProd = process.env.PROD === 'true'
@@ -13,6 +14,7 @@ console.log('  PROD (deployment tier):', isProd ? '✓ true' : '✗ false (dev/p
 console.log('  MONGODB_URI:', hasMongoUri ? '✓ configured' : '✗ not set (in-memory DB)')
 console.log('  JWT_SECRET:', hasJwtSecret ? '✓ configured' : '✗ not set (insecure dev secret)')
 console.log('  SENDGRID:', hasSendgrid ? '✓ configured (emails OTP)' : '✗ not set (dev: OTP via console + UI preview)')
+console.log('  S3 UPLOADS:', storage.isConfigured() ? '✓ configured (presigned PUT)' : '✗ not set (uploads fall back to inline data URLs)')
 if (isProd && !hasMongoUri) {
   console.warn('[server] ⚠ PROD=true but MONGODB_URI is not set — using in-memory storage')
 }
@@ -24,7 +26,21 @@ const app = express()
 const PORT = process.env.PORT ? parseInt(process.env.PORT) : 3001
 
 app.use(cors({ origin: '*' }))
-app.use(express.json())
+// 2 MB JSON limit: large file bytes now go straight to S3 via presigned PUT
+// (see routes/uploads.ts), so request bodies only carry metadata + the small
+// compressed thumbnails that still persist inline. The Express default (100 KB)
+// was silently 413-ing those; 2 MB is a comfortable headroom without inviting
+// multi-MB base64 payloads back into Mongo.
+//
+// Exception: /api/issues aggregates a whole magazine into one frozen snapshot
+// and, in local dev (no S3), embeds inline data-URL images — so it parses its
+// body with a larger limit at its own mount point below. The global parser
+// must skip it here, otherwise it would 413 the large body first.
+const jsonSmall = express.json({ limit: '2mb' })
+app.use((req, res, next) => {
+  if (req.path.startsWith('/api/issues')) return next()
+  return jsonSmall(req, res, next)
+})
 
 // ── Request logging ──
 app.use((req, res, next) => {
@@ -43,7 +59,7 @@ app.get('/api/health', (_req, res) => {
 // --- Add your API routes below ---
 
 // === auto-mounted routers (backend planner) ===
-import { authedWriteGate, staffWriteGate, articlesWriteGate, horseScopedWriteGate } from './lib/rbac.js'
+import { authedWriteGate, staffWriteGate, articlesWriteGate, horseScopedWriteGate, partyScopedWriteGate, issuesGate } from './lib/rbac.js'
 import authRouter from './routes/auth.js'
 import adminRouter from './routes/admin.js'
 import staffRouter from './routes/staff.js'
@@ -63,6 +79,11 @@ import reportsRouter from './routes/reports.js'
 import mediaItemsRouter from './routes/mediaItems.js'
 import racingEntriesRouter from './routes/racingEntries.js'
 import tipperProfilesRouter from './routes/tipperProfiles.js'
+import uploadsRouter from './routes/uploads.js'
+import issuesRouter from './routes/issues.js'
+import sponsorsRouter from './routes/sponsors.js'
+import breakingNewsRouter from './routes/breakingNews.js'
+import metricsRouter from './routes/metrics.js'
 
 // Reads stay public (the public website needs them). Writes are gated by role:
 //   - articles  → editorial matrix (create / edit_own w/ author match / edit_any)
@@ -83,7 +104,7 @@ app.use('/api/podcastEpisodes', podcastEpisodesRouter)
 app.use('/api/articles', articlesWriteGate, articlesRouter)
 app.use('/api/horses', horseScopedWriteGate({ collection: 'horses', idIsHorse: true, optionalGet: true }), horsesRouter)
 app.use('/api/horsePartyLinks', horseScopedWriteGate({ collection: 'horsePartyLinks' }), horsePartyLinksRouter)
-app.use('/api/parties', staffWriteGate, partiesRouter)
+app.use('/api/parties', partyScopedWriteGate, partiesRouter)
 app.use('/api/races', staffWriteGate, racesRouter)
 app.use('/api/tips', authedWriteGate, tipsRouter)
 app.use('/api/sales', horseScopedWriteGate({ collection: 'sales' }), salesRouter)
@@ -91,6 +112,17 @@ app.use('/api/reports', horseScopedWriteGate({ collection: 'reports', optionalGe
 app.use('/api/mediaItems', horseScopedWriteGate({ collection: 'mediaItems' }), mediaItemsRouter)
 app.use('/api/racingEntries', horseScopedWriteGate({ collection: 'racingEntries' }), racingEntriesRouter)
 app.use('/api/tipperProfiles', authedWriteGate, tipperProfilesRouter)
+app.use('/api/uploads', uploadsRouter)         // presigned S3 PUT URLs (auth inside)
+// Published magazine issues. Public read (incl. unpublished for staff), staff
+// write. A frozen issue aggregates a whole magazine's pages; in local dev its
+// images are inline data URLs, so it needs more headroom than the global 2 MB
+// body cap (in deployment, page images are S3 URLs and bodies stay small).
+app.use('/api/issues', express.json({ limit: '30mb' }), issuesGate, issuesRouter)
+// Public landing-page content: read is public, writes are staff-only.
+app.use('/api/sponsors', staffWriteGate, sponsorsRouter)
+app.use('/api/breakingNews', staffWriteGate, breakingNewsRouter)
+// Computed site metrics — public, read-only (no writes).
+app.use('/api/metrics', metricsRouter)
 // === end auto-mounted routers ===
 
 

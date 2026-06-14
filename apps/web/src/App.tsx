@@ -30,6 +30,7 @@ import ClaimsQueue from '@/pages/ClaimsQueue';
 import OrgDashboard from '@/pages/OrgDashboard';
 import Dashboard from '@/pages/Dashboard';
 import StaffAdmin from '@/pages/StaffAdmin';
+import SiteContent from '@/pages/SiteContent';
 
 /* Inject Google Fonts for vintage skeuomorphic horse dashboard */
 function useVintageFonts() {
@@ -209,6 +210,14 @@ export default function App() {
             element={
               <AppLayout>
                 <PodcastWorkflow />
+              </AppLayout>
+            }
+          />
+          <Route
+            path="/site-content"
+            element={
+              <AppLayout>
+                <SiteContent />
               </AppLayout>
             }
           />

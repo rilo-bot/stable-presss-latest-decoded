@@ -33,8 +33,11 @@ export interface MediaItem {
   /** Required — at least one of url or file_name must be provided */
   url?: string;
 
-  /** Optional — uploaded file reference (filename/key after upload) */
+  /** Optional — original filename of an uploaded asset (for display). */
   file_name?: string;
+
+  /** Optional — stored URL of the uploaded asset (S3 public URL, or inline data URL in fallback mode). */
+  file_url?: string;
 
   /** Optional — Party IDs of individuals / organisations featured in the media */
   featured_party_ids?: string[];

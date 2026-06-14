@@ -5,10 +5,6 @@ import { PodcastPlayer } from '@/components/PodcastPlayer';
 import {Mic, LoaderCircle} from 'lucide-react';
 import { Link } from 'react-router-dom';
 
-// Known seed IDs — if any of these are still in localStorage from a previous
-// session, wipe them out so only real CMS-created episodes are displayed.
-const SEED_IDS = new Set(['ep-1', 'ep-2', 'ep-3', 'ep-4']);
-
 export default function PodcastHub() {
   // === auto fetch-on-mount (backend planner) ===
   const fetchPodcastEpisodes = usePodcastStore((s) => s.fetchPodcastEpisodes);
@@ -18,19 +14,8 @@ export default function PodcastHub() {
   // === end auto fetch-on-mount ===
 
   const episodes = usePodcastStore((s) => s.episodes);
-  const deleteEpisode = usePodcastStore((s) => s.deleteEpisode);
   const activeEpisodeId = usePodcastStore((s) => s.activeEpisodeId);
   const setActiveEpisode = usePodcastStore((s) => s.setActiveEpisode);
-
-  // One-time migration: remove any leftover seed episodes from localStorage
-  useEffect(() => {
-    (episodes ?? []).forEach((ep) => {
-      if (SEED_IDS.has(ep.id)) {
-        deleteEpisode(ep.id);
-      }
-    });
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []); // intentionally empty — run once on mount
 
   // Only show published episodes on the public hub
   const publishedEpisodes = useMemo(

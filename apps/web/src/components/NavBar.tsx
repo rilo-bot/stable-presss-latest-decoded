@@ -298,6 +298,16 @@ export function NavBar() {
                 >
                   Newsroom
                 </Link>
+                <span className="h-3 w-px bg-primary-foreground/20" />
+                <Link
+                  to="/site-content"
+                  className={cn(
+                    'transition-opacity',
+                    location.pathname === '/site-content' ? 'opacity-100' : 'opacity-60 hover:opacity-100'
+                  )}
+                >
+                  Site Content
+                </Link>
               </>
             )}
             {role === 'administrator' && (

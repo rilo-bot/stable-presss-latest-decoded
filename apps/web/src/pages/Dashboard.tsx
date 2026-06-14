@@ -5,7 +5,8 @@ import { useOrgStore } from '@/stores/orgStore';
 import { useClaimStore } from '@/stores/claimStore';
 import { useHorseStore } from '@/stores/horseStore';
 import { useHorsePartyLinkStore } from '@/stores/horsePartyLinkStore';
-import { authorisedHorseIds, previewHorseIds, hasPendingClaim, isStaff } from '@/rbac/can';
+import { HorseStudio } from '@/components/HorseStudio';
+import { authorisedHorseIds, previewHorseIds, hasProvisionalParty, primaryPartyId, isStaff } from '@/rbac/can';
 import { PARTY_ROLES, PARTY_ROLE_LABELS } from '@/types/party';
 import type { PartyRole } from '@/types/party';
 import { TIER_ORDER, TIER_LABELS } from '@/rbac/entitlement';
@@ -44,6 +45,7 @@ export default function Dashboard() {
   const [claimRole, setClaimRole] = useState<PartyRole>('owner');
   const [orgName, setOrgName] = useState('');
   const [busy, setBusy] = useState<string | null>(null);
+  const [studioHorseId, setStudioHorseId] = useState<string | null>(null);
 
   useEffect(() => {
     void fetchMine();
@@ -68,7 +70,12 @@ export default function Dashboard() {
   const staff = isStaff(currentUser);
   const admin = currentUser.roles.includes('administrator');
   const claims = currentUser.partyClaims ?? [];
-  const awaitingVerification = hasPendingClaim(currentUser);
+  // Provisional = a self-registered party they can edit NOW (hidden from public
+  // until verified). Awaiting-existing = a claim on a pre-existing party that
+  // stays view-only until an admin/org approves it.
+  const provisional = hasProvisionalParty(currentUser);
+  const awaitingExisting = claims.some((c) => c.status === 'pending' && !c.selfRegistered);
+  const myPartyId = primaryPartyId(currentUser);
 
   const onClaim = async () => {
     setBusy('claim');
@@ -76,6 +83,18 @@ export default function Dashboard() {
     setBusy(null);
     if (r.ok) toast.success('Claim submitted for verification.');
     else toast.error(r.error ?? 'Could not submit claim.');
+  };
+
+  // First-run: create the member's profile in one click (quick role pick above)
+  // and drop them straight into their hub to add details + horses.
+  const onCreateProfile = async () => {
+    setBusy('create');
+    const r = await createClaim(claimRole);
+    setBusy(null);
+    if (!r.ok) { toast.error(r.error ?? 'Could not create your profile.'); return; }
+    toast.success('Profile created — add your details and horses next.');
+    const pid = primaryPartyId(useAuthStore.getState().currentUser);
+    navigate(pid ? `/parties/${pid}` : '/dashboard');
   };
 
   const onCreateOrg = async () => {
@@ -126,6 +145,38 @@ export default function Dashboard() {
         </p>
         <div className="h-px w-full bg-border/60 mt-4" />
       </div>
+
+      {/* First-run: create your profile (quick role pick → one click → hub) */}
+      {!staff && !myPartyId && (
+        <section className="rounded-lg border border-primary/30 bg-primary/5 p-5">
+          <h2 className="text-sm font-bold uppercase tracking-[0.1em] text-foreground">Set up your racing profile</h2>
+          <p className="text-xs text-muted-foreground mt-1">
+            Pick your role and we&rsquo;ll create your profile in one click — then add your details
+            and horses at your own pace. Nothing is public until a staff member verifies it.
+          </p>
+          <div className="flex flex-wrap gap-2 mt-3 mb-4">
+            {PARTY_ROLES.map((r) => (
+              <button
+                key={r}
+                type="button"
+                onClick={() => setClaimRole(r)}
+                className={
+                  'rounded-full px-3 py-1.5 text-xs font-medium border transition-colors ' +
+                  (claimRole === r
+                    ? 'bg-primary text-primary-foreground border-primary'
+                    : 'bg-card text-muted-foreground border-border hover:border-primary/60 hover:text-foreground')
+                }
+              >
+                {PARTY_ROLE_LABELS[r]}
+              </button>
+            ))}
+          </div>
+          <Button onClick={onCreateProfile} disabled={busy === 'create'} className="gap-1.5">
+            {busy === 'create' ? <Loader2 size={14} className="animate-spin" /> : <PlusCircle size={14} />}
+            Create my profile
+          </Button>
+        </section>
+      )}
 
       {/* Quick links */}
       <div className="flex flex-wrap gap-2">
@@ -215,33 +266,57 @@ export default function Dashboard() {
 
         {/* My stable */}
         <Section title="My Stable" icon={<BookOpen size={15} />}>
-          {awaitingVerification && (
+          {provisional && (
+            <div className="flex items-start gap-2 mb-3 rounded-sm border border-primary/30 bg-primary/5 px-3 py-2">
+              <ShieldCheck size={14} className="mt-0.5 shrink-0 text-primary" />
+              <p className="text-[11px] leading-snug text-foreground/80">
+                Your profile is live in <span className="font-semibold">provisional</span> mode —
+                visible only to you while a staff member verifies your claim. You can register
+                horses and add their data now; everything stays hidden from the public site until
+                it&rsquo;s verified.
+              </p>
+            </div>
+          )}
+
+          {awaitingExisting && (
             <div className="flex items-start gap-2 mb-3 rounded-sm border border-amber-500/30 bg-amber-500/10 px-3 py-2">
               <Clock size={14} className="mt-0.5 shrink-0 text-amber-600" />
               <p className="text-[11px] leading-snug text-amber-700">
-                A role claim is awaiting verification. You can preview your stable below in{' '}
+                You&rsquo;ve claimed an existing party record. You can preview its stable below in{' '}
                 <span className="font-semibold">view-only</span> mode — editing unlocks once an admin
                 or your organisation approves it.
               </p>
             </div>
           )}
 
+          {myPartyId && (
+            <Link
+              to={`/parties/${myPartyId}`}
+              className="inline-flex items-center gap-1.5 mb-3 px-3 py-1.5 rounded-sm bg-primary text-primary-foreground text-sm font-medium hover:opacity-90 transition-opacity"
+            >
+              <PlusCircle size={14} /> Register a horse
+            </Link>
+          )}
+
           {stableHorses.length === 0 && previewHorses.length === 0 ? (
             <p className="text-xs text-muted-foreground">
-              Horses you have a verified, current link to will appear here.
+              {myPartyId
+                ? 'Register a horse above to start building your stable.'
+                : 'Horses you have a verified, current link to will appear here.'}
             </p>
           ) : (
             <div className="space-y-3">
               {stableHorses.length > 0 && (
                 <div className="grid grid-cols-2 gap-2">
                   {stableHorses.map((h) => (
-                    <Link
+                    <button
                       key={h.id}
-                      to={`/horses/${h.id}`}
-                      className="p-2 border border-border/60 rounded-sm text-sm text-foreground hover:border-primary/50 transition-colors truncate"
+                      type="button"
+                      onClick={() => setStudioHorseId(h.id)}
+                      className="p-2 border border-border/60 rounded-sm text-sm text-foreground hover:border-primary/50 transition-colors truncate text-left"
                     >
                       {h.name}
-                    </Link>
+                    </button>
                   ))}
                 </div>
               )}
@@ -253,15 +328,16 @@ export default function Dashboard() {
                   </p>
                   <div className="grid grid-cols-2 gap-2">
                     {previewHorses.map((h) => (
-                      <Link
+                      <button
                         key={h.id}
-                        to={`/horses/${h.id}`}
-                        className="flex items-center gap-1.5 p-2 border border-dashed border-amber-500/40 bg-amber-500/5 rounded-sm text-sm text-muted-foreground hover:text-foreground transition-colors truncate"
+                        type="button"
+                        onClick={() => setStudioHorseId(h.id)}
+                        className="flex items-center gap-1.5 p-2 border border-dashed border-amber-500/40 bg-amber-500/5 rounded-sm text-sm text-muted-foreground hover:text-foreground transition-colors truncate w-full text-left"
                         title="View only until your claim is verified"
                       >
                         <Lock size={12} className="shrink-0 text-amber-600" />
                         <span className="truncate">{h.name}</span>
-                      </Link>
+                      </button>
                     ))}
                   </div>
                 </div>
@@ -326,6 +402,10 @@ export default function Dashboard() {
           </Section>
         )}
       </div>
+
+      {studioHorseId && (
+        <HorseStudio horseId={studioHorseId} onBack={() => setStudioHorseId(null)} subjectLabel="Dashboard" />
+      )}
     </div>
   );
 }

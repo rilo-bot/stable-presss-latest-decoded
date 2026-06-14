@@ -94,4 +94,12 @@ export interface Party {
   started_year?: number;
   /** Specific personnel subtypes — only populated when 'personnel' is in roles */
   personnel_subtype?: PersonnelSubtype[];
+  /**
+   * Public visibility. Member self-registered parties start 'unverified' (hidden
+   * from the public site, editable by their owner) and flip to 'verified' on staff
+   * approval of the claim. Missing/legacy parties are treated as verified.
+   */
+  verificationStatus?: 'unverified' | 'verified';
+  /** Account that self-registered this party (provisional ownership). */
+  createdByUserId?: string;
 }

@@ -6,7 +6,7 @@ import { createDefaultPages, FIRST_COVER_IMAGE, BLUEPRINT_BY_TYPE } from '@/edit
 import type {
   Magazine,
   MagazinePage,
-  PublishedIssue,
+  PublishPayload,
   RegionContent,
   TextStyle,
   ImageContent,
@@ -64,30 +64,10 @@ function reconcilePages(pages: MagazinePage[]): MagazinePage[] {
   });
 }
 
-function buildIssue(
-  m: Magazine,
-  pages: MagazinePage[],
-  scope: 'full' | 'selected'
-): PublishedIssue {
-  return {
-    id: uid('issue'),
-    magazineId: m.id,
-    title: m.title,
-    edition: m.edition,
-    coverImage: m.coverImage,
-    pages: deepClonePages(pages),
-    scope,
-    version: 1,
-    publishedAt: nowIso(),
-    unpublishedAt: null,
-  };
-}
-
 // ── state ───────────────────────────────────────────────────────────────────
 
 interface MagazineState {
   magazines: Magazine[];
-  issues: PublishedIssue[];
   images: Record<string, ImageRef>;
 
   // ephemeral editor state (not persisted)
@@ -119,14 +99,11 @@ interface MagazineState {
   addImageUrl: (url: string) => string;
   resolveImage: (keyOrUrl: string) => string;
 
-  // publishing
-  publishFull: (magId: string) => string | null;
-  publishSelected: (magId: string) => string | null;
-  republishIssue: (issueId: string) => void;
-  unpublishIssue: (issueId: string) => void;
-  deleteIssue: (issueId: string) => void;
-  listPublishedIssues: () => PublishedIssue[];
-  getIssue: (id: string) => PublishedIssue | undefined;
+  // publishing — issues are persisted server-side (see stores/issueStore.ts).
+  // The store only builds the self-contained snapshot to POST, and records the
+  // resulting issue id back onto the draft.
+  buildIssuePayload: (magId: string, scope: 'full' | 'selected') => PublishPayload | null;
+  markPublished: (magId: string, issueId: string) => void;
   getMagazine: (id: string) => Magazine | undefined;
 }
 
@@ -157,7 +134,6 @@ export const useMagazineStore = create<MagazineState>()(
   persist(
     (set, get) => ({
       magazines: [],
-      issues: [],
       images: {},
       currentId: null,
       selectedRegionId: null,
@@ -319,86 +295,56 @@ export const useMagazineStore = create<MagazineState>()(
         return keyOrUrl; // already a URL or data URL
       },
 
-      publishFull: (magId) => {
-        const m = get().magazines.find((x) => x.id === magId);
+      buildIssuePayload: (magId, scope) => {
+        const s = get();
+        const m = s.magazines.find((x) => x.id === magId);
         if (!m) return null;
-        const issue = buildIssue(m, m.pages, 'full');
-        set((s) => ({
-          issues: [...s.issues, issue],
-          magazines: s.magazines.map((x) =>
-            x.id === m.id
-              ? { ...x, status: 'published', publishedIssueIds: [...x.publishedIssueIds, issue.id] }
-              : x
+        const selected =
+          scope === 'selected' ? m.pages.filter((p) => p.selectedForPublish) : m.pages;
+        if (selected.length === 0) return null;
+        // Deep-clone, then resolve every image reference to a self-contained value
+        // (a URL, or — for legacy drafts — the inline data URL behind an img-<hash>
+        // key), so the published snapshot renders with no access to this store.
+        const pages: MagazinePage[] = deepClonePages(selected).map((p) => ({
+          ...p,
+          content: Object.fromEntries(
+            Object.entries(p.content).map(([id, c]) =>
+              c.kind === 'image' ? [id, { ...c, src: s.resolveImage(c.src) }] : [id, c]
+            )
           ),
         }));
-        return issue.id;
+        return {
+          magazineId: m.id,
+          title: m.title,
+          edition: m.edition,
+          coverImage: m.coverImage,
+          coverImageUrl: s.resolveImage(m.coverImage),
+          pages,
+          scope,
+        };
       },
 
-      publishSelected: (magId) => {
-        const m = get().magazines.find((x) => x.id === magId);
-        if (!m) return null;
-        const pages = m.pages.filter((p) => p.selectedForPublish);
-        if (pages.length === 0) return null;
-        const issue = buildIssue(m, pages, 'selected');
+      markPublished: (magId, issueId) =>
         set((s) => ({
-          issues: [...s.issues, issue],
-          magazines: s.magazines.map((x) =>
-            x.id === m.id
-              ? { ...x, status: 'published', publishedIssueIds: [...x.publishedIssueIds, issue.id] }
-              : x
-          ),
-        }));
-        return issue.id;
-      },
-
-      republishIssue: (issueId) =>
-        set((s) => {
-          const issue = s.issues.find((i) => i.id === issueId);
-          if (!issue) return {};
-          const m = s.magazines.find((x) => x.id === issue.magazineId);
-          if (!m) return {};
-          const pages =
-            issue.scope === 'selected' ? m.pages.filter((p) => p.selectedForPublish) : m.pages;
-          return {
-            issues: s.issues.map((i) =>
-              i.id !== issueId
-                ? i
-                : {
-                    ...i,
-                    title: m.title,
-                    edition: m.edition,
-                    coverImage: m.coverImage,
-                    pages: deepClonePages(pages),
-                    version: i.version + 1,
-                    publishedAt: nowIso(),
-                    unpublishedAt: null,
-                  }
-            ),
-          };
-        }),
-
-      unpublishIssue: (issueId) =>
-        set((s) => ({
-          issues: s.issues.map((i) =>
-            i.id === issueId ? { ...i, unpublishedAt: nowIso() } : i
+          magazines: s.magazines.map((m) =>
+            m.id === magId
+              ? {
+                  ...m,
+                  status: 'published',
+                  publishedIssueIds: [...m.publishedIssueIds, issueId],
+                  updatedAt: nowIso(),
+                }
+              : m
           ),
         })),
 
-      deleteIssue: (issueId) =>
-        set((s) => ({ issues: s.issues.filter((i) => i.id !== issueId) })),
-
-      listPublishedIssues: () =>
-        get()
-          .issues.filter((i) => !i.unpublishedAt)
-          .sort((a, b) => (a.publishedAt < b.publishedAt ? 1 : -1)),
-
-      getIssue: (id) => get().issues.find((i) => i.id === id),
       getMagazine: (id) => get().magazines.find((m) => m.id === id),
     }),
     {
       name: 'stablepress-magazines',
       storage: idbJSONStorage,
-      partialize: (s) => ({ magazines: s.magazines, issues: s.issues, images: s.images }),
+      // Issues are persisted server-side now; only drafts + their images stay local.
+      partialize: (s) => ({ magazines: s.magazines, images: s.images }),
     }
   )
 );

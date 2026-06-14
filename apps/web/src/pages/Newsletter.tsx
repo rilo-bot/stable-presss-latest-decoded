@@ -26,67 +26,6 @@ const SECTION_ICONS: Record<string, React.ReactNode> = {
   interviews: <Mic size={13} />,
 };
 
-/* ── Static fallback editorial items (newsletter only) ── */
-
-interface FallbackItem {
-  id: string;
-  category: string;
-  title: string;
-  summary: string;
-  author: string;
-  readingTime: number;
-  status: 'newsletter';
-  imageUrl: string;
-  publishedAt: Date;
-}
-
-const FALLBACK_ITEMS: FallbackItem[] = [
-  {
-    id: 'fb1',
-    category: 'race-reports',
-    title: 'Sovereign Streak Wins Flemington Feature in Dominant Fashion',
-    summary: "A flawless display of front-running saw Sovereign Streak take the $200,000 Flemington Cup by two and a half lengths. Trainer Marcus Quill post-race: \"She's done nothing wrong all preparation.\"",
-    author: 'Tom McAllister',
-    readingTime: 6,
-    status: 'newsletter',
-    imageUrl: 'https://images.pexels.com/photos/12995066/pexels-photo-12995066.jpeg?auto=compress&cs=tinysrgb&h=650&w=940',
-    publishedAt: new Date('2025-06-08'),
-  },
-  {
-    id: 'fb2',
-    category: 'form-guide',
-    title: 'The Flemington Straight: Why the 1000m Bias Has Shifted',
-    summary: "Recent track work and rainfall events have fundamentally altered the going at Flemington's famous straight course. Our sectional analysis team breaks down what it means for Saturday's field.",
-    author: 'Sarah Ellison',
-    readingTime: 10,
-    status: 'newsletter',
-    imageUrl: 'https://images.pexels.com/photos/27305774/pexels-photo-27305774.jpeg?auto=compress&cs=tinysrgb&h=650&w=940',
-    publishedAt: new Date('2025-06-07'),
-  },
-  {
-    id: 'fb5',
-    category: 'morning-edition',
-    title: "Saturday's Stable Reports: Randwick Scratchings and Market Movers",
-    summary: "Complete guide to this weekend's Randwick card — all confirmed runners, overnight scratchings, barrier draws, and the early market moves our form analysts are watching.",
-    author: 'Editorial Desk',
-    readingTime: 4,
-    status: 'newsletter',
-    imageUrl: 'https://images.pexels.com/photos/18913040/pexels-photo-18913040.jpeg?auto=compress&cs=tinysrgb&h=350',
-    publishedAt: new Date('2025-06-07'),
-  },
-  {
-    id: 'fb6',
-    category: 'jockey-desk',
-    title: 'The Art of the Hold-up Ride: Luke Dittman on Patience and Precision',
-    summary: 'Luke Dittman breaks down the anatomy of the hold-up ride — when to commit, when to wait, and why the one-horse race is the biggest myth in racing.',
-    author: 'Rebecca Frame',
-    readingTime: 9,
-    status: 'newsletter',
-    imageUrl: 'https://images.pexels.com/photos/7882582/pexels-photo-7882582.jpeg?auto=compress&cs=tinysrgb&h=650&w=940',
-    publishedAt: new Date('2025-06-05'),
-  },
-];
-
 const SECTION_IMAGES: Record<string, string> = {
   news: 'https://images.pexels.com/photos/12995066/pexels-photo-12995066.jpeg?auto=compress&cs=tinysrgb&h=650&w=940',
   analysis: 'https://images.pexels.com/photos/27305774/pexels-photo-27305774.jpeg?auto=compress&cs=tinysrgb&h=650&w=940',
@@ -135,24 +74,9 @@ export default function Newsletter() {
 
   const hasCmsArticles = newsletterArticles.length > 0;
 
-  // Fallback items filtered the same way
-  const fallbackItems = useMemo(() => {
-    let base = FALLBACK_ITEMS;
-    if (categoryParam) base = base.filter((i) => i.category === categoryParam);
-    if (search.trim()) {
-      const q = search.toLowerCase();
-      base = base.filter(
-        (i) =>
-          i.title.toLowerCase().includes(q) ||
-          i.author.toLowerCase().includes(q)
-      );
-    }
-    return base;
-  }, [categoryParam, search]);
+  type AnyItem = (typeof newsletterArticles)[0];
 
-  type AnyItem = (typeof newsletterArticles)[0] | FallbackItem;
-
-  const source: AnyItem[] = hasCmsArticles ? newsletterArticles : fallbackItems;
+  const source: AnyItem[] = newsletterArticles;
 
   // Group articles by category section
   const sections = useMemo(() => {

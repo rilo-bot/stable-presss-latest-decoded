@@ -19,6 +19,7 @@ import { Label } from '@/components/ui/label';
 import { Textarea } from '@/components/ui/textarea';
 import { Badge } from '@/components/ui/badge';
 import { useMediaStore } from '@/stores/mediaStore';
+import { uploadRawFile } from '@/lib/upload';
 import { useHorseStore } from '@/stores/horseStore';
 import { usePartyStore } from '@/stores/partyStore';
 import { useArticleStore } from '@/stores/articleStore';
@@ -99,6 +100,7 @@ export function MediaDataForm({ horseId, initial, onSave, onCancel, compact = fa
   // File upload state
   const [selectedFile, setSelectedFile] = useState<globalThis.File | null>(null);
   const [fileName, setFileName] = useState(initial?.file_name ?? '');
+  const [fileUrl, setFileUrl] = useState(initial?.file_url ?? '');
   const [dragOver, setDragOver] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
@@ -177,6 +179,7 @@ export function MediaDataForm({ horseId, initial, onSave, onCancel, compact = fa
   function clearFile() {
     setSelectedFile(null);
     setFileName('');
+    setFileUrl('');
     if (fileInputRef.current) fileInputRef.current.value = '';
   }
 
@@ -197,6 +200,19 @@ export function MediaDataForm({ horseId, initial, onSave, onCancel, compact = fa
     if (err) { toast.error(err); return; }
     setSaving(true);
     try {
+      // Upload a newly-selected file to S3 before saving; reuse the existing
+      // stored URL on edits where no new file was chosen.
+      let resolvedFileUrl = fileUrl;
+      if (urlOrFile === 'file' && selectedFile) {
+        try {
+          const result = await uploadRawFile(selectedFile, 'media');
+          resolvedFileUrl = result.url;
+          setFileUrl(result.url);
+        } catch (uploadErr) {
+          toast.error(uploadErr instanceof Error ? uploadErr.message : 'Could not upload the file.');
+          return;
+        }
+      }
       const payload: Omit<MediaItem, 'id' | 'createdAt'> = {
         horse_id: selectedHorseId,
         subject: subject.trim(),
@@ -206,6 +222,7 @@ export function MediaDataForm({ horseId, initial, onSave, onCancel, compact = fa
         published_date: publishedDate || undefined,
         url: urlOrFile === 'url' ? url.trim() || undefined : undefined,
         file_name: urlOrFile === 'file' ? fileName.trim() || undefined : undefined,
+        file_url: urlOrFile === 'file' ? resolvedFileUrl || undefined : undefined,
         featured_party_ids: featuredPartyIds,
         linked_article_id: linkedArticleId || undefined,
       };

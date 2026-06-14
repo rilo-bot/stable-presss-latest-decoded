@@ -73,10 +73,13 @@ router.post('/', async (req, res) => {
     return;
   }
 
-  // Resolve the party this role attaches to. An individual is ONE person-party
-  // carrying multiple roles — so reuse the user's existing person-party across
-  // claims rather than minting a new one per role.
-  let partyId = typeof req.body?.partyId === 'string' ? req.body.partyId : '';
+  // Resolve the party this role attaches to. Providing `partyId` means claiming a
+  // PRE-EXISTING party (someone else's record on the register) — that stays
+  // view-only until verified. Omitting it means the member is registering
+  // THEMSELVES: we reuse/mint their own person-party and grant provisional access.
+  const providedPartyId = typeof req.body?.partyId === 'string' ? req.body.partyId : '';
+  const selfRegistered = !providedPartyId;
+  let partyId = providedPartyId;
   if (partyId) {
     const party = await db.collection('parties').findById(partyId);
     if (!party) {
@@ -97,16 +100,20 @@ router.post('/', async (req, res) => {
         typeof req.body?.partyName === 'string' && req.body.partyName.trim()
           ? req.body.partyName.trim()
           : account.displayName;
+      // A self-registered party is provisional: unverified (hidden from the public
+      // site) and owned by its creator until staff verify the claim.
       partyId = await db.collection('parties').insertOne({
         party_type: 'person',
         roles: [role],
         name: partyName,
+        verificationStatus: 'unverified',
+        createdByUserId: account.id,
         createdAt: new Date().toISOString(),
       });
     }
   }
 
-  const claim: PartyClaim = { id: genClaimId(), partyId, role, status: 'pending', evidenceUrl };
+  const claim: PartyClaim = { id: genClaimId(), partyId, role, status: 'pending', evidenceUrl, selfRegistered };
   await db.collection('users').updateOne(account.id, { partyClaims: [...claims, claim] });
   const fresh = await db.collection('users').findById(account.id);
   res.status(201).json({ user: withIdentityDefaults({ id: fresh!._id, ...fresh }), claim });
@@ -186,10 +193,13 @@ router.post('/:id/verify', async (req, res) => {
   if (!roles.includes(claim.role)) roles.push(claim.role);
 
   await db.collection('users').updateOne(found.user._id, { partyClaims: claims, roles });
+  // Verification is the public-trust upgrade: flip the party live so it surfaces
+  // on the public site (a provisional self-registered party was unverified).
+  await db.collection('parties').updateOne(claim.partyId, { verificationStatus: 'verified' });
   await createNotification({
     recipientUserId: String(found.user._id),
     type: 'claim_verified',
-    message: `Your ${claim.role} claim has been verified — you can now manage your ${claim.role} data.`,
+    message: `Your ${claim.role} claim has been verified — your profile and horses are now live on the public site.`,
     partyId: claim.partyId,
     actorUserId: account.id,
   });

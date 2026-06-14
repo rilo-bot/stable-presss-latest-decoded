@@ -6,10 +6,11 @@
 import { useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useMagazineStore } from '@/stores/magazineStore';
+import { useIssueStore } from '@/stores/issueStore';
 import { useEditorFonts } from './fonts/useEditorFonts';
 import { MagazineCanvas } from './MagazineCanvas';
 import { Inspector } from './inspector/Inspector';
-import { X, ZoomIn, ZoomOut, Send, CheckSquare, Square, ChevronDown } from 'lucide-react';
+import { X, ZoomIn, ZoomOut, Send, CheckSquare, Square, ChevronDown, Loader2 } from 'lucide-react';
 import { toast } from 'sonner';
 
 export function MagazineEditor({ magazineId, onClose }: { magazineId: string; onClose: () => void }) {
@@ -19,8 +20,9 @@ export function MagazineEditor({ magazineId, onClose }: { magazineId: string; on
   const loadMagazine = useMagazineStore((s) => s.loadMagazine);
   const updateMeta = useMagazineStore((s) => s.updateMagazineMeta);
   const setAllSelected = useMagazineStore((s) => s.setAllPagesSelected);
-  const publishFull = useMagazineStore((s) => s.publishFull);
-  const publishSelected = useMagazineStore((s) => s.publishSelected);
+  const buildIssuePayload = useMagazineStore((s) => s.buildIssuePayload);
+  const markPublished = useMagazineStore((s) => s.markPublished);
+  const publishIssue = useIssueStore((s) => s.publish);
 
   const meta = useMagazineStore((s) => {
     const m = s.magazines.find((x) => x.id === magazineId);
@@ -32,6 +34,7 @@ export function MagazineEditor({ magazineId, onClose }: { magazineId: string; on
 
   const [scale, setScale] = useState(0.62);
   const [pubOpen, setPubOpen] = useState(false);
+  const [publishing, setPublishing] = useState(false);
 
   useEffect(() => {
     loadMagazine(magazineId);
@@ -55,13 +58,19 @@ export function MagazineEditor({ magazineId, onClose }: { magazineId: string; on
     );
   }
 
-  const afterPublish = (id: string | null, scope: 'full edition' | 'selected pages') => {
-    if (!id) {
+  const doPublish = async (scope: 'full' | 'selected') => {
+    const payload = buildIssuePayload(magazineId, scope);
+    if (!payload) {
       toast.error('Select at least one page to publish.');
       return;
     }
     setPubOpen(false);
-    toast.success(`Published ${scope} to Bulletins.`, {
+    setPublishing(true);
+    const id = await publishIssue(payload);
+    setPublishing(false);
+    if (!id) return; // issueStore surfaced the error toast already
+    markPublished(magazineId, id);
+    toast.success(`Published ${scope === 'full' ? 'full edition' : 'selected pages'} to Bulletins.`, {
       action: {
         label: 'View',
         onClick: () => {
@@ -114,21 +123,23 @@ export function MagazineEditor({ magazineId, onClose }: { magazineId: string; on
           <div className="relative">
             <button
               onClick={() => setPubOpen((o) => !o)}
-              className="flex items-center gap-1.5 rounded-sm bg-emerald-500 px-3 py-2 text-xs font-semibold text-white hover:bg-emerald-600"
+              disabled={publishing}
+              className="flex items-center gap-1.5 rounded-sm bg-emerald-500 px-3 py-2 text-xs font-semibold text-white hover:bg-emerald-600 disabled:opacity-60"
             >
-              <Send size={13} /> Publish <ChevronDown size={12} />
+              {publishing ? <Loader2 size={13} className="animate-spin" /> : <Send size={13} />}
+              {publishing ? 'Publishing…' : 'Publish'} <ChevronDown size={12} />
             </button>
             {pubOpen && (
               <div className="absolute right-0 top-full z-50 mt-1 w-56 overflow-hidden rounded-sm border border-white/15 bg-[#0d1626] shadow-xl">
                 <button
-                  onClick={() => afterPublish(publishFull(magazineId), 'full edition')}
+                  onClick={() => doPublish('full')}
                   className="block w-full px-3 py-2.5 text-left text-xs text-white hover:bg-white/10"
                 >
                   <span className="font-semibold">Publish full edition</span>
                   <span className="block text-[10px] text-white/40">All {meta.pages} pages</span>
                 </button>
                 <button
-                  onClick={() => afterPublish(publishSelected(magazineId), 'selected pages')}
+                  onClick={() => doPublish('selected')}
                   className="block w-full border-t border-white/10 px-3 py-2.5 text-left text-xs text-white hover:bg-white/10"
                 >
                   <span className="font-semibold">Publish selected pages</span>

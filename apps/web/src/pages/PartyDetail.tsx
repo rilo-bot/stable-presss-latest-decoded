@@ -3,16 +3,17 @@ import { useParams, useNavigate, useSearchParams, Navigate } from 'react-router-
 import { motion, AnimatePresence } from 'framer-motion';
 import {
   Star, ChevronRight, X, User, Briefcase, Flag, BookOpen, Shield, Users,
-  Camera, TrendingUp, ShoppingCart, Heart, Wand, Binary, FileText, Trophy, Contact, Plus, Pencil,
+  Camera, TrendingUp, ShoppingCart, Heart, Wand, Binary, FileText, Trophy, Contact, Plus, Pencil, Clock,
 } from 'lucide-react';
 import { usePartyStore } from '@/stores/partyStore';
 import { useHorseStore } from '@/stores/horseStore';
 import { useArticleStore } from '@/stores/articleStore';
 import { useAuthStore } from '@/stores/authStore';
-import { canManageParty } from '@/rbac/can';
+import { canManageParty, isStaff } from '@/rbac/can';
 import { PartyForm } from '@/components/PartyForm';
 import { HorseForm } from '@/components/HorseForm';
 import { HorseStudio } from '@/components/HorseStudio';
+import { PartyStudio } from '@/components/PartyStudio';
 import type { Party, PartyRole } from '@/types/party';
 import { PARTY_ROLE_LABELS } from '@/types/party';
 import { useProfileScope } from '@/hooks/useProfileScope';
@@ -97,6 +98,13 @@ export default function PartyDetail() {
 
   // Loading / not-found: parties may still be fetching.
   if (parties.length > 0 && !party) return <Navigate to="/parties" replace />;
+
+  // Member-owners get the form-first studio (their editable hub); the public and
+  // staff see the magazine profile below. `?public=1` lets an owner preview it.
+  const viewPublic = searchParams.get('public') === '1';
+  if (!isStaff(currentUser) && canManageParty(currentUser, id) && !viewPublic) {
+    return <PartyStudio partyId={id} />;
+  }
 
   const roleLabel = ROLE_BINDINGS[activeRole]?.label ?? 'Profile';
   const isOwner = canManageParty(currentUser, id);
@@ -236,6 +244,11 @@ export default function PartyDetail() {
             )}
             <div style={{ background: 'linear-gradient(180deg, var(--forest-mid) 0%, var(--forest-deep) 100%)', borderTop: '2px solid var(--gold-dark)', padding: '10px 14px', display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12, flexWrap: 'wrap' }}>
               <FollowButton horseId={`party:${id}`} label={`Follow This ${roleLabel}`} />
+              {isOwner && party?.verificationStatus === 'unverified' && (
+                <span title="Visible only to you until a staff member verifies your claim" style={{ display: 'flex', alignItems: 'center', gap: 5, padding: '4px 10px', borderRadius: 3, border: '1px solid var(--gold-dark)', background: 'rgba(14,36,22,0.6)', color: 'var(--gold-bright)', fontWeight: 700, fontSize: '0.52rem', textTransform: 'uppercase', letterSpacing: '0.1em', ...serifStyle }}>
+                  <Clock size={11} /> Provisional · hidden from public
+                </span>
+              )}
               {isOwner && (
                 <button onClick={() => setEditProfileOpen(true)} style={{ display: 'flex', alignItems: 'center', gap: 5, padding: '5px 11px', borderRadius: 3, border: '1px solid var(--gold-mid)', background: 'linear-gradient(135deg, var(--gold-bright), var(--gold-mid))', color: 'var(--forest-deep)', fontWeight: 700, fontSize: '0.56rem', textTransform: 'uppercase', letterSpacing: '0.1em', cursor: 'pointer', ...serifStyle }}>
                   <Pencil size={11} /> Edit Profile

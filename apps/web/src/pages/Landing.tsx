@@ -6,6 +6,11 @@ import { useHorseStore } from '@/stores/horseStore';
 import { usePartyStore } from '@/stores/partyStore';
 import { connectionResolver } from '@/lib/horseConnections';
 import { useAuthStore } from '@/stores/authStore';
+import { usePodcastStore } from '@/stores/podcastStore';
+import { useIssueStore } from '@/stores/issueStore';
+import { useBreakingNewsStore } from '@/stores/breakingNewsStore';
+import { useSponsorStore } from '@/stores/sponsorStore';
+import { useMetricsStore } from '@/stores/metricsStore';
 import { ArticleCard } from '@/components/ArticleCard';
 import { ArticleSkeletonCard } from '@/components/SkeletonCard';
 import { EmptyState } from '@/components/EmptyState';
@@ -13,146 +18,19 @@ import {ArrowRight, ChevronRight, Phone, Play, LoaderCircle, TrendingUp, Users, 
 import { Button } from '@/components/ui/button';
 import { cn } from '@/lib/utils';
 
-/* ── Static data ──────────────────────────────────────── */
+/* ── Formatting helpers ──────────────────────────────────── */
 
-const BREAKING_TICKER = [
-  'RACE 7 FLEMINGTON — Sovereign Streak wins by 2½L in dominant fashion',
-  'STABLE TRANSFER — Golden Accord moves to Gai Waterhouse Racing',
-  'SCRATCHING — Midnight Phantom withdrawn, Rosehill R4',
-  'WEIGHTS — Australian Guineas nominations close Friday 5pm AEST',
-  'BLOODSTOCK — Lord Riviera sells at Magic Millions for $2.4M',
-];
+function fmtMinutes(seconds: number): string {
+  const min = Math.max(1, Math.round((seconds || 0) / 60));
+  return `${min} min`;
+}
 
-const PODCAST_EPISODES = [
-  {
-    id: 'ep-48',
-    number: 48,
-    title: 'The Weight of the Draw: How Post Positions Change Everything',
-    duration: '52 min',
-    guest: 'Harold Quince, Trainer',
-    date: 'Jun 8',
-  },
-  {
-    id: 'ep-47',
-    number: 47,
-    title: 'Form Reading in the Modern Era: Beyond the Speed Map',
-    duration: '44 min',
-    guest: 'Dr. Lena Farrow, Racing Analyst',
-    date: 'Jun 1',
-  },
-  {
-    id: 'ep-46',
-    number: 46,
-    title: 'Breeding for Distance: The Science Behind a Stayer',
-    duration: '61 min',
-    guest: 'William Ashby, Bloodstock Agent',
-    date: 'May 25',
-  },
-];
-
-const BULLETIN_EDITIONS = [
-  {
-    id: 'b-14',
-    edition: 'Vol. XIV — Issue 23',
-    date: 'June 2025',
-    headline: 'Cup Season Preview: The Field That Will Define a Generation',
-    teaser:
-      'Our panel of nine analysts have spoken. Inside: full field assessments, track bias reports, and the dark horses the market has overlooked.',
-    pageCount: 48,
-    category: 'form-guide',
-  },
-  {
-    id: 'b-13',
-    edition: 'Vol. XIV — Issue 22',
-    date: 'May 2025',
-    headline: 'The Autumn Carnival Debrief',
-    teaser:
-      'Connections, controversies, and the standout performers who shaped the season.',
-    pageCount: 52,
-    category: 'bloodstock',
-  },
-];
-
-const SPONSORS = [
-  {
-    id: 's1',
-    name: 'Tattersalls Bloodstock',
-    category: 'Principal Partner',
-    tagline: "Australia's premier thoroughbred auction house",
-  },
-  {
-    id: 's2',
-    name: 'Champion Sires Registry',
-    category: 'Breeding Partner',
-    tagline: 'Where bloodlines are documented and preserved',
-  },
-  {
-    id: 's3',
-    name: 'TrackMaster Systems',
-    category: 'Technology Partner',
-    tagline: 'Advanced race-day data and handicapping tools',
-  },
-];
-
-const MEMBER_METRICS = [
-  {
-    label: 'Active Members',
-    value: '12,840',
-    icon: <Users size={16} />,
-    delta: '+284 this month',
-  },
-  {
-    label: 'Articles Published',
-    value: '3,291',
-    icon: <BookOpen size={16} />,
-    delta: '+18 this week',
-  },
-  {
-    label: 'Tips Placed',
-    value: '94,572',
-    icon: <TrendingUp size={16} />,
-    delta: 'Across all meets',
-  },
-  {
-    label: 'Leaderboard Leaders',
-    value: '250',
-    icon: <Award size={16} />,
-    delta: 'Global tippers',
-  },
-];
-
-const FEATURED_ANALYSIS = [
-  {
-    id: 'fa1',
-    category: 'Analysis',
-    categoryKey: 'form-guide',
-    title: 'The Flemington Straight: Why the 1000m Bias Has Shifted',
-    author: 'Sarah Ellison',
-    time: '10 min read',
-    imageUrl:
-      'https://images.pexels.com/photos/27305774/pexels-photo-27305774.jpeg?auto=compress&cs=tinysrgb&h=650&w=940',
-  },
-  {
-    id: 'fa2',
-    category: 'Interview',
-    categoryKey: 'trainer-profiles',
-    title: 'Trainer Evelyn Cross: Twelve Group Ones and Counting',
-    author: 'Catherine Darragh',
-    time: '8 min read',
-    imageUrl:
-      'https://images.pexels.com/photos/7882582/pexels-photo-7882582.jpeg?auto=compress&cs=tinysrgb&h=650&w=940',
-  },
-  {
-    id: 'fa3',
-    category: 'Bloodstock',
-    categoryKey: 'bloodstock',
-    title: 'Northern Hemisphere Stallions and Their Australian Influence',
-    author: 'James Whitfield',
-    time: '12 min read',
-    imageUrl:
-      'https://images.pexels.com/photos/11341144/pexels-photo-11341144.jpeg?auto=compress&cs=tinysrgb&h=650&w=940',
-  },
-];
+function fmtShortDate(iso?: string): string {
+  if (!iso) return '';
+  const d = new Date(iso);
+  if (isNaN(d.getTime())) return '';
+  return d.toLocaleDateString('en-AU', { day: 'numeric', month: 'short' });
+}
 
 /* ── Component ────────────────────────────────────────── */
 
@@ -160,15 +38,41 @@ export default function Landing() {
   // === auto fetch-on-mount (backend planner) ===
   const fetchHorses = useHorseStore((s) => s.fetchHorses);
   const fetchParties = usePartyStore((s) => s.fetchParties);
+  const fetchArticles = useArticleStore((s) => s.fetchArticles);
+  const fetchPodcastEpisodes = usePodcastStore((s) => s.fetchPodcastEpisodes);
+  const fetchIssues = useIssueStore((s) => s.fetchIssues);
+  const fetchBreakingNews = useBreakingNewsStore((s) => s.fetchBreakingNews);
+  const fetchSponsors = useSponsorStore((s) => s.fetchSponsors);
+  const fetchMetrics = useMetricsStore((s) => s.fetchMetrics);
   useEffect(() => {
     fetchHorses();
     fetchParties();
-  }, [fetchHorses, fetchParties]);
+    fetchArticles();
+    fetchPodcastEpisodes();
+    fetchIssues();
+    fetchBreakingNews();
+    fetchSponsors();
+    fetchMetrics();
+  }, [
+    fetchHorses,
+    fetchParties,
+    fetchArticles,
+    fetchPodcastEpisodes,
+    fetchIssues,
+    fetchBreakingNews,
+    fetchSponsors,
+    fetchMetrics,
+  ]);
   // === end auto fetch-on-mount ===
 
   const articles = useArticleStore((s) => s.articles);
   const horses = useHorseStore((s) => s.horses);
   const parties = usePartyStore((s) => s.parties);
+  const episodes = usePodcastStore((s) => s.episodes);
+  const issues = useIssueStore((s) => s.issues);
+  const breakingItems = useBreakingNewsStore((s) => s.items);
+  const sponsors = useSponsorStore((s) => s.sponsors);
+  const metrics = useMetricsStore((s) => s.metrics);
   const horseConn = useMemo(() => connectionResolver(parties ?? []), [parties]);
   const currentUser = useAuthStore((s) => s.currentUser);
 
@@ -192,6 +96,34 @@ export default function Landing() {
   const heroArticle = published[0] ?? null;
   const secondaryArticles = useMemo(() => published.slice(1, 4), [published]);
   const sidebarArticles = useMemo(() => published.slice(0, 5), [published]);
+  const featuredArticles = useMemo(() => published.slice(4, 7), [published]);
+
+  // Live landing-page content (real data; sections fall back to empty states).
+  const tickerItems = useMemo(() => breakingItems.filter((i) => i.active), [breakingItems]);
+  const publishedIssues = useMemo(
+    () =>
+      issues
+        .filter((i) => !i.unpublishedAt)
+        .sort((a, b) => (a.publishedAt < b.publishedAt ? 1 : -1))
+        .slice(0, 2),
+    [issues]
+  );
+  const liveEpisodes = useMemo(
+    () => episodes.filter((e) => e.status === 'published').slice(0, 3),
+    [episodes]
+  );
+  const metricCards = useMemo(
+    () =>
+      metrics
+        ? [
+            { label: 'Active Members', value: metrics.activeMembers.toLocaleString(), icon: <Users size={16} /> },
+            { label: 'Articles Published', value: metrics.articlesPublished.toLocaleString(), icon: <BookOpen size={16} /> },
+            { label: 'Tips Placed', value: metrics.tipsPlaced.toLocaleString(), icon: <TrendingUp size={16} /> },
+            { label: 'Leaderboard Leaders', value: metrics.leaderboardLeaders.toLocaleString(), icon: <Award size={16} /> },
+          ]
+        : [],
+    [metrics]
+  );
 
   const handleSubscribe = (e: React.FormEvent) => {
     e.preventDefault();
@@ -204,28 +136,30 @@ export default function Landing() {
     <div className="min-h-screen bg-background">
 
       {/* ── Breaking News Ticker ─────────────────────────── */}
-      <div
-        className="border-b border-border/40 overflow-hidden"
-        style={{ background: 'hsl(var(--brand-accent) / 0.08)' }}
-      >
-        <div className="max-w-7xl mx-auto px-4 md:px-8 py-1.5 flex items-center gap-4">
-          <span
-            className="flex-shrink-0 text-[9px] uppercase tracking-[0.18em] font-bold px-2 py-0.5 rounded-sm"
-            style={{
-              background: 'hsl(var(--brand-accent))',
-              color: 'hsl(var(--brand-accent-foreground))',
-            }}
-          >
-            Breaking
-          </span>
-          <div className="overflow-hidden flex-1">
-            <p className="text-[11px] text-foreground/80 font-medium whitespace-nowrap overflow-hidden text-ellipsis">
-              {BREAKING_TICKER[tickerIdx]}
-            </p>
+      {tickerItems.length > 0 && (
+        <div
+          className="border-b border-border/40 overflow-hidden"
+          style={{ background: 'hsl(var(--brand-accent) / 0.08)' }}
+        >
+          <div className="max-w-7xl mx-auto px-4 md:px-8 py-1.5 flex items-center gap-4">
+            <span
+              className="flex-shrink-0 text-[9px] uppercase tracking-[0.18em] font-bold px-2 py-0.5 rounded-sm"
+              style={{
+                background: 'hsl(var(--brand-accent))',
+                color: 'hsl(var(--brand-accent-foreground))',
+              }}
+            >
+              Breaking
+            </span>
+            <div className="overflow-hidden flex-1">
+              <p className="text-[11px] text-foreground/80 font-medium whitespace-nowrap overflow-hidden text-ellipsis">
+                {tickerItems[Math.min(tickerIdx, tickerItems.length - 1)].text}
+              </p>
+            </div>
+            <Zap size={12} className="flex-shrink-0 opacity-40" />
           </div>
-          <Zap size={12} className="flex-shrink-0 opacity-40" />
         </div>
-      </div>
+      )}
 
       {/* ── Hero Banner ─────────────────────────────────── */}
       <section className="relative w-full overflow-hidden">
@@ -344,10 +278,11 @@ export default function Landing() {
       </section>
 
       {/* ── Edition & Member Metrics Banner ─────────────── */}
+      {metricCards.length > 0 && (
       <div className="bg-card border-b border-border">
         <div className="max-w-7xl mx-auto px-4 md:px-8">
           <div className="flex flex-wrap items-stretch divide-x divide-border">
-            {MEMBER_METRICS.map((metric) => (
+            {metricCards.map((metric) => (
               <div
                 key={metric.label}
                 className="flex items-center gap-3 px-4 md:px-6 py-4 flex-1 min-w-[130px]"
@@ -366,6 +301,7 @@ export default function Landing() {
           </div>
         </div>
       </div>
+      )}
 
       {/* ── Main Content Grid ────────────────────────────── */}
       <div className="max-w-7xl mx-auto px-4 md:px-8 py-10 md:py-14">
@@ -443,49 +379,63 @@ export default function Landing() {
                 </Link>
               </div>
 
-              <div className="space-y-0">
-                {FEATURED_ANALYSIS.map((item, idx) => (
-                  <Link
-                    key={item.id}
-                    to={`/news?category=${item.categoryKey}`}
-                    className={cn(
-                      'group grid grid-cols-1 sm:grid-cols-[auto_1fr] gap-4 py-5 transition-colors hover:bg-muted/30 -mx-3 px-3 rounded-sm',
-                      idx < FEATURED_ANALYSIS.length - 1 && 'border-b border-border/40'
-                    )}
-                    aria-label={`Read analysis: ${item.title}`}
-                  >
-                    <div className="w-full sm:w-28 h-20 flex-shrink-0 overflow-hidden rounded-sm">
-                      <img
-                        src={item.imageUrl}
-                        alt={item.title}
-                        crossOrigin="anonymous"
-                        className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-300"
-                      />
-                    </div>
-                    <div className="min-w-0">
-                      <div className="flex items-center gap-2 mb-1.5">
-                        <span
-                          className="text-[9px] uppercase tracking-[0.14em] font-bold"
-                          style={{ color: 'hsl(var(--brand-accent))' }}
-                        >
-                          {item.category}
-                        </span>
+              {featuredArticles.length > 0 ? (
+                <div className="space-y-0">
+                  {featuredArticles.map((article, idx) => (
+                    <Link
+                      key={article.id}
+                      to={`/articles/${article.id}`}
+                      className={cn(
+                        'group grid grid-cols-1 sm:grid-cols-[auto_1fr] gap-4 py-5 transition-colors hover:bg-muted/30 -mx-3 px-3 rounded-sm',
+                        idx < featuredArticles.length - 1 && 'border-b border-border/40'
+                      )}
+                      aria-label={`Read analysis: ${article.title}`}
+                    >
+                      {article.imageUrl && (
+                        <div className="w-full sm:w-28 h-20 flex-shrink-0 overflow-hidden rounded-sm">
+                          <img
+                            src={article.imageUrl}
+                            alt={article.title}
+                            crossOrigin="anonymous"
+                            className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-300"
+                          />
+                        </div>
+                      )}
+                      <div className="min-w-0">
+                        {article.category && (
+                          <div className="flex items-center gap-2 mb-1.5">
+                            <span
+                              className="text-[9px] uppercase tracking-[0.14em] font-bold"
+                              style={{ color: 'hsl(var(--brand-accent))' }}
+                            >
+                              {article.category}
+                            </span>
+                          </div>
+                        )}
+                        <h3 className="font-[family-name:var(--font-display)] text-base font-bold text-foreground leading-snug group-hover:opacity-[0.85] transition-opacity mb-1.5 line-clamp-2">
+                          {article.title}
+                        </h3>
+                        <div className="flex items-center gap-3 text-[10px] text-muted-foreground">
+                          <span>{article.author}</span>
+                          {article.readingTime && (
+                            <>
+                              <span>·</span>
+                              <span className="flex items-center gap-1">
+                                <Clock size={9} />
+                                {article.readingTime} min read
+                              </span>
+                            </>
+                          )}
+                        </div>
                       </div>
-                      <h3 className="font-[family-name:var(--font-display)] text-base font-bold text-foreground leading-snug group-hover:opacity-[0.85] transition-opacity mb-1.5 line-clamp-2">
-                        {item.title}
-                      </h3>
-                      <div className="flex items-center gap-3 text-[10px] text-muted-foreground">
-                        <span>{item.author}</span>
-                        <span>·</span>
-                        <span className="flex items-center gap-1">
-                          <Clock size={9} />
-                          {item.time}
-                        </span>
-                      </div>
-                    </div>
-                  </Link>
-                ))}
-              </div>
+                    </Link>
+                  ))}
+                </div>
+              ) : (
+                <p className="text-sm text-muted-foreground/70 italic py-6">
+                  Published analysis and interviews will be featured here.
+                </p>
+              )}
             </section>
 
             {/* ── Horse profiles strip ─── */}
@@ -575,83 +525,93 @@ export default function Landing() {
                 </Link>
               </div>
 
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-5">
-                {BULLETIN_EDITIONS.map((bulletin) => (
-                  <div
-                    key={bulletin.id}
-                    className="relative border border-border/60 rounded-sm overflow-hidden group cursor-pointer hover:border-primary/40 transition-colors"
-                    onClick={() =>
-                      setBulletinOpen(
-                        bulletinOpen === bulletin.id ? null : bulletin.id
-                      )
-                    }
-                  >
-                    {/* Cover */}
-                    <div className="relative h-48 bg-primary overflow-hidden">
-                      <img
-                        src="https://images.pexels.com/photos/18913040/pexels-photo-18913040.jpeg?auto=compress&cs=tinysrgb&h=350"
-                        alt="Print bulletin cover"
-                        crossOrigin="anonymous"
-                        className="absolute inset-0 w-full h-full object-cover opacity-20 group-hover:opacity-30 transition-opacity"
-                      />
-                      <div className="relative z-10 p-5 h-full flex flex-col justify-between">
-                        <div>
-                          <div
-                            className="inline-block text-[8px] uppercase tracking-[0.2em] font-bold px-2 py-0.5 mb-2"
-                            style={{
-                              background: 'hsl(var(--brand-accent))',
-                              color: 'hsl(var(--brand-accent-foreground))',
-                            }}
-                          >
-                            Print Edition
+              {publishedIssues.length > 0 ? (
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-5">
+                  {publishedIssues.map((issue) => (
+                    <div
+                      key={issue.id}
+                      className="relative border border-border/60 rounded-sm overflow-hidden group cursor-pointer hover:border-primary/40 transition-colors"
+                      onClick={() =>
+                        setBulletinOpen(bulletinOpen === issue.id ? null : issue.id)
+                      }
+                    >
+                      {/* Cover */}
+                      <div className="relative h-48 bg-primary overflow-hidden">
+                        {issue.coverImageUrl && (
+                          <img
+                            src={issue.coverImageUrl}
+                            alt={`${issue.title} cover`}
+                            crossOrigin="anonymous"
+                            className="absolute inset-0 w-full h-full object-cover opacity-20 group-hover:opacity-30 transition-opacity"
+                          />
+                        )}
+                        <div className="relative z-10 p-5 h-full flex flex-col justify-between">
+                          <div>
+                            <div
+                              className="inline-block text-[8px] uppercase tracking-[0.2em] font-bold px-2 py-0.5 mb-2"
+                              style={{
+                                background: 'hsl(var(--brand-accent))',
+                                color: 'hsl(var(--brand-accent-foreground))',
+                              }}
+                            >
+                              Print Edition
+                            </div>
+                            <p className="text-[9px] uppercase tracking-[0.12em] text-primary-foreground/50">
+                              {issue.edition}
+                            </p>
                           </div>
-                          <p className="text-[9px] uppercase tracking-[0.12em] text-primary-foreground/50">
-                            {bulletin.edition}
-                          </p>
-                        </div>
-                        <div>
-                          <h3 className="font-[family-name:var(--font-display)] text-lg font-bold text-primary-foreground leading-snug line-clamp-2">
-                            {bulletin.headline}
-                          </h3>
+                          <div>
+                            <h3 className="font-[family-name:var(--font-display)] text-lg font-bold text-primary-foreground leading-snug line-clamp-2">
+                              {issue.title}
+                            </h3>
+                          </div>
                         </div>
                       </div>
-                    </div>
 
-                    {/* Body */}
-                    <div className="p-4 bg-card">
-                      <div className="flex items-center justify-between mb-2">
-                        <span className="text-[10px] text-muted-foreground">
-                          {bulletin.date}
-                        </span>
-                        <span className="text-[10px] text-muted-foreground">
-                          {bulletin.pageCount} pages
-                        </span>
-                      </div>
-                      {bulletinOpen === bulletin.id ? (
-                        <div>
-                          <p className="text-xs text-muted-foreground leading-relaxed mb-3">
-                            {bulletin.teaser}
-                          </p>
+                      {/* Body */}
+                      <div className="p-4 bg-card">
+                        <div className="flex items-center justify-between mb-2">
+                          <span className="text-[10px] text-muted-foreground">
+                            {new Date(issue.publishedAt).toLocaleDateString('en-AU', {
+                              month: 'long',
+                              year: 'numeric',
+                            })}
+                          </span>
+                          <span className="text-[10px] text-muted-foreground">
+                            {issue.pageCount} pages
+                          </span>
+                        </div>
+                        {bulletinOpen === issue.id ? (
                           <Button
                             size="sm"
                             className="w-full bg-primary text-primary-foreground hover:bg-primary/90 text-xs"
                             asChild
                             onClick={(e) => e.stopPropagation()}
                           >
-                            <Link to={`/bulletins?category=${bulletin.category}`}>
-                              Read Full Bulletin
-                            </Link>
+                            <Link to={`/bulletins/${issue.id}`}>Read Full Bulletin</Link>
                           </Button>
-                        </div>
-                      ) : (
-                        <button className="text-[10px] uppercase tracking-[0.1em] font-semibold text-muted-foreground hover:text-foreground transition-colors flex items-center gap-1">
-                          Preview edition <ChevronRight size={10} />
-                        </button>
-                      )}
+                        ) : (
+                          <button className="text-[10px] uppercase tracking-[0.1em] font-semibold text-muted-foreground hover:text-foreground transition-colors flex items-center gap-1">
+                            Preview edition <ChevronRight size={10} />
+                          </button>
+                        )}
+                      </div>
                     </div>
-                  </div>
-                ))}
-              </div>
+                  ))}
+                </div>
+              ) : (
+                <div className="py-10 text-center border border-dashed border-border/60 rounded-sm">
+                  <p className="font-[family-name:var(--font-display)] text-sm text-muted-foreground italic">
+                    No bulletins have been published yet.
+                  </p>
+                  <Link
+                    to="/bulletins"
+                    className="mt-3 inline-flex items-center gap-1 text-[10px] uppercase tracking-[0.1em] font-semibold text-primary hover:text-primary/80 transition-colors"
+                  >
+                    Browse bulletins <ArrowRight size={11} />
+                  </Link>
+                </div>
+              )}
 
               {/* Newsletter/Subscription prompt */}
               <div
@@ -800,45 +760,51 @@ export default function Landing() {
                   On the Air
                 </h3>
                 <div className="h-px w-full bg-primary-foreground/10 mb-4" />
-                <div className="space-y-0">
-                  {PODCAST_EPISODES.map((ep, idx) => (
-                    <Link
-                      key={ep.id}
-                      to="/podcast"
-                      className={cn(
-                        'group block py-3 hover:bg-primary-foreground/5 transition-colors -mx-1 px-1 rounded-sm',
-                        idx < PODCAST_EPISODES.length - 1 &&
-                          'border-b border-primary-foreground/10'
-                      )}
-                    >
-                      <div className="flex items-start gap-3">
-                        <div
-                          className="flex-shrink-0 mt-0.5 w-7 h-7 rounded-full flex items-center justify-center border"
-                          style={{ borderColor: 'hsl(var(--brand-accent) / 0.6)' }}
-                        >
-                          <Play
-                            size={10}
-                            style={{ color: 'hsl(var(--brand-accent))' }}
-                          />
-                        </div>
-                        <div className="min-w-0">
-                          <p
-                            className="text-[9px] uppercase tracking-[0.1em] mb-0.5 font-semibold"
-                            style={{ color: 'hsl(var(--brand-accent))' }}
+                {liveEpisodes.length > 0 ? (
+                  <div className="space-y-0">
+                    {liveEpisodes.map((ep, idx) => (
+                      <Link
+                        key={ep.id}
+                        to="/podcast"
+                        className={cn(
+                          'group block py-3 hover:bg-primary-foreground/5 transition-colors -mx-1 px-1 rounded-sm',
+                          idx < liveEpisodes.length - 1 &&
+                            'border-b border-primary-foreground/10'
+                        )}
+                      >
+                        <div className="flex items-start gap-3">
+                          <div
+                            className="flex-shrink-0 mt-0.5 w-7 h-7 rounded-full flex items-center justify-center border"
+                            style={{ borderColor: 'hsl(var(--brand-accent) / 0.6)' }}
                           >
-                            Ep. {ep.number} · {ep.duration} · {ep.date}
-                          </p>
-                          <h4 className="text-[11px] font-semibold text-primary-foreground leading-snug line-clamp-2 group-hover:opacity-80 transition-opacity">
-                            {ep.title}
-                          </h4>
-                          <p className="text-[10px] text-primary-foreground/50 mt-0.5">
-                            {ep.guest}
-                          </p>
+                            <Play
+                              size={10}
+                              style={{ color: 'hsl(var(--brand-accent))' }}
+                            />
+                          </div>
+                          <div className="min-w-0">
+                            <p
+                              className="text-[9px] uppercase tracking-[0.1em] mb-0.5 font-semibold"
+                              style={{ color: 'hsl(var(--brand-accent))' }}
+                            >
+                              Ep. {ep.episodeNumber} · {fmtMinutes(ep.durationSeconds)} · {fmtShortDate(ep.publishedAt)}
+                            </p>
+                            <h4 className="text-[11px] font-semibold text-primary-foreground leading-snug line-clamp-2 group-hover:opacity-80 transition-opacity">
+                              {ep.title}
+                            </h4>
+                            <p className="text-[10px] text-primary-foreground/50 mt-0.5">
+                              {ep.guests[0]?.name ?? ep.host}
+                            </p>
+                          </div>
                         </div>
-                      </div>
-                    </Link>
-                  ))}
-                </div>
+                      </Link>
+                    ))}
+                  </div>
+                ) : (
+                  <p className="text-[11px] text-primary-foreground/50 py-3">
+                    No episodes published yet.
+                  </p>
+                )}
               </div>
               <div className="border-t border-primary-foreground/10 px-5 py-2.5">
                 <Link
@@ -961,13 +927,18 @@ export default function Landing() {
                 </h3>
                 <div className="flex-1 h-px bg-border/50" />
               </div>
+              {sponsors.length === 0 ? (
+                <p className="text-[10px] text-muted-foreground/70 italic">
+                  No sponsors listed yet.
+                </p>
+              ) : (
               <div className="space-y-3">
-                {SPONSORS.map((sponsor, idx) => (
+                {sponsors.map((sponsor, idx) => (
                   <div
                     key={sponsor.id}
                     className={cn(
                       'flex items-start gap-3 pb-3',
-                      idx < SPONSORS.length - 1 && 'border-b border-border/40'
+                      idx < sponsors.length - 1 && 'border-b border-border/40'
                     )}
                   >
                     <div
@@ -998,6 +969,7 @@ export default function Landing() {
                   </div>
                 ))}
               </div>
+              )}
               <p className="mt-3 text-[9px] text-muted-foreground uppercase tracking-[0.1em] text-center">
                 Sponsor enquiries:{' '}
                 <span className="text-foreground">press@stablepress.com.au</span>
@@ -1062,9 +1034,8 @@ export default function Landing() {
               The racing record that serious turf followers trust.
             </h2>
             <p className="text-sm text-primary-foreground/70 leading-relaxed max-w-xl mx-auto mb-8">
-              Join 12,840 members who rely on Stable Press for premium editorial,
-              paddock intelligence, and the deepest horse profiles in Australian
-              thoroughbred racing.
+              Rely on Stable Press for premium editorial, paddock intelligence,
+              and the deepest horse profiles in Australian thoroughbred racing.
             </p>
             <div className="flex flex-col sm:flex-row items-center justify-center gap-3">
               <Button
@@ -1184,21 +1155,23 @@ export default function Landing() {
           </div>
 
           {/* Sponsor bar */}
-          <div className="py-4 border-t border-b border-border/40 mb-6">
-            <div className="flex flex-wrap items-center justify-center gap-6">
-              <span className="text-[9px] uppercase tracking-[0.16em] text-muted-foreground font-semibold">
-                Proudly Supported By
-              </span>
-              {SPONSORS.map((s) => (
-                <span
-                  key={s.id}
-                  className="text-[10px] font-semibold text-muted-foreground hover:text-foreground transition-colors cursor-pointer"
-                >
-                  {s.name}
+          {sponsors.length > 0 && (
+            <div className="py-4 border-t border-b border-border/40 mb-6">
+              <div className="flex flex-wrap items-center justify-center gap-6">
+                <span className="text-[9px] uppercase tracking-[0.16em] text-muted-foreground font-semibold">
+                  Proudly Supported By
                 </span>
-              ))}
+                {sponsors.map((s) => (
+                  <span
+                    key={s.id}
+                    className="text-[10px] font-semibold text-muted-foreground hover:text-foreground transition-colors cursor-pointer"
+                  >
+                    {s.name}
+                  </span>
+                ))}
+              </div>
             </div>
-          </div>
+          )}
 
           <div className="flex flex-col sm:flex-row items-center justify-between gap-3">
             <p className="text-[10px] text-muted-foreground">
