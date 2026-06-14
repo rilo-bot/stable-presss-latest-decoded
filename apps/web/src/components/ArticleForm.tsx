@@ -17,6 +17,8 @@ import { useArticleStore } from '@/stores/articleStore';
 import { useHorseStore } from '@/stores/horseStore';
 import { useAuthStore } from '@/stores/authStore';
 import type { Article } from '@/types/article';
+import { TIER_ORDER, TIER_LABELS } from '@/rbac/entitlement';
+import type { SubscriptionTier } from '@/rbac/entitlement';
 import type { KanbanStatus } from '@/components/KanbanColumn';
 import type { UserRole } from '@/stores/authStore';
 import { can } from '@/lib/permissions';
@@ -103,6 +105,7 @@ export function ArticleForm({
   const [category, setCategory] = useState('');
   const [status, setStatus] = useState<KanbanStatus>(defaultStatus);
   const [readingTime, setReadingTime] = useState('');
+  const [minTier, setMinTier] = useState<SubscriptionTier>('free');
   const [linkedHorseIds, setLinkedHorseIds] = useState<string[]>([]);
   const [saving, setSaving] = useState(false);
 
@@ -129,6 +132,7 @@ export function ArticleForm({
         setStatus(resolvedStatus);
       }
       setReadingTime(editArticle.readingTime?.toString() ?? '');
+      setMinTier(editArticle.minTier ?? 'free');
       setLinkedHorseIds(editArticle.linkedHorseIds ?? []);
     } else {
       setTitle('');
@@ -141,6 +145,7 @@ export function ArticleForm({
         : defaultStatus;
       setStatus(clampedDefault);
       setReadingTime('');
+      setMinTier('free');
       setLinkedHorseIds([]);
     }
   }, [open, editArticle, defaultStatus, isContributor, currentUser?.displayName]);
@@ -170,6 +175,7 @@ export function ArticleForm({
         category: category || undefined,
         status: status as Article['status'],
         readingTime: readingTime ? parseInt(readingTime, 10) : undefined,
+        minTier,
         linkedHorseIds,
         publishedAt: status === 'published' ? new Date() : null,
         imageUrl: editArticle?.imageUrl,
@@ -308,6 +314,26 @@ export function ArticleForm({
                 onChange={(e) => setReadingTime(e.target.value)}
                 placeholder="e.g. 8"
               />
+            </div>
+            <div className="space-y-1.5">
+              <Label
+                htmlFor="article-mintier"
+                className="text-[10px] uppercase tracking-[0.1em] font-semibold text-muted-foreground"
+              >
+                Access Tier
+              </Label>
+              <select
+                id="article-mintier"
+                value={minTier}
+                onChange={(e) => setMinTier(e.target.value as SubscriptionTier)}
+                className="w-full h-9 rounded-md border border-input bg-background px-2 text-sm"
+              >
+                {TIER_ORDER.map((t) => (
+                  <option key={t} value={t}>
+                    {t === 'free' ? 'Free — everyone' : `${TIER_LABELS[t]} members & up`}
+                  </option>
+                ))}
+              </select>
             </div>
           </div>
 

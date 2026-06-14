@@ -7,6 +7,7 @@ import { isCurrentLink } from '@/types/horsePartyLink';
 import type { PartyRole } from '@/types/party';
 import type { Horse } from '@/types/horse';
 import { ROLE_BINDINGS } from '@/lib/profile/roleMap';
+import { horsesInScopeForParty } from '@/rbac/scope';
 import type { PanelParty, ProfileSubject, CentralSummary } from '@/lib/profile/types';
 
 export interface ProfileScope {
@@ -39,25 +40,12 @@ export function useProfileScope(subject: ProfileSubject | null): ProfileScope {
   useEffect(() => { fetchLinks(); fetchEntries(); }, [fetchLinks, fetchEntries]);
 
   // ── 1. horseIds in scope ──
+  // Party-central scope now comes from the shared pure resolver (rbac/scope.ts),
+  // the same one the permission engine uses, so display and access never diverge.
   const horseIds = useMemo<string[]>(() => {
     if (!subject) return [];
     if (subject.kind === 'horse') return [subject.horse.id];
-
-    const { party, role } = subject;
-    const binding = ROLE_BINDINGS[role];
-    const ids = new Set<string>();
-    // From relationship links pointing at this party.
-    allLinks.forEach((l) => {
-      if (l.party_id !== party.id) return;
-      if (binding.relType && l.relationship_type !== binding.relType) return;
-      ids.add(l.horse_id);
-    });
-    // From legacy direct id-array fields on the horse record.
-    horses.forEach((h) => {
-      const arr = h[binding.horseField] as string[] | undefined;
-      if (Array.isArray(arr) && arr.includes(party.id)) ids.add(h.id);
-    });
-    return Array.from(ids);
+    return horsesInScopeForParty(subject.party.id, subject.role, { horses, links: allLinks });
   }, [subject, allLinks, horses]);
 
   const scopedHorses = useMemo(

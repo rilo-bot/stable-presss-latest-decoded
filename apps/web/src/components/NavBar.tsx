@@ -255,12 +255,50 @@ export function NavBar() {
                 <span className="h-3 w-px bg-primary-foreground/20" />
               </>
             )}
+            {currentUser && (
+              <>
+                <Link
+                  to="/dashboard"
+                  className="opacity-70 hover:opacity-100 transition-opacity font-semibold"
+                  style={{ color: 'hsl(var(--brand-accent))' }}
+                >
+                  Dashboard
+                </Link>
+                <span className="h-3 w-px bg-primary-foreground/20" />
+              </>
+            )}
+            {currentUser?.orgMemberships && currentUser.orgMemberships.length > 0 && (
+              <>
+                <Link
+                  to={`/orgs/${currentUser.orgMemberships[0].orgId}`}
+                  className="opacity-70 hover:opacity-100 transition-opacity"
+                >
+                  My Organisation
+                </Link>
+                <span className="h-3 w-px bg-primary-foreground/20" />
+              </>
+            )}
             <Link
               to="/newsroom"
               className="opacity-60 hover:opacity-100 transition-opacity"
             >
               Newsroom
             </Link>
+            {role === 'administrator' && (
+              <>
+                <span className="h-3 w-px bg-primary-foreground/20" />
+                <Link
+                  to="/claims"
+                  className={cn(
+                    'transition-opacity font-semibold',
+                    location.pathname === '/claims' ? 'opacity-100' : 'opacity-60 hover:opacity-100'
+                  )}
+                  style={{ color: 'hsl(var(--brand-accent))' }}
+                >
+                  Verify Claims
+                </Link>
+              </>
+            )}
             {showPodcastWorkflow && (
               <>
                 <span className="h-3 w-px bg-primary-foreground/20" />

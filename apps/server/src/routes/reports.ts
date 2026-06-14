@@ -1,5 +1,6 @@
 import { Router } from 'express';
 import { db } from '../lib/db.js';
+import { isStaff } from '../lib/rbac.js';
 
 type WithMongoId = { _id: string; [key: string]: unknown };
 function project<T extends WithMongoId>(doc: T): Omit<T, '_id'> & { id: string } {
@@ -9,10 +10,15 @@ function project<T extends WithMongoId>(doc: T): Omit<T, '_id'> & { id: string }
 
 const router = Router();
 
-// list
-router.get('/', async (_req, res) => {
+// list — "authorised-only" reports (visibility !== 'public') are hidden from
+// anonymous/reader callers. Staff see everything; party/org-scoped visibility
+// for linked horses is layered in Phase C/D.  TODO(phase C/D): scope by horse link.
+router.get('/', async (req, res) => {
   const items = await db.collection('reports').find();
-  res.json(items.map(project));
+  const visible = isStaff(req.account)
+    ? items
+    : items.filter((r) => (r.visibility ?? 'public') === 'public');
+  res.json(visible.map(project));
 });
 
 // create

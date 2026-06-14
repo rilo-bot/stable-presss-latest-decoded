@@ -6,6 +6,8 @@
 import crypto from 'crypto'
 import jwt from 'jsonwebtoken'
 import type { Request, Response, NextFunction } from 'express'
+import { db } from './db.js'
+import { withIdentityDefaults, type AccountUser } from './identity.js'
 
 const JWT_SECRET = (process.env.JWT_SECRET ?? '').trim() || 'dev-only-insecure-secret'
 const TOKEN_TTL = '7d'
@@ -44,12 +46,14 @@ export function verifyToken(token: string): TokenClaims | null {
   }
 }
 
-// Augment Express's Request so handlers can read req.user after requireAuth.
+// Augment Express's Request so handlers can read req.user (token claims) and
+// req.account (the live, normalized user record) after the auth middleware.
 declare global {
   // eslint-disable-next-line @typescript-eslint/no-namespace
   namespace Express {
     interface Request {
       user?: TokenClaims
+      account?: AccountUser
     }
   }
 }
@@ -79,5 +83,44 @@ export function requireAuth(req: Request, res: Response, next: NextFunction): vo
 export function optionalAuth(req: Request, _res: Response, next: NextFunction): void {
   const claims = claimsFromHeader(req)
   if (claims) req.user = claims
+  next()
+}
+
+/**
+ * Like requireAuth, but also loads the LIVE user record and attaches the
+ * normalized account to req.account. Permission checks read roles/claims/tier
+ * from here so changes take effect without re-issuing a token (the JWT only
+ * carries {sub,email,role}). Rejects with 401 if the token or user is invalid.
+ */
+export async function attachAccount(req: Request, res: Response, next: NextFunction): Promise<void> {
+  const claims = claimsFromHeader(req)
+  if (!claims) {
+    res.status(401).json({ error: 'Authentication required' })
+    return
+  }
+  const doc = await db.collection('users').findById(claims.sub)
+  if (!doc) {
+    res.status(401).json({ error: 'Account not found' })
+    return
+  }
+  req.user = claims
+  req.account = withIdentityDefaults({ id: doc._id, ...doc })
+  next()
+}
+
+/**
+ * Like attachAccount but never rejects: loads + attaches req.account when a valid
+ * token resolves to a real user, otherwise proceeds anonymously. For routes that
+ * serve everyone but tailor the response to the caller (e.g. hide private records).
+ */
+export async function attachAccountOptional(req: Request, _res: Response, next: NextFunction): Promise<void> {
+  const claims = claimsFromHeader(req)
+  if (claims) {
+    const doc = await db.collection('users').findById(claims.sub)
+    if (doc) {
+      req.user = claims
+      req.account = withIdentityDefaults({ id: doc._id, ...doc })
+    }
+  }
   next()
 }

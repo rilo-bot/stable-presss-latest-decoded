@@ -6,7 +6,7 @@ import { Routes, Route } from 'react-router-dom';
 import { Toaster } from 'sonner';
 
 import { NavBar } from '@/components/NavBar';
-import { ProtectedRoute } from '@/components/ProtectedRoute';
+import { RequireAuth, RequireStaff, RequireRole } from '@/rbac/guards';
 // import { OnboardingOverlay } from '@/components/OnboardingOverlay'; // onboarding disabled
 import { useAuthStore } from '@/stores/authStore';
 
@@ -26,6 +26,10 @@ import Bulletins from '@/pages/Bulletins';
 import BulletinViewer from '@/pages/BulletinViewer';
 import Parties from '@/pages/Parties';
 import PartyDetail from '@/pages/PartyDetail';
+import ClaimsQueue from '@/pages/ClaimsQueue';
+import OrgDashboard from '@/pages/OrgDashboard';
+import Dashboard from '@/pages/Dashboard';
+import StaffAdmin from '@/pages/StaffAdmin';
 
 /* Inject Google Fonts for vintage skeuomorphic horse dashboard */
 function useVintageFonts() {
@@ -190,8 +194,8 @@ export default function App() {
         <Route path="/login" element={<Login />} />
         <Route path="/signup" element={<Signup />} />
 
-        {/* Protected routes */}
-        <Route element={<ProtectedRoute />}>
+        {/* Staff-only routes — readers/parties are redirected home */}
+        <Route element={<RequireStaff />}>
           <Route
             path="/newsroom"
             element={
@@ -205,6 +209,46 @@ export default function App() {
             element={
               <AppLayout>
                 <PodcastWorkflow />
+              </AppLayout>
+            }
+          />
+        </Route>
+
+        {/* Member routes — any signed-in user */}
+        <Route element={<RequireAuth />}>
+          <Route
+            path="/dashboard"
+            element={
+              <AppLayout>
+                <Dashboard />
+              </AppLayout>
+            }
+          />
+          <Route
+            path="/orgs/:id"
+            element={
+              <AppLayout>
+                <OrgDashboard />
+              </AppLayout>
+            }
+          />
+        </Route>
+
+        {/* Admin-only routes */}
+        <Route element={<RequireRole roles={['administrator']} />}>
+          <Route
+            path="/claims"
+            element={
+              <AppLayout>
+                <ClaimsQueue />
+              </AppLayout>
+            }
+          />
+          <Route
+            path="/staff"
+            element={
+              <AppLayout>
+                <StaffAdmin />
               </AppLayout>
             }
           />

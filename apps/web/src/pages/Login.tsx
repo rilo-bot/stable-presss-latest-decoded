@@ -102,7 +102,7 @@ export default function Login() {
     const result = await verifyOtp(email.trim(), code);
     setLoading(false);
     if (result.ok) {
-      navigate('/newsroom');
+      navigate('/dashboard');
     } else {
       toast.error(result.error ?? 'Verification failed. Please try again.');
       setOtpError(result.error ?? '');

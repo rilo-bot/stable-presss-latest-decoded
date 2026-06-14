@@ -1,49 +1,19 @@
 import { useState, useRef, useEffect } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import { useAuthStore } from '@/stores/authStore';
-import type { UserRole } from '@/stores/authStore';
-import { useOnboardingStore } from '@/stores/onboardingStore';
+import { useClaimStore } from '@/stores/claimStore';
+import { useOrgStore } from '@/stores/orgStore';
+import { PARTY_ROLES, PARTY_ROLE_LABELS } from '@/types/party';
+import type { PartyRole } from '@/types/party';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { toast } from 'sonner';
-import { Mail, ArrowRight, RotateCcw, ChevronDown } from 'lucide-react';
+import { Mail, ArrowRight, RotateCcw, BookOpen, Star, Building2, Check, Upload, Loader2 } from 'lucide-react';
 import { cn } from '@/lib/utils';
 
-type Step = 'details' | 'otp';
-
-const ROLE_OPTIONS: { value: UserRole; label: string; description: string }[] = [
-  {
-    value: 'contributor',
-    label: 'Contributor',
-    description: 'Write and submit stories for editorial review',
-  },
-  {
-    value: 'editor',
-    label: 'Editor',
-    description: 'Review, revise, and approve editorial content',
-  },
-  {
-    value: 'legal_reviewer',
-    label: 'Legal Reviewer',
-    description: 'Assess content for legal compliance before publishing',
-  },
-  {
-    value: 'podcast_producer',
-    label: 'Podcast Producer',
-    description: 'Manage and produce The Gallop Podcast episodes',
-  },
-  {
-    value: 'publisher',
-    label: 'Publisher',
-    description: 'Schedule and publish content across all channels',
-  },
-  {
-    value: 'administrator',
-    label: 'Administrator',
-    description: 'Full platform access and team management',
-  },
-];
+type Step = 'details' | 'otp' | 'claim' | 'org';
+type AccountType = 'reader' | 'individual' | 'organisation';
 
 export default function Signup() {
   const [step, setStep] = useState<Step>('details');
@@ -51,12 +21,10 @@ export default function Signup() {
   // Step 1 state
   const [displayName, setDisplayName] = useState('');
   const [email, setEmail] = useState('');
-  const [role, setRole] = useState<UserRole | ''>('');
-  const [roleOpen, setRoleOpen] = useState(false);
+  const [accountType, setAccountType] = useState<AccountType>('reader');
   const [fieldErrors, setFieldErrors] = useState<{
     displayName?: string;
     email?: string;
-    role?: string;
   }>({});
 
   // Step 2 state
@@ -64,16 +32,24 @@ export default function Signup() {
   const [otpPreview, setOtpPreview] = useState<string | null>(null);
   const [otpError, setOtpError] = useState('');
 
+  // Step 3 (claim) state — individuals claim one or more racing roles.
+  const [selectedRoles, setSelectedRoles] = useState<PartyRole[]>([]);
+  const [evidenceDataUrl, setEvidenceDataUrl] = useState<string | undefined>();
+  const [evidenceName, setEvidenceName] = useState<string | null>(null);
+
+  // Step 3 (org) state — organisations create an org and become its owner.
+  const [orgName, setOrgName] = useState('');
+  const [orgLocation, setOrgLocation] = useState('');
+
   const [loading, setLoading] = useState(false);
 
   const requestSignupOtp = useAuthStore((s) => s.requestSignupOtp);
   const verifyOtp = useAuthStore((s) => s.verifyOtp);
-  const startOnboarding = useOnboardingStore((s) => s.startOnboarding);
+  const createClaim = useClaimStore((s) => s.createClaim);
+  const createOrg = useOrgStore((s) => s.createOrg);
   const navigate = useNavigate();
 
   const digitRefs = useRef<(HTMLInputElement | null)[]>([]);
-
-  const selectedRole = ROLE_OPTIONS.find((r) => r.value === role) ?? null;
 
   useEffect(() => {
     if (step === 'otp') {
@@ -87,7 +63,6 @@ export default function Signup() {
     if (!email.trim()) errors.email = 'An email address is required.';
     else if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email))
       errors.email = 'Please enter a valid email address.';
-    if (!role) errors.role = 'Please select your role in the newsroom.';
     return errors;
   };
 
@@ -102,7 +77,7 @@ export default function Signup() {
     }
     setFieldErrors({});
     setLoading(true);
-    const result = await requestSignupOtp(email.trim(), displayName.trim(), role as UserRole);
+    const result = await requestSignupOtp(email.trim(), displayName.trim());
     setLoading(false);
     if (result.ok) {
       setOtpPreview(result.devCode ?? null);
@@ -155,18 +130,79 @@ export default function Signup() {
     const result = await verifyOtp(email.trim(), code);
     setLoading(false);
     if (result.ok) {
-      toast.success('Your account is ready. Welcome to Stable Press.');
-      // Onboarding disabled — skip startOnboarding trigger.
-      // const currentUser = useAuthStore.getState().currentUser;
-      // if (currentUser) {
-      //   startOnboarding(currentUser.id);
-      // }
-      navigate('/newsroom');
+      // Every account is created as a reader. Individuals continue to claim their
+      // racing role(s); organisations set up their org; readers are done.
+      if (accountType === 'individual') {
+        toast.success('Account created. Now claim your racing role.');
+        setStep('claim');
+      } else if (accountType === 'organisation') {
+        toast.success('Account created. Now set up your organisation.');
+        setStep('org');
+      } else {
+        toast.success('Your account is ready. Welcome to Stable Press.');
+        navigate('/dashboard');
+      }
     } else {
       toast.error(result.error ?? 'Verification failed. Please try again.');
       setOtpError(result.error ?? '');
       setOtpDigits(['', '', '', '', '', '']);
       setTimeout(() => digitRefs.current[0]?.focus(), 80);
+    }
+  };
+
+  const toggleRole = (role: PartyRole) => {
+    setSelectedRoles((prev) =>
+      prev.includes(role) ? prev.filter((r) => r !== role) : [...prev, role],
+    );
+  };
+
+  const handleEvidenceFile = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    if (file.size > 4 * 1024 * 1024) {
+      toast.error('Please choose a file under 4 MB.');
+      return;
+    }
+    const reader = new FileReader();
+    reader.onload = () => {
+      setEvidenceDataUrl(typeof reader.result === 'string' ? reader.result : undefined);
+      setEvidenceName(file.name);
+    };
+    reader.readAsDataURL(file);
+  };
+
+  const handleClaimSubmit = async () => {
+    if (selectedRoles.length === 0) {
+      toast.error('Select at least one role to claim.');
+      return;
+    }
+    setLoading(true);
+    const results = await Promise.all(
+      selectedRoles.map((role) => createClaim(role, { evidenceUrl: evidenceDataUrl })),
+    );
+    setLoading(false);
+    const failed = results.filter((r) => !r.ok);
+    if (failed.length === 0) {
+      toast.success('Claim submitted. An administrator will review and verify it shortly.');
+    } else {
+      toast.error(failed[0].error ?? 'Some claims could not be submitted.');
+    }
+    navigate('/');
+  };
+
+  const handleOrgSubmit = async () => {
+    if (!orgName.trim()) {
+      toast.error('Enter your organisation name.');
+      return;
+    }
+    setLoading(true);
+    const result = await createOrg({ name: orgName.trim(), base_location: orgLocation.trim() || undefined });
+    setLoading(false);
+    if (result.ok && result.id) {
+      toast.success('Organisation created. You are its owner.');
+      navigate(`/orgs/${result.id}`);
+    } else {
+      toast.error(result.error ?? 'Could not create the organisation.');
     }
   };
 
@@ -186,7 +222,7 @@ export default function Signup() {
     setOtpDigits(['', '', '', '', '', '']);
     setOtpError('');
     setLoading(true);
-    const result = await requestSignupOtp(email.trim(), displayName.trim(), role as UserRole);
+    const result = await requestSignupOtp(email.trim(), displayName.trim());
     setLoading(false);
     if (result.ok) {
       setOtpPreview(result.devCode ?? null);
@@ -230,19 +266,6 @@ export default function Signup() {
         </div>
 
         <div>
-          <div className="mb-6 border border-primary-foreground/10 rounded-sm p-4">
-            <p className="text-[9px] uppercase tracking-[0.18em] text-primary-foreground/40 font-semibold mb-3">
-              Newsroom Roles
-            </p>
-            <div className="grid grid-cols-2 gap-1.5">
-              {ROLE_OPTIONS.map((r) => (
-                <div key={r.value} className="flex items-center gap-1.5">
-                  <div className="w-1 h-1 rounded-full bg-[hsl(var(--brand-accent)/0.6)]" />
-                  <span className="text-[10px] text-primary-foreground/60">{r.label}</span>
-                </div>
-              ))}
-            </div>
-          </div>
           <div className="border-t border-primary-foreground/10 pt-6">
             <p className="text-xs text-primary-foreground/40 italic font-[family-name:var(--font-display)]">
               &ldquo;The form is everything. The rest is conversation.&rdquo;
@@ -351,88 +374,40 @@ export default function Signup() {
                   )}
                 </div>
 
-                {/* Role */}
-                <div className="space-y-1.5">
-                  <Label
-                    htmlFor="role-btn"
-                    className="text-[11px] uppercase tracking-[0.1em] text-muted-foreground font-semibold"
-                  >
-                    Newsroom Role
+                {/* Account type — everyone is a reader; individuals also claim racing roles */}
+                <div className="space-y-2">
+                  <Label className="text-[11px] uppercase tracking-[0.1em] text-muted-foreground font-semibold">
+                    How will you use Stable Press?
                   </Label>
-                  <div className="relative">
-                    <button
-                      id="role-btn"
-                      type="button"
-                      onClick={() => setRoleOpen((v) => !v)}
-                      className={cn(
-                        'w-full flex items-center justify-between gap-2 px-3 py-2 text-sm rounded-md border bg-background transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring',
-                        fieldErrors.role
-                          ? 'border-destructive focus-visible:ring-destructive'
-                          : 'border-input hover:border-primary/50',
-                        !selectedRole && 'text-muted-foreground'
-                      )}
-                      aria-haspopup="listbox"
-                      aria-expanded={roleOpen}
-                      aria-describedby={fieldErrors.role ? 'role-error' : undefined}
-                    >
-                      <span
-                        className={selectedRole ? 'text-foreground' : 'text-muted-foreground'}
-                      >
-                        {selectedRole ? selectedRole.label : 'Select your role…'}
-                      </span>
-                      <ChevronDown
-                        size={14}
+                  <div className="grid gap-2">
+                    {[
+                      { value: 'reader' as const, icon: <BookOpen size={15} />, label: 'Reader', desc: 'Follow horses & owners, read editorial, place tips.' },
+                      { value: 'individual' as const, icon: <Star size={15} />, label: 'Racing individual', desc: 'Owner, trainer, jockey, breeder… claim your role.' },
+                      { value: 'organisation' as const, icon: <Building2 size={15} />, label: 'Organisation', desc: 'Syndicate, stud, stable or agency with members.' },
+                    ].map((opt) => (
+                      <button
+                        key={opt.value}
+                        type="button"
+                        onClick={() => setAccountType(opt.value)}
+                        aria-pressed={accountType === opt.value}
                         className={cn(
-                          'text-muted-foreground transition-transform flex-shrink-0',
-                          roleOpen && 'rotate-180'
+                          'flex items-start gap-3 px-3 py-2.5 rounded-md border text-left transition-colors',
+                          accountType === opt.value
+                            ? 'border-primary bg-primary/8'
+                            : 'border-input hover:border-primary/50',
                         )}
-                      />
-                    </button>
-
-                    {roleOpen && (
-                      <div
-                        className="absolute top-full left-0 right-0 mt-1 bg-card border border-border rounded-md shadow-lg z-20 overflow-hidden"
-                        role="listbox"
-                        aria-label="Newsroom role"
                       >
-                        {ROLE_OPTIONS.map((option) => (
-                          <button
-                            key={option.value}
-                            type="button"
-                            role="option"
-                            aria-selected={role === option.value}
-                            onClick={() => {
-                              setRole(option.value);
-                              setRoleOpen(false);
-                              if (fieldErrors.role)
-                                setFieldErrors((p) => ({ ...p, role: undefined }));
-                            }}
-                            className={cn(
-                              'w-full flex flex-col items-start px-3 py-2.5 text-left hover:bg-muted/60 transition-colors border-b border-border/30 last:border-b-0 focus-visible:outline-none focus-visible:bg-muted/60',
-                              role === option.value && 'bg-primary/8'
-                            )}
-                          >
-                            <span
-                              className={cn(
-                                'text-sm font-semibold',
-                                role === option.value ? 'text-primary' : 'text-foreground'
-                              )}
-                            >
-                              {option.label}
-                            </span>
-                            <span className="text-[11px] text-muted-foreground mt-0.5 leading-snug">
-                              {option.description}
-                            </span>
-                          </button>
-                        ))}
-                      </div>
-                    )}
+                        <span className={cn('mt-0.5', accountType === opt.value ? 'text-primary' : 'text-muted-foreground')}>
+                          {opt.icon}
+                        </span>
+                        <span className="flex-1">
+                          <span className="block text-sm font-semibold text-foreground">{opt.label}</span>
+                          <span className="block text-[11px] text-muted-foreground leading-snug">{opt.desc}</span>
+                        </span>
+                        {accountType === opt.value && <Check size={15} className="text-primary mt-0.5" />}
+                      </button>
+                    ))}
                   </div>
-                  {fieldErrors.role && (
-                    <p id="role-error" className="text-xs text-destructive mt-1">
-                      {fieldErrors.role}
-                    </p>
-                  )}
                 </div>
 
                 <Button
@@ -560,6 +535,157 @@ export default function Signup() {
                   Sign in here
                 </Link>
               </p>
+            </>
+          )}
+
+          {/* Step 3: Claim racing role(s) — individuals only */}
+          {step === 'claim' && (
+            <>
+              <div className="mb-8">
+                <h2 className="font-[family-name:var(--font-display)] text-2xl font-bold text-foreground mb-1">
+                  Claim your racing role
+                </h2>
+                <div className="h-px w-full bg-foreground/10 mt-3 mb-4" />
+                <p className="text-sm text-muted-foreground">
+                  Select the role(s) you hold. Each claim is reviewed by an administrator before it
+                  becomes active — until then it stays <span className="font-medium text-foreground">pending</span> and read-only.
+                </p>
+              </div>
+
+              <div className="space-y-5">
+                <div className="space-y-2">
+                  <Label className="text-[11px] uppercase tracking-[0.1em] text-muted-foreground font-semibold">
+                    Your role(s)
+                  </Label>
+                  <div className="grid grid-cols-2 gap-2">
+                    {PARTY_ROLES.map((role) => (
+                      <button
+                        key={role}
+                        type="button"
+                        onClick={() => toggleRole(role)}
+                        aria-pressed={selectedRoles.includes(role)}
+                        className={cn(
+                          'flex items-center justify-between gap-2 px-3 py-2 rounded-md border text-sm transition-colors',
+                          selectedRoles.includes(role)
+                            ? 'border-primary bg-primary/8 text-primary font-semibold'
+                            : 'border-input hover:border-primary/50 text-foreground',
+                        )}
+                      >
+                        <span className="truncate">{PARTY_ROLE_LABELS[role]}</span>
+                        {selectedRoles.includes(role) && <Check size={14} className="flex-shrink-0" />}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+
+                <div className="space-y-2">
+                  <Label className="text-[11px] uppercase tracking-[0.1em] text-muted-foreground font-semibold">
+                    Evidence (optional)
+                  </Label>
+                  <label className="flex items-center gap-2 px-3 py-2.5 rounded-md border border-dashed border-input hover:border-primary/50 cursor-pointer text-sm text-muted-foreground transition-colors">
+                    <Upload size={15} className="flex-shrink-0" />
+                    <span className="truncate">
+                      {evidenceName ?? 'Attach a licence or document (image/PDF, ≤4 MB)'}
+                    </span>
+                    <input
+                      type="file"
+                      className="hidden"
+                      accept="image/*,application/pdf"
+                      onChange={handleEvidenceFile}
+                    />
+                  </label>
+                </div>
+
+                <Button
+                  type="button"
+                  onClick={handleClaimSubmit}
+                  disabled={loading || selectedRoles.length === 0}
+                  className="w-full bg-primary text-primary-foreground hover:bg-primary/90 gap-2"
+                >
+                  {loading ? (
+                    <>
+                      <Loader2 size={15} className="animate-spin" /> Submitting…
+                    </>
+                  ) : (
+                    <>
+                      Submit for verification <ArrowRight size={15} />
+                    </>
+                  )}
+                </Button>
+
+                <button
+                  type="button"
+                  onClick={() => navigate('/')}
+                  className="w-full text-center text-sm text-muted-foreground hover:text-foreground transition-colors"
+                >
+                  Skip for now — I&rsquo;ll do this later
+                </button>
+              </div>
+            </>
+          )}
+
+          {/* Step 3: Create organisation — organisations only */}
+          {step === 'org' && (
+            <>
+              <div className="mb-8">
+                <h2 className="font-[family-name:var(--font-display)] text-2xl font-bold text-foreground mb-1">
+                  Set up your organisation
+                </h2>
+                <div className="h-px w-full bg-foreground/10 mt-3 mb-4" />
+                <p className="text-sm text-muted-foreground">
+                  You&rsquo;ll become its owner — add members, manage horses, and control parties from
+                  your organisation dashboard.
+                </p>
+              </div>
+
+              <div className="space-y-5">
+                <div className="space-y-1.5">
+                  <Label
+                    htmlFor="orgName"
+                    className="text-[11px] uppercase tracking-[0.1em] text-muted-foreground font-semibold"
+                  >
+                    Organisation Name
+                  </Label>
+                  <Input
+                    id="orgName"
+                    value={orgName}
+                    onChange={(e) => setOrgName(e.target.value)}
+                    placeholder="Karaka Bloodstock"
+                  />
+                </div>
+
+                <div className="space-y-1.5">
+                  <Label
+                    htmlFor="orgLocation"
+                    className="text-[11px] uppercase tracking-[0.1em] text-muted-foreground font-semibold"
+                  >
+                    Base Location <span className="text-muted-foreground/60 normal-case">(optional)</span>
+                  </Label>
+                  <Input
+                    id="orgLocation"
+                    value={orgLocation}
+                    onChange={(e) => setOrgLocation(e.target.value)}
+                    placeholder="Auckland, New Zealand"
+                  />
+                </div>
+
+                <Button
+                  type="button"
+                  onClick={handleOrgSubmit}
+                  disabled={loading || !orgName.trim()}
+                  className="w-full bg-primary text-primary-foreground hover:bg-primary/90 gap-2"
+                >
+                  {loading ? (
+                    <>
+                      <Loader2 size={15} className="animate-spin" /> Creating…
+                    </>
+                  ) : (
+                    <>
+                      Create organisation <ArrowRight size={15} />
+                    </>
+                  )}
+                </Button>
+              </div>
             </>
           )}
         </div>

@@ -43,8 +43,13 @@ app.get('/api/health', (_req, res) => {
 // --- Add your API routes below ---
 
 // === auto-mounted routers (backend planner) ===
-import { requireAuth } from './lib/auth.js'
+import { authedWriteGate, staffWriteGate, articlesWriteGate, reportsGate } from './lib/rbac.js'
 import authRouter from './routes/auth.js'
+import adminRouter from './routes/admin.js'
+import staffRouter from './routes/staff.js'
+import subscriptionRouter from './routes/subscription.js'
+import partyClaimsRouter from './routes/partyClaims.js'
+import organisationsRouter from './routes/organisations.js'
 import articlesRouter from './routes/articles.js'
 import horsesRouter from './routes/horses.js'
 import horsePartyLinksRouter from './routes/horsePartyLinks.js'
@@ -58,31 +63,30 @@ import mediaItemsRouter from './routes/mediaItems.js'
 import racingEntriesRouter from './routes/racingEntries.js'
 import tipperProfilesRouter from './routes/tipperProfiles.js'
 
-// Reads are public (the public website needs them); any write (POST/PUT/DELETE/
-// PATCH) requires a valid session. Entity routes therefore carry no per-handler
-// auth — this single gate covers them uniformly. (auth + podcastEpisodes manage
-// their own finer-grained rules and are mounted without it.)
-function requireAuthForWrites(req: express.Request, res: express.Response, next: express.NextFunction): void {
-  if (req.method === 'GET') {
-    next()
-    return
-  }
-  requireAuth(req, res, next)
-}
-
+// Reads stay public (the public website needs them). Writes are gated by role:
+//   - articles  → editorial matrix (create / edit_own w/ author match / edit_any)
+//   - racing data (horses, parties, links, races, sales, reports, media, entries)
+//     → staff-only for now; party/org-scoped access arrives in Phase C/D
+//   - tipping (tips, tipperProfiles) → any authenticated user (readers participate)
+// auth + podcastEpisodes keep their own finer-grained rules.
 app.use('/api/auth', authRouter)
+app.use('/api/admin', adminRouter)               // secret-gated first-admin seed
+app.use('/api/staff', staffRouter)               // admin-only staff grant/revoke
+app.use('/api/subscription', subscriptionRouter) // self-service tier (manual, no billing yet)
+app.use('/api/partyClaims', partyClaimsRouter)   // self-gated (attachAccount inside)
+app.use('/api/organisations', organisationsRouter) // self-gated (attachAccount inside)
 app.use('/api/podcastEpisodes', podcastEpisodesRouter)
-app.use('/api/articles', requireAuthForWrites, articlesRouter)
-app.use('/api/horses', requireAuthForWrites, horsesRouter)
-app.use('/api/horsePartyLinks', requireAuthForWrites, horsePartyLinksRouter)
-app.use('/api/parties', requireAuthForWrites, partiesRouter)
-app.use('/api/races', requireAuthForWrites, racesRouter)
-app.use('/api/tips', requireAuthForWrites, tipsRouter)
-app.use('/api/sales', requireAuthForWrites, salesRouter)
-app.use('/api/reports', requireAuthForWrites, reportsRouter)
-app.use('/api/mediaItems', requireAuthForWrites, mediaItemsRouter)
-app.use('/api/racingEntries', requireAuthForWrites, racingEntriesRouter)
-app.use('/api/tipperProfiles', requireAuthForWrites, tipperProfilesRouter)
+app.use('/api/articles', articlesWriteGate, articlesRouter)
+app.use('/api/horses', staffWriteGate, horsesRouter)
+app.use('/api/horsePartyLinks', staffWriteGate, horsePartyLinksRouter)
+app.use('/api/parties', staffWriteGate, partiesRouter)
+app.use('/api/races', staffWriteGate, racesRouter)
+app.use('/api/tips', authedWriteGate, tipsRouter)
+app.use('/api/sales', staffWriteGate, salesRouter)
+app.use('/api/reports', reportsGate, reportsRouter)
+app.use('/api/mediaItems', staffWriteGate, mediaItemsRouter)
+app.use('/api/racingEntries', staffWriteGate, racingEntriesRouter)
+app.use('/api/tipperProfiles', authedWriteGate, tipperProfilesRouter)
 // === end auto-mounted routers ===
 
 

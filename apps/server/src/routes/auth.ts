@@ -1,23 +1,14 @@
 import { Router } from 'express';
 import { db } from '../lib/db.js';
-import { genOtp, hashOtp, signToken, requireAuth } from '../lib/auth.js';
+import { genOtp, hashOtp, signToken, attachAccount } from '../lib/auth.js';
 import { sendOtpEmail, isEmailConfigured } from '../lib/email.js';
+import { withIdentityDefaults, newReaderFields } from '../lib/identity.js';
 
 type WithMongoId = { _id: string; [key: string]: unknown };
 function project<T extends WithMongoId>(doc: T): Omit<T, '_id'> & { id: string } {
   const { _id, ...rest } = doc;
   return { id: _id, ...rest } as Omit<T, '_id'> & { id: string };
 }
-
-// Must mirror UserRole in apps/web/src/stores/authStore.ts
-const VALID_ROLES = [
-  'contributor',
-  'editor',
-  'legal_reviewer',
-  'podcast_producer',
-  'publisher',
-  'administrator',
-] as const;
 
 const OTP_TTL_MS = (Number(process.env.OTP_TTL_MINUTES) || 10) * 60 * 1000;
 const RESEND_COOLDOWN_MS = 30 * 1000;
@@ -53,7 +44,9 @@ router.post('/request-otp', async (req, res) => {
   const existingUsers = await db.collection('users').find({ email });
   const user = existingUsers[0] ?? null;
 
-  let pendingUser: { email: string; displayName: string; role: string } | undefined;
+  // Every new account starts as a plain reader. Roles (party / staff) and
+  // subscription tier are layered on AFTER signup — never self-selected here.
+  let pendingUser: { email: string; displayName: string } | undefined;
   if (mode === 'login') {
     if (!user) {
       res.status(404).json({ error: 'No account found with that email address.' });
@@ -65,16 +58,11 @@ router.post('/request-otp', async (req, res) => {
       return;
     }
     const displayName = typeof req.body?.displayName === 'string' ? req.body.displayName.trim() : '';
-    const role = typeof req.body?.role === 'string' ? req.body.role : '';
     if (!displayName) {
       res.status(400).json({ error: 'Please enter your name.' });
       return;
     }
-    if (!VALID_ROLES.includes(role as (typeof VALID_ROLES)[number])) {
-      res.status(400).json({ error: 'Please select a valid newsroom role.' });
-      return;
-    }
-    pendingUser = { email, displayName, role };
+    pendingUser = { email, displayName };
   }
 
   // Resend cooldown — reject if a code was issued very recently.
@@ -147,7 +135,7 @@ router.post('/verify-otp', async (req, res) => {
 
   let userDoc;
   if (otp.purpose === 'signup') {
-    const pending = otp.pendingUser as { email: string; displayName: string; role: string } | undefined;
+    const pending = otp.pendingUser as { email: string; displayName: string } | undefined;
     if (!pending) {
       res.status(400).json({ error: 'Signup details missing. Please start again.' });
       return;
@@ -160,8 +148,8 @@ router.post('/verify-otp', async (req, res) => {
       const id = await db.collection('users').insertOne({
         email: pending.email,
         displayName: pending.displayName,
-        role: pending.role,
         createdAt: new Date().toISOString(),
+        ...newReaderFields(),
       });
       userDoc = await db.collection('users').findById(id);
     }
@@ -175,19 +163,30 @@ router.post('/verify-otp', async (req, res) => {
     return;
   }
 
-  const user = project(userDoc);
-  const token = signToken({ sub: user.id, email: String(user.email), role: String(user.role) });
-  res.json({ token, user });
+  // Apply any staff roles an administrator pre-granted to this email (first sign-in).
+  let finalDoc = userDoc;
+  const grants = await db.collection('pendingStaffGrants').find({ email });
+  if (grants.length > 0) {
+    const current = withIdentityDefaults(project(finalDoc)).roles;
+    const merged: string[] = [...current];
+    for (const g of grants) {
+      if (typeof g.role === 'string' && !merged.includes(g.role)) merged.push(g.role);
+    }
+    await db.collection('users').updateOne(finalDoc._id, { roles: merged });
+    await Promise.all(grants.map((g) => db.collection('pendingStaffGrants').deleteOne(g._id)));
+    const refreshed = await db.collection('users').findById(finalDoc._id);
+    if (refreshed) finalDoc = refreshed;
+  }
+
+  // Normalize (fills identity defaults for legacy docs too) before issuing the token.
+  const account = withIdentityDefaults(project(finalDoc));
+  const token = signToken({ sub: account.id, email: account.email, role: String(account.role) });
+  res.json({ token, user: account });
 });
 
-// ── Session check — validate a persisted token ───────────────────────────────
-router.get('/me', requireAuth, async (req, res) => {
-  const userDoc = await db.collection('users').findById(req.user!.sub);
-  if (!userDoc) {
-    res.status(404).json({ error: 'Account not found.' });
-    return;
-  }
-  res.json({ user: project(userDoc) });
+// ── Session check — validate a persisted token, return the live account ───────
+router.get('/me', attachAccount, async (req, res) => {
+  res.json({ user: req.account });
 });
 
 export default router;

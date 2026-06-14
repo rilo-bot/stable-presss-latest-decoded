@@ -13,6 +13,8 @@ export type ArticleStatus =
   | 'bulletin'
   | 'archived';
 
+import type { SubscriptionTier } from '@/rbac/entitlement';
+
 export interface Article {
   id: string;
   title: string;
@@ -26,4 +28,6 @@ export interface Article {
   readingTime?: number;
   tags?: string[];
   createdAt: Date;
+  /** Minimum subscription tier to read the full article. Defaults to free. */
+  minTier?: SubscriptionTier;
 }

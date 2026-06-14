@@ -310,11 +310,11 @@ export function PartyForm({ open, onOpenChange, party, defaultRole, onSaved }: P
           : undefined,
       };
       if (isEdit && party) {
-        updateParty(party.id, payload);
+        await updateParty(party.id, payload);
         toast.success('Party record updated.');
         onSaved?.(party.id);
       } else {
-        const id = addParty(payload);
+        const id = await addParty(payload);
         toast.success('Party added to Stable Press.');
         onSaved?.(id);
       }

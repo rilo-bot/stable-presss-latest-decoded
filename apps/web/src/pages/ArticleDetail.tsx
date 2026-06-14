@@ -16,6 +16,9 @@ import {
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import type { ArticleStatus } from '@/types/article';
+import { useAuthStore } from '@/stores/authStore';
+import { canViewPremium } from '@/rbac/can';
+import { Paywall } from '@/components/Paywall';
 
 const STATUS_LABELS: Record<ArticleStatus, string> = {
   draft: 'Draft — not yet published',
@@ -144,6 +147,10 @@ export default function ArticleDetail() {
     article.status === 'bulletin';
 
   const paragraphs = splitIntoParagraphs(article.summary ?? '');
+
+  // Premium gate (entitlement axis) — independent of roles. Defaults to free/ungated.
+  const currentUser = useAuthStore((s) => s.currentUser);
+  const locked = !canViewPremium(currentUser, article.minTier);
 
   return (
     <div className="min-h-screen bg-background">
@@ -362,39 +369,46 @@ export default function ArticleDetail() {
                   {paragraphs[0].slice(1)}
                 </p>
 
-                {/* Pull quote after first paragraph if we have enough */}
-                {paragraphs.length >= 3 && (
-                  <div
-                    className="my-8 pl-5 border-l-[3px] py-2"
-                    style={{ borderColor: 'hsl(var(--brand-accent))' }}
-                  >
-                    <p
-                      className="font-[family-name:var(--font-display)] italic text-xl md:text-2xl font-semibold text-foreground/85 leading-snug"
-                      style={{ fontStyle: 'italic' }}
-                    >
-                      "{paragraphs[1]}"
-                    </p>
-                    <p
-                      className="mt-3 text-[10px] uppercase tracking-[0.14em] font-bold"
-                      style={{ color: 'hsl(var(--brand-accent))' }}
-                    >
-                      — {article.author}
-                    </p>
-                  </div>
-                )}
+                {locked ? (
+                  /* Premium gate — first paragraph above is the free teaser. */
+                  <Paywall requiredTier={article.minTier ?? 'premium'} />
+                ) : (
+                  <>
+                    {/* Pull quote after first paragraph if we have enough */}
+                    {paragraphs.length >= 3 && (
+                      <div
+                        className="my-8 pl-5 border-l-[3px] py-2"
+                        style={{ borderColor: 'hsl(var(--brand-accent))' }}
+                      >
+                        <p
+                          className="font-[family-name:var(--font-display)] italic text-xl md:text-2xl font-semibold text-foreground/85 leading-snug"
+                          style={{ fontStyle: 'italic' }}
+                        >
+                          "{paragraphs[1]}"
+                        </p>
+                        <p
+                          className="mt-3 text-[10px] uppercase tracking-[0.14em] font-bold"
+                          style={{ color: 'hsl(var(--brand-accent))' }}
+                        >
+                          — {article.author}
+                        </p>
+                      </div>
+                    )}
 
-                {/* Remaining body paragraphs */}
-                <div className="space-y-5">
-                  {paragraphs.slice(paragraphs.length >= 3 ? 2 : 1).map((para, idx) => (
-                    <p
-                      key={idx}
-                      className="text-base text-foreground/85 leading-relaxed font-[family-name:var(--font-body,inherit)]"
-                      style={{ lineHeight: 1.78 }}
-                    >
-                      {para}
-                    </p>
-                  ))}
-                </div>
+                    {/* Remaining body paragraphs */}
+                    <div className="space-y-5">
+                      {paragraphs.slice(paragraphs.length >= 3 ? 2 : 1).map((para, idx) => (
+                        <p
+                          key={idx}
+                          className="text-base text-foreground/85 leading-relaxed font-[family-name:var(--font-body,inherit)]"
+                          style={{ lineHeight: 1.78 }}
+                        >
+                          {para}
+                        </p>
+                      ))}
+                    </div>
+                  </>
+                )}
               </div>
             )}
 
