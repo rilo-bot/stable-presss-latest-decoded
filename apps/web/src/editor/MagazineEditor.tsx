@@ -3,15 +3,19 @@
  * inspector. Launched from the CMS. No save button — edits persist live.
  */
 
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useMagazineStore } from '@/stores/magazineStore';
 import { useIssueStore } from '@/stores/issueStore';
+import { useEditorAgentUi } from '@/stores/editorAgentUiStore';
 import { useEditorFonts } from './fonts/useEditorFonts';
 import { MagazineCanvas } from './MagazineCanvas';
 import { Inspector } from './inspector/Inspector';
 import { ShareDialog } from './ShareDialog';
-import { X, ZoomIn, ZoomOut, Send, CheckSquare, Square, ChevronDown, Loader2, Users } from 'lucide-react';
+import { EditorAgentPanel } from './agent/EditorAgentPanel';
+import { FloatingSuggestions } from './agent/FloatingSuggestions';
+import { useCurrentPageTracker } from './agent/useCurrentPageTracker';
+import { X, ZoomIn, ZoomOut, Send, CheckSquare, Square, ChevronDown, Loader2, Users, Sparkles } from 'lucide-react';
 import { toast } from 'sonner';
 
 export function MagazineEditor({ magazineId, onClose }: { magazineId: string; onClose: () => void }) {
@@ -41,7 +45,24 @@ export function MagazineEditor({ magazineId, onClose }: { magazineId: string; on
   const [pubOpen, setPubOpen] = useState(false);
   const [publishing, setPublishing] = useState(false);
   const [shareOpen, setShareOpen] = useState(false);
+  const [aiOpen, setAiOpen] = useState(true);
   const [loadState, setLoadState] = useState<'loading' | 'ready' | 'notfound'>('loading');
+  const canvasScrollRef = useRef<HTMLDivElement>(null);
+  const pageCount = meta?.pages ?? 0;
+  useCurrentPageTracker(canvasScrollRef, magazineId, pageCount);
+
+  // Hide the global Stablehand launcher while the editor is open; clean up its
+  // staged edits / current-page on close.
+  useEffect(() => {
+    const ui = useEditorAgentUi.getState();
+    ui.setSuppressGlobal(true);
+    return () => {
+      ui.setSuppressGlobal(false);
+      ui.setOpen(false);
+      ui.setCurrentPage(null);
+      ui.clearStaged();
+    };
+  }, []);
 
   useEffect(() => {
     let active = true;
@@ -152,6 +173,18 @@ export function MagazineEditor({ magazineId, onClose }: { magazineId: string; on
             <button onClick={() => setScale((z) => Math.min(1.1, +(z + 0.08).toFixed(2)))} className="px-2 py-1.5 text-white/70 hover:bg-white/10" aria-label="Zoom in"><ZoomIn size={14} /></button>
           </div>
 
+          {/* AI Studio Assistant toggle */}
+          <button
+            onClick={() => setAiOpen((o) => !o)}
+            aria-pressed={aiOpen}
+            className={
+              'flex items-center gap-1 rounded-sm border px-2 py-1.5 text-[11px] ' +
+              (aiOpen ? 'border-amber-400/40 bg-amber-400/10 text-amber-200' : 'border-white/15 text-white/70 hover:bg-white/10')
+            }
+          >
+            <Sparkles size={13} /> AI
+          </button>
+
           {canManage && (
             <>
               {/* share */}
@@ -199,12 +232,21 @@ export function MagazineEditor({ magazineId, onClose }: { magazineId: string; on
 
       {/* Body */}
       <div className="flex min-h-0 flex-1">
-        <div className="min-w-0 flex-1 overflow-auto bg-[#0b1220]">
-          <MagazineCanvas magazineId={magazineId} scale={scale} />
+        <div className="relative min-w-0 flex-1">
+          <div ref={canvasScrollRef} className="absolute inset-0 overflow-auto bg-[#0b1220]">
+            <MagazineCanvas magazineId={magazineId} scale={scale} />
+          </div>
+          {/* Always-3 page-aware suggestion chips, pinned to the canvas */}
+          <FloatingSuggestions magazineId={magazineId} />
         </div>
         <div className="w-[300px] flex-shrink-0 overflow-hidden border-l border-white/10 bg-[#0d1626]">
           <Inspector />
         </div>
+        {aiOpen && (
+          <div className="w-[340px] flex-shrink-0 overflow-hidden border-l border-white/10">
+            <EditorAgentPanel />
+          </div>
+        )}
       </div>
 
       {shareOpen && <ShareDialog magazineId={magazineId} onClose={() => setShareOpen(false)} />}

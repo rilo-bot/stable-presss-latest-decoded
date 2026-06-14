@@ -21,6 +21,7 @@ import type {
   MagazinePage,
   MagazineSummary,
   MagazineAccess,
+  StaffOption,
   PublishPayload,
   RegionContent,
   TextStyle,
@@ -113,10 +114,11 @@ interface MagazineState {
   deleteMagazine: (id: string) => Promise<void>;
   updateMagazineMeta: (id: string, patch: Partial<Pick<Magazine, 'title' | 'edition' | 'coverImage'>>) => void;
 
-  // collaborators
+  // collaborators (magazine capability is derived server-side from the staff role)
+  fetchStaffDirectory: () => Promise<StaffOption[]>;
   addCollaborator: (
     magId: string,
-    body: { email: string; role: 'editor' | 'contributor'; pageIds: string[] | 'all' }
+    body: { email: string; pageIds: string[] | 'all' }
   ) => Promise<boolean>;
   removeCollaborator: (magId: string, userId: string) => Promise<boolean>;
 
@@ -282,6 +284,16 @@ export const useMagazineStore = create<MagazineState>()((set, get) => {
         magazines: s.magazines.map((m) => (m.id === id ? { ...m, ...patch, updatedAt: nowIso() } : m)),
       }));
       schedule(`meta:${id}`, () => flushMeta(id));
+    },
+
+    fetchStaffDirectory: async () => {
+      try {
+        const res = await authFetch('/api/magazines/staff-directory');
+        if (!res.ok) throw new Error(`HTTP ${res.status}`);
+        return (await res.json()) as StaffOption[];
+      } catch {
+        return [];
+      }
     },
 
     addCollaborator: async (magId, body) => {

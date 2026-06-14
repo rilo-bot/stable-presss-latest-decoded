@@ -21,6 +21,8 @@ import { MessageCircle, X, Send, Sparkles, Square, Maximize2, Minimize2 } from '
 import { apiUrl } from '@/lib/api';
 import { useAuthStore } from '@/stores/authStore';
 import { useAgentUi } from '@/stores/agentUiStore';
+import { useEditorAgentUi } from '@/stores/editorAgentUiStore';
+import { MarkdownMessage } from '@/components/MarkdownMessage';
 
 // ── Page-context derivation ────────────────────────────────────────────────
 // Turns the current path into a small hint the assistant can use. The agent
@@ -108,6 +110,8 @@ export function AgentWidget() {
   const setOpen = useAgentUi((s) => s.setOpen);
   const toggle = useAgentUi((s) => s.toggle);
   const pendingPrompt = useAgentUi((s) => s.pendingPrompt);
+  // Hidden while the magazine editor is open (it has its own Studio Assistant).
+  const suppressGlobal = useEditorAgentUi((s) => s.suppressGlobal);
 
   const [expanded, setExpanded] = useState(false);
   const [input, setInput] = useState('');
@@ -165,6 +169,9 @@ export function AgentWidget() {
 
   const starters = contextStarters(location.pathname);
 
+  // The editor mounts its own assistant; don't show two launchers.
+  if (suppressGlobal) return null;
+
   return (
     <>
       {/* Floating launcher (forest green + gold) */}
@@ -191,8 +198,10 @@ export function AgentWidget() {
             exit={{ opacity: 0, y: 24, scale: 0.97 }}
             transition={{ type: 'spring', stiffness: 320, damping: 30 }}
             className={
-              'fixed bottom-24 right-5 z-50 flex flex-col overflow-hidden rounded-xl border border-border bg-card shadow-2xl ' +
-              (expanded ? 'h-[min(88vh,820px)] w-[min(96vw,640px)]' : 'h-[min(70vh,560px)] w-[min(92vw,400px)]')
+              // max-h keeps the panel within the viewport so the header is never
+              // clipped at the top, regardless of the bottom anchor / expanded size.
+              'fixed bottom-24 right-5 z-50 flex max-h-[calc(100dvh-7rem)] flex-col overflow-hidden rounded-xl border border-border bg-card shadow-2xl ' +
+              (expanded ? 'h-[min(88dvh,820px)] w-[min(96vw,640px)]' : 'h-[min(70dvh,560px)] w-[min(92vw,400px)]')
             }
           >
             {/* Header (forest green band, gold accents) */}
@@ -265,10 +274,10 @@ export function AgentWidget() {
                       className={
                         mine
                           ? 'max-w-[85%] whitespace-pre-wrap rounded-2xl rounded-br-sm bg-primary px-3 py-2 text-sm text-primary-foreground'
-                          : 'max-w-[85%] whitespace-pre-wrap rounded-2xl rounded-bl-sm bg-muted px-3 py-2 text-sm text-foreground'
+                          : 'max-w-[85%] rounded-2xl rounded-bl-sm bg-muted px-3 py-2 text-sm text-foreground'
                       }
                     >
-                      {text}
+                      {mine ? text : <MarkdownMessage text={text} />}
                     </div>
                   </div>
                 );

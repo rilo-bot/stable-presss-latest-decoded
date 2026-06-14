@@ -56,6 +56,13 @@ function roleOnMagazine(doc: WithMongoId, userId: string): MagRole | null {
 const canEditAll = (role: MagRole | null) => role === 'owner' || role === 'editor';
 const canManage = (role: MagRole | null) => role === 'owner' || role === 'editor';
 
+// A collaborator's magazine capability follows the staff role they already hold:
+// content editors/publishers/admins edit everything; everyone else is page-scoped.
+const MAG_EDITOR_ROLES = ['administrator', 'publisher', 'editor'];
+function magRoleForStaff(roles: string[]): 'editor' | 'contributor' {
+  return roles.some((r) => MAG_EDITOR_ROLES.includes(r)) ? 'editor' : 'contributor';
+}
+
 /** The set of page ids a user may edit: 'all' for owner/editor, else their assignment. */
 function editablePageIds(doc: WithMongoId, userId: string): string[] | 'all' {
   const role = roleOnMagazine(doc, userId);
@@ -99,6 +106,23 @@ router.get('/', async (req, res) => {
   res.json(
     mine.map((d) => ({ ...summarize(d), myRole: roleOnMagazine(d, uid) })),
   );
+});
+
+// staff directory — candidates for the Share dialog (any staff caller).
+// Declared before '/:id' so the literal path isn't captured as a magazine id.
+router.get('/staff-directory', async (_req, res) => {
+  const users = await db.collection('users').find();
+  const staff = users
+    .map((u) => withIdentityDefaults({ id: u._id, ...u }))
+    .filter((u) => u.roles.some((r) => (STAFF_ROLES as string[]).includes(r)))
+    .map((u) => ({
+      userId: u.id,
+      displayName: u.displayName,
+      email: u.email,
+      staffRoles: u.roles.filter((r) => (STAFF_ROLES as string[]).includes(r)),
+    }))
+    .sort((a, b) => (a.displayName || a.email).localeCompare(b.displayName || b.email));
+  res.json(staff);
 });
 
 // get one — owner or collaborator only
@@ -238,13 +262,7 @@ router.post('/:id/collaborators', async (req, res) => {
   }
 
   const email = typeof req.body?.email === 'string' ? req.body.email.trim().toLowerCase() : '';
-  const role = req.body?.role === 'editor' ? 'editor' : 'contributor';
   const rawPageIds = req.body?.pageIds;
-  const pageIds: string[] | 'all' = rawPageIds === 'all' || rawPageIds == null
-    ? 'all'
-    : Array.isArray(rawPageIds)
-      ? rawPageIds.map(String)
-      : 'all';
 
   if (!email || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
     res.status(400).json({ error: 'A valid email is required.' });
@@ -264,6 +282,15 @@ router.post('/:id/collaborators', async (req, res) => {
     res.status(409).json({ error: 'That person is the owner of this magazine.' });
     return;
   }
+
+  // Capability is derived from their staff role; only page scope is chosen here.
+  const role = magRoleForStaff(acct.roles);
+  const pageIds: string[] | 'all' =
+    role === 'editor' || rawPageIds === 'all' || rawPageIds == null
+      ? 'all'
+      : Array.isArray(rawPageIds)
+        ? rawPageIds.map(String)
+        : 'all';
 
   const next: Collaborator = {
     userId: acct.id,

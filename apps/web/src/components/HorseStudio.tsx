@@ -254,7 +254,7 @@ export function HorseStudio({ horseId, onBack, subjectLabel }: HorseStudioProps)
         {/* CENTRE */}
         <div className="hs-col" style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
           <div className="sku-gold-card">
-            <OrnateCrest name={horseName} subtitle={crestSubtitle} />
+            <OrnateCrest name={horseName} subtitle={crestSubtitle} compact />
             <div style={{ background: 'linear-gradient(180deg, var(--forest-mid) 0%, var(--forest-deep) 100%)', borderTop: '2px solid var(--gold-dark)', padding: '10px 14px', display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12, flexWrap: 'wrap' }}>
               {isUnverified ? (
                 <span title="Hidden from the public until a staff member verifies it" style={{ display: 'flex', alignItems: 'center', gap: 5, padding: '4px 10px', borderRadius: 3, border: '1px solid var(--gold-dark)', background: 'rgba(14,36,22,0.6)', color: 'var(--gold-bright)', fontWeight: 700, fontSize: '0.52rem', textTransform: 'uppercase', letterSpacing: '0.1em', ...serifStyle }}>
@@ -294,6 +294,21 @@ export function HorseStudio({ horseId, onBack, subjectLabel }: HorseStudioProps)
             </AnimatePresence>
           ) : (
             <>
+              {/* Hero photo — full-cover, shown right under the crest */}
+              <HeroImageEdit
+                src={horse.imageUrl}
+                alt={horseName}
+                editable={editable}
+                kind="horse"
+                onUpload={(url) => set({ imageUrl: url })}
+                containerStyle={{ height: 'clamp(300px, 46vh, 520px)', minHeight: 300 }}
+              >
+                <div style={{ position: 'absolute', bottom: 0, left: 0, right: 0, background: 'linear-gradient(0deg, rgba(26,51,34,0.92) 0%, rgba(26,51,34,0.55) 65%, transparent 100%)', padding: '24px 16px 10px', ...serifStyle }}>
+                  <div style={{ fontSize: '0.5rem', letterSpacing: '0.18em', textTransform: 'uppercase', color: 'var(--gold-bright)', marginBottom: 2 }}>Featured Thoroughbred</div>
+                  <div style={{ fontSize: '0.9rem', fontWeight: 700, color: 'var(--parchment)', textShadow: '0 1px 4px rgba(0,0,0,0.8)' }}>{horseName}</div>
+                </div>
+              </HeroImageEdit>
+
               {/* Identity + Pedigree row */}
               <div style={{ display: 'grid', gridTemplateColumns: '0.85fr 1.15fr', gap: 14, alignItems: 'stretch' }}>
                 <div className="sku-gold-card" style={{ ...serifStyle, display: 'flex', flexDirection: 'column' }}>
@@ -331,21 +346,6 @@ export function HorseStudio({ horseId, onBack, subjectLabel }: HorseStudioProps)
                   </div>
                 </div>
               </div>
-
-              {/* Hero photo */}
-              <HeroImageEdit
-                src={horse.imageUrl}
-                alt={horseName}
-                editable={editable}
-                kind="horse"
-                onUpload={(url) => set({ imageUrl: url })}
-                containerStyle={{ height: 'clamp(300px, 44vh, 500px)', minHeight: 300 }}
-              >
-                <div style={{ position: 'absolute', bottom: 0, left: 0, right: 0, background: 'linear-gradient(0deg, rgba(26,51,34,0.92) 0%, rgba(26,51,34,0.55) 65%, transparent 100%)', padding: '24px 16px 10px', ...serifStyle }}>
-                  <div style={{ fontSize: '0.5rem', letterSpacing: '0.18em', textTransform: 'uppercase', color: 'var(--gold-bright)', marginBottom: 2 }}>Featured Thoroughbred</div>
-                  <div style={{ fontSize: '0.9rem', fontWeight: 700, color: 'var(--parchment)', textShadow: '0 1px 4px rgba(0,0,0,0.8)' }}>{horseName}</div>
-                </div>
-              </HeroImageEdit>
 
               {/* Racing Summary */}
               <div className="sku-gold-card" style={{ ...serifStyle }}>

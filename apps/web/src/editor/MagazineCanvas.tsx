@@ -109,7 +109,7 @@ function CanvasPage({
   const setPageSelected = useMagazineStore((s) => s.setPageSelected);
 
   return (
-    <div className="flex flex-col items-center">
+    <div className="flex flex-col items-center" data-page-id={pageId}>
       <div
         className="mb-1.5 flex items-center gap-3 text-white/60"
         style={{ width: PAGE_W * scale }}

@@ -35,7 +35,9 @@ router.post('/chat', attachAccountOptional, async (req, res) => {
       model: getAgentModel(),
       system: buildSystemPrompt(req.account, body.pageContext),
       messages: await convertToModelMessages(body.messages),
-      tools: buildTools(req.account),
+      // Forward the caller's Bearer token so ACTION tools proxy to our own gated
+      // endpoints AS this user — the route enforces RBAC, not the agent.
+      tools: buildTools(req.account, req.headers.authorization),
       // Let the model read a few tools then answer (tool → result → answer loops).
       stopWhen: stepCountIs(6),
     })

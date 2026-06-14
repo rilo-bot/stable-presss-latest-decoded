@@ -81,8 +81,37 @@ const LIVE_ARTICLE_STATUSES = ['published', 'newsletter', 'bulletin']
 const isLiveArticle = (a: Doc) =>
   LIVE_ARTICLE_STATUSES.includes(String(a.status)) || !!a.publishedAt
 
-export function buildTools(account?: AccountUser): ToolSet {
+// Self-origin for Phase-3 ACTION tools. They proxy to the app's own gated REST
+// endpoints (forwarding the caller's Bearer token), so the real route enforces
+// RBAC + validation and runs every side effect (horse auto-linking, server-side
+// tip crediting). Internal loopback is used so it works in every environment.
+const SELF_PORT = process.env.PORT ? parseInt(process.env.PORT, 10) : 3001
+const SELF_BASE = `http://127.0.0.1:${SELF_PORT}`
+
+export function buildTools(account?: AccountUser, authHeader?: string): ToolSet {
   const staff = isStaff(account)
+
+  // Call one of our own endpoints AS the current user. The route's gate decides
+  // if it is allowed — the agent never bypasses a permission check.
+  async function selfApi(method: string, path: string, payload?: unknown) {
+    const headers: Record<string, string> = { 'content-type': 'application/json' }
+    if (authHeader) headers.authorization = authHeader
+    const r = await fetch(`${SELF_BASE}${path}`, {
+      method,
+      headers,
+      body: payload === undefined ? undefined : JSON.stringify(payload),
+    })
+    let data: unknown = null
+    const text = await r.text()
+    try {
+      data = text ? JSON.parse(text) : null
+    } catch {
+      data = text
+    }
+    return { ok: r.ok, status: r.status, data }
+  }
+
+  const canAct = !!account && !!authHeader
 
   return {
     myAccount: tool({
@@ -385,5 +414,127 @@ export function buildTools(account?: AccountUser): ToolSet {
         return { topic, guide: FEATURE_GUIDES[topic] ?? FEATURE_GUIDES.overview }
       },
     }),
+
+    // ── ACTION tools (Phase 3) — only for signed-in users. Each PROXIES to the
+    // app's own gated endpoint as the user, so the real route enforces RBAC and
+    // runs all side effects. Each requires `confirmed:true`, which the assistant
+    // must only set after the user explicitly agrees (see the system prompt).
+    ...(canAct
+      ? {
+          registerHorse: tool({
+            description:
+              'Register a NEW horse for the signed-in member (it becomes theirs and stays hidden from the public until staff verify it). ALWAYS describe what you will do and have the user confirm first; only then call again with confirmed:true.',
+            inputSchema: z.object({
+              name: z.string().describe("The horse's name."),
+              sex: z.string().optional().describe('e.g. colt, filly, mare, gelding, stallion.'),
+              confirmed: z.boolean().optional().describe('Set true ONLY after the user has explicitly confirmed.'),
+            }),
+            execute: async ({ name, sex, confirmed }) => {
+              if (!confirmed) {
+                return {
+                  needsConfirmation: true,
+                  willDo: `Register a new horse "${name}"${sex ? ` (${sex})` : ''} under your stable. It stays hidden from the public until staff verify it.`,
+                  note: 'Confirm with the user, then call again with confirmed:true.',
+                }
+              }
+              const res = await selfApi('POST', '/api/horses', { name, ...(sex ? { sex } : {}) })
+              if (!res.ok) {
+                return {
+                  ok: false,
+                  status: res.status,
+                  message:
+                    res.status === 401
+                      ? 'You may need to sign in again for me to do that.'
+                      : "I wasn't able to register that horse just now — but you can always register one from your Dashboard → My Stable, and I can walk you through it.",
+                }
+              }
+              return { ok: true, horse: res.data }
+            },
+          }),
+
+          createArticleDraft: tool({
+            description:
+              'Create a new editorial article DRAFT (editorial staff only). ALWAYS confirm the title and summary with the user first; only then call again with confirmed:true.',
+            inputSchema: z.object({
+              title: z.string(),
+              summary: z.string().optional(),
+              confirmed: z.boolean().optional(),
+            }),
+            execute: async ({ title, summary, confirmed }) => {
+              if (!confirmed) {
+                return {
+                  needsConfirmation: true,
+                  willDo: `Create a draft story titled "${title}".`,
+                  note: 'Confirm with the user, then call again with confirmed:true.',
+                }
+              }
+              const res = await selfApi('POST', '/api/articles', {
+                title,
+                summary: summary ?? '',
+                author: account!.displayName,
+                status: 'draft',
+              })
+              if (!res.ok) {
+                return {
+                  ok: false,
+                  status: res.status,
+                  message:
+                    res.status === 403
+                      ? "Drafting stories is an editorial-staff action, so I can't publish one on this account — but I'd be glad to help you write the piece so it's ready to hand to an editor."
+                      : "I couldn't create that draft just now — happy to help you prepare the text instead.",
+                }
+              }
+              return { ok: true, article: res.data }
+            },
+          }),
+
+          updateMyParty: tool({
+            description:
+              "Update the signed-in member's OWN party profile (profession, base location, country, started year). ALWAYS confirm the change first; only then call again with confirmed:true.",
+            inputSchema: z.object({
+              partyId: z.string().optional().describe("Defaults to the user's own party."),
+              profession: z.string().optional(),
+              base_location: z.string().optional(),
+              country_of_birth: z.string().optional(),
+              started_year: z.number().optional(),
+              confirmed: z.boolean().optional(),
+            }),
+            execute: async ({ partyId, profession, base_location, country_of_birth, started_year, confirmed }) => {
+              const pid = partyId ?? manageablePartyIds(account!)[0]
+              if (!pid) {
+                return {
+                  ok: false,
+                  message:
+                    "You don't have a party profile yet — claiming a racing role from your Dashboard creates one, and then I can help you fill it in.",
+                }
+              }
+              const updates: Record<string, unknown> = {}
+              if (profession !== undefined) updates.profession = profession
+              if (base_location !== undefined) updates.base_location = base_location
+              if (country_of_birth !== undefined) updates.country_of_birth = country_of_birth
+              if (started_year !== undefined) updates.started_year = started_year
+              if (Object.keys(updates).length === 0) {
+                return { ok: false, message: 'Just let me know which detail to change and I will take care of it.' }
+              }
+              if (!confirmed) {
+                return {
+                  needsConfirmation: true,
+                  willDo: `Update your party profile — ${Object.entries(updates).map(([k, v]) => `${k.replace(/_/g, ' ')} → ${v}`).join(', ')}.`,
+                  note: 'Confirm with the user, then call again with confirmed:true.',
+                }
+              }
+              const res = await selfApi('PUT', `/api/parties/${pid}`, updates)
+              if (!res.ok) {
+                return {
+                  ok: false,
+                  status: res.status,
+                  message: "I couldn't update that profile — it may not be one you manage. Your own profile is editable from your Dashboard or Profile Studio.",
+                }
+              }
+              return { ok: true, party: res.data }
+            },
+          }),
+        }
+      : {}),
   }
 }

@@ -28,27 +28,6 @@ import {
   Trash, Link as LinkIcon, ExternalLink, Info, Lock,
 } from 'lucide-react';
 
-/* ─── Fallback panel images (used ONLY when a party has no uploaded photo) ─── */
-const FALLBACK_IMAGES: Record<string, string> = {
-  owner:       'https://images.pexels.com/photos/1059180/pexels-photo-1059180.jpeg?auto=compress&cs=tinysrgb&h=130',
-  breeder:     'https://images.pexels.com/photos/28469948/pexels-photo-28469948.jpeg?auto=compress&cs=tinysrgb&h=130',
-  trainer:     'https://images.pexels.com/photos/29930438/pexels-photo-29930438.jpeg?auto=compress&cs=tinysrgb&h=130',
-  personnel:   'https://images.pexels.com/photos/14132978/pexels-photo-14132978.jpeg?auto=compress&cs=tinysrgb&h=130',
-  jockey:      'https://images.pexels.com/photos/1559386/pexels-photo-1559386.jpeg?auto=compress&cs=tinysrgb&h=130',
-  syndicate:   'https://images.pexels.com/photos/20157010/pexels-photo-20157010.jpeg?auto=compress&cs=tinysrgb&h=130',
-};
-
-const DATA_CARD_IMAGES: Record<string, string> = {
-  media:    'https://images.pexels.com/photos/28825866/pexels-photo-28825866.jpeg?auto=compress&cs=tinysrgb&h=350',
-  racing:   'https://images.pexels.com/photos/34942801/pexels-photo-34942801.jpeg?auto=compress&cs=tinysrgb&h=350',
-  breeding: 'https://images.pexels.com/photos/5454159/pexels-photo-5454159.jpeg?auto=compress&cs=tinysrgb&h=350',
-  sales:    'https://images.pexels.com/photos/6640385/pexels-photo-6640385.jpeg?auto=compress&cs=tinysrgb&h=350',
-  pedigree: 'https://images.pexels.com/photos/34042427/pexels-photo-34042427.jpeg?auto=compress&cs=tinysrgb&h=350',
-  studbook: 'https://images.pexels.com/photos/35098073/pexels-photo-35098073.jpeg?auto=compress&cs=tinysrgb&h=350',
-};
-
-const HERO_IMAGE = 'https://images.pexels.com/photos/11341116/pexels-photo-11341116.jpeg?auto=compress&cs=tinysrgb&h=1300&w=940';
-
 const serifStyle: React.CSSProperties = { fontFamily: "'IM Fell English', 'Palatino Linotype', Georgia, serif" };
 const goldStyle: React.CSSProperties = { color: 'var(--gold-bright)', textShadow: '0 1px 3px rgba(0,0,0,0.7)' };
 
@@ -83,9 +62,19 @@ interface PartyContext {
   isPartyContext: boolean;
 }
 
-function partyPhoto(party: Party | undefined, roleKey: string): string {
-  if (party?.photo) return party.photo;
-  return FALLBACK_IMAGES[roleKey] ?? FALLBACK_IMAGES['owner'];
+function partyPhoto(party: Party | undefined, _roleKey?: string): string | undefined {
+  return party?.photo || undefined;
+}
+
+function PhotoOrIcon({ src, alt, icon, style, iconColor = 'var(--gold-dark)' }: { src?: string; alt: string; icon: React.ReactNode; style?: React.CSSProperties; iconColor?: string }) {
+  if (src) {
+    return <img src={src} alt={alt} crossOrigin="anonymous" style={{ width: '100%', height: '100%', objectFit: 'cover', objectPosition: 'center center', display: 'block', ...style }} />;
+  }
+  return (
+    <div style={{ width: '100%', height: '100%', display: 'flex', alignItems: 'center', justifyContent: 'center', background: 'linear-gradient(135deg, var(--forest-mid) 0%, var(--forest-deep) 100%)', ...style }}>
+      <span style={{ color: iconColor, display: 'flex' }}>{icon}</span>
+    </div>
+  );
 }
 
 function fmtDate(iso?: string | null): string {
@@ -119,8 +108,8 @@ function PartyContextBanner({ partyContext, onClear }: { partyContext: PartyCont
       border: '1px solid var(--gold-mid)', borderRadius: 3, marginBottom: 10, flexWrap: 'wrap',
     }}>
       <div style={{ width: 28, height: 28, borderRadius: 2, overflow: 'hidden', border: '1px solid var(--gold-mid)', flexShrink: 0 }}>
-        <img src={partyPhoto(party, partyContext.roleLabel.toLowerCase())} alt={party.name} crossOrigin="anonymous"
-          style={{ width: '100%', height: '100%', objectFit: 'cover', objectPosition: 'center' }} />
+        <PhotoOrIcon src={partyPhoto(party, partyContext.roleLabel.toLowerCase())} alt={party.name}
+          icon={<User size={16} strokeWidth={1.5} />} style={{ objectPosition: 'center' }} />
       </div>
       <div style={{ flex: 1, minWidth: 0 }}>
         <div style={{ fontSize: '0.56rem', textTransform: 'uppercase', letterSpacing: '0.12em', color: 'var(--gold-mid)', ...serifStyle }}>
@@ -141,7 +130,7 @@ function PartyContextBanner({ partyContext, onClear }: { partyContext: PartyCont
 interface DataPanelProps {
   title: string; icon: React.ReactNode; rows: DataRow[]; badge?: string;
   defaultOpen?: boolean;
-  imgSrc: string;
+  imgSrc?: string;
   primaryName: string; secondaryLine: string; panelKey: string;
   activePanel: string | null; onPanelClick: (key: string) => void;
 }
@@ -164,7 +153,7 @@ function DataPanel({ title, icon, rows, badge, defaultOpen = false, imgSrc, prim
       {!open && (
         <button onClick={() => onPanelClick(panelKey)} aria-pressed={isHighlighted} aria-label={`${isHighlighted ? 'Close' : 'View'} ${title} in detail`} style={{ width: '100%', background: isHighlighted ? 'linear-gradient(90deg, var(--forest-light) 0%, var(--forest-mid) 100%)' : 'var(--parchment)', backgroundImage: isHighlighted ? undefined : 'repeating-linear-gradient(0deg, transparent, transparent 20px, rgba(0,0,0,0.022) 20px, rgba(0,0,0,0.022) 21px)', boxShadow: 'inset 0 2px 5px rgba(0,0,0,0.15)', padding: '8px 10px', display: 'flex', alignItems: 'center', gap: 10, border: 'none', cursor: 'pointer', transition: 'background 0.18s' }}>
           <div style={{ width: 44, height: 44, borderRadius: 3, border: `2px solid ${isHighlighted ? 'var(--gold-bright)' : 'var(--gold-mid)'}`, boxShadow: '0 2px 6px rgba(0,0,0,0.35)', overflow: 'hidden', flexShrink: 0, background: 'var(--forest-deep)', transition: 'border-color 0.18s' }}>
-            <img src={imgSrc} alt={primaryName} crossOrigin="anonymous" style={{ width: '100%', height: '100%', objectFit: 'cover', objectPosition: 'center center', display: 'block' }} />
+            <PhotoOrIcon src={imgSrc} alt={primaryName} icon={<User size={22} strokeWidth={1.5} />} />
           </div>
           <div style={{ flex: 1, minWidth: 0 }}>
             <div style={{ fontSize: '0.78rem', fontWeight: 700, color: isHighlighted ? 'var(--parchment)' : 'var(--forest-deep)', lineHeight: 1.2, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis', ...serifStyle, transition: 'color 0.18s' }}>{primaryName}</div>
@@ -180,7 +169,7 @@ function DataPanel({ title, icon, rows, badge, defaultOpen = false, imgSrc, prim
         <div style={{ background: 'var(--parchment)', backgroundImage: 'repeating-linear-gradient(0deg, transparent, transparent 18px, rgba(0,0,0,0.022) 18px, rgba(0,0,0,0.022) 19px)', boxShadow: 'inset 0 2px 5px rgba(0,0,0,0.15)' }}>
           <button onClick={() => onPanelClick(panelKey)} aria-pressed={isHighlighted} aria-label={`${isHighlighted ? 'Close' : 'Show'} ${title} in detail view`} style={{ width: '100%', display: 'flex', alignItems: 'center', gap: 10, padding: '10px 11px 10px', background: isHighlighted ? 'linear-gradient(90deg, var(--forest-light) 0%, var(--forest-mid) 100%)' : 'transparent', border: 'none', cursor: 'pointer', transition: 'background 0.18s', borderBottom: '1px solid var(--parchment-dark)' }}>
             <div style={{ width: 56, height: 56, borderRadius: 3, border: `2px solid ${isHighlighted ? 'var(--gold-bright)' : 'var(--gold-mid)'}`, boxShadow: '0 2px 8px rgba(0,0,0,0.4), inset 0 0 0 1px rgba(255,224,154,0.15)', overflow: 'hidden', flexShrink: 0, background: 'var(--forest-deep)', position: 'relative', transition: 'border-color 0.18s' }}>
-              <img src={imgSrc} alt={primaryName} crossOrigin="anonymous" style={{ width: '100%', height: '100%', objectFit: 'cover', objectPosition: 'center center', display: 'block' }} />
+              <PhotoOrIcon src={imgSrc} alt={primaryName} icon={<User size={26} strokeWidth={1.5} />} />
               <div style={{ position: 'absolute', inset: 0, boxShadow: 'inset 0 0 8px rgba(0,0,0,0.35)', pointerEvents: 'none', borderRadius: 2 }} />
             </div>
             <div style={{ flex: 1, minWidth: 0, textAlign: 'left' }}>
@@ -212,17 +201,21 @@ function DataPanel({ title, icon, rows, badge, defaultOpen = false, imgSrc, prim
   );
 }
 
-function OrnateCrest({ name, subtitle, partyName }: { name: string; subtitle: string; partyName?: string }) {
+function OrnateCrest({ name, subtitle, partyName, compact }: { name: string; subtitle: string; partyName?: string; compact?: boolean }) {
+  const corner = compact ? 5 : 8;
+  const dividerMb = compact ? 5 : 10;
   return (
-    <div className="sku-crest" style={{ padding: '18px 20px 14px', textAlign: 'center', position: 'relative' }}>
-      <span style={{ position: 'absolute', top: 8, left: 12, color: 'var(--gold-mid)', fontSize: '0.7rem', ...serifStyle }}>✦</span>
-      <span style={{ position: 'absolute', top: 8, right: 12, color: 'var(--gold-mid)', fontSize: '0.7rem', ...serifStyle }}>✦</span>
-      <div className="sku-divider" style={{ marginBottom: 10 }} />
-      <div style={{ display: 'inline-flex', alignItems: 'center', justifyContent: 'center', width: 48, height: 48, borderRadius: '50%', border: '2px solid var(--gold-mid)', boxShadow: '0 0 0 1px var(--gold-dark), inset 0 1px 0 rgba(255,224,154,0.2), 0 3px 10px rgba(0,0,0,0.5)', background: 'linear-gradient(180deg, var(--forest-light) 0%, var(--forest-deep) 100%)', marginBottom: 8 }}>
-        <Star size={22} style={{ color: 'var(--gold-bright)' }} strokeWidth={1.5} />
-      </div>
-      <div style={{ fontSize: '0.55rem', letterSpacing: '0.22em', textTransform: 'uppercase', color: 'var(--gold-mid)', textShadow: '0 1px 3px rgba(0,0,0,0.8)', marginBottom: 4, ...serifStyle }}>Stable Press · Thoroughbred Profile</div>
-      <h1 style={{ fontSize: 'clamp(1.2rem, 3vw, 1.7rem)', fontWeight: 700, lineHeight: 1.15, color: 'var(--parchment)', textShadow: '0 2px 6px rgba(0,0,0,0.8)', margin: '4px 0', ...serifStyle }}>{name}</h1>
+    <div className="sku-crest" style={{ padding: compact ? '9px 18px 7px' : '18px 20px 14px', textAlign: 'center', position: 'relative' }}>
+      <span style={{ position: 'absolute', top: corner, left: 12, color: 'var(--gold-mid)', fontSize: '0.7rem', ...serifStyle }}>✦</span>
+      <span style={{ position: 'absolute', top: corner, right: 12, color: 'var(--gold-mid)', fontSize: '0.7rem', ...serifStyle }}>✦</span>
+      <div className="sku-divider" style={{ marginBottom: dividerMb }} />
+      {!compact && (
+        <div style={{ display: 'inline-flex', alignItems: 'center', justifyContent: 'center', width: 48, height: 48, borderRadius: '50%', border: '2px solid var(--gold-mid)', boxShadow: '0 0 0 1px var(--gold-dark), inset 0 1px 0 rgba(255,224,154,0.2), 0 3px 10px rgba(0,0,0,0.5)', background: 'linear-gradient(180deg, var(--forest-light) 0%, var(--forest-deep) 100%)', marginBottom: 8 }}>
+          <Star size={22} style={{ color: 'var(--gold-bright)' }} strokeWidth={1.5} />
+        </div>
+      )}
+      <div style={{ fontSize: compact ? '0.5rem' : '0.55rem', letterSpacing: '0.22em', textTransform: 'uppercase', color: 'var(--gold-mid)', textShadow: '0 1px 3px rgba(0,0,0,0.8)', marginBottom: compact ? 2 : 4, ...serifStyle }}>Stable Press · Thoroughbred Profile</div>
+      <h1 style={{ fontSize: compact ? 'clamp(1.05rem, 2.2vw, 1.35rem)' : 'clamp(1.2rem, 3vw, 1.7rem)', fontWeight: 700, lineHeight: 1.15, color: 'var(--parchment)', textShadow: '0 2px 6px rgba(0,0,0,0.8)', margin: compact ? '1px 0' : '4px 0', ...serifStyle }}>{name}</h1>
       {partyName && (
         <>
           <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 8, margin: '6px 0 2px' }}>
@@ -230,13 +223,13 @@ function OrnateCrest({ name, subtitle, partyName }: { name: string; subtitle: st
             <span style={{ fontSize: '0.48rem', letterSpacing: '0.2em', textTransform: 'uppercase', color: 'var(--gold-dark)', ...serifStyle }}>·</span>
             <div style={{ flex: 1, height: 1, background: 'linear-gradient(90deg, var(--gold-dark), transparent)' }} />
           </div>
-          <h2 style={{ fontSize: 'clamp(1.05rem, 2.5vw, 1.45rem)', fontWeight: 700, lineHeight: 1.2, color: 'var(--gold-bright)', textShadow: '0 2px 8px rgba(0,0,0,0.85)', margin: '2px 0 4px', ...serifStyle }}>{partyName}</h2>
+          <h2 style={{ fontSize: compact ? 'clamp(0.95rem, 2vw, 1.2rem)' : 'clamp(1.05rem, 2.5vw, 1.45rem)', fontWeight: 700, lineHeight: 1.2, color: 'var(--gold-bright)', textShadow: '0 2px 8px rgba(0,0,0,0.85)', margin: '2px 0 4px', ...serifStyle }}>{partyName}</h2>
         </>
       )}
-      <div style={{ fontSize: '0.65rem', fontStyle: 'italic', color: partyName ? 'var(--gold-mid)' : 'var(--gold-bright)', textShadow: '0 1px 3px rgba(0,0,0,0.7)', ...serifStyle, marginBottom: 10 }}>{subtitle}</div>
+      <div style={{ fontSize: compact ? '0.58rem' : '0.65rem', fontStyle: 'italic', color: partyName ? 'var(--gold-mid)' : 'var(--gold-bright)', textShadow: '0 1px 3px rgba(0,0,0,0.7)', ...serifStyle, marginBottom: dividerMb }}>{subtitle}</div>
       <div className="sku-divider" />
-      <span style={{ position: 'absolute', bottom: 8, left: 12, color: 'var(--gold-mid)', fontSize: '0.7rem', ...serifStyle }}>✦</span>
-      <span style={{ position: 'absolute', bottom: 8, right: 12, color: 'var(--gold-mid)', fontSize: '0.7rem', ...serifStyle }}>✦</span>
+      <span style={{ position: 'absolute', bottom: corner, left: 12, color: 'var(--gold-mid)', fontSize: '0.7rem', ...serifStyle }}>✦</span>
+      <span style={{ position: 'absolute', bottom: corner, right: 12, color: 'var(--gold-mid)', fontSize: '0.7rem', ...serifStyle }}>✦</span>
     </div>
   );
 }
@@ -360,7 +353,7 @@ function ArticlesPanel({ articles, horseName }: { articles: Array<{ id: string; 
 }
 
 interface PartyHeroImageProps {
-  imgSrc: string;
+  imgSrc?: string;
   partyName: string;
   roleLabel: string;
   secondaryLine: string;
@@ -372,7 +365,7 @@ function PartyHeroImage({ imgSrc, partyName, roleLabel, secondaryLine, onClose }
     <div style={{ border: '3px solid var(--gold-mid)', borderRadius: 4, overflow: 'hidden', boxShadow: '0 0 0 1px var(--gold-dark), 0 8px 32px rgba(0,0,0,0.75)', position: 'relative', background: 'var(--forest-deep)' }}>
       <div style={{ height: 3, background: 'linear-gradient(90deg, var(--gold-dark) 0%, var(--gold-bright) 50%, var(--gold-dark) 100%)' }} />
       <div style={{ position: 'relative', width: '100%', height: 520 }}>
-        <img src={imgSrc} alt={partyName} crossOrigin="anonymous" style={{ position: 'absolute', inset: 0, width: '100%', height: '100%', objectFit: 'cover', objectPosition: 'center center', display: 'block' }} />
+        <PhotoOrIcon src={imgSrc} alt={partyName} icon={<User size={64} strokeWidth={1.2} />} style={{ position: 'absolute', inset: 0 }} />
         <div style={{ position: 'absolute', inset: 0, background: 'radial-gradient(ellipse at center top, transparent 40%, rgba(0,0,0,0.35) 100%)', pointerEvents: 'none' }} />
         <div style={{ position: 'absolute', bottom: 0, left: 0, right: 0, background: 'linear-gradient(0deg, rgba(14,36,22,0.97) 0%, rgba(14,36,22,0.55) 50%, transparent 100%)', padding: '48px 20px 20px', ...serifStyle }}>
           <div style={{ fontSize: '0.5rem', letterSpacing: '0.22em', textTransform: 'uppercase', color: 'var(--gold-mid)', marginBottom: 4 }}>Stable Press · {roleLabel}</div>
@@ -388,11 +381,10 @@ function PartyHeroImage({ imgSrc, partyName, roleLabel, secondaryLine, onClose }
   );
 }
 
-function ProfileDetailPanel({ title, icon, imgSrc, onClose, children }: { title: string; icon: React.ReactNode; imgSrc: string; onClose: () => void; children: React.ReactNode }) {
+function ProfileDetailPanel({ title, icon, imgSrc: _imgSrc, onClose, children }: { title: string; icon: React.ReactNode; imgSrc?: string; onClose: () => void; children: React.ReactNode }) {
   return (
     <div className="sku-gold-card" style={{ ...serifStyle, overflow: 'hidden' }}>
-      <div style={{ position: 'relative', height: 110, overflow: 'hidden', background: 'var(--forest-deep)' }}>
-        <img src={imgSrc} alt={title} crossOrigin="anonymous" style={{ width: '100%', height: '100%', objectFit: 'cover', objectPosition: 'center center', display: 'block', opacity: 0.72 }} />
+      <div style={{ position: 'relative', height: 110, overflow: 'hidden', background: 'linear-gradient(135deg, var(--forest-mid) 0%, var(--forest-deep) 100%)' }}>
         <div style={{ position: 'absolute', inset: 0, background: 'linear-gradient(180deg, rgba(0,0,0,0.08) 0%, rgba(14,36,22,0.9) 100%)', pointerEvents: 'none' }} />
         <div style={{ position: 'absolute', bottom: 0, left: 0, right: 0, padding: '8px 14px 10px', display: 'flex', alignItems: 'flex-end', justifyContent: 'space-between' }}>
           <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
@@ -433,7 +425,7 @@ function PartyAvatarStrip({ parties, fallbackKey }: { parties: PanelParty[]; fal
       {parties.map(({ party, isCurrent }) => (
         <div key={party.id} style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 3 }}>
           <div style={{ width: 40, height: 40, borderRadius: 3, border: `2px solid ${isCurrent ? 'var(--gold-bright)' : 'var(--gold-dark)'}`, overflow: 'hidden', background: 'var(--forest-deep)', boxShadow: '0 2px 6px rgba(0,0,0,0.4)', flexShrink: 0 }}>
-            <img src={partyPhoto(party, fallbackKey)} alt={party.name} crossOrigin="anonymous" style={{ width: '100%', height: '100%', objectFit: 'cover', objectPosition: 'center center' }} />
+            <PhotoOrIcon src={partyPhoto(party, fallbackKey)} alt={party.name} icon={<User size={20} strokeWidth={1.5} />} />
           </div>
           <div style={{ fontSize: '0.5rem', color: isCurrent ? 'var(--gold-bright)' : 'var(--parchment-shadow)', textAlign: 'center', maxWidth: 48, lineHeight: 1.2, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{party.name.split(' ')[0]}</div>
           {isCurrent && <div style={{ background: 'var(--gold-mid)', color: 'var(--forest-deep)', fontSize: '0.42rem', fontWeight: 700, padding: '1px 4px', borderRadius: 2 }}>CUR</div>}
@@ -454,7 +446,7 @@ function ContextNote({ context }: { context?: string }) {
 
 function OwnerDetailPanel({ parties, horse, onClose }: { parties: PanelParty[]; horse: HorseData; onClose: () => void }) {
   const primary = parties[0];
-  const imgSrc = primary ? partyPhoto(primary.party, 'owner') : FALLBACK_IMAGES.owner;
+  const imgSrc = primary ? partyPhoto(primary.party, 'owner') : undefined;
   return (
     <ProfileDetailPanel title="Owners Data" icon={<User size={14} strokeWidth={1.8} style={{ color: 'var(--gold-bright)' }} />} imgSrc={imgSrc} onClose={onClose}>
       <PartyAvatarStrip parties={parties} fallbackKey="owner" />
@@ -465,7 +457,7 @@ function OwnerDetailPanel({ parties, horse, onClose }: { parties: PanelParty[]; 
           {parties.length > 1 && (
             <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 8, paddingBottom: 6, borderBottom: '1px solid var(--parchment-dark)' }}>
               <div style={{ width: 32, height: 32, borderRadius: 2, overflow: 'hidden', border: '1px solid var(--gold-mid)', flexShrink: 0 }}>
-                <img src={partyPhoto(party, 'owner')} alt={party.name} crossOrigin="anonymous" style={{ width: '100%', height: '100%', objectFit: 'cover', objectPosition: 'center center' }} />
+                <PhotoOrIcon src={partyPhoto(party, 'owner')} alt={party.name} icon={<User size={18} strokeWidth={1.5} />} />
               </div>
               <span style={{ fontSize: '0.72rem', fontWeight: 700, color: 'var(--forest-deep)', ...serifStyle }}>{party.name}</span>
             </div>
@@ -500,7 +492,7 @@ function OwnerDetailPanel({ parties, horse, onClose }: { parties: PanelParty[]; 
 
 function BreederDetailPanel({ parties, horse, onClose }: { parties: PanelParty[]; horse: HorseData; onClose: () => void }) {
   const primary = parties[0];
-  const imgSrc = primary ? partyPhoto(primary.party, 'breeder') : FALLBACK_IMAGES.breeder;
+  const imgSrc = primary ? partyPhoto(primary.party, 'breeder') : undefined;
   return (
     <ProfileDetailPanel title="Breeders Data" icon={<BookOpen size={14} strokeWidth={1.8} style={{ color: 'var(--gold-bright)' }} />} imgSrc={imgSrc} onClose={onClose}>
       <PartyAvatarStrip parties={parties} fallbackKey="breeder" />
@@ -511,7 +503,7 @@ function BreederDetailPanel({ parties, horse, onClose }: { parties: PanelParty[]
           {parties.length > 1 && (
             <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 8, paddingBottom: 6, borderBottom: '1px solid var(--parchment-dark)' }}>
               <div style={{ width: 32, height: 32, borderRadius: 2, overflow: 'hidden', border: '1px solid var(--gold-mid)', flexShrink: 0 }}>
-                <img src={partyPhoto(party, 'breeder')} alt={party.name} crossOrigin="anonymous" style={{ width: '100%', height: '100%', objectFit: 'cover', objectPosition: 'center center' }} />
+                <PhotoOrIcon src={partyPhoto(party, 'breeder')} alt={party.name} icon={<User size={18} strokeWidth={1.5} />} />
               </div>
               <span style={{ fontSize: '0.72rem', fontWeight: 700, color: 'var(--forest-deep)', ...serifStyle }}>{party.name}</span>
             </div>
@@ -550,7 +542,7 @@ function BreederDetailPanel({ parties, horse, onClose }: { parties: PanelParty[]
 
 function TrainerDetailPanel({ parties, horse, onClose }: { parties: PanelParty[]; horse: HorseData; onClose: () => void }) {
   const primary = parties[0];
-  const imgSrc = primary ? partyPhoto(primary.party, 'trainer') : FALLBACK_IMAGES.trainer;
+  const imgSrc = primary ? partyPhoto(primary.party, 'trainer') : undefined;
   return (
     <ProfileDetailPanel title="Trainers Data" icon={<Briefcase size={14} strokeWidth={1.8} style={{ color: 'var(--gold-bright)' }} />} imgSrc={imgSrc} onClose={onClose}>
       <PartyAvatarStrip parties={parties} fallbackKey="trainer" />
@@ -561,7 +553,7 @@ function TrainerDetailPanel({ parties, horse, onClose }: { parties: PanelParty[]
           {parties.length > 1 && (
             <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 8, paddingBottom: 6, borderBottom: '1px solid var(--parchment-dark)' }}>
               <div style={{ width: 32, height: 32, borderRadius: 2, overflow: 'hidden', border: '1px solid var(--gold-mid)', flexShrink: 0 }}>
-                <img src={partyPhoto(party, 'trainer')} alt={party.name} crossOrigin="anonymous" style={{ width: '100%', height: '100%', objectFit: 'cover', objectPosition: 'center center' }} />
+                <PhotoOrIcon src={partyPhoto(party, 'trainer')} alt={party.name} icon={<User size={18} strokeWidth={1.5} />} />
               </div>
               <span style={{ fontSize: '0.72rem', fontWeight: 700, color: 'var(--forest-deep)', ...serifStyle }}>{party.name}</span>
             </div>
@@ -599,7 +591,7 @@ function TrainerDetailPanel({ parties, horse, onClose }: { parties: PanelParty[]
 function PersonnelDetailPanel({ parties, agentParties, syndicateParties, horse, onClose }: { parties: PanelParty[]; agentParties: PanelParty[]; syndicateParties: PanelParty[]; horse: HorseData; onClose: () => void }) {
   const allP = [...agentParties, ...syndicateParties, ...parties];
   const primary = allP[0];
-  const imgSrc = primary ? partyPhoto(primary.party, 'personnel') : FALLBACK_IMAGES.personnel;
+  const imgSrc = primary ? partyPhoto(primary.party, 'personnel') : undefined;
   return (
     <ProfileDetailPanel title="Personnel Data" icon={<Users size={14} strokeWidth={1.8} style={{ color: 'var(--gold-bright)' }} />} imgSrc={imgSrc} onClose={onClose}>
       {agentParties.length > 0 && (
@@ -611,7 +603,7 @@ function PersonnelDetailPanel({ parties, agentParties, syndicateParties, horse, 
               {agentParties.length > 1 && (
                 <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 6, paddingBottom: 4, borderBottom: '1px solid var(--parchment-dark)' }}>
                   <div style={{ width: 28, height: 28, borderRadius: 2, overflow: 'hidden', border: '1px solid var(--gold-mid)', flexShrink: 0 }}>
-                    <img src={partyPhoto(party, 'personnel')} alt={party.name} crossOrigin="anonymous" style={{ width: '100%', height: '100%', objectFit: 'cover', objectPosition: 'center center' }} />
+                    <PhotoOrIcon src={partyPhoto(party, 'personnel')} alt={party.name} icon={<User size={16} strokeWidth={1.5} />} />
                   </div>
                   <span style={{ fontSize: '0.68rem', fontWeight: 700, color: 'var(--forest-deep)', ...serifStyle }}>{party.name}</span>
                 </div>
@@ -637,7 +629,7 @@ function PersonnelDetailPanel({ parties, agentParties, syndicateParties, horse, 
               {syndicateParties.length > 1 && (
                 <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 6, paddingBottom: 4, borderBottom: '1px solid var(--parchment-dark)' }}>
                   <div style={{ width: 28, height: 28, borderRadius: 2, overflow: 'hidden', border: '1px solid var(--gold-mid)', flexShrink: 0 }}>
-                    <img src={partyPhoto(party, 'syndicate')} alt={party.name} crossOrigin="anonymous" style={{ width: '100%', height: '100%', objectFit: 'cover', objectPosition: 'center center' }} />
+                    <PhotoOrIcon src={partyPhoto(party, 'syndicate')} alt={party.name} icon={<User size={16} strokeWidth={1.5} />} />
                   </div>
                   <span style={{ fontSize: '0.68rem', fontWeight: 700, color: 'var(--forest-deep)', ...serifStyle }}>{party.name}</span>
                 </div>
@@ -663,7 +655,7 @@ function PersonnelDetailPanel({ parties, agentParties, syndicateParties, horse, 
               {parties.length > 1 && (
                 <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 6, paddingBottom: 4, borderBottom: '1px solid var(--parchment-dark)' }}>
                   <div style={{ width: 28, height: 28, borderRadius: 2, overflow: 'hidden', border: '1px solid var(--gold-mid)', flexShrink: 0 }}>
-                    <img src={partyPhoto(party, 'personnel')} alt={party.name} crossOrigin="anonymous" style={{ width: '100%', height: '100%', objectFit: 'cover', objectPosition: 'center center' }} />
+                    <PhotoOrIcon src={partyPhoto(party, 'personnel')} alt={party.name} icon={<User size={16} strokeWidth={1.5} />} />
                   </div>
                   <span style={{ fontSize: '0.68rem', fontWeight: 700, color: 'var(--forest-deep)', ...serifStyle }}>{party.name}</span>
                 </div>
@@ -695,7 +687,7 @@ function PersonnelDetailPanel({ parties, agentParties, syndicateParties, horse, 
 
 function JockeyDetailPanel({ parties, horse, onClose }: { parties: PanelParty[]; horse: HorseData; onClose: () => void }) {
   const primary = parties[0];
-  const imgSrc = primary ? partyPhoto(primary.party, 'jockey') : FALLBACK_IMAGES.jockey;
+  const imgSrc = primary ? partyPhoto(primary.party, 'jockey') : undefined;
   return (
     <ProfileDetailPanel title="Jockey(s) Data" icon={<Flag size={14} strokeWidth={1.8} style={{ color: 'var(--gold-bright)' }} />} imgSrc={imgSrc} onClose={onClose}>
       <PartyAvatarStrip parties={parties} fallbackKey="jockey" />
@@ -706,7 +698,7 @@ function JockeyDetailPanel({ parties, horse, onClose }: { parties: PanelParty[];
           {parties.length > 1 && (
             <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 8, paddingBottom: 6, borderBottom: '1px solid var(--parchment-dark)' }}>
               <div style={{ width: 32, height: 32, borderRadius: 2, overflow: 'hidden', border: '1px solid var(--gold-mid)', flexShrink: 0 }}>
-                <img src={partyPhoto(party, 'jockey')} alt={party.name} crossOrigin="anonymous" style={{ width: '100%', height: '100%', objectFit: 'cover', objectPosition: 'center center' }} />
+                <PhotoOrIcon src={partyPhoto(party, 'jockey')} alt={party.name} icon={<User size={18} strokeWidth={1.5} />} />
               </div>
               <span style={{ fontSize: '0.72rem', fontWeight: 700, color: 'var(--forest-deep)', ...serifStyle }}>{party.name}</span>
             </div>
@@ -739,7 +731,7 @@ function JockeyDetailPanel({ parties, horse, onClose }: { parties: PanelParty[];
 
 function SyndicateManagerDetailPanel({ parties, horse, onClose }: { parties: PanelParty[]; horse: HorseData; onClose: () => void }) {
   const primary = parties[0];
-  const imgSrc = primary ? partyPhoto(primary.party, 'syndicate') : FALLBACK_IMAGES.syndicate;
+  const imgSrc = primary ? partyPhoto(primary.party, 'syndicate') : undefined;
   return (
     <ProfileDetailPanel title="Syndicate Manager" icon={<Shield size={14} strokeWidth={1.8} style={{ color: 'var(--gold-bright)' }} />} imgSrc={imgSrc} onClose={onClose}>
       <PartyAvatarStrip parties={parties} fallbackKey="syndicate" />
@@ -750,7 +742,7 @@ function SyndicateManagerDetailPanel({ parties, horse, onClose }: { parties: Pan
           {parties.length > 1 && (
             <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 8, paddingBottom: 6, borderBottom: '1px solid var(--parchment-dark)' }}>
               <div style={{ width: 32, height: 32, borderRadius: 2, overflow: 'hidden', border: '1px solid var(--gold-mid)', flexShrink: 0 }}>
-                <img src={partyPhoto(party, 'syndicate')} alt={party.name} crossOrigin="anonymous" style={{ width: '100%', height: '100%', objectFit: 'cover', objectPosition: 'center center' }} />
+                <PhotoOrIcon src={partyPhoto(party, 'syndicate')} alt={party.name} icon={<User size={18} strokeWidth={1.5} />} />
               </div>
               <span style={{ fontSize: '0.72rem', fontWeight: 700, color: 'var(--forest-deep)', ...serifStyle }}>{party.name}</span>
             </div>
@@ -779,12 +771,10 @@ function SyndicateManagerDetailPanel({ parties, horse, onClose }: { parties: Pan
 }
 
 /* ── Shared section panel shell ── */
-function SectionPanel({ title, icon, imgKey, onClose, children }: { title: string; icon: React.ReactNode; imgKey: keyof typeof DATA_CARD_IMAGES; onClose: () => void; children: React.ReactNode }) {
-  const imgSrc = DATA_CARD_IMAGES[imgKey];
+function SectionPanel({ title, icon, imgKey: _imgKey, onClose, children }: { title: string; icon: React.ReactNode; imgKey: string; onClose: () => void; children: React.ReactNode }) {
   return (
     <div className="sku-gold-card" style={{ ...serifStyle, overflow: 'hidden' }}>
-      <div style={{ position: 'relative', height: 110, overflow: 'hidden', background: 'var(--forest-deep)' }}>
-        <img src={imgSrc} alt={title} crossOrigin="anonymous" style={{ width: '100%', height: '100%', objectFit: 'cover', objectPosition: 'center center', display: 'block', opacity: 0.75 }} />
+      <div style={{ position: 'relative', height: 110, overflow: 'hidden', background: 'linear-gradient(135deg, var(--forest-mid) 0%, var(--forest-deep) 100%)' }}>
         <div style={{ position: 'absolute', inset: 0, background: 'linear-gradient(180deg, rgba(0,0,0,0.1) 0%, rgba(14,36,22,0.88) 100%)', pointerEvents: 'none' }} />
         <div style={{ position: 'absolute', bottom: 0, left: 0, right: 0, padding: '8px 14px 10px', display: 'flex', alignItems: 'flex-end', justifyContent: 'space-between' }}>
           <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
@@ -1355,7 +1345,7 @@ function ReportsSection({ horse, onClose }: { horse: HorseData; onClose: () => v
   const hiddenCount = horseReports.length - visible.length;
 
   return (
-    <ProfileDetailPanel title="Reports / Forms" icon={<FileText size={14} strokeWidth={1.8} style={{ color: 'var(--gold-bright)' }} />} imgSrc={DATA_CARD_IMAGES.studbook} onClose={onClose}>
+    <ProfileDetailPanel title="Reports / Forms" icon={<FileText size={14} strokeWidth={1.8} style={{ color: 'var(--gold-bright)' }} />} onClose={onClose}>
       <SRow label="Horse" value={horse.isUnnamed ? 'Un-Named' : horse.name} />
       <SRow label="Documents" value={String(visible.length)} />
 
@@ -1417,16 +1407,14 @@ function ReportsSection({ horse, onClose }: { horse: HorseData; onClose: () => v
 }
 
 /* ── Data Category Card (right column) ── */
-interface DataCategoryDef { key: string; label: string; sublabel: string; icon: React.ReactNode; imgKey: keyof typeof DATA_CARD_IMAGES; }
+interface DataCategoryDef { key: string; label: string; sublabel: string; icon: React.ReactNode; imgKey: string; }
 
-function DataCategoryCard({ label, sublabel, icon, imgKey, active, onClick }: Omit<DataCategoryDef, 'key'> & { active: boolean; onClick: () => void }) {
-  const imgSrc = DATA_CARD_IMAGES[imgKey];
+function DataCategoryCard({ label, sublabel, icon, imgKey: _imgKey, active, onClick }: Omit<DataCategoryDef, 'key'> & { active: boolean; onClick: () => void }) {
   const [hovered, setHovered] = useState(false);
   const lit = hovered || active;
   return (
     <button onClick={onClick} onMouseEnter={() => setHovered(true)} onMouseLeave={() => setHovered(false)} aria-label={`${active ? 'Close' : 'View'} ${label} data`} aria-pressed={active} style={{ width: '100%', border: `2px solid ${lit ? 'var(--gold-bright)' : 'var(--gold-dark)'}`, borderRadius: 4, overflow: 'hidden', cursor: 'pointer', background: 'none', padding: 0, display: 'flex', flexDirection: 'column', boxShadow: lit ? '0 0 0 1px var(--gold-bright), 0 6px 20px rgba(0,0,0,0.6)' : '0 0 0 1px var(--gold-dark), 0 3px 10px rgba(0,0,0,0.45)', transition: 'border-color 0.18s, box-shadow 0.18s', outline: active ? '2px solid var(--gold-bright)' : 'none', outlineOffset: 2, ...serifStyle }}>
-      <div style={{ position: 'relative', width: '100%', height: 68, overflow: 'hidden', background: 'var(--forest-deep)' }}>
-        <img src={imgSrc} alt={label} crossOrigin="anonymous" style={{ width: '100%', height: '100%', objectFit: 'cover', objectPosition: 'center center', display: 'block', opacity: lit ? 0.88 : 0.68, transform: lit ? 'scale(1.04)' : 'scale(1)', transition: 'opacity 0.22s, transform 0.28s ease' }} />
+      <div style={{ position: 'relative', width: '100%', height: 68, overflow: 'hidden', background: 'linear-gradient(135deg, var(--forest-mid) 0%, var(--forest-deep) 100%)' }}>
         <div style={{ position: 'absolute', inset: 0, background: active ? 'linear-gradient(180deg, rgba(180,140,30,0.18) 0%, rgba(14,36,22,0.55) 100%)' : 'linear-gradient(180deg, rgba(0,0,0,0.15) 0%, rgba(14,36,22,0.72) 100%)', pointerEvents: 'none', transition: 'background 0.2s' }} />
         {active && <div style={{ position: 'absolute', top: 5, right: 6, width: 16, height: 16, borderRadius: 2, background: 'var(--gold-bright)', display: 'flex', alignItems: 'center', justifyContent: 'center', boxShadow: '0 1px 4px rgba(0,0,0,0.5)' }}><X size={9} strokeWidth={3} style={{ color: 'var(--forest-deep)' }} /></div>}
         <div style={{ position: 'absolute', top: 6, left: 7, width: 20, height: 20, borderRadius: 2, background: 'rgba(26,51,34,0.82)', border: `1px solid ${active ? 'var(--gold-bright)' : 'var(--gold-dark)'}`, display: 'flex', alignItems: 'center', justifyContent: 'center', transition: 'border-color 0.18s' }}>{icon}</div>
@@ -1603,14 +1591,14 @@ export default function HorseDetail() {
     setRightPanel(null);
   };
 
-  const ownerImg       = ownerParties[0]     ? partyPhoto(ownerParties[0].party, 'owner')         : FALLBACK_IMAGES.owner;
-  const breederImg     = breederParties[0]   ? partyPhoto(breederParties[0].party, 'breeder')      : FALLBACK_IMAGES.breeder;
-  const trainerImg     = trainerParties[0]   ? partyPhoto(trainerParties[0].party, 'trainer')      : FALLBACK_IMAGES.trainer;
+  const ownerImg       = ownerParties[0]     ? partyPhoto(ownerParties[0].party, 'owner')         : undefined;
+  const breederImg     = breederParties[0]   ? partyPhoto(breederParties[0].party, 'breeder')      : undefined;
+  const trainerImg     = trainerParties[0]   ? partyPhoto(trainerParties[0].party, 'trainer')      : undefined;
   const personnelImg   = agentParties[0]     ? partyPhoto(agentParties[0].party, 'personnel')
                        : syndicateParties[0] ? partyPhoto(syndicateParties[0].party, 'personnel')
-                       : personnelParties[0] ? partyPhoto(personnelParties[0].party, 'personnel')  : FALLBACK_IMAGES.personnel;
-  const jockeyImg      = jockeyParties[0]    ? partyPhoto(jockeyParties[0].party, 'jockey')        : FALLBACK_IMAGES.jockey;
-  const syndicateImg   = syndicateParties[0] ? partyPhoto(syndicateParties[0].party, 'syndicate')  : FALLBACK_IMAGES.syndicate;
+                       : personnelParties[0] ? partyPhoto(personnelParties[0].party, 'personnel')  : undefined;
+  const jockeyImg      = jockeyParties[0]    ? partyPhoto(jockeyParties[0].party, 'jockey')        : undefined;
+  const syndicateImg   = syndicateParties[0] ? partyPhoto(syndicateParties[0].party, 'syndicate')  : undefined;
 
   const ownerSecondary   = ownerParties[0]     ? [ownerParties[0].party.base_location, ownerParties[0].party.country_of_birth].filter(Boolean).join(' · ') || 'Registered owner'     : 'Not Recorded';
   const breederSecondary = breederParties[0]   ? [breederParties[0].party.base_location, breederParties[0].party.country_of_birth].filter(Boolean).join(' · ') || 'Registered breeder' : 'Not Recorded';
@@ -1686,7 +1674,7 @@ export default function HorseDetail() {
     { key: 'studbook', label: 'Stud Book Data', sublabel: 'Official registry entries',  icon: <Binary       size={11} strokeWidth={1.8} style={{ color: 'var(--gold-bright)' }} />, imgKey: 'studbook' },
   ];
 
-  type PartyHeroMeta = { imgSrc: string; partyName: string; roleLabel: string; secondaryLine: string } | null;
+  type PartyHeroMeta = { imgSrc?: string; partyName: string; roleLabel: string; secondaryLine: string } | null;
 
   const getPartyHeroMeta = (): PartyHeroMeta => {
     if (!leftPanel) return null;
@@ -1849,6 +1837,7 @@ export default function HorseDetail() {
               name={horseName}
               subtitle={[horse.sex, horse.colour, sizeStr, horse.country, horse.dob ? new Date(horse.dob).getFullYear() + ' foal' : undefined].filter(Boolean).join(' · ')}
               partyName={crestPartyName}
+              compact
             />
             {/* Gamification bar: Follow + dossier completeness */}
             <div style={{ background: 'linear-gradient(180deg, var(--forest-mid) 0%, var(--forest-deep) 100%)', borderTop: '2px solid var(--gold-dark)', padding: '10px 14px', display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12, flexWrap: 'wrap' }}>
@@ -1893,6 +1882,16 @@ export default function HorseDetail() {
             </>
           ) : (
             <>
+              {/* Horse photo — full-cover, shown right under the crest */}
+              <div style={{ height: 'clamp(300px, 46vh, 520px)', minHeight: 300, position: 'relative', border: '3px solid var(--gold-mid)', boxShadow: '0 0 0 1px var(--gold-dark), 0 6px 24px rgba(0,0,0,0.7)', borderRadius: 4, overflow: 'hidden', background: 'var(--forest-deep)' }}>
+                <PhotoOrIcon src={horse.imageUrl} alt={horseName} icon={<Image size={64} strokeWidth={1.2} />} style={{ position: 'absolute', inset: 0 }} />
+                <div style={{ position: 'absolute', inset: 0, background: 'radial-gradient(ellipse at center, transparent 45%, rgba(0,0,0,0.5) 100%)', pointerEvents: 'none' }} />
+                <div style={{ position: 'absolute', bottom: 0, left: 0, right: 0, background: 'linear-gradient(0deg, rgba(26,51,34,0.92) 0%, rgba(26,51,34,0.55) 65%, transparent 100%)', padding: '24px 16px 10px', ...serifStyle }}>
+                  <div style={{ fontSize: '0.5rem', letterSpacing: '0.18em', textTransform: 'uppercase', color: 'var(--gold-bright)', marginBottom: 2 }}>Featured Thoroughbred</div>
+                  <div style={{ fontSize: '0.9rem', fontWeight: 700, color: 'var(--parchment)', textShadow: '0 1px 4px rgba(0,0,0,0.8)' }}>{horseName}</div>
+                </div>
+              </div>
+
               {/* Identity card + Pedigree preview row (matches FR reference) */}
               <div style={{ display: 'grid', gridTemplateColumns: '0.85fr 1.15fr', gap: 14, alignItems: 'stretch' }}>
                 {/* Identity card */}
@@ -1942,16 +1941,6 @@ export default function HorseDetail() {
                       <p style={{ fontSize: '0.68rem', fontStyle: 'italic', color: 'var(--parchment-shadow)', textAlign: 'center', margin: 'auto' }}>Pedigree not on file.</p>
                     )}
                   </div>
-                </div>
-              </div>
-
-              {/* Horse photo — fixed, prominent height; page scrolls if needed */}
-              <div style={{ height: 'clamp(300px, 44vh, 500px)', minHeight: 300, position: 'relative', border: '3px solid var(--gold-mid)', boxShadow: '0 0 0 1px var(--gold-dark), 0 6px 24px rgba(0,0,0,0.7)', borderRadius: 4, overflow: 'hidden', background: 'var(--forest-deep)' }}>
-                <img src={horse.imageUrl || HERO_IMAGE} alt={horseName} crossOrigin="anonymous" style={{ position: 'absolute', inset: 0, width: '100%', height: '100%', objectFit: 'cover', display: 'block' }} />
-                <div style={{ position: 'absolute', inset: 0, background: 'radial-gradient(ellipse at center, transparent 45%, rgba(0,0,0,0.5) 100%)', pointerEvents: 'none' }} />
-                <div style={{ position: 'absolute', bottom: 0, left: 0, right: 0, background: 'linear-gradient(0deg, rgba(26,51,34,0.92) 0%, rgba(26,51,34,0.55) 65%, transparent 100%)', padding: '24px 16px 10px', ...serifStyle }}>
-                  <div style={{ fontSize: '0.5rem', letterSpacing: '0.18em', textTransform: 'uppercase', color: 'var(--gold-bright)', marginBottom: 2 }}>Featured Thoroughbred</div>
-                  <div style={{ fontSize: '0.9rem', fontWeight: 700, color: 'var(--parchment)', textShadow: '0 1px 4px rgba(0,0,0,0.8)' }}>{horseName}</div>
                 </div>
               </div>
 

@@ -6,27 +6,52 @@
  * the server collaborators API via the magazine store.
  */
 
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { useMagazineStore } from '@/stores/magazineStore';
+import type { StaffOption } from '@/types/magazine';
 import { X, UserPlus, Trash2, Loader2, Crown, ShieldCheck, PencilLine } from 'lucide-react';
 import { cn } from '@/lib/utils';
 
+// Staff roles that grant full magazine editing (mirror of the server derivation).
+const EDITOR_STAFF_ROLES = ['administrator', 'publisher', 'editor'];
+
 export function ShareDialog({ magazineId, onClose }: { magazineId: string; onClose: () => void }) {
   const magazine = useMagazineStore((s) => s.magazines.find((m) => m.id === magazineId));
+  const fetchStaffDirectory = useMagazineStore((s) => s.fetchStaffDirectory);
   const addCollaborator = useMagazineStore((s) => s.addCollaborator);
   const removeCollaborator = useMagazineStore((s) => s.removeCollaborator);
 
-  const [email, setEmail] = useState('');
-  const [role, setRole] = useState<'contributor' | 'editor'>('contributor');
+  const [directory, setDirectory] = useState<StaffOption[]>([]);
+  const [selectedEmail, setSelectedEmail] = useState('');
   const [pageMode, setPageMode] = useState<'all' | 'specific'>('all');
   const [picked, setPicked] = useState<Set<string>>(new Set());
   const [busy, setBusy] = useState(false);
+
+  useEffect(() => {
+    fetchStaffDirectory().then(setDirectory);
+  }, [fetchStaffDirectory]);
 
   const pages = useMemo(
     () => (magazine?.pages ?? []).map((p) => ({ id: p.id, number: p.number, label: p.label })),
     [magazine]
   );
   const collaborators = magazine?.collaborators ?? [];
+
+  // Staff who aren't already the owner or a collaborator.
+  const available = useMemo(
+    () =>
+      directory.filter(
+        (o) => o.userId !== magazine?.ownerId && !collaborators.some((c) => c.userId === o.userId)
+      ),
+    [directory, magazine?.ownerId, collaborators]
+  );
+
+  // The chosen person's capability is derived from their existing staff role.
+  const selectedStaff = useMemo(
+    () => directory.find((o) => o.email === selectedEmail),
+    [directory, selectedEmail]
+  );
+  const selectedIsEditor = !!selectedStaff?.staffRoles.some((r) => EDITOR_STAFF_ROLES.includes(r));
 
   if (!magazine) return null;
 
@@ -38,18 +63,17 @@ export function ShareDialog({ magazineId, onClose }: { magazineId: string; onClo
     });
 
   const submit = async () => {
-    if (!email.trim()) return;
+    if (!selectedEmail) return;
     const pageIds: string[] | 'all' =
-      role === 'editor' || pageMode === 'all' ? 'all' : Array.from(picked);
-    if (role === 'contributor' && pageMode === 'specific' && picked.size === 0) return;
+      selectedIsEditor || pageMode === 'all' ? 'all' : Array.from(picked);
+    if (!selectedIsEditor && pageMode === 'specific' && picked.size === 0) return;
     setBusy(true);
-    const ok = await addCollaborator(magazineId, { email: email.trim(), role, pageIds });
+    const ok = await addCollaborator(magazineId, { email: selectedEmail, pageIds });
     setBusy(false);
     if (ok) {
-      setEmail('');
+      setSelectedEmail('');
       setPicked(new Set());
       setPageMode('all');
-      setRole('contributor');
     }
   };
 
@@ -115,39 +139,44 @@ export function ShareDialog({ magazineId, onClose }: { magazineId: string; onClo
           <div className="space-y-2.5 rounded-sm border border-white/10 p-3">
             <p className="text-[10px] uppercase tracking-[0.12em] font-bold text-white/40">Invite a staff member</p>
 
-            <input
-              type="email"
-              value={email}
-              onChange={(e) => setEmail(e.target.value)}
-              placeholder="name@stablepress.co.nz"
-              className="w-full rounded-sm border border-white/15 bg-white/5 px-2.5 py-2 text-xs text-white outline-none placeholder:text-white/30 focus:border-sky-400/50"
-              spellCheck={false}
-            />
+            {available.length === 0 ? (
+              <p className="rounded-sm border border-white/10 bg-white/5 px-2.5 py-2 text-[11px] text-white/50">
+                All staff members already have access to this magazine.
+              </p>
+            ) : (
+              <select
+                value={selectedEmail}
+                onChange={(e) => setSelectedEmail(e.target.value)}
+                className="w-full rounded-sm border border-white/15 bg-white/5 px-2.5 py-2 text-xs text-white outline-none focus:border-sky-400/50"
+              >
+                <option value="" className="bg-[#0d1626]">Choose a staff member…</option>
+                {available.map((o) => (
+                  <option key={o.userId} value={o.email} className="bg-[#0d1626]">
+                    {o.displayName || o.email}{o.displayName ? ` · ${o.email}` : ''}
+                  </option>
+                ))}
+              </select>
+            )}
 
-            {/* Role */}
-            <div className="flex gap-1.5">
-              {(['contributor', 'editor'] as const).map((r) => (
-                <button
-                  key={r}
-                  type="button"
-                  onClick={() => setRole(r)}
-                  className={cn(
-                    'flex-1 rounded-sm border px-2 py-1.5 text-[11px] font-semibold capitalize transition-colors',
-                    role === r ? 'border-sky-400/60 bg-sky-500/15 text-sky-200' : 'border-white/15 text-white/60 hover:bg-white/10'
-                  )}
-                >
-                  {r}
-                </button>
-              ))}
-            </div>
-            <p className="text-[10px] leading-relaxed text-white/40">
-              {role === 'editor'
-                ? 'Editors can edit every page, publish, and manage collaborators.'
-                : 'Contributors can edit only the pages you assign below.'}
-            </p>
+            {/* Capability — derived from the selected member's staff role */}
+            {selectedStaff && (
+              <p className="text-[10px] leading-relaxed text-white/50">
+                {selectedIsEditor ? (
+                  <>
+                    Joins as an <span className="font-semibold text-sky-200">Editor</span> (their staff role) — can edit
+                    every page, publish, and manage collaborators.
+                  </>
+                ) : (
+                  <>
+                    Joins as a <span className="font-semibold text-emerald-200">Contributor</span> (their staff role) —
+                    can edit only the pages you assign below.
+                  </>
+                )}
+              </p>
+            )}
 
-            {/* Page scope (contributors only) */}
-            {role === 'contributor' && (
+            {/* Page scope (contributor-type only) */}
+            {selectedStaff && !selectedIsEditor && (
               <div className="space-y-2">
                 <div className="flex gap-1.5">
                   {(['all', 'specific'] as const).map((m) => (
@@ -189,7 +218,7 @@ export function ShareDialog({ magazineId, onClose }: { magazineId: string; onClo
             <button
               type="button"
               onClick={submit}
-              disabled={busy || !email.trim() || (role === 'contributor' && pageMode === 'specific' && picked.size === 0)}
+              disabled={busy || !selectedEmail || (!selectedIsEditor && pageMode === 'specific' && picked.size === 0)}
               className="flex w-full items-center justify-center gap-2 rounded-sm bg-sky-500 px-3 py-2 text-xs font-semibold text-white hover:bg-sky-600 disabled:opacity-50"
             >
               {busy ? <Loader2 size={13} className="animate-spin" /> : <UserPlus size={13} />}
@@ -198,8 +227,8 @@ export function ShareDialog({ magazineId, onClose }: { magazineId: string; onClo
           </div>
 
           <p className="text-[10px] leading-relaxed text-white/35">
-            Collaborators must already have a staff account. They'll see this magazine in their Newsroom studio and can
-            edit the pages shared with them — changes save automatically. Reopen the magazine to see their latest edits.
+            Only staff members appear in the list. They'll see this magazine in their Newsroom studio and can edit the
+            pages shared with them — changes save automatically. Reopen the magazine to see their latest edits.
           </p>
         </div>
       </div>

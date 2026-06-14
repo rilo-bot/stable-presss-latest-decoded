@@ -176,6 +176,14 @@ export interface MagazineAccess {
   editablePageIds: string[] | 'all';
 }
 
+/** A staff member that can be picked as a collaborator (Share dialog dropdown). */
+export interface StaffOption {
+  userId: string;
+  displayName: string;
+  email: string;
+  staffRoles: string[];
+}
+
 /**
  * A frozen, public-facing snapshot produced by publishing. Persisted server-side
  * (collection `issues`) so published bulletins are visible to every reader on any

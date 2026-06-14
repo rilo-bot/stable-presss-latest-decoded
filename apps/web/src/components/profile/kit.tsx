@@ -65,14 +65,16 @@ function HeaderBand({ icon, title, eyebrow, onClose, height = 110 }: { icon: Rea
 }
 
 /* ─── Ornate crest header ─── */
-export function OrnateCrest({ name, subtitle, partyName }: { name: string; subtitle: string; partyName?: string }) {
+export function OrnateCrest({ name, subtitle, partyName, compact }: { name: string; subtitle: string; partyName?: string; compact?: boolean }) {
+  const corner = compact ? 5 : 8;
+  const dividerMb = compact ? 5 : 10;
   return (
-    <div className="sku-crest" style={{ padding: '18px 20px 14px', textAlign: 'center', position: 'relative' }}>
-      <span style={{ position: 'absolute', top: 8, left: 12, color: 'var(--gold-mid)', fontSize: '0.7rem', ...serifStyle }}>✦</span>
-      <span style={{ position: 'absolute', top: 8, right: 12, color: 'var(--gold-mid)', fontSize: '0.7rem', ...serifStyle }}>✦</span>
-      <div className="sku-divider" style={{ marginBottom: 10 }} />
-      <div style={{ fontSize: '0.55rem', letterSpacing: '0.22em', textTransform: 'uppercase', color: 'var(--gold-mid)', textShadow: '0 1px 3px rgba(0,0,0,0.8)', marginBottom: 4, ...serifStyle }}>{subtitle ? 'Stable Press' : 'Stable Press · Profile'}</div>
-      <h1 style={{ fontSize: 'clamp(1.2rem, 3vw, 1.7rem)', fontWeight: 700, lineHeight: 1.15, color: 'var(--parchment)', textShadow: '0 2px 6px rgba(0,0,0,0.8)', margin: '4px 0', ...serifStyle }}>{name}</h1>
+    <div className="sku-crest" style={{ padding: compact ? '9px 18px 7px' : '18px 20px 14px', textAlign: 'center', position: 'relative' }}>
+      <span style={{ position: 'absolute', top: corner, left: 12, color: 'var(--gold-mid)', fontSize: '0.7rem', ...serifStyle }}>✦</span>
+      <span style={{ position: 'absolute', top: corner, right: 12, color: 'var(--gold-mid)', fontSize: '0.7rem', ...serifStyle }}>✦</span>
+      <div className="sku-divider" style={{ marginBottom: dividerMb }} />
+      <div style={{ fontSize: compact ? '0.5rem' : '0.55rem', letterSpacing: '0.22em', textTransform: 'uppercase', color: 'var(--gold-mid)', textShadow: '0 1px 3px rgba(0,0,0,0.8)', marginBottom: compact ? 2 : 4, ...serifStyle }}>{subtitle ? 'Stable Press' : 'Stable Press · Profile'}</div>
+      <h1 style={{ fontSize: compact ? 'clamp(1.05rem, 2.2vw, 1.35rem)' : 'clamp(1.2rem, 3vw, 1.7rem)', fontWeight: 700, lineHeight: 1.15, color: 'var(--parchment)', textShadow: '0 2px 6px rgba(0,0,0,0.8)', margin: compact ? '1px 0' : '4px 0', ...serifStyle }}>{name}</h1>
       {partyName && (
         <>
           <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 8, margin: '6px 0 2px' }}>
@@ -80,13 +82,13 @@ export function OrnateCrest({ name, subtitle, partyName }: { name: string; subti
             <span style={{ fontSize: '0.48rem', letterSpacing: '0.2em', textTransform: 'uppercase', color: 'var(--gold-dark)', ...serifStyle }}>·</span>
             <div style={{ flex: 1, height: 1, background: 'linear-gradient(90deg, var(--gold-dark), transparent)' }} />
           </div>
-          <h2 style={{ fontSize: 'clamp(1.05rem, 2.5vw, 1.45rem)', fontWeight: 700, lineHeight: 1.2, color: 'var(--gold-bright)', textShadow: '0 2px 8px rgba(0,0,0,0.85)', margin: '2px 0 4px', ...serifStyle }}>{partyName}</h2>
+          <h2 style={{ fontSize: compact ? 'clamp(0.95rem, 2vw, 1.2rem)' : 'clamp(1.05rem, 2.5vw, 1.45rem)', fontWeight: 700, lineHeight: 1.2, color: 'var(--gold-bright)', textShadow: '0 2px 8px rgba(0,0,0,0.85)', margin: '2px 0 4px', ...serifStyle }}>{partyName}</h2>
         </>
       )}
-      <div style={{ fontSize: '0.65rem', fontStyle: 'italic', color: partyName ? 'var(--gold-mid)' : 'var(--gold-bright)', textShadow: '0 1px 3px rgba(0,0,0,0.7)', ...serifStyle, marginBottom: 10 }}>{subtitle}</div>
+      {(subtitle || !compact) && <div style={{ fontSize: compact ? '0.58rem' : '0.65rem', fontStyle: 'italic', color: partyName ? 'var(--gold-mid)' : 'var(--gold-bright)', textShadow: '0 1px 3px rgba(0,0,0,0.7)', ...serifStyle, marginBottom: dividerMb }}>{subtitle}</div>}
       <div className="sku-divider" />
-      <span style={{ position: 'absolute', bottom: 8, left: 12, color: 'var(--gold-mid)', fontSize: '0.7rem', ...serifStyle }}>✦</span>
-      <span style={{ position: 'absolute', bottom: 8, right: 12, color: 'var(--gold-mid)', fontSize: '0.7rem', ...serifStyle }}>✦</span>
+      <span style={{ position: 'absolute', bottom: corner, left: 12, color: 'var(--gold-mid)', fontSize: '0.7rem', ...serifStyle }}>✦</span>
+      <span style={{ position: 'absolute', bottom: corner, right: 12, color: 'var(--gold-mid)', fontSize: '0.7rem', ...serifStyle }}>✦</span>
     </div>
   );
 }

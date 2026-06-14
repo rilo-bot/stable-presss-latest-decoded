@@ -87,6 +87,7 @@ import sponsorsRouter from './routes/sponsors.js'
 import breakingNewsRouter from './routes/breakingNews.js'
 import metricsRouter from './routes/metrics.js'
 import agentRouter from './routes/agent.js'
+import agentEditorRouter from './routes/agentEditor.js'
 
 // Reads stay public (the public website needs them). Writes are gated by role:
 //   - articles  → editorial matrix (create / edit_own w/ author match / edit_any)
@@ -133,6 +134,8 @@ app.use('/api/breakingNews', staffWriteGate, breakingNewsRouter)
 app.use('/api/metrics', metricsRouter)
 // AI concierge ("the Stablehand"). Read-only tools, RBAC-scoped to the caller
 // (attachAccountOptional inside the route); answers stream back to the browser.
+// Editor route is mounted first (more specific path) so /editor/* resolves here.
+app.use('/api/agent/editor', agentEditorRouter)  // in-editor Studio Assistant (client-executed editor tools)
 app.use('/api/agent', agentRouter)
 // === end auto-mounted routers ===
 
