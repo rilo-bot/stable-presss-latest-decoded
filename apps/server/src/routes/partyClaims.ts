@@ -10,6 +10,7 @@ import {
   type PartyRole,
 } from '../lib/identity.js';
 import { isAdmin } from '../lib/rbac.js';
+import { createNotification } from '../lib/notify.js';
 
 const router = Router();
 
@@ -185,6 +186,13 @@ router.post('/:id/verify', async (req, res) => {
   if (!roles.includes(claim.role)) roles.push(claim.role);
 
   await db.collection('users').updateOne(found.user._id, { partyClaims: claims, roles });
+  await createNotification({
+    recipientUserId: String(found.user._id),
+    type: 'claim_verified',
+    message: `Your ${claim.role} claim has been verified — you can now manage your ${claim.role} data.`,
+    partyId: claim.partyId,
+    actorUserId: account.id,
+  });
   res.json({ ok: true, claim: updatedClaim });
 });
 
@@ -217,6 +225,13 @@ router.post('/:id/reject', async (req, res) => {
   const claims = [...found.claims];
   claims[found.idx] = updatedClaim;
   await db.collection('users').updateOne(found.user._id, { partyClaims: claims });
+  await createNotification({
+    recipientUserId: String(found.user._id),
+    type: 'claim_rejected',
+    message: `Your ${claim.role} claim was not approved${updatedClaim.rejectionReason ? `: ${updatedClaim.rejectionReason}` : '.'}`,
+    partyId: claim.partyId,
+    actorUserId: account.id,
+  });
   res.json({ ok: true, claim: updatedClaim });
 });
 

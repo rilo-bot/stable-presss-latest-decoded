@@ -252,9 +252,7 @@ function PedCell({ name, label, strong }: { name?: string; label: string; strong
 function ConnectionsPanel({ horse }: { horse: HorseData }) {
   const pairs = [
     { label: 'Owner', value: horse.ownerDisplay },
-    { label: 'Owner Since', value: horse.ownerSince ? new Date(horse.ownerSince).toLocaleDateString('en-AU', { month: 'short', year: 'numeric' }) : undefined },
     { label: 'Trainer', value: horse.trainerDisplay },
-    { label: 'Trainer Since', value: horse.trainerSince ? new Date(horse.trainerSince).toLocaleDateString('en-AU', { month: 'short', year: 'numeric' }) : undefined },
     { label: 'Jockey', value: horse.jockeyDisplay },
     { label: 'Breeder', value: horse.breederDisplay },
     { label: 'Syndicate Mgr', value: horse.syndicateManagerDisplay },
@@ -1532,24 +1530,24 @@ export default function HorseDetail() {
 
   const horse = useMemo((): HorseData | null => {
     if (!rawHorse) return null;
-    const resolveNames = (linked: PanelParty[], ids: string[] | undefined, fallback: string | undefined): string => {
+    const resolveNames = (linked: PanelParty[], ids: string[] | undefined): string => {
       if (linked.length > 0) return linked.map((p) => p.party.name).join(', ');
       if (ids && ids.length > 0) {
         const names = ids.map((pid) => allParties.find((p) => p.id === pid)?.name).filter(Boolean) as string[];
         if (names.length > 0) return names.join(', ');
       }
-      return fallback ?? '';
+      return '';
     };
     return {
       ...rawHorse,
-      ownerDisplay: resolveNames(ownerParties, rawHorse.ownerIds, rawHorse.owner),
-      trainerDisplay: resolveNames(trainerParties, rawHorse.trainerIds, rawHorse.trainer),
-      jockeyDisplay: resolveNames(jockeyParties, rawHorse.jockeyIds, rawHorse.jockey),
-      breederDisplay: resolveNames(breederParties, rawHorse.breederIds, rawHorse.breeder),
-      syndicateManagerDisplay: resolveNames(syndicateParties, rawHorse.syndicateManagerIds, rawHorse.syndicateManager),
-      bloodstockAgentDisplay: resolveNames(agentParties, rawHorse.bloodstockAgentIds, rawHorse.bloodstockAgent),
-      horseBreakersDisplay: resolveNames(personnelParties.slice(0, 1), rawHorse.personnelIds?.slice(0, 1), rawHorse.horseBreaker),
-      personnelDisplay: resolveNames(personnelParties, rawHorse.personnelIds, rawHorse.associatedPersonnel),
+      ownerDisplay: resolveNames(ownerParties, rawHorse.ownerIds),
+      trainerDisplay: resolveNames(trainerParties, rawHorse.trainerIds),
+      jockeyDisplay: resolveNames(jockeyParties, rawHorse.jockeyIds),
+      breederDisplay: resolveNames(breederParties, rawHorse.breederIds),
+      syndicateManagerDisplay: resolveNames(syndicateParties, rawHorse.syndicateManagerIds),
+      bloodstockAgentDisplay: resolveNames(agentParties, rawHorse.bloodstockAgentIds),
+      horseBreakersDisplay: resolveNames(personnelParties.slice(0, 1), rawHorse.personnelIds?.slice(0, 1)),
+      personnelDisplay: resolveNames(personnelParties, rawHorse.personnelIds),
     };
   }, [rawHorse, allParties, ownerParties, trainerParties, jockeyParties, breederParties, syndicateParties, agentParties, personnelParties]);
 

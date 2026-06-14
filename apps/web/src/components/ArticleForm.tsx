@@ -15,6 +15,8 @@ import {
 } from '@/components/ui/dialog';
 import { useArticleStore } from '@/stores/articleStore';
 import { useHorseStore } from '@/stores/horseStore';
+import { usePartyStore } from '@/stores/partyStore';
+import { connectionResolver } from '@/lib/horseConnections';
 import { useAuthStore } from '@/stores/authStore';
 import type { Article } from '@/types/article';
 import { TIER_ORDER, TIER_LABELS } from '@/rbac/entitlement';
@@ -97,6 +99,8 @@ export function ArticleForm({
   const addArticle = useArticleStore((s) => s.addArticle);
   const updateArticle = useArticleStore((s) => s.updateArticle);
   const horses = useHorseStore((s) => s.horses);
+  const parties = usePartyStore((s) => s.parties);
+  const horseConn = connectionResolver(parties);
   const currentUser = useAuthStore((s) => s.currentUser);
 
   const [title, setTitle] = useState('');
@@ -502,7 +506,7 @@ export function ArticleForm({
                           {horse.name}
                         </p>
                         <p className="text-[10px] text-muted-foreground truncate">
-                          {horse.trainer}
+                          {horseConn(horse).trainer || '—'}
                         </p>
                       </div>
                     </button>

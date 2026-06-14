@@ -3,6 +3,8 @@ import { useParams, Navigate, Link, useNavigate } from 'react-router-dom';
 import { motion } from 'framer-motion';
 import { useArticleStore } from '@/stores/articleStore';
 import { useHorseStore } from '@/stores/horseStore';
+import { usePartyStore } from '@/stores/partyStore';
+import { connectionResolver } from '@/lib/horseConnections';
 import {
   Clock,
   ChevronRight,
@@ -89,9 +91,11 @@ const DEFAULT_HERO =
 export default function ArticleDetail() {
   // === auto fetch-on-mount (backend planner) ===
   const fetchHorses = useHorseStore((s) => s.fetchHorses);
+  const fetchParties = usePartyStore((s) => s.fetchParties);
   useEffect(() => {
     fetchHorses();
-  }, [fetchHorses]);
+    fetchParties();
+  }, [fetchHorses, fetchParties]);
   // === end auto fetch-on-mount ===
 
   const { id } = useParams<{ id: string }>();
@@ -101,6 +105,8 @@ export default function ArticleDetail() {
 
   const articles = useArticleStore((s) => s.articles);
   const horses = useHorseStore((s) => s.horses);
+  const parties = usePartyStore((s) => s.parties);
+  const horseConn = useMemo(() => connectionResolver(parties), [parties]);
 
   const article = useMemo(() => articles.find((a) => a.id === id), [articles, id]);
 
@@ -564,7 +570,7 @@ export default function ArticleDetail() {
                           {horse.name}
                         </p>
                         <p className="text-[10px] text-muted-foreground uppercase tracking-[0.06em] truncate">
-                          Trainer: {horse.trainer}
+                          Trainer: {horseConn(horse).trainer || '—'}
                         </p>
                       </div>
                       <ChevronRight

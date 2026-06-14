@@ -43,13 +43,14 @@ app.get('/api/health', (_req, res) => {
 // --- Add your API routes below ---
 
 // === auto-mounted routers (backend planner) ===
-import { authedWriteGate, staffWriteGate, articlesWriteGate, reportsGate } from './lib/rbac.js'
+import { authedWriteGate, staffWriteGate, articlesWriteGate, horseScopedWriteGate } from './lib/rbac.js'
 import authRouter from './routes/auth.js'
 import adminRouter from './routes/admin.js'
 import staffRouter from './routes/staff.js'
 import subscriptionRouter from './routes/subscription.js'
 import partyClaimsRouter from './routes/partyClaims.js'
 import organisationsRouter from './routes/organisations.js'
+import notificationsRouter from './routes/notifications.js'
 import articlesRouter from './routes/articles.js'
 import horsesRouter from './routes/horses.js'
 import horsePartyLinksRouter from './routes/horsePartyLinks.js'
@@ -65,8 +66,10 @@ import tipperProfilesRouter from './routes/tipperProfiles.js'
 
 // Reads stay public (the public website needs them). Writes are gated by role:
 //   - articles  → editorial matrix (create / edit_own w/ author match / edit_any)
-//   - racing data (horses, parties, links, races, sales, reports, media, entries)
-//     → staff-only for now; party/org-scoped access arrives in Phase C/D
+//   - horse-centric data (horses, links, sales, reports, media, racing entries)
+//     → staff OR a member with an authorised relationship to the target horse
+//       (horseScopedWriteGate). Members create/manage only their own horses.
+//   - parties, races → staff-only (org party creation flows via /organisations)
 //   - tipping (tips, tipperProfiles) → any authenticated user (readers participate)
 // auth + podcastEpisodes keep their own finer-grained rules.
 app.use('/api/auth', authRouter)
@@ -75,17 +78,18 @@ app.use('/api/staff', staffRouter)               // admin-only staff grant/revok
 app.use('/api/subscription', subscriptionRouter) // self-service tier (manual, no billing yet)
 app.use('/api/partyClaims', partyClaimsRouter)   // self-gated (attachAccount inside)
 app.use('/api/organisations', organisationsRouter) // self-gated (attachAccount inside)
+app.use('/api/notifications', notificationsRouter)  // self-gated (attachAccount inside)
 app.use('/api/podcastEpisodes', podcastEpisodesRouter)
 app.use('/api/articles', articlesWriteGate, articlesRouter)
-app.use('/api/horses', staffWriteGate, horsesRouter)
-app.use('/api/horsePartyLinks', staffWriteGate, horsePartyLinksRouter)
+app.use('/api/horses', horseScopedWriteGate({ collection: 'horses', idIsHorse: true, optionalGet: true }), horsesRouter)
+app.use('/api/horsePartyLinks', horseScopedWriteGate({ collection: 'horsePartyLinks' }), horsePartyLinksRouter)
 app.use('/api/parties', staffWriteGate, partiesRouter)
 app.use('/api/races', staffWriteGate, racesRouter)
 app.use('/api/tips', authedWriteGate, tipsRouter)
-app.use('/api/sales', staffWriteGate, salesRouter)
-app.use('/api/reports', reportsGate, reportsRouter)
-app.use('/api/mediaItems', staffWriteGate, mediaItemsRouter)
-app.use('/api/racingEntries', staffWriteGate, racingEntriesRouter)
+app.use('/api/sales', horseScopedWriteGate({ collection: 'sales' }), salesRouter)
+app.use('/api/reports', horseScopedWriteGate({ collection: 'reports', optionalGet: true }), reportsRouter)
+app.use('/api/mediaItems', horseScopedWriteGate({ collection: 'mediaItems' }), mediaItemsRouter)
+app.use('/api/racingEntries', horseScopedWriteGate({ collection: 'racingEntries' }), racingEntriesRouter)
 app.use('/api/tipperProfiles', authedWriteGate, tipperProfilesRouter)
 // === end auto-mounted routers ===
 

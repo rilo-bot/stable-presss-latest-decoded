@@ -15,6 +15,10 @@ interface HorseFormProps {
   open: boolean;
   onClose: () => void;
   editHorse?: Horse | null;
+  /** Pre-select this party as owner when creating (member self-registration). */
+  defaultOwnerId?: string;
+  /** Member self-service mode: relax the trainer requirement (owner is enough). */
+  memberMode?: boolean;
 }
 
 const SEX_OPTIONS = ['Colt', 'Filly', 'Mare', 'Stallion', 'Gelding', 'Rig'];
@@ -71,17 +75,6 @@ const empty = (): FormData => ({
   bloodstockAgentIds: [],
   syndicateManagerIds: [],
   personnelIds: [],
-  // Legacy (kept for backwards compat)
-  owner: '',
-  ownerSince: '',
-  breeder: '',
-  trainer: '',
-  trainerSince: '',
-  jockey: '',
-  syndicateManager: '',
-  bloodstockAgent: '',
-  horseBreaker: '',
-  associatedPersonnel: '',
   careerRecord: '',
   careerWinnings: undefined,
   lastTenForm: '',
@@ -519,7 +512,7 @@ function ImageUploader({
   );
 }
 
-export function HorseForm({ open, onClose, editHorse }: HorseFormProps) {
+export function HorseForm({ open, onClose, editHorse, defaultOwnerId, memberMode }: HorseFormProps) {
   const addHorse = useHorseStore((s) => s.addHorse);
   const updateHorse = useHorseStore((s) => s.updateHorse);
   const removeHorse = useHorseStore((s) => s.removeHorse);
@@ -570,17 +563,6 @@ export function HorseForm({ open, onClose, editHorse }: HorseFormProps) {
               bloodstockAgentIds: editHorse.bloodstockAgentIds ?? [],
               syndicateManagerIds: editHorse.syndicateManagerIds ?? [],
               personnelIds: editHorse.personnelIds ?? [],
-              // Legacy
-              owner: editHorse.owner ?? '',
-              ownerSince: editHorse.ownerSince ?? '',
-              breeder: editHorse.breeder ?? '',
-              trainer: editHorse.trainer ?? '',
-              trainerSince: editHorse.trainerSince ?? '',
-              jockey: editHorse.jockey ?? '',
-              syndicateManager: editHorse.syndicateManager ?? '',
-              bloodstockAgent: editHorse.bloodstockAgent ?? '',
-              horseBreaker: editHorse.horseBreaker ?? '',
-              associatedPersonnel: editHorse.associatedPersonnel ?? '',
               careerRecord: editHorse.careerRecord ?? '',
               careerWinnings: editHorse.careerWinnings,
               lastTenForm: editHorse.lastTenForm ?? '',
@@ -591,12 +573,12 @@ export function HorseForm({ open, onClose, editHorse }: HorseFormProps) {
               imageUrl: editHorse.imageUrl ?? '',
               age: editHorse.age,
             }
-          : empty()
+          : { ...empty(), ownerIds: defaultOwnerId ? [defaultOwnerId] : [] }
       );
       setConfirmDelete(false);
       setSaving(false);
     }
-  }, [open, editHorse]);
+  }, [open, editHorse, defaultOwnerId]);
 
   const setField = (field: keyof FormData, value: string | number | boolean | string[] | undefined) =>
     setForm((prev) => ({ ...prev, [field]: value }));
@@ -610,14 +592,14 @@ export function HorseForm({ open, onClose, editHorse }: HorseFormProps) {
     }
 
     // Check that at least one owner and one trainer are selected
-    const hasOwner = (form.ownerIds ?? []).length > 0 || (form.owner ?? '').trim().length > 0;
-    const hasTrainer = (form.trainerIds ?? []).length > 0 || (form.trainer ?? '').trim().length > 0;
+    const hasOwner = (form.ownerIds ?? []).length > 0;
+    const hasTrainer = (form.trainerIds ?? []).length > 0;
 
     if (!hasOwner) {
       toast.error('At least one owner is required. Add owners in the Parties CMS first.');
       return;
     }
-    if (!hasTrainer) {
+    if (!memberMode && !hasTrainer) {
       toast.error('At least one trainer is required. Add trainers in the Parties CMS first.');
       return;
     }

@@ -14,6 +14,7 @@ import type { Request, Response, NextFunction } from 'express'
 import { db } from './db.js'
 import { attachAccount, attachAccountOptional } from './auth.js'
 import { STAFF_ROLES, type AccountUser, type OrgRole, type StaffRole } from './identity.js'
+import { authorisedHorseIds } from './scope.js'
 
 type ContentAction =
   | 'content.draft.create'
@@ -82,6 +83,77 @@ export function staffWriteGate(req: Request, res: Response, next: NextFunction):
     }
     next()
   })
+}
+
+/**
+ * Can the account write this horse's data? Staff always; otherwise the creator,
+ * or a current verified-party / org link to the horse (mirror of the web
+ * `canManageHorse`). Loads horses + links live so role/claim changes take effect
+ * without re-issuing a token.
+ */
+export async function accountCanManageHorse(
+  account: AccountUser | undefined,
+  horseId: string,
+): Promise<boolean> {
+  if (!account) return false
+  if (isStaff(account)) return true
+  const horse = await db.collection('horses').findById(horseId)
+  if (!horse) return false
+  if (horse.createdByUserId && horse.createdByUserId === account.id) return true
+  const horses = await db.collection('horses').find()
+  const links = await db.collection('horsePartyLinks').find()
+  return authorisedHorseIds(account, { horses, links }).includes(horseId)
+}
+
+/**
+ * Horse-scoped write gate: GET is public (optionally account-aware so the
+ * handler can filter private/unverified rows); writes require staff OR an
+ * authorised relationship to the target horse.
+ *   - `idIsHorse`   the router's :id IS the horse id (the horses router itself);
+ *                   POST is allowed for any signed-in account (the handler stamps
+ *                   creator + auto-links their owner party).
+ *   - otherwise     a child record keyed by `horse_id` (body on POST; looked up
+ *                   from `collection` on PUT/DELETE).
+ *   - `optionalGet` attach the account on GET (for visibility filtering).
+ */
+export function horseScopedWriteGate(opts: {
+  collection: string
+  idIsHorse?: boolean
+  optionalGet?: boolean
+}) {
+  return (req: Request, res: Response, next: NextFunction): void => {
+    if (req.method === 'GET') {
+      if (opts.optionalGet) {
+        void attachAccountOptional(req, res, next)
+        return
+      }
+      return next()
+    }
+    void attachAccount(req, res, async () => {
+      const account = req.account
+      if (isStaff(account)) return next()
+
+      if (req.method === 'POST') {
+        if (opts.idIsHorse) return next() // create a horse: handler stamps creator + auto-links owner
+        const horseId = typeof req.body?.horse_id === 'string' ? req.body.horse_id : undefined
+        if (horseId && (await accountCanManageHorse(account, horseId))) return next()
+        return forbid(res, 'You can only add records to horses you manage.')
+      }
+
+      // PUT / DELETE on /:id
+      const id = firstSegment(req)
+      if (!id) return forbid(res, 'Not allowed.')
+      let horseId: string | undefined
+      if (opts.idIsHorse) {
+        horseId = id
+      } else {
+        const rec = await db.collection(opts.collection).findById(id)
+        horseId = rec?.horse_id ? String(rec.horse_id) : undefined
+      }
+      if (horseId && (await accountCanManageHorse(account, horseId))) return next()
+      return forbid(res, 'You can only modify horses you manage.')
+    })
+  }
 }
 
 /** First non-empty path segment of the mounted sub-path (the :id for /:id routes). */

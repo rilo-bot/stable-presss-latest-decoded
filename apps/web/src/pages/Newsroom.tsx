@@ -3,6 +3,7 @@ import { useArticleStore } from '@/stores/articleStore';
 import { useAuthStore } from '@/stores/authStore';
 import { useHorseStore } from '@/stores/horseStore';
 import { usePartyStore } from '@/stores/partyStore';
+import { connectionResolver } from '@/lib/horseConnections';
 import { useMediaStore } from '@/stores/mediaStore';
 import { useRacingEntryStore } from '@/stores/racingEntryStore';
 import {
@@ -265,6 +266,7 @@ export default function Newsroom() {
   const horses = useHorseStore((s) => s.horses);
   const parties = usePartyStore((s) => s.parties);
   const removeParty = usePartyStore((s) => s.removeParty);
+  const horseConn = useMemo(() => connectionResolver(parties ?? []), [parties]);
 
   // Media store
   const mediaItems = useMediaStore((s) => s.items);
@@ -378,15 +380,17 @@ export default function Newsroom() {
   const filteredHorses = useMemo(() => {
     const q = horseSearch.toLowerCase().trim();
     if (!q) return horses ?? [];
-    return (horses ?? []).filter(
-      (h) =>
+    return (horses ?? []).filter((h) => {
+      const c = horseConn(h);
+      return (
         h.name?.toLowerCase().includes(q) ||
-        h.trainer?.toLowerCase().includes(q) ||
-        h.jockey?.toLowerCase().includes(q) ||
-        h.owner?.toLowerCase().includes(q) ||
+        c.trainer.toLowerCase().includes(q) ||
+        c.jockey.toLowerCase().includes(q) ||
+        c.owner.toLowerCase().includes(q) ||
         h.country?.toLowerCase().includes(q)
-    );
-  }, [horses, horseSearch]);
+      );
+    });
+  }, [horses, horseSearch, horseConn]);
 
   const safeParties = parties ?? [];
 
@@ -802,13 +806,13 @@ export default function Newsroom() {
                             </div>
                           </td>
                           <td className="px-4 py-3">
-                            <span className="text-xs text-muted-foreground line-clamp-1">{horse.owner || '—'}</span>
+                            <span className="text-xs text-muted-foreground line-clamp-1">{horseConn(horse).owner || '—'}</span>
                           </td>
                           <td className="px-4 py-3">
-                            <span className="text-xs text-muted-foreground">{horse.trainer || '—'}</span>
+                            <span className="text-xs text-muted-foreground">{horseConn(horse).trainer || '—'}</span>
                           </td>
                           <td className="px-4 py-3">
-                            <span className="text-xs text-muted-foreground">{horse.jockey || '—'}</span>
+                            <span className="text-xs text-muted-foreground">{horseConn(horse).jockey || '—'}</span>
                           </td>
                           <td className="px-4 py-3">
                             {horse.country ? (

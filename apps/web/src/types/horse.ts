@@ -68,28 +68,6 @@ export interface Horse {
    */
   personnelIds?: string[];
 
-  /* ── Legacy free-text fields (kept for backwards compat with existing horses) ── */
-  /** @deprecated Use ownerIds */
-  owner?: string;
-  /** @deprecated Use ownerIds */
-  ownerSince?: string;
-  /** @deprecated Use breederIds */
-  breeder?: string;
-  /** @deprecated Use trainerIds */
-  trainer?: string;
-  /** @deprecated Use trainerIds */
-  trainerSince?: string;
-  /** @deprecated Use jockeyIds */
-  jockey?: string;
-  /** @deprecated Use syndicateManagerIds */
-  syndicateManager?: string;
-  /** @deprecated Use bloodstockAgentIds */
-  bloodstockAgent?: string;
-  /** @deprecated Use personnelIds */
-  horseBreaker?: string;
-  /** @deprecated Use personnelIds */
-  associatedPersonnel?: string;
-
   /* ── Section 4: Racing Summary ── */
   careerRecord?: string;
   careerWinnings?: number;
@@ -104,4 +82,13 @@ export interface Horse {
 
   /* ── Legacy ── */
   age?: number;
+
+  /* ── Ownership & verification (member self-service) ── */
+  /** Account id that created this horse via member self-registration. */
+  createdByUserId?: string;
+  /**
+   * Member-created horses are 'unverified' and hidden from the public site until
+   * staff / NZTR verification; staff-created horses are 'verified'.
+   */
+  verificationStatus?: 'unverified' | 'verified';
 }

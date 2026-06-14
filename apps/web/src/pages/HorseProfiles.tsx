@@ -1,7 +1,9 @@
 import { useState, useMemo, useEffect } from 'react';
 import { useNavigate, Link } from 'react-router-dom';
 import { useHorseStore } from '@/stores/horseStore';
+import { usePartyStore } from '@/stores/partyStore';
 import { useFollowStore, followerCount } from '@/stores/followStore';
+import { connectionResolver } from '@/lib/horseConnections';
 import { HorseCard } from '@/components/HorseCard';
 import { HorseSkeletonCard } from '@/components/SkeletonCard';
 import { EmptyState } from '@/components/EmptyState';
@@ -12,12 +14,15 @@ import { motion } from 'framer-motion';
 export default function HorseProfiles() {
   // === auto fetch-on-mount (backend planner) ===
   const fetchHorses = useHorseStore((s) => s.fetchHorses);
+  const fetchParties = usePartyStore((s) => s.fetchParties);
   useEffect(() => {
     fetchHorses();
-  }, [fetchHorses]);
+    fetchParties();
+  }, [fetchHorses, fetchParties]);
   // === end auto fetch-on-mount ===
 
   const horses = useHorseStore((s) => s.horses);
+  const parties = usePartyStore((s) => s.parties);
   const navigate = useNavigate();
   const [query, setQuery] = useState('');
   const [loading, setLoading] = useState(true);
@@ -40,14 +45,17 @@ export default function HorseProfiles() {
   const filtered = useMemo(() => {
     const q = query.toLowerCase().trim();
     if (!q) return safeHorses;
-    return safeHorses.filter(
-      (h) =>
+    const conn = connectionResolver(parties ?? []);
+    return safeHorses.filter((h) => {
+      const c = conn(h);
+      return (
         h.name?.toLowerCase().includes(q) ||
-        h.trainer?.toLowerCase().includes(q) ||
-        h.jockey?.toLowerCase().includes(q) ||
-        h.owner?.toLowerCase().includes(q)
-    );
-  }, [safeHorses, query]);
+        c.trainer.toLowerCase().includes(q) ||
+        c.jockey.toLowerCase().includes(q) ||
+        c.owner.toLowerCase().includes(q)
+      );
+    });
+  }, [safeHorses, query, parties]);
 
   return (
     <div className="max-w-7xl mx-auto px-4 md:px-8 py-10">

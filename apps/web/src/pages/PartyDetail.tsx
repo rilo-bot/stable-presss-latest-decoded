@@ -3,11 +3,16 @@ import { useParams, useNavigate, useSearchParams, Navigate } from 'react-router-
 import { motion, AnimatePresence } from 'framer-motion';
 import {
   Star, ChevronRight, X, User, Briefcase, Flag, BookOpen, Shield, Users,
-  Camera, TrendingUp, ShoppingCart, Heart, Wand, Binary, FileText, Trophy, Contact,
+  Camera, TrendingUp, ShoppingCart, Heart, Wand, Binary, FileText, Trophy, Contact, Plus, Pencil,
 } from 'lucide-react';
 import { usePartyStore } from '@/stores/partyStore';
 import { useHorseStore } from '@/stores/horseStore';
 import { useArticleStore } from '@/stores/articleStore';
+import { useAuthStore } from '@/stores/authStore';
+import { canManageParty } from '@/rbac/can';
+import { PartyForm } from '@/components/PartyForm';
+import { HorseForm } from '@/components/HorseForm';
+import { HorseStudio } from '@/components/HorseStudio';
 import type { Party, PartyRole } from '@/types/party';
 import { PARTY_ROLE_LABELS } from '@/types/party';
 import { useProfileScope } from '@/hooks/useProfileScope';
@@ -64,6 +69,10 @@ export default function PartyDetail() {
   const navigate = useNavigate();
   const [searchParams, setSearchParams] = useSearchParams();
   const [activeModule, setActiveModule] = useState<string | null>(null);
+  const [editProfileOpen, setEditProfileOpen] = useState(false);
+  const [registerHorseOpen, setRegisterHorseOpen] = useState(false);
+  const [studioHorseId, setStudioHorseId] = useState<string | null>(null);
+  const currentUser = useAuthStore((s) => s.currentUser);
 
   // Reset any open module when the subject changes (recursive re-pointing).
   useEffect(() => { setActiveModule(null); }, [id, searchParams.get('role')]);
@@ -90,6 +99,7 @@ export default function PartyDetail() {
   if (parties.length > 0 && !party) return <Navigate to="/parties" replace />;
 
   const roleLabel = ROLE_BINDINGS[activeRole]?.label ?? 'Profile';
+  const isOwner = canManageParty(currentUser, id);
   const partyName = party?.name ?? 'Loading…';
   const heroImg = party ? partyPhoto(party, ROLE_IMG_KEY[activeRole]) : FALLBACK_IMAGES.owner;
 
@@ -226,6 +236,11 @@ export default function PartyDetail() {
             )}
             <div style={{ background: 'linear-gradient(180deg, var(--forest-mid) 0%, var(--forest-deep) 100%)', borderTop: '2px solid var(--gold-dark)', padding: '10px 14px', display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12, flexWrap: 'wrap' }}>
               <FollowButton horseId={`party:${id}`} label={`Follow This ${roleLabel}`} />
+              {isOwner && (
+                <button onClick={() => setEditProfileOpen(true)} style={{ display: 'flex', alignItems: 'center', gap: 5, padding: '5px 11px', borderRadius: 3, border: '1px solid var(--gold-mid)', background: 'linear-gradient(135deg, var(--gold-bright), var(--gold-mid))', color: 'var(--forest-deep)', fontWeight: 700, fontSize: '0.56rem', textTransform: 'uppercase', letterSpacing: '0.1em', cursor: 'pointer', ...serifStyle }}>
+                  <Pencil size={11} /> Edit Profile
+                </button>
+              )}
               <DossierMeter filled={dossierFilled} total={dossierFlags.length} />
             </div>
           </div>
@@ -260,6 +275,11 @@ export default function PartyDetail() {
                     <div style={{ fontSize: '0.5rem', letterSpacing: '0.18em', textTransform: 'uppercase', color: 'var(--gold-bright)' }}>{roleLabel}</div>
                     <div style={{ fontSize: '0.9rem', fontWeight: 700, color: 'var(--parchment)' }}>{partyName}</div>
                   </div>
+                  {isOwner && (
+                    <button onClick={() => setEditProfileOpen(true)} title="Upload your photo" style={{ position: 'absolute', top: 8, right: 8, display: 'flex', alignItems: 'center', gap: 4, padding: '4px 8px', borderRadius: 3, border: '1px solid var(--gold-mid)', background: 'rgba(14,36,22,0.85)', color: 'var(--gold-bright)', cursor: 'pointer', fontSize: '0.52rem', textTransform: 'uppercase', letterSpacing: '0.1em', ...serifStyle }}>
+                      <Camera size={11} /> Photo
+                    </button>
+                  )}
                 </div>
               </div>
 
@@ -281,9 +301,16 @@ export default function PartyDetail() {
 
               {/* Horses connected to this party */}
               <div className="sku-gold-card" style={{ ...serifStyle }}>
-                <div className="sku-green-header" style={{ padding: '7px 12px', display: 'flex', alignItems: 'center', gap: 6 }}>
-                  <BookOpen size={12} style={{ color: 'var(--gold-bright)' }} />
-                  <span style={{ ...goldStyle, fontSize: '0.6rem', letterSpacing: '0.16em', textTransform: 'uppercase', fontWeight: 700 }}>Horses · {scope.horses.length}</span>
+                <div className="sku-green-header" style={{ padding: '7px 12px', display: 'flex', alignItems: 'center', gap: 6, justifyContent: 'space-between' }}>
+                  <span style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                    <BookOpen size={12} style={{ color: 'var(--gold-bright)' }} />
+                    <span style={{ ...goldStyle, fontSize: '0.6rem', letterSpacing: '0.16em', textTransform: 'uppercase', fontWeight: 700 }}>Horses · {scope.horses.length}</span>
+                  </span>
+                  {isOwner && (
+                    <button onClick={() => setRegisterHorseOpen(true)} style={{ display: 'flex', alignItems: 'center', gap: 4, padding: '3px 8px', borderRadius: 3, border: '1px solid var(--gold-mid)', background: 'linear-gradient(135deg, var(--gold-bright), var(--gold-mid))', color: 'var(--forest-deep)', fontWeight: 700, fontSize: '0.5rem', textTransform: 'uppercase', letterSpacing: '0.08em', cursor: 'pointer', ...serifStyle }}>
+                      <Plus size={11} /> Register Horse
+                    </button>
+                  )}
                 </div>
                 <div className="sku-parchment" style={{ padding: '8px 10px' }}>
                   {scope.horses.length === 0 ? (
@@ -292,7 +319,7 @@ export default function PartyDetail() {
                     <ul style={{ listStyle: 'none', padding: 0, margin: 0 }}>
                       {scope.horses.map((h, idx) => (
                         <li key={h.id} style={{ borderBottom: idx < scope.horses.length - 1 ? '1px solid var(--parchment-dark)' : undefined }}>
-                          <button onClick={() => goHorse(h.id)} style={{ width: '100%', display: 'flex', alignItems: 'center', gap: 10, padding: '8px 4px', background: 'none', border: 'none', cursor: 'pointer', textAlign: 'left' }}>
+                          <button onClick={() => (isOwner ? setStudioHorseId(h.id) : goHorse(h.id))} style={{ width: '100%', display: 'flex', alignItems: 'center', gap: 10, padding: '8px 4px', background: 'none', border: 'none', cursor: 'pointer', textAlign: 'left' }}>
                             <div style={{ width: 34, height: 34, borderRadius: 3, overflow: 'hidden', border: '1px solid var(--gold-mid)', flexShrink: 0, background: 'var(--forest-deep)' }}>
                               {h.imageUrl && <img src={h.imageUrl} alt={h.name} crossOrigin="anonymous" style={{ width: '100%', height: '100%', objectFit: 'cover' }} />}
                             </div>
@@ -327,6 +354,17 @@ export default function PartyDetail() {
           </div>
         </div>
       </div>
+
+      {party && isOwner && (
+        <>
+          <PartyForm open={editProfileOpen} onOpenChange={setEditProfileOpen} party={party} />
+          <HorseForm open={registerHorseOpen} onClose={() => setRegisterHorseOpen(false)} defaultOwnerId={id} memberMode />
+        </>
+      )}
+
+      {studioHorseId && (
+        <HorseStudio horseId={studioHorseId} onBack={() => setStudioHorseId(null)} subjectLabel={partyName} />
+      )}
 
       <style>{`
         .party-page { background: linear-gradient(180deg, var(--forest-deep) 0%, #111e17 100%); min-height: calc(100vh - var(--navbar-h, 112px)); display: flex; flex-direction: column; }

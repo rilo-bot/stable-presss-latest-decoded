@@ -1,6 +1,8 @@
 import { cn } from '@/lib/utils';
 import type { Horse } from '@/types/horse';
 import { useNavigate } from 'react-router-dom';
+import { usePartyStore } from '@/stores/partyStore';
+import { connectionResolver } from '@/lib/horseConnections';
 
 const FALLBACK_IMAGE =
   'https://images.pexels.com/photos/11341144/pexels-photo-11341144.jpeg?auto=compress&cs=tinysrgb&h=350';
@@ -12,6 +14,8 @@ interface HorseCardProps {
 
 export function HorseCard({ horse, className }: HorseCardProps) {
   const navigate = useNavigate();
+  const parties = usePartyStore((s) => s.parties);
+  const conn = connectionResolver(parties)(horse);
   const imageSrc = horse.imageUrl?.trim() ? horse.imageUrl : FALLBACK_IMAGE;
 
   return (
@@ -106,25 +110,25 @@ export function HorseCard({ horse, className }: HorseCardProps) {
             <dt className="text-[9px] uppercase tracking-[0.12em] text-muted-foreground font-semibold mb-0.5">
               Owner
             </dt>
-            <dd className="text-[13px] text-foreground leading-snug truncate">{horse.owner}</dd>
+            <dd className="text-[13px] text-foreground leading-snug truncate">{conn.owner || '—'}</dd>
           </div>
           <div>
             <dt className="text-[9px] uppercase tracking-[0.12em] text-muted-foreground font-semibold mb-0.5">
               Trainer
             </dt>
-            <dd className="text-[13px] text-foreground leading-snug truncate">{horse.trainer}</dd>
+            <dd className="text-[13px] text-foreground leading-snug truncate">{conn.trainer || '—'}</dd>
           </div>
           <div>
             <dt className="text-[9px] uppercase tracking-[0.12em] text-muted-foreground font-semibold mb-0.5">
               Jockey
             </dt>
-            <dd className="text-[13px] text-foreground leading-snug truncate">{horse.jockey}</dd>
+            <dd className="text-[13px] text-foreground leading-snug truncate">{conn.jockey || '—'}</dd>
           </div>
           <div>
             <dt className="text-[9px] uppercase tracking-[0.12em] text-muted-foreground font-semibold mb-0.5">
               Breeder
             </dt>
-            <dd className="text-[13px] text-foreground leading-snug truncate">{horse.breeder}</dd>
+            <dd className="text-[13px] text-foreground leading-snug truncate">{conn.breeder || '—'}</dd>
           </div>
         </dl>
 

@@ -3,6 +3,8 @@ import { Link } from 'react-router-dom';
 import { motion } from 'framer-motion';
 import { useArticleStore } from '@/stores/articleStore';
 import { useHorseStore } from '@/stores/horseStore';
+import { usePartyStore } from '@/stores/partyStore';
+import { connectionResolver } from '@/lib/horseConnections';
 import { useAuthStore } from '@/stores/authStore';
 import { ArticleCard } from '@/components/ArticleCard';
 import { ArticleSkeletonCard } from '@/components/SkeletonCard';
@@ -157,13 +159,17 @@ const FEATURED_ANALYSIS = [
 export default function Landing() {
   // === auto fetch-on-mount (backend planner) ===
   const fetchHorses = useHorseStore((s) => s.fetchHorses);
+  const fetchParties = usePartyStore((s) => s.fetchParties);
   useEffect(() => {
     fetchHorses();
-  }, [fetchHorses]);
+    fetchParties();
+  }, [fetchHorses, fetchParties]);
   // === end auto fetch-on-mount ===
 
   const articles = useArticleStore((s) => s.articles);
   const horses = useHorseStore((s) => s.horses);
+  const parties = usePartyStore((s) => s.parties);
+  const horseConn = useMemo(() => connectionResolver(parties ?? []), [parties]);
   const currentUser = useAuthStore((s) => s.currentUser);
 
   const [tickerIdx] = useState(0);
@@ -528,7 +534,7 @@ export default function Landing() {
                           {horse.name}
                         </h3>
                         <p className="text-[11px] text-muted-foreground mt-0.5">
-                          Trainer: {horse.trainer} · Jockey: {horse.jockey}
+                          Trainer: {horseConn(horse).trainer || '—'} · Jockey: {horseConn(horse).jockey || '—'}
                         </p>
                       </div>
                       {horse.colour && (

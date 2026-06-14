@@ -1,5 +1,6 @@
 import { Router } from 'express';
 import { db } from '../lib/db.js';
+import { createNotification, usersForParty } from '../lib/notify.js';
 
 type WithMongoId = { _id: string; [key: string]: unknown };
 function project<T extends WithMongoId>(doc: T): Omit<T, '_id'> & { id: string } {
@@ -48,6 +49,31 @@ router.post('/', async (req, res) => {
     res.status(500).json({ error: 'failed to create' });
     return;
   }
+
+  // Notify the account(s) behind the linked party that they've been connected to
+  // this horse (informational only — no accept/decline). Skip the actor.
+  const actorId = req.account?.id;
+  const recipients = (await usersForParty(String(body.party_id))).filter((uid) => uid !== actorId);
+  if (recipients.length > 0) {
+    const horse = await db.collection('horses').findById(String(body.horse_id));
+    const horseName = horse?.name ?? 'a horse';
+    const actorName = req.account?.displayName ?? 'Someone';
+    const rel = String(body.relationship_type);
+    await Promise.all(
+      recipients.map((uid) =>
+        createNotification({
+          recipientUserId: uid,
+          type: 'horse_link',
+          message: `${actorName} linked you to ${horseName} as ${rel}.`,
+          horseId: String(body.horse_id),
+          partyId: String(body.party_id),
+          linkId: id,
+          actorUserId: actorId,
+        }),
+      ),
+    );
+  }
+
   res.status(201).json(project(created));
 });
 

@@ -5,7 +5,7 @@ import { useOrgStore } from '@/stores/orgStore';
 import { useClaimStore } from '@/stores/claimStore';
 import { useHorseStore } from '@/stores/horseStore';
 import { useHorsePartyLinkStore } from '@/stores/horsePartyLinkStore';
-import { authorisedHorseIds, isStaff } from '@/rbac/can';
+import { authorisedHorseIds, previewHorseIds, hasPendingClaim, isStaff } from '@/rbac/can';
 import { PARTY_ROLES, PARTY_ROLE_LABELS } from '@/types/party';
 import type { PartyRole } from '@/types/party';
 import { TIER_ORDER, TIER_LABELS } from '@/rbac/entitlement';
@@ -14,7 +14,7 @@ import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { toast } from 'sonner';
 import {
-  Newspaper, Star, Mic, HelpCircle, Building2, ShieldCheck, Users, PlusCircle, Loader2, Crown, Check, BookOpen,
+  Newspaper, Star, Mic, HelpCircle, Building2, ShieldCheck, Users, PlusCircle, Loader2, Crown, Check, BookOpen, Clock, Lock,
 } from 'lucide-react';
 
 function Section({ title, icon, children }: { title: string; icon: React.ReactNode; children: React.ReactNode }) {
@@ -51,15 +51,24 @@ export default function Dashboard() {
     void fetchLinks();
   }, [fetchMine, fetchHorses, fetchLinks]);
 
+  // Verified scope = horses the user can actually manage (write).
   const stableHorses = useMemo(() => {
     const ids = new Set(authorisedHorseIds(currentUser, { horses, links }));
     return horses.filter((h) => ids.has(h.id));
+  }, [currentUser, horses, links]);
+
+  // Pending-only scope = horses visible read-only while a claim awaits verification.
+  const previewHorses = useMemo(() => {
+    const verified = new Set(authorisedHorseIds(currentUser, { horses, links }));
+    const preview = new Set(previewHorseIds(currentUser, { horses, links }));
+    return horses.filter((h) => preview.has(h.id) && !verified.has(h.id));
   }, [currentUser, horses, links]);
 
   if (!currentUser) return null;
   const staff = isStaff(currentUser);
   const admin = currentUser.roles.includes('administrator');
   const claims = currentUser.partyClaims ?? [];
+  const awaitingVerification = hasPendingClaim(currentUser);
 
   const onClaim = async () => {
     setBusy('claim');
@@ -206,21 +215,57 @@ export default function Dashboard() {
 
         {/* My stable */}
         <Section title="My Stable" icon={<BookOpen size={15} />}>
-          {stableHorses.length === 0 ? (
+          {awaitingVerification && (
+            <div className="flex items-start gap-2 mb-3 rounded-sm border border-amber-500/30 bg-amber-500/10 px-3 py-2">
+              <Clock size={14} className="mt-0.5 shrink-0 text-amber-600" />
+              <p className="text-[11px] leading-snug text-amber-700">
+                A role claim is awaiting verification. You can preview your stable below in{' '}
+                <span className="font-semibold">view-only</span> mode — editing unlocks once an admin
+                or your organisation approves it.
+              </p>
+            </div>
+          )}
+
+          {stableHorses.length === 0 && previewHorses.length === 0 ? (
             <p className="text-xs text-muted-foreground">
               Horses you have a verified, current link to will appear here.
             </p>
           ) : (
-            <div className="grid grid-cols-2 gap-2">
-              {stableHorses.map((h) => (
-                <Link
-                  key={h.id}
-                  to={`/horses/${h.id}`}
-                  className="p-2 border border-border/60 rounded-sm text-sm text-foreground hover:border-primary/50 transition-colors truncate"
-                >
-                  {h.name}
-                </Link>
-              ))}
+            <div className="space-y-3">
+              {stableHorses.length > 0 && (
+                <div className="grid grid-cols-2 gap-2">
+                  {stableHorses.map((h) => (
+                    <Link
+                      key={h.id}
+                      to={`/horses/${h.id}`}
+                      className="p-2 border border-border/60 rounded-sm text-sm text-foreground hover:border-primary/50 transition-colors truncate"
+                    >
+                      {h.name}
+                    </Link>
+                  ))}
+                </div>
+              )}
+
+              {previewHorses.length > 0 && (
+                <div>
+                  <p className="text-[10px] uppercase tracking-[0.12em] font-bold text-muted-foreground mb-1.5">
+                    Pending verification · view only
+                  </p>
+                  <div className="grid grid-cols-2 gap-2">
+                    {previewHorses.map((h) => (
+                      <Link
+                        key={h.id}
+                        to={`/horses/${h.id}`}
+                        className="flex items-center gap-1.5 p-2 border border-dashed border-amber-500/40 bg-amber-500/5 rounded-sm text-sm text-muted-foreground hover:text-foreground transition-colors truncate"
+                        title="View only until your claim is verified"
+                      >
+                        <Lock size={12} className="shrink-0 text-amber-600" />
+                        <span className="truncate">{h.name}</span>
+                      </Link>
+                    ))}
+                  </div>
+                </div>
+              )}
             </div>
           )}
         </Section>

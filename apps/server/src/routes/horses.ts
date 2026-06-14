@@ -1,5 +1,7 @@
 import { Router } from 'express';
 import { db } from '../lib/db.js';
+import { isStaff } from '../lib/rbac.js';
+import { authorisedHorseIds } from '../lib/scope.js';
 
 type WithMongoId = { _id: string; [key: string]: unknown };
 function project<T extends WithMongoId>(doc: T): Omit<T, '_id'> & { id: string } {
@@ -11,7 +13,26 @@ const router = Router();
 
 router.get('/', async (req, res) => {
   const items = await db.collection('horses').find();
-  res.json(items.map(project));
+  const account = req.account;
+  if (isStaff(account)) {
+    res.json(items.map(project));
+    return;
+  }
+  // Non-staff callers: hide horses that are still unverified, except the viewer's
+  // own created/authorised horses (so an owner can see the pending horse they
+  // just registered).
+  let allowed = new Set<string>();
+  if (account) {
+    const links = await db.collection('horsePartyLinks').find();
+    allowed = new Set(authorisedHorseIds(account, { horses: items, links }));
+  }
+  const visible = items.filter(
+    (h) =>
+      h.verificationStatus !== 'unverified' ||
+      (account ? h.createdByUserId === account.id : false) ||
+      allowed.has(String(h._id)),
+  );
+  res.json(visible.map(project));
 });
 
 router.post('/', async (req, res) => {
@@ -46,6 +67,7 @@ router.post('/', async (req, res) => {
     pedigreeNotes: string;
     pullQuote: string;
     imageUrl: string;
+    verificationStatus: string;
   }>;
 
   if (!body || !body.name) {
@@ -53,15 +75,47 @@ router.post('/', async (req, res) => {
     return;
   }
 
+  const account = req.account;
+  const staff = isStaff(account);
   const now = new Date().toISOString();
+
+  // Staff-created horses are live; member-created horses are unverified (hidden
+  // from the public site) until staff/NZTR verification. Members never self-verify.
+  const verificationStatus: 'verified' | 'unverified' = staff
+    ? body.verificationStatus === 'unverified'
+      ? 'unverified'
+      : 'verified'
+    : 'unverified';
+
   const doc: Record<string, unknown> = {
     ...body,
+    verificationStatus,
+    createdByUserId: account?.id,
     createdAt: now,
     updatedAt: now,
   };
   delete (doc as { id?: unknown }).id;
 
   const id = await db.collection('horses').insertOne(doc);
+
+  // A member registering a horse becomes its owner: auto-link their verified
+  // owner party (or first verified party) so the horse joins the connection
+  // graph and they keep authorised access via the standard scope rules.
+  if (account && !staff) {
+    const verified = account.partyClaims.filter((c) => c.status === 'verified');
+    const ownerClaim = verified.find((c) => c.role === 'owner') ?? verified[0];
+    if (ownerClaim) {
+      await db.collection('horsePartyLinks').insertOne({
+        horse_id: id,
+        party_id: ownerClaim.partyId,
+        relationship_type: 'ownership',
+        start_date: now.slice(0, 10),
+        createdAt: now,
+        updatedAt: now,
+      });
+    }
+  }
+
   const created = await db.collection('horses').findById(id);
   if (!created) {
     res.status(500).json({ error: 'failed to create' });
@@ -102,10 +156,17 @@ router.put('/:id', async (req, res) => {
     pedigreeNotes: string;
     pullQuote: string;
     imageUrl: string;
+    verificationStatus: string;
   }>;
 
+  const account = req.account;
+  const staff = isStaff(account);
   const now = new Date().toISOString();
-  const updated_flag = await db.collection('horses').updateOne(req.params.id, { ...body, updatedAt: now });
+  const update: Record<string, unknown> = { ...body, updatedAt: now };
+  delete (update as { id?: unknown }).id;
+  delete (update as { createdByUserId?: unknown }).createdByUserId; // never client-settable
+  if (!staff) delete (update as { verificationStatus?: unknown }).verificationStatus; // members can't self-verify
+  const updated_flag = await db.collection('horses').updateOne(req.params.id, update);
   if (!updated_flag) {
     res.status(404).json({ error: 'Not found' });
     return;

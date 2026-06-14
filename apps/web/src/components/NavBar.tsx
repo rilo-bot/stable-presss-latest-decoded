@@ -3,6 +3,8 @@ import { Link, useNavigate, useLocation } from 'react-router-dom';
 import { cn } from '@/lib/utils';
 import { useAuthStore } from '@/stores/authStore';
 import { can } from '@/lib/permissions';
+import { isStaff, primaryPartyId } from '@/rbac/can';
+import { NotificationBell } from '@/components/NotificationBell';
 import {
   Menu,
   X,
@@ -187,6 +189,9 @@ export function NavBar() {
   const location = useLocation();
 
   const role = currentUser?.role;
+  const staff = isStaff(currentUser);
+  const accountLabel = staff ? 'Staff' : 'Member';
+  const myPartyId = primaryPartyId(currentUser);
 
   const showPodcastWorkflow =
     can(role, 'podcast.manage') ||
@@ -244,46 +249,57 @@ export function NavBar() {
           </div>
           <div className="flex items-center gap-3 text-[10px] uppercase tracking-[0.1em]">
             {!currentUser && (
-              <>
-                <Link
-                  to="/signup"
-                  className="opacity-70 hover:opacity-100 transition-opacity font-semibold"
-                  style={{ color: 'hsl(var(--brand-accent))' }}
-                >
-                  Subscribe
-                </Link>
-                <span className="h-3 w-px bg-primary-foreground/20" />
-              </>
+              <Link
+                to="/signup"
+                className="opacity-70 hover:opacity-100 transition-opacity font-semibold"
+                style={{ color: 'hsl(var(--brand-accent))' }}
+              >
+                Subscribe
+              </Link>
             )}
             {currentUser && (
+              <Link
+                to="/dashboard"
+                className="opacity-70 hover:opacity-100 transition-opacity font-semibold"
+                style={{ color: 'hsl(var(--brand-accent))' }}
+              >
+                Dashboard
+              </Link>
+            )}
+            {currentUser && myPartyId && (
               <>
+                <span className="h-3 w-px bg-primary-foreground/20" />
                 <Link
-                  to="/dashboard"
+                  to={`/parties/${myPartyId}`}
                   className="opacity-70 hover:opacity-100 transition-opacity font-semibold"
                   style={{ color: 'hsl(var(--brand-accent))' }}
                 >
-                  Dashboard
+                  My Profile
                 </Link>
-                <span className="h-3 w-px bg-primary-foreground/20" />
               </>
             )}
             {currentUser?.orgMemberships && currentUser.orgMemberships.length > 0 && (
               <>
+                <span className="h-3 w-px bg-primary-foreground/20" />
                 <Link
                   to={`/orgs/${currentUser.orgMemberships[0].orgId}`}
                   className="opacity-70 hover:opacity-100 transition-opacity"
                 >
                   My Organisation
                 </Link>
-                <span className="h-3 w-px bg-primary-foreground/20" />
               </>
             )}
-            <Link
-              to="/newsroom"
-              className="opacity-60 hover:opacity-100 transition-opacity"
-            >
-              Newsroom
-            </Link>
+            {staff && (
+              <>
+                <span className="h-3 w-px bg-primary-foreground/20" />
+                <Link
+                  to="/newsroom"
+                  className="opacity-60 hover:opacity-100 transition-opacity"
+                >
+                  Newsroom
+                </Link>
+              </>
+            )}
             {role === 'administrator' && (
               <>
                 <span className="h-3 w-px bg-primary-foreground/20" />
@@ -344,6 +360,7 @@ export function NavBar() {
           <div className="hidden md:flex items-center gap-3">
             {currentUser ? (
               <div className="flex items-center gap-3">
+                <NotificationBell />
                 <div className="flex items-center gap-1.5 px-3 py-1 rounded-full bg-primary-foreground/10 border border-primary-foreground/20">
                   <User size={12} className="text-primary-foreground/80" />
                   <span className="text-xs font-medium text-primary-foreground">{currentUser.displayName}</span>
@@ -354,7 +371,7 @@ export function NavBar() {
                       color: 'hsl(var(--brand-accent-foreground))',
                     }}
                   >
-                    Member
+                    {accountLabel}
                   </span>
                 </div>
                 <Button
@@ -493,22 +510,24 @@ export function NavBar() {
               </Link>
             )}
 
-            <Link
-              to="/newsroom"
-              className={cn(
-                'flex items-center gap-1.5 px-3 py-2.5 text-[11px] uppercase tracking-[0.1em] font-semibold transition-colors border-b-2 flex-shrink-0',
-                location.pathname === '/newsroom'
-                  ? 'text-primary-foreground'
-                  : 'text-primary-foreground/65 hover:text-primary-foreground border-transparent'
-              )}
-              style={
-                location.pathname === '/newsroom'
-                  ? { borderBottomColor: 'hsl(var(--brand-accent))' }
-                  : undefined
-              }
-            >
-              CMS
-            </Link>
+            {staff && (
+              <Link
+                to="/newsroom"
+                className={cn(
+                  'flex items-center gap-1.5 px-3 py-2.5 text-[11px] uppercase tracking-[0.1em] font-semibold transition-colors border-b-2 flex-shrink-0',
+                  location.pathname === '/newsroom'
+                    ? 'text-primary-foreground'
+                    : 'text-primary-foreground/65 hover:text-primary-foreground border-transparent'
+                )}
+                style={
+                  location.pathname === '/newsroom'
+                    ? { borderBottomColor: 'hsl(var(--brand-accent))' }
+                    : undefined
+                }
+              >
+                CMS
+              </Link>
+            )}
           </nav>
         </div>
       </div>
@@ -666,24 +685,26 @@ export function NavBar() {
               </Link>
             )}
 
-            <Link
-              to="/newsroom"
-              onClick={() => setMobileOpen(false)}
-              className={cn(
-                'flex items-center gap-2.5 px-3 py-2.5 rounded-sm text-sm font-medium transition-colors border-l-2',
-                location.pathname === '/newsroom'
-                  ? 'bg-primary/8 text-primary'
-                  : 'text-muted-foreground hover:text-foreground hover:bg-muted/50 border-transparent'
-              )}
-              style={
-                location.pathname === '/newsroom'
-                  ? { borderLeftColor: 'hsl(var(--brand-accent))' }
-                  : undefined
-              }
-            >
-              <Newspaper size={14} />
-              Newsroom CMS
-            </Link>
+            {staff && (
+              <Link
+                to="/newsroom"
+                onClick={() => setMobileOpen(false)}
+                className={cn(
+                  'flex items-center gap-2.5 px-3 py-2.5 rounded-sm text-sm font-medium transition-colors border-l-2',
+                  location.pathname === '/newsroom'
+                    ? 'bg-primary/8 text-primary'
+                    : 'text-muted-foreground hover:text-foreground hover:bg-muted/50 border-transparent'
+                )}
+                style={
+                  location.pathname === '/newsroom'
+                    ? { borderLeftColor: 'hsl(var(--brand-accent))' }
+                    : undefined
+                }
+              >
+                <Newspaper size={14} />
+                Newsroom CMS
+              </Link>
+            )}
           </div>
 
           {/* Mobile auth */}
@@ -693,6 +714,7 @@ export function NavBar() {
                 <div className="flex items-center gap-2 px-3 py-2">
                   <User size={14} className="text-primary" />
                   <span className="text-sm text-foreground font-medium">{currentUser.displayName}</span>
+                  <NotificationBell tone="light" />
                   <span
                     className="text-[9px] uppercase tracking-wider px-1.5 py-0.5 rounded-full font-bold ml-auto"
                     style={{
@@ -700,7 +722,7 @@ export function NavBar() {
                       color: 'hsl(var(--brand-accent-foreground))',
                     }}
                   >
-                    Member
+                    {accountLabel}
                   </span>
                 </div>
                 <button
