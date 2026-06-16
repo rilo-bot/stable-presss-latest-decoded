@@ -5,7 +5,7 @@ import { persist } from 'zustand/middleware';
  * Member onboarding — tracks whether an individual has dismissed the one-time
  * "welcome" strip shown atop their profile hub (PartyStudio). Per-user so each
  * account is greeted once; persisted to localStorage. Separate from the staff
- * CMS tour (onboardingStore).
+ * Production System tour (onboardingStore).
  */
 interface MemberOnboardingState {
   dismissedByUser: Record<string, boolean>;

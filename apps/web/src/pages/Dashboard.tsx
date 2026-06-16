@@ -380,7 +380,7 @@ export default function Dashboard() {
                 to="/newsroom"
                 className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-sm border border-border/60 text-sm hover:border-primary/50 transition-colors"
               >
-                <Newspaper size={15} /> Newsroom CMS
+                <Newspaper size={15} /> Newsroom Production System
               </Link>
               {admin && (
                 <>

@@ -1,6 +1,6 @@
 /**
  * Full-screen magazine editor: top toolbar + scrolling page canvas + right
- * inspector. Launched from the CMS. No save button — edits persist live.
+ * inspector. Launched from the Production System. No save button — edits persist live.
  */
 
 import { useEffect, useRef, useState } from 'react';

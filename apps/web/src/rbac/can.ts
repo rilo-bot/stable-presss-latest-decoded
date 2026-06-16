@@ -6,7 +6,7 @@
  *   - party/org racing → verified role + relationship SCOPE (scope.ts)
  *   - premium content  → entitlement only (entitlement.ts)
  *
- * These are the building blocks the dashboards, guards, and CRMs call. The
+ * These are the building blocks the dashboards, guards, and Production Systems call. The
  * server mirrors the enforcing subset in apps/server/src/lib/rbac.ts.
  */
 import type { AuthUser } from '@/stores/authStore';
@@ -134,7 +134,7 @@ export function canViewAuthorisedRecord(
   return authorisedHorseIds(user, data).includes(horseId);
 }
 
-/** Can the user edit this horse's racing data? Staff (CRM) or a current linked party/org. */
+/** Can the user edit this horse's racing data? Staff (Production System) or a current linked party/org. */
 export function canManageHorse(
   user: AuthUser | null | undefined,
   horseId: string,

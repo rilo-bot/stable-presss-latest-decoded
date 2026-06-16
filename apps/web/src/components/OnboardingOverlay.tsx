@@ -28,7 +28,7 @@ const FEATURES = [
     icon: Newspaper,
     title: 'Editorial Newsroom',
     description:
-      'A full Kanban CMS — draft, review, approve, and schedule stories through every stage before they hit the front page.',
+      'A full Kanban Production System — draft, review, approve, and schedule stories through every stage before they hit the front page.',
   },
   {
     icon: Share,

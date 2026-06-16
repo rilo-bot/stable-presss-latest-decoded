@@ -245,7 +245,7 @@ function PartyPicker({
         >
           <span className="text-muted-foreground text-xs">
             {filtered.length === 0
-              ? 'No parties with this role yet — add them in the CMS'
+              ? 'No parties with this role yet — add them in the Production System'
               : selectedIds.length === 0
               ? `Select ${label.toLowerCase()}…`
               : `${selectedIds.length} selected`}
@@ -307,7 +307,7 @@ function PartyPicker({
       {filtered.length === 0 && (
         <p className="text-[10px] text-muted-foreground flex items-center gap-1">
           <Plus size={10} />
-          Create parties in the CMS Parties section, then they will appear here.
+          Create parties in the Production System Parties section, then they will appear here.
         </p>
       )}
       {hint && filtered.length > 0 && (
@@ -595,11 +595,11 @@ export function HorseForm({ open, onClose, editHorse, defaultOwnerId, memberMode
     const hasTrainer = (form.trainerIds ?? []).length > 0;
 
     if (!hasOwner) {
-      toast.error('At least one owner is required. Add owners in the Parties CMS first.');
+      toast.error('At least one owner is required. Add owners in the Parties Production System first.');
       return;
     }
     if (!memberMode && !hasTrainer) {
-      toast.error('At least one trainer is required. Add trainers in the Parties CMS first.');
+      toast.error('At least one trainer is required. Add trainers in the Parties Production System first.');
       return;
     }
 
@@ -1010,7 +1010,7 @@ export function HorseForm({ open, onClose, editHorse, defaultOwnerId, memberMode
                 <div>
                   <p className="text-xs font-semibold text-foreground">Linked from your Party database</p>
                   <p className="text-[10px] text-muted-foreground mt-0.5">
-                    All connections below are sourced from Parties in the CMS. Create owners, trainers, jockeys and
+                    All connections below are sourced from Parties in the Production System. Create owners, trainers, jockeys and
                     more in the Parties section — they will appear in the dropdowns here.
                   </p>
                 </div>

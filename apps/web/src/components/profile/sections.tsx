@@ -34,7 +34,7 @@ const EmptyHint = ({ icon, line }: { icon: React.ReactNode; line: string }) => (
   <div style={{ marginTop: 12, padding: '20px 14px', background: 'rgba(0,0,0,0.03)', border: '1px solid var(--parchment-dark)', borderRadius: 3, textAlign: 'center' }}>
     <div style={{ display: 'flex', justifyContent: 'center', marginBottom: 8 }}>{icon}</div>
     <p style={{ fontSize: '0.72rem', fontStyle: 'italic', color: 'var(--parchment-shadow)', marginBottom: 4 }}>{line}</p>
-    <p style={{ fontSize: '0.62rem', color: 'var(--parchment-shadow)' }}>Records are managed through the Stable Press CRM.</p>
+    <p style={{ fontSize: '0.62rem', color: 'var(--parchment-shadow)' }}>Records are managed through the Stable Press Production System.</p>
   </div>
 );
 
@@ -122,7 +122,7 @@ export function MediaSection({ horseIds, subjectName, onClose, onOpenHorse }: Ba
       )}
       <div style={{ marginTop: 14, padding: '10px 12px', background: 'rgba(0,0,0,0.04)', border: '1px solid var(--parchment-dark)', borderRadius: 3, display: 'flex', alignItems: 'center', gap: 8 }}>
         <Image size={14} style={{ color: 'var(--gold-mid)', flexShrink: 0 }} />
-        <span style={{ fontSize: '0.62rem', color: 'var(--parchment-shadow)', fontStyle: 'italic' }}>Media records surface automatically from the Stable Press CRM.</span>
+        <span style={{ fontSize: '0.62rem', color: 'var(--parchment-shadow)', fontStyle: 'italic' }}>Media records surface automatically from the Stable Press Production System.</span>
       </div>
     </SectionPanel>
   );
@@ -269,7 +269,7 @@ export function SalesSection({ horseIds, subjectName, onClose, onOpenHorse }: Ba
       )}
       <div style={{ marginTop: 12, padding: '10px 12px', background: 'rgba(0,0,0,0.04)', border: '1px solid var(--parchment-dark)', borderRadius: 3, display: 'flex', alignItems: 'center', gap: 8 }}>
         <DollarSign size={14} style={{ color: 'var(--gold-mid)', flexShrink: 0 }} />
-        <span style={{ fontSize: '0.64rem', color: 'var(--parchment-shadow)', fontStyle: 'italic' }}>Sales &amp; auction records are managed through the Stable Press CRM.</span>
+        <span style={{ fontSize: '0.64rem', color: 'var(--parchment-shadow)', fontStyle: 'italic' }}>Sales &amp; auction records are managed through the Stable Press Production System.</span>
       </div>
     </SectionPanel>
   );

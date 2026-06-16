@@ -533,12 +533,12 @@ export default function NewsIndex() {
                 The press stands ready. No dispatches have been filed.
               </h3>
               <p className="text-sm text-muted-foreground max-w-md mx-auto mb-5">
-                Published stories from the Newsroom will appear here. Head to the Newsroom CMS to file your first dispatch.
+                Published stories from the Newsroom will appear here. Head to the Newsroom Production System to file your first dispatch.
               </p>
               <div className="flex flex-col sm:flex-row items-center justify-center gap-3">
                 <Button asChild className="bg-primary text-primary-foreground hover:bg-primary/90 gap-1.5">
                   <Link to="/newsroom">
-                    Go to Newsroom CMS
+                    Go to Newsroom Production System
                     <ArrowRight size={14} />
                   </Link>
                 </Button>

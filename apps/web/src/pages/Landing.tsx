@@ -1116,7 +1116,7 @@ export default function Landing() {
                   { to: '/tipping', label: 'Leaderboard' },
                   { to: '/newsletter', label: 'Newsletter' },
                   { to: '/bulletins', label: 'Print Bulletins' },
-                  { to: '/newsroom', label: 'CMS Newsroom' },
+                  { to: '/newsroom', label: 'Production System Newsroom' },
                 ].map((item) => (
                   <li key={item.label}>
                     <Link

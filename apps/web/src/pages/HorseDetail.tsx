@@ -895,13 +895,13 @@ function MediaSection({ horseId, horseName, onClose, partyContext }: {
                 No media featuring {contextName} has been filed yet.
               </p>
               <p style={{ fontSize: '0.62rem', color: 'var(--parchment-shadow)' }}>
-                Media records are managed through the Stable Press CRM.
+                Media records are managed through the Stable Press Production System.
               </p>
             </>
           ) : (
             <>
               <p style={{ fontSize: '0.72rem', fontStyle: 'italic', color: 'var(--parchment-shadow)', marginBottom: 4 }}>No media coverage on file for {horseName} yet.</p>
-              <p style={{ fontSize: '0.62rem', color: 'var(--parchment-shadow)' }}>Media records are managed through the Stable Press CRM.</p>
+              <p style={{ fontSize: '0.62rem', color: 'var(--parchment-shadow)' }}>Media records are managed through the Stable Press Production System.</p>
             </>
           )}
         </div>
@@ -964,8 +964,8 @@ function MediaSection({ horseId, horseName, onClose, partyContext }: {
         <Image size={14} style={{ color: 'var(--gold-mid)', flexShrink: 0 }} />
         <span style={{ fontSize: '0.62rem', color: 'var(--parchment-shadow)', fontStyle: 'italic' }}>
           {partyContext.isPartyContext
-            ? `Showing media featuring ${contextName}. Full records are managed through the Stable Press CRM.`
-            : 'Media records are managed through the Stable Press CRM and linked to this horse automatically.'
+            ? `Showing media featuring ${contextName}. Full records are managed through the Stable Press Production System.`
+            : 'Media records are managed through the Stable Press Production System and linked to this horse automatically.'
           }
         </span>
       </div>
@@ -1046,12 +1046,12 @@ function RacingSection({ horseId, horseName, horse, onClose, partyContext }: {
               <p style={{ fontSize: '0.72rem', fontStyle: 'italic', color: 'var(--parchment-shadow)', marginBottom: 4 }}>
                 No races on file with {contextName} as {partyContext.roleLabel.toLowerCase()}.
               </p>
-              <p style={{ fontSize: '0.62rem', color: 'var(--parchment-shadow)' }}>Racing records are managed through the Stable Press CRM.</p>
+              <p style={{ fontSize: '0.62rem', color: 'var(--parchment-shadow)' }}>Racing records are managed through the Stable Press Production System.</p>
             </>
           ) : (
             <>
               <p style={{ fontSize: '0.72rem', fontStyle: 'italic', color: 'var(--parchment-shadow)', marginBottom: 4 }}>No racing records on file for {horseName} yet.</p>
-              <p style={{ fontSize: '0.62rem', color: 'var(--parchment-shadow)' }}>Racing records are managed through the Stable Press CRM.</p>
+              <p style={{ fontSize: '0.62rem', color: 'var(--parchment-shadow)' }}>Racing records are managed through the Stable Press Production System.</p>
             </>
           )}
         </div>
@@ -1143,7 +1143,7 @@ function RacingSection({ horseId, horseName, horse, onClose, partyContext }: {
       <div style={{ marginTop: 14, padding: '10px 12px', background: 'rgba(0,0,0,0.04)', border: '1px solid var(--parchment-dark)', borderRadius: 3, display: 'flex', alignItems: 'center', gap: 8 }}>
         <TrendingUp size={14} style={{ color: 'var(--gold-mid)', flexShrink: 0 }} />
         <span style={{ fontSize: '0.62rem', color: 'var(--parchment-shadow)', fontStyle: 'italic' }}>
-          Racing records are managed through the Stable Press CRM and surface automatically on this profile.
+          Racing records are managed through the Stable Press Production System and surface automatically on this profile.
         </span>
       </div>
     </SectionPanel>
@@ -1230,7 +1230,7 @@ function SalesSection({ horse, onClose, partyContext }: { horse: HorseData; onCl
           <p style={{ fontSize: '0.72rem', fontStyle: 'italic', color: 'var(--parchment-shadow)', marginBottom: 4 }}>
             {isOwnerContext ? `No purchases by ${contextName} on file.` : `No sales history on file for ${horse.name} yet.`}
           </p>
-          <p style={{ fontSize: '0.62rem', color: 'var(--parchment-shadow)' }}>Sales records are managed through the Stable Press CRM.</p>
+          <p style={{ fontSize: '0.62rem', color: 'var(--parchment-shadow)' }}>Sales records are managed through the Stable Press Production System.</p>
         </div>
       ) : (
         <ul style={{ listStyle: 'none', padding: 0, margin: '12px 0 0' }}>
@@ -1258,7 +1258,7 @@ function SalesSection({ horse, onClose, partyContext }: { horse: HorseData; onCl
       )}
       <div style={{ marginTop: 12, padding: '10px 12px', background: 'rgba(0,0,0,0.04)', border: '1px solid var(--parchment-dark)', borderRadius: 3, display: 'flex', alignItems: 'center', gap: 8 }}>
         <DollarSign size={14} style={{ color: 'var(--gold-mid)', flexShrink: 0 }} />
-        <span style={{ fontSize: '0.64rem', color: 'var(--parchment-shadow)', fontStyle: 'italic' }}>Sales &amp; auction records are managed through the Stable Press CRM.</span>
+        <span style={{ fontSize: '0.64rem', color: 'var(--parchment-shadow)', fontStyle: 'italic' }}>Sales &amp; auction records are managed through the Stable Press Production System.</span>
       </div>
     </SectionPanel>
   );

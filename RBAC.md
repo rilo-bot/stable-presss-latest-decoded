@@ -42,7 +42,7 @@ but cannot read premium-gated articles.
 | **4. Editorial staff** | **Admin-invited only** | Never self-serve. First admin is seeded; admins invite the rest. |
 
 All four share the same user/login table. **Racing and Editorial are separate admin
-surfaces (two CRMs) over one auth.**
+surfaces (two Production Systems) over one auth.**
 
 ---
 

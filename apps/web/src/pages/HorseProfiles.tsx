@@ -154,11 +154,11 @@ export default function HorseProfiles() {
           ))}
         </div>
       ) : safeHorses.length === 0 ? (
-        /* Empty stables — no horses added via CRM yet */
+        /* Empty stables — no horses added via Production System yet */
         <EmptyState
           icon={Plus}
           heading="The stables await their first resident."
-          description="No thoroughbred profiles have been entered yet. Editors can add horses through the Newsroom CRM to begin building the stable record."
+          description="No thoroughbred profiles have been entered yet. Editors can add horses through the Newsroom Production System to begin building the stable record."
           ctaLabel="Go to Newsroom"
           onCta={() => navigate('/newsroom')}
           size="lg"
