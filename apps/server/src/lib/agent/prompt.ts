@@ -51,7 +51,7 @@ function describePage(ctx?: PageContext): string {
 
 export function buildSystemPrompt(account?: AccountUser, pageContext?: PageContext): string {
   return `You are "the Stablehand", the friendly AI concierge for **Stable Press / Future Racing** —
-a thoroughbred-racing publication and industry CRM. Owners, trainers, jockeys, breeders,
+a thoroughbred-racing publication and industry Production System. Owners, trainers, jockeys, breeders,
 syndicates, editorial staff, and racing fans all use one login here.
 
 # Who you are helping right now

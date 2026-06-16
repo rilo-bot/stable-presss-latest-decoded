@@ -5,7 +5,6 @@ import { useOrgStore } from '@/stores/orgStore';
 import { useClaimStore } from '@/stores/claimStore';
 import { useHorseStore } from '@/stores/horseStore';
 import { useHorsePartyLinkStore } from '@/stores/horsePartyLinkStore';
-import { HorseStudio } from '@/components/HorseStudio';
 import { authorisedHorseIds, previewHorseIds, hasProvisionalParty, primaryPartyId, isStaff } from '@/rbac/can';
 import { PARTY_ROLES, PARTY_ROLE_LABELS } from '@/types/party';
 import type { PartyRole } from '@/types/party';
@@ -45,7 +44,6 @@ export default function Dashboard() {
   const [claimRole, setClaimRole] = useState<PartyRole>('owner');
   const [orgName, setOrgName] = useState('');
   const [busy, setBusy] = useState<string | null>(null);
-  const [studioHorseId, setStudioHorseId] = useState<string | null>(null);
 
   useEffect(() => {
     void fetchMine();
@@ -312,7 +310,7 @@ export default function Dashboard() {
                     <button
                       key={h.id}
                       type="button"
-                      onClick={() => setStudioHorseId(h.id)}
+                      onClick={() => navigate(`/horses/${h.id}/edit`)}
                       className="p-2 border border-border/60 rounded-sm text-sm text-foreground hover:border-primary/50 transition-colors truncate text-left"
                     >
                       {h.name}
@@ -331,7 +329,7 @@ export default function Dashboard() {
                       <button
                         key={h.id}
                         type="button"
-                        onClick={() => setStudioHorseId(h.id)}
+                        onClick={() => navigate(`/horses/${h.id}`)}
                         className="flex items-center gap-1.5 p-2 border border-dashed border-amber-500/40 bg-amber-500/5 rounded-sm text-sm text-muted-foreground hover:text-foreground transition-colors truncate w-full text-left"
                         title="View only until your claim is verified"
                       >
@@ -380,7 +378,7 @@ export default function Dashboard() {
                 to="/newsroom"
                 className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-sm border border-border/60 text-sm hover:border-primary/50 transition-colors"
               >
-                <Newspaper size={15} /> Newsroom CMS
+                <Newspaper size={15} /> Newsroom Production System
               </Link>
               {admin && (
                 <>
@@ -402,10 +400,6 @@ export default function Dashboard() {
           </Section>
         )}
       </div>
-
-      {studioHorseId && (
-        <HorseStudio horseId={studioHorseId} onBack={() => setStudioHorseId(null)} subjectLabel="Dashboard" />
-      )}
     </div>
   );
 }

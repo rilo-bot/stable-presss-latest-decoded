@@ -18,7 +18,7 @@
     transparent 100%
   );
 
-  /* CMS sidebar width */
+  /* Production System sidebar width */
   --cms-sidebar-w: 224px;
   --cms-sidebar-w-collapsed: 56px;
 

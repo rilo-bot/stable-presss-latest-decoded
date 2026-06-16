@@ -12,6 +12,7 @@ import { useEffect, useRef, useCallback } from 'react';
 import { useMagazineStore } from '@/stores/magazineStore';
 import { useEditorContext } from '../EditorContext';
 import { textStyleToCss } from './regionStyle';
+import { sanitizeRichText } from '../lib/sanitize';
 import type { TextContent } from '@/types/magazine';
 import { cn } from '@/lib/utils';
 
@@ -37,10 +38,12 @@ export function EditableText({ regionId, className }: Props) {
   const debounceRef = useRef<number | undefined>(undefined);
 
   // Sync DOM from store only when not focused (avoids caret reset while typing).
+  // Sanitize on read too: content loaded from the server is rendered via innerHTML
+  // here, so this is the edit-mode counterpart to the read-only view's sanitization.
   useEffect(() => {
     const el = ref.current;
     if (!el || focusedRef.current) return;
-    const html = content?.html ?? '';
+    const html = sanitizeRichText(content?.html ?? '');
     if (el.innerHTML !== html) el.innerHTML = html;
   }, [content?.html]);
 

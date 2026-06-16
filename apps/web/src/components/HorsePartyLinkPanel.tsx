@@ -204,7 +204,7 @@ export function HorsePartyLinkPanel({ horseId, horseName }: HorsePartyLinkPanelP
           <AlertCircle size={13} className="text-muted-foreground mt-0.5 flex-shrink-0" />
           <p className="text-[11px] text-muted-foreground leading-relaxed">
             No parties exist yet. Add parties via the{' '}
-            <strong className="text-foreground">Parties CRM</strong> before linking them to a horse.
+            <strong className="text-foreground">Parties Production System</strong> before linking them to a horse.
           </p>
         </div>
       )}

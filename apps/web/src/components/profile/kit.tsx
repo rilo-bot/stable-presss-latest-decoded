@@ -3,7 +3,6 @@ import { ChevronRight, X, User } from 'lucide-react';
 import type { Party } from '@/types/party';
 import type { MediaType } from '@/types/mediaItem';
 import type { RaceStatus } from '@/types/racingEntry';
-import type { PanelParty } from '@/lib/profile/types';
 
 /* ─── Shared style tokens ─── */
 export const serifStyle: React.CSSProperties = { fontFamily: "'IM Fell English', 'Palatino Linotype', Georgia, serif" };
@@ -11,8 +10,6 @@ export const goldStyle: React.CSSProperties = { color: 'var(--gold-bright)', tex
 
 /* ─── Data-card image keys (kept as a TYPE only — no stock imagery is rendered) ─── */
 export type DataCardImgKey = 'media' | 'racing' | 'breeding' | 'sales' | 'pedigree' | 'studbook' | 'horses';
-
-export interface DataRow { label: string; value: string; }
 
 /* ─── Helpers ─── */
 /** A party's real uploaded photo, or undefined — callers render an icon placeholder (no stock images). */
@@ -24,11 +21,6 @@ export function fmtDate(iso?: string | null): string {
   if (!iso) return '—';
   try { return new Date(iso).toLocaleDateString('en-AU', { day: 'numeric', month: 'short', year: 'numeric' }); }
   catch { return iso; }
-}
-
-export function fmtYear(iso?: string | null): string {
-  if (!iso) return '—';
-  try { return String(new Date(iso).getFullYear()); } catch { return iso; }
 }
 
 export function fmtMoney(amount?: number, currency = 'AUD'): string {
@@ -126,15 +118,6 @@ export function ProfileDetailPanel({ title, icon, onClose, children }: { title: 
   );
 }
 
-export function PSRow({ label, value, highlight }: { label: string; value: string; highlight?: boolean }) {
-  return (
-    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline', borderBottom: '1px solid var(--parchment-shadow)', paddingBottom: 6, marginBottom: 6, gap: 8 }}>
-      <dt style={{ fontSize: '0.56rem', textTransform: 'uppercase', letterSpacing: '0.1em', color: 'var(--parchment-shadow)', fontWeight: 700, flexShrink: 0 }}>{label}</dt>
-      <dd style={{ fontSize: '0.72rem', color: highlight ? 'var(--gold-bright)' : 'var(--forest-deep)', fontWeight: 600, textAlign: 'right', margin: 0 }}>{value}</dd>
-    </div>
-  );
-}
-
 /* ─── Media / race badges ─── */
 const MEDIA_TYPE_BADGE_COLORS: Record<MediaType, React.CSSProperties> = {
   Article:         { background: 'linear-gradient(90deg,#2d5a3d,#3a7050)', color: 'var(--gold-bright)' },
@@ -165,24 +148,6 @@ export function RaceStatusBadge({ status }: { status: RaceStatus }) {
   const c = colors[status] ?? colors.Entered;
   return (
     <span style={{ background: c.bg, color: c.text, fontSize: '0.5rem', fontWeight: 700, padding: '2px 7px', borderRadius: 2, textTransform: 'uppercase', letterSpacing: '0.12em', border: '1px solid rgba(255,224,154,0.15)', flexShrink: 0 }}>{status}</span>
-  );
-}
-
-/* ─── Avatar strip for relationship tiles ─── */
-export function PartyAvatarStrip({ parties, fallbackKey }: { parties: PanelParty[]; fallbackKey: string }) {
-  if (parties.length === 0) return null;
-  return (
-    <div style={{ display: 'flex', gap: 6, marginBottom: 10, flexWrap: 'wrap' }}>
-      {parties.map(({ party, isCurrent }) => (
-        <div key={party.id} style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 3 }}>
-          <div style={{ border: `2px solid ${isCurrent ? 'var(--gold-bright)' : 'var(--gold-dark)'}`, borderRadius: 3, boxShadow: '0 2px 6px rgba(0,0,0,0.4)' }}>
-            <Avatar src={partyPhoto(party, fallbackKey)} alt={party.name} size={36} radius={2} />
-          </div>
-          <div style={{ fontSize: '0.5rem', color: isCurrent ? 'var(--gold-bright)' : 'var(--parchment-shadow)', textAlign: 'center', maxWidth: 48, lineHeight: 1.2, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{party.name.split(' ')[0]}</div>
-          {isCurrent && <div style={{ background: 'var(--gold-mid)', color: 'var(--forest-deep)', fontSize: '0.42rem', fontWeight: 700, padding: '1px 4px', borderRadius: 2 }}>CUR</div>}
-        </div>
-      ))}
-    </div>
   );
 }
 

@@ -497,7 +497,7 @@ export function NavBar() {
               );
             })}
 
-            {/* Spacer then CMS links */}
+            {/* Spacer then Production System links */}
             <div className="flex-1" />
 
             {showPodcastWorkflow && (
@@ -535,7 +535,7 @@ export function NavBar() {
                     : undefined
                 }
               >
-                CMS
+                Production System
               </Link>
             )}
           </nav>
@@ -712,7 +712,7 @@ export function NavBar() {
                 }
               >
                 <Newspaper size={14} />
-                Newsroom CMS
+                Newsroom Production System
               </Link>
             )}
           </div>

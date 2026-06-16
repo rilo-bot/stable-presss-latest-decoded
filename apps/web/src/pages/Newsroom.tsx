@@ -1,4 +1,5 @@
 import { useState, useMemo, useEffect } from 'react'
+import { useNavigate } from 'react-router-dom';
 import { useArticleStore } from '@/stores/articleStore';
 import { useAuthStore } from '@/stores/authStore';
 import { useHorseStore } from '@/stores/horseStore';
@@ -24,7 +25,6 @@ import { useSaleStore } from '@/stores/saleStore';
 import { useReportStore } from '@/stores/reportStore';
 import type { Sale } from '@/types/sale';
 import type { HorseReport } from '@/types/horseReport';
-import { MagazineEditor } from '@/editor/MagazineEditor';
 import { useMagazineStore } from '@/stores/magazineStore';
 import { useIssueStore } from '@/stores/issueStore';
 import type { Article, ArticleStatus } from '@/types/article';
@@ -192,10 +192,10 @@ const SIDE_NAV: SideNavItem[] = [
   },
   { id: 'my-assets', label: 'My Media Assets', icon: <Image size={15} />, section: 'Content', requiresPermission: 'media.upload_own' },
   { id: 'compensation', label: 'My Compensation', icon: <DollarSign size={15} />, section: 'Content', requiresPermission: 'compensation.view_own' },
-  { id: 'horses', label: 'Thoroughbred CRM', icon: <Star size={15} />, section: 'Stables', requiresPermission: 'content.draft.create' },
-  { id: 'parties', label: 'Parties CRM', icon: <Users size={15} />, section: 'Stables', requiresPermission: 'content.draft.create' },
-  { id: 'media-crm', label: 'Media Records CRM', icon: <File size={15} />, section: 'Stables', requiresPermission: 'content.draft.create' },
-  { id: 'racing-crm', label: 'Racing Data CRM', icon: <Flag size={15} />, section: 'Stables', requiresPermission: 'content.draft.create' },
+  { id: 'horses', label: 'Thoroughbred Production System', icon: <Star size={15} />, section: 'Stables', requiresPermission: 'content.draft.create' },
+  { id: 'parties', label: 'Parties Production System', icon: <Users size={15} />, section: 'Stables', requiresPermission: 'content.draft.create' },
+  { id: 'media-production-system', label: 'Media Records Production System', icon: <File size={15} />, section: 'Stables', requiresPermission: 'content.draft.create' },
+  { id: 'racing-production-system', label: 'Racing Data Production System', icon: <Flag size={15} />, section: 'Stables', requiresPermission: 'content.draft.create' },
   { id: 'team', label: 'Team Members', icon: <Users size={15} />, section: 'Management', requiresPermission: 'team.manage' },
   { id: 'analytics', label: 'Analytics', icon: <BarChart2 size={15} />, section: 'Management', requiresPermission: 'analytics.view' },
   { id: 'settings', label: 'Settings', icon: <Settings size={15} />, section: 'Management', requiresPermission: 'settings.view' },
@@ -315,8 +315,9 @@ export default function Newsroom() {
   const [assignDialogArticle, setAssignDialogArticle] = useState<Article | null>(null);
   const [assignNote, setAssignNote] = useState('');
 
-  // Magazine Studio state — drafts are server-persisted + collaborative.
-  const [editorMagId, setEditorMagId] = useState<string | null>(null);
+  // Magazine Studio opens on its own route (/newsroom/magazine/:id); drafts are
+  // server-persisted + collaborative.
+  const navigate = useNavigate();
   const magazines = useMagazineStore((s) => s.summaries);
   const createMagazine = useMagazineStore((s) => s.createMagazine);
   const deleteMagazine = useMagazineStore((s) => s.deleteMagazine);
@@ -354,20 +355,20 @@ export default function Newsroom() {
     if (await removeIssue(id)) toast.success('Edition deleted.');
   };
 
-  // Horse CRM state
+  // Horse Production System state
   const [horseFormOpen, setHorseFormOpen] = useState(false);
   const [editHorse, setEditHorse] = useState<Horse | null>(null);
   const [horseSearch, setHorseSearch] = useState('');
   const [expandedHorseId, setExpandedHorseId] = useState<string | null>(null);
 
-  // Parties CRM state
+  // Parties Production System state
   const [partyFormOpen, setPartyFormOpen] = useState(false);
   const [editParty, setEditParty] = useState<Party | undefined>(undefined);
   const [partySearch, setPartySearch] = useState('');
   const [partyDeleteTarget, setPartyDeleteTarget] = useState<Party | null>(null);
   const [partyDeleteConfirm, setPartyDeleteConfirm] = useState(false);
 
-  // Media CRM state
+  // Media Production System state
   const [mediaFormOpen, setMediaFormOpen] = useState(false);
   const [editMedia, setEditMedia] = useState<MediaItem | undefined>(undefined);
   const [mediaSearch, setMediaSearch] = useState('');
@@ -376,7 +377,7 @@ export default function Newsroom() {
   const [mediaDeleteTarget, setMediaDeleteTarget] = useState<MediaItem | null>(null);
   const [mediaDeleteConfirm, setMediaDeleteConfirm] = useState(false);
 
-  // Racing CRM state
+  // Racing Production System state
   const [racingFormOpen, setRacingFormOpen] = useState(false);
   const [editRacing, setEditRacing] = useState<RacingEntry | undefined>(undefined);
   const [salesFormOpen, setSalesFormOpen] = useState(false);
@@ -661,13 +662,7 @@ export default function Newsroom() {
 
   const handleNewMagazine = async () => {
     const id = await createMagazine();
-    if (id) setEditorMagId(id);
-  };
-
-  // Returning to the studio: refresh the server-backed list (new drafts, edition counts).
-  const handleCloseEditor = () => {
-    setEditorMagId(null);
-    void fetchMagazines();
+    if (id) navigate(`/newsroom/magazine/${id}`);
   };
 
   function renderBulletinTemplates() {
@@ -828,7 +823,7 @@ export default function Newsroom() {
                     <Button
                       size="sm"
                       className="bg-primary text-primary-foreground hover:bg-primary/90 gap-1.5 text-xs flex-1"
-                      onClick={() => setEditorMagId(mag.id)}
+                      onClick={() => navigate(`/newsroom/magazine/${mag.id}`)}
                     >
                       <Edit size={12} /> {mag.myRole === 'contributor' ? 'Open my pages' : 'Open'}
                     </Button>
@@ -861,16 +856,16 @@ export default function Newsroom() {
     );
   }
 
-  /* ── Horse CRM ─────────────────────────────────────── */
+  /* ── Horse Production System ─────────────────────────────────────── */
 
-  function renderHorseCRM() {
+  function renderHorseProductionSystem() {
     const safeHorses = horses ?? [];
     return (
       <div className="space-y-5">
         <div className="flex items-center justify-between gap-4 flex-wrap">
           <div>
             <p className="text-[10px] uppercase tracking-[0.14em] font-bold text-muted-foreground mb-0.5">
-              Stable Press CRM
+              Stable Press Production System
             </p>
             <p className="text-sm text-muted-foreground">
               {safeHorses.length === 0
@@ -1086,16 +1081,16 @@ export default function Newsroom() {
     );
   }
 
-  /* ── Parties CRM ───────────────────────────────────── */
+  /* ── Parties Production System ───────────────────────────────────── */
 
-  function renderPartiesCRM() {
+  function renderPartiesProductionSystem() {
     const currentYear = new Date().getFullYear();
     return (
       <div className="space-y-5">
         <div className="flex items-center justify-between gap-4 flex-wrap">
           <div>
             <p className="text-[10px] uppercase tracking-[0.14em] font-bold text-muted-foreground mb-0.5">
-              Stable Press CRM
+              Stable Press Production System
             </p>
             <p className="text-sm text-muted-foreground">
               {safeParties.length === 0
@@ -1320,7 +1315,7 @@ export default function Newsroom() {
           <div className="flex items-start gap-2.5 px-4 py-3 rounded-sm border border-border/50 bg-muted/20">
             <Eye size={13} className="text-muted-foreground mt-0.5 flex-shrink-0" />
             <p className="text-[11px] text-muted-foreground leading-relaxed">
-              Parties added here can be linked to thoroughbreds via the <strong className="text-foreground">Thoroughbred CRM</strong>.
+              Parties added here can be linked to thoroughbreds via the <strong className="text-foreground">Thoroughbred Production System</strong>.
               Each record can be associated with thoroughbred profiles and editorial coverage across the platform.
             </p>
           </div>
@@ -1329,9 +1324,9 @@ export default function Newsroom() {
     );
   }
 
-  /* ── Media CRM ─────────────────────────────────────── */
+  /* ── Media Production System ─────────────────────────────────────── */
 
-  function renderMediaCRM() {
+  function renderMediaProductionSystem() {
     const safeMedia = mediaItems ?? [];
     const safeHorses = horses ?? [];
 
@@ -1346,7 +1341,7 @@ export default function Newsroom() {
         <div className="flex items-center justify-between gap-4 flex-wrap">
           <div>
             <p className="text-[10px] uppercase tracking-[0.14em] font-bold text-muted-foreground mb-0.5">
-              Stable Press CRM
+              Stable Press Production System
             </p>
             <p className="text-sm text-muted-foreground">
               {safeMedia.length === 0
@@ -1618,9 +1613,9 @@ export default function Newsroom() {
     );
   }
 
-  /* ── Racing Data CRM ────────────────────────────────── */
+  /* ── Racing Data Production System ────────────────────────────────── */
 
-  function renderRacingCRM() {
+  function renderRacingProductionSystem() {
     const safeEntries = racingEntries ?? [];
     const safeHorses = horses ?? [];
 
@@ -1630,7 +1625,7 @@ export default function Newsroom() {
         <div className="flex items-center justify-between gap-4 flex-wrap">
           <div>
             <p className="text-[10px] uppercase tracking-[0.14em] font-bold text-muted-foreground mb-0.5">
-              Stable Press CRM
+              Stable Press Production System
             </p>
             <p className="text-sm text-muted-foreground">
               {safeEntries.length === 0
@@ -1876,7 +1871,7 @@ export default function Newsroom() {
     );
   }
 
-  /* ── Media CRM form slide-over ─────────────────────── */
+  /* ── Media Production System form slide-over ─────────────────────── */
 
   function renderMediaFormPanel() {
     if (!mediaFormOpen) return null;
@@ -1902,7 +1897,7 @@ export default function Newsroom() {
               <File size={15} style={{ color: 'hsl(var(--brand-accent))' }} />
               <div>
                 <p className="text-[10px] uppercase tracking-[0.16em] font-bold opacity-70">
-                  Media Records CRM
+                  Media Records Production System
                 </p>
                 <p className="font-[family-name:var(--font-display)] text-sm font-bold">
                   {editMedia ? 'Edit Media Record' : 'Add New Media Record'}
@@ -2006,7 +2001,7 @@ export default function Newsroom() {
     );
   }
 
-  /* ── Racing CRM form slide-over ────────────────────── */
+  /* ── Racing Production System form slide-over ────────────────────── */
 
   function renderRacingFormPanel() {
     if (!racingFormOpen) return null;
@@ -2840,7 +2835,7 @@ export default function Newsroom() {
             <p className="text-[10px] uppercase tracking-[0.12em] font-bold text-muted-foreground">Library Stats</p>
             {[
               { label: 'Total Published Stories', value: publishedWithMedia.length },
-              { label: 'Media Records (CRM)', value: (mediaItems ?? []).length },
+              { label: 'Media Records (Production System)', value: (mediaItems ?? []).length },
               { label: 'Storage Used', value: '—' },
             ].map((s) => (
               <div key={s.label} className="flex items-center justify-between">
@@ -3155,7 +3150,7 @@ export default function Newsroom() {
           >
             <div className="flex items-center gap-2">
               <File size={14} style={{ color: 'hsl(var(--chart-3))' }} />
-              <span className="text-xs font-semibold text-foreground">Media Records CRM</span>
+              <span className="text-xs font-semibold text-foreground">Media Records Production System</span>
               {(mediaItems ?? []).length > 0 && (
                 <span
                   className="text-[9px] font-bold px-1.5 py-0.5 rounded-full"
@@ -3173,7 +3168,7 @@ export default function Newsroom() {
               variant="outline"
               className="text-xs gap-1.5"
               style={{ borderColor: 'hsl(var(--chart-3) / 0.4)', color: 'hsl(var(--chart-3))' }}
-              onClick={() => setActiveNav('media-crm')}
+              onClick={() => setActiveNav('media-production-system')}
             >
               Manage Media
               <ArrowRight size={11} />
@@ -3189,7 +3184,7 @@ export default function Newsroom() {
           >
             <div className="flex items-center gap-2">
               <Flag size={14} style={{ color: 'hsl(var(--chart-1))' }} />
-              <span className="text-xs font-semibold text-foreground">Racing Data CRM</span>
+              <span className="text-xs font-semibold text-foreground">Racing Data Production System</span>
               {(racingEntries ?? []).length > 0 && (
                 <span
                   className="text-[9px] font-bold px-1.5 py-0.5 rounded-full"
@@ -3207,7 +3202,7 @@ export default function Newsroom() {
               variant="outline"
               className="text-xs gap-1.5"
               style={{ borderColor: 'hsl(var(--chart-1) / 0.4)', color: 'hsl(var(--chart-1))' }}
-              onClick={() => setActiveNav('racing-crm')}
+              onClick={() => setActiveNav('racing-production-system')}
             >
               Manage Racing
               <ArrowRight size={11} />
@@ -3735,7 +3730,7 @@ export default function Newsroom() {
         <div className="flex items-center justify-between px-4 py-4 border-b border-border/40">
           {!sidebarCollapsed && (
             <div>
-              <p className="text-[10px] uppercase tracking-[0.16em] font-bold text-muted-foreground">CMS</p>
+              <p className="text-[10px] uppercase tracking-[0.16em] font-bold text-muted-foreground">Production System</p>
               <p className="font-[family-name:var(--font-display)] text-sm font-bold text-foreground">Newsroom</p>
             </div>
           )}
@@ -3822,7 +3817,7 @@ export default function Newsroom() {
                         {safeParties.length}
                       </span>
                     )}
-                    {!sidebarCollapsed && item.id === 'media-crm' && (mediaItems ?? []).length > 0 && (
+                    {!sidebarCollapsed && item.id === 'media-production-system' && (mediaItems ?? []).length > 0 && (
                       <span
                         className="text-[9px] font-bold px-1.5 py-0.5 rounded-full"
                         style={{ background: 'hsl(var(--chart-3) / 0.15)', color: 'hsl(var(--chart-3))' }}
@@ -3830,7 +3825,7 @@ export default function Newsroom() {
                         {(mediaItems ?? []).length}
                       </span>
                     )}
-                    {!sidebarCollapsed && item.id === 'racing-crm' && (racingEntries ?? []).length > 0 && (
+                    {!sidebarCollapsed && item.id === 'racing-production-system' && (racingEntries ?? []).length > 0 && (
                       <span
                         className="text-[9px] font-bold px-1.5 py-0.5 rounded-full"
                         style={{ background: 'hsl(var(--chart-1) / 0.15)', color: 'hsl(var(--chart-1))' }}
@@ -3928,7 +3923,7 @@ export default function Newsroom() {
               </Button>
             )}
 
-            {activeNav === 'media-crm' && (
+            {activeNav === 'media-production-system' && (
               <Button
                 size="sm"
                 className="bg-primary text-primary-foreground hover:bg-primary/90 gap-1.5 text-xs"
@@ -3940,7 +3935,7 @@ export default function Newsroom() {
               </Button>
             )}
 
-            {activeNav === 'racing-crm' && (
+            {activeNav === 'racing-production-system' && (
               <Button
                 size="sm"
                 className="bg-primary text-primary-foreground hover:bg-primary/90 gap-1.5 text-xs"
@@ -3963,7 +3958,7 @@ export default function Newsroom() {
               </Button>
             )}
 
-            {activeNav !== 'horses' && activeNav !== 'parties' && activeNav !== 'media-crm' && activeNav !== 'racing-crm' && activeNav !== 'bulletin-templates' && can(userRole, 'content.draft.create') && (
+            {activeNav !== 'horses' && activeNav !== 'parties' && activeNav !== 'media-production-system' && activeNav !== 'racing-production-system' && activeNav !== 'bulletin-templates' && can(userRole, 'content.draft.create') && (
               <Button
                 size="sm"
                 className="bg-primary text-primary-foreground hover:bg-primary/90 gap-1.5 text-xs"
@@ -4021,7 +4016,7 @@ export default function Newsroom() {
                     {safeParties.length} {safeParties.length === 1 ? 'party' : 'parties'} registered
                   </span>
                 )}
-                {activeNav === 'media-crm' && (mediaItems ?? []).length > 0 && (
+                {activeNav === 'media-production-system' && (mediaItems ?? []).length > 0 && (
                   <span
                     className="text-[10px] font-bold px-2 py-0.5 rounded-full"
                     style={{ background: 'hsl(var(--chart-3) / 0.12)', color: 'hsl(var(--chart-3))' }}
@@ -4029,7 +4024,7 @@ export default function Newsroom() {
                     {(mediaItems ?? []).length} media {(mediaItems ?? []).length === 1 ? 'record' : 'records'}
                   </span>
                 )}
-                {activeNav === 'racing-crm' && (racingEntries ?? []).length > 0 && (
+                {activeNav === 'racing-production-system' && (racingEntries ?? []).length > 0 && (
                   <span
                     className="text-[10px] font-bold px-2 py-0.5 rounded-full"
                     style={{ background: 'hsl(var(--chart-1) / 0.12)', color: 'hsl(var(--chart-1))' }}
@@ -4068,10 +4063,10 @@ export default function Newsroom() {
           {activeNav === 'editor-hub' && renderEditorHub()}
           {activeNav === 'my-assets' && renderMyAssets()}
           {activeNav === 'compensation' && renderCompensation()}
-          {activeNav === 'horses' && renderHorseCRM()}
-          {activeNav === 'parties' && renderPartiesCRM()}
-          {activeNav === 'media-crm' && renderMediaCRM()}
-          {activeNav === 'racing-crm' && renderRacingCRM()}
+          {activeNav === 'horses' && renderHorseProductionSystem()}
+          {activeNav === 'parties' && renderPartiesProductionSystem()}
+          {activeNav === 'media-production-system' && renderMediaProductionSystem()}
+          {activeNav === 'racing-production-system' && renderRacingProductionSystem()}
           {activeNav === 'team' && renderTeam()}
           {activeNav === 'bulletin-templates' && renderBulletinTemplates()}
 
@@ -4170,11 +4165,6 @@ export default function Newsroom() {
           onSave={() => { setReportFormOpen(false); setEditReport(undefined); fetchReports(); }}
           onCancel={() => { setReportFormOpen(false); setEditReport(undefined); }}
         />
-      )}
-
-      {/* Full-screen Magazine Studio editor */}
-      {editorMagId && (
-        <MagazineEditor magazineId={editorMagId} onClose={handleCloseEditor} />
       )}
     </div>
   );

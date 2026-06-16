@@ -27,6 +27,7 @@ import { Router } from 'express';
 import { db } from '../lib/db.js';
 import { withIdentityDefaults, STAFF_ROLES } from '../lib/identity.js';
 import { isStaff } from '../lib/rbac.js';
+import { sanitizeContentMap, sanitizePages } from '../lib/sanitizeHtml.js';
 
 type WithMongoId = { _id: string; [key: string]: unknown };
 
@@ -160,7 +161,7 @@ router.post('/', async (req, res) => {
     edition: body.edition ?? '',
     coverImage: body.coverImage ?? '',
     status: 'draft',
-    pages: body.pages,
+    pages: sanitizePages(body.pages),
     ownerId: uid,
     ownerName: req.account!.displayName,
     collaborators: [],
@@ -235,6 +236,8 @@ router.patch('/:id/pages/:pageId', async (req, res) => {
     res.status(400).json({ error: 'content is required' });
     return;
   }
+  // Trust boundary: never store rich text the client could have tampered with.
+  const safeContent = sanitizeContentMap(content);
   const pages = Array.isArray(doc.pages) ? doc.pages : [];
   const idx = pages.findIndex((p: Record<string, unknown>) => String(p.id) === pageId);
   if (idx === -1) {
@@ -243,7 +246,7 @@ router.patch('/:id/pages/:pageId', async (req, res) => {
   }
   const now = new Date().toISOString();
   const nextPages = pages.map((p: Record<string, unknown>, i: number) =>
-    i === idx ? { ...p, content } : p,
+    i === idx ? { ...p, content: safeContent } : p,
   );
   await db.collection('magazines').updateOne(id, {
     pages: nextPages,

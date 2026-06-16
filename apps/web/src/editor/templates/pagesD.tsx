@@ -204,7 +204,7 @@ export function WinningPage() {
           </div>
         </div>
       </div>
-      <Footer footerId="winning-moments.uploadNote" pageNumId="winning-moments.pageNum" />
+      <Footer footerId="winning-moments.footer" pageNumId="winning-moments.pageNum" />
     </Page>
   );
 }

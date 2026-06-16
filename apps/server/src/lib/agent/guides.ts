@@ -6,7 +6,7 @@
 
 export const FEATURE_GUIDES: Record<string, string> = {
   overview:
-    'Stable Press is a racing publication and industry CRM. Anyone can browse Horses, Parties, the News, print Bulletins, the Podcast and the Tipping Ring. Creating a free account lets you follow horses, take part in tipping, and — once verified — manage your own stable. Editorial staff manage content from the Newsroom.',
+    'Stable Press is a racing publication and industry Production System. Anyone can browse Horses, Parties, the News, print Bulletins, the Podcast and the Tipping Ring. Creating a free account lets you follow horses, take part in tipping, and — once verified — manage your own stable. Editorial staff manage content from the Newsroom.',
 
   'get-started':
     'Create a free account from the Sign up page (top-right). Sign-in is passwordless: enter your email and we send a 6-digit code. Once in, you land on your Dashboard, where you can follow horses, join the Tipping Ring, claim a racing role, or set up an organisation.',
@@ -36,7 +36,7 @@ export const FEATURE_GUIDES: Record<string, string> = {
     'Bulletins are the print-style magazine editions. Browse them on the Bulletins page and open one to read it page by page. Staff create and publish editions from the Newsroom → Magazine Studio.',
 
   newsroom:
-    'The Newsroom is the editorial workspace for staff: an editorial Kanban, story drafting and review, the Magazine Studio for bulletins, and CRM modules for horses, parties, media and racing data. It is available to editorial staff accounts.',
+    'The Newsroom is the editorial workspace for staff: an editorial Kanban, story drafting and review, the Magazine Studio for bulletins, and Production System modules for horses, parties, media and racing data. It is available to editorial staff accounts.',
 
   organisations:
     'An organisation (syndicate, stud, stable or agency) groups members and the parties/horses it manages under one umbrella. Create one during sign-up (choose Organisation) or manage it from My Organisation: invite members, add managed parties, and verify members’ role claims for parties your organisation controls.',

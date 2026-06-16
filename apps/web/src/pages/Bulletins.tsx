@@ -69,7 +69,7 @@ export default function Bulletins() {
     return () => clearTimeout(t);
   }, []);
 
-  // CMS bulletin articles
+  // Production System bulletin articles
   const bulletinArticles = useMemo(() => {
     let base = (articles ?? []).filter((a) => a.status === 'bulletin');
     if (categoryParam) base = base.filter((a) => (a.category ?? '') === categoryParam);
@@ -409,7 +409,7 @@ export default function Bulletins() {
             <p className="text-sm text-muted-foreground leading-relaxed mb-6">
               {search
                 ? 'Try a different search term or browse a different category.'
-                : 'Stories filed with the "Bulletin" status in the Newsroom CMS will appear here, organised by their editorial category.'}
+                : 'Stories filed with the "Bulletin" status in the Newsroom Production System will appear here, organised by their editorial category.'}
             </p>
             {search ? (
               <Button variant="outline" onClick={() => setSearch('')}>
@@ -421,7 +421,7 @@ export default function Bulletins() {
                 className="bg-primary text-primary-foreground hover:bg-primary/90 gap-1.5"
               >
                 <Link to="/newsroom">
-                  Go to Newsroom CMS
+                  Go to Newsroom Production System
                   <ArrowRight size={14} />
                 </Link>
               </Button>

@@ -1,6 +1,6 @@
 /**
  * Full-screen magazine editor: top toolbar + scrolling page canvas + right
- * inspector. Launched from the CMS. No save button — edits persist live.
+ * inspector. Launched from the Production System. No save button — edits persist live.
  */
 
 import { useEffect, useRef, useState } from 'react';
@@ -123,10 +123,7 @@ export function MagazineEditor({ magazineId, onClose }: { magazineId: string; on
     toast.success(`Published ${scope === 'full' ? 'full edition' : 'selected pages'} to Bulletins.`, {
       action: {
         label: 'View',
-        onClick: () => {
-          onClose();
-          navigate(`/bulletins/${id}`);
-        },
+        onClick: () => navigate(`/bulletins/${id}`),
       },
     });
   };

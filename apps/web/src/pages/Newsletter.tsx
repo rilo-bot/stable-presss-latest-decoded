@@ -56,7 +56,7 @@ export default function Newsletter() {
     return () => clearTimeout(t);
   }, []);
 
-  // CMS articles — newsletter status ONLY (bulletin articles go to /bulletins)
+  // Production System articles — newsletter status ONLY (bulletin articles go to /bulletins)
   const newsletterArticles = useMemo(() => {
     let base = (articles ?? []).filter((a) => a.status === 'newsletter');
     if (categoryParam) base = base.filter((a) => (a.category ?? '') === categoryParam);
@@ -315,7 +315,7 @@ export default function Newsletter() {
             <p className="text-sm text-muted-foreground leading-relaxed mb-6">
               {search
                 ? 'Try a different search term or browse a different category.'
-                : 'Stories moved to the Newsletter stage in the Newsroom CMS will appear here, organised by their editorial category.'}
+                : 'Stories moved to the Newsletter stage in the Newsroom Production System will appear here, organised by their editorial category.'}
             </p>
             {search ? (
               <Button variant="outline" onClick={() => setSearch('')}>Clear search</Button>
@@ -323,7 +323,7 @@ export default function Newsletter() {
               <div className="flex flex-col sm:flex-row items-center gap-3 justify-center">
                 <Button asChild className="bg-primary text-primary-foreground hover:bg-primary/90 gap-1.5">
                   <Link to="/newsroom">
-                    Go to Newsroom CMS
+                    Go to Newsroom Production System
                     <ArrowRight size={14} />
                   </Link>
                 </Button>

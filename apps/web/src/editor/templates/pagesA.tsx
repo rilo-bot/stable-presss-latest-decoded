@@ -131,7 +131,7 @@ export function PresidentPage() {
           </div>
         </div>
       </div>
-      <Footer footerId="president-update.siteLabel" pageNumId="president-update.pageNum" />
+      <Footer footerId="president-update.footer" pageNumId="president-update.pageNum" />
     </Page>
   );
 }
@@ -186,7 +186,7 @@ export function EditorLetterPage() {
           </div>
         </div>
       </div>
-      <Footer footerId="editor-letter.name" pageNumId="editor-letter.pageNum" />
+      <Footer footerId="editor-letter.footer" pageNumId="editor-letter.pageNum" />
     </Page>
   );
 }
