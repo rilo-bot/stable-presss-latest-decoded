@@ -54,7 +54,7 @@ const cover = mkPage('cover', 'Cover', {
     'The premium owner-first publication for New Zealand thoroughbred racing. Celebrating the people, stories, friendships and moments that make racehorse ownership unforgettable.',
     { ...P.body, fontSize: 12 }
   ),
-  editionBadge: text('20 PAGE OWNER EXPERIENCE EDITION', { ...P.bandLabel, fontSize: 10 }),
+  editionBadge: text('24 PAGE OWNER EXPERIENCE EDITION', { ...P.bandLabel, fontSize: 10 }),
   insideTitle: text('INSIDE THIS ISSUE', P.kickerGold),
   inside1: text('<b>Owner stories</b><br>Real journeys and winning moments', P.bodySmall),
   inside2: text('<b>Regional roundups</b><br>QR-linked coverage for every region', P.bodySmall),
@@ -102,7 +102,8 @@ const president = mkPage('president-update', "President's Update", {
   stayBody: text('Scan the QR code to visit our website for the latest news, race results, owner benefits and event details.', { ...P.bodySmall, color: '#dfe6f2' }),
   stayQr: qr('https://nztrof.co.nz'),
   siteLabel: text('nztrof.co.nz', { ...P.kickerGold, fontSize: 10 }),
-  pageNum: text('PAGE 2', { ...P.footer, align: 'left' }),
+  footer: text("PROUD TO REPRESENT NEW ZEALAND'S RACEHORSE OWNERS.", P.footer),
+  pageNum: text('PAGE 2', { ...P.footer, align: 'right' }),
 });
 
 // ── 3. From the Editor ──────────────────────────────────────────────
@@ -131,6 +132,7 @@ const editor = mkPage('editor-letter', 'From the Editor', {
   siteBody: text('raceowners.co.nz — your go-to place for ownership information, resources, race results and owners\' benefits.', P.bodySmall),
   siteQr: qr('https://raceowners.co.nz'),
   subs: text('SUBSCRIPTION RATES   |   Single $60 (incl. GST)   |   Double $65 (incl. GST)', P.footer),
+  footer: text('STORIES BEHIND THE SILKS. PASSION BEHIND THE SPORT.', P.footer),
   pageNum: text('PAGE 3', { ...P.footer, align: 'right' }),
 });
 
@@ -673,7 +675,8 @@ const winning = mkPage('winning-moments', 'Winning Moments', {
   ...winnerCard('w5', STOCK.crowd2, 'BENCHMARK WINNER — MATAMATA', 'OCEAN EMPRESS', 'Owners: Blue Ocean Racing (Mgr: B. Hargreaves). Trainer: S. Marsh · Jockey: W. Pinn'),
   uploadQr: qr('https://nztrof.co.nz/upload'),
   uploadNote: text('Share your winning moments with the ownership community! Upload your photos online now.', P.qrLabel),
-  pageNum: text('PAGE 18', { ...P.footer, align: 'left' }),
+  footer: text('EVERY WINNER HAS A TEAM BEHIND THEM.', P.footer),
+  pageNum: text('PAGE 18', { ...P.footer, align: 'right' }),
 });
 
 // ── 23. Owners Voice ────────────────────────────────────────────────
@@ -765,13 +768,21 @@ export const BLUEPRINT_BY_TYPE: Record<string, PageBlueprint> = Object.fromEntri
 
 /** Build the default 24-page document for a brand-new magazine. */
 export function createDefaultPages(): MagazinePage[] {
-  return BLUEPRINTS.map((bp, i) => ({
-    id: `${bp.pageType}-${i + 1}`,
-    pageType: bp.pageType,
-    label: bp.label,
-    number: i + 1,
-    selectedForPublish: true,
+  return BLUEPRINTS.map((bp, i) => {
     // Deep clone so each magazine owns its content.
-    content: structuredClone(bp.defaultContent),
-  }));
+    const content = structuredClone(bp.defaultContent);
+    // Page numbers are positional, so derive them from print order rather than
+    // trusting the per-blueprint defaults (which were copied from the original
+    // print issue and were out of order / duplicated).
+    const pn = content[`${bp.pageType}.pageNum`];
+    if (pn && pn.kind === 'text') pn.html = `PAGE ${i + 1}`;
+    return {
+      id: `${bp.pageType}-${i + 1}`,
+      pageType: bp.pageType,
+      label: bp.label,
+      number: i + 1,
+      selectedForPublish: true,
+      content,
+    };
+  });
 }

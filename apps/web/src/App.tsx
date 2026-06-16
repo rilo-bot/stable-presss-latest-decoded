@@ -8,7 +8,6 @@ import { Toaster } from 'sonner';
 import { NavBar } from '@/components/NavBar';
 import { AgentWidget } from '@/components/AgentWidget';
 import { RequireAuth, RequireStaff, RequireRole } from '@/rbac/guards';
-// import { OnboardingOverlay } from '@/components/OnboardingOverlay'; // onboarding disabled
 import { useAuthStore } from '@/stores/authStore';
 
 import Landing from '@/pages/Landing';
@@ -16,8 +15,10 @@ import Login from '@/pages/Login';
 import Signup from '@/pages/Signup';
 import HorseProfiles from '@/pages/HorseProfiles';
 import HorseDetail from '@/pages/HorseDetail';
+import HorseEditor from '@/pages/HorseEditor';
 import ArticleDetail from '@/pages/ArticleDetail';
 import Newsroom from '@/pages/Newsroom';
+import MagazineStudio from '@/pages/MagazineStudio';
 import TippingRing from '@/pages/TippingRing';
 import PodcastHub from '@/pages/PodcastHub';
 import PodcastWorkflow from '@/pages/PodcastWorkflow';
@@ -207,6 +208,8 @@ export default function App() {
               </AppLayout>
             }
           />
+          {/* Full-screen magazine editor — its own deep-linkable route, no nav chrome. */}
+          <Route path="/newsroom/magazine/:id" element={<MagazineStudio />} />
           <Route
             path="/podcast/workflow"
             element={
@@ -251,6 +254,14 @@ export default function App() {
               </AppLayout>
             }
           />
+          <Route
+            path="/horses/:id/edit"
+            element={
+              <AppLayout>
+                <HorseEditor />
+              </AppLayout>
+            }
+          />
         </Route>
 
         {/* Admin-only routes */}
@@ -283,9 +294,6 @@ export default function App() {
           }
         />
       </Routes>
-
-      {/* Global onboarding overlay — disabled */}
-      {/* <OnboardingOverlay /> */}
 
       {/* AI concierge — available on every page */}
       <AgentWidget />

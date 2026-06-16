@@ -1,4 +1,5 @@
 import { useState, useMemo, useEffect } from 'react'
+import { useNavigate } from 'react-router-dom';
 import { useArticleStore } from '@/stores/articleStore';
 import { useAuthStore } from '@/stores/authStore';
 import { useHorseStore } from '@/stores/horseStore';
@@ -24,7 +25,6 @@ import { useSaleStore } from '@/stores/saleStore';
 import { useReportStore } from '@/stores/reportStore';
 import type { Sale } from '@/types/sale';
 import type { HorseReport } from '@/types/horseReport';
-import { MagazineEditor } from '@/editor/MagazineEditor';
 import { useMagazineStore } from '@/stores/magazineStore';
 import { useIssueStore } from '@/stores/issueStore';
 import type { Article, ArticleStatus } from '@/types/article';
@@ -315,8 +315,9 @@ export default function Newsroom() {
   const [assignDialogArticle, setAssignDialogArticle] = useState<Article | null>(null);
   const [assignNote, setAssignNote] = useState('');
 
-  // Magazine Studio state — drafts are server-persisted + collaborative.
-  const [editorMagId, setEditorMagId] = useState<string | null>(null);
+  // Magazine Studio opens on its own route (/newsroom/magazine/:id); drafts are
+  // server-persisted + collaborative.
+  const navigate = useNavigate();
   const magazines = useMagazineStore((s) => s.summaries);
   const createMagazine = useMagazineStore((s) => s.createMagazine);
   const deleteMagazine = useMagazineStore((s) => s.deleteMagazine);
@@ -661,13 +662,7 @@ export default function Newsroom() {
 
   const handleNewMagazine = async () => {
     const id = await createMagazine();
-    if (id) setEditorMagId(id);
-  };
-
-  // Returning to the studio: refresh the server-backed list (new drafts, edition counts).
-  const handleCloseEditor = () => {
-    setEditorMagId(null);
-    void fetchMagazines();
+    if (id) navigate(`/newsroom/magazine/${id}`);
   };
 
   function renderBulletinTemplates() {
@@ -828,7 +823,7 @@ export default function Newsroom() {
                     <Button
                       size="sm"
                       className="bg-primary text-primary-foreground hover:bg-primary/90 gap-1.5 text-xs flex-1"
-                      onClick={() => setEditorMagId(mag.id)}
+                      onClick={() => navigate(`/newsroom/magazine/${mag.id}`)}
                     >
                       <Edit size={12} /> {mag.myRole === 'contributor' ? 'Open my pages' : 'Open'}
                     </Button>
@@ -4170,11 +4165,6 @@ export default function Newsroom() {
           onSave={() => { setReportFormOpen(false); setEditReport(undefined); fetchReports(); }}
           onCancel={() => { setReportFormOpen(false); setEditReport(undefined); }}
         />
-      )}
-
-      {/* Full-screen Magazine Studio editor */}
-      {editorMagId && (
-        <MagazineEditor magazineId={editorMagId} onClose={handleCloseEditor} />
       )}
     </div>
   );
