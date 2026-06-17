@@ -6,10 +6,11 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useChat } from '@ai-sdk/react';
 import { lastAssistantMessageIsCompleteWithToolCalls, type UIMessage } from 'ai';
-import { Sparkles, Send, Square, Undo2, Check, X, Paperclip, FileText, Loader2 } from 'lucide-react';
+import { Sparkles, Send, Square, Undo2, Check, X, Paperclip, FileText, Loader2, Mic, Volume2, VolumeX } from 'lucide-react';
 import { toast } from 'sonner';
 
 import { MarkdownMessage } from '@/components/MarkdownMessage';
+import { useVoiceChat } from '@/agent/voice/useVoiceChat';
 import { useEditorAgentUi } from '@/stores/editorAgentUiStore';
 import { createEditorTransport } from './editorTransport';
 import { executeEditorTool, isEditorClientTool } from './editOpsExecutor';
@@ -181,6 +182,12 @@ export function EditorAgentPanel() {
     void dispatch(text.trim());
   };
 
+  // Push-to-talk + spoken replies, shared with the concierge/onboarding/drawer.
+  // The panel only mounts while open, so active is always true here — unmount
+  // cleanup stops mic/playback when the editor closes the panel.
+  const { voiceReady, voiceMode, setVoiceMode, recording, transcribing, caption, toggleMic } =
+    useVoiceChat({ messages, send, busy, active: true });
+
   // A suggestion chip / inline trigger queued a prompt — send it once (analysing
   // any attached files first, via dispatch).
   useEffect(() => {
@@ -219,6 +226,17 @@ export function EditorAgentPanel() {
         {undoCount > 0 && (
           <button onClick={() => undoLast()} title="Undo last AI change" className="ml-auto flex items-center gap-1 rounded-sm border border-white/15 px-2 py-1 text-[10px] text-white/70 hover:bg-white/10">
             <Undo2 size={11} /> Undo
+          </button>
+        )}
+        {voiceReady && (
+          <button
+            onClick={() => setVoiceMode((v) => !v)}
+            aria-label={voiceMode ? 'Turn off spoken replies' : 'Read replies aloud'}
+            title={voiceMode ? 'Spoken replies on' : 'Read replies aloud'}
+            className={(undoCount > 0 ? '' : 'ml-auto ') + 'flex h-7 w-7 items-center justify-center rounded-sm border border-white/15 hover:bg-white/10'}
+            style={{ color: voiceMode ? 'var(--gold-bright)' : 'var(--gold-mid)' }}
+          >
+            {voiceMode ? <Volume2 size={14} /> : <VolumeX size={14} />}
           </button>
         )}
       </div>
@@ -279,6 +297,12 @@ export function EditorAgentPanel() {
 
       {/* Composer */}
       <div className="border-t border-white/10">
+        {(recording || transcribing) && (
+          <div className="flex items-center gap-2 border-b border-white/10 bg-white/[0.03] px-3 py-1.5 text-[11px] text-white/60">
+            <span className={'inline-block h-2 w-2 rounded-full ' + (recording ? 'animate-pulse bg-red-500' : 'bg-white/30')} />
+            <span className="line-clamp-2 italic">{caption || (transcribing ? 'Transcribing…' : 'Listening… speak now')}</span>
+          </div>
+        )}
         {pendingFiles.length > 0 && (
           <div className="flex flex-wrap gap-1.5 px-2.5 pt-2">
             {pendingFiles.map((f, i) => (
@@ -334,9 +358,22 @@ export function EditorAgentPanel() {
                 send(input);
               }
             }}
-            placeholder={pendingFiles.length > 0 ? 'Describe the document, then Enter to fill the bulletin…' : 'Ask the studio assistant…  (Shift+Enter for a new line)'}
-            className="max-h-32 flex-1 resize-none rounded-2xl border border-white/15 bg-white/5 px-3 py-1.5 text-[12px] leading-snug text-white outline-none placeholder:text-white/30 focus:border-white/30"
+            disabled={recording || transcribing}
+            placeholder={recording ? 'Listening…' : transcribing ? 'Transcribing…' : pendingFiles.length > 0 ? 'Describe the document, then Enter to fill the bulletin…' : 'Ask the studio assistant…  (Shift+Enter for a new line)'}
+            className="max-h-32 flex-1 resize-none rounded-2xl border border-white/15 bg-white/5 px-3 py-1.5 text-[12px] leading-snug text-white outline-none placeholder:text-white/30 focus:border-white/30 disabled:opacity-60"
           />
+          {voiceReady && !busy && (
+            <button
+              type="button"
+              onClick={() => void toggleMic()}
+              disabled={transcribing}
+              aria-label={recording ? 'Stop recording' : 'Speak to the studio assistant'}
+              title={recording ? 'Stop & send' : 'Speak'}
+              className={'flex h-8 w-8 flex-shrink-0 items-center justify-center rounded-full border transition-colors disabled:opacity-50 ' + (recording ? 'animate-pulse border-red-500 bg-red-500/15 text-red-400' : 'border-white/15 text-white/60 hover:bg-white/10')}
+            >
+              {transcribing ? <Loader2 size={13} className="animate-spin" /> : recording ? <Square size={13} /> : <Mic size={13} />}
+            </button>
+          )}
           {busy ? (
             <button type="button" onClick={() => stop()} aria-label="Stop" className="flex h-8 w-8 items-center justify-center rounded-full bg-white/10 text-white/70">
               <Square size={13} />
