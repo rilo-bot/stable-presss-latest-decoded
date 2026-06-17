@@ -52,6 +52,7 @@ export default function Login() {
     setLoading(false);
     if (result.ok) {
       setOtpPreview(result.devCode ?? null);
+      if (result.devCode) setOtpDigits(result.devCode.slice(0, 6).split(''));
       setStep('otp');
       toast.success('Verification code sent. Check your inbox.');
     } else {
@@ -131,6 +132,7 @@ export default function Login() {
     setLoading(false);
     if (result.ok) {
       setOtpPreview(result.devCode ?? null);
+      if (result.devCode) setOtpDigits(result.devCode.slice(0, 6).split(''));
       toast.success('A fresh code has been sent.');
       setTimeout(() => digitRefs.current[0]?.focus(), 80);
     } else {

@@ -49,9 +49,13 @@ router.post('/', async (req, res) => {
     return;
   }
 
+  const account = req.account;
   const now = new Date().toISOString();
   const doc: Record<string, unknown> = {
     ...body,
+    createdByUserId: account?.id,
+    // Members create provisional (hidden) parties; staff create verified register entries.
+    verificationStatus: isStaff(account) ? 'verified' : 'unverified',
     createdAt: now,
     updatedAt: now,
   };

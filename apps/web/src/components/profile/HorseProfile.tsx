@@ -6,11 +6,12 @@
  * unlike the old HorseDetail, which never fetched horses/links. One layout, two
  * modes; all hooks run before any conditional return (no Rules-of-Hooks bug).
  */
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { toast } from 'sonner';
 import {
-  Clock, Check, Plus, Loader2, ChevronRight, X, Users, BookMarked, Trophy, Binary, FileText, Pencil,
+  Clock, Check, Plus, Loader2, X, ChevronRight, BookMarked, Trophy, Binary, Pencil, ArrowRight,
+  Camera, ClipboardList, Dna,
 } from 'lucide-react';
 import { useHorseStore } from '@/stores/horseStore';
 import { usePartyStore } from '@/stores/partyStore';
@@ -18,19 +19,21 @@ import { useHorsePartyLinkStore } from '@/stores/horsePartyLinkStore';
 import { useAuthStore } from '@/stores/authStore';
 import { canManageHorse } from '@/rbac/can';
 import { useProfileScope } from '@/hooks/useProfileScope';
-import { ROLE_BINDINGS } from '@/lib/profile/roleMap';
+import { SEX_OPTIONS, COLOUR_OPTIONS, COUNTRY_OPTIONS } from '@/components/horse-form/constants';
 import type { Horse } from '@/types/horse';
-import type { PartyRole } from '@/types/party';
-import type { HorsePartyRelationshipType } from '@/types/horsePartyLink';
-import { HORSE_PARTY_RELATIONSHIP_LABELS, isCurrentLink } from '@/types/horsePartyLink';
 import { serifStyle, goldStyle, OrnateCrest } from '@/components/profile/kit';
 import { ProfileScaffold, type Crumb } from '@/components/profile/ProfileScaffold';
 import { IdentityCard, type FieldDescriptor } from '@/components/profile/IdentityCard';
 import { PortraitFrame } from '@/components/profile/PortraitFrame';
-import { ConnectionsRail, type RelTile } from '@/components/profile/ConnectionsRail';
+import { RoleConnectionsRail } from '@/components/profile/RoleConnectionsRail';
 import { DataSectionsRail } from '@/components/profile/DataSectionsRail';
-import { REL_ORDER, renderProfileModule, activeModuleLabel } from '@/components/profile/modules';
+import { renderProfileModule, activeModuleLabel, ROLE_ICON } from '@/components/profile/modules';
 import { InlineEditRow, InlineEditTextArea } from '@/components/profile/editable';
+import { OnboardingSteps, type OnbStep } from '@/components/profile/OnboardingSteps';
+import { OnboardingGuide, type GuideStep } from '@/components/profile/OnboardingGuide';
+import { OnboardingComplete } from '@/components/profile/OnboardingComplete';
+import { ProfileAgentPanel, StudioLauncher } from '@/agent/profile/ProfileAgentPanel';
+import { useProfileAgentUi, type ProfileContext } from '@/stores/profileAgentUiStore';
 import { DossierMeter } from '@/components/DossierMeter';
 import { FollowButton } from '@/components/FollowButton';
 import { AskAgentButton } from '@/components/AskAgentButton';
@@ -41,17 +44,64 @@ import { ReportsDataForm } from '@/components/ReportsDataForm';
 
 type Mode = 'view' | 'edit';
 
-/** Party roles that map to a relationship link (excludes those with no relType). */
-const LINK_ROLES = Object.values(ROLE_BINDINGS)
-  .filter((b) => b.relType)
-  .map((b) => ({ role: b.role, rel: b.relType as HorsePartyRelationshipType, label: b.label }));
-
 const ADD_LABELS: Record<string, string> = { media: 'media', racing: 'racing entry', sales: 'sale record', reports: 'document' };
 
-const selectStyle: React.CSSProperties = {
-  height: 30, background: 'var(--parchment)', border: '1px solid var(--gold-mid)', borderRadius: 3,
-  padding: '0 6px', fontSize: '0.66rem', color: 'var(--forest-deep)', outline: 'none', ...serifStyle,
+/* Onboarding connection steps — one per left-rail party box, walked one by one
+   (Syndicate Manager is auto-derived from a linked party, so it isn't a step).
+   `rel` matches the box's relationship_type; `noun` drives prompts/tips. */
+const CONNECTION_STEPS = [
+  { key: 'owners',    rel: 'ownership', role: 'owner',            label: 'Owners',    noun: 'owner',            title: 'Add the owners' },
+  { key: 'breeders',  rel: 'bred-by',   role: 'breeder',          label: 'Breeders',  noun: 'breeder',          title: 'Add the breeder' },
+  { key: 'trainers',  rel: 'training',  role: 'trainer',          label: 'Trainers',  noun: 'trainer',          title: 'Add the trainer' },
+  { key: 'personnel', rel: 'personnel', role: 'personnel',        label: 'Personnel', noun: 'personnel member', title: 'Add the personnel' },
+  { key: 'jockeys',   rel: 'riding',    role: 'jockey',           label: 'Jockeys',   noun: 'jockey',           title: 'Add the jockey' },
+  { key: 'agents',    rel: 'agent',     role: 'bloodstock agent', label: 'Agents',    noun: 'bloodstock agent', title: 'Add the bloodstock agent' },
+] as const;
+
+/* Milestone icons for the onboarding strip — photo/basics/pedigree get their own;
+   connection steps reuse ROLE_ICON so each node matches its left-rail box. */
+const STEP_ICONS: Record<string, React.ReactNode> = {
+  photo: <Camera size={14} strokeWidth={1.8} />,
+  basics: <ClipboardList size={14} strokeWidth={1.8} />,
+  pedigree: <Dna size={14} strokeWidth={1.8} />,
 };
+
+/* Per-horse "skipped onboarding steps", persisted in localStorage (pure UI state
+   — no server/domain change). A skipped step counts as resolved so the user can
+   finish onboarding without it; the party box stays on the left rail to add later. */
+const SKIP_STORE_KEY = (id: string) => `sp-onb-skip:${id}`;
+function loadSkippedSteps(id: string): Set<string> {
+  try { const raw = localStorage.getItem(SKIP_STORE_KEY(id)); return new Set(raw ? (JSON.parse(raw) as string[]) : []); }
+  catch { return new Set(); }
+}
+function persistSkippedSteps(id: string, set: Set<string>) {
+  try { localStorage.setItem(SKIP_STORE_KEY(id), JSON.stringify([...set])); } catch { /* storage unavailable — non-fatal */ }
+}
+
+/** Snapshot the horse's editable fields + connection counts for the AI assistant. */
+function buildHorseContext(horse: Horse, links: { relationship_type: string }[]): ProfileContext {
+  // Mirrors the editable field set advertised in the server profile prompt
+  // (lib/agent/profilePrompt.ts HORSE_FIELDS) so the agent never proposes a field
+  // it cannot see as empty, and can fill every field it is told it may edit.
+  const f: Record<string, string> = {
+    name: horse.name ?? '', sex: horse.sex ?? '', colour: horse.colour ?? '', dob: horse.dob ?? '',
+    country: horse.country ?? '',
+    sire: horse.sire ?? '', sireSire: horse.sireSire ?? '', sireDam: horse.sireDam ?? '',
+    dam: horse.dam ?? '', damSire: horse.damSire ?? '', damDam: horse.damDam ?? '',
+    careerRecord: horse.careerRecord ?? '',
+    careerWinnings: horse.careerWinnings != null ? String(horse.careerWinnings) : '',
+    lastTenForm: horse.lastTenForm ?? '', seasonRecord: horse.seasonRecord ?? '',
+    currentRating: horse.currentRating != null ? String(horse.currentRating) : '',
+    studBook: horse.studBook ?? '', registrationNumber: horse.registrationNumber ?? '',
+    microchip: horse.microchip ?? '', brandFreeze: horse.brandFreeze ?? '', passportNumber: horse.passportNumber ?? '',
+    pullQuote: horse.pullQuote ?? '', pedigreeNotes: horse.pedigreeNotes ?? '',
+  };
+  const emptyFields = Object.entries(f).filter(([, v]) => !v.trim()).map(([k]) => k);
+  const counts: Record<string, number> = {};
+  links.forEach((l) => { counts[l.relationship_type] = (counts[l.relationship_type] ?? 0) + 1; });
+  const roleBoxes = Object.entries(counts).map(([role, count]) => ({ role, count }));
+  return { entityKind: 'horse', entityId: horse.id, name: horse.isUnnamed ? 'Un-Named' : (horse.name || 'New Horse'), fields: f, emptyFields, roleBoxes };
+}
 
 interface HorseProfileProps {
   horseId: string;
@@ -66,11 +116,9 @@ export function HorseProfile({ horseId, mode, onBack }: HorseProfileProps) {
   const horsesLoaded = useHorseStore((s) => s.loaded);
   const fetchHorses = useHorseStore((s) => s.fetchHorses);
   const updateHorse = useHorseStore((s) => s.updateHorse);
-  const parties = usePartyStore((s) => s.parties);
   const fetchParties = usePartyStore((s) => s.fetchParties);
   const allLinks = useHorsePartyLinkStore((s) => s.links);
   const linksLoaded = useHorsePartyLinkStore((s) => s.loaded);
-  const addLink = useHorsePartyLinkStore((s) => s.addLink);
   const currentUser = useAuthStore((s) => s.currentUser);
 
   // Fetch horses + parties on mount; useProfileScope fetches links + entries.
@@ -79,9 +127,6 @@ export function HorseProfile({ horseId, mode, onBack }: HorseProfileProps) {
 
   const [activeModule, setActiveModule] = useState<string | null>(null);
   const [addOpen, setAddOpen] = useState(false);
-  const [showAddConn, setShowAddConn] = useState(false);
-  const [addRole, setAddRole] = useState<PartyRole>('trainer');
-  const [addPartyId, setAddPartyId] = useState('');
   useEffect(() => { setAddOpen(false); }, [activeModule]);
 
   const horse = useMemo(() => horses.find((h) => h.id === horseId), [horses, horseId]);
@@ -94,6 +139,50 @@ export function HorseProfile({ horseId, mode, onBack }: HorseProfileProps) {
   const scope = useProfileScope(subject);
 
   const horseLinks = useMemo(() => allLinks.filter((l) => l.horse_id === horseId), [allLinks, horseId]);
+
+  // Keep the AI assistant's context in sync with the open horse (edit mode only).
+  const setAgentContext = useProfileAgentUi((s) => s.setContext);
+  const askAgent = useProfileAgentUi((s) => s.ask);
+  useEffect(() => {
+    if (mode === 'edit' && horse) setAgentContext(buildHorseContext(horse, horseLinks));
+    return () => setAgentContext(null);
+  }, [mode, horse, horseLinks, setAgentContext]);
+
+  // Steps the user explicitly skipped (persisted per horse). A skipped step
+  // counts as resolved so onboarding can finish without it.
+  const [skipped, setSkipped] = useState<Set<string>>(() => loadSkippedSteps(horseId));
+  useEffect(() => { setSkipped(loadSkippedSteps(horseId)); }, [horseId]);
+
+  // Onboarding completion (edit mode). Mirrors the `onbSteps` done predicates
+  // below — keep in sync. Computed as a hook (before the guards) so the one-time
+  // celebration toast can fire without breaking the Rules-of-Hooks order.
+  const onbAllDone = useMemo(() => {
+    if (!horse || mode !== 'edit' || !editable) return false;
+    const ok = (done: boolean, key: string) => done || skipped.has(key);
+    const linked = (rel: string) => horseLinks.some((l) => l.relationship_type === rel);
+    return ok(!!horse.imageUrl, 'photo')
+      && ok(!!(horse.sex && horse.colour && horse.dob), 'basics')
+      && ok(!!(horse.sire || horse.dam), 'pedigree')
+      && CONNECTION_STEPS.every((c) => ok(linked(c.rel), c.key));
+  }, [horse, horseLinks, mode, editable, skipped]);
+  // Celebrate only a GENUINE completion during this session — i.e. a
+  // loaded-but-incomplete profile that then becomes complete. Without the
+  // "saw incomplete first" gate the toast would pop on merely opening an
+  // already-complete (or previously fully-skipped, loaded from localStorage)
+  // horse, since onbAllDone is true on the first committed render.
+  const celebratedRef = useRef(false);
+  const sawIncompleteRef = useRef(false);
+  useEffect(() => {
+    if (!onbAllDone) {
+      if (horsesLoaded && linksLoaded && mode === 'edit' && editable) sawIncompleteRef.current = true;
+      celebratedRef.current = false; // re-arm if data is later removed
+      return;
+    }
+    if (sawIncompleteRef.current && !celebratedRef.current) {
+      celebratedRef.current = true;
+      toast.success('🏇 Profile complete — it’s ready to view.');
+    }
+  }, [onbAllDone, horsesLoaded, linksLoaded, mode, editable]);
 
   // ── Guards AFTER all hooks (stable hook order) ──
   if (!horse) {
@@ -121,26 +210,13 @@ export function HorseProfile({ horseId, mode, onBack }: HorseProfileProps) {
   const sizeStr = horse.handsSize ? `${horse.handsSize}hh${horse.metricSize ? ` · ${horse.metricSize}m` : ''}` : undefined;
   const crestSubtitle = [horse.sex, horse.colour, sizeStr, horse.country, horse.dob ? `${new Date(horse.dob).getFullYear()} foal` : undefined].filter(Boolean).join(' · ');
 
-  const partyName = (pid: string) => parties.find((p) => p.id === pid)?.name ?? 'Unknown party';
-  const addPartyOptions = parties.filter((p) => p.roles.includes(addRole));
-
-  const submitConnection = async () => {
-    if (!addPartyId) { toast.error('Choose a party to link.'); return; }
-    const rel = LINK_ROLES.find((r) => r.role === addRole)?.rel;
-    if (!rel) return;
-    await addLink({ horse_id: horseId, party_id: addPartyId, relationship_type: rel, start_date: new Date().toISOString().slice(0, 10) });
-    toast.success(`${partyName(addPartyId)} linked as ${addRole}. They've been notified.`);
-    setAddPartyId('');
-    setShowAddConn(false);
-  };
-
   const openModule = (key: string) => setActiveModule((p) => (p === key ? null : key));
   const closeModule = () => setActiveModule(null);
   const closeAdd = () => setAddOpen(false);
   const moduleOpen = activeModule !== null;
   const canAdd = !!activeModule && ['media', 'racing', 'sales', 'reports'].includes(activeModule);
 
-  const goHorse = (hid: string) => navigate(isEdit ? `/horses/${hid}/edit` : `/horses/${hid}`);
+  const goHorse = (hid: string) => navigate(isEdit ? `/studio/horse/${hid}` : `/horses/${hid}`);
 
   const dossierFlags = [
     horseLinks.length > 0 || (horse.ownerIds?.length ?? 0) > 0,
@@ -154,6 +230,72 @@ export function HorseProfile({ horseId, mode, onBack }: HorseProfileProps) {
   ];
   const dossierFilled = dossierFlags.filter(Boolean).length;
 
+  // ── Onboarding step guide (edit mode; self-hides once complete) ──
+  // Photo → basics → pedigree, then ONE step per left-rail party (owners,
+  // breeders, trainers… walked one by one). Any step can be Skipped (persisted
+  // per horse); skipped counts as resolved. Racing is no longer a step.
+  const hasRel = (rel: string) => horseLinks.some((l) => l.relationship_type === rel);
+  const onbSteps: OnbStep[] = [
+    { key: 'photo', label: 'Photo', hint: 'Upload a clear photo of the horse.', done: !!horse.imageUrl, skipped: skipped.has('photo'), anchorId: 'onb-photo', icon: STEP_ICONS.photo },
+    { key: 'basics', label: 'Basics', hint: 'Add sex, colour and the foaling date.', done: !!(horse.sex && horse.colour && horse.dob), skipped: skipped.has('basics'), anchorId: 'onb-identity', icon: STEP_ICONS.basics },
+    { key: 'pedigree', label: 'Pedigree', hint: 'Record the sire and dam.', done: !!(horse.sire || horse.dam), skipped: skipped.has('pedigree'), anchorId: 'onb-identity', icon: STEP_ICONS.pedigree },
+    ...CONNECTION_STEPS.map((c) => ({
+      key: c.key,
+      label: c.label,
+      hint: `Link the ${c.noun} — optional, skip if it doesn’t apply.`,
+      done: hasRel(c.rel),
+      skipped: skipped.has(c.key),
+      anchorId: `onb-conn-${c.rel}`,
+      icon: ROLE_ICON[c.role],
+    })),
+  ];
+  // Step action: `module:<key>` opens that data section in the centre; anything
+  // else scrolls to the DOM anchor of that name.
+  const scrollToAnchor = (id?: string) => {
+    if (!id) return;
+    if (id.startsWith('module:')) { openModule(id.slice(7)); return; }
+    document.getElementById(id)?.scrollIntoView({ behavior: 'smooth', block: 'center' });
+  };
+  // Mark a step skipped (persisted) so the guide moves on and onboarding can finish.
+  const skipStep = (key: string) => setSkipped((prev) => {
+    const next = new Set(prev); next.add(key); persistSkippedSteps(horseId, next); return next;
+  });
+
+  // Per-step prompt that opens the Stable Studio assistant ready to help.
+  const HORSE_STEP_PROMPTS: Record<string, string> = {
+    photo: `What information should I gather to complete ${horseName}'s profile? Give me a short checklist.`,
+    basics: `Help me fill in ${horseName}'s sex, colour and foaling date.`,
+    pedigree: `Help me record ${horseName}'s sire and dam.`,
+    ...Object.fromEntries(CONNECTION_STEPS.map((c) => [c.key, `Help me add the ${c.noun} for ${horseName}.`])),
+  };
+  const askAiForStep = (step: OnbStep) => askAgent(HORSE_STEP_PROMPTS[step.key] ?? `Help me with ${horseName}'s ${step.label.toLowerCase()}.`);
+
+  // ── Onboarding guide content: the floating mascot's per-step title + tips. ──
+  const HORSE_COACH: Record<string, { title: string; tips: string[] }> = {
+    photo: { title: 'Add a clear photo', tips: ['A side-on, well-lit shot works best', 'JPG or PNG'] },
+    basics: { title: 'Add the basics', tips: ['Sex, colour & foaling date', 'The foaling date sets the age'] },
+    pedigree: { title: 'Record the pedigree', tips: ['Sire & dam — names alone already help'] },
+    ...Object.fromEntries(CONNECTION_STEPS.map((c) => [c.key, {
+      title: c.title,
+      tips: [`Type a name to link or create the ${c.noun}`, 'Optional — tap Skip if it doesn’t apply'],
+    }])),
+  };
+  const activeStep = onbSteps.find((s) => !s.done && !s.skipped);
+  const activeKey = activeStep?.key;
+  const showGuide = editableHorse && !onbAllDone;
+  const isActive = (key: string) => showGuide && activeKey === key;
+  // When the active step is a connection, glow + point at that left-rail box.
+  const activeConnRel = CONNECTION_STEPS.find((c) => c.key === activeKey)?.rel ?? null;
+  const guideSteps: GuideStep[] = onbSteps.map((s) => ({
+    key: s.key,
+    label: s.label,
+    title: HORSE_COACH[s.key]?.title ?? s.label,
+    tips: HORSE_COACH[s.key]?.tips,
+    anchorId: s.anchorId,
+    pointerId: s.anchorId && !s.anchorId.startsWith('module:') ? s.anchorId : undefined,
+    done: s.done || !!s.skipped,
+  }));
+
   // ── Field descriptors (read-only in view, editable in edit) ──
   const unnamedCheckbox = (
     <label style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: '0.6rem', color: 'var(--forest-mid)', padding: '2px 0 8px', ...serifStyle }}>
@@ -166,9 +308,9 @@ export function HorseProfile({ horseId, mode, onBack }: HorseProfileProps) {
     { label: 'Name', value: horse.name ?? '', displayValue: horse.isUnnamed ? 'Un-Named' : undefined, onSave: horse.isUnnamed ? undefined : (v) => set({ name: v }) },
     ...(isEdit ? [{ label: '__unnamed', value: '', render: unnamedCheckbox }] : []),
     { label: 'Foaled', type: 'date', value: horse.dob ?? '', displayValue: horse.dob ? new Date(horse.dob).toLocaleDateString('en-AU', { day: 'numeric', month: 'short', year: 'numeric' }) : undefined, onSave: (v) => set({ dob: v || undefined }) },
-    { label: 'Sex', value: horse.sex ?? '', onSave: (v) => set({ sex: v.trim() || undefined }) },
-    { label: 'Colour', value: horse.colour ?? '', onSave: (v) => set({ colour: v.trim() || undefined }) },
-    { label: 'Country', value: horse.country ?? '', onSave: (v) => set({ country: v.trim() || undefined }) },
+    { label: 'Sex', type: 'select', options: SEX_OPTIONS, value: horse.sex ?? '', onSave: (v) => set({ sex: v.trim() || undefined }) },
+    { label: 'Colour', type: 'select', options: COLOUR_OPTIONS, value: horse.colour ?? '', onSave: (v) => set({ colour: v.trim() || undefined }) },
+    { label: 'Country', type: 'select', options: COUNTRY_OPTIONS, value: horse.country ?? '', onSave: (v) => set({ country: v.trim() || undefined }) },
     { label: 'Hands', type: 'number', value: horse.handsSize != null ? String(horse.handsSize) : '', onSave: (v) => set({ handsSize: num(v) }) },
     { label: 'Metric (cm)', type: 'number', value: horse.metricSize != null ? String(horse.metricSize) : '', onSave: (v) => set({ metricSize: num(v) }) },
   ];
@@ -206,28 +348,45 @@ export function HorseProfile({ horseId, mode, onBack }: HorseProfileProps) {
     </div>
   );
 
+  // These editable cards are NOT stacked in the default body anymore — they open
+  // in the centre when their matching right-rail tile is clicked (keeps the page
+  // lean: default = photo + Identity + Pedigree). See `moduleEditCard` below.
+  const racingCard = <IdentityCard title="Racing Summary" icon={<Trophy size={12} style={{ color: 'var(--gold-bright)' }} />} fields={racingFields} editable={editableHorse} />;
+  const studbookCard = <IdentityCard title="Stud Book" icon={<Binary size={12} style={{ color: 'var(--gold-bright)' }} />} fields={studbookFields} editable={editableHorse} />;
+  const notesCard = (
+    <div className="sku-gold-card" style={{ ...serifStyle }}>
+      <div className="sku-green-header" style={{ padding: '7px 12px', display: 'flex', alignItems: 'center', gap: 6 }}>
+        <Pencil size={12} style={{ color: 'var(--gold-bright)' }} />
+        <span style={{ ...goldStyle, fontSize: '0.6rem', letterSpacing: '0.16em', textTransform: 'uppercase', fontWeight: 700 }}>Notes</span>
+      </div>
+      <div className="sku-parchment" style={{ padding: '12px 14px', display: 'flex', flexDirection: 'column', gap: 12 }}>
+        <InlineEditRow label="Pull quote" value={horse.pullQuote ?? ''} onSave={(v) => set({ pullQuote: v.trim() || undefined })} editable={editableHorse} />
+        <InlineEditTextArea label="Pedigree / general notes" value={horse.pedigreeNotes ?? ''} onSave={(v) => set({ pedigreeNotes: v })} editable={editableHorse} rows={3} />
+      </div>
+    </div>
+  );
+
   const centerDefault = (
     <>
-      <PortraitFrame src={horse.imageUrl} alt={horseName} editable={editableHorse} kind="horse" onUpload={(url) => set({ imageUrl: url })} containerStyle={{ height: 'clamp(300px, 46vh, 520px)', minHeight: 300 }} caption={featuredCaption} />
+      {editableHorse && (onbAllDone
+        ? <OnboardingComplete title="Profile complete!" subtitle={`${horseName} is ready to view.`} onViewPublic={() => navigate(`/horses/${horseId}`)} />
+        : <OnboardingSteps title={`Finish ${horseName}'s profile`} steps={onbSteps} onStepClick={scrollToAnchor} />
+      )}
 
-      <div style={{ display: 'grid', gridTemplateColumns: '0.85fr 1.15fr', gap: 14, alignItems: 'stretch' }}>
-        <IdentityCard title="Identity" fields={idFields} editable={editableHorse} />
-        <IdentityCard title="Pedigree" icon={<BookMarked size={12} style={{ color: 'var(--gold-bright)' }} />} fields={pedFields} editable={editableHorse} />
+      <div id="onb-photo">
+        <PortraitFrame src={horse.imageUrl} alt={horseName} editable={editableHorse} kind="horse" onUpload={(url) => set({ imageUrl: url })} containerStyle={{ height: 'clamp(300px, 46vh, 520px)', minHeight: 300 }} caption={featuredCaption} label={!horse.imageUrl ? 'Add a photo to begin' : undefined} className={isActive('photo') ? 'onb-spotlight' : undefined} />
       </div>
 
-      <IdentityCard title="Racing Summary" icon={<Trophy size={12} style={{ color: 'var(--gold-bright)' }} />} fields={racingFields} editable={editableHorse} />
-      <IdentityCard title="Stud Book" icon={<Binary size={12} style={{ color: 'var(--gold-bright)' }} />} fields={studbookFields} editable={editableHorse} />
-
-      <div className="sku-gold-card" style={{ ...serifStyle }}>
-        <div className="sku-green-header" style={{ padding: '7px 12px', display: 'flex', alignItems: 'center', gap: 6 }}>
-          <Pencil size={12} style={{ color: 'var(--gold-bright)' }} />
-          <span style={{ ...goldStyle, fontSize: '0.6rem', letterSpacing: '0.16em', textTransform: 'uppercase', fontWeight: 700 }}>Notes</span>
-        </div>
-        <div className="sku-parchment" style={{ padding: '12px 14px', display: 'flex', flexDirection: 'column', gap: 12 }}>
-          <InlineEditRow label="Pull quote" value={horse.pullQuote ?? ''} onSave={(v) => set({ pullQuote: v.trim() || undefined })} editable={editableHorse} />
-          <InlineEditTextArea label="Pedigree / general notes" value={horse.pedigreeNotes ?? ''} onSave={(v) => set({ pedigreeNotes: v })} editable={editableHorse} rows={3} />
-        </div>
+      <div id="onb-identity" style={{ display: 'grid', gridTemplateColumns: '0.85fr 1.15fr', gap: 14, alignItems: 'stretch' }}>
+        <IdentityCard title="Identity" fields={idFields} editable={editableHorse} className={isActive('basics') ? 'onb-spotlight' : undefined} />
+        <IdentityCard title="Pedigree" icon={<BookMarked size={12} style={{ color: 'var(--gold-bright)' }} />} fields={pedFields} editable={editableHorse} className={isActive('pedigree') ? 'onb-spotlight' : undefined} />
       </div>
+
+      {editableHorse && !isActive('racing') && (
+        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 6, padding: '4px 0', fontSize: '0.58rem', fontStyle: 'italic', color: 'var(--gold-dark)', ...serifStyle }}>
+          <ArrowRight size={11} /> Racing, Stud Book, Notes &amp; more open here — pick a Data Section on the right.
+        </div>
+      )}
     </>
   );
 
@@ -241,8 +400,18 @@ export function HorseProfile({ horseId, mode, onBack }: HorseProfileProps) {
       default: return null;
     }
   };
+  // In edit mode, the heavy editable cards live with their matching data tile so
+  // they open in the centre on click (instead of stacking down the default body).
+  const moduleEditCard = editableHorse
+    ? (activeModule === 'racing' ? racingCard
+      : activeModule === 'studbook' ? studbookCard
+      : activeModule === 'pedigree' ? notesCard
+      : null)
+    : null;
+
   const centerModule = activeModule ? (
     <>
+      {moduleEditCard && <div style={{ marginBottom: 10 }}>{moduleEditCard}</div>}
       {editableHorse && canAdd && (
         <div style={{ marginBottom: 10 }}>
           {addOpen ? (
@@ -264,13 +433,7 @@ export function HorseProfile({ horseId, mode, onBack }: HorseProfileProps) {
     </>
   ) : null;
 
-  // ── Left rail ──
-  const reportsButton = (
-    <button onClick={() => openModule('reports')} aria-pressed={activeModule === 'reports'} style={{ marginTop: 2, width: '100%', border: `2px solid ${activeModule === 'reports' ? 'var(--gold-bright)' : 'var(--gold-dark)'}`, borderRadius: 4, overflow: 'hidden', cursor: 'pointer', boxShadow: '0 0 0 1px var(--gold-dark), 0 3px 10px rgba(0,0,0,0.4)', display: 'flex', flexDirection: 'column', background: 'none', padding: 0, ...serifStyle }}>
-      <div style={{ background: 'linear-gradient(180deg, var(--forest-mid) 0%, var(--forest-deep) 100%)', padding: '6px 10px', display: 'flex', alignItems: 'center', gap: 6 }}><FileText size={12} strokeWidth={1.8} style={{ color: 'var(--gold-bright)' }} /><span style={{ fontSize: '0.58rem', letterSpacing: '0.14em', textTransform: 'uppercase', fontWeight: 700, color: 'var(--gold-bright)' }}>Reports / Forms</span></div>
-      <div style={{ background: 'var(--parchment)', padding: '8px 11px', display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}><span style={{ fontSize: '0.64rem', color: 'var(--forest-deep)', fontWeight: 600, fontStyle: 'italic' }}>Official documents &amp; reports</span><ChevronRight size={13} style={{ color: 'var(--gold-mid)' }} /></div>
-    </button>
-  );
+  // ── Left rail — always-on, multi-party, dated role boxes (view + edit) ──
   const allHorsesButton = (
     <button onClick={() => navigate('/horses')} className="sku-gold-btn" style={{ marginTop: 4, padding: '7px 0', width: '100%', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 6, ...serifStyle }}>
       <ChevronRight size={12} style={{ color: 'var(--forest-deep)', transform: 'rotate(180deg)' }} />
@@ -278,69 +441,18 @@ export function HorseProfile({ horseId, mode, onBack }: HorseProfileProps) {
     </button>
   );
 
-  const relTiles: RelTile[] = REL_ORDER
-    .filter((r) => scope.relationshipTiles[r]?.length > 0)
-    .map((r) => ({ role: r, parties: scope.relationshipTiles[r] }));
-
-  const left = isEdit ? (
-    <>
-      <div style={{ borderBottom: '2px solid var(--gold-dark)', paddingBottom: 6, marginBottom: 2, display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
-        <span style={{ fontSize: '0.58rem', letterSpacing: '0.2em', textTransform: 'uppercase', color: 'var(--gold-bright)', fontWeight: 700, ...serifStyle }}>Connections</span>
-        <span style={{ fontSize: '0.5rem', color: 'var(--gold-dark)', ...serifStyle }}>✦</span>
-      </div>
-      <div className="sku-gold-card" style={{ ...serifStyle }}>
-        <div className="sku-green-header" style={{ padding: '7px 12px', display: 'flex', alignItems: 'center', gap: 6, justifyContent: 'space-between' }}>
-          <span style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
-            <Users size={12} style={{ color: 'var(--gold-bright)' }} />
-            <span style={{ ...goldStyle, fontSize: '0.58rem', letterSpacing: '0.14em', textTransform: 'uppercase', fontWeight: 700 }}>People · {horseLinks.length}</span>
-          </span>
-          {editable && (
-            <button onClick={() => setShowAddConn((v) => !v)} style={{ display: 'flex', alignItems: 'center', gap: 3, padding: '3px 8px', borderRadius: 3, border: '1px solid var(--gold-mid)', background: 'linear-gradient(135deg, var(--gold-bright), var(--gold-mid))', color: 'var(--forest-deep)', fontWeight: 700, fontSize: '0.5rem', textTransform: 'uppercase', letterSpacing: '0.08em', cursor: 'pointer', ...serifStyle }}>
-              <Plus size={10} /> Add
-            </button>
-          )}
-        </div>
-        <div className="sku-parchment" style={{ padding: '10px 12px' }}>
-          {editable && showAddConn && (
-            <div style={{ display: 'flex', flexDirection: 'column', gap: 6, marginBottom: 10, paddingBottom: 10, borderBottom: '1px solid var(--parchment-dark)' }}>
-              <select value={addRole} onChange={(e) => { setAddRole(e.target.value as PartyRole); setAddPartyId(''); }} style={selectStyle}>
-                {LINK_ROLES.map((r) => <option key={r.role} value={r.role}>{r.label}</option>)}
-              </select>
-              <select value={addPartyId} onChange={(e) => setAddPartyId(e.target.value)} style={selectStyle}>
-                <option value="">{addPartyOptions.length ? `Select a ${addRole}…` : `No ${addRole}s in the register`}</option>
-                {addPartyOptions.map((p) => <option key={p.id} value={p.id}>{p.name}</option>)}
-              </select>
-              <button onClick={submitConnection} className="sku-gold-btn" style={{ padding: '5px 0', fontSize: '0.56rem', textTransform: 'uppercase', letterSpacing: '0.08em', fontWeight: 700, ...serifStyle }}>Link &amp; notify</button>
-            </div>
-          )}
-          {horseLinks.length === 0 ? (
-            <p style={{ fontSize: '0.66rem', fontStyle: 'italic', color: 'var(--parchment-shadow)', textAlign: 'center', padding: '4px 0' }}>No connections yet.</p>
-          ) : (
-            <ul style={{ listStyle: 'none', padding: 0, margin: 0 }}>
-              {horseLinks.map((l, idx) => (
-                <li key={l.id} style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 8, borderBottom: idx < horseLinks.length - 1 ? '1px solid var(--parchment-dark)' : undefined, padding: '6px 0' }}>
-                  <span style={{ fontSize: '0.7rem', fontWeight: 700, color: 'var(--forest-deep)', ...serifStyle, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{partyName(l.party_id)}</span>
-                  <span style={{ fontSize: '0.5rem', textTransform: 'uppercase', letterSpacing: '0.08em', fontWeight: 700, color: 'var(--parchment-shadow)', flexShrink: 0 }}>
-                    {HORSE_PARTY_RELATIONSHIP_LABELS[l.relationship_type]} · {isCurrentLink(l) ? 'cur' : 'past'}
-                  </span>
-                </li>
-              ))}
-            </ul>
-          )}
-        </div>
-      </div>
-      {reportsButton}
-      {allHorsesButton}
-    </>
-  ) : (
-    <ConnectionsRail
-      tiles={relTiles}
-      emptyText="No connected parties yet."
-      onOpenParty={(pid) => navigate(`/parties/${pid}`)}
-      reportsActive={activeModule === 'reports'}
-      onOpenReports={() => openModule('reports')}
-      footer={allHorsesButton}
-    />
+  const left = (
+    <div id="onb-connections" style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
+      <RoleConnectionsRail
+        horseId={horseId}
+        editable={editableHorse}
+        onOpenParty={(pid) => navigate(`/parties/${pid}`)}
+        reportsActive={activeModule === 'reports'}
+        onOpenReports={() => openModule('reports')}
+        footer={allHorsesButton}
+        spotlightRel={showGuide ? activeConnRel : null}
+      />
+    </div>
   );
 
   // ── Crest card ──
@@ -360,15 +472,9 @@ export function HorseProfile({ horseId, mode, onBack }: HorseProfileProps) {
             </span>
           )
         ) : (
-          <>
-            <FollowButton horseId={horse.id} />
-            {editable && isUnverified && provisionalBadge}
-            {editable && (
-              <button onClick={() => navigate(`/horses/${horseId}/edit`)} style={{ display: 'flex', alignItems: 'center', gap: 5, padding: '5px 11px', borderRadius: 3, border: '1px solid var(--gold-mid)', background: 'linear-gradient(135deg, var(--gold-bright), var(--gold-mid))', color: 'var(--forest-deep)', fontWeight: 700, fontSize: '0.56rem', textTransform: 'uppercase', letterSpacing: '0.1em', cursor: 'pointer', ...serifStyle }}>
-                <Pencil size={11} /> Edit
-              </button>
-            )}
-          </>
+          /* Public page = read-only preview: no owner edit chrome. Editing is
+             reached only from the private studio (Dashboard → your horses). */
+          <FollowButton horseId={horse.id} />
         )}
         <DossierMeter filled={dossierFilled} total={dossierFlags.length} />
       </div>
@@ -390,11 +496,15 @@ export function HorseProfile({ horseId, mode, onBack }: HorseProfileProps) {
 
   const breadcrumbRight = (
     <>
-      <AskAgentButton
-        variant="ornate"
-        prompt={isEdit ? "Help me complete this horse's profile — what details should I add?" : 'Tell me about this horse — its connections, recent form, and anything notable.'}
-        label="Ask"
-      />
+      {editableHorse ? (
+        <StudioLauncher />
+      ) : (
+        <AskAgentButton
+          variant="ornate"
+          prompt="Tell me about this horse — its connections, recent form, and anything notable."
+          label="Ask"
+        />
+      )}
       <span style={{ fontSize: '0.5rem', letterSpacing: '0.18em', textTransform: 'uppercase', color: 'var(--gold-dark)', ...serifStyle }}>Stable Press · Racing Almanac</span>
     </>
   );
@@ -409,6 +519,11 @@ export function HorseProfile({ horseId, mode, onBack }: HorseProfileProps) {
       centerModule={centerModule}
       moduleKey={activeModule}
       right={<DataSectionsRail activeModule={activeModule} onToggle={openModule} />}
+      overlay={editableHorse
+        ? (showGuide
+          ? <OnboardingGuide steps={guideSteps} name="Stablehand" onShowMe={scrollToAnchor} onAskStep={(s) => askAiForStep(onbSteps.find((o) => o.key === s.key) ?? onbSteps[0])} onSkipStep={(s) => skipStep(s.key)} />
+          : <ProfileAgentPanel />)
+        : undefined}
     />
   );
 }

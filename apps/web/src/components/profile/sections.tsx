@@ -33,8 +33,8 @@ interface BaseSectionProps {
 const EmptyHint = ({ icon, line }: { icon: React.ReactNode; line: string }) => (
   <div style={{ marginTop: 12, padding: '20px 14px', background: 'rgba(0,0,0,0.03)', border: '1px solid var(--parchment-dark)', borderRadius: 3, textAlign: 'center' }}>
     <div style={{ display: 'flex', justifyContent: 'center', marginBottom: 8 }}>{icon}</div>
-    <p style={{ fontSize: '0.72rem', fontStyle: 'italic', color: 'var(--parchment-shadow)', marginBottom: 4 }}>{line}</p>
-    <p style={{ fontSize: '0.62rem', color: 'var(--parchment-shadow)' }}>Records are managed through the Stable Press Production System.</p>
+    <p style={{ fontSize: '0.72rem', fontStyle: 'italic', color: 'var(--parchment-label)', marginBottom: 4 }}>{line}</p>
+    <p style={{ fontSize: '0.62rem', color: 'var(--parchment-label)' }}>Records are managed through the Stable Press Production System.</p>
   </div>
 );
 
@@ -88,7 +88,7 @@ export function MediaSection({ horseIds, subjectName, onClose, onOpenHorse }: Ba
                     {item.subject && <div style={{ fontSize: '0.62rem', color: 'var(--forest-mid)', fontStyle: 'italic', marginTop: 2, lineHeight: 1.4 }}>{item.subject}</div>}
                   </div>
                 </div>
-                <div style={{ display: 'flex', flexWrap: 'wrap', gap: '4px 12px', fontSize: '0.58rem', color: 'var(--parchment-shadow)' }}>
+                <div style={{ display: 'flex', flexWrap: 'wrap', gap: '4px 12px', fontSize: '0.58rem', color: 'var(--parchment-label)' }}>
                   {multi && <span style={{ display: 'flex', alignItems: 'center', gap: 3 }}><BookMarked size={9} style={{ color: 'var(--gold-dark)' }} /><HorseTag horseId={item.horse_id} name={horseName(item.horse_id)} onOpenHorse={onOpenHorse} /></span>}
                   {item.source_publication && <span style={{ display: 'flex', alignItems: 'center', gap: 3 }}><Newspaper size={9} style={{ color: 'var(--gold-dark)', flexShrink: 0 }} />{item.source_publication}</span>}
                   {item.published_date && <span style={{ display: 'flex', alignItems: 'center', gap: 3 }}><span style={{ color: 'var(--gold-dark)' }}>·</span>{fmtDate(item.published_date)}</span>}
@@ -122,7 +122,7 @@ export function MediaSection({ horseIds, subjectName, onClose, onOpenHorse }: Ba
       )}
       <div style={{ marginTop: 14, padding: '10px 12px', background: 'rgba(0,0,0,0.04)', border: '1px solid var(--parchment-dark)', borderRadius: 3, display: 'flex', alignItems: 'center', gap: 8 }}>
         <Image size={14} style={{ color: 'var(--gold-mid)', flexShrink: 0 }} />
-        <span style={{ fontSize: '0.62rem', color: 'var(--parchment-shadow)', fontStyle: 'italic' }}>Media records surface automatically from the Stable Press Production System.</span>
+        <span style={{ fontSize: '0.62rem', color: 'var(--parchment-label)', fontStyle: 'italic' }}>Media records surface automatically from the Stable Press Production System.</span>
       </div>
     </SectionPanel>
   );
@@ -173,7 +173,7 @@ export function RacingSection({ horseIds, horses, subjectName, onClose, onOpenHo
                     {entry.subject && <div style={{ fontSize: '0.62rem', color: 'var(--forest-mid)', fontStyle: 'italic', marginTop: 2, lineHeight: 1.4 }}>{entry.subject}</div>}
                   </div>
                 </div>
-                <div style={{ display: 'flex', flexWrap: 'wrap', gap: '4px 12px', fontSize: '0.58rem', color: 'var(--parchment-shadow)', marginBottom: 4 }}>
+                <div style={{ display: 'flex', flexWrap: 'wrap', gap: '4px 12px', fontSize: '0.58rem', color: 'var(--parchment-label)', marginBottom: 4 }}>
                   {multi && <span style={{ display: 'flex', alignItems: 'center', gap: 3 }}><BookMarked size={9} style={{ color: 'var(--gold-dark)' }} /><HorseTag horseId={entry.horse_id} name={horseName(entry.horse_id)} onOpenHorse={onOpenHorse} /></span>}
                   {entry.race_date && <span style={{ display: 'flex', alignItems: 'center', gap: 3 }}><Flag size={9} style={{ color: 'var(--gold-dark)', flexShrink: 0 }} />{fmtDate(entry.race_date)}</span>}
                   {entry.venue && <span style={{ display: 'flex', alignItems: 'center', gap: 3 }}><span style={{ color: 'var(--gold-dark)' }}>·</span>{entry.venue}{entry.country ? `, ${entry.country}` : ''}</span>}
@@ -181,7 +181,7 @@ export function RacingSection({ horseIds, horses, subjectName, onClose, onOpenHo
                   {entry.distance && <span style={{ display: 'flex', alignItems: 'center', gap: 3 }}><span style={{ color: 'var(--gold-dark)' }}>·</span>{entry.distance}</span>}
                 </div>
                 {entry.status === 'Finished' && (
-                  <div style={{ display: 'flex', flexWrap: 'wrap', gap: '4px 12px', fontSize: '0.58rem', color: 'var(--parchment-shadow)' }}>
+                  <div style={{ display: 'flex', flexWrap: 'wrap', gap: '4px 12px', fontSize: '0.58rem', color: 'var(--parchment-label)' }}>
                     {entry.finish_position !== undefined && (
                       <span style={{ color: entry.finish_position === 1 ? 'var(--gold-bright)' : 'var(--forest-mid)', fontWeight: entry.finish_position === 1 ? 700 : 500 }}>
                         {entry.finish_position === 1 ? '🏆' : ''} {entry.finish_position}{entry.finish_position === 1 ? 'st' : entry.finish_position === 2 ? 'nd' : entry.finish_position === 3 ? 'rd' : 'th'}
@@ -192,7 +192,7 @@ export function RacingSection({ horseIds, horses, subjectName, onClose, onOpenHo
                   </div>
                 )}
                 {(jockeyName || trainerName) && (
-                  <div style={{ display: 'flex', flexWrap: 'wrap', gap: '4px 12px', fontSize: '0.57rem', color: 'var(--parchment-shadow)', marginTop: 4 }}>
+                  <div style={{ display: 'flex', flexWrap: 'wrap', gap: '4px 12px', fontSize: '0.57rem', color: 'var(--parchment-label)', marginTop: 4 }}>
                     {jockeyName && <span style={{ display: 'flex', alignItems: 'center', gap: 3 }}><Users size={8} style={{ color: 'var(--gold-dark)' }} />J: {jockeyName}</span>}
                     {trainerName && <span style={{ display: 'flex', alignItems: 'center', gap: 3 }}><Briefcase size={8} style={{ color: 'var(--gold-dark)' }} />T: {trainerName}</span>}
                   </div>
@@ -255,7 +255,7 @@ export function SalesSection({ horseIds, subjectName, onClose, onOpenHorse }: Ba
                     {sale.price !== undefined && <div style={{ fontSize: '0.74rem', color: 'var(--gold-dark)', fontWeight: 700, marginTop: 1 }}>{fmtMoney(sale.price, sale.currency)}</div>}
                   </div>
                 </div>
-                <div style={{ display: 'flex', flexWrap: 'wrap', gap: '4px 12px', fontSize: '0.58rem', color: 'var(--parchment-shadow)' }}>
+                <div style={{ display: 'flex', flexWrap: 'wrap', gap: '4px 12px', fontSize: '0.58rem', color: 'var(--parchment-label)' }}>
                   <span style={{ display: 'flex', alignItems: 'center', gap: 3 }}><DollarSign size={9} style={{ color: 'var(--gold-dark)', flexShrink: 0 }} />{fmtDate(sale.sale_date)}</span>
                   {multi && <HorseTag horseId={sale.horse_id} name={horseName(sale.horse_id)} onOpenHorse={onOpenHorse} />}
                   {sale.vendor && <span><span style={{ color: 'var(--gold-dark)' }}>· </span>Vendor: {sale.vendor}</span>}
@@ -269,7 +269,7 @@ export function SalesSection({ horseIds, subjectName, onClose, onOpenHorse }: Ba
       )}
       <div style={{ marginTop: 12, padding: '10px 12px', background: 'rgba(0,0,0,0.04)', border: '1px solid var(--parchment-dark)', borderRadius: 3, display: 'flex', alignItems: 'center', gap: 8 }}>
         <DollarSign size={14} style={{ color: 'var(--gold-mid)', flexShrink: 0 }} />
-        <span style={{ fontSize: '0.64rem', color: 'var(--parchment-shadow)', fontStyle: 'italic' }}>Sales &amp; auction records are managed through the Stable Press Production System.</span>
+        <span style={{ fontSize: '0.64rem', color: 'var(--parchment-label)', fontStyle: 'italic' }}>Sales &amp; auction records are managed through the Stable Press Production System.</span>
       </div>
     </SectionPanel>
   );
@@ -309,7 +309,7 @@ export function ReportsSection({ horseIds, subjectName, onClose, onOpenHorse }: 
                     <div style={{ fontSize: '0.76rem', fontWeight: 700, color: 'var(--forest-deep)', lineHeight: 1.3, ...serifStyle, display: 'flex', alignItems: 'center', gap: 5 }}>
                       {restricted && <Lock size={10} style={{ color: 'var(--gold-dark)', flexShrink: 0 }} />}{r.title}
                     </div>
-                    <div style={{ display: 'flex', flexWrap: 'wrap', gap: '4px 12px', fontSize: '0.58rem', color: 'var(--parchment-shadow)', marginTop: 2 }}>
+                    <div style={{ display: 'flex', flexWrap: 'wrap', gap: '4px 12px', fontSize: '0.58rem', color: 'var(--parchment-label)', marginTop: 2 }}>
                       {multi && <HorseTag horseId={r.horse_id} name={horseName(r.horse_id)} onOpenHorse={onOpenHorse} />}
                       {r.issuing_body && <span>{r.issuing_body}</span>}
                       {r.issued_date && <span><span style={{ color: 'var(--gold-dark)' }}>· </span>{fmtDate(r.issued_date)}</span>}
@@ -334,7 +334,7 @@ export function ReportsSection({ horseIds, subjectName, onClose, onOpenHorse }: 
       {hiddenCount > 0 && !currentUser && (
         <div style={{ marginTop: 12, padding: '10px 12px', background: 'rgba(180,140,30,0.08)', border: '1px solid var(--gold-dark)', borderRadius: 3, display: 'flex', alignItems: 'center', gap: 8 }}>
           <Lock size={14} style={{ color: 'var(--gold-mid)', flexShrink: 0 }} />
-          <span style={{ fontSize: '0.64rem', color: 'var(--parchment-shadow)', fontStyle: 'italic' }}>{hiddenCount} restricted document{hiddenCount !== 1 ? 's' : ''} hidden — sign in as an authorised member to view.</span>
+          <span style={{ fontSize: '0.64rem', color: 'var(--parchment-label)', fontStyle: 'italic' }}>{hiddenCount} restricted document{hiddenCount !== 1 ? 's' : ''} hidden — sign in as an authorised member to view.</span>
         </div>
       )}
     </ProfileDetailPanel>
@@ -355,7 +355,7 @@ function HorsePicker({ horses, onOpenHorse, label }: { horses: Horse[]; onOpenHo
               </div>
               <div style={{ flex: 1, minWidth: 0 }}>
                 <div style={{ fontSize: '0.74rem', fontWeight: 700, color: 'var(--forest-deep)', ...serifStyle }}>{h.isUnnamed ? 'Un-Named' : h.name}</div>
-                <div style={{ fontSize: '0.58rem', color: 'var(--parchment-shadow)' }}>{[h.sex, h.colour].filter(Boolean).join(' · ')}</div>
+                <div style={{ fontSize: '0.58rem', color: 'var(--parchment-label)' }}>{[h.sex, h.colour].filter(Boolean).join(' · ')}</div>
               </div>
               {onOpenHorse && <ChevronRight size={13} style={{ color: 'var(--gold-mid)', flexShrink: 0 }} />}
             </button>
@@ -378,7 +378,7 @@ export function PedigreeSection({ horses, subjectName, onClose, onOpenHorse }: {
           {hasFamilyTree ? (
             <div style={{ marginBottom: 12 }}><PedigreeGrid horse={single} /></div>
           ) : (
-            <div style={{ marginTop: 12, padding: '10px 12px', background: 'rgba(0,0,0,0.04)', border: '1px solid var(--parchment-dark)', borderRadius: 3, display: 'flex', alignItems: 'center', gap: 8 }}><BookMarked size={14} style={{ color: 'var(--gold-mid)', flexShrink: 0 }} /><span style={{ fontSize: '0.64rem', color: 'var(--parchment-shadow)', fontStyle: 'italic' }}>No pedigree data on file.</span></div>
+            <div style={{ marginTop: 12, padding: '10px 12px', background: 'rgba(0,0,0,0.04)', border: '1px solid var(--parchment-dark)', borderRadius: 3, display: 'flex', alignItems: 'center', gap: 8 }}><BookMarked size={14} style={{ color: 'var(--gold-mid)', flexShrink: 0 }} /><span style={{ fontSize: '0.64rem', color: 'var(--parchment-label)', fontStyle: 'italic' }}>No pedigree data on file.</span></div>
           )}
           {single.pedigreeNotes && <><SectionHeading>Pedigree Notes</SectionHeading><p style={{ fontSize: '0.72rem', color: 'var(--forest-mid)', lineHeight: 1.6 }}>{single.pedigreeNotes}</p></>}
         </>
@@ -417,7 +417,7 @@ export function StudBookSection({ horses, subjectName, onClose, onOpenHorse }: {
           </dl>
           <div style={{ marginTop: 12, padding: '10px 12px', background: 'rgba(0,0,0,0.04)', border: '1px solid var(--parchment-dark)', borderRadius: 3, display: 'flex', alignItems: 'center', gap: 8 }}>
             <MapPin size={14} style={{ color: 'var(--gold-mid)', flexShrink: 0 }} />
-            <span style={{ fontSize: '0.64rem', color: 'var(--parchment-shadow)', fontStyle: 'italic' }}>Official stud book registration details as held by Racing Australia.</span>
+            <span style={{ fontSize: '0.64rem', color: 'var(--parchment-label)', fontStyle: 'italic' }}>Official stud book registration details as held by Racing Australia.</span>
           </div>
         </>
       ) : horses.length === 0 ? (

@@ -30,7 +30,7 @@ export function ConnectionsRail({ tiles, emptyText, onOpenParty, reportsActive, 
 
       {tiles.length === 0 && (
         <div style={{ padding: '10px 12px', border: '1px solid var(--gold-dark)', borderRadius: 3, background: 'rgba(26,51,34,0.5)', textAlign: 'center' }}>
-          <span style={{ fontSize: '0.6rem', fontStyle: 'italic', color: 'var(--parchment-shadow)', ...serifStyle }}>{emptyText}</span>
+          <span style={{ fontSize: '0.6rem', fontStyle: 'italic', color: 'var(--parchment-label)', ...serifStyle }}>{emptyText}</span>
         </div>
       )}
 

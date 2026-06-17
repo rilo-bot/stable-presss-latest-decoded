@@ -8,7 +8,9 @@ interface HorsePartyLinkState {
   loading: boolean;
   error: string | null;
   loaded: boolean;
-  fetchHorsePartyLinks: () => Promise<void>;
+  /** Pass force=true to refetch even when already loaded (e.g. after a server
+   *  side-effect created a link, like horse registration auto-linking the owner). */
+  fetchHorsePartyLinks: (force?: boolean) => Promise<void>;
   addLink: (
     link: Omit<HorsePartyLink, 'id' | 'createdAt'>
   ) => Promise<string>;
@@ -16,7 +18,7 @@ interface HorsePartyLinkState {
     id: string,
     updates: Partial<Omit<HorsePartyLink, 'id' | 'createdAt'>>
   ) => Promise<void>;
-  removeLink: (id: string) => Promise<void>;
+  removeLink: (id: string) => Promise<boolean>;
   /** Returns all links for a given horse */
   getLinksForHorse: (horseId: string) => HorsePartyLink[];
   /** Returns all links for a given party */
@@ -30,8 +32,9 @@ export const useHorsePartyLinkStore = create<HorsePartyLinkState>()(
     error: null,
     loaded: false,
 
-    fetchHorsePartyLinks: async () => {
-      if (get().loading || get().loaded) return;
+    fetchHorsePartyLinks: async (force = false) => {
+      if (get().loading) return;
+      if (get().loaded && !force) return;
       set({ loading: true, error: null });
       try {
         const res = await authFetch('/api/horsePartyLinks');
@@ -97,10 +100,12 @@ export const useHorsePartyLinkStore = create<HorsePartyLinkState>()(
           method: 'DELETE',
         });
         if (!res.ok) throw new Error(`HTTP ${res.status}`);
+        return true;
       } catch (err) {
         const message = err instanceof Error ? err.message : 'Could not delete the link — restoring it';
         set({ links: previous, error: message });
         toast.error('Could not delete the link — restoring it');
+        return false;
       }
     },
 

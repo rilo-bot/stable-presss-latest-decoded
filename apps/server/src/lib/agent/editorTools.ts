@@ -24,6 +24,15 @@ const pageRef = {
     .describe('Target page id. Omit to use the page the editor is currently viewing.'),
 }
 
+// Force a write to be STAGED for review (Apply/Discard) instead of auto-applying
+// into an empty region. REQUIRED for any content drawn from an uploaded document.
+const reviewFlag = {
+  review: z
+    .boolean()
+    .optional()
+    .describe('Stage this for the user to review instead of auto-applying. Set true for content from an uploaded document.'),
+}
+
 const styleShape = z.object({
   fontSize: z.number().optional(),
   fontWeight: z.number().optional(),
@@ -80,8 +89,8 @@ export function buildEditorTools(account?: AccountUser): ToolSet {
     // ── writes (empty regions auto-apply; overwrites/style/clear/batches are staged for the user to Apply) ──
     setRegionText: tool({
       description:
-        'Set a text region. Provide light inline HTML (<b><i><u><s><br><span>); it is sanitized. Filling an EMPTY region applies instantly; overwriting filled text is staged for the user to approve.',
-      inputSchema: z.object({ ...pageRef, regionId: z.string(), html: z.string() }),
+        'Set a text region. Provide light inline HTML (<b><i><u><s><br><span>); it is sanitized. Filling an EMPTY region applies instantly; overwriting filled text is staged for the user to approve. Pass review:true (always, for content from an uploaded document) to stage it for review even when the region is empty.',
+      inputSchema: z.object({ ...pageRef, regionId: z.string(), html: z.string(), ...reviewFlag }),
     }),
     setRegionImage: tool({
       description:
@@ -92,11 +101,12 @@ export function buildEditorTools(account?: AccountUser): ToolSet {
         src: z.string(),
         fit: z.enum(['cover', 'contain']).optional(),
         alt: z.string().optional(),
+        ...reviewFlag,
       }),
     }),
     setRegionQr: tool({
       description: 'Set a QR region\'s target. Only https: or mailto: URLs are allowed.',
-      inputSchema: z.object({ ...pageRef, regionId: z.string(), targetUrl: z.string(), fg: z.string().optional() }),
+      inputSchema: z.object({ ...pageRef, regionId: z.string(), targetUrl: z.string(), fg: z.string().optional(), ...reviewFlag }),
     }),
     patchRegionStyle: tool({
       description:

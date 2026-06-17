@@ -18,7 +18,7 @@ type SaveState = 'idle' | 'saving' | 'saved';
 
 const labelStyle: React.CSSProperties = {
   fontSize: '0.56rem', textTransform: 'uppercase', letterSpacing: '0.1em',
-  color: 'var(--parchment-shadow)', fontWeight: 700, flexShrink: 0, ...serifStyle,
+  color: 'var(--parchment-label)', fontWeight: 700, flexShrink: 0, ...serifStyle,
 };
 
 const inputStyle: React.CSSProperties = {
@@ -40,7 +40,9 @@ interface InlineEditRowProps {
   value: string;
   onSave: (next: string) => void | Promise<void>;
   editable?: boolean;
-  type?: 'text' | 'number' | 'date';
+  type?: 'text' | 'number' | 'date' | 'select';
+  /** Choices for type='select' (e.g. SEX_OPTIONS) — same lists as the full form. */
+  options?: string[];
   /** Pre-formatted display string (e.g. a formatted date / money) when not editing. */
   displayValue?: string;
   highlight?: boolean;
@@ -49,7 +51,7 @@ interface InlineEditRowProps {
 }
 
 /** A parchment row that becomes a themed input on click and auto-saves on blur. */
-export function InlineEditRow({ label, value, onSave, editable, type = 'text', displayValue, highlight, min, max }: InlineEditRowProps) {
+export function InlineEditRow({ label, value, onSave, editable, type = 'text', options, displayValue, highlight, min, max }: InlineEditRowProps) {
   const [editing, setEditing] = useState(false);
   const [val, setVal] = useState(value ?? '');
   const [state, setState] = useState<SaveState>('idle');
@@ -57,12 +59,12 @@ export function InlineEditRow({ label, value, onSave, editable, type = 'text', d
   useEffect(() => { setVal(value ?? ''); }, [value]);
   useEffect(() => () => { if (timer.current) window.clearTimeout(timer.current); }, []);
 
-  const commit = async () => {
+  const commitValue = async (next: string) => {
     setEditing(false);
-    if ((value ?? '') === val) return;
+    if ((value ?? '') === next) return;
     setState('saving');
     try {
-      await onSave(val);
+      await onSave(next);
       setState('saved');
       if (timer.current) window.clearTimeout(timer.current);
       timer.current = window.setTimeout(() => setState('idle'), 1400);
@@ -71,6 +73,7 @@ export function InlineEditRow({ label, value, onSave, editable, type = 'text', d
       setVal(value ?? '');
     }
   };
+  const commit = () => commitValue(val);
   const cancel = () => { setVal(value ?? ''); setEditing(false); };
 
   const shown = displayValue || value;
@@ -81,17 +84,31 @@ export function InlineEditRow({ label, value, onSave, editable, type = 'text', d
       <dt style={labelStyle}>{label}</dt>
       <dd style={{ margin: 0, flex: editing ? 1 : '0 1 auto', minWidth: 0, display: 'flex', alignItems: 'center', justifyContent: 'flex-end', gap: 5 }}>
         {editing ? (
-          <input
-            autoFocus
-            type={type}
-            value={val}
-            min={min}
-            max={max}
-            onChange={(e) => setVal(e.target.value)}
-            onBlur={commit}
-            onKeyDown={(e) => { if (e.key === 'Enter') (e.target as HTMLInputElement).blur(); else if (e.key === 'Escape') cancel(); }}
-            style={inputStyle}
-          />
+          type === 'select' ? (
+            <select
+              autoFocus
+              value={val}
+              onChange={(e) => { setVal(e.target.value); void commitValue(e.target.value); }}
+              onBlur={commit}
+              onKeyDown={(e) => { if (e.key === 'Escape') cancel(); }}
+              style={{ ...inputStyle, textAlign: 'left', cursor: 'pointer' }}
+            >
+              <option value="">{`Select ${label.toLowerCase()}…`}</option>
+              {(options ?? []).map((o) => <option key={o} value={o}>{o}</option>)}
+            </select>
+          ) : (
+            <input
+              autoFocus
+              type={type}
+              value={val}
+              min={min}
+              max={max}
+              onChange={(e) => setVal(e.target.value)}
+              onBlur={commit}
+              onKeyDown={(e) => { if (e.key === 'Enter') (e.target as HTMLInputElement).blur(); else if (e.key === 'Escape') cancel(); }}
+              style={inputStyle}
+            />
+          )
         ) : editable ? (
           <button
             type="button"
@@ -99,7 +116,7 @@ export function InlineEditRow({ label, value, onSave, editable, type = 'text', d
             style={{ display: 'inline-flex', alignItems: 'center', gap: 5, background: 'none', border: 'none', padding: 0, cursor: 'pointer', textAlign: 'right', maxWidth: '100%' }}
             title={`Edit ${label.toLowerCase()}`}
           >
-            <span style={{ fontSize: '0.72rem', fontWeight: 600, color: shown ? valueColor : 'var(--parchment-shadow)', fontStyle: shown ? 'normal' : 'italic', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', ...serifStyle }}>
+            <span style={{ fontSize: '0.72rem', fontWeight: 600, color: shown ? valueColor : 'var(--gold-dark)', fontStyle: shown ? 'normal' : 'italic', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', ...serifStyle }}>
               {shown || `Add ${label.toLowerCase()}`}
             </span>
             <Pencil size={9} style={{ color: 'var(--gold-mid)', flexShrink: 0 }} />
@@ -159,7 +176,7 @@ export function InlineEditTextArea({ label, value, onSave, editable, placeholder
           style={{ width: '100%', resize: 'vertical', background: 'var(--parchment)', border: '1px solid var(--gold-mid)', borderRadius: 2, padding: '6px 8px', fontSize: '0.72rem', color: 'var(--forest-deep)', lineHeight: 1.5, outline: 'none', boxShadow: 'inset 0 1px 2px rgba(0,0,0,0.1)', ...serifStyle }}
         />
       ) : (
-        <p style={{ fontSize: '0.72rem', color: value ? 'var(--forest-mid)' : 'var(--parchment-shadow)', fontStyle: value ? 'normal' : 'italic', lineHeight: 1.6, margin: 0, ...serifStyle }}>{value || 'Not recorded.'}</p>
+        <p style={{ fontSize: '0.72rem', color: value ? 'var(--forest-mid)' : 'var(--gold-dark)', fontStyle: value ? 'normal' : 'italic', lineHeight: 1.6, margin: 0, ...serifStyle }}>{value || 'Not recorded.'}</p>
       )}
     </div>
   );
@@ -172,6 +189,8 @@ interface HeroImageEditProps {
   kind: UploadKind;
   onUpload: (url: string) => void | Promise<void>;
   containerStyle?: React.CSSProperties;
+  /** Extra class on the frame root (e.g. the onboarding spotlight outline). */
+  containerClassName?: string;
   /** Caption overlay (role / name block) — only rendered once a real image exists. */
   children?: React.ReactNode;
   /** Empty-state button label. */
@@ -182,7 +201,7 @@ interface HeroImageEditProps {
  * Gold-framed hero image with a DIRECT upload. No fake placeholder image: until a
  * real photo is uploaded it shows an explicit upload zone with a visible button.
  */
-export function HeroImageEdit({ src, alt, editable, kind, onUpload, containerStyle, children, label = 'Upload photo' }: HeroImageEditProps) {
+export function HeroImageEdit({ src, alt, editable, kind, onUpload, containerStyle, containerClassName, children, label = 'Upload photo' }: HeroImageEditProps) {
   const inputRef = useRef<HTMLInputElement>(null);
   const [preview, setPreview] = useState<string | undefined>(src);
   const [busy, setBusy] = useState(false);
@@ -212,11 +231,14 @@ export function HeroImageEdit({ src, alt, editable, kind, onUpload, containerSty
   const pick = () => inputRef.current?.click();
 
   return (
-    <div style={{ position: 'relative', border: '3px solid var(--gold-mid)', boxShadow: '0 0 0 1px var(--gold-dark), 0 6px 24px rgba(0,0,0,0.7)', borderRadius: 4, overflow: 'hidden', background: 'var(--forest-deep)', ...containerStyle }}>
+    <div className={containerClassName} style={{ position: 'relative', border: '3px solid var(--gold-mid)', boxShadow: '0 0 0 1px var(--gold-dark), 0 6px 24px rgba(0,0,0,0.7)', borderRadius: 4, overflow: 'hidden', background: 'var(--forest-deep)', ...containerStyle }}>
       {preview ? (
         <>
-          <img src={preview} alt={alt} crossOrigin="anonymous" style={{ position: 'absolute', inset: 0, width: '100%', height: '100%', objectFit: 'cover', display: 'block' }} />
-          <div style={{ position: 'absolute', inset: 0, background: 'radial-gradient(ellipse at center, transparent 45%, rgba(0,0,0,0.5) 100%)', pointerEvents: 'none' }} />
+          {/* Blurred cover copy fills the frame (no empty bars) so the space stays full… */}
+          <img src={preview} alt="" aria-hidden crossOrigin="anonymous" style={{ position: 'absolute', inset: 0, width: '100%', height: '100%', objectFit: 'cover', filter: 'blur(20px) brightness(0.5)', transform: 'scale(1.12)', display: 'block' }} />
+          {/* …while the real photo shows in full (object-contain → never cropped). */}
+          <img src={preview} alt={alt} crossOrigin="anonymous" style={{ position: 'absolute', inset: 0, width: '100%', height: '100%', objectFit: 'contain', display: 'block' }} />
+          <div style={{ position: 'absolute', inset: 0, background: 'radial-gradient(ellipse at center, transparent 55%, rgba(0,0,0,0.45) 100%)', pointerEvents: 'none' }} />
           {children}
           {editable && (
             <button type="button" onClick={pick} disabled={busy} title="Change photo" style={{ position: 'absolute', top: 8, right: 8, display: 'flex', alignItems: 'center', gap: 4, padding: '4px 9px', borderRadius: 3, border: '1px solid var(--gold-mid)', background: 'rgba(14,36,22,0.85)', color: 'var(--gold-bright)', cursor: busy ? 'wait' : 'pointer', fontSize: '0.52rem', textTransform: 'uppercase', letterSpacing: '0.1em', fontWeight: 700, ...serifStyle }}>
@@ -240,7 +262,7 @@ export function HeroImageEdit({ src, alt, editable, kind, onUpload, containerSty
                 <span style={{ fontSize: '0.56rem', color: 'var(--gold-mid)', ...serifStyle }}>JPG or PNG · nothing uploaded yet</span>
               </>
             ) : (
-              <span style={{ fontSize: '0.6rem', fontStyle: 'italic', color: 'var(--parchment-shadow)', ...serifStyle }}>No photo on file</span>
+              <span style={{ fontSize: '0.6rem', fontStyle: 'italic', color: 'var(--parchment-label)', ...serifStyle }}>No photo on file</span>
             )}
           </div>
         </div>

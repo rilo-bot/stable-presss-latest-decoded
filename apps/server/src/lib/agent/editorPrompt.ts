@@ -28,6 +28,18 @@ export interface EditorContext {
   } | null
   selection?: { regionId: string; kind: string; filled: boolean } | null
   otherPages?: Array<{ pageId: string; pageType: string; label?: string; number?: number; filledCount?: number; totalRegions?: number; editable?: boolean }>
+  attachments?: Array<{
+    id: string
+    name: string
+    kind?: string
+    digest?: {
+      title?: string
+      summary?: string
+      sections?: Array<{ heading: string; body: string }>
+      facts?: string[]
+      tables?: Array<{ caption?: string; rows: string[][] }>
+    }
+  }>
 }
 
 // The fixed NZTROF bulletin has one of each of these 24 page types. Knowing the
@@ -85,7 +97,27 @@ function describeContext(ctx?: EditorContext): string {
   if (ctx.selection) {
     lines.push(`Selected region: ${ctx.selection.regionId} (${ctx.selection.kind}, ${ctx.selection.filled ? 'filled' : 'empty'}). "This region" = this one.`)
   }
-  return lines.join('\n')
+  if (ctx.attachments?.length) {
+    lines.push('', `Uploaded source documents (${ctx.attachments.length}) — the user's own material to draw content from:`)
+    for (const a of ctx.attachments) {
+      const d = a.digest ?? {}
+      const block: string[] = [`• "${a.name}"${d.title ? ` — ${d.title}` : ''}`]
+      if (d.summary) block.push(`  Summary: ${d.summary}`)
+      if (d.sections?.length) block.push('  Sections:\n' + d.sections.map((s) => `    - ${s.heading}: ${s.body}`).join('\n'))
+      if (d.facts?.length) block.push('  Key facts:\n' + d.facts.map((f) => `    - ${f}`).join('\n'))
+      if (d.tables?.length)
+        block.push(
+          '  Tables:\n' +
+            d.tables
+              .map((t) => `    - ${t.caption ?? 'table'} (${t.rows.length} rows): ` + t.rows.slice(0, 20).map((r) => r.join(' | ')).join(' ; '))
+              .join('\n'),
+        )
+      lines.push(block.join('\n'))
+    }
+  }
+  const out = lines.join('\n')
+  // Guard the prompt size — a couple of big digests could otherwise dominate.
+  return out.length > 16000 ? out.slice(0, 16000) + '\n…(source documents truncated)' : out
 }
 
 export function buildEditorSystemPrompt(account?: AccountUser, ctx?: EditorContext): string {
@@ -117,6 +149,27 @@ ${describeContext(ctx)}
 - Respect permissions warmly: only edit pages in your editable set. If a page isn't shared with you, never scold — say so
   gently and offer a real alternative ("I can't edit that page directly, but I'd love to draft the copy here for you to drop in").
 - Ground real facts with searchHorses / searchArticles when copy should reference actual horses or stories. Never fabricate.
+
+# Working with uploaded documents
+- The user can upload PDFs, images and text files. Their analysed content appears under "Uploaded source documents" in
+  the live context above — treat it as the source of truth for that material.
+- ALWAYS open by showing you actually read THIS document: name one or two CONCRETE specifics from its digest (a real
+  figure, name, quote or section heading). Never give a generic structural review that could apply to any bulletin — if
+  the only thing you can say is generic, the document didn't come through, so tell the user that plainly and ask them to
+  re-upload (don't pretend you read it).
+- Proactively SUGGEST placements without waiting to be told where: read the most relevant target pages with getPage /
+  pageCatalog, decide where each piece of the document best fits across the bulletin, and STAGE those edits (setRegionText
+  / applyPageFill with review:true) so they appear as one-click Apply cards. Then summarise what you've suggested in chat
+  as a short numbered list, e.g. "1. Aeliana opening → Headline Story intro  2. Career stats → the four stat boxes". If the
+  user named a specific destination, do that; otherwise propose the best fits and stage them for review.
+- Prioritise within your step budget: stage the highest-impact placements first (headline/intro/stats/feature body), use
+  applyPageFill to stage several regions on one page in a single step, and tell the user there's more you can place if they
+  want it — rather than trying to fill everything at once.
+- ALWAYS STAGE document-derived edits for review — pass review:true on setRegionText / setRegionImage / setRegionQr
+  (applyPageFill is always staged). Never auto-fill straight from a document: the user wants to verify imported content
+  before it goes live. Point them to the **Review & apply** card as usual.
+- Be faithful: keep names, figures, dates, results and quotes EXACTLY as in the document. Never invent a detail that
+  isn't there — if a region needs something the document doesn't contain, say so kindly rather than making it up.
 
 # If the user says it "didn't work", can't find Apply, or nothing seems to change — be reassuring, never dismissive
 - NEVER blame the user or call it "a technical issue on your side / with the editor that I can't fix." That is unkind and

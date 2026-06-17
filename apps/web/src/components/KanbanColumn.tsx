@@ -232,7 +232,7 @@ function KanbanCard({
       <div className="flex items-center justify-between mb-2">
         {article.category ? (
           <span
-            className="text-[8px] uppercase tracking-[0.14em] font-bold"
+            className="text-[10px] uppercase tracking-[0.14em] font-bold"
             style={{ color: columnAccent }}
           >
             {article.category}
@@ -241,7 +241,7 @@ function KanbanCard({
           <span />
         )}
         {article.readingTime && (
-          <span className="flex items-center gap-0.5 text-[9px] text-muted-foreground">
+          <span className="flex items-center gap-0.5 text-[11px] text-muted-foreground">
             <Clock size={8} />
             {article.readingTime}m
           </span>
@@ -260,17 +260,17 @@ function KanbanCard({
       </button>
 
       {/* Author */}
-      <p className="text-[10px] text-muted-foreground mb-2 truncate">
+      <p className="text-[12px] text-muted-foreground mb-2 truncate">
         {article.author}
         {isContributor && !isOwnArticle && (
-          <span className="ml-1.5 text-[9px] text-muted-foreground/50 italic">(not yours)</span>
+          <span className="ml-1.5 text-[11px] text-muted-foreground/50 italic">(not yours)</span>
         )}
       </p>
 
       {/* Linked horses */}
       {article.linkedHorseIds.length > 0 && (
         <div className="flex items-center gap-1 mb-2">
-          <span className="text-[9px] uppercase tracking-[0.08em] text-muted-foreground border border-border/50 rounded-sm px-1.5 py-0.5">
+          <span className="text-[11px] uppercase tracking-[0.08em] text-muted-foreground border border-border/50 rounded-sm px-1.5 py-0.5">
             {article.linkedHorseIds.length} horse
             {article.linkedHorseIds.length !== 1 ? 's' : ''}
           </span>
@@ -282,13 +282,13 @@ function KanbanCard({
         {canEdit ? (
           <button
             onClick={onEdit}
-            className="text-[10px] uppercase tracking-[0.08em] text-muted-foreground hover:text-foreground transition-colors font-semibold focus-visible:ring-2 focus-visible:ring-ring rounded-sm"
+            className="text-[12px] uppercase tracking-[0.08em] text-muted-foreground hover:text-foreground transition-colors font-semibold focus-visible:ring-2 focus-visible:ring-ring rounded-sm"
             aria-label="Edit article"
           >
             Edit
           </button>
         ) : (
-          <span className="flex items-center gap-1 text-[10px] text-muted-foreground/40">
+          <span className="flex items-center gap-1 text-[12px] text-muted-foreground/40">
             <Lock size={9} />
             <span className="uppercase tracking-[0.08em]">Read-only</span>
           </span>
@@ -298,7 +298,7 @@ function KanbanCard({
         {showRevision && (
           <button
             onClick={onSendRevision}
-            className="text-[10px] uppercase tracking-[0.08em] font-semibold transition-colors focus-visible:ring-2 focus-visible:ring-ring rounded-sm"
+            className="text-[12px] uppercase tracking-[0.08em] font-semibold transition-colors focus-visible:ring-2 focus-visible:ring-ring rounded-sm"
             style={{ color: '#e8a020' }}
             aria-label="Send back for revision"
           >
@@ -310,7 +310,7 @@ function KanbanCard({
         {showAdvance && nextStage && (
           <button
             onClick={onAdvance}
-            className="ml-auto flex items-center gap-0.5 text-[10px] uppercase tracking-[0.08em] font-semibold transition-colors focus-visible:ring-2 focus-visible:ring-ring rounded-sm"
+            className="ml-auto flex items-center gap-0.5 text-[12px] uppercase tracking-[0.08em] font-semibold transition-colors focus-visible:ring-2 focus-visible:ring-ring rounded-sm"
             style={{ color: columnAccent }}
             aria-label={`Advance to ${nextStage.label}`}
           >
@@ -383,17 +383,17 @@ export function KanbanColumn({
           <div className="min-w-0">
             <p
               className={cn(
-                'text-[10px] uppercase tracking-[0.12em] font-bold leading-tight',
+                'text-[12px] uppercase tracking-[0.12em] font-bold leading-tight',
                 isActiveColumn ? 'text-foreground' : 'text-muted-foreground'
               )}
             >
               {label}
             </p>
-            <p className="text-[9px] text-muted-foreground/60 mt-0.5 truncate">
+            <p className="text-[11px] text-muted-foreground/60 mt-0.5 truncate">
               {colConfig.sublabel}
             </p>
             <p
-              className="text-[8px] uppercase tracking-wider mt-0.5 font-semibold"
+              className="text-[10px] uppercase tracking-wider mt-0.5 font-semibold"
               style={{ color: colConfig.accent, opacity: 0.7 }}
             >
               {colConfig.role}
@@ -403,7 +403,7 @@ export function KanbanColumn({
         {/* Count */}
         <span
           className={cn(
-            'text-[11px] font-bold tabular-nums rounded-sm px-1.5 py-0.5 mt-0.5 flex-shrink-0',
+            'text-[13px] font-bold tabular-nums rounded-sm px-1.5 py-0.5 mt-0.5 flex-shrink-0',
             isActiveColumn
               ? 'bg-primary/15 text-primary'
               : 'bg-border/60 text-muted-foreground'
@@ -427,7 +427,7 @@ export function KanbanColumn({
       <div className="flex-1 border border-t-0 border-border/60 rounded-b-sm p-3 space-y-2.5 bg-background/30 min-h-[180px]">
         {articles.length === 0 ? (
           <div className="flex flex-col items-center justify-center py-8 text-center">
-            <p className="font-[family-name:var(--font-display)] italic text-[11px] text-muted-foreground/60">
+            <p className="font-[family-name:var(--font-display)] italic text-[13px] text-muted-foreground/60">
               {emptyMessages[status] ?? 'No stories here.'}
             </p>
           </div>

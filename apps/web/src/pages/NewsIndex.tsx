@@ -2,197 +2,29 @@ import { useMemo, useState, useEffect } from 'react';
 import { Link, useSearchParams } from 'react-router-dom';
 import { motion } from 'framer-motion';
 import { useArticleStore } from '@/stores/articleStore';
-import { ArticleCard } from '@/components/ArticleCard';
 import { ArticleSkeletonCard } from '@/components/SkeletonCard';
 import { EmptyState } from '@/components/EmptyState';
 import { cn } from '@/lib/utils';
 import {
-  Newspaper,
-  BarChart2,
-  Mic,
   ChevronRight,
   Search,
   PenLine,
   Clock,
   ArrowRight,
   Mail,
-  BookOpen,
 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
+import {
+  CATEGORIES,
+  SECTIONS,
+  EDITORIAL_FEATURES,
+  isLive,
+} from './news-index/constants';
+import { ArticleGrid } from './news-index/ArticleGrid';
 
-/* ── Category taxonomy ───────────────────────────────── */
-
-interface CategoryDef {
-  key: string;
-  label: string;
-  icon: React.ReactNode;
-  section: 'news' | 'analysis' | 'interviews';
-  description: string;
-}
-
-export const CATEGORIES: CategoryDef[] = [
-  // News
-  {
-    key: 'race-reports',
-    label: 'Race Reports',
-    icon: <Newspaper size={14} />,
-    section: 'news',
-    description: "Post-race analysis, results, and stewards' decisions from the track.",
-  },
-  {
-    key: 'industry-news',
-    label: 'Industry News',
-    icon: <Newspaper size={14} />,
-    section: 'news',
-    description: 'Transfers, injuries, ownership changes, and industry developments.',
-  },
-  {
-    key: 'morning-edition',
-    label: 'Morning Edition',
-    icon: <Newspaper size={14} />,
-    section: 'news',
-    description: "Today's stables dispatch — stable reports, scratchings, and early market moves.",
-  },
-  // Analysis
-  {
-    key: 'form-guide',
-    label: 'Form Guide',
-    icon: <BarChart2 size={14} />,
-    section: 'analysis',
-    description: 'Deep-dive speed ratings, class assessments, and sectional analysis.',
-  },
-  {
-    key: 'track-notes',
-    label: 'Track Notes',
-    icon: <BarChart2 size={14} />,
-    section: 'analysis',
-    description: 'Going reports, track configurations, and bias assessments.',
-  },
-  {
-    key: 'bloodstock',
-    label: 'Bloodstock',
-    icon: <BarChart2 size={14} />,
-    section: 'analysis',
-    description: 'Pedigree analysis, stallion updates, and breeding trends.',
-  },
-  // Interviews
-  {
-    key: 'trainer-profiles',
-    label: 'Trainer Profiles',
-    icon: <Mic size={14} />,
-    section: 'interviews',
-    description: 'Long-form conversations with the trainers shaping the sport.',
-  },
-  {
-    key: 'jockey-desk',
-    label: 'Jockey Desk',
-    icon: <Mic size={14} />,
-    section: 'interviews',
-    description: 'Rider perspectives, riding patterns, and form from the saddle.',
-  },
-  {
-    key: 'owner-stories',
-    label: 'Owner Stories',
-    icon: <Mic size={14} />,
-    section: 'interviews',
-    description: 'The people behind the horses — their passion, partnerships, and ambitions.',
-  },
-];
-
-const SECTIONS = [
-  {
-    key: 'news',
-    label: 'News',
-    icon: <Newspaper size={15} />,
-    description: 'Race results, industry updates, and daily dispatches from the track.',
-  },
-  {
-    key: 'analysis',
-    label: 'Analysis',
-    icon: <BarChart2 size={15} />,
-    description: 'Form guides, track notes, and bloodstock intelligence from our expert panel.',
-  },
-  {
-    key: 'interviews',
-    label: 'Interviews',
-    icon: <Mic size={15} />,
-    description: 'In-depth conversations with trainers, jockeys, and the owners who drive the sport.',
-  },
-] as const;
-
-/* ── Static featured editorial (shown when no articles yet) ── */
-
-const EDITORIAL_FEATURES = [
-  {
-    id: 'ef1',
-    section: 'Analysis',
-    title: 'The Flemington Straight: Why the 1000m Bias Has Shifted',
-    author: 'Sarah Ellison',
-    time: '10 min read',
-    category: 'form-guide',
-    imageUrl:
-      'https://images.pexels.com/photos/27305774/pexels-photo-27305774.jpeg?auto=compress&cs=tinysrgb&h=650&w=940',
-  },
-  {
-    id: 'ef2',
-    section: 'Interview',
-    title: 'Trainer Evelyn Cross: Twelve Group Ones and Counting',
-    author: 'Catherine Darragh',
-    time: '8 min read',
-    category: 'trainer-profiles',
-    imageUrl:
-      'https://images.pexels.com/photos/7882582/pexels-photo-7882582.jpeg?auto=compress&cs=tinysrgb&h=650&w=940',
-  },
-  {
-    id: 'ef3',
-    section: 'Bloodstock',
-    title: 'Northern Hemisphere Stallions and Their Australian Influence',
-    author: 'James Whitfield',
-    time: '12 min read',
-    category: 'bloodstock',
-    imageUrl:
-      'https://images.pexels.com/photos/11341144/pexels-photo-11341144.jpeg?auto=compress&cs=tinysrgb&h=650&w=940',
-  },
-  {
-    id: 'ef4',
-    section: 'Race Report',
-    title: 'Sovereign Streak Wins Flemington Feature in Dominant Fashion',
-    author: 'Tom McAllister',
-    time: '6 min read',
-    category: 'race-reports',
-    imageUrl:
-      'https://images.pexels.com/photos/12995066/pexels-photo-12995066.jpeg?auto=compress&cs=tinysrgb&h=650&w=940',
-  },
-  {
-    id: 'ef5',
-    section: 'Jockey Desk',
-    title: 'The Art of the Hold-up Ride: Luke Dittman on Patience and Precision',
-    author: 'Rebecca Frame',
-    time: '9 min read',
-    category: 'jockey-desk',
-    imageUrl:
-      'https://images.pexels.com/photos/7882582/pexels-photo-7882582.jpeg?auto=compress&cs=tinysrgb&h=650&w=940',
-  },
-  {
-    id: 'ef6',
-    section: 'Morning Edition',
-    title: "Saturday's Stable Reports: Randwick Scratching and Market Movers",
-    author: 'Editorial Desk',
-    time: '4 min read',
-    category: 'morning-edition',
-    imageUrl:
-      'https://images.pexels.com/photos/18913040/pexels-photo-18913040.jpeg?auto=compress&cs=tinysrgb&h=350',
-  },
-];
-
-/* ── Helpers ─────────────────────────────────────────── */
-
-/** Articles that are visible on the public index */
-const LIVE_STATUSES = ['published', 'newsletter', 'bulletin'] as const;
-
-function isLive(status: string): boolean {
-  return (LIVE_STATUSES as readonly string[]).includes(status);
-}
+// Re-exported for consumers that import CATEGORIES from this module.
+export { CATEGORIES } from './news-index/constants';
+export type { CategoryDef } from './news-index/constants';
 
 /* ── Component ────────────────────────────────────────── */
 
@@ -579,130 +411,17 @@ export default function NewsIndex() {
             }}
           />
         ) : (
-          /* Article grid */
-          <div className="space-y-12">
-            {/* Result count */}
-            <div className="flex items-center gap-3">
-              <span className="text-[10px] uppercase tracking-[0.14em] text-muted-foreground font-semibold">
-                {filteredArticles.length} {filteredArticles.length === 1 ? 'story' : 'stories'}
-              </span>
-              <div className="flex-1 h-px bg-border/40" />
-              {(activeCategory || activeSection || search) && (
-                <button
-                  onClick={() => { setCategory(null); setSearch(''); }}
-                  className="text-[10px] uppercase tracking-[0.1em] font-semibold text-muted-foreground hover:text-foreground transition-colors"
-                >
-                  Clear filters
-                </button>
-              )}
-            </div>
-
-            {/* Newsletter channel band — shown when there are newsletter articles */}
-            {newsletterArticles.length > 0 && (
-              <section>
-                <div className="flex items-center gap-3 mb-5">
-                  <div
-                    className="flex items-center gap-2 px-3 py-1 rounded-sm"
-                    style={{ background: 'hsl(var(--chart-1) / 0.12)' }}
-                  >
-                    <Mail size={12} style={{ color: 'hsl(var(--chart-1))' }} />
-                    <span
-                      className="text-[9px] uppercase tracking-[0.18em] font-bold"
-                      style={{ color: 'hsl(var(--chart-1))' }}
-                    >
-                      Newsletter
-                    </span>
-                  </div>
-                  <div className="flex-1 h-px bg-border/40" />
-                  <Link
-                    to="/newsletter"
-                    className="text-[10px] uppercase tracking-[0.1em] font-semibold text-muted-foreground hover:text-foreground transition-colors flex items-center gap-1"
-                  >
-                    Full newsletter <ChevronRight size={10} />
-                  </Link>
-                </div>
-                <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-5">
-                  {newsletterArticles.map((article, idx) => (
-                    <motion.div
-                      key={article.id}
-                      initial={{ opacity: 0, y: 6 }}
-                      animate={{ opacity: 1, y: 0 }}
-                      transition={{ delay: idx * 0.03, duration: 0.18, ease: 'easeOut' }}
-                    >
-                      <ArticleCard article={article} variant="default" />
-                    </motion.div>
-                  ))}
-                </div>
-              </section>
-            )}
-
-            {/* Bulletin channel band — links to /bulletins */}
-            {bulletinArticles.length > 0 && (
-              <section>
-                <div className="flex items-center gap-3 mb-5">
-                  <div
-                    className="flex items-center gap-2 px-3 py-1 rounded-sm"
-                    style={{ background: 'hsl(var(--brand-accent) / 0.12)' }}
-                  >
-                    <BookOpen size={12} style={{ color: 'hsl(var(--brand-accent))' }} />
-                    <span
-                      className="text-[9px] uppercase tracking-[0.18em] font-bold"
-                      style={{ color: 'hsl(var(--brand-accent))' }}
-                    >
-                      Print Bulletin
-                    </span>
-                  </div>
-                  <div className="flex-1 h-px bg-border/40" />
-                  <Link
-                    to="/bulletins"
-                    className="text-[10px] uppercase tracking-[0.1em] font-semibold text-muted-foreground hover:text-foreground transition-colors flex items-center gap-1"
-                  >
-                    Full bulletin <ChevronRight size={10} />
-                  </Link>
-                </div>
-                <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-5">
-                  {bulletinArticles.map((article, idx) => (
-                    <motion.div
-                      key={article.id}
-                      initial={{ opacity: 0, y: 6 }}
-                      animate={{ opacity: 1, y: 0 }}
-                      transition={{ delay: idx * 0.03, duration: 0.18, ease: 'easeOut' }}
-                    >
-                      <ArticleCard article={article} variant="default" />
-                    </motion.div>
-                  ))}
-                </div>
-              </section>
-            )}
-
-            {/* Published articles */}
-            {publishedOnly.length > 0 && (
-              <section>
-                {(newsletterArticles.length > 0 || bulletinArticles.length > 0) && (
-                  <div className="flex items-center gap-3 mb-5">
-                    <div className="flex items-center gap-2 px-3 py-1 rounded-sm bg-primary/10">
-                      <span className="text-[9px] uppercase tracking-[0.18em] font-bold text-primary">
-                        Published
-                      </span>
-                    </div>
-                    <div className="flex-1 h-px bg-border/40" />
-                  </div>
-                )}
-                <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-5">
-                  {publishedOnly.map((article, idx) => (
-                    <motion.div
-                      key={article.id}
-                      initial={{ opacity: 0, y: 6 }}
-                      animate={{ opacity: 1, y: 0 }}
-                      transition={{ delay: idx * 0.03, duration: 0.18, ease: 'easeOut' }}
-                    >
-                      <ArticleCard article={article} variant="default" />
-                    </motion.div>
-                  ))}
-                </div>
-              </section>
-            )}
-          </div>
+          <ArticleGrid
+            filteredArticles={filteredArticles}
+            newsletterArticles={newsletterArticles}
+            bulletinArticles={bulletinArticles}
+            publishedOnly={publishedOnly}
+            activeCategory={activeCategory}
+            activeSection={activeSection}
+            search={search}
+            setCategory={setCategory}
+            setSearch={setSearch}
+          />
         )}
       </div>
 

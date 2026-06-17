@@ -5,7 +5,11 @@ import type { MediaType } from '@/types/mediaItem';
 import type { RaceStatus } from '@/types/racingEntry';
 
 /* ─── Shared style tokens ─── */
-export const serifStyle: React.CSSProperties = { fontFamily: "'IM Fell English', 'Palatino Linotype', Georgia, serif" };
+/* Body/label/value text — a clean, screen-readable serif (replaces the hard-to-read
+   IM Fell English). Cascades across every profile surface that spreads serifStyle. */
+export const serifStyle: React.CSSProperties = { fontFamily: "Georgia, 'Times New Roman', serif" };
+/* Hero/crest headings — the editorial display serif (already loaded in theme.css). */
+export const displayStyle: React.CSSProperties = { fontFamily: "'Playfair Display', Georgia, serif" };
 export const goldStyle: React.CSSProperties = { color: 'var(--gold-bright)', textShadow: '0 1px 3px rgba(0,0,0,0.7)' };
 
 /* ─── Data-card image keys (kept as a TYPE only — no stock imagery is rendered) ─── */
@@ -66,7 +70,7 @@ export function OrnateCrest({ name, subtitle, partyName, compact }: { name: stri
       <span style={{ position: 'absolute', top: corner, right: 12, color: 'var(--gold-mid)', fontSize: '0.7rem', ...serifStyle }}>✦</span>
       <div className="sku-divider" style={{ marginBottom: dividerMb }} />
       <div style={{ fontSize: compact ? '0.5rem' : '0.55rem', letterSpacing: '0.22em', textTransform: 'uppercase', color: 'var(--gold-mid)', textShadow: '0 1px 3px rgba(0,0,0,0.8)', marginBottom: compact ? 2 : 4, ...serifStyle }}>{subtitle ? 'Stable Press' : 'Stable Press · Profile'}</div>
-      <h1 style={{ fontSize: compact ? 'clamp(1.05rem, 2.2vw, 1.35rem)' : 'clamp(1.2rem, 3vw, 1.7rem)', fontWeight: 700, lineHeight: 1.15, color: 'var(--parchment)', textShadow: '0 2px 6px rgba(0,0,0,0.8)', margin: compact ? '1px 0' : '4px 0', ...serifStyle }}>{name}</h1>
+      <h1 style={{ fontSize: compact ? 'clamp(1.05rem, 2.2vw, 1.35rem)' : 'clamp(1.2rem, 3vw, 1.7rem)', fontWeight: 700, lineHeight: 1.15, color: 'var(--parchment)', textShadow: '0 2px 6px rgba(0,0,0,0.8)', margin: compact ? '1px 0' : '4px 0', ...displayStyle }}>{name}</h1>
       {partyName && (
         <>
           <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 8, margin: '6px 0 2px' }}>
@@ -74,7 +78,7 @@ export function OrnateCrest({ name, subtitle, partyName, compact }: { name: stri
             <span style={{ fontSize: '0.48rem', letterSpacing: '0.2em', textTransform: 'uppercase', color: 'var(--gold-dark)', ...serifStyle }}>·</span>
             <div style={{ flex: 1, height: 1, background: 'linear-gradient(90deg, var(--gold-dark), transparent)' }} />
           </div>
-          <h2 style={{ fontSize: compact ? 'clamp(0.95rem, 2vw, 1.2rem)' : 'clamp(1.05rem, 2.5vw, 1.45rem)', fontWeight: 700, lineHeight: 1.2, color: 'var(--gold-bright)', textShadow: '0 2px 8px rgba(0,0,0,0.85)', margin: '2px 0 4px', ...serifStyle }}>{partyName}</h2>
+          <h2 style={{ fontSize: compact ? 'clamp(0.95rem, 2vw, 1.2rem)' : 'clamp(1.05rem, 2.5vw, 1.45rem)', fontWeight: 700, lineHeight: 1.2, color: 'var(--gold-bright)', textShadow: '0 2px 8px rgba(0,0,0,0.85)', margin: '2px 0 4px', ...displayStyle }}>{partyName}</h2>
         </>
       )}
       {(subtitle || !compact) && <div style={{ fontSize: compact ? '0.58rem' : '0.65rem', fontStyle: 'italic', color: partyName ? 'var(--gold-mid)' : 'var(--gold-bright)', textShadow: '0 1px 3px rgba(0,0,0,0.7)', ...serifStyle, marginBottom: dividerMb }}>{subtitle}</div>}
@@ -98,14 +102,14 @@ export function SectionPanel({ title, icon, onClose, children }: { title: string
 export function SRow({ label, value, highlight }: { label: string; value: string; highlight?: boolean }) {
   return (
     <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline', borderBottom: '1px solid var(--parchment-shadow)', paddingBottom: 6, marginBottom: 6, gap: 8 }}>
-      <dt style={{ fontSize: '0.56rem', textTransform: 'uppercase', letterSpacing: '0.1em', color: 'var(--parchment-shadow)', fontWeight: 700, flexShrink: 0 }}>{label}</dt>
+      <dt style={{ fontSize: '0.56rem', textTransform: 'uppercase', letterSpacing: '0.1em', color: 'var(--parchment-label)', fontWeight: 700, flexShrink: 0 }}>{label}</dt>
       <dd style={{ fontSize: '0.72rem', color: highlight ? 'var(--gold-bright)' : 'var(--forest-deep)', fontWeight: 600, textAlign: 'right', margin: 0 }}>{value}</dd>
     </div>
   );
 }
 
 export function SectionHeading({ children }: { children: React.ReactNode }) {
-  return <p style={{ fontSize: '0.56rem', textTransform: 'uppercase', letterSpacing: '0.14em', color: 'var(--parchment-shadow)', fontWeight: 700, marginBottom: 8, marginTop: 14, borderTop: '1px solid var(--parchment-dark)', paddingTop: 10 }}>{children}</p>;
+  return <p style={{ fontSize: '0.56rem', textTransform: 'uppercase', letterSpacing: '0.14em', color: 'var(--parchment-label)', fontWeight: 700, marginBottom: 8, marginTop: 14, borderTop: '1px solid var(--parchment-dark)', paddingTop: 10 }}>{children}</p>;
 }
 
 /* ─── Profile detail panel shell (entity / reports) ─── */
@@ -154,11 +158,11 @@ export function RaceStatusBadge({ status }: { status: RaceStatus }) {
 /* ─── Data Category Card (right column tile) — gradient + icon, no stock photo ─── */
 export interface DataCategoryDef { key: string; label: string; sublabel: string; icon: React.ReactNode; imgKey: DataCardImgKey; }
 
-export function DataCategoryCard({ label, sublabel, icon, active, onClick }: Omit<DataCategoryDef, 'key'> & { active: boolean; onClick: () => void }) {
+export function DataCategoryCard({ label, sublabel, icon, active, onClick, id }: Omit<DataCategoryDef, 'key'> & { active: boolean; onClick: () => void; id?: string }) {
   const [hovered, setHovered] = useState(false);
   const lit = hovered || active;
   return (
-    <button onClick={onClick} onMouseEnter={() => setHovered(true)} onMouseLeave={() => setHovered(false)} aria-label={`${active ? 'Close' : 'View'} ${label} data`} aria-pressed={active} style={{ width: '100%', border: `2px solid ${lit ? 'var(--gold-bright)' : 'var(--gold-dark)'}`, borderRadius: 4, overflow: 'hidden', cursor: 'pointer', background: 'none', padding: 0, display: 'flex', flexDirection: 'column', boxShadow: lit ? '0 0 0 1px var(--gold-bright), 0 6px 20px rgba(0,0,0,0.6)' : '0 0 0 1px var(--gold-dark), 0 3px 10px rgba(0,0,0,0.45)', transition: 'border-color 0.18s, box-shadow 0.18s', outline: active ? '2px solid var(--gold-bright)' : 'none', outlineOffset: 2, ...serifStyle }}>
+    <button id={id} onClick={onClick} onMouseEnter={() => setHovered(true)} onMouseLeave={() => setHovered(false)} aria-label={`${active ? 'Close' : 'View'} ${label} data`} aria-pressed={active} style={{ width: '100%', border: `2px solid ${lit ? 'var(--gold-bright)' : 'var(--gold-dark)'}`, borderRadius: 4, overflow: 'hidden', cursor: 'pointer', background: 'none', padding: 0, display: 'flex', flexDirection: 'column', boxShadow: lit ? '0 0 0 1px var(--gold-bright), 0 6px 20px rgba(0,0,0,0.6)' : '0 0 0 1px var(--gold-dark), 0 3px 10px rgba(0,0,0,0.45)', transition: 'border-color 0.18s, box-shadow 0.18s', outline: active ? '2px solid var(--gold-bright)' : 'none', outlineOffset: 2, ...serifStyle }}>
       <div style={{ position: 'relative', width: '100%', height: 64, overflow: 'hidden', background: active ? 'linear-gradient(135deg, var(--forest-light) 0%, var(--forest-mid) 100%)' : 'linear-gradient(135deg, var(--forest-mid) 0%, var(--forest-deep) 100%)', display: 'flex', alignItems: 'center', justifyContent: 'center', transition: 'background 0.2s' }}>
         <div style={{ position: 'absolute', inset: 0, opacity: 0.5, backgroundImage: 'radial-gradient(circle at 1px 1px, rgba(255,224,154,0.1) 1px, transparent 0)', backgroundSize: '13px 13px' }} />
         <div style={{ width: 32, height: 32, borderRadius: '50%', background: 'rgba(14,36,22,0.65)', border: `1px solid ${active ? 'var(--gold-bright)' : 'var(--gold-dark)'}`, display: 'flex', alignItems: 'center', justifyContent: 'center', transform: lit ? 'scale(1.08)' : 'scale(1)', transition: 'transform 0.25s, border-color 0.18s' }}>{icon}</div>
@@ -194,7 +198,7 @@ export function EntityTile({ title, icon, primaryName, secondaryLine, count, img
         <div style={{ flex: 1, minWidth: 0 }}>
           <div style={{ fontSize: '0.78rem', fontWeight: 700, color: 'var(--forest-deep)', lineHeight: 1.2, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis', ...serifStyle }}>{primaryName}</div>
           <div style={{ fontSize: '0.6rem', color: 'var(--forest-mid)', fontStyle: 'italic', marginTop: 2, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis', ...serifStyle }}>{secondaryLine}</div>
-          <div style={{ fontSize: '0.56rem', color: 'var(--parchment-shadow)', marginTop: 3, textTransform: 'uppercase', letterSpacing: '0.1em' }}>{count} {count === 1 ? 'record' : 'records'} on file</div>
+          <div style={{ fontSize: '0.56rem', color: 'var(--parchment-label)', marginTop: 3, textTransform: 'uppercase', letterSpacing: '0.1em' }}>{count} {count === 1 ? 'record' : 'records'} on file</div>
         </div>
         {interactive && (
           <div style={{ width: 22, height: 22, borderRadius: 2, flexShrink: 0, background: 'linear-gradient(135deg, var(--gold-mid) 0%, var(--gold-dark) 100%)', display: 'flex', alignItems: 'center', justifyContent: 'center', boxShadow: '0 1px 4px rgba(0,0,0,0.4)' }}>

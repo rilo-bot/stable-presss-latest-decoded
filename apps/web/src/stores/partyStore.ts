@@ -11,7 +11,7 @@ interface PartyState {
   fetchParties: (force?: boolean) => Promise<void>;
   addParty: (party: Omit<Party, 'id' | 'createdAt'>) => Promise<string>;
   updateParty: (id: string, updates: Partial<Omit<Party, 'id' | 'createdAt'>>) => Promise<void>;
-  removeParty: (id: string) => Promise<void>;
+  removeParty: (id: string) => Promise<boolean>;
 }
 
 export const usePartyStore = create<PartyState>()((set, get) => ({
@@ -84,10 +84,12 @@ export const usePartyStore = create<PartyState>()((set, get) => ({
     try {
       const res = await authFetch(`/api/parties/${id}`, { method: 'DELETE' });
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      return true;
     } catch (err) {
       const message = err instanceof Error ? err.message : 'Could not delete the party — restoring it';
       set({ parties: previous, error: message });
       toast.error('Could not delete the party — restoring it');
+      return false;
     }
   },
 }));

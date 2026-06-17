@@ -1,6 +1,6 @@
 import { useState, useRef, useCallback, useMemo, useEffect } from 'react';
 import { toast } from 'sonner';
-import { User, Building2, Upload, X, Check, Camera, Calendar } from 'lucide-react';
+import { Calendar } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -16,51 +16,16 @@ import {
 import { usePartyStore } from '@/stores/partyStore';
 import { uploadImage } from '@/lib/upload';
 import type { Party, PartyRole, PersonnelSubtype } from '@/types/party';
+import { getStartedYearLabel } from '@/types/party';
 import {
-  PARTY_ROLES,
-  PARTY_ROLE_LABELS,
-  getStartedYearLabel,
-  PERSONNEL_SUBTYPES,
-  PERSONNEL_SUBTYPE_LABELS,
-} from '@/types/party';
-
-/* ─────────────────────────────────────────────
-   Props
-───────────────────────────────────────────── */
-interface PartyFormProps {
-  open: boolean;
-  onOpenChange: (open: boolean) => void;
-  /** When supplied, the form operates in edit mode. */
-  party?: Party;
-  /**
-   * When supplied (and not in edit mode), the form opens with this role
-   * pre-selected so the user does not have to pick it manually.
-   */
-  defaultRole?: PartyRole;
-  /** Called after a successful save so callers can react (e.g. navigate). */
-  onSaved?: (id: string) => void;
-}
-
-/* ─────────────────────────────────────────────
-   Helpers
-───────────────────────────────────────────── */
-
-const ACCEPTED_IMAGE_TYPES = ['image/jpeg', 'image/png', 'image/webp', 'image/gif'];
-const MAX_FILE_SIZE_MB = 5;
-
-/** Calculate age in whole years from a YYYY-MM-DD string. Returns null if invalid. */
-function calcAge(dob: string): number | null {
-  if (!dob) return null;
-  const birth = new Date(dob);
-  if (isNaN(birth.getTime())) return null;
-  const now = new Date();
-  let age = now.getFullYear() - birth.getFullYear();
-  const mDiff = now.getMonth() - birth.getMonth();
-  if (mDiff < 0 || (mDiff === 0 && now.getDate() < birth.getDate())) age--;
-  return age >= 0 ? age : null;
-}
-
-const CURRENT_YEAR = new Date().getFullYear();
+  ACCEPTED_IMAGE_TYPES,
+  MAX_FILE_SIZE_MB,
+  calcAge,
+  CURRENT_YEAR,
+  type PartyFormProps,
+} from './party-form/helpers';
+import { PhotoUpload } from './party-form/PhotoUpload';
+import { RolePicker } from './party-form/RolePicker';
 
 /* ─────────────────────────────────────────────
    Component
@@ -351,81 +316,15 @@ export function PartyForm({ open, onOpenChange, party, defaultRole, onSaved }: P
             />
           </div>
 
-          {/* ── Roles ── */}
-          <div className="space-y-2">
-            <Label className="text-xs uppercase tracking-[0.1em] font-semibold text-muted-foreground">
-              Roles <span className="text-destructive">*</span>
-            </Label>
-            <p className="text-[11px] text-muted-foreground -mt-1">
-              Select all roles this party holds in the racing industry.
-            </p>
-            <div className="flex flex-wrap gap-2 mt-1" role="group" aria-label="Party roles">
-              {PARTY_ROLES.map((role) => {
-                const active = roles.includes(role);
-                return (
-                  <button
-                    key={role}
-                    type="button"
-                    aria-pressed={active}
-                    onClick={() => toggleRole(role)}
-                    className={cn(
-                      'inline-flex items-center gap-1.5 rounded-full px-3 py-1.5 text-xs font-medium transition-all border',
-                      active
-                        ? 'bg-primary text-primary-foreground border-primary shadow-sm'
-                        : 'bg-card text-muted-foreground border-border hover:border-primary/60 hover:text-foreground'
-                    )}
-                  >
-                    {active && <Check size={10} strokeWidth={3} />}
-                    {PARTY_ROLE_LABELS[role]}
-                  </button>
-                );
-              })}
-            </div>
-            {errors.roles && (
-              <p className="text-xs text-destructive mt-1">{errors.roles}</p>
-            )}
-          </div>
-
-          {/* ── Personnel Subtype (revealed only when 'personnel' role is selected) ── */}
-          {showPersonnelSubtype && (
-            <div className="space-y-2 pl-4 border-l-2 border-primary/30">
-              <div>
-                <Label className="text-xs uppercase tracking-[0.1em] font-semibold text-muted-foreground">
-                  Personnel Type
-                </Label>
-                <p className="text-[11px] text-muted-foreground mt-0.5">
-                  Select all that apply for this personnel member.
-                </p>
-              </div>
-              <div className="flex flex-wrap gap-2" role="group" aria-label="Personnel subtypes">
-                {PERSONNEL_SUBTYPES.map((subtype) => {
-                  const active = personnelSubtypes.includes(subtype);
-                  return (
-                    <button
-                      key={subtype}
-                      type="button"
-                      aria-pressed={active}
-                      onClick={() => togglePersonnelSubtype(subtype)}
-                      className={cn(
-                        'inline-flex items-center gap-1.5 rounded-full px-3 py-1.5 text-xs font-medium transition-all border',
-                        active
-                          ? 'bg-[hsl(var(--brand-accent))] text-[hsl(var(--brand-accent-foreground))] border-[hsl(var(--brand-accent))] shadow-sm'
-                          : 'bg-card text-muted-foreground border-border hover:border-[hsl(var(--brand-accent))]/60 hover:text-foreground'
-                      )}
-                    >
-                      {active && <Check size={10} strokeWidth={3} />}
-                      {PERSONNEL_SUBTYPE_LABELS[subtype]}
-                    </button>
-                  );
-                })}
-              </div>
-              {personnelSubtypes.length > 0 && (
-                <p className="text-[11px] text-muted-foreground">
-                  {personnelSubtypes.length} subtype{personnelSubtypes.length !== 1 ? 's' : ''} selected
-                </p>
-              )}
-            </div>
-          )}
+          {/* ── Roles + Personnel Subtype ── */}
+          <RolePicker
+            roles={roles}
+            toggleRole={toggleRole}
+            rolesError={errors.roles}
+            showPersonnelSubtype={showPersonnelSubtype}
+            personnelSubtypes={personnelSubtypes}
+            togglePersonnelSubtype={togglePersonnelSubtype}
+          />
 
           {/* ── Date of Birth + Auto Age ── */}
           <div className="space-y-1.5">
@@ -523,106 +422,19 @@ export function PartyForm({ open, onOpenChange, party, defaultRole, onSaved }: P
           </div>
 
           {/* ── Photo Upload ── */}
-          <div className="space-y-2">
-              <Label className="text-xs uppercase tracking-[0.1em] font-semibold text-muted-foreground">
-                Photo <span className="text-destructive">*</span>
-              </Label>
-              <p className="text-[11px] text-muted-foreground -mt-1">
-                A clear headshot is required for all individuals. JPEG, PNG or WebP, max {MAX_FILE_SIZE_MB} MB.
-              </p>
-
-              {photoPreview ? (
-                /* Preview state */
-                <div className="relative inline-flex group">
-                  <img
-                    src={photoPreview}
-                    alt="Photo preview"
-                    crossOrigin="anonymous"
-                    className="h-32 w-32 rounded-md object-cover border border-border/60 shadow-sm"
-                  />
-                  <div className="absolute inset-0 rounded-md bg-foreground/0 group-hover:bg-foreground/20 transition-colors" />
-                  {/* Change / Remove controls */}
-                  <div className="absolute -top-2 -right-2 flex items-center gap-1">
-                    <button
-                      type="button"
-                      aria-label="Change photo"
-                      onClick={() => fileInputRef.current?.click()}
-                      className="h-7 w-7 rounded-full bg-primary text-primary-foreground flex items-center justify-center shadow hover:bg-primary/90 transition-colors"
-                    >
-                      <Camera size={13} />
-                    </button>
-                    <button
-                      type="button"
-                      aria-label="Remove photo"
-                      onClick={removePhoto}
-                      className="h-7 w-7 rounded-full bg-destructive text-destructive-foreground flex items-center justify-center shadow hover:bg-destructive/90 transition-colors"
-                    >
-                      <X size={13} />
-                    </button>
-                  </div>
-                  {photoFile && (
-                    <p className="absolute -bottom-5 left-0 text-[10px] text-muted-foreground truncate max-w-[128px]">
-                      {photoFile.name}
-                    </p>
-                  )}
-                </div>
-              ) : (
-                /* Drop-zone state */
-                <div
-                  ref={dropZoneRef}
-                  onDrop={handleDrop}
-                  onDragOver={handleDragOver}
-                  onDragLeave={handleDragLeave}
-                  onClick={() => fileInputRef.current?.click()}
-                  role="button"
-                  tabIndex={0}
-                  aria-label="Upload photo — click or drag and drop"
-                  onKeyDown={(e) => {
-                    if (e.key === 'Enter' || e.key === ' ') fileInputRef.current?.click();
-                  }}
-                  className={cn(
-                    'flex flex-col items-center justify-center gap-2 rounded-md border-2 border-dashed p-8 cursor-pointer transition-all',
-                    dragOver
-                      ? 'border-primary bg-primary/8 scale-[1.01]'
-                      : errors.photo
-                      ? 'border-destructive bg-destructive/5 hover:border-destructive/70'
-                      : 'border-border/60 bg-muted/20 hover:border-primary/50 hover:bg-primary/5'
-                  )}
-                >
-                  <div
-                    className={cn(
-                      'flex h-12 w-12 items-center justify-center rounded-full transition-colors',
-                      dragOver ? 'bg-primary/20 text-primary' : 'bg-muted text-muted-foreground'
-                    )}
-                  >
-                    <Upload size={20} />
-                  </div>
-                  <div className="text-center">
-                    <p className="text-sm font-medium text-foreground">
-                      Click to upload or drag &amp; drop
-                    </p>
-                    <p className="text-[11px] text-muted-foreground mt-0.5">
-                      JPEG, PNG, WebP or GIF — max {MAX_FILE_SIZE_MB} MB
-                    </p>
-                  </div>
-                </div>
-              )}
-
-              {errors.photo && (
-                <p className="text-xs text-destructive mt-1">{errors.photo}</p>
-              )}
-
-              {/* Hidden file input */}
-              <input
-                ref={fileInputRef}
-                type="file"
-                accept={ACCEPTED_IMAGE_TYPES.join(',')}
-                className="sr-only"
-                aria-hidden="true"
-                tabIndex={-1}
-                onChange={handleFileInputChange}
-              />
-          </div>
+          <PhotoUpload
+            photoPreview={photoPreview}
+            photoFile={photoFile}
+            photoError={errors.photo}
+            dragOver={dragOver}
+            fileInputRef={fileInputRef}
+            dropZoneRef={dropZoneRef}
+            removePhoto={removePhoto}
+            handleDrop={handleDrop}
+            handleDragOver={handleDragOver}
+            handleDragLeave={handleDragLeave}
+            handleFileInputChange={handleFileInputChange}
+          />
         </div>
 
         {/* ── Sticky footer ── */}

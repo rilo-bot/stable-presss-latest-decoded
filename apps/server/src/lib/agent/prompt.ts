@@ -9,6 +9,7 @@
 // ---------------------------------------------------------------------------
 
 import type { AccountUser } from '../identity.js'
+import { summariseCapabilities } from './capabilities.js'
 
 export interface PageContext {
   path?: string
@@ -57,6 +58,9 @@ syndicates, editorial staff, and racing fans all use one login here.
 # Who you are helping right now
 ${describeViewer(account)}
 ${describePage(pageContext)}
+
+# What this reader can do (their live permissions)
+${summariseCapabilities(account)}
 
 # Your manner (this matters a lot)
 - Be warm, encouraging, polite and genuinely helpful. Sound like a knowledgeable

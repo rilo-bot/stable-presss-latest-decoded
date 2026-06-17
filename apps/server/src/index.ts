@@ -88,6 +88,9 @@ import breakingNewsRouter from './routes/breakingNews.js'
 import metricsRouter from './routes/metrics.js'
 import agentRouter from './routes/agent.js'
 import agentEditorRouter from './routes/agentEditor.js'
+import agentProfileRouter from './routes/agentProfile.js'
+import agentVoiceRouter from './routes/agentVoice.js'
+import newsroomRouter from './routes/newsroom.js'
 
 // Reads stay public (the public website needs them). Writes are gated by role:
 //   - articles  → editorial matrix (create / edit_own w/ author match / edit_any)
@@ -132,10 +135,14 @@ app.use('/api/sponsors', staffWriteGate, sponsorsRouter)
 app.use('/api/breakingNews', staffWriteGate, breakingNewsRouter)
 // Computed site metrics — public, read-only (no writes).
 app.use('/api/metrics', metricsRouter)
+// Production System dashboard — staff-only, role-scoped summary + AI brief.
+app.use('/api/newsroom', newsroomRouter)
 // AI concierge ("the Stablehand"). Read-only tools, RBAC-scoped to the caller
 // (attachAccountOptional inside the route); answers stream back to the browser.
 // Editor route is mounted first (more specific path) so /editor/* resolves here.
 app.use('/api/agent/editor', agentEditorRouter)  // in-editor Studio Assistant (client-executed editor tools)
+app.use('/api/agent/profile', agentProfileRouter) // in-profile Stable Studio assistant (client-executed, staged proposals)
+app.use('/api/agent/voice', agentVoiceRouter)    // OpenAI STT/TTS for the concierge (key stays server-side)
 app.use('/api/agent', agentRouter)
 // === end auto-mounted routers ===
 

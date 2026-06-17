@@ -1,0 +1,31 @@
+import { mkPage, text, img, qr, STOCK, P, WHITE } from './_shared';
+
+// ── 11. Karaka Sales & Syndicates ───────────────────────────────────
+export const karaka = mkPage('karaka-sales', 'Karaka Sales & Syndicates', {
+  band: text('KARAKA SALES & SYNDICATES', P.bandLabel),
+  h1a: text('THE DREAM', { ...P.displayNavy, fontSize: 34 }),
+  h1b: text('STARTS HERE', { ...P.displayGold, fontSize: 34 }),
+  sub: text('Great racing begins with great pedigrees.', P.scriptGold),
+  body: text('The NZB Karaka Yearling Sales are where champions are found and dreams take their first step. For many owners, it\'s the beginning of an incredible journey.', P.bodySmall),
+  point1: text('<b>First-time buyers welcome</b> — our industry is built on welcoming new owners. We\'ll help you every step of the way.', P.bodySmall),
+  point2: text('<b>Syndicate opportunities</b> — shared ownership. Shared excitement. Build lifelong friendships.', P.bodySmall),
+  point3: text('<b>Ownership made possible</b> — there are options for every budget. Start small, dream big.', P.bodySmall),
+  point4: text('<b>The thrill of the possible</b> — every great story starts somewhere. Yours could start at Karaka.', P.bodySmall),
+  heroImg: img(STOCK.horseGallop, 'cover'),
+  badge: text('2025 NZB CHAIRMAN\'S BROODMARE SALE RESULTS', { ...P.statLabel, color: WHITE, align: 'center' }),
+  resultsTitle: text('Latest Sale Results', P.scriptGold),
+  results: text('• Gross: $7,393,000<br>• Average: $112,016<br>• Median: $52,500<br>• Clearance Rate: 91%<br>• Top Price: $400,000', P.bodySmall),
+  resultsNote: text('A strong result reflecting confidence in quality New Zealand breeding.', P.caption),
+  resultsQr: qr('https://nzb.co.nz/results'),
+  ad1Name: text('NZB — Backing New Zealand Breeding. Supporting Racing\'s Future.', { ...P.kickerWhite, fontSize: 10 }),
+  ad1Img: img(STOCK.paddock, 'cover'),
+  ad2Name: text('CAMBRIDGE STUD — World-Class Breeding. Champion Results.', { ...P.kickerWhite, fontSize: 10 }),
+  ad2Img: img(STOCK.mareFoal, 'cover'),
+  cta1: text('BROWSE CURRENT SYNDICATION OPPORTUNITIES', P.qrLabel),
+  cta2: text('DISCOVER quality horses and upcoming syndicates', P.qrLabel),
+  cta3: text('CONNECT with trainers and syndicate managers', P.qrLabel),
+  cta4: text('JOIN — be part of something extraordinary', P.qrLabel),
+  ctaQr: qr('https://nzb.co.nz/syndication'),
+  footer: text('GREAT HORSES. GREAT PEOPLE. GREAT MEMORIES. YOUR JOURNEY STARTS HERE.', P.footer),
+  pageNum: text('PAGE 9', { ...P.footer, align: 'right' }),
+});

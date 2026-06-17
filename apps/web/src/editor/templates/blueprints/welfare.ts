@@ -1,0 +1,53 @@
+import { mkPage, text, img, qr, STOCK, P } from './_shared';
+
+// ── 15. Horse Welfare & Rehoming ────────────────────────────────────
+export const welfare = mkPage('horse-welfare', 'Horse Welfare & Rehoming', {
+  band: text('HORSE WELFARE & REHOMING', { ...P.bandLabel }),
+  h1a: text('LIFE AFTER', { ...P.displayNavy, fontSize: 34, color: '#1a3322' }),
+  h1b: text('RACING', { ...P.displayGold, fontSize: 34 }),
+  sub: text('Their next chapter. Our commitment.', P.scriptGold),
+  body: text('Racing gives horses a start in life. We\'re here to help them thrive long after the last race.', P.bodySmall),
+  heroImg: img(STOCK.eventing, 'cover'),
+  henryTitle: text('MEET HENRY', P.kickerNavy),
+  henryBody: text('After a successful racing career, Henry found a new calling in eventing. Today, he\'s inspiring young riders and showing just how versatile Thoroughbreds can be.', P.bodySmall),
+  henryImg: img(STOCK.eventing, 'cover'),
+  card1Img: img(STOCK.paddock, 'cover'),
+  card1Body: text('<b>New disciplines</b> — from eventing to dressage, showjumping to pony club, so many paths are possible.', P.bodySmall),
+  card2Img: img(STOCK.horseGallop, 'cover'),
+  card2Body: text('<b>Great partners</b> — retired racehorses make loyal, intelligent partners for riders of all ages.', P.bodySmall),
+  card3Img: img(STOCK.mareFoal, 'cover'),
+  card3Body: text('<b>Forever grateful</b> — thank you to the owners, trainers and supporters who give these horses a second chance.', P.bodySmall),
+  quote: text('They gave us their best on the track. Now it\'s our turn to give back.', P.pullQuote),
+  sponsorBand: text('PROUDLY SUPPORTING HORSE WELFARE ACROSS NEW ZEALAND — Emergency response. Expert care. Every horse, every time. horseambulance.co.nz', { ...P.kickerWhite, fontSize: 9 }),
+  footer: text('SUPPORTING TODAY. SECURING TOMORROW.', P.footer),
+  pageNum: text('PAGE 13', { ...P.footer, align: 'right' }),
+});
+
+// ── 16. Business & Owners ───────────────────────────────────────────
+export const business = mkPage('business-owners', 'Business & Owners', {
+  band: text('BUSINESS & OWNERS', P.bandLabel),
+  h1a: text('WHERE RACING', { ...P.displayNavy, fontSize: 28 }),
+  h1b: text('AND BUSINESS', { ...P.displayGold, fontSize: 28 }),
+  h1c: text('CONNECT', { ...P.displayNavy, fontSize: 28 }),
+  sub: text('Strong partnerships. Stronger results.', P.scriptGold),
+  body: text('Racing brings people together — on and off the track. Many of our owners are business leaders who value relationships, trust and the thrill of success.', P.bodySmall),
+  heroImg: img(STOCK.crowd, 'cover'),
+  col1Title: text('NETWORKING', P.kickerNavy),
+  col1Body: text('Build meaningful connections in a relaxed and rewarding environment.', P.bodySmall),
+  col2Title: text('CLIENT RELATIONSHIPS', P.kickerNavy),
+  col2Body: text('Share experiences that strengthen trust and create lasting impressions.', P.bodySmall),
+  col3Title: text('BUSINESS DEVELOPMENT', P.kickerNavy),
+  col3Body: text('Racing opens doors to new opportunities, partnerships and mutual success.', P.bodySmall),
+  spotlightTitle: text('OWNER BUSINESS SPOTLIGHTS', { ...P.bandLabel, fontSize: 11 }),
+  spot1Img: img(STOCK.portrait1, 'cover'),
+  spot1Body: text('<b>Mark O\'Sullivan</b> — O\'Sullivan Civil Engineering. Building communities both on and off the track.', P.bodySmall),
+  spot2Img: img(STOCK.portrait2, 'cover'),
+  spot2Body: text('<b>Sarah James</b> — James & Co Lawyers. Passionate about people, property and performance.', P.bodySmall),
+  spot3Img: img(STOCK.portrait3, 'cover'),
+  spot3Body: text('<b>Tom Harrison</b> — Harrison Rural Services. From the land to the track, supporting rural communities.', P.bodySmall),
+  partners: text('PROUDLY SUPPORTING OWNERSHIP & BUSINESS — Noble Insurance · Chapman Tripp · Farmlands · Dunstan · Bloodstock Insurance', { ...P.kickerNavy, fontSize: 9 }),
+  qr: qr('https://nztrof.co.nz/business'),
+  qrNote: text('CONNECT WITH FEATURED OWNER BUSINESSES', P.qrLabel),
+  footer: text('BUILDING RELATIONSHIPS TODAY. CREATING SUCCESS TOMORROW.', P.footer),
+  pageNum: text('PAGE 14', { ...P.footer, align: 'left' }),
+});

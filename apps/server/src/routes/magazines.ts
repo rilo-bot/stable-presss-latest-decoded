@@ -218,6 +218,35 @@ router.patch('/:id', async (req, res) => {
   res.json(withViewer(updated!, uid));
 });
 
+// replace the whole page list (add / remove / reorder) — owner only.
+// The client sends the full ordered pages array (with content); structural
+// changes can't be made by collaborators, so this is gated to the owner.
+router.put('/:id/pages', async (req, res) => {
+  const uid = req.account!.id;
+  const doc = await db.collection('magazines').findById(req.params.id);
+  if (!doc || !roleOnMagazine(doc, uid)) {
+    res.status(404).json({ error: 'Not found' });
+    return;
+  }
+  if (!isOwner(roleOnMagazine(doc, uid))) {
+    res.status(403).json({ error: 'Only the owner can add, remove or reorder pages.' });
+    return;
+  }
+  const pages = (req.body as { pages?: unknown })?.pages;
+  if (!Array.isArray(pages) || pages.length === 0) {
+    res.status(400).json({ error: 'pages must be a non-empty array' });
+    return;
+  }
+  const now = new Date().toISOString();
+  await db.collection('magazines').updateOne(req.params.id, {
+    pages: sanitizePages(pages),
+    updatedAt: now,
+    updatedBy: { userId: uid, displayName: req.account!.displayName },
+  });
+  const updated = await db.collection('magazines').findById(req.params.id);
+  res.json(withViewer(updated!, uid));
+});
+
 // update ONE page's content — page-scoped (the debounced edit hot path)
 router.patch('/:id/pages/:pageId', async (req, res) => {
   const uid = req.account!.id;

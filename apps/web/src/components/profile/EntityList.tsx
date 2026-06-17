@@ -41,7 +41,7 @@ export function EntityList({ title, count, icon, action, prepend, rows, emptyTex
       <div className="sku-parchment" style={{ padding: '8px 10px' }}>
         {prepend}
         {rows.length === 0 ? (
-          <p style={{ fontSize: '0.7rem', fontStyle: 'italic', color: 'var(--parchment-shadow)', textAlign: 'center', padding: '8px 0' }}>{emptyText}</p>
+          <p style={{ fontSize: '0.7rem', fontStyle: 'italic', color: 'var(--parchment-label)', textAlign: 'center', padding: '8px 0' }}>{emptyText}</p>
         ) : (
           <ul style={{ listStyle: 'none', padding: 0, margin: 0 }}>
             {rows.map((h, idx) => (
@@ -52,7 +52,7 @@ export function EntityList({ title, count, icon, action, prepend, rows, emptyTex
                   </div>
                   <div style={{ flex: 1, minWidth: 0 }}>
                     <div style={{ fontSize: '0.76rem', fontWeight: 700, color: 'var(--forest-deep)', ...serifStyle, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{h.name}</div>
-                    <div style={{ fontSize: '0.58rem', color: 'var(--parchment-shadow)' }}>{h.meta}{h.badge}</div>
+                    <div style={{ fontSize: '0.58rem', color: 'var(--parchment-label)' }}>{h.meta}{h.badge}</div>
                   </div>
                   <ChevronRight size={13} style={{ color: 'var(--gold-mid)', flexShrink: 0 }} />
                 </button>

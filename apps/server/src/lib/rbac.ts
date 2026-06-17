@@ -58,7 +58,7 @@ export function isOrgOwner(account: AccountUser | undefined, orgId: string): boo
   return orgRoleIn(account, orgId) === 'org_owner'
 }
 
-function contentCan(account: AccountUser | undefined, action: ContentAction): boolean {
+export function contentCan(account: AccountUser | undefined, action: ContentAction): boolean {
   if (!account) return false
   return account.roles.some(
     (r) => (STAFF_ROLES as string[]).includes(r) && CONTENT_PERMS[r as StaffRole]?.includes(action),
@@ -192,7 +192,13 @@ export function partyScopedWriteGate(req: Request, res: Response, next: NextFunc
   void attachAccount(req, res, async () => {
     const account = req.account
     if (isStaff(account)) return next()
-    if (req.method === 'POST') return forbid(res, 'Staff maintain the party register.')
+    // Members may create a provisional party (e.g. adding a trainer from a horse
+    // page); the handler stamps it unverified + createdByUserId so it stays hidden
+    // from the public until staff verify it.
+    if (req.method === 'POST') {
+      if (!account) return forbid(res, 'Sign in to add a party.')
+      return next()
+    }
     if (req.method === 'DELETE') return forbid(res, 'You cannot delete a party.')
     const id = firstSegment(req)
     if (id && (await accountCanManageParty(account, id))) return next()

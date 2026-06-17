@@ -8,6 +8,8 @@ import { useHorsePartyLinkStore } from '@/stores/horsePartyLinkStore';
 import { authorisedHorseIds, previewHorseIds, hasProvisionalParty, primaryPartyId, isStaff } from '@/rbac/can';
 import { PARTY_ROLES, PARTY_ROLE_LABELS } from '@/types/party';
 import type { PartyRole } from '@/types/party';
+import type { Horse } from '@/types/horse';
+import { ROLE_BINDINGS } from '@/lib/profile/roleMap';
 import { TIER_ORDER, TIER_LABELS } from '@/rbac/entitlement';
 import type { SubscriptionTier } from '@/rbac/entitlement';
 import { Button } from '@/components/ui/button';
@@ -37,6 +39,7 @@ export default function Dashboard() {
   const createClaim = useClaimStore((s) => s.createClaim);
   const horses = useHorseStore((s) => s.horses);
   const fetchHorses = useHorseStore((s) => s.fetchHorses);
+  const addHorse = useHorseStore((s) => s.addHorse);
   const links = useHorsePartyLinkStore((s) => s.links);
   const fetchLinks = useHorsePartyLinkStore((s) => s.fetchHorsePartyLinks);
   const navigate = useNavigate();
@@ -93,6 +96,20 @@ export default function Dashboard() {
     toast.success('Profile created — add your details and horses next.');
     const pid = primaryPartyId(useAuthStore.getState().currentUser);
     navigate(pid ? `/studio/${pid}` : '/dashboard');
+  };
+
+  // One-click: create an un-named draft horse (photo-first, name later) and drop
+  // straight into its studio. We tag the creating party in the *Ids field for
+  // THEIR role (owner→ownerIds, trainer→trainerIds, …) so the server auto-links
+  // them under that role and they appear in the matching connection box.
+  const onAddHorse = async () => {
+    setBusy('horse');
+    const myRole: PartyRole = claims.find((c) => c.partyId === myPartyId)?.role ?? 'owner';
+    const connect: Partial<Horse> = {};
+    if (myPartyId) (connect as Record<string, string[]>)[ROLE_BINDINGS[myRole].horseField] = [myPartyId];
+    const created = await addHorse({ ...connect, name: '', isUnnamed: true, pedigreeNotes: '' });
+    setBusy(null);
+    if (created) navigate(`/studio/horse/${created.id}`);
   };
 
   const onCreateOrg = async () => {
@@ -288,18 +305,29 @@ export default function Dashboard() {
           )}
 
           {myPartyId && (
-            <Link
-              to={`/studio/${myPartyId}`}
-              className="inline-flex items-center gap-1.5 mb-3 px-3 py-1.5 rounded-sm bg-primary text-primary-foreground text-sm font-medium hover:opacity-90 transition-opacity"
-            >
-              <PlusCircle size={14} /> Register a horse
-            </Link>
+            <div className="flex flex-wrap items-center gap-3 mb-3">
+              <button
+                type="button"
+                onClick={onAddHorse}
+                disabled={busy === 'horse'}
+                className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-sm bg-primary text-primary-foreground text-sm font-medium hover:opacity-90 transition-opacity disabled:opacity-60"
+              >
+                {busy === 'horse' ? <Loader2 size={14} className="animate-spin" /> : <PlusCircle size={14} />}
+                {stableHorses.length === 0 ? 'Add your first horse' : 'Add a horse'}
+              </button>
+              <Link
+                to={`/studio/${myPartyId}`}
+                className="text-xs text-muted-foreground hover:text-foreground transition-colors underline-offset-2 hover:underline"
+              >
+                Manage my profile
+              </Link>
+            </div>
           )}
 
           {stableHorses.length === 0 && previewHorses.length === 0 ? (
             <p className="text-xs text-muted-foreground">
               {myPartyId
-                ? 'Register a horse above to start building your stable.'
+                ? 'Add your first horse above — start with a photo, name it later, and finish the details at your own pace.'
                 : 'Horses you have a verified, current link to will appear here.'}
             </p>
           ) : (
@@ -310,7 +338,7 @@ export default function Dashboard() {
                     <button
                       key={h.id}
                       type="button"
-                      onClick={() => navigate(`/horses/${h.id}/edit`)}
+                      onClick={() => navigate(`/studio/horse/${h.id}`)}
                       className="p-2 border border-border/60 rounded-sm text-sm text-foreground hover:border-primary/50 transition-colors truncate text-left"
                     >
                       {h.name}

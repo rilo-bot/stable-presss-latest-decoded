@@ -1,0 +1,163 @@
+// ---------------------------------------------------------------------------
+// Production System dashboard — staff-only, role-scoped.
+//   GET  /api/newsroom/summary — live aggregates + the caller's capabilities
+//                                (one fetch powers the whole dashboard).
+//   POST /api/newsroom/brief   — a short AI "Studio brief" narrating the summary.
+//
+// Everything is computed live from real collections and scoped to what the
+// caller's editorial role actually acts on — no stored dashboard doc, nothing to
+// manage. The capability list reuses lib/agent/capabilities.ts so the dashboard's
+// quick actions and the AI assistant share one source of truth.
+// ---------------------------------------------------------------------------
+
+import { Router } from 'express'
+import { generateText } from 'ai'
+import { db } from '../lib/db.js'
+import { attachAccount } from '../lib/auth.js'
+import { isStaff, isAdmin } from '../lib/rbac.js'
+import { getCapabilities } from '../lib/agent/capabilities.js'
+import { getAgentModel, isAgentConfigured } from '../lib/agent/provider.js'
+import type { AccountUser, PartyClaim } from '../lib/identity.js'
+
+const router = Router()
+router.use(attachAccount)
+
+const LIVE_STATUSES = ['published', 'newsletter', 'bulletin']
+const isReviewer = (a: AccountUser) =>
+  a.roles.includes('editor') || a.roles.includes('legal_reviewer') || a.roles.includes('administrator')
+const isPublisher = (a: AccountUser) => a.roles.includes('publisher') || a.roles.includes('administrator')
+
+export interface NeedItem {
+  id: string
+  label: string
+  count: number
+  where: string
+}
+
+/** The role-scoped dashboard summary. Pure aggregation over live collections. */
+async function buildNewsroomSummary(account: AccountUser) {
+  const [articles, horses, parties, races, issues] = await Promise.all([
+    db.collection('articles').find(),
+    db.collection('horses').find(),
+    db.collection('parties').find(),
+    db.collection('races').find(),
+    db.collection('issues').find(),
+  ])
+
+  const byStatus: Record<string, number> = {}
+  for (const a of articles) byStatus[String(a.status)] = (byStatus[String(a.status)] ?? 0) + 1
+  const countStatus = (...statuses: string[]) => statuses.reduce((n, s) => n + (byStatus[s] ?? 0), 0)
+
+  const mine = articles.filter((a) => a.author && a.author === account.displayName)
+  const countMine = (...statuses: string[]) =>
+    mine.filter((a) => statuses.includes(String(a.status))).length
+
+  const unverifiedHorses = horses.filter((h) => h.verificationStatus === 'unverified').length
+  const unverifiedParties = parties.filter((p) => p.verificationStatus === 'unverified').length
+  const issuesInProgress = issues.filter((d) => !d.publishedAt || d.unpublishedAt).length
+
+  const now = Date.now()
+  const upcomingRaces = races.filter((r) => {
+    if (r.scheduledAt && Date.parse(String(r.scheduledAt)) > now) return true
+    return ['upcoming', 'open', 'scheduled'].includes(String(r.status))
+  }).length
+
+  // Pending racing-role claims this account may verify (admins see all; org
+  // verification is layered separately — non-admins get 0 here for now).
+  let pendingClaims = 0
+  if (isAdmin(account)) {
+    const users = await db.collection('users').find()
+    for (const u of users) {
+      const claims: PartyClaim[] = Array.isArray(u.partyClaims) ? u.partyClaims : []
+      pendingClaims += claims.filter((c) => c.status === 'pending').length
+    }
+  }
+
+  // ── "Needs your attention" — only what THIS role acts on, only when non-zero ──
+  const needs: NeedItem[] = []
+  if (isReviewer(account)) {
+    const c = countStatus('submitted', 'editorial_review')
+    if (c) needs.push({ id: 'review-stories', label: 'Stories awaiting your review', count: c, where: 'review' })
+  }
+  if (account.roles.includes('legal_reviewer') || isAdmin(account)) {
+    const c = countStatus('legal_review', 'compliance')
+    if (c) needs.push({ id: 'legal-review', label: 'Stories awaiting legal / compliance', count: c, where: 'review' })
+  }
+  if (isPublisher(account)) {
+    const c = countStatus('approved', 'publisher_review', 'scheduled')
+    if (c) needs.push({ id: 'publish-stories', label: 'Stories ready to publish or schedule', count: c, where: 'workflow' })
+  }
+  const myRevision = countMine('revision')
+  if (myRevision) needs.push({ id: 'my-revisions', label: 'Your stories need revision', count: myRevision, where: 'drafts' })
+  const myDrafts = countMine('draft')
+  if (myDrafts) needs.push({ id: 'my-drafts', label: 'Your drafts in progress', count: myDrafts, where: 'drafts' })
+  if (pendingClaims) needs.push({ id: 'verify-claims', label: 'Racing-role claims to verify', count: pendingClaims, where: 'claims' })
+  if (unverifiedHorses) needs.push({ id: 'verify-horses', label: 'Unverified horses to review', count: unverifiedHorses, where: 'horses' })
+  if (unverifiedParties) needs.push({ id: 'verify-parties', label: 'Unverified parties to review', count: unverifiedParties, where: 'parties' })
+  if (issuesInProgress) needs.push({ id: 'finish-bulletins', label: 'Bulletins in progress', count: issuesInProgress, where: 'bulletin-templates' })
+
+  return {
+    generatedFor: { name: account.displayName || account.email, roles: account.roles, isAdmin: isAdmin(account) },
+    stories: {
+      total: articles.length,
+      mine: mine.length,
+      live: countStatus(...LIVE_STATUSES),
+      byStatus,
+    },
+    needsAttention: needs,
+    snapshot: {
+      horses: horses.length,
+      unverifiedHorses,
+      parties: parties.length,
+      unverifiedParties,
+      articlesLive: countStatus(...LIVE_STATUSES),
+      upcomingRaces,
+      issues: issues.length,
+      issuesInProgress,
+    },
+  }
+}
+
+router.get('/summary', async (req, res) => {
+  const account = req.account!
+  if (!isStaff(account)) {
+    res.status(403).json({ error: 'Staff access required.' })
+    return
+  }
+  const [summary, capabilities] = await Promise.all([
+    buildNewsroomSummary(account),
+    getCapabilities(account),
+  ])
+  res.json({ summary, capabilities: capabilities.capabilities })
+})
+
+router.post('/brief', async (req, res) => {
+  const account = req.account!
+  if (!isStaff(account)) {
+    res.status(403).json({ error: 'Staff access required.' })
+    return
+  }
+  if (!isAgentConfigured()) {
+    res.json({ brief: null })
+    return
+  }
+  try {
+    const summary = await buildNewsroomSummary(account)
+    const { text } = await generateText({
+      model: getAgentModel(),
+      system:
+        'You are the editor-in-chief of Stable Press writing a short daily Production System brief for a colleague. ' +
+        'Open by greeting them by first name. In 2–4 warm, specific sentences, tell them what most needs their attention ' +
+        'today and the single best next action, using the real numbers provided. Refer to pages by name (In Review, ' +
+        'Workflow Board, Magazine Studio, Verify Claims, the Production Systems). If nothing needs attention, say so ' +
+        'cheerfully. Plain prose only — no markdown, no lists, no headings. Never invent numbers beyond what is given.',
+      prompt: `Here is today's live summary for ${summary.generatedFor.name} (roles: ${summary.generatedFor.roles.join(', ')}):\n${JSON.stringify(summary)}\n\nWrite the brief.`,
+    })
+    res.json({ brief: text.trim() })
+  } catch (err) {
+    console.error('[newsroom] brief error:', err)
+    res.json({ brief: null }) // dashboard falls back to the structured cards
+  }
+})
+
+export default router

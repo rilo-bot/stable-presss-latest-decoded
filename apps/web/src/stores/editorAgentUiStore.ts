@@ -10,7 +10,7 @@
 // ---------------------------------------------------------------------------
 
 import { create } from 'zustand';
-import type { StagedEdit, UndoEntry } from '@/editor/agent/types';
+import type { StagedEdit, UndoEntry, DocAttachment } from '@/editor/agent/types';
 
 interface EditorAgentUiState {
   open: boolean;
@@ -20,6 +20,8 @@ interface EditorAgentUiState {
   pendingPrompt: string | null;
   staged: StagedEdit[];
   undo: UndoEntry[];
+  /** Uploaded source documents (analysed digests) the agent can place from. */
+  attachments: DocAttachment[];
 
   setOpen: (open: boolean) => void;
   toggle: () => void;
@@ -36,6 +38,10 @@ interface EditorAgentUiState {
 
   pushUndo: (entry: UndoEntry) => void;
   popUndo: () => UndoEntry | undefined;
+
+  addAttachment: (a: DocAttachment) => void;
+  removeAttachment: (id: string) => void;
+  clearAttachments: () => void;
 }
 
 export const useEditorAgentUi = create<EditorAgentUiState>((set, get) => ({
@@ -45,6 +51,7 @@ export const useEditorAgentUi = create<EditorAgentUiState>((set, get) => ({
   pendingPrompt: null,
   staged: [],
   undo: [],
+  attachments: [],
 
   setOpen: (open) => set({ open }),
   toggle: () => set((s) => ({ open: !s.open })),
@@ -66,4 +73,8 @@ export const useEditorAgentUi = create<EditorAgentUiState>((set, get) => ({
     set({ undo: undo.slice(0, -1) });
     return last;
   },
+
+  addAttachment: (a) => set((s) => ({ attachments: [...s.attachments, a].slice(-6) })),
+  removeAttachment: (id) => set((s) => ({ attachments: s.attachments.filter((a) => a.id !== id) })),
+  clearAttachments: () => set({ attachments: [] }),
 }));

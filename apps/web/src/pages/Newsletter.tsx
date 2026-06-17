@@ -1,4 +1,4 @@
-import { useMemo, useState, useEffect } from 'react';
+import { useState, useEffect } from 'react';
 import { Link, useSearchParams } from 'react-router-dom';
 import { motion } from 'framer-motion';
 import { useArticleStore } from '@/stores/articleStore';
@@ -7,9 +7,6 @@ import { cn } from '@/lib/utils';
 import {
   Mail,
   BookOpen,
-  Newspaper,
-  BarChart2,
-  Mic,
   ChevronRight,
   Clock,
   ArrowRight,
@@ -17,20 +14,9 @@ import {
   Calendar,
 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
-
-/* ── Section icon map ───────────────────────────────── */
-
-const SECTION_ICONS: Record<string, React.ReactNode> = {
-  news: <Newspaper size={13} />,
-  analysis: <BarChart2 size={13} />,
-  interviews: <Mic size={13} />,
-};
-
-const SECTION_IMAGES: Record<string, string> = {
-  news: 'https://images.pexels.com/photos/12995066/pexels-photo-12995066.jpeg?auto=compress&cs=tinysrgb&h=650&w=940',
-  analysis: 'https://images.pexels.com/photos/27305774/pexels-photo-27305774.jpeg?auto=compress&cs=tinysrgb&h=650&w=940',
-  interviews: 'https://images.pexels.com/photos/7882582/pexels-photo-7882582.jpeg?auto=compress&cs=tinysrgb&h=650&w=940',
-};
+import SectionGrid from '@/pages/bulletins/SectionGrid';
+import { useArticleGroups } from '@/pages/bulletins/useArticleGroups';
+import { SECTION_IMAGES } from '@/pages/bulletins/constants';
 
 /* ── Component ────────────────────────────────────────── */
 
@@ -49,7 +35,6 @@ export default function Newsletter() {
 
   const [search, setSearch] = useState('');
   const [loading, setLoading] = useState(true);
-  const [expandedSection, setExpandedSection] = useState<string | null>(null);
 
   useEffect(() => {
     const t = setTimeout(() => setLoading(false), 600);
@@ -57,50 +42,12 @@ export default function Newsletter() {
   }, []);
 
   // Production System articles — newsletter status ONLY (bulletin articles go to /bulletins)
-  const newsletterArticles = useMemo(() => {
-    let base = (articles ?? []).filter((a) => a.status === 'newsletter');
-    if (categoryParam) base = base.filter((a) => (a.category ?? '') === categoryParam);
-    if (search.trim()) {
-      const q = search.toLowerCase();
-      base = base.filter(
-        (a) =>
-          a.title.toLowerCase().includes(q) ||
-          a.author.toLowerCase().includes(q) ||
-          (a.category ?? '').toLowerCase().includes(q)
-      );
-    }
-    return base;
-  }, [articles, categoryParam, search]);
-
-  const hasCmsArticles = newsletterArticles.length > 0;
-
-  type AnyItem = (typeof newsletterArticles)[0];
-
-  const source: AnyItem[] = newsletterArticles;
-
-  // Group articles by category section
-  const sections = useMemo(() => {
-    const grouped: {
-      section: string;
-      cats: { catDef: (typeof CATEGORIES)[0]; items: AnyItem[] }[];
-    }[] = [];
-    const allSections = ['news', 'analysis', 'interviews'] as const;
-    for (const sec of allSections) {
-      const cats = CATEGORIES.filter((c) => c.section === sec);
-      const secItems = cats
-        .map((catDef) => ({
-          catDef,
-          items: source.filter((item) => (item.category ?? '') === catDef.key),
-        }))
-        .filter((g) => g.items.length > 0);
-      if (secItems.length > 0) {
-        grouped.push({ section: sec, cats: secItems });
-      }
-    }
-    return grouped;
-  }, [source]);
-
-  const heroItem = source[0] ?? null;
+  const { source, hasCmsArticles, sections, heroItem } = useArticleGroups(
+    articles,
+    'newsletter',
+    categoryParam,
+    search
+  );
 
   const setCategory = (key: string | null) => {
     if (key) {
@@ -451,154 +398,7 @@ export default function Newsletter() {
             )}
 
             {/* ── Category sections ── */}
-            {sections.map((group, groupIdx) => (
-              <section key={group.section}>
-                {/* Section header */}
-                <div className="flex items-center gap-4 mb-8">
-                  <div
-                    className="flex items-center gap-2 px-3 py-1.5 rounded-sm"
-                    style={{ background: 'hsl(var(--primary) / 0.08)' }}
-                  >
-                    <span className="text-primary">{SECTION_ICONS[group.section]}</span>
-                    <span className="text-[9px] uppercase tracking-[0.2em] font-bold text-primary">
-                      {group.section.charAt(0).toUpperCase() + group.section.slice(1)}
-                    </span>
-                  </div>
-                  <div className="flex-1 h-px bg-border/50" />
-                </div>
-
-                {group.cats.map((catGroup) => {
-                  const { catDef, items } = catGroup;
-                  const isExpanded = expandedSection === catDef.key || items.length <= 3;
-
-                  return (
-                    <div key={catDef.key} className="mb-10">
-                      {/* Category sub-header */}
-                      <div className="flex items-center gap-3 mb-5">
-                        <div
-                          className="flex-shrink-0 w-1 h-4 rounded-full"
-                          style={{ background: 'hsl(var(--brand-accent))' }}
-                        />
-                        <h3 className="font-[family-name:var(--font-display)] text-base font-bold text-foreground">
-                          {catDef.label}
-                        </h3>
-                        <span className="text-[10px] text-muted-foreground uppercase tracking-[0.1em] font-semibold">
-                          {items.length} {items.length === 1 ? 'story' : 'stories'}
-                        </span>
-                        <div className="flex-1 h-px bg-border/40" />
-                        <Link
-                          to={`/news?category=${catDef.key}`}
-                          className="text-[10px] uppercase tracking-[0.1em] font-semibold text-muted-foreground hover:text-foreground transition-colors flex items-center gap-1"
-                        >
-                          News index <ChevronRight size={10} />
-                        </Link>
-                      </div>
-
-                      {/* Articles grid */}
-                      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-5">
-                        {(isExpanded ? items : items.slice(0, 3)).map((item, itemIdx) => {
-                          const isReal = hasCmsArticles && (item as any).id && !(item as any).id.startsWith('fb');
-                          const itemImageUrl = (item as any).imageUrl ?? SECTION_IMAGES[catDef.section];
-
-                          const cardContent = (
-                            <div className="group border border-border/60 rounded-sm overflow-hidden bg-card hover:border-primary/30 transition-colors h-full flex flex-col">
-                              {/* Card image */}
-                              <div className="relative h-40 overflow-hidden flex-shrink-0">
-                                <img
-                                  src={itemImageUrl}
-                                  alt={item.title}
-                                  crossOrigin="anonymous"
-                                  className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-500"
-                                />
-                                <div className="absolute inset-0 bg-gradient-to-t from-foreground/60 via-transparent to-transparent" />
-                                <span
-                                  className="absolute top-2.5 left-2.5 flex items-center gap-1 text-[8px] uppercase tracking-[0.16em] font-bold px-2 py-0.5"
-                                  style={{ background: 'hsl(var(--chart-1))', color: 'hsl(var(--primary-foreground))' }}
-                                >
-                                  <Mail size={8} />
-                                  Newsletter
-                                </span>
-                              </div>
-
-                              {/* Card body */}
-                              <div className="p-4 flex flex-col flex-1">
-                                <span
-                                  className="text-[9px] uppercase tracking-[0.14em] font-bold mb-2"
-                                  style={{ color: 'hsl(var(--brand-accent))' }}
-                                >
-                                  {catDef.label}
-                                </span>
-                                <h4 className="font-[family-name:var(--font-display)] text-sm font-bold text-foreground leading-snug line-clamp-2 mb-2 group-hover:opacity-[0.85] transition-opacity flex-1">
-                                  {item.title}
-                                </h4>
-                                {(item as any).summary && (
-                                  <p className="text-[11px] text-muted-foreground leading-relaxed line-clamp-2 mb-3">
-                                    {(item as any).summary}
-                                  </p>
-                                )}
-                                <div className="flex items-center justify-between mt-auto">
-                                  <div className="flex items-center gap-2 text-[10px] text-muted-foreground">
-                                    <span>{item.author}</span>
-                                    {item.readingTime && (
-                                      <>
-                                        <span>·</span>
-                                        <span className="flex items-center gap-0.5">
-                                          <Clock size={9} />
-                                          {item.readingTime}m
-                                        </span>
-                                      </>
-                                    )}
-                                  </div>
-                                  <span className="text-[9px] uppercase tracking-[0.08em] font-semibold text-primary flex items-center gap-0.5 opacity-0 group-hover:opacity-100 transition-opacity">
-                                    Read <ArrowRight size={9} />
-                                  </span>
-                                </div>
-                              </div>
-                            </div>
-                          );
-
-                          const itemKey = (item as any).id ?? `item-${groupIdx}-${itemIdx}`;
-
-                          return (
-                            <motion.div
-                              key={itemKey}
-                              initial={{ opacity: 0, y: 8 }}
-                              animate={{ opacity: 1, y: 0 }}
-                              transition={{ delay: itemIdx * 0.04 + groupIdx * 0.05, duration: 0.22, ease: 'easeOut' }}
-                            >
-                              {isReal ? (
-                                <Link
-                                  to={`/articles/${(item as any).id}`}
-                                  className="block h-full"
-                                  aria-label={`Read: ${item.title}`}
-                                >
-                                  {cardContent}
-                                </Link>
-                              ) : (
-                                cardContent
-                              )}
-                            </motion.div>
-                          );
-                        })}
-                      </div>
-
-                      {/* Show more */}
-                      {items.length > 3 && !isExpanded && (
-                        <div className="mt-4 text-center">
-                          <button
-                            onClick={() => setExpandedSection(catDef.key)}
-                            className="text-[11px] uppercase tracking-[0.1em] font-semibold text-muted-foreground hover:text-foreground transition-colors flex items-center gap-1.5 mx-auto"
-                          >
-                            Show {items.length - 3} more in {catDef.label}
-                            <ChevronRight size={12} />
-                          </button>
-                        </div>
-                      )}
-                    </div>
-                  );
-                })}
-              </section>
-            ))}
+            <SectionGrid variant="newsletter" sections={sections} hasCmsArticles={hasCmsArticles} />
           </div>
         )}
       </div>

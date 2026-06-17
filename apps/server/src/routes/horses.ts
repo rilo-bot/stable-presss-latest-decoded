@@ -11,6 +11,19 @@ function project<T extends WithMongoId>(doc: T): Omit<T, '_id'> & { id: string }
 
 const router = Router();
 
+// Mirror of the web ROLE_BINDINGS (lib/profile/roleMap.ts): which legacy *Ids
+// field on a Horse maps to which HorsePartyLink relationship_type. Used to link
+// the CREATING party under its own role (trainer → Trainers box, not Owners).
+// `syndicateManagerIds` has no relationship_type — handled by the fallback.
+const ROLE_LINK_FIELDS: { field: string; rel: string }[] = [
+  { field: 'ownerIds', rel: 'ownership' },
+  { field: 'trainerIds', rel: 'training' },
+  { field: 'jockeyIds', rel: 'riding' },
+  { field: 'breederIds', rel: 'bred-by' },
+  { field: 'bloodstockAgentIds', rel: 'agent' },
+  { field: 'personnelIds', rel: 'personnel' },
+];
+
 router.get('/', async (req, res) => {
   const items = await db.collection('horses').find();
   const account = req.account;
@@ -70,7 +83,9 @@ router.post('/', async (req, res) => {
     verificationStatus: string;
   }>;
 
-  if (!body || !body.name) {
+  // A name is required UNLESS this is an un-named draft (foal / yearling), which
+  // members create photo-first and name later. Un-named drafts store name: ''.
+  if (!body || (!body.name && !body.isUnnamed)) {
     res.status(400).json({ error: 'name is required' });
     return;
   }
@@ -89,6 +104,7 @@ router.post('/', async (req, res) => {
 
   const doc: Record<string, unknown> = {
     ...body,
+    name: body.name ?? '',
     verificationStatus,
     createdByUserId: account?.id,
     createdAt: now,
@@ -98,24 +114,35 @@ router.post('/', async (req, res) => {
 
   const id = await db.collection('horses').insertOne(doc);
 
-  // A member registering a horse becomes its owner: auto-link their manageable
-  // owner party (or first manageable party — incl. a provisional self-registered
-  // one) so the horse joins the connection graph and they keep authorised access
-  // via the standard scope rules.
+  // A member registering a horse is auto-linked to it UNDER THEIR OWN ROLE, so
+  // they show up in the matching connection box (an owner in Owners, a trainer in
+  // Trainers, etc.) and keep authorised access via the standard scope rules. The
+  // role is taken from whichever *Ids field the client populated with a party the
+  // member manages; if none was provided, we fall back to linking their owner
+  // party (or first manageable party) as ownership.
   if (account && !staff) {
     const manageable = account.partyClaims.filter(
       (c) => c.status === 'verified' || (c.status === 'pending' && c.selfRegistered !== false),
     );
-    const ownerClaim = manageable.find((c) => c.role === 'owner') ?? manageable[0];
-    if (ownerClaim) {
-      await db.collection('horsePartyLinks').insertOne({
-        horse_id: id,
-        party_id: ownerClaim.partyId,
-        relationship_type: 'ownership',
-        start_date: now.slice(0, 10),
-        createdAt: now,
-        updatedAt: now,
+    const manageablePartyIds = new Set(manageable.map((c) => c.partyId));
+    const insertLink = (party_id: string, relationship_type: string) =>
+      db.collection('horsePartyLinks').insertOne({
+        horse_id: id, party_id, relationship_type, start_date: now.slice(0, 10), createdAt: now, updatedAt: now,
       });
+
+    let linkedAny = false;
+    const rec = body as Record<string, unknown>;
+    for (const { field, rel } of ROLE_LINK_FIELDS) {
+      const ids = Array.isArray(rec[field]) ? (rec[field] as string[]) : [];
+      for (const pid of ids) {
+        if (!manageablePartyIds.has(pid)) continue; // only auto-link parties the member manages
+        await insertLink(pid, rel);
+        linkedAny = true;
+      }
+    }
+    if (!linkedAny) {
+      const ownerClaim = manageable.find((c) => c.role === 'owner') ?? manageable[0];
+      if (ownerClaim) await insertLink(ownerClaim.partyId, 'ownership');
     }
   }
 

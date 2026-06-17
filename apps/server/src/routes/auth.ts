@@ -74,7 +74,9 @@ router.post('/request-otp', async (req, res) => {
 
   await clearOtps(email);
 
-  const code = genOtp();
+  // Dev env (no SendGrid configured): skip emailing and use a fixed, predictable
+  // code so you can sign in without checking an inbox. Real envs get a random one.
+  const code = isEmailConfigured() ? genOtp() : '123456';
   const now = new Date();
   await db.collection('otps').insertOne({
     email,

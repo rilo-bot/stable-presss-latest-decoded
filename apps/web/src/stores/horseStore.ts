@@ -2,6 +2,7 @@ import { create } from 'zustand';
 import { toast } from 'sonner';
 import type { Horse } from '@/types/horse';
 import { authFetch } from '@/lib/api';
+import { useHorsePartyLinkStore } from '@/stores/horsePartyLinkStore';
 
 interface HorseState {
   horses: Horse[];
@@ -9,7 +10,7 @@ interface HorseState {
   error: string | null;
   loaded: boolean;
   fetchHorses: () => Promise<void>;
-  addHorse: (horse: Omit<Horse, 'id' | 'createdAt'>) => Promise<void>;
+  addHorse: (horse: Omit<Horse, 'id' | 'createdAt'>) => Promise<Horse | null>;
   updateHorse: (id: string, updates: Partial<Omit<Horse, 'id' | 'createdAt'>>) => Promise<void>;
   removeHorse: (id: string) => Promise<void>;
 }
@@ -45,10 +46,15 @@ export const useHorseStore = create<HorseState>()((set, get) => ({
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
       const created: Horse = await res.json();
       set((state) => ({ horses: [...state.horses, created] }));
+      // The server auto-links the creating party (under its role). Force-refetch
+      // links so the new connection shows immediately on the horse's page.
+      void useHorsePartyLinkStore.getState().fetchHorsePartyLinks(true);
+      return created;
     } catch (err) {
       const message = err instanceof Error ? err.message : 'Failed to add horse';
       set({ error: message });
       toast.error(message);
+      return null;
     }
   },
 
