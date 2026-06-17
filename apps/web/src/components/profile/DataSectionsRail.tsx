@@ -18,7 +18,7 @@ export function DataSectionsRail({ activeModule, onToggle, extra }: {
         <span style={{ fontSize: '0.5rem', color: 'var(--gold-dark)', ...serifStyle }}>✦</span>
       </div>
       {DATA_CATEGORIES.map((cat) => (
-        <DataCategoryCard key={cat.key} label={cat.label} sublabel={cat.sublabel} icon={cat.icon} imgKey={cat.imgKey as DataCardImgKey} active={activeModule === cat.key} onClick={() => onToggle(cat.key)} />
+        <DataCategoryCard key={cat.key} id={`onb-data-${cat.key}`} label={cat.label} sublabel={cat.sublabel} icon={cat.icon} imgKey={cat.imgKey as DataCardImgKey} active={activeModule === cat.key} onClick={() => onToggle(cat.key)} />
       ))}
       {extra}
       <div style={{ marginTop: 6, padding: '8px 10px', border: '1px solid var(--gold-dark)', borderRadius: 3, background: 'rgba(26,51,34,0.5)', textAlign: 'center', ...serifStyle }}>

@@ -128,6 +128,34 @@
   }
 }
 
+/* Onboarding "spotlight" — gentle gold glow + pulse on the active step's box.
+   Uses `outline` (+ drop-shadow glow) rather than box-shadow so it never gets
+   clipped or overridden by an element's own box-shadow, and never shifts layout.
+   Non-blocking: the rest of the page stays fully usable. */
+.onb-spotlight {
+  outline: 2px solid var(--gold-bright);
+  outline-offset: 3px;
+  border-radius: 4px;
+  animation: onb-pulse 2s ease-in-out infinite;
+  scroll-margin-top: 90px;
+}
+@keyframes onb-pulse {
+  0%, 100% { outline-color: rgba(212, 168, 67, 0.55); filter: drop-shadow(0 0 4px rgba(212, 168, 67, 0.4)); }
+  50%      { outline-color: rgba(212, 168, 67, 1);    filter: drop-shadow(0 0 11px rgba(212, 168, 67, 0.75)); }
+}
+@media (prefers-reduced-motion: reduce) {
+  .onb-spotlight { animation: none; outline-color: var(--gold-bright); }
+}
+
+/* Onboarding guide pointer — the mascot's dashed "marching ants" arrow. */
+.onb-arrow {
+  stroke-dasharray: 7 6;
+  animation: onb-dash 0.6s linear infinite;
+  filter: drop-shadow(0 0 3px rgba(212, 168, 67, 0.6));
+}
+@keyframes onb-dash { to { stroke-dashoffset: -13; } }
+@media (prefers-reduced-motion: reduce) { .onb-arrow { animation: none; } }
+
 /* Masthead rule accent — thin gold line above sections */
 .rule-gold {
   border-top: var(--rule-gold);

@@ -43,13 +43,13 @@ export function WorkflowFlowBar({ buckets, onStageClick, activeColumn, visibleSt
                   {stage.icon}
                 </span>
                 <span
-                  className="text-[11px] font-bold tabular-nums"
+                  className="text-[13px] font-bold tabular-nums"
                   style={{ color: isActive ? stage.accent : 'hsl(var(--foreground))' }}
                 >
                   {count}
                 </span>
                 <span
-                  className="text-[8px] uppercase tracking-[0.08em] leading-tight text-center"
+                  className="text-[10px] uppercase tracking-[0.08em] leading-tight text-center"
                   style={{ color: isActive ? stage.accent : 'hsl(var(--muted-foreground))' }}
                 >
                   {stage.label.replace(' ', '\n')}

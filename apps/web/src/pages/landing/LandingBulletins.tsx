@@ -5,15 +5,9 @@ import type { IssueSummary } from '@/types/magazine';
 
 interface LandingBulletinsProps {
   publishedIssues: IssueSummary[];
-  bulletinOpen: string | null;
-  setBulletinOpen: (id: string | null) => void;
 }
 
-export function LandingBulletins({
-  publishedIssues,
-  bulletinOpen,
-  setBulletinOpen,
-}: LandingBulletinsProps) {
+export function LandingBulletins({ publishedIssues }: LandingBulletinsProps) {
   return (
     <section id="bulletins">
       <div className="flex items-center gap-4 mb-6">
@@ -36,19 +30,18 @@ export function LandingBulletins({
       {publishedIssues.length > 0 ? (
         <div className="grid grid-cols-1 sm:grid-cols-2 gap-5">
           {publishedIssues.map((issue) => (
-            <div
+            <Link
               key={issue.id}
-              className="relative border border-border/60 rounded-sm overflow-hidden group cursor-pointer hover:border-primary/40 transition-colors"
-              onClick={() =>
-                setBulletinOpen(bulletinOpen === issue.id ? null : issue.id)
-              }
+              to={`/bulletins/${issue.id}`}
+              className="relative border border-border/60 rounded-sm overflow-hidden group hover:border-primary/40 transition-colors block"
+              aria-label={`Read bulletin: ${issue.title}`}
             >
               {/* Cover */}
               <div className="relative h-48 bg-primary overflow-hidden">
                 {issue.coverImageUrl && (
                   <img
                     src={issue.coverImageUrl}
-                    alt={`${issue.title} cover`}
+                    alt=""
                     crossOrigin="anonymous"
                     className="absolute inset-0 w-full h-full object-cover opacity-20 group-hover:opacity-30 transition-opacity"
                   />
@@ -56,7 +49,7 @@ export function LandingBulletins({
                 <div className="relative z-10 p-5 h-full flex flex-col justify-between">
                   <div>
                     <div
-                      className="inline-block text-[8px] uppercase tracking-[0.2em] font-bold px-2 py-0.5 mb-2"
+                      className="inline-block text-[9px] uppercase tracking-[0.2em] font-bold px-2 py-0.5 mb-2"
                       style={{
                         background: 'hsl(var(--brand-accent))',
                         color: 'hsl(var(--brand-accent-foreground))',
@@ -64,7 +57,7 @@ export function LandingBulletins({
                     >
                       Print Edition
                     </div>
-                    <p className="text-[9px] uppercase tracking-[0.12em] text-primary-foreground/50">
+                    <p className="text-[10px] uppercase tracking-[0.12em] text-primary-foreground/60">
                       {issue.edition}
                     </p>
                   </div>
@@ -79,32 +72,21 @@ export function LandingBulletins({
               {/* Body */}
               <div className="p-4 bg-card">
                 <div className="flex items-center justify-between mb-2">
-                  <span className="text-[10px] text-muted-foreground">
+                  <span className="text-[11px] text-muted-foreground">
                     {new Date(issue.publishedAt).toLocaleDateString('en-AU', {
                       month: 'long',
                       year: 'numeric',
                     })}
                   </span>
-                  <span className="text-[10px] text-muted-foreground">
+                  <span className="text-[11px] text-muted-foreground">
                     {issue.pageCount} pages
                   </span>
                 </div>
-                {bulletinOpen === issue.id ? (
-                  <Button
-                    size="sm"
-                    className="w-full bg-primary text-primary-foreground hover:bg-primary/90 text-xs"
-                    asChild
-                    onClick={(e) => e.stopPropagation()}
-                  >
-                    <Link to={`/bulletins/${issue.id}`}>Read Full Bulletin</Link>
-                  </Button>
-                ) : (
-                  <button className="text-[10px] uppercase tracking-[0.1em] font-semibold text-muted-foreground hover:text-foreground transition-colors flex items-center gap-1">
-                    Preview edition <ChevronRight size={10} />
-                  </button>
-                )}
+                <span className="text-[10px] uppercase tracking-[0.1em] font-semibold text-muted-foreground group-hover:text-foreground transition-colors flex items-center gap-1">
+                  Read full bulletin <ChevronRight size={10} />
+                </span>
               </div>
-            </div>
+            </Link>
           ))}
         </div>
       ) : (

@@ -8,15 +8,52 @@
 // only deltas are the editor persona + the editor toolset.
 // ---------------------------------------------------------------------------
 
-import { Router } from 'express'
+import { Router, raw } from 'express'
 import { streamText, generateObject, convertToModelMessages, stepCountIs, type UIMessage } from 'ai'
 import { z } from 'zod'
 import { attachAccountOptional } from '../lib/auth.js'
 import { getAgentModel, isAgentConfigured } from '../lib/agent/provider.js'
 import { buildEditorSystemPrompt, type EditorContext } from '../lib/agent/editorPrompt.js'
 import { buildEditorTools } from '../lib/agent/editorTools.js'
+import { ingestDocument, ingestKind } from '../lib/agent/documentIngest.js'
 
 const router = Router()
+
+// POST /api/agent/editor/ingest?filename=  — analyse an uploaded PDF/image/text
+// file ONCE into a compact digest the agent can place from. Body: raw file bytes;
+// Content-Type header = the file's type. Same proxied pattern as /api/uploads.
+const MB = 1024 * 1024
+const rawDoc = raw({ type: () => true, limit: '26mb' })
+router.post('/ingest', attachAccountOptional, rawDoc, async (req, res) => {
+  if (!isAgentConfigured()) {
+    res.status(503).json({ error: 'The studio assistant is resting — OPENROUTER_API_KEY is not configured on the server.' })
+    return
+  }
+  const contentType = String(req.headers['content-type'] ?? '').split(';')[0]!.trim()
+  const name = String(req.query.filename ?? 'document')
+  const kind = ingestKind(contentType)
+  if (!kind) {
+    res.status(415).json({ error: `I can read PDFs, images and text files — "${contentType || 'that type'}" isn't supported yet.` })
+    return
+  }
+  const body = req.body as Buffer
+  if (!Buffer.isBuffer(body) || body.length === 0) {
+    res.status(400).json({ error: 'The file came through empty — please try again.' })
+    return
+  }
+  const cap = kind === 'image' ? 15 * MB : 25 * MB
+  if (body.length > cap) {
+    res.status(413).json({ error: `That file is a bit big (max ${Math.round(cap / MB)} MB) — try a smaller one.` })
+    return
+  }
+  try {
+    const digest = await ingestDocument({ bytes: body, contentType, name })
+    res.json({ digest })
+  } catch (err) {
+    console.error('[agent-editor] ingest error:', err)
+    res.status(500).json({ error: "I couldn't read that document just now — try a different file, or paste the key details and I'll place them." })
+  }
+})
 
 router.post('/chat', attachAccountOptional, async (req, res) => {
   if (!isAgentConfigured()) {

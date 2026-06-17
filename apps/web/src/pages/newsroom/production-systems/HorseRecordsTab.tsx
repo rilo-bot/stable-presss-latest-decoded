@@ -39,10 +39,10 @@ export function HorseRecordsTab({
       <div>
         <div className="flex items-center justify-between mb-3">
           <div>
-            <p className="text-[10px] uppercase tracking-[0.14em] font-bold text-muted-foreground">Sales Records</p>
-            <p className="text-xs text-muted-foreground/70">Auction & transfer history — surfaces on the horse's Sales Data module.</p>
+            <p className="text-[12px] uppercase tracking-[0.14em] font-bold text-muted-foreground">Sales Records</p>
+            <p className="text-sm text-muted-foreground/70">Auction & transfer history — surfaces on the horse's Sales Data module.</p>
           </div>
-          <Button size="sm" className="gap-1.5 text-xs bg-primary text-primary-foreground hover:bg-primary/90" onClick={() => { setEditSale(undefined); setSalesFormOpen(true); }}>
+          <Button size="sm" className="gap-1.5 text-sm bg-primary text-primary-foreground hover:bg-primary/90" onClick={() => { setEditSale(undefined); setSalesFormOpen(true); }}>
             <Plus size={13} /> Add Sale
           </Button>
         </div>
@@ -54,10 +54,10 @@ export function HorseRecordsTab({
               <div key={s.id} className="flex items-center gap-3 px-4 py-2.5">
                 <div className="flex-1 min-w-0">
                   <p className="text-sm font-medium text-foreground truncate">{horseName(s.horse_id)} — {s.venue}{s.lot ? ` · ${s.lot}` : ''}</p>
-                  <p className="text-[11px] text-muted-foreground">{s.sale_type} · {s.sale_date}{s.price ? ` · ${s.currency === 'NZD' ? 'NZ$' : '$'}${s.price.toLocaleString('en-AU')}` : ''}</p>
+                  <p className="text-[13px] text-muted-foreground">{s.sale_type} · {s.sale_date}{s.price ? ` · ${s.currency === 'NZD' ? 'NZ$' : '$'}${s.price.toLocaleString('en-AU')}` : ''}</p>
                 </div>
-                <button className="text-xs text-primary hover:underline" onClick={() => { setEditSale(s); setSalesFormOpen(true); }}>Edit</button>
-                <button className="text-xs text-destructive hover:underline" onClick={() => removeSale(s.id)}>Delete</button>
+                <button className="text-sm text-primary hover:underline" onClick={() => { setEditSale(s); setSalesFormOpen(true); }}>Edit</button>
+                <button className="text-sm text-destructive hover:underline" onClick={() => removeSale(s.id)}>Delete</button>
               </div>
             ))}
           </div>
@@ -68,10 +68,10 @@ export function HorseRecordsTab({
       <div>
         <div className="flex items-center justify-between mb-3">
           <div>
-            <p className="text-[10px] uppercase tracking-[0.14em] font-bold text-muted-foreground">Reports / Forms</p>
-            <p className="text-xs text-muted-foreground/70">Registration, passport, vet & other documents. Restricted docs show to members only.</p>
+            <p className="text-[12px] uppercase tracking-[0.14em] font-bold text-muted-foreground">Reports / Forms</p>
+            <p className="text-sm text-muted-foreground/70">Registration, passport, vet & other documents. Restricted docs show to members only.</p>
           </div>
-          <Button size="sm" className="gap-1.5 text-xs bg-primary text-primary-foreground hover:bg-primary/90" onClick={() => { setEditReport(undefined); setReportFormOpen(true); }}>
+          <Button size="sm" className="gap-1.5 text-sm bg-primary text-primary-foreground hover:bg-primary/90" onClick={() => { setEditReport(undefined); setReportFormOpen(true); }}>
             <Plus size={13} /> Add Document
           </Button>
         </div>
@@ -83,10 +83,10 @@ export function HorseRecordsTab({
               <div key={r.id} className="flex items-center gap-3 px-4 py-2.5">
                 <div className="flex-1 min-w-0">
                   <p className="text-sm font-medium text-foreground truncate">{horseName(r.horse_id)} — {r.title}</p>
-                  <p className="text-[11px] text-muted-foreground">{r.doc_type} · {r.visibility === 'restricted' ? 'Restricted' : 'Public'}{r.issued_date ? ` · ${r.issued_date}` : ''}</p>
+                  <p className="text-[13px] text-muted-foreground">{r.doc_type} · {r.visibility === 'restricted' ? 'Restricted' : 'Public'}{r.issued_date ? ` · ${r.issued_date}` : ''}</p>
                 </div>
-                <button className="text-xs text-primary hover:underline" onClick={() => { setEditReport(r); setReportFormOpen(true); }}>Edit</button>
-                <button className="text-xs text-destructive hover:underline" onClick={() => removeReport(r.id)}>Delete</button>
+                <button className="text-sm text-primary hover:underline" onClick={() => { setEditReport(r); setReportFormOpen(true); }}>Edit</button>
+                <button className="text-sm text-destructive hover:underline" onClick={() => removeReport(r.id)}>Delete</button>
               </div>
             ))}
           </div>

@@ -15,7 +15,9 @@ export interface FieldDescriptor {
   onSave?: (next: string) => void | Promise<void>;
   /** Pre-formatted display string when not editing (e.g. formatted date / money). */
   displayValue?: string;
-  type?: 'text' | 'number' | 'date';
+  type?: 'text' | 'number' | 'date' | 'select';
+  /** Choices for type='select'. */
+  options?: string[];
   highlight?: boolean;
   min?: number | string;
   max?: number | string;
@@ -25,9 +27,9 @@ export interface FieldDescriptor {
 
 const noop = () => {};
 
-export function IdentityCard({ title, fields, editable, icon }: { title: string; fields: FieldDescriptor[]; editable: boolean; icon?: React.ReactNode }) {
+export function IdentityCard({ title, fields, editable, icon, className }: { title: string; fields: FieldDescriptor[]; editable: boolean; icon?: React.ReactNode; className?: string }) {
   return (
-    <div className="sku-gold-card" style={{ ...serifStyle, display: 'flex', flexDirection: 'column' }}>
+    <div className={`sku-gold-card${className ? ` ${className}` : ''}`} style={{ ...serifStyle, display: 'flex', flexDirection: 'column' }}>
       {icon ? (
         <div className="sku-green-header" style={{ padding: '7px 12px', display: 'flex', alignItems: 'center', gap: 6 }}>
           {icon}
@@ -50,6 +52,7 @@ export function IdentityCard({ title, fields, editable, icon }: { title: string;
               onSave={f.onSave ?? noop}
               editable={editable && !!f.onSave}
               type={f.type}
+              options={f.options}
               displayValue={f.displayValue}
               highlight={f.highlight}
               min={f.min}

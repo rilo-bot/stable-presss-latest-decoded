@@ -183,17 +183,36 @@ export function NavBar() {
           {/* Wordmark */}
           <Link
             to="/"
-            className="flex flex-col leading-none group"
+            className="flex items-center gap-2.5 group"
             aria-label="Stable Press — home"
           >
-            <span className="font-[family-name:var(--font-display)] text-xl font-bold tracking-tight text-primary-foreground group-hover:text-[hsl(var(--brand-accent))] transition-colors duration-150 leading-none">
-              Stable Press
-            </span>
+            {/* Brand mark, recoloured to brand gold via a mask so the green
+                artwork reads on the dark-green bar (transparent PNG → gold shape). */}
             <span
-              className="text-[9px] uppercase tracking-[0.22em] mt-0.5"
-              style={{ color: 'hsl(var(--brand-accent))' }}
-            >
-              NZTROF Ownership
+              aria-hidden="true"
+              className="h-12 w-12 flex-shrink-0 group-hover:opacity-90 transition-opacity"
+              style={{
+                backgroundColor: 'hsl(var(--brand-accent))',
+                WebkitMaskImage: "url('/images/Stable_Press.png')",
+                maskImage: "url('/images/Stable_Press.png')",
+                WebkitMaskSize: 'contain',
+                maskSize: 'contain',
+                WebkitMaskRepeat: 'no-repeat',
+                maskRepeat: 'no-repeat',
+                WebkitMaskPosition: 'center',
+                maskPosition: 'center',
+              }}
+            />
+            <span className="flex flex-col leading-none">
+              <span className="font-[family-name:var(--font-display)] text-xl font-bold tracking-tight text-primary-foreground group-hover:text-[hsl(var(--brand-accent))] transition-colors duration-150 leading-none">
+                Stable Press
+              </span>
+              <span
+                className="text-[9px] uppercase tracking-[0.22em] mt-0.5"
+                style={{ color: 'hsl(var(--brand-accent))' }}
+              >
+                NZTROF Ownership
+              </span>
             </span>
           </Link>
 

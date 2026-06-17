@@ -54,14 +54,14 @@ export function EditorApprovalRouting({ articles, onAdvance, setEditorTab }: Edi
       >
         <Layers size={15} className="text-primary flex-shrink-0 mt-0.5" />
         <div>
-          <p className="text-xs font-semibold text-foreground mb-0.5">Approval Workflow Routing</p>
-          <p className="text-[11px] text-muted-foreground leading-relaxed">
+          <p className="text-sm font-semibold text-foreground mb-0.5">Approval Workflow Routing</p>
+          <p className="text-[13px] text-muted-foreground leading-relaxed">
             Stories that have passed editorial review need routing to the next stage — Legal, Compliance, Approved, or back for Revision.
           </p>
         </div>
       </div>
 
-      <div className="flex flex-wrap items-center gap-2 text-[10px] text-muted-foreground">
+      <div className="flex flex-wrap items-center gap-2 text-[12px] text-muted-foreground">
         <span className="font-semibold uppercase tracking-[0.1em]">Routing path:</span>
         {[
           { label: 'Editorial Review', color: 'hsl(var(--chart-2))' },
@@ -103,7 +103,7 @@ export function EditorApprovalRouting({ articles, onAdvance, setEditorTab }: Edi
                 <div className="flex items-start justify-between gap-4 flex-wrap">
                   <div className="min-w-0">
                     <p className="text-sm font-semibold text-foreground line-clamp-1">{article.title}</p>
-                    <p className="text-[11px] text-muted-foreground mt-0.5">
+                    <p className="text-[13px] text-muted-foreground mt-0.5">
                       {article.author} · {article.category ?? 'General'}
                     </p>
                     <div className="mt-1.5">
@@ -115,7 +115,7 @@ export function EditorApprovalRouting({ articles, onAdvance, setEditorTab }: Edi
                       <button
                         key={action.toStatus}
                         onClick={() => onAdvance(article.id, action.toStatus)}
-                        className="flex items-center gap-1.5 px-3 py-1.5 rounded-sm border text-[10px] uppercase tracking-[0.08em] font-semibold transition-colors hover:opacity-80"
+                        className="flex items-center gap-1.5 px-3 py-1.5 rounded-sm border text-[12px] uppercase tracking-[0.08em] font-semibold transition-colors hover:opacity-80"
                         style={{
                           borderColor: `${action.color}40`,
                           background: `${action.color}10`,

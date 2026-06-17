@@ -26,8 +26,8 @@ export function EditorScheduling({ articles, buckets, onAdvance, setEditorTab }:
       >
         <CalendarClock size={15} className="text-primary flex-shrink-0 mt-0.5" />
         <div>
-          <p className="text-xs font-semibold text-foreground mb-0.5">Scheduled Publishing</p>
-          <p className="text-[11px] text-muted-foreground leading-relaxed">
+          <p className="text-sm font-semibold text-foreground mb-0.5">Scheduled Publishing</p>
+          <p className="text-[13px] text-muted-foreground leading-relaxed">
             Approved and Publisher-reviewed stories can be queued for publication.
           </p>
         </div>
@@ -36,14 +36,14 @@ export function EditorScheduling({ articles, buckets, onAdvance, setEditorTab }:
       <div className="border border-border/60 rounded-sm overflow-hidden bg-card">
         <div className="px-4 py-3 border-b border-border/40 bg-primary/5 flex items-center gap-2">
           <Clock size={13} className="text-primary" />
-          <p className="text-[10px] uppercase tracking-[0.12em] font-bold text-foreground">Currently Scheduled</p>
-          <span className="text-[9px] font-bold px-1.5 py-0.5 rounded-full bg-primary text-primary-foreground tabular-nums">
+          <p className="text-[12px] uppercase tracking-[0.12em] font-bold text-foreground">Currently Scheduled</p>
+          <span className="text-[11px] font-bold px-1.5 py-0.5 rounded-full bg-primary text-primary-foreground tabular-nums">
             {alreadyScheduled.length}
           </span>
         </div>
         {alreadyScheduled.length === 0 ? (
           <div className="px-4 py-6 text-center">
-            <p className="text-[11px] text-muted-foreground italic font-[family-name:var(--font-display)]">
+            <p className="text-[13px] text-muted-foreground italic font-[family-name:var(--font-display)]">
               Nothing queued yet. Schedule approved stories below.
             </p>
           </div>
@@ -52,16 +52,16 @@ export function EditorScheduling({ articles, buckets, onAdvance, setEditorTab }:
             {alreadyScheduled.map((article) => (
               <div key={article.id} className="px-4 py-3 flex items-center justify-between gap-3">
                 <div className="min-w-0">
-                  <p className="text-xs font-medium text-foreground line-clamp-1">{article.title}</p>
-                  <p className="text-[10px] text-muted-foreground">{article.author}</p>
+                  <p className="text-sm font-medium text-foreground line-clamp-1">{article.title}</p>
+                  <p className="text-[12px] text-muted-foreground">{article.author}</p>
                 </div>
                 <div className="flex items-center gap-2 flex-shrink-0">
-                  <span className="text-[9px] uppercase tracking-[0.1em] font-bold px-2 py-0.5 rounded-sm bg-primary/10 text-primary">
+                  <span className="text-[11px] uppercase tracking-[0.1em] font-bold px-2 py-0.5 rounded-sm bg-primary/10 text-primary">
                     Scheduled
                   </span>
                   <button
                     onClick={() => onAdvance(article.id, 'published')}
-                    className="text-[10px] uppercase tracking-[0.08em] font-semibold text-primary hover:text-primary/80 transition-colors"
+                    className="text-[12px] uppercase tracking-[0.08em] font-semibold text-primary hover:text-primary/80 transition-colors"
                   >
                     Publish Now →
                   </button>
@@ -75,8 +75,8 @@ export function EditorScheduling({ articles, buckets, onAdvance, setEditorTab }:
       <div className="border border-border/60 rounded-sm overflow-hidden bg-card">
         <div className="px-4 py-3 border-b border-border/40 bg-muted/30 flex items-center gap-2">
           <CheckCircle size={13} className="text-muted-foreground" />
-          <p className="text-[10px] uppercase tracking-[0.12em] font-bold text-muted-foreground">Ready to Schedule</p>
-          <span className="text-[9px] font-bold px-1.5 py-0.5 rounded-full bg-muted text-muted-foreground tabular-nums">
+          <p className="text-[12px] uppercase tracking-[0.12em] font-bold text-muted-foreground">Ready to Schedule</p>
+          <span className="text-[11px] font-bold px-1.5 py-0.5 rounded-full bg-muted text-muted-foreground tabular-nums">
             {schedulable.length}
           </span>
         </div>
@@ -95,8 +95,8 @@ export function EditorScheduling({ articles, buckets, onAdvance, setEditorTab }:
             {schedulable.map((article) => (
               <div key={article.id} className="px-4 py-3 flex items-center justify-between gap-3">
                 <div className="min-w-0">
-                  <p className="text-xs font-medium text-foreground line-clamp-1">{article.title}</p>
-                  <p className="text-[10px] text-muted-foreground">
+                  <p className="text-sm font-medium text-foreground line-clamp-1">{article.title}</p>
+                  <p className="text-[12px] text-muted-foreground">
                     {article.author} · <StatusBadge status={article.status} />
                   </p>
                 </div>
@@ -106,7 +106,7 @@ export function EditorScheduling({ articles, buckets, onAdvance, setEditorTab }:
                       article.status === 'publisher_review' ? 'scheduled' : 'publisher_review';
                     onAdvance(article.id, toStatus);
                   }}
-                  className="flex-shrink-0 flex items-center gap-1.5 px-3 py-1.5 rounded-sm border border-primary/30 bg-primary/8 text-primary text-[10px] uppercase tracking-[0.08em] font-semibold hover:bg-primary/15 transition-colors"
+                  className="flex-shrink-0 flex items-center gap-1.5 px-3 py-1.5 rounded-sm border border-primary/30 bg-primary/8 text-primary text-[12px] uppercase tracking-[0.08em] font-semibold hover:bg-primary/15 transition-colors"
                 >
                   <CalendarClock size={11} />
                   {article.status === 'publisher_review' ? 'Schedule →' : 'Route to Publisher →'}

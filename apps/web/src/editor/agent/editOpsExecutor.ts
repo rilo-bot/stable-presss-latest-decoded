@@ -177,9 +177,13 @@ export async function executeEditorTool(toolName: string, input: unknown): Promi
   const page = resolvePage(mag, a.pageId);
   if (!page) return { ok: false, error: 'Page not found.' };
 
+  // `review:true` (used for content drawn from an uploaded document) forces a
+  // write to be staged for Apply/Discard rather than auto-applied into an empty region.
+  const allowAuto = !a.review;
+
   switch (toolName) {
     case 'setRegionText':
-      return writeRegion(mag, page, String(a.regionId), { kind: 'text', html: String(a.html ?? '') }, `Write “${a.regionId}”`, true);
+      return writeRegion(mag, page, String(a.regionId), { kind: 'text', html: String(a.html ?? '') }, `Write “${a.regionId}”`, allowAuto);
     case 'setRegionImage':
       return writeRegion(
         mag,
@@ -187,12 +191,12 @@ export async function executeEditorTool(toolName: string, input: unknown): Promi
         String(a.regionId),
         { kind: 'image', patch: { src: String(a.src ?? ''), ...(a.fit ? { fit: a.fit } : {}), ...(a.alt ? { alt: String(a.alt) } : {}) } },
         `Set photo on “${a.regionId}”`,
-        true,
+        allowAuto,
       );
     case 'setRegionQr': {
       const url = String(a.targetUrl ?? '');
       if (!/^https:\/\//i.test(url) && !/^mailto:/i.test(url)) return { ok: false, error: 'QR target must be an https: or mailto: URL.' };
-      return writeRegion(mag, page, String(a.regionId), { kind: 'qr', patch: { targetUrl: url, ...(a.fg ? { fg: String(a.fg) } : {}) } }, `Set QR on “${a.regionId}”`, true);
+      return writeRegion(mag, page, String(a.regionId), { kind: 'qr', patch: { targetUrl: url, ...(a.fg ? { fg: String(a.fg) } : {}) } }, `Set QR on “${a.regionId}”`, allowAuto);
     }
     case 'patchRegionStyle':
       return writeRegion(mag, page, String(a.regionId), { kind: 'style', patch: (a.style ?? {}) as Partial<TextStyle> }, `Restyle “${a.regionId}”`, false);

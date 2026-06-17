@@ -11,6 +11,7 @@ import { useNavigate } from 'react-router-dom';
 import { toast } from 'sonner';
 import {
   Clock, Check, Plus, Loader2, X, ChevronRight, BookMarked, Trophy, Binary, Pencil, ArrowRight,
+  Camera, ClipboardList, Dna,
 } from 'lucide-react';
 import { useHorseStore } from '@/stores/horseStore';
 import { usePartyStore } from '@/stores/partyStore';
@@ -18,6 +19,7 @@ import { useHorsePartyLinkStore } from '@/stores/horsePartyLinkStore';
 import { useAuthStore } from '@/stores/authStore';
 import { canManageHorse } from '@/rbac/can';
 import { useProfileScope } from '@/hooks/useProfileScope';
+import { SEX_OPTIONS, COLOUR_OPTIONS, COUNTRY_OPTIONS } from '@/components/horse-form/constants';
 import type { Horse } from '@/types/horse';
 import { serifStyle, goldStyle, OrnateCrest } from '@/components/profile/kit';
 import { ProfileScaffold, type Crumb } from '@/components/profile/ProfileScaffold';
@@ -25,9 +27,10 @@ import { IdentityCard, type FieldDescriptor } from '@/components/profile/Identit
 import { PortraitFrame } from '@/components/profile/PortraitFrame';
 import { RoleConnectionsRail } from '@/components/profile/RoleConnectionsRail';
 import { DataSectionsRail } from '@/components/profile/DataSectionsRail';
-import { renderProfileModule, activeModuleLabel } from '@/components/profile/modules';
+import { renderProfileModule, activeModuleLabel, ROLE_ICON } from '@/components/profile/modules';
 import { InlineEditRow, InlineEditTextArea } from '@/components/profile/editable';
 import { OnboardingSteps, type OnbStep } from '@/components/profile/OnboardingSteps';
+import { OnboardingGuide, type GuideStep } from '@/components/profile/OnboardingGuide';
 import { OnboardingComplete } from '@/components/profile/OnboardingComplete';
 import { ProfileAgentPanel, StudioLauncher } from '@/agent/profile/ProfileAgentPanel';
 import { useProfileAgentUi, type ProfileContext } from '@/stores/profileAgentUiStore';
@@ -42,6 +45,38 @@ import { ReportsDataForm } from '@/components/ReportsDataForm';
 type Mode = 'view' | 'edit';
 
 const ADD_LABELS: Record<string, string> = { media: 'media', racing: 'racing entry', sales: 'sale record', reports: 'document' };
+
+/* Onboarding connection steps — one per left-rail party box, walked one by one
+   (Syndicate Manager is auto-derived from a linked party, so it isn't a step).
+   `rel` matches the box's relationship_type; `noun` drives prompts/tips. */
+const CONNECTION_STEPS = [
+  { key: 'owners',    rel: 'ownership', role: 'owner',            label: 'Owners',    noun: 'owner',            title: 'Add the owners' },
+  { key: 'breeders',  rel: 'bred-by',   role: 'breeder',          label: 'Breeders',  noun: 'breeder',          title: 'Add the breeder' },
+  { key: 'trainers',  rel: 'training',  role: 'trainer',          label: 'Trainers',  noun: 'trainer',          title: 'Add the trainer' },
+  { key: 'personnel', rel: 'personnel', role: 'personnel',        label: 'Personnel', noun: 'personnel member', title: 'Add the personnel' },
+  { key: 'jockeys',   rel: 'riding',    role: 'jockey',           label: 'Jockeys',   noun: 'jockey',           title: 'Add the jockey' },
+  { key: 'agents',    rel: 'agent',     role: 'bloodstock agent', label: 'Agents',    noun: 'bloodstock agent', title: 'Add the bloodstock agent' },
+] as const;
+
+/* Milestone icons for the onboarding strip — photo/basics/pedigree get their own;
+   connection steps reuse ROLE_ICON so each node matches its left-rail box. */
+const STEP_ICONS: Record<string, React.ReactNode> = {
+  photo: <Camera size={14} strokeWidth={1.8} />,
+  basics: <ClipboardList size={14} strokeWidth={1.8} />,
+  pedigree: <Dna size={14} strokeWidth={1.8} />,
+};
+
+/* Per-horse "skipped onboarding steps", persisted in localStorage (pure UI state
+   — no server/domain change). A skipped step counts as resolved so the user can
+   finish onboarding without it; the party box stays on the left rail to add later. */
+const SKIP_STORE_KEY = (id: string) => `sp-onb-skip:${id}`;
+function loadSkippedSteps(id: string): Set<string> {
+  try { const raw = localStorage.getItem(SKIP_STORE_KEY(id)); return new Set(raw ? (JSON.parse(raw) as string[]) : []); }
+  catch { return new Set(); }
+}
+function persistSkippedSteps(id: string, set: Set<string>) {
+  try { localStorage.setItem(SKIP_STORE_KEY(id), JSON.stringify([...set])); } catch { /* storage unavailable — non-fatal */ }
+}
 
 /** Snapshot the horse's editable fields + connection counts for the AI assistant. */
 function buildHorseContext(horse: Horse, links: { relationship_type: string }[]): ProfileContext {
@@ -113,17 +148,23 @@ export function HorseProfile({ horseId, mode, onBack }: HorseProfileProps) {
     return () => setAgentContext(null);
   }, [mode, horse, horseLinks, setAgentContext]);
 
+  // Steps the user explicitly skipped (persisted per horse). A skipped step
+  // counts as resolved so onboarding can finish without it.
+  const [skipped, setSkipped] = useState<Set<string>>(() => loadSkippedSteps(horseId));
+  useEffect(() => { setSkipped(loadSkippedSteps(horseId)); }, [horseId]);
+
   // Onboarding completion (edit mode). Mirrors the `onbSteps` done predicates
   // below — keep in sync. Computed as a hook (before the guards) so the one-time
   // celebration toast can fire without breaking the Rules-of-Hooks order.
   const onbAllDone = useMemo(() => {
     if (!horse || mode !== 'edit' || !editable) return false;
-    return !!horse.imageUrl
-      && !!(horse.sex && horse.colour && horse.dob)
-      && horseLinks.length > 0
-      && !!(horse.sire || horse.dam)
-      && !!(horse.careerRecord || horse.currentRating);
-  }, [horse, horseLinks, mode, editable]);
+    const ok = (done: boolean, key: string) => done || skipped.has(key);
+    const linked = (rel: string) => horseLinks.some((l) => l.relationship_type === rel);
+    return ok(!!horse.imageUrl, 'photo')
+      && ok(!!(horse.sex && horse.colour && horse.dob), 'basics')
+      && ok(!!(horse.sire || horse.dam), 'pedigree')
+      && CONNECTION_STEPS.every((c) => ok(linked(c.rel), c.key));
+  }, [horse, horseLinks, mode, editable, skipped]);
   const celebratedRef = useRef(false);
   useEffect(() => {
     if (onbAllDone && !celebratedRef.current) {
@@ -180,12 +221,23 @@ export function HorseProfile({ horseId, mode, onBack }: HorseProfileProps) {
   const dossierFilled = dossierFlags.filter(Boolean).length;
 
   // ── Onboarding step guide (edit mode; self-hides once complete) ──
+  // Photo → basics → pedigree, then ONE step per left-rail party (owners,
+  // breeders, trainers… walked one by one). Any step can be Skipped (persisted
+  // per horse); skipped counts as resolved. Racing is no longer a step.
+  const hasRel = (rel: string) => horseLinks.some((l) => l.relationship_type === rel);
   const onbSteps: OnbStep[] = [
-    { key: 'photo', label: 'Photo', hint: 'Upload a clear photo of the horse.', done: !!horse.imageUrl, anchorId: 'onb-photo' },
-    { key: 'basics', label: 'Basics', hint: 'Add sex, colour and the foaling date.', done: !!(horse.sex && horse.colour && horse.dob), anchorId: 'onb-identity' },
-    { key: 'connections', label: 'Connections', hint: 'Link the owner, trainer and other parties.', done: horseLinks.length > 0, anchorId: 'onb-connections' },
-    { key: 'pedigree', label: 'Pedigree', hint: 'Record the sire and dam.', done: !!(horse.sire || horse.dam), anchorId: 'onb-identity' },
-    { key: 'racing', label: 'Racing', hint: 'Add the career record or rating.', done: !!(horse.careerRecord || horse.currentRating), anchorId: 'module:racing' },
+    { key: 'photo', label: 'Photo', hint: 'Upload a clear photo of the horse.', done: !!horse.imageUrl, skipped: skipped.has('photo'), anchorId: 'onb-photo', icon: STEP_ICONS.photo },
+    { key: 'basics', label: 'Basics', hint: 'Add sex, colour and the foaling date.', done: !!(horse.sex && horse.colour && horse.dob), skipped: skipped.has('basics'), anchorId: 'onb-identity', icon: STEP_ICONS.basics },
+    { key: 'pedigree', label: 'Pedigree', hint: 'Record the sire and dam.', done: !!(horse.sire || horse.dam), skipped: skipped.has('pedigree'), anchorId: 'onb-identity', icon: STEP_ICONS.pedigree },
+    ...CONNECTION_STEPS.map((c) => ({
+      key: c.key,
+      label: c.label,
+      hint: `Link the ${c.noun} — optional, skip if it doesn’t apply.`,
+      done: hasRel(c.rel),
+      skipped: skipped.has(c.key),
+      anchorId: `onb-conn-${c.rel}`,
+      icon: ROLE_ICON[c.role],
+    })),
   ];
   // Step action: `module:<key>` opens that data section in the centre; anything
   // else scrolls to the DOM anchor of that name.
@@ -194,16 +246,45 @@ export function HorseProfile({ horseId, mode, onBack }: HorseProfileProps) {
     if (id.startsWith('module:')) { openModule(id.slice(7)); return; }
     document.getElementById(id)?.scrollIntoView({ behavior: 'smooth', block: 'center' });
   };
+  // Mark a step skipped (persisted) so the guide moves on and onboarding can finish.
+  const skipStep = (key: string) => setSkipped((prev) => {
+    const next = new Set(prev); next.add(key); persistSkippedSteps(horseId, next); return next;
+  });
 
   // Per-step prompt that opens the Stable Studio assistant ready to help.
   const HORSE_STEP_PROMPTS: Record<string, string> = {
     photo: `What information should I gather to complete ${horseName}'s profile? Give me a short checklist.`,
     basics: `Help me fill in ${horseName}'s sex, colour and foaling date.`,
-    connections: `Help me add the owner and trainer for ${horseName}.`,
     pedigree: `Help me record ${horseName}'s sire and dam.`,
-    racing: `Draft ${horseName}'s career record and current rating from what you know.`,
+    ...Object.fromEntries(CONNECTION_STEPS.map((c) => [c.key, `Help me add the ${c.noun} for ${horseName}.`])),
   };
   const askAiForStep = (step: OnbStep) => askAgent(HORSE_STEP_PROMPTS[step.key] ?? `Help me with ${horseName}'s ${step.label.toLowerCase()}.`);
+
+  // ── Onboarding guide content: the floating mascot's per-step title + tips. ──
+  const HORSE_COACH: Record<string, { title: string; tips: string[] }> = {
+    photo: { title: 'Add a clear photo', tips: ['A side-on, well-lit shot works best', 'JPG or PNG'] },
+    basics: { title: 'Add the basics', tips: ['Sex, colour & foaling date', 'The foaling date sets the age'] },
+    pedigree: { title: 'Record the pedigree', tips: ['Sire & dam — names alone already help'] },
+    ...Object.fromEntries(CONNECTION_STEPS.map((c) => [c.key, {
+      title: c.title,
+      tips: [`Type a name to link or create the ${c.noun}`, 'Optional — tap Skip if it doesn’t apply'],
+    }])),
+  };
+  const activeStep = onbSteps.find((s) => !s.done && !s.skipped);
+  const activeKey = activeStep?.key;
+  const showGuide = editableHorse && !onbAllDone;
+  const isActive = (key: string) => showGuide && activeKey === key;
+  // When the active step is a connection, glow + point at that left-rail box.
+  const activeConnRel = CONNECTION_STEPS.find((c) => c.key === activeKey)?.rel ?? null;
+  const guideSteps: GuideStep[] = onbSteps.map((s) => ({
+    key: s.key,
+    label: s.label,
+    title: HORSE_COACH[s.key]?.title ?? s.label,
+    tips: HORSE_COACH[s.key]?.tips,
+    anchorId: s.anchorId,
+    pointerId: s.anchorId && !s.anchorId.startsWith('module:') ? s.anchorId : undefined,
+    done: s.done || !!s.skipped,
+  }));
 
   // ── Field descriptors (read-only in view, editable in edit) ──
   const unnamedCheckbox = (
@@ -217,9 +298,9 @@ export function HorseProfile({ horseId, mode, onBack }: HorseProfileProps) {
     { label: 'Name', value: horse.name ?? '', displayValue: horse.isUnnamed ? 'Un-Named' : undefined, onSave: horse.isUnnamed ? undefined : (v) => set({ name: v }) },
     ...(isEdit ? [{ label: '__unnamed', value: '', render: unnamedCheckbox }] : []),
     { label: 'Foaled', type: 'date', value: horse.dob ?? '', displayValue: horse.dob ? new Date(horse.dob).toLocaleDateString('en-AU', { day: 'numeric', month: 'short', year: 'numeric' }) : undefined, onSave: (v) => set({ dob: v || undefined }) },
-    { label: 'Sex', value: horse.sex ?? '', onSave: (v) => set({ sex: v.trim() || undefined }) },
-    { label: 'Colour', value: horse.colour ?? '', onSave: (v) => set({ colour: v.trim() || undefined }) },
-    { label: 'Country', value: horse.country ?? '', onSave: (v) => set({ country: v.trim() || undefined }) },
+    { label: 'Sex', type: 'select', options: SEX_OPTIONS, value: horse.sex ?? '', onSave: (v) => set({ sex: v.trim() || undefined }) },
+    { label: 'Colour', type: 'select', options: COLOUR_OPTIONS, value: horse.colour ?? '', onSave: (v) => set({ colour: v.trim() || undefined }) },
+    { label: 'Country', type: 'select', options: COUNTRY_OPTIONS, value: horse.country ?? '', onSave: (v) => set({ country: v.trim() || undefined }) },
     { label: 'Hands', type: 'number', value: horse.handsSize != null ? String(horse.handsSize) : '', onSave: (v) => set({ handsSize: num(v) }) },
     { label: 'Metric (cm)', type: 'number', value: horse.metricSize != null ? String(horse.metricSize) : '', onSave: (v) => set({ metricSize: num(v) }) },
   ];
@@ -279,25 +360,19 @@ export function HorseProfile({ horseId, mode, onBack }: HorseProfileProps) {
     <>
       {editableHorse && (onbAllDone
         ? <OnboardingComplete title="Profile complete!" subtitle={`${horseName} is ready to view.`} onViewPublic={() => navigate(`/horses/${horseId}`)} />
-        : <OnboardingSteps title={`Finish ${horseName}'s profile`} steps={onbSteps} onStepClick={scrollToAnchor} onAskAI={askAiForStep} />
+        : <OnboardingSteps title={`Finish ${horseName}'s profile`} steps={onbSteps} onStepClick={scrollToAnchor} />
       )}
 
       <div id="onb-photo">
-        {editableHorse && !horse.imageUrl && (
-          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 7, marginBottom: 8 }}>
-            <span style={{ width: 18, height: 18, borderRadius: '50%', background: 'linear-gradient(135deg, var(--gold-bright), var(--gold-mid))', color: 'var(--forest-deep)', display: 'flex', alignItems: 'center', justifyContent: 'center', fontWeight: 700, fontSize: '0.6rem', ...serifStyle }}>1</span>
-            <span style={{ fontSize: '0.58rem', letterSpacing: '0.16em', textTransform: 'uppercase', fontWeight: 700, color: 'var(--gold-dark)', ...serifStyle }}>Start here · add a photo</span>
-          </div>
-        )}
-        <PortraitFrame src={horse.imageUrl} alt={horseName} editable={editableHorse} kind="horse" onUpload={(url) => set({ imageUrl: url })} containerStyle={{ height: 'clamp(300px, 46vh, 520px)', minHeight: 300 }} caption={featuredCaption} label={!horse.imageUrl ? 'Add a photo to begin' : undefined} />
+        <PortraitFrame src={horse.imageUrl} alt={horseName} editable={editableHorse} kind="horse" onUpload={(url) => set({ imageUrl: url })} containerStyle={{ height: 'clamp(300px, 46vh, 520px)', minHeight: 300 }} caption={featuredCaption} label={!horse.imageUrl ? 'Add a photo to begin' : undefined} className={isActive('photo') ? 'onb-spotlight' : undefined} />
       </div>
 
       <div id="onb-identity" style={{ display: 'grid', gridTemplateColumns: '0.85fr 1.15fr', gap: 14, alignItems: 'stretch' }}>
-        <IdentityCard title="Identity" fields={idFields} editable={editableHorse} />
-        <IdentityCard title="Pedigree" icon={<BookMarked size={12} style={{ color: 'var(--gold-bright)' }} />} fields={pedFields} editable={editableHorse} />
+        <IdentityCard title="Identity" fields={idFields} editable={editableHorse} className={isActive('basics') ? 'onb-spotlight' : undefined} />
+        <IdentityCard title="Pedigree" icon={<BookMarked size={12} style={{ color: 'var(--gold-bright)' }} />} fields={pedFields} editable={editableHorse} className={isActive('pedigree') ? 'onb-spotlight' : undefined} />
       </div>
 
-      {editableHorse && (
+      {editableHorse && !isActive('racing') && (
         <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 6, padding: '4px 0', fontSize: '0.58rem', fontStyle: 'italic', color: 'var(--gold-dark)', ...serifStyle }}>
           <ArrowRight size={11} /> Racing, Stud Book, Notes &amp; more open here — pick a Data Section on the right.
         </div>
@@ -365,6 +440,7 @@ export function HorseProfile({ horseId, mode, onBack }: HorseProfileProps) {
         reportsActive={activeModule === 'reports'}
         onOpenReports={() => openModule('reports')}
         footer={allHorsesButton}
+        spotlightRel={showGuide ? activeConnRel : null}
       />
     </div>
   );
@@ -433,7 +509,11 @@ export function HorseProfile({ horseId, mode, onBack }: HorseProfileProps) {
       centerModule={centerModule}
       moduleKey={activeModule}
       right={<DataSectionsRail activeModule={activeModule} onToggle={openModule} />}
-      overlay={editableHorse ? <ProfileAgentPanel /> : undefined}
+      overlay={editableHorse
+        ? (showGuide
+          ? <OnboardingGuide steps={guideSteps} name="Stablehand" onShowMe={scrollToAnchor} onAskStep={(s) => askAiForStep(onbSteps.find((o) => o.key === s.key) ?? onbSteps[0])} onSkipStep={(s) => skipStep(s.key)} />
+          : <ProfileAgentPanel />)
+        : undefined}
     />
   );
 }

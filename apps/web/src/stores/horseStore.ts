@@ -2,6 +2,7 @@ import { create } from 'zustand';
 import { toast } from 'sonner';
 import type { Horse } from '@/types/horse';
 import { authFetch } from '@/lib/api';
+import { useHorsePartyLinkStore } from '@/stores/horsePartyLinkStore';
 
 interface HorseState {
   horses: Horse[];
@@ -45,6 +46,9 @@ export const useHorseStore = create<HorseState>()((set, get) => ({
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
       const created: Horse = await res.json();
       set((state) => ({ horses: [...state.horses, created] }));
+      // The server auto-links the creating party (under its role). Force-refetch
+      // links so the new connection shows immediately on the horse's page.
+      void useHorsePartyLinkStore.getState().fetchHorsePartyLinks(true);
       return created;
     } catch (err) {
       const message = err instanceof Error ? err.message : 'Failed to add horse';

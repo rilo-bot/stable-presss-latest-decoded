@@ -22,6 +22,7 @@ import {
   PARTY_ROLE_LABELS, PERSONNEL_SUBTYPES, PERSONNEL_SUBTYPE_LABELS, getStartedYearLabel,
 } from '@/types/party';
 import type { Party, PartyRole, PersonnelSubtype } from '@/types/party';
+import type { Horse } from '@/types/horse';
 import { serifStyle, goldStyle, fmtMoney, fmtDate, OrnateCrest } from '@/components/profile/kit';
 import { ProfileScaffold, type Crumb } from '@/components/profile/ProfileScaffold';
 import { IdentityCard, type FieldDescriptor } from '@/components/profile/IdentityCard';
@@ -32,6 +33,7 @@ import { ConnectionsRail, type RelTile } from '@/components/profile/ConnectionsR
 import { DataSectionsRail } from '@/components/profile/DataSectionsRail';
 import { REL_ORDER, renderProfileModule, activeModuleLabel } from '@/components/profile/modules';
 import { OnboardingSteps, type OnbStep } from '@/components/profile/OnboardingSteps';
+import { OnboardingGuide, type GuideStep } from '@/components/profile/OnboardingGuide';
 import { OnboardingComplete } from '@/components/profile/OnboardingComplete';
 import { ProfileAgentPanel, StudioLauncher } from '@/agent/profile/ProfileAgentPanel';
 import { useProfileAgentUi, type ProfileContext } from '@/stores/profileAgentUiStore';
@@ -165,13 +167,22 @@ export function PartyProfile({ partyId, mode, onBack }: PartyProfileProps) {
     void set({ personnel_subtype: next });
   };
 
+  // Link the new horse to THIS party under the role the studio is centred on, so
+  // the creator shows in the matching connection box (a trainer in Trainers, not
+  // Owners). The server reads this *Ids field to pick the link's relationship.
+  const selfConnect = (): Partial<Horse> => {
+    const c: Partial<Horse> = {};
+    (c as Record<string, string[]>)[ROLE_BINDINGS[activeRole].horseField] = [partyId];
+    return c;
+  };
+
   // Register a (named) horse and drop straight into its studio to finish it.
   const onAddHorse = async () => {
     const name = newHorseName.trim();
     if (!name) { toast.error('Enter a horse name.'); return; }
     setAdding(true);
     try {
-      const created = await addHorse({ name, pedigreeNotes: '', ownerIds: [partyId] });
+      const created = await addHorse({ ...selfConnect(), name, pedigreeNotes: '' });
       if (created) { setNewHorseName(''); navigate(`/studio/horse/${created.id}`); }
     } finally {
       setAdding(false);
@@ -183,7 +194,7 @@ export function PartyProfile({ partyId, mode, onBack }: PartyProfileProps) {
   const onAddUnnamedFoal = async () => {
     setAdding(true);
     try {
-      const created = await addHorse({ name: '', isUnnamed: true, pedigreeNotes: '', ownerIds: [partyId] });
+      const created = await addHorse({ ...selfConnect(), name: '', isUnnamed: true, pedigreeNotes: '' });
       if (created) navigate(`/studio/horse/${created.id}`);
     } finally {
       setAdding(false);
@@ -224,6 +235,26 @@ export function PartyProfile({ partyId, mode, onBack }: PartyProfileProps) {
     horses: 'Help me add my first horse.',
   };
   const askAiForStep = (step: OnbStep) => askAgent(PARTY_STEP_PROMPTS[step.key] ?? `Help me with my ${step.label.toLowerCase()}.`);
+
+  // ── Onboarding guide content: the floating mascot's per-step title + tips. ──
+  const PARTY_COACH: Record<string, { title: string; tips: string[] }> = {
+    photo: { title: 'Add your photo', tips: ['A friendly headshot, silks or a logo'] },
+    details: { title: 'Add your details', tips: ['Your profession & base location'] },
+    horses: { title: 'Add your horses', tips: ['Register the horses in your stable'] },
+  };
+  const activeStep = onbSteps.find((s) => !s.done);
+  const activeKey = activeStep?.key;
+  const showGuide = isEdit && editable && !onbAllDone;
+  const isActive = (key: string) => showGuide && activeKey === key;
+  const guideSteps: GuideStep[] = onbSteps.map((s) => ({
+    key: s.key,
+    label: s.label,
+    title: PARTY_COACH[s.key]?.title ?? s.label,
+    tips: PARTY_COACH[s.key]?.tips,
+    anchorId: s.anchorId,
+    pointerId: s.anchorId && !s.anchorId.startsWith('module:') ? s.anchorId : undefined,
+    done: s.done,
+  }));
 
   const summaryCells = [
     { label: 'Horses', value: String(horseCount) },
@@ -397,11 +428,11 @@ export function PartyProfile({ partyId, mode, onBack }: PartyProfileProps) {
     <>
       {isEdit && editable && (onbAllDone
         ? <OnboardingComplete title="Profile complete!" subtitle="Your profile is ready to view." onViewPublic={() => navigate(`/parties/${partyId}`)} />
-        : <OnboardingSteps title="Finish your profile" steps={onbSteps} onStepClick={scrollToAnchor} onAskAI={askAiForStep} />
+        : <OnboardingSteps title="Finish your profile" steps={onbSteps} onStepClick={scrollToAnchor} />
       )}
 
       <div id="onb-identity" style={{ display: 'grid', gridTemplateColumns: '0.95fr 1.05fr', gap: 14, alignItems: 'stretch' }}>
-        <IdentityCard title={identityTitle} fields={identityFields} editable={isEdit && editable} />
+        <IdentityCard title={identityTitle} fields={identityFields} editable={isEdit && editable} className={isActive('details') ? 'onb-spotlight' : undefined} />
         <PortraitFrame
           src={party.photo}
           alt={partyName}
@@ -410,6 +441,7 @@ export function PartyProfile({ partyId, mode, onBack }: PartyProfileProps) {
           onUpload={(url) => set({ photo: url })}
           containerStyle={{ minHeight: isEdit ? 200 : 180 }}
           caption={portraitCaption}
+          className={isActive('photo') ? 'onb-spotlight' : undefined}
         />
       </div>
 
@@ -434,7 +466,7 @@ export function PartyProfile({ partyId, mode, onBack }: PartyProfileProps) {
 
       <SummaryGrid title={`${roleLabel} Summary`} cells={summaryCells} columns={4} />
 
-      <div id="onb-horses">
+      <div id="onb-horses" className={isActive('horses') ? 'onb-spotlight' : undefined}>
         <EntityList
           title={isEdit ? 'My Horses' : 'Horses'}
           count={horseCount}
@@ -479,7 +511,11 @@ export function PartyProfile({ partyId, mode, onBack }: PartyProfileProps) {
         centerModule={activeModule ? renderProfileModule(activeModule, { scope, subjectName: partyName, roleLabel, onClose: closeModule, onOpenHorse: openHorse }) : null}
         moduleKey={activeModule}
         right={<DataSectionsRail activeModule={activeModule} onToggle={openModule} />}
-        overlay={isEdit && editable ? <ProfileAgentPanel /> : undefined}
+        overlay={isEdit && editable
+          ? (showGuide
+            ? <OnboardingGuide steps={guideSteps} name="Stablehand" onShowMe={scrollToAnchor} onAskStep={(s) => askAiForStep(onbSteps.find((o) => o.key === s.key) ?? onbSteps[0])} />
+            : <ProfileAgentPanel />)
+          : undefined}
       />
     </>
   );

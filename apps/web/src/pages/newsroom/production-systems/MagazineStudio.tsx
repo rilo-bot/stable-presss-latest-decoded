@@ -39,7 +39,7 @@ export function MagazineStudio({
     <div className="space-y-5">
       <div className="flex items-center justify-between gap-4 flex-wrap">
         <div>
-          <p className="text-[10px] uppercase tracking-[0.14em] font-bold text-muted-foreground mb-0.5">
+          <p className="text-[12px] uppercase tracking-[0.14em] font-bold text-muted-foreground mb-0.5">
             Bulletin Magazine Builder
           </p>
           <p className="text-sm text-muted-foreground">
@@ -50,7 +50,7 @@ export function MagazineStudio({
         </div>
         <Button
           size="sm"
-          className="bg-primary text-primary-foreground hover:bg-primary/90 gap-1.5 text-xs"
+          className="bg-primary text-primary-foreground hover:bg-primary/90 gap-1.5 text-sm"
           onClick={onNewMagazine}
         >
           <Plus size={13} />
@@ -83,14 +83,14 @@ export function MagazineStudio({
                       {mag.title}
                     </p>
                     {mag.myRole !== 'owner' && (
-                      <span className="flex-shrink-0 rounded-full bg-sky-500/15 px-2 py-0.5 text-[9px] font-bold uppercase tracking-[0.08em] text-sky-600">
+                      <span className="flex-shrink-0 rounded-full bg-sky-500/15 px-2 py-0.5 text-[11px] font-bold uppercase tracking-[0.08em] text-sky-600">
                         {mag.myRole === 'editor' ? 'Shared · Editor' : 'Shared · Contributor'}
                       </span>
                     )}
                   </div>
-                  <p className="text-[10px] text-muted-foreground line-clamp-1 mt-0.5">{mag.edition}</p>
+                  <p className="text-[12px] text-muted-foreground line-clamp-1 mt-0.5">{mag.edition}</p>
                 </div>
-                <div className="px-4 py-3 flex flex-wrap items-center gap-x-3 gap-y-1 text-[10px] text-muted-foreground">
+                <div className="px-4 py-3 flex flex-wrap items-center gap-x-3 gap-y-1 text-[12px] text-muted-foreground">
                   <span className="inline-flex items-center gap-1">
                     <FileText size={11} /> {mag.pageCount} pages
                   </span>
@@ -115,13 +115,13 @@ export function MagazineStudio({
                 {/* Published editions — manage what readers see */}
                 {editions.length > 0 && (
                   <div className="px-4 pb-3 space-y-1.5 border-t border-border/40 pt-2.5">
-                    <p className="text-[9px] uppercase tracking-[0.12em] font-bold text-muted-foreground">
+                    <p className="text-[11px] uppercase tracking-[0.12em] font-bold text-muted-foreground">
                       Editions
                     </p>
                     {editions.map((issue) => {
                       const live = !issue.unpublishedAt;
                       return (
-                        <div key={issue.id} className="flex items-center gap-1.5 text-[10px]">
+                        <div key={issue.id} className="flex items-center gap-1.5 text-[12px]">
                           <span
                             className={cn(
                               'h-1.5 w-1.5 rounded-full flex-shrink-0',
@@ -181,7 +181,7 @@ export function MagazineStudio({
                 <div className="mt-auto flex items-center gap-2 px-4 py-3 border-t border-border/40">
                   <Button
                     size="sm"
-                    className="bg-primary text-primary-foreground hover:bg-primary/90 gap-1.5 text-xs flex-1"
+                    className="bg-primary text-primary-foreground hover:bg-primary/90 gap-1.5 text-sm flex-1"
                     onClick={() => onOpenMagazine(mag.id)}
                   >
                     <Edit size={12} /> {mag.myRole === 'contributor' ? 'Open my pages' : 'Open'}
@@ -189,7 +189,7 @@ export function MagazineStudio({
                   {mag.myRole === 'owner' && (
                     <button
                       onClick={() => onDeleteMagazine(mag.id)}
-                      className="text-[10px] uppercase tracking-[0.08em] font-semibold text-destructive hover:text-destructive/80 transition-colors px-2"
+                      className="text-[12px] uppercase tracking-[0.08em] font-semibold text-destructive hover:text-destructive/80 transition-colors px-2"
                       aria-label={`Delete ${mag.title}`}
                     >
                       <Trash size={13} />
@@ -204,7 +204,7 @@ export function MagazineStudio({
 
       <div className="flex items-start gap-2.5 px-4 py-3 rounded-sm border border-border/50 bg-muted/20">
         <Eye size={13} className="text-muted-foreground mt-0.5 flex-shrink-0" />
-        <p className="text-[11px] text-muted-foreground leading-relaxed">
+        <p className="text-[13px] text-muted-foreground leading-relaxed">
           Magazines you publish appear on the public <strong className="text-foreground">Bulletins</strong> page as
           readable editions. Edit text, swap photos and set QR links live in the studio. Under each magazine you can
           view, <strong className="text-foreground">update</strong> an edition from the current draft,{' '}

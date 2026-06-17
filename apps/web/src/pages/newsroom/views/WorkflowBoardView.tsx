@@ -57,7 +57,7 @@ export function WorkflowBoardView({
             key={col.status}
             onClick={() => setActiveColumn(col.status)}
             className={cn(
-              'flex-shrink-0 px-3 py-1.5 text-[10px] uppercase tracking-[0.08em] font-semibold rounded-sm border transition-colors',
+              'flex-shrink-0 px-3 py-1.5 text-[12px] uppercase tracking-[0.08em] font-semibold rounded-sm border transition-colors',
               activeColumn === col.status
                 ? 'bg-primary text-primary-foreground border-primary'
                 : 'border-border/60 text-muted-foreground hover:text-foreground'
@@ -109,7 +109,7 @@ export function WorkflowBoardView({
               {canAdd && (
                 <button
                   onClick={() => onNewInColumn(col.status)}
-                  className="flex items-center justify-center gap-1.5 py-1.5 rounded-sm border border-dashed border-border/60 text-[10px] uppercase tracking-[0.08em] font-semibold text-muted-foreground hover:text-foreground hover:border-primary/40 transition-colors"
+                  className="flex items-center justify-center gap-1.5 py-1.5 rounded-sm border border-dashed border-border/60 text-[12px] uppercase tracking-[0.08em] font-semibold text-muted-foreground hover:text-foreground hover:border-primary/40 transition-colors"
                   aria-label={`Add story to ${col.label}`}
                 >
                   <Plus size={11} />
@@ -139,7 +139,7 @@ export function WorkflowBoardView({
               {can(userRole, 'content.draft.create') && col.status === 'draft' && (
                 <button
                   onClick={() => onNewInColumn(col.status)}
-                  className="flex items-center justify-center gap-1.5 py-2 rounded-sm border border-dashed border-border/60 text-[10px] uppercase tracking-[0.08em] font-semibold text-muted-foreground hover:text-foreground hover:border-primary/40 transition-colors"
+                  className="flex items-center justify-center gap-1.5 py-2 rounded-sm border border-dashed border-border/60 text-[12px] uppercase tracking-[0.08em] font-semibold text-muted-foreground hover:text-foreground hover:border-primary/40 transition-colors"
                 >
                   <Plus size={11} />
                   Add to {col.label}

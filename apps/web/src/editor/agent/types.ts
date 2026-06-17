@@ -48,6 +48,22 @@ export interface EditorContextBlob {
   currentPage: CtxCurrentPage | null;
   selection: { regionId: string; kind: RegionKind; filled: boolean } | null;
   otherPages: CtxOtherPage[];
+  attachments?: DocAttachment[];
+}
+
+// ── Uploaded source documents (analysed into a compact digest) ───────────────
+export interface DocDigest {
+  title: string;
+  summary: string;
+  sections: { heading: string; body: string }[];
+  facts: string[];
+  tables?: { caption?: string; rows: string[][] }[];
+}
+export interface DocAttachment {
+  id: string;
+  name: string;
+  kind: 'pdf' | 'image' | 'text';
+  digest: DocDigest;
 }
 
 // ── Edit operations (preview + apply) ────────────────────────────────────────

@@ -8,7 +8,9 @@ interface HorsePartyLinkState {
   loading: boolean;
   error: string | null;
   loaded: boolean;
-  fetchHorsePartyLinks: () => Promise<void>;
+  /** Pass force=true to refetch even when already loaded (e.g. after a server
+   *  side-effect created a link, like horse registration auto-linking the owner). */
+  fetchHorsePartyLinks: (force?: boolean) => Promise<void>;
   addLink: (
     link: Omit<HorsePartyLink, 'id' | 'createdAt'>
   ) => Promise<string>;
@@ -30,8 +32,9 @@ export const useHorsePartyLinkStore = create<HorsePartyLinkState>()(
     error: null,
     loaded: false,
 
-    fetchHorsePartyLinks: async () => {
-      if (get().loading || get().loaded) return;
+    fetchHorsePartyLinks: async (force = false) => {
+      if (get().loading) return;
+      if (get().loaded && !force) return;
       set({ loading: true, error: null });
       try {
         const res = await authFetch('/api/horsePartyLinks');

@@ -8,6 +8,8 @@ import { useHorsePartyLinkStore } from '@/stores/horsePartyLinkStore';
 import { authorisedHorseIds, previewHorseIds, hasProvisionalParty, primaryPartyId, isStaff } from '@/rbac/can';
 import { PARTY_ROLES, PARTY_ROLE_LABELS } from '@/types/party';
 import type { PartyRole } from '@/types/party';
+import type { Horse } from '@/types/horse';
+import { ROLE_BINDINGS } from '@/lib/profile/roleMap';
 import { TIER_ORDER, TIER_LABELS } from '@/rbac/entitlement';
 import type { SubscriptionTier } from '@/rbac/entitlement';
 import { Button } from '@/components/ui/button';
@@ -97,10 +99,15 @@ export default function Dashboard() {
   };
 
   // One-click: create an un-named draft horse (photo-first, name later) and drop
-  // straight into its studio. The server auto-links the member as owner.
+  // straight into its studio. We tag the creating party in the *Ids field for
+  // THEIR role (owner→ownerIds, trainer→trainerIds, …) so the server auto-links
+  // them under that role and they appear in the matching connection box.
   const onAddHorse = async () => {
     setBusy('horse');
-    const created = await addHorse({ name: '', isUnnamed: true, pedigreeNotes: '', ownerIds: myPartyId ? [myPartyId] : undefined });
+    const myRole: PartyRole = claims.find((c) => c.partyId === myPartyId)?.role ?? 'owner';
+    const connect: Partial<Horse> = {};
+    if (myPartyId) (connect as Record<string, string[]>)[ROLE_BINDINGS[myRole].horseField] = [myPartyId];
+    const created = await addHorse({ ...connect, name: '', isUnnamed: true, pedigreeNotes: '' });
     setBusy(null);
     if (created) navigate(`/studio/horse/${created.id}`);
   };

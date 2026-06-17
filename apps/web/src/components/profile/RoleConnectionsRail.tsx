@@ -78,7 +78,7 @@ function DateFields({ startYear, endYear, present, set }: {
 }
 
 /* ─── One role box ─── */
-function RoleBox({ def, entries, editable, parties, onOpenParty, onAdd, onSaveDates, onRemove }: {
+function RoleBox({ def, entries, editable, parties, onOpenParty, onAdd, onSaveDates, onRemove, id, spotlight }: {
   def: RoleDef;
   entries: Entry[];
   editable: boolean;
@@ -87,6 +87,9 @@ function RoleBox({ def, entries, editable, parties, onOpenParty, onAdd, onSaveDa
   onAdd: (def: RoleDef, payload: AddPayload) => Promise<void>;
   onSaveDates: (linkId: string, payload: Omit<AddPayload, 'name'>) => Promise<void>;
   onRemove: (linkId: string) => void;
+  /** DOM id (onboarding pointer/scroll target) + glow when this is the active step. */
+  id?: string;
+  spotlight?: boolean;
 }) {
   const [open, setOpen] = useState(true);
   const [adding, setAdding] = useState(false);
@@ -113,7 +116,7 @@ function RoleBox({ def, entries, editable, parties, onOpenParty, onAdd, onSaveDa
   const badge = entries.length > 0 ? `${entries.length} linked` : null;
 
   return (
-    <div className="sku-gold-card" style={{ ...serifStyle, overflow: 'hidden' }}>
+    <div id={id} className={`sku-gold-card${spotlight ? ' onb-spotlight' : ''}`} style={{ ...serifStyle, overflow: 'hidden' }}>
       {/* Header */}
       <button onClick={() => setOpen((v) => !v)} className="sku-green-header" style={{ width: '100%', border: 'none', cursor: 'pointer', padding: '7px 10px', display: 'flex', alignItems: 'center', gap: 6, justifyContent: 'space-between' }}>
         <span style={{ display: 'flex', alignItems: 'center', gap: 6, minWidth: 0 }}>
@@ -199,13 +202,15 @@ function RoleBox({ def, entries, editable, parties, onOpenParty, onAdd, onSaveDa
   );
 }
 
-export function RoleConnectionsRail({ horseId, editable, onOpenParty, reportsActive, onOpenReports, footer }: {
+export function RoleConnectionsRail({ horseId, editable, onOpenParty, reportsActive, onOpenReports, footer, spotlightRel }: {
   horseId: string;
   editable: boolean;
   onOpenParty: (id: string) => void;
   reportsActive: boolean;
   onOpenReports: () => void;
   footer: React.ReactNode;
+  /** relationship_type of the active onboarding step → glow that box (or null). */
+  spotlightRel?: string | null;
 }) {
   const allLinks = useHorsePartyLinkStore((s) => s.links);
   const addLink = useHorsePartyLinkStore((s) => s.addLink);
@@ -265,7 +270,8 @@ export function RoleConnectionsRail({ horseId, editable, onOpenParty, reportsAct
       </div>
 
       {ROLE_BOXES.map((def) => (
-        <RoleBox key={def.role} def={def} entries={entriesForRole(def)} editable={editable} parties={parties} onOpenParty={onOpenParty} onAdd={onAdd} onSaveDates={onSaveDates} onRemove={removeLink} />
+        <RoleBox key={def.role} def={def} entries={entriesForRole(def)} editable={editable} parties={parties} onOpenParty={onOpenParty} onAdd={onAdd} onSaveDates={onSaveDates} onRemove={removeLink}
+          id={def.rel ? `onb-conn-${def.rel}` : undefined} spotlight={!!def.rel && def.rel === spotlightRel} />
       ))}
 
       {/* Shared datalist of existing parties for the add inputs */}

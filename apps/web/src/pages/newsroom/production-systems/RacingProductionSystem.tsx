@@ -47,7 +47,7 @@ export function RacingProductionSystem({
       {/* Header */}
       <div className="flex items-center justify-between gap-4 flex-wrap">
         <div>
-          <p className="text-[10px] uppercase tracking-[0.14em] font-bold text-muted-foreground mb-0.5">
+          <p className="text-[12px] uppercase tracking-[0.14em] font-bold text-muted-foreground mb-0.5">
             Stable Press Production System
           </p>
           <p className="text-sm text-muted-foreground">
@@ -58,7 +58,7 @@ export function RacingProductionSystem({
         </div>
         <Button
           size="sm"
-          className="bg-primary text-primary-foreground hover:bg-primary/90 gap-1.5 text-xs"
+          className="bg-primary text-primary-foreground hover:bg-primary/90 gap-1.5 text-sm"
           onClick={() => onOpenRacingForm()}
         >
           <Plus size={13} />
@@ -76,14 +76,14 @@ export function RacingProductionSystem({
               placeholder="Search race, venue, subject…"
               value={racingSearch}
               onChange={(e) => setRacingSearch(e.target.value)}
-              className="w-full pl-8 pr-3 py-2 text-xs border border-input rounded-sm bg-card focus:outline-none focus:ring-1 focus:ring-ring"
+              className="w-full pl-8 pr-3 py-2 text-sm border border-input rounded-sm bg-card focus:outline-none focus:ring-1 focus:ring-ring"
               aria-label="Search racing records"
             />
           </div>
           <select
             value={racingHorseFilter}
             onChange={(e) => setRacingHorseFilter(e.target.value)}
-            className="px-3 py-2 text-xs border border-input rounded-sm bg-card focus:outline-none focus:ring-1 focus:ring-ring text-foreground"
+            className="px-3 py-2 text-sm border border-input rounded-sm bg-card focus:outline-none focus:ring-1 focus:ring-ring text-foreground"
             aria-label="Filter by horse"
           >
             <option value="">All Horses</option>
@@ -110,7 +110,7 @@ export function RacingProductionSystem({
           <p className="text-sm font-semibold text-foreground mb-1">No racing records match your filters</p>
           <button
             onClick={() => { setRacingSearch(''); setRacingHorseFilter(''); }}
-            className="text-xs text-primary hover:text-primary/80 transition-colors mt-2"
+            className="text-sm text-primary hover:text-primary/80 transition-colors mt-2"
           >
             Clear all filters
           </button>
@@ -118,10 +118,10 @@ export function RacingProductionSystem({
       ) : (
         <div className="border border-border/60 rounded-sm overflow-hidden bg-card">
           <div className="px-4 py-2.5 border-b border-border/40 bg-muted/30 flex items-center justify-between">
-            <p className="text-[10px] uppercase tracking-[0.12em] font-bold text-muted-foreground">
+            <p className="text-[12px] uppercase tracking-[0.12em] font-bold text-muted-foreground">
               Racing Records
             </p>
-            <span className="text-[10px] text-muted-foreground tabular-nums">
+            <span className="text-[12px] text-muted-foreground tabular-nums">
               {filteredRacingEntries.length} {filteredRacingEntries.length === 1 ? 'record' : 'records'}
             </span>
           </div>
@@ -132,7 +132,7 @@ export function RacingProductionSystem({
                   {['Horse', 'Race', 'Venue', 'Date', 'Status', 'Position', 'Actions'].map((h) => (
                     <th
                       key={h}
-                      className="text-left px-4 py-2.5 text-[10px] uppercase tracking-[0.1em] text-muted-foreground font-semibold"
+                      className="text-left px-4 py-2.5 text-[12px] uppercase tracking-[0.1em] text-muted-foreground font-semibold"
                     >
                       {h}
                     </th>
@@ -153,21 +153,21 @@ export function RacingProductionSystem({
                       {/* Horse */}
                       <td className="px-4 py-3 max-w-[140px]">
                         {horse ? (
-                          <span className="text-xs font-semibold text-foreground block line-clamp-1">{horse.name}</span>
+                          <span className="text-sm font-semibold text-foreground block line-clamp-1">{horse.name}</span>
                         ) : (
-                          <span className="text-muted-foreground/40 text-xs">—</span>
+                          <span className="text-muted-foreground/40 text-sm">—</span>
                         )}
                       </td>
 
                       {/* Race name + subject */}
                       <td className="px-4 py-3 max-w-[200px]">
-                        <span className="text-xs font-semibold text-foreground block line-clamp-1">{entry.race_name}</span>
+                        <span className="text-sm font-semibold text-foreground block line-clamp-1">{entry.race_name}</span>
                         {entry.subject && (
-                          <span className="text-[10px] text-muted-foreground italic block line-clamp-1 mt-0.5">{entry.subject}</span>
+                          <span className="text-[12px] text-muted-foreground italic block line-clamp-1 mt-0.5">{entry.subject}</span>
                         )}
                         {entry.class_grade && (
                           <span
-                            className="text-[9px] uppercase tracking-[0.08em] font-bold px-1.5 py-0.5 rounded-sm mt-0.5 inline-block"
+                            className="text-[11px] uppercase tracking-[0.08em] font-bold px-1.5 py-0.5 rounded-sm mt-0.5 inline-block"
                             style={{ background: 'hsl(var(--brand-accent) / 0.12)', color: 'hsl(var(--brand-accent))' }}
                           >
                             {entry.class_grade}
@@ -178,9 +178,9 @@ export function RacingProductionSystem({
                       {/* Venue */}
                       <td className="px-4 py-3">
                         <div className="flex flex-col gap-0.5">
-                          <span className="text-xs text-muted-foreground">{entry.venue}</span>
+                          <span className="text-sm text-muted-foreground">{entry.venue}</span>
                           {entry.country && (
-                            <span className="text-[9px] uppercase tracking-[0.08em] font-semibold text-muted-foreground/60">{entry.country}</span>
+                            <span className="text-[11px] uppercase tracking-[0.08em] font-semibold text-muted-foreground/60">{entry.country}</span>
                           )}
                         </div>
                       </td>
@@ -188,7 +188,7 @@ export function RacingProductionSystem({
                       {/* Date */}
                       <td className="px-4 py-3">
                         {entry.race_date ? (
-                          <div className="flex items-center gap-1 text-xs text-muted-foreground">
+                          <div className="flex items-center gap-1 text-sm text-muted-foreground">
                             <CalendarDays size={10} className="text-primary/50 flex-shrink-0" />
                             <span>
                               {new Date(entry.race_date).toLocaleDateString('en-AU', {
@@ -199,7 +199,7 @@ export function RacingProductionSystem({
                             </span>
                           </div>
                         ) : (
-                          <span className="text-muted-foreground/40 text-xs">—</span>
+                          <span className="text-muted-foreground/40 text-sm">—</span>
                         )}
                       </td>
 
@@ -216,10 +216,10 @@ export function RacingProductionSystem({
                             style={{ color: entry.finish_position === 1 ? 'hsl(var(--brand-accent))' : 'hsl(var(--foreground))' }}
                           >
                             {entry.finish_position === 1 ? '🥇' : ''} {entry.finish_position}
-                            {entry.margin ? <span className="text-[10px] text-muted-foreground ml-1 font-normal">({entry.margin})</span> : null}
+                            {entry.margin ? <span className="text-[12px] text-muted-foreground ml-1 font-normal">({entry.margin})</span> : null}
                           </span>
                         ) : (
-                          <span className="text-muted-foreground/40 text-xs">—</span>
+                          <span className="text-muted-foreground/40 text-sm">—</span>
                         )}
                       </td>
 
@@ -228,14 +228,14 @@ export function RacingProductionSystem({
                         <div className="flex items-center gap-3">
                           <button
                             onClick={() => onOpenRacingForm(entry)}
-                            className="text-[10px] uppercase tracking-[0.08em] font-semibold text-primary hover:text-primary/80 transition-colors"
+                            className="text-[12px] uppercase tracking-[0.08em] font-semibold text-primary hover:text-primary/80 transition-colors"
                             aria-label={`Edit ${entry.race_name}`}
                           >
                             Edit
                           </button>
                           <button
                             onClick={() => onRacingDelete(entry)}
-                            className="text-[10px] uppercase tracking-[0.08em] font-semibold text-destructive hover:text-destructive/80 transition-colors"
+                            className="text-[12px] uppercase tracking-[0.08em] font-semibold text-destructive hover:text-destructive/80 transition-colors"
                             aria-label={`Remove ${entry.race_name}`}
                           >
                             Remove
@@ -254,7 +254,7 @@ export function RacingProductionSystem({
       {/* Delete confirm */}
       {racingDeleteConfirm && racingDeleteTarget && (
         <div className="border border-destructive/30 rounded-sm bg-destructive/5 px-4 py-3 flex items-center justify-between gap-4 flex-wrap">
-          <p className="text-xs text-foreground">
+          <p className="text-sm text-foreground">
             Remove{' '}
             <span className="font-semibold">{racingDeleteTarget.race_name}</span>
             {' '}from Stable Press? This cannot be undone.
@@ -263,7 +263,7 @@ export function RacingProductionSystem({
             <Button
               size="sm"
               variant="outline"
-              className="text-xs"
+              className="text-sm"
               onClick={() => { setRacingDeleteConfirm(false); setRacingDeleteTarget(null); }}
             >
               Cancel
@@ -271,7 +271,7 @@ export function RacingProductionSystem({
             <Button
               size="sm"
               variant="destructive"
-              className="text-xs"
+              className="text-sm"
               onClick={confirmRacingDelete}
             >
               Remove
@@ -284,7 +284,7 @@ export function RacingProductionSystem({
       {safeEntries.length > 0 && (
         <div className="flex items-start gap-2.5 px-4 py-3 rounded-sm border border-border/50 bg-muted/20">
           <Eye size={13} className="text-muted-foreground mt-0.5 flex-shrink-0" />
-          <p className="text-[11px] text-muted-foreground leading-relaxed">
+          <p className="text-[13px] text-muted-foreground leading-relaxed">
             Racing records added here surface on each <strong className="text-foreground">Thoroughbred Profile</strong>.
             Records with linked jockeys and trainers will also appear on their party profiles.
           </p>

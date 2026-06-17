@@ -46,7 +46,7 @@ export function NewsroomSidebar({
       <div className="flex items-center justify-between px-4 py-4 border-b border-border/40">
         {!sidebarCollapsed && (
           <div>
-            <p className="text-[10px] uppercase tracking-[0.16em] font-bold text-muted-foreground">Production System</p>
+            <p className="text-[12px] uppercase tracking-[0.16em] font-bold text-muted-foreground">Production System</p>
             <p className="font-[family-name:var(--font-display)] text-sm font-bold text-foreground">Newsroom</p>
           </div>
         )}
@@ -61,15 +61,15 @@ export function NewsroomSidebar({
 
       {!sidebarCollapsed && (
         <div className="px-3 py-3 border-b border-border/40">
-          <p className="text-[9px] uppercase tracking-[0.14em] font-semibold text-muted-foreground mb-1.5">Your Role</p>
+          <p className="text-[11px] uppercase tracking-[0.14em] font-semibold text-muted-foreground mb-1.5">Your Role</p>
           <div
-            className="flex items-center gap-2 px-2.5 py-1.5 rounded-sm border text-xs font-semibold"
+            className="flex items-center gap-2 px-2.5 py-1.5 rounded-sm border text-sm font-semibold"
             style={{ borderColor: `${currentRoleConfig.color}40`, background: `${currentRoleConfig.color}08` }}
           >
             <span style={{ color: currentRoleConfig.color }}>{currentRoleConfig.icon}</span>
             <span style={{ color: currentRoleConfig.color }}>{currentRoleConfig.label}</span>
           </div>
-          <p className="text-[9px] text-muted-foreground mt-1.5 leading-snug">{currentRoleConfig.description}</p>
+          <p className="text-[11px] text-muted-foreground mt-1.5 leading-snug">{currentRoleConfig.description}</p>
         </div>
       )}
 
@@ -80,7 +80,7 @@ export function NewsroomSidebar({
           return (
             <div key={section} className="mb-1">
               {!sidebarCollapsed && (
-                <p className="px-4 py-1.5 text-[9px] uppercase tracking-[0.16em] font-bold text-muted-foreground/50">
+                <p className="px-4 py-1.5 text-[11px] uppercase tracking-[0.16em] font-bold text-muted-foreground/50">
                   {section}
                 </p>
               )}
@@ -91,7 +91,7 @@ export function NewsroomSidebar({
                     setActiveNav(item.id);
                   }}
                   className={cn(
-                    'w-full flex items-center gap-2.5 px-3 py-2 text-xs font-medium transition-colors rounded-sm mx-1',
+                    'w-full flex items-center gap-2.5 px-3 py-2 text-sm font-medium transition-colors rounded-sm mx-1',
                     sidebarCollapsed && 'justify-center',
                     activeNav === item.id
                       ? 'bg-primary/10 text-primary'
@@ -106,20 +106,20 @@ export function NewsroomSidebar({
                   {!sidebarCollapsed && <span className="flex-1 text-left">{item.label}</span>}
                   {!sidebarCollapsed && item.badge && (
                     <span
-                      className="text-[8px] font-bold px-1.5 py-0.5 rounded-full uppercase tracking-[0.1em] flex-shrink-0"
+                      className="text-[10px] font-bold px-1.5 py-0.5 rounded-full uppercase tracking-[0.1em] flex-shrink-0"
                       style={{ background: 'hsl(var(--brand-accent))', color: 'hsl(var(--brand-accent-foreground))' }}
                     >
                       {item.badge}
                     </span>
                   )}
                   {!sidebarCollapsed && item.id === 'editor-hub' && pendingReview > 0 && (
-                    <span className="text-[9px] font-bold px-1.5 py-0.5 rounded-full bg-primary text-primary-foreground">
+                    <span className="text-[11px] font-bold px-1.5 py-0.5 rounded-full bg-primary text-primary-foreground">
                       {pendingReview}
                     </span>
                   )}
                   {!sidebarCollapsed && item.id === 'horses' && (horses ?? []).length > 0 && (
                     <span
-                      className="text-[9px] font-bold px-1.5 py-0.5 rounded-full"
+                      className="text-[11px] font-bold px-1.5 py-0.5 rounded-full"
                       style={{ background: 'hsl(var(--brand-accent) / 0.15)', color: 'hsl(var(--brand-accent))' }}
                     >
                       {(horses ?? []).length}
@@ -127,7 +127,7 @@ export function NewsroomSidebar({
                   )}
                   {!sidebarCollapsed && item.id === 'parties' && safeParties.length > 0 && (
                     <span
-                      className="text-[9px] font-bold px-1.5 py-0.5 rounded-full"
+                      className="text-[11px] font-bold px-1.5 py-0.5 rounded-full"
                       style={{ background: 'hsl(var(--primary) / 0.15)', color: 'hsl(var(--primary))' }}
                     >
                       {safeParties.length}
@@ -135,7 +135,7 @@ export function NewsroomSidebar({
                   )}
                   {!sidebarCollapsed && item.id === 'media-production-system' && (mediaItems ?? []).length > 0 && (
                     <span
-                      className="text-[9px] font-bold px-1.5 py-0.5 rounded-full"
+                      className="text-[11px] font-bold px-1.5 py-0.5 rounded-full"
                       style={{ background: 'hsl(var(--chart-3) / 0.15)', color: 'hsl(var(--chart-3))' }}
                     >
                       {(mediaItems ?? []).length}
@@ -143,7 +143,7 @@ export function NewsroomSidebar({
                   )}
                   {!sidebarCollapsed && item.id === 'racing-production-system' && (racingEntries ?? []).length > 0 && (
                     <span
-                      className="text-[9px] font-bold px-1.5 py-0.5 rounded-full"
+                      className="text-[11px] font-bold px-1.5 py-0.5 rounded-full"
                       style={{ background: 'hsl(var(--chart-1) / 0.15)', color: 'hsl(var(--chart-1))' }}
                     >
                       {(racingEntries ?? []).length}
@@ -160,14 +160,14 @@ export function NewsroomSidebar({
         <div className="border-t border-border/40 px-3 py-3">
           <div className="flex items-center gap-2">
             <div
-              className="w-7 h-7 rounded-full flex items-center justify-center text-[10px] font-bold text-primary-foreground flex-shrink-0"
+              className="w-7 h-7 rounded-full flex items-center justify-center text-[12px] font-bold text-primary-foreground flex-shrink-0"
               style={{ background: currentRoleConfig.color }}
             >
               {currentUser.displayName.charAt(0)}
             </div>
             <div className="min-w-0">
-              <p className="text-xs font-semibold text-foreground truncate">{currentUser.displayName}</p>
-              <p className="text-[9px] text-muted-foreground capitalize">{currentRoleConfig.label}</p>
+              <p className="text-sm font-semibold text-foreground truncate">{currentUser.displayName}</p>
+              <p className="text-[11px] text-muted-foreground capitalize">{currentRoleConfig.label}</p>
             </div>
           </div>
         </div>

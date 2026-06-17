@@ -1,5 +1,5 @@
 import { Link } from 'react-router-dom';
-import { ArrowRight, LoaderCircle, Play } from 'lucide-react';
+import { ArrowRight, Radio, Play } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import type { PodcastEpisode } from '@/types/podcast';
 import { fmtMinutes, fmtShortDate } from './helpers';
@@ -13,7 +13,7 @@ export function LandingPodcast({ liveEpisodes }: LandingPodcastProps) {
     <div className="bg-primary rounded-sm overflow-hidden">
       <div className="px-5 pt-5 pb-4">
         <div className="flex items-center gap-2 mb-3">
-          <LoaderCircle
+          <Radio
             size={13}
             style={{ color: 'hsl(var(--brand-accent))' }}
           />

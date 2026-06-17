@@ -6,26 +6,33 @@ import { Button } from '@/components/ui/button';
 import { cn } from '@/lib/utils';
 import type { Article } from '@/types/article';
 import type { Sponsor } from '@/types/sponsor';
+import type { TipperProfile } from '@/types/tip';
+
+interface MyTipping {
+  profile: TipperProfile;
+  rank: number;
+  total: number;
+}
 
 interface LandingSidebarProps {
   hasUser: boolean;
-  subscribed: boolean;
   subscribeEmail: string;
   setSubscribeEmail: (value: string) => void;
   handleSubscribe: (e: React.FormEvent) => void;
   sidebarArticles: Article[];
   sponsors: Sponsor[];
+  myTipping: MyTipping | null;
   podcastSlot: ReactNode;
 }
 
 export function LandingSidebar({
   hasUser,
-  subscribed,
   subscribeEmail,
   setSubscribeEmail,
   handleSubscribe,
   sidebarArticles,
   sponsors,
+  myTipping,
   podcastSlot,
 }: LandingSidebarProps) {
   return (
@@ -75,33 +82,23 @@ export function LandingSidebar({
               ))}
             </ul>
 
-            {subscribed ? (
-              <div className="flex items-center gap-2 py-2 px-3 rounded-sm bg-primary/10 border border-primary/20">
-                <Check size={14} className="text-primary" />
-                <span className="text-xs font-medium text-primary">
-                  You are on the list
-                </span>
-              </div>
-            ) : (
-              <form onSubmit={handleSubscribe} className="space-y-2">
-                <input
-                  type="email"
-                  placeholder="your@email.com"
-                  value={subscribeEmail}
-                  onChange={(e) => setSubscribeEmail(e.target.value)}
-                  required
-                  className="w-full px-3 py-2 text-xs border border-input rounded-sm bg-card text-foreground placeholder:text-muted-foreground focus:outline-none focus:ring-1 focus:ring-ring"
-                  aria-label="Email address for membership"
-                />
-                <Button
-                  type="submit"
-                  size="sm"
-                  className="w-full bg-primary text-primary-foreground hover:bg-primary/90 text-xs font-semibold"
-                >
-                  Start Membership
-                </Button>
-              </form>
-            )}
+            <form onSubmit={handleSubscribe} className="space-y-2">
+              <input
+                type="email"
+                placeholder="your@email.com"
+                value={subscribeEmail}
+                onChange={(e) => setSubscribeEmail(e.target.value)}
+                className="w-full px-3 py-2 text-xs border border-input rounded-sm bg-card text-foreground placeholder:text-muted-foreground focus:outline-none focus:ring-1 focus:ring-ring"
+                aria-label="Email address for membership"
+              />
+              <Button
+                type="submit"
+                size="sm"
+                className="w-full bg-primary text-primary-foreground hover:bg-primary/90 text-xs font-semibold"
+              >
+                Start Membership
+              </Button>
+            </form>
           </div>
           <div className="px-5 py-2 border-t border-border/40 flex items-center justify-center gap-1">
             <span className="text-[9px] text-muted-foreground">
@@ -279,30 +276,30 @@ export function LandingSidebar({
         </p>
       </div>
 
-      {/* Member Engagement */}
-      {hasUser && (
+      {/* Member Engagement — real tipping record, shown only once the member has one */}
+      {hasUser && myTipping && (
         <div className="border border-primary/20 rounded-sm p-5 bg-primary/5">
           <div className="flex items-center gap-2 mb-3">
             <Users size={14} className="text-primary" />
             <span className="text-[9px] uppercase tracking-[0.2em] font-bold text-primary">
-              Your Activity
+              Your Tipping Record
             </span>
           </div>
           <div className="grid grid-cols-2 gap-3">
             {[
-              { label: 'Reads this week', value: '—' },
-              { label: 'Tips placed', value: '—' },
-              { label: 'Rank', value: '—' },
-              { label: 'Streak', value: '—' },
+              { label: 'Coin balance', value: myTipping.profile.coinBalance.toLocaleString() },
+              { label: 'Tips placed', value: myTipping.profile.tipsPlaced.toLocaleString() },
+              { label: 'Rank', value: `${myTipping.rank} / ${myTipping.total}` },
+              { label: 'Total won', value: myTipping.profile.totalWon.toLocaleString() },
             ].map((stat) => (
               <div
                 key={stat.label}
                 className="text-center py-2 rounded-sm bg-background"
               >
-                <span className="block font-[family-name:var(--font-display)] text-lg font-bold text-primary">
+                <span className="block font-[family-name:var(--font-display)] text-lg font-bold text-primary tabular-nums">
                   {stat.value}
                 </span>
-                <span className="block text-[9px] text-muted-foreground mt-0.5">
+                <span className="block text-[10px] text-muted-foreground mt-0.5">
                   {stat.label}
                 </span>
               </div>

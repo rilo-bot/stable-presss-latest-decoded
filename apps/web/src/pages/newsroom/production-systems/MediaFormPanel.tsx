@@ -32,7 +32,7 @@ export function MediaFormPanel({ mediaFormOpen, editMedia, onClose, onSaved }: M
           <div className="flex items-center gap-2.5">
             <File size={15} style={{ color: 'hsl(var(--brand-accent))' }} />
             <div>
-              <p className="text-[10px] uppercase tracking-[0.16em] font-bold opacity-70">
+              <p className="text-[12px] uppercase tracking-[0.16em] font-bold opacity-70">
                 Media Records Production System
               </p>
               <p className="font-[family-name:var(--font-display)] text-sm font-bold">

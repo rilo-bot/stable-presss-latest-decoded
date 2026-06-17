@@ -59,7 +59,7 @@ function StatCard({ icon, value, label, tone }: { icon: React.ReactNode; value: 
       <span className="flex h-8 w-8 items-center justify-center rounded-sm bg-muted/40" style={{ color: tone ?? 'hsl(var(--primary))' }}>{icon}</span>
       <div className="leading-tight">
         <div className="text-lg font-bold tabular-nums text-foreground">{value}</div>
-        <div className="text-[10px] uppercase tracking-[0.08em] text-muted-foreground">{label}</div>
+        <div className="text-[12px] uppercase tracking-[0.08em] text-muted-foreground">{label}</div>
       </div>
     </div>
   );
@@ -116,7 +116,7 @@ export function NewsroomDashboard({ onNavigate }: { onNavigate: (where: string) 
     return (
       <div className="mb-8 flex items-center justify-between gap-3 rounded-sm border border-destructive/30 bg-destructive/5 px-4 py-3 text-sm">
         <span className="flex items-center gap-2 text-destructive"><AlertCircle size={15} /> Couldn’t load the dashboard summary.</span>
-        <button onClick={() => void loadSummary()} className="rounded-sm border border-border px-2 py-1 text-xs hover:bg-muted">Retry</button>
+        <button onClick={() => void loadSummary()} className="rounded-sm border border-border px-2 py-1 text-sm hover:bg-muted">Retry</button>
       </div>
     );
   }
@@ -130,14 +130,14 @@ export function NewsroomDashboard({ onNavigate }: { onNavigate: (where: string) 
       {/* AI Studio brief */}
       <div className="rounded-md border border-[hsl(var(--brand-accent)/0.35)] bg-gradient-to-br from-[hsl(var(--brand-accent)/0.07)] to-transparent p-4">
         <div className="mb-1.5 flex items-center justify-between gap-2">
-          <span className="flex items-center gap-1.5 text-[11px] font-bold uppercase tracking-[0.1em]" style={{ color: 'hsl(var(--brand-accent))' }}>
+          <span className="flex items-center gap-1.5 text-[13px] font-bold uppercase tracking-[0.1em]" style={{ color: 'hsl(var(--brand-accent))' }}>
             <Sparkles size={13} /> Today’s Studio Brief
           </span>
           <button
             onClick={() => void loadBrief()}
             disabled={briefLoading}
             title="Regenerate brief"
-            className="flex items-center gap-1 rounded-sm border border-border/60 px-2 py-1 text-[10px] text-muted-foreground hover:bg-muted disabled:opacity-50"
+            className="flex items-center gap-1 rounded-sm border border-border/60 px-2 py-1 text-[12px] text-muted-foreground hover:bg-muted disabled:opacity-50"
           >
             <RefreshCw size={11} className={briefLoading ? 'animate-spin' : ''} /> Refresh
           </button>
@@ -171,7 +171,7 @@ export function NewsroomDashboard({ onNavigate }: { onNavigate: (where: string) 
         <h3 className="mb-2 flex items-center gap-2 font-[family-name:var(--font-display)] text-base font-bold text-foreground">
           Needs your attention
           {summary.needsAttention.length > 0 && (
-            <span className="flex h-5 min-w-5 items-center justify-center rounded-full bg-[hsl(var(--brand-accent))] px-1.5 text-[11px] font-bold text-[hsl(var(--brand-accent-foreground,0_0%_100%))]" style={{ color: 'white' }}>
+            <span className="flex h-5 min-w-5 items-center justify-center rounded-full bg-[hsl(var(--brand-accent))] px-1.5 text-[13px] font-bold text-[hsl(var(--brand-accent-foreground,0_0%_100%))]" style={{ color: 'white' }}>
               {summary.needsAttention.length}
             </span>
           )}

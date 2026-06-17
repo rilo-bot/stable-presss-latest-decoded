@@ -41,8 +41,8 @@ export function EditorAssignments({
       >
         <UserCheck size={15} className="text-primary flex-shrink-0 mt-0.5" />
         <div>
-          <p className="text-xs font-semibold text-foreground mb-0.5">Content Assignment & Modification</p>
-          <p className="text-[11px] text-muted-foreground leading-relaxed">
+          <p className="text-sm font-semibold text-foreground mb-0.5">Content Assignment & Modification</p>
+          <p className="text-[13px] text-muted-foreground leading-relaxed">
             As Editor, you can claim stories in draft, editorial review, or revision — edit them directly, reassign notes, or push them forward in the workflow.
           </p>
         </div>
@@ -51,7 +51,7 @@ export function EditorAssignments({
       {assignDialogArticle && (
         <div className="border border-primary/30 rounded-sm bg-card p-4 space-y-3">
           <div className="flex items-center justify-between">
-            <p className="text-xs font-semibold text-foreground">
+            <p className="text-sm font-semibold text-foreground">
               Assignment Note — <span className="font-normal text-muted-foreground">{assignDialogArticle.title}</span>
             </p>
             <button
@@ -63,7 +63,7 @@ export function EditorAssignments({
             </button>
           </div>
           <textarea
-            className="w-full px-3 py-2 text-xs border border-input rounded-sm bg-background focus:outline-none focus:ring-1 focus:ring-ring resize-none"
+            className="w-full px-3 py-2 text-sm border border-input rounded-sm bg-background focus:outline-none focus:ring-1 focus:ring-ring resize-none"
             rows={3}
             placeholder="Add an editorial note or assignment instruction for this story…"
             value={assignNote}
@@ -74,14 +74,14 @@ export function EditorAssignments({
             <Button
               size="sm"
               variant="outline"
-              className="text-xs"
+              className="text-sm"
               onClick={() => { setAssignDialogArticle(null); setAssignNote(''); }}
             >
               Cancel
             </Button>
             <Button
               size="sm"
-              className="text-xs bg-primary text-primary-foreground hover:bg-primary/90 gap-1.5"
+              className="text-sm bg-primary text-primary-foreground hover:bg-primary/90 gap-1.5"
               onClick={async () => {
                 try {
                   await updateArticle(assignDialogArticle.id, { assignmentNote: assignNote.trim() || undefined });
@@ -102,10 +102,10 @@ export function EditorAssignments({
 
       <div className="border border-border/60 rounded-sm overflow-hidden bg-card">
         <div className="px-4 py-3 border-b border-border/40 bg-muted/30 flex items-center justify-between">
-          <p className="text-[10px] uppercase tracking-[0.12em] font-bold text-muted-foreground">
+          <p className="text-[12px] uppercase tracking-[0.12em] font-bold text-muted-foreground">
             Stories You Can Assign or Modify
           </p>
-          <span className="text-[10px] text-muted-foreground tabular-nums">
+          <span className="text-[12px] text-muted-foreground tabular-nums">
             {assignable.length} {assignable.length === 1 ? 'story' : 'stories'}
           </span>
         </div>
@@ -128,7 +128,7 @@ export function EditorAssignments({
                   {['Story', 'Author', 'Stage', 'Actions'].map((h) => (
                     <th
                       key={h}
-                      className="text-left px-4 py-2.5 text-[10px] uppercase tracking-[0.1em] text-muted-foreground font-semibold"
+                      className="text-left px-4 py-2.5 text-[12px] uppercase tracking-[0.1em] text-muted-foreground font-semibold"
                     >
                       {h}
                     </th>
@@ -145,17 +145,17 @@ export function EditorAssignments({
                     )}
                   >
                     <td className="px-4 py-3 max-w-[240px]">
-                      <span className="text-xs font-medium text-foreground line-clamp-1 block">
+                      <span className="text-sm font-medium text-foreground line-clamp-1 block">
                         {article.title}
                       </span>
                       {article.category && (
-                        <span className="text-[10px] text-muted-foreground border border-border/50 px-1.5 py-0.5 rounded-sm mt-0.5 inline-block">
+                        <span className="text-[12px] text-muted-foreground border border-border/50 px-1.5 py-0.5 rounded-sm mt-0.5 inline-block">
                           {article.category}
                         </span>
                       )}
                     </td>
                     <td className="px-4 py-3">
-                      <span className="text-xs text-muted-foreground">{article.author}</span>
+                      <span className="text-sm text-muted-foreground">{article.author}</span>
                     </td>
                     <td className="px-4 py-3">
                       <StatusBadge status={article.status} />
@@ -164,13 +164,13 @@ export function EditorAssignments({
                       <div className="flex items-center gap-3">
                         <button
                           onClick={() => onEdit(article)}
-                          className="text-[10px] uppercase tracking-[0.08em] font-semibold text-primary hover:text-primary/80 transition-colors"
+                          className="text-[12px] uppercase tracking-[0.08em] font-semibold text-primary hover:text-primary/80 transition-colors"
                         >
                           Edit
                         </button>
                         <button
                           onClick={() => { setAssignDialogArticle(article); setAssignNote(article.assignmentNote ?? ''); }}
-                          className="text-[10px] uppercase tracking-[0.08em] font-semibold text-muted-foreground hover:text-foreground transition-colors"
+                          className="text-[12px] uppercase tracking-[0.08em] font-semibold text-muted-foreground hover:text-foreground transition-colors"
                         >
                           Note
                         </button>

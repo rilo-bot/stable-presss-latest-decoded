@@ -21,7 +21,7 @@ export function StatusBadge({ status }: { status: string }) {
   const c = config[status] ?? config['draft'];
   return (
     <span
-      className={cn('text-[9px] uppercase tracking-[0.1em] font-bold px-2 py-0.5 rounded-sm whitespace-nowrap', c.className)}
+      className={cn('text-[11px] uppercase tracking-[0.1em] font-bold px-2 py-0.5 rounded-sm whitespace-nowrap', c.className)}
       style={c.style}
     >
       {c.label}

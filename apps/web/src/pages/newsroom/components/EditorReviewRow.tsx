@@ -27,11 +27,11 @@ export function EditorReviewRow({
       <div className="min-w-0 flex-1">
         <p className="text-sm font-semibold text-foreground line-clamp-1">{article.title}</p>
         <div className="flex items-center gap-2 mt-0.5 flex-wrap">
-          <span className="text-[11px] text-muted-foreground">{article.author}</span>
+          <span className="text-[13px] text-muted-foreground">{article.author}</span>
           {article.category && (
             <>
               <span className="text-muted-foreground/30">·</span>
-              <span className="text-[10px] text-muted-foreground border border-border/50 px-1.5 py-0.5 rounded-sm">
+              <span className="text-[12px] text-muted-foreground border border-border/50 px-1.5 py-0.5 rounded-sm">
                 {article.category}
               </span>
             </>
@@ -39,7 +39,7 @@ export function EditorReviewRow({
           {article.readingTime && (
             <>
               <span className="text-muted-foreground/30">·</span>
-              <span className="text-[10px] text-muted-foreground flex items-center gap-0.5">
+              <span className="text-[12px] text-muted-foreground flex items-center gap-0.5">
                 <Clock size={9} />
                 {article.readingTime}m
               </span>
@@ -50,14 +50,14 @@ export function EditorReviewRow({
       <div className="flex items-center gap-2 flex-shrink-0 flex-wrap">
         <button
           onClick={onEdit}
-          className="text-[10px] uppercase tracking-[0.08em] font-semibold text-muted-foreground hover:text-foreground transition-colors px-2 py-1 rounded-sm border border-border/50 hover:border-border"
+          className="text-[12px] uppercase tracking-[0.08em] font-semibold text-muted-foreground hover:text-foreground transition-colors px-2 py-1 rounded-sm border border-border/50 hover:border-border"
         >
           Edit
         </button>
         {!hideRevision && (
           <button
             onClick={onSendRevision}
-            className="text-[10px] uppercase tracking-[0.08em] font-semibold px-2 py-1 rounded-sm border transition-colors"
+            className="text-[12px] uppercase tracking-[0.08em] font-semibold px-2 py-1 rounded-sm border transition-colors"
             style={{ color: '#e8a020', borderColor: 'rgba(232,160,32,0.3)', background: 'rgba(232,160,32,0.06)' }}
           >
             Send for Revision
@@ -65,7 +65,7 @@ export function EditorReviewRow({
         )}
         <button
           onClick={onPullToReview}
-          className="text-[10px] uppercase tracking-[0.08em] font-semibold px-2 py-1 rounded-sm border transition-colors"
+          className="text-[12px] uppercase tracking-[0.08em] font-semibold px-2 py-1 rounded-sm border transition-colors"
           style={{ color: actionColor, borderColor: `${actionColor}40`, background: `${actionColor}10` }}
         >
           {actionLabel} →

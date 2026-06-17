@@ -20,21 +20,21 @@ export function MyAssetsView() {
           <p className="font-[family-name:var(--font-display)] text-sm font-bold text-foreground mb-1">
             Upload a media file
           </p>
-          <p className="text-xs text-muted-foreground">
+          <p className="text-sm text-muted-foreground">
             Images, graphics, and supporting media for your stories. Files live here and can be referenced in your drafts.
           </p>
         </div>
-        <Button size="sm" variant="outline" className="gap-1.5 text-xs" disabled>
+        <Button size="sm" variant="outline" className="gap-1.5 text-sm" disabled>
           <Upload size={12} />
           Choose File
         </Button>
-        <p className="text-[10px] text-muted-foreground/50 italic">
+        <p className="text-[12px] text-muted-foreground/50 italic">
           Media asset storage connects to your storage provider in production.
         </p>
       </div>
 
       <div className="border border-border/60 rounded-sm p-6 bg-card">
-        <p className="text-[10px] uppercase tracking-[0.12em] font-bold text-muted-foreground mb-4">
+        <p className="text-[12px] uppercase tracking-[0.12em] font-bold text-muted-foreground mb-4">
           Your Uploaded Assets
         </p>
         <EmptyState

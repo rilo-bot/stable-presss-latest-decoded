@@ -16,13 +16,17 @@ import { useLocation } from 'react-router-dom';
 import { useChat } from '@ai-sdk/react';
 import { DefaultChatTransport, type UIMessage } from 'ai';
 import { AnimatePresence, motion } from 'framer-motion';
-import { MessageCircle, X, Send, Sparkles, Square, Maximize2, Minimize2 } from 'lucide-react';
+import { MessageCircle, X, Send, Sparkles, Square, Maximize2, Minimize2, Mic, Volume2, VolumeX, Loader2 } from 'lucide-react';
 
 import { apiUrl } from '@/lib/api';
 import { useAuthStore } from '@/stores/authStore';
 import { useAgentUi } from '@/stores/agentUiStore';
 import { useEditorAgentUi } from '@/stores/editorAgentUiStore';
 import { MarkdownMessage } from '@/components/MarkdownMessage';
+import {
+  isRecordingSupported, isVoiceEnabled, startRecording, transcribe,
+  startLiveCaption, SpeechStream, type Recorder, type LiveCaption,
+} from '@/agent/voice/voiceClient';
 
 // ── Page-context derivation ────────────────────────────────────────────────
 // Turns the current path into a small hint the assistant can use. The agent
@@ -154,6 +158,84 @@ export function AgentWidget() {
     setInput('');
   };
 
+  // ── Voice (push-to-talk pipeline: OpenAI ears + mouth, Claude stays the brain) ──
+  const [voiceReady, setVoiceReady] = useState(false);   // mic supported AND server has a key
+  const [voiceMode, setVoiceMode] = useState(false);     // read replies aloud
+  const [recording, setRecording] = useState(false);
+  const [transcribing, setTranscribing] = useState(false);
+  const [caption, setCaption] = useState('');     // live interim transcript while speaking
+  const recorderRef = useRef<Recorder | null>(null);
+  const liveRef = useRef<LiveCaption | null>(null);
+  const speechRef = useRef<SpeechStream | null>(null);   // streaming TTS for the current reply
+  const speechMsgIdRef = useRef<string | null>(null);    // assistant msg id we're speaking
+  const speakNextRef = useRef(false);             // speak the next reply (user just spoke)
+
+  useEffect(() => {
+    if (!isRecordingSupported()) return;
+    void isVoiceEnabled().then(setVoiceReady);
+  }, []);
+
+  const toggleMic = async () => {
+    if (recording) {
+      // Stop → transcribe → send through the normal agent flow.
+      const rec = recorderRef.current;
+      recorderRef.current = null;
+      liveRef.current?.stop();
+      liveRef.current = null;
+      setRecording(false);
+      if (!rec) return;
+      setTranscribing(true);
+      try {
+        const clip = await rec.stop();
+        const text = await transcribe(clip);
+        if (text) {
+          speakNextRef.current = true; // they spoke → speak the reply back, even if voice mode is off
+          send(text);
+        }
+      } catch {
+        /* transcription failed — user can try again or type */
+      } finally {
+        setTranscribing(false);
+        setCaption('');
+      }
+      return;
+    }
+    try {
+      speechRef.current?.stop(); // don't record over our own playback
+      recorderRef.current = await startRecording();
+      setCaption('');
+      liveRef.current = startLiveCaption(setCaption); // live words (display-only); null if unsupported
+      setRecording(true);
+    } catch {
+      setVoiceReady(false); // mic denied/unavailable — hide the control
+    }
+  };
+
+  // Stream the reply to speech: start speaking the first sentence WHILE the rest
+  // is still being written (voice mode on, or the user just spoke). Decide once
+  // per assistant message, then feed text incrementally and flush on completion.
+  useEffect(() => {
+    const last = messages[messages.length - 1];
+    if (!last || last.role !== 'assistant') return;
+    if (speechMsgIdRef.current !== last.id) {
+      speechMsgIdRef.current = last.id;
+      speechRef.current?.stop();
+      const shouldSpeak = voiceMode || speakNextRef.current;
+      speakNextRef.current = false;
+      speechRef.current = shouldSpeak ? new SpeechStream() : null;
+    }
+    const stream = speechRef.current;
+    if (stream) {
+      const text = messageText(last);
+      if (busy) stream.update(text);
+      else stream.finish(text);
+    }
+  }, [messages, busy, voiceMode]);
+
+  // Stop playback when voice mode is turned off or the panel closes/unmounts.
+  useEffect(() => { if (!voiceMode || !open) speechRef.current?.stop(); }, [voiceMode, open]);
+  useEffect(() => () => { speechRef.current?.stop(); recorderRef.current?.cancel(); liveRef.current?.stop(); }, []);
+
   // An inline "Ask" button queued a question — send it once, then clear.
   useEffect(() => {
     if (!pendingPrompt) return;
@@ -222,6 +304,17 @@ export function AgentWidget() {
                 </div>
               </div>
               <div className="ml-auto flex items-center gap-1">
+                {voiceReady && (
+                  <button
+                    onClick={() => setVoiceMode((v) => !v)}
+                    aria-label={voiceMode ? 'Turn off spoken replies' : 'Read replies aloud'}
+                    title={voiceMode ? 'Spoken replies on' : 'Read replies aloud'}
+                    className="flex h-7 w-7 items-center justify-center rounded-md transition-opacity hover:opacity-80"
+                    style={{ color: voiceMode ? 'var(--gold-bright)' : 'var(--gold-mid)' }}
+                  >
+                    {voiceMode ? <Volume2 className="h-4 w-4" /> : <VolumeX className="h-4 w-4" />}
+                  </button>
+                )}
                 <button
                   onClick={() => setExpanded((v) => !v)}
                   aria-label={expanded ? 'Shrink chat' : 'Expand chat'}
@@ -304,6 +397,17 @@ export function AgentWidget() {
               )}
             </div>
 
+            {/* Live caption while recording (interim words from the browser; the
+                authoritative transcript still comes from OpenAI on stop) */}
+            {(recording || transcribing) && (
+              <div className="flex items-center gap-2 border-t border-border bg-muted/40 px-3 py-1.5 text-xs text-muted-foreground">
+                <span className={'inline-block h-2 w-2 rounded-full ' + (recording ? 'animate-pulse bg-red-500' : 'bg-muted-foreground/50')} />
+                <span className="line-clamp-2 italic">
+                  {caption || (transcribing ? 'Transcribing…' : 'Listening… speak now')}
+                </span>
+              </div>
+            )}
+
             {/* Composer */}
             <form
               onSubmit={(e) => {
@@ -315,10 +419,26 @@ export function AgentWidget() {
               <input
                 value={input}
                 onChange={(e) => setInput(e.target.value)}
-                placeholder="Ask me anything…"
-                className="flex-1 rounded-full border border-border bg-background px-3 py-2 text-sm outline-none focus:ring-2"
+                placeholder={recording ? 'Listening…' : transcribing ? 'Transcribing…' : 'Ask me anything…'}
+                disabled={recording || transcribing}
+                className="flex-1 rounded-full border border-border bg-background px-3 py-2 text-sm outline-none focus:ring-2 disabled:opacity-70"
                 style={{ ['--tw-ring-color' as string]: GOLD }}
               />
+              {voiceReady && !busy && (
+                <button
+                  type="button"
+                  onClick={() => void toggleMic()}
+                  disabled={transcribing}
+                  aria-label={recording ? 'Stop recording' : 'Speak to the Stablehand'}
+                  title={recording ? 'Stop & send' : 'Speak'}
+                  className={
+                    'flex h-9 w-9 items-center justify-center rounded-full border transition-colors disabled:opacity-50 ' +
+                    (recording ? 'animate-pulse border-red-500 bg-red-500/15 text-red-500' : 'border-border text-muted-foreground hover:bg-muted')
+                  }
+                >
+                  {transcribing ? <Loader2 className="h-4 w-4 animate-spin" /> : recording ? <Square className="h-4 w-4" /> : <Mic className="h-4 w-4" />}
+                </button>
+              )}
               {busy ? (
                 <button
                   type="button"

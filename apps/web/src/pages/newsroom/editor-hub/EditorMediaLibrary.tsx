@@ -36,23 +36,23 @@ export function EditorMediaLibrary({ articles, mediaItems, horses, onOpenMediaFo
           </div>
           <div className="text-center">
             <p className="font-[family-name:var(--font-display)] text-sm font-bold text-foreground mb-0.5">Upload Media</p>
-            <p className="text-[11px] text-muted-foreground">Add images, graphics, and audio for any story.</p>
+            <p className="text-[13px] text-muted-foreground">Add images, graphics, and audio for any story.</p>
           </div>
-          <Button size="sm" variant="outline" className="text-xs gap-1.5">
+          <Button size="sm" variant="outline" className="text-sm gap-1.5">
             <Upload size={11} />Choose Files
           </Button>
         </div>
 
         <div className="border border-border/60 rounded-sm p-5 bg-card space-y-3">
-          <p className="text-[10px] uppercase tracking-[0.12em] font-bold text-muted-foreground">Library Stats</p>
+          <p className="text-[12px] uppercase tracking-[0.12em] font-bold text-muted-foreground">Library Stats</p>
           {[
             { label: 'Total Published Stories', value: publishedWithMedia.length },
             { label: 'Media Records (Production System)', value: (mediaItems ?? []).length },
             { label: 'Storage Used', value: '—' },
           ].map((s) => (
             <div key={s.label} className="flex items-center justify-between">
-              <span className="text-[11px] text-muted-foreground">{s.label}</span>
-              <span className="text-[11px] font-bold tabular-nums text-primary">{s.value}</span>
+              <span className="text-[13px] text-muted-foreground">{s.label}</span>
+              <span className="text-[13px] font-bold tabular-nums text-primary">{s.value}</span>
             </div>
           ))}
         </div>
@@ -62,9 +62,9 @@ export function EditorMediaLibrary({ articles, mediaItems, horses, onOpenMediaFo
         <div className="px-4 py-3 border-b border-border/40 bg-muted/30 flex items-center justify-between">
           <div className="flex items-center gap-2">
             <FolderOpen size={13} className="text-muted-foreground" />
-            <p className="text-[10px] uppercase tracking-[0.12em] font-bold text-muted-foreground">Media Records</p>
+            <p className="text-[12px] uppercase tracking-[0.12em] font-bold text-muted-foreground">Media Records</p>
           </div>
-          <p className="text-[10px] text-muted-foreground italic">Editor view — full access</p>
+          <p className="text-[12px] text-muted-foreground italic">Editor view — full access</p>
         </div>
         {(mediaItems ?? []).length === 0 ? (
           <div className="p-8">
@@ -82,7 +82,7 @@ export function EditorMediaLibrary({ articles, mediaItems, horses, onOpenMediaFo
               <thead>
                 <tr className="border-b border-border/40 bg-muted/20">
                   {['Title', 'Type', 'Horse', 'Source', 'Manage'].map((h) => (
-                    <th key={h} className="text-left px-4 py-2.5 text-[10px] uppercase tracking-[0.1em] text-muted-foreground font-semibold">{h}</th>
+                    <th key={h} className="text-left px-4 py-2.5 text-[12px] uppercase tracking-[0.1em] text-muted-foreground font-semibold">{h}</th>
                   ))}
                 </tr>
               </thead>
@@ -92,23 +92,23 @@ export function EditorMediaLibrary({ articles, mediaItems, horses, onOpenMediaFo
                   return (
                     <tr key={item.id} className={cn('border-b border-border/30 hover:bg-muted/10 transition-colors', idx % 2 === 0 ? 'bg-card' : 'bg-background')}>
                       <td className="px-4 py-3 max-w-[200px]">
-                        <span className="text-xs font-medium text-foreground line-clamp-1 block">{item.title}</span>
-                        {item.subject && <span className="text-[10px] text-muted-foreground line-clamp-1 block">{item.subject}</span>}
+                        <span className="text-sm font-medium text-foreground line-clamp-1 block">{item.title}</span>
+                        {item.subject && <span className="text-[12px] text-muted-foreground line-clamp-1 block">{item.subject}</span>}
                       </td>
-                      <td className="px-4 py-3"><span className="text-[10px] uppercase tracking-[0.08em] font-semibold text-primary">{item.media_type}</span></td>
-                      <td className="px-4 py-3"><span className="text-xs text-muted-foreground">{horse ? (horse.isUnnamed ? 'Un-Named' : horse.name) : '—'}</span></td>
-                      <td className="px-4 py-3"><span className="text-xs text-muted-foreground">{item.source_publication ?? '—'}</span></td>
+                      <td className="px-4 py-3"><span className="text-[12px] uppercase tracking-[0.08em] font-semibold text-primary">{item.media_type}</span></td>
+                      <td className="px-4 py-3"><span className="text-sm text-muted-foreground">{horse ? (horse.isUnnamed ? 'Un-Named' : horse.name) : '—'}</span></td>
+                      <td className="px-4 py-3"><span className="text-sm text-muted-foreground">{item.source_publication ?? '—'}</span></td>
                       <td className="px-4 py-3">
                         <div className="flex items-center gap-3">
                           <button
                             onClick={() => onOpenMediaForm(item)}
-                            className="text-[10px] uppercase tracking-[0.08em] font-semibold text-primary hover:text-primary/80 transition-colors"
+                            className="text-[12px] uppercase tracking-[0.08em] font-semibold text-primary hover:text-primary/80 transition-colors"
                           >
                             Edit
                           </button>
                           <button
                             onClick={() => onMediaDelete(item)}
-                            className="text-[10px] uppercase tracking-[0.08em] font-semibold text-destructive hover:text-destructive/80 transition-colors"
+                            className="text-[12px] uppercase tracking-[0.08em] font-semibold text-destructive hover:text-destructive/80 transition-colors"
                           >
                             Delete
                           </button>

@@ -65,7 +65,7 @@ export function OverviewView({
 
       {isContributor && (
         <div
-          className="flex items-start gap-2.5 px-4 py-3 rounded-sm border text-xs"
+          className="flex items-start gap-2.5 px-4 py-3 rounded-sm border text-sm"
           style={{ borderColor: `${currentRoleConfig.color}40`, background: `${currentRoleConfig.color}08` }}
         >
           <AlertCircle size={14} style={{ color: currentRoleConfig.color }} className="flex-shrink-0 mt-0.5" />
@@ -82,10 +82,10 @@ export function OverviewView({
         >
           <div className="flex items-center gap-2">
             <Edit size={14} className="text-primary" />
-            <span className="text-xs font-semibold text-foreground">Editor Hub</span>
+            <span className="text-sm font-semibold text-foreground">Editor Hub</span>
             {pendingReview > 0 && (
               <span
-                className="text-[9px] font-bold px-1.5 py-0.5 rounded-full"
+                className="text-[11px] font-bold px-1.5 py-0.5 rounded-full"
                 style={{ background: 'hsl(var(--brand-accent))', color: 'hsl(var(--brand-accent-foreground))' }}
               >
                 {pendingReview} awaiting action
@@ -95,7 +95,7 @@ export function OverviewView({
           <Button
             size="sm"
             variant="outline"
-            className="text-xs gap-1.5 border-primary/30 text-primary hover:bg-primary/10"
+            className="text-sm gap-1.5 border-primary/30 text-primary hover:bg-primary/10"
             onClick={() => setActiveNav('editor-hub')}
           >
             Open Editor Hub
@@ -111,21 +111,21 @@ export function OverviewView({
       >
         <div className="flex items-center gap-2">
           <BookOpen size={14} style={{ color: 'hsl(var(--brand-accent))' }} />
-          <span className="text-xs font-semibold text-foreground">Bulletin Templates</span>
+          <span className="text-sm font-semibold text-foreground">Bulletin Templates</span>
           <span
-            className="text-[8px] font-bold px-1.5 py-0.5 rounded-full uppercase tracking-[0.1em]"
+            className="text-[10px] font-bold px-1.5 py-0.5 rounded-full uppercase tracking-[0.1em]"
             style={{ background: 'hsl(var(--brand-accent))', color: 'hsl(var(--brand-accent-foreground))' }}
           >
             New
           </span>
-          <span className="text-[11px] text-muted-foreground hidden sm:inline">
+          <span className="text-[13px] text-muted-foreground hidden sm:inline">
             — 9 templates ready to use
           </span>
         </div>
         <Button
           size="sm"
           variant="outline"
-          className="text-xs gap-1.5"
+          className="text-sm gap-1.5"
           style={{ borderColor: 'hsl(var(--brand-accent) / 0.4)', color: 'hsl(var(--brand-accent))' }}
           onClick={() => setActiveNav('bulletin-templates')}
         >
@@ -142,23 +142,23 @@ export function OverviewView({
         >
           <div className="flex items-center gap-2">
             <File size={14} style={{ color: 'hsl(var(--chart-3))' }} />
-            <span className="text-xs font-semibold text-foreground">Media Records Production System</span>
+            <span className="text-sm font-semibold text-foreground">Media Records Production System</span>
             {(mediaItems ?? []).length > 0 && (
               <span
-                className="text-[9px] font-bold px-1.5 py-0.5 rounded-full"
+                className="text-[11px] font-bold px-1.5 py-0.5 rounded-full"
                 style={{ background: 'hsl(var(--chart-3) / 0.15)', color: 'hsl(var(--chart-3))' }}
               >
                 {(mediaItems ?? []).length} records
               </span>
             )}
-            <span className="text-[11px] text-muted-foreground hidden sm:inline">
+            <span className="text-[13px] text-muted-foreground hidden sm:inline">
               — articles, photos, videos &amp; press releases
             </span>
           </div>
           <Button
             size="sm"
             variant="outline"
-            className="text-xs gap-1.5"
+            className="text-sm gap-1.5"
             style={{ borderColor: 'hsl(var(--chart-3) / 0.4)', color: 'hsl(var(--chart-3))' }}
             onClick={() => setActiveNav('media-production-system')}
           >
@@ -176,23 +176,23 @@ export function OverviewView({
         >
           <div className="flex items-center gap-2">
             <Flag size={14} style={{ color: 'hsl(var(--chart-1))' }} />
-            <span className="text-xs font-semibold text-foreground">Racing Data Production System</span>
+            <span className="text-sm font-semibold text-foreground">Racing Data Production System</span>
             {(racingEntries ?? []).length > 0 && (
               <span
-                className="text-[9px] font-bold px-1.5 py-0.5 rounded-full"
+                className="text-[11px] font-bold px-1.5 py-0.5 rounded-full"
                 style={{ background: 'hsl(var(--chart-1) / 0.15)', color: 'hsl(var(--chart-1))' }}
               >
                 {(racingEntries ?? []).length} records
               </span>
             )}
-            <span className="text-[11px] text-muted-foreground hidden sm:inline">
+            <span className="text-[13px] text-muted-foreground hidden sm:inline">
               — race entries, results &amp; performance
             </span>
           </div>
           <Button
             size="sm"
             variant="outline"
-            className="text-xs gap-1.5"
+            className="text-sm gap-1.5"
             style={{ borderColor: 'hsl(var(--chart-1) / 0.4)', color: 'hsl(var(--chart-1))' }}
             onClick={() => setActiveNav('racing-production-system')}
           >
@@ -243,7 +243,7 @@ export function OverviewView({
               <span className={cn('opacity-50', stat.alert && 'text-[hsl(var(--brand-accent))]')}>{stat.icon}</span>
               {stat.alert && (
                 <span
-                  className="text-[8px] uppercase tracking-wider px-1.5 py-0.5 rounded-full font-bold"
+                  className="text-[10px] uppercase tracking-wider px-1.5 py-0.5 rounded-full font-bold"
                   style={{ background: 'hsl(var(--brand-accent))', color: 'hsl(var(--brand-accent-foreground))' }}
                 >
                   Action
@@ -256,8 +256,8 @@ export function OverviewView({
             >
               {stat.value}
             </span>
-            <span className="block text-[10px] text-muted-foreground mt-1 uppercase tracking-[0.08em]">{stat.label}</span>
-            <span className="block text-[10px] text-muted-foreground/60 mt-0.5">{stat.delta}</span>
+            <span className="block text-[12px] text-muted-foreground mt-1 uppercase tracking-[0.08em]">{stat.label}</span>
+            <span className="block text-[12px] text-muted-foreground/60 mt-0.5">{stat.delta}</span>
           </div>
         ))}
       </div>
@@ -280,7 +280,7 @@ export function OverviewView({
               <span className="text-lg font-bold tabular-nums" style={{ color: stage.accent }}>
                 {buckets[stage.status].length}
               </span>
-              <span className="text-[9px] uppercase tracking-[0.08em] text-muted-foreground leading-tight">
+              <span className="text-[11px] uppercase tracking-[0.08em] text-muted-foreground leading-tight">
                 {stage.label}
               </span>
             </button>
@@ -311,7 +311,7 @@ export function OverviewView({
               <thead>
                 <tr className="bg-muted/40 border-b border-border/40">
                   {['Story', 'Author', 'Category', 'Stage'].map((h) => (
-                    <th key={h} className="text-left px-4 py-2.5 text-[10px] uppercase tracking-[0.1em] text-muted-foreground font-semibold">{h}</th>
+                    <th key={h} className="text-left px-4 py-2.5 text-[12px] uppercase tracking-[0.1em] text-muted-foreground font-semibold">{h}</th>
                   ))}
                 </tr>
               </thead>
@@ -329,13 +329,13 @@ export function OverviewView({
                       onClick={() => editable && onEdit(article)}
                     >
                       <td className="px-4 py-3">
-                        <span className="font-medium text-xs text-foreground line-clamp-1">{article.title}</span>
+                        <span className="font-medium text-sm text-foreground line-clamp-1">{article.title}</span>
                       </td>
                       <td className="px-4 py-3">
-                        <span className="text-xs text-muted-foreground">{article.author}</span>
+                        <span className="text-sm text-muted-foreground">{article.author}</span>
                       </td>
                       <td className="px-4 py-3">
-                        <span className="text-[10px] text-muted-foreground border border-border/50 px-2 py-0.5 rounded-sm">
+                        <span className="text-[12px] text-muted-foreground border border-border/50 px-2 py-0.5 rounded-sm">
                           {article.category ?? 'General'}
                         </span>
                       </td>

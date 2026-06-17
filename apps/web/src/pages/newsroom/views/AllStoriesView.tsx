@@ -36,7 +36,7 @@ export function AllStoriesView({
     <div className="space-y-4">
       {isContributor && (
         <div
-          className="flex items-start gap-2.5 px-4 py-3 rounded-sm border text-xs"
+          className="flex items-start gap-2.5 px-4 py-3 rounded-sm border text-sm"
           style={{ borderColor: `${currentRoleConfig.color}40`, background: `${currentRoleConfig.color}08` }}
         >
           <AlertCircle size={14} style={{ color: currentRoleConfig.color }} className="flex-shrink-0 mt-0.5" />
@@ -53,11 +53,11 @@ export function AllStoriesView({
             placeholder="Search stories, authors, categories…"
             value={searchQuery}
             onChange={(e) => setSearchQuery(e.target.value)}
-            className="w-full pl-8 pr-3 py-2 text-xs border border-input rounded-sm bg-card focus:outline-none focus:ring-1 focus:ring-ring"
+            className="w-full pl-8 pr-3 py-2 text-sm border border-input rounded-sm bg-card focus:outline-none focus:ring-1 focus:ring-ring"
             aria-label="Search stories"
           />
         </div>
-        <Button size="sm" variant="outline" className="gap-1.5 text-xs" aria-label="Filter stories">
+        <Button size="sm" variant="outline" className="gap-1.5 text-sm" aria-label="Filter stories">
           <Filter size={12} />
           Filter
         </Button>
@@ -77,7 +77,7 @@ export function AllStoriesView({
             <thead>
               <tr className="bg-muted/40 border-b border-border/40">
                 {['Story', 'Author', 'Category', 'Stage', 'Actions'].map((h) => (
-                  <th key={h} className="text-left px-4 py-3 text-[10px] uppercase tracking-[0.1em] text-muted-foreground font-semibold">{h}</th>
+                  <th key={h} className="text-left px-4 py-3 text-[12px] uppercase tracking-[0.1em] text-muted-foreground font-semibold">{h}</th>
                 ))}
               </tr>
             </thead>
@@ -87,16 +87,16 @@ export function AllStoriesView({
                 return (
                   <tr key={article.id} className={cn('border-b border-border/30 transition-colors', idx % 2 === 0 ? 'bg-card' : 'bg-background')}>
                     <td className="px-4 py-3 max-w-[240px]">
-                      <span className="font-medium text-xs text-foreground line-clamp-1 block">{article.title}</span>
+                      <span className="font-medium text-sm text-foreground line-clamp-1 block">{article.title}</span>
                       {article.readingTime && (
-                        <span className="text-[10px] text-muted-foreground">{article.readingTime} min read</span>
+                        <span className="text-[12px] text-muted-foreground">{article.readingTime} min read</span>
                       )}
                     </td>
                     <td className="px-4 py-3">
-                      <span className="text-xs text-muted-foreground whitespace-nowrap">{article.author}</span>
+                      <span className="text-sm text-muted-foreground whitespace-nowrap">{article.author}</span>
                     </td>
                     <td className="px-4 py-3">
-                      <span className="text-[10px] text-muted-foreground border border-border/50 px-2 py-0.5 rounded-sm whitespace-nowrap">
+                      <span className="text-[12px] text-muted-foreground border border-border/50 px-2 py-0.5 rounded-sm whitespace-nowrap">
                         {article.category ?? 'General'}
                       </span>
                     </td>
@@ -105,12 +105,12 @@ export function AllStoriesView({
                       {editable ? (
                         <button
                           onClick={() => onEdit(article)}
-                          className="text-[10px] uppercase tracking-[0.08em] font-semibold text-primary hover:text-primary/80 transition-colors"
+                          className="text-[12px] uppercase tracking-[0.08em] font-semibold text-primary hover:text-primary/80 transition-colors"
                         >
                           Edit
                         </button>
                       ) : (
-                        <span className="flex items-center gap-1 text-[10px] text-muted-foreground/50">
+                        <span className="flex items-center gap-1 text-[12px] text-muted-foreground/50">
                           <Lock size={10} />
                           Read-only
                         </span>

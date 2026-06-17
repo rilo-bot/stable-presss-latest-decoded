@@ -1,4 +1,5 @@
 import { useMemo, useState, useEffect } from 'react';
+import { useNavigate } from 'react-router-dom';
 import { useArticleStore } from '@/stores/articleStore';
 import { useHorseStore } from '@/stores/horseStore';
 import { usePartyStore } from '@/stores/partyStore';
@@ -9,17 +10,23 @@ import { useIssueStore } from '@/stores/issueStore';
 import { useBreakingNewsStore } from '@/stores/breakingNewsStore';
 import { useSponsorStore } from '@/stores/sponsorStore';
 import { useMetricsStore } from '@/stores/metricsStore';
+import { useTippingStore } from '@/stores/tippingStore';
+import { isStaff } from '@/rbac/can';
 import { TrendingUp, Users, BookOpen, Award } from 'lucide-react';
 import { LandingHero } from './landing/LandingHero';
 import { LandingFeaturedArticles } from './landing/LandingFeaturedArticles';
 import { LandingBulletins } from './landing/LandingBulletins';
 import { LandingSidebar } from './landing/LandingSidebar';
 import { LandingPodcast } from './landing/LandingPodcast';
+import { LandingRaces } from './landing/LandingRaces';
+import { LandingLeaderboard } from './landing/LandingLeaderboard';
 import { LandingFooter } from './landing/LandingFooter';
 
 /* ── Component ────────────────────────────────────────── */
 
 export default function Landing() {
+  const navigate = useNavigate();
+
   // === auto fetch-on-mount (backend planner) ===
   const fetchHorses = useHorseStore((s) => s.fetchHorses);
   const fetchParties = usePartyStore((s) => s.fetchParties);
@@ -29,6 +36,7 @@ export default function Landing() {
   const fetchBreakingNews = useBreakingNewsStore((s) => s.fetchBreakingNews);
   const fetchSponsors = useSponsorStore((s) => s.fetchSponsors);
   const fetchMetrics = useMetricsStore((s) => s.fetchMetrics);
+  const fetchRaces = useTippingStore((s) => s.fetchRaces);
   useEffect(() => {
     fetchHorses();
     fetchParties();
@@ -38,6 +46,7 @@ export default function Landing() {
     fetchBreakingNews();
     fetchSponsors();
     fetchMetrics();
+    fetchRaces();
   }, [
     fetchHorses,
     fetchParties,
@@ -47,10 +56,13 @@ export default function Landing() {
     fetchBreakingNews,
     fetchSponsors,
     fetchMetrics,
+    fetchRaces,
   ]);
   // === end auto fetch-on-mount ===
 
   const articles = useArticleStore((s) => s.articles);
+  // Real loading state — drives the skeleton until articles actually arrive.
+  const articlesLoading = useArticleStore((s) => !s.loaded && !s.error);
   const horses = useHorseStore((s) => s.horses);
   const parties = usePartyStore((s) => s.parties);
   const episodes = usePodcastStore((s) => s.episodes);
@@ -58,30 +70,23 @@ export default function Landing() {
   const breakingItems = useBreakingNewsStore((s) => s.items);
   const sponsors = useSponsorStore((s) => s.sponsors);
   const metrics = useMetricsStore((s) => s.metrics);
+  const races = useTippingStore((s) => s.races);
+  const tipperProfiles = useTippingStore((s) => s.profiles);
   const horseConn = useMemo(() => connectionResolver(parties ?? []), [parties]);
   const currentUser = useAuthStore((s) => s.currentUser);
 
-  const [tickerIdx] = useState(0);
   const [subscribeEmail, setSubscribeEmail] = useState('');
-  const [subscribed, setSubscribed] = useState(false);
-  const [bulletinOpen, setBulletinOpen] = useState<string | null>(null);
-  const [articlesLoading, setArticlesLoading] = useState(true);
-
-  // Brief skeleton on mount so the shimmer is visible
-  useEffect(() => {
-    const t = setTimeout(() => setArticlesLoading(false), 700);
-    return () => clearTimeout(t);
-  }, []);
 
   const published = useMemo(
     () => (articles ?? []).filter((a) => a.status === 'published' || a.status === 'newsletter' || a.status === 'bulletin'),
     [articles]
   );
 
+  // Non-overlapping slices so a story is never shown twice on one page.
   const heroArticle = published[0] ?? null;
   const secondaryArticles = useMemo(() => published.slice(1, 4), [published]);
-  const sidebarArticles = useMemo(() => published.slice(0, 5), [published]);
   const featuredArticles = useMemo(() => published.slice(4, 7), [published]);
+  const sidebarArticles = useMemo(() => published.slice(7, 12), [published]);
 
   // Live landing-page content (real data; sections fall back to empty states).
   const tickerItems = useMemo(() => breakingItems.filter((i) => i.active), [breakingItems]);
@@ -97,6 +102,32 @@ export default function Landing() {
     () => episodes.filter((e) => e.status === 'published').slice(0, 3),
     [episodes]
   );
+
+  // Next races still open for (or awaiting) tipping, soonest first.
+  const upcomingRaces = useMemo(
+    () =>
+      races
+        .filter((r) => r.status === 'open' || r.status === 'upcoming')
+        .sort((a, b) => (a.scheduledAt < b.scheduledAt ? -1 : 1))
+        .slice(0, 3),
+    [races]
+  );
+
+  // Live tipping leaderboard, richest balance first.
+  const leaderboard = useMemo(
+    () => [...tipperProfiles].sort((a, b) => b.coinBalance - a.coinBalance).slice(0, 5),
+    [tipperProfiles]
+  );
+
+  // The signed-in member's own tipping record (real, or null if they've never tipped).
+  const myTipping = useMemo(() => {
+    if (!currentUser) return null;
+    const ranked = [...tipperProfiles].sort((a, b) => b.coinBalance - a.coinBalance);
+    const idx = ranked.findIndex((p) => p.userId === currentUser.id);
+    if (idx === -1) return null;
+    return { profile: ranked[idx], rank: idx + 1, total: ranked.length };
+  }, [currentUser, tipperProfiles]);
+
   const metricCards = useMemo(
     () =>
       metrics
@@ -104,17 +135,18 @@ export default function Landing() {
             { label: 'Active Members', value: metrics.activeMembers.toLocaleString(), icon: <Users size={16} /> },
             { label: 'Articles Published', value: metrics.articlesPublished.toLocaleString(), icon: <BookOpen size={16} /> },
             { label: 'Tips Placed', value: metrics.tipsPlaced.toLocaleString(), icon: <TrendingUp size={16} /> },
-            { label: 'Leaderboard Leaders', value: metrics.leaderboardLeaders.toLocaleString(), icon: <Award size={16} /> },
+            { label: 'Leaderboard Tippers', value: metrics.leaderboardLeaders.toLocaleString(), icon: <Award size={16} /> },
           ]
         : [],
     [metrics]
   );
 
+  // Honest subscribe: there is no anonymous email-capture store, so route the
+  // visitor into real signup with their email carried across (prefilled there).
   const handleSubscribe = (e: React.FormEvent) => {
     e.preventDefault();
-    if (subscribeEmail.trim()) {
-      setSubscribed(true);
-    }
+    const email = subscribeEmail.trim();
+    navigate(email ? `/signup?email=${encodeURIComponent(email)}` : '/signup');
   };
 
   return (
@@ -122,10 +154,13 @@ export default function Landing() {
 
       <LandingHero
         tickerItems={tickerItems}
-        tickerIdx={tickerIdx}
         heroArticle={heroArticle}
         metricCards={metricCards}
+        metrics={metrics}
       />
+
+      {/* ── On the Card: live upcoming races ─────────────── */}
+      <LandingRaces races={upcomingRaces} />
 
       {/* ── Main Content Grid ────────────────────────────── */}
       <div className="max-w-7xl mx-auto px-4 md:px-8 py-10 md:py-14">
@@ -141,28 +176,26 @@ export default function Landing() {
               horseConn={horseConn}
             />
 
-            <LandingBulletins
-              publishedIssues={publishedIssues}
-              bulletinOpen={bulletinOpen}
-              setBulletinOpen={setBulletinOpen}
-            />
+            <LandingLeaderboard leaders={leaderboard} />
+
+            <LandingBulletins publishedIssues={publishedIssues} />
           </div>
 
           {/* ── RIGHT: Sidebar ── */}
           <LandingSidebar
             hasUser={!!currentUser}
-            subscribed={subscribed}
             subscribeEmail={subscribeEmail}
             setSubscribeEmail={setSubscribeEmail}
             handleSubscribe={handleSubscribe}
             sidebarArticles={sidebarArticles}
             sponsors={sponsors}
+            myTipping={myTipping}
             podcastSlot={<LandingPodcast liveEpisodes={liveEpisodes} />}
           />
         </div>
       </div>
 
-      <LandingFooter hasUser={!!currentUser} sponsors={sponsors} />
+      <LandingFooter hasUser={!!currentUser} isStaff={isStaff(currentUser)} sponsors={sponsors} />
     </div>
   );
 }

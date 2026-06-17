@@ -2,11 +2,6 @@ import { useState, useMemo, useEffect } from 'react'
 import { useNavigate } from 'react-router-dom';
 import { useArticleStore } from '@/stores/articleStore';
 import { useAuthStore } from '@/stores/authStore';
-import { useHorseStore } from '@/stores/horseStore';
-import { usePartyStore } from '@/stores/partyStore';
-import { connectionResolver } from '@/lib/horseConnections';
-import { useMediaStore } from '@/stores/mediaStore';
-import { useRacingEntryStore } from '@/stores/racingEntryStore';
 import {
   WORKFLOW_STAGES,
 } from '@/components/KanbanColumn';
@@ -16,24 +11,14 @@ import { HorseForm } from '@/components/HorseForm';
 import { PartyForm } from '@/components/PartyForm';
 import { SalesDataForm } from '@/components/SalesDataForm';
 import { ReportsDataForm } from '@/components/ReportsDataForm';
-import { useSaleStore } from '@/stores/saleStore';
-import { useReportStore } from '@/stores/reportStore';
-import type { Sale } from '@/types/sale';
-import type { HorseReport } from '@/types/horseReport';
 import { useMagazineStore } from '@/stores/magazineStore';
 import { useIssueStore } from '@/stores/issueStore';
 import type { Article, ArticleStatus } from '@/types/article';
-import type { Horse } from '@/types/horse';
-import type { Party } from '@/types/party';
-import type { MediaItem, MediaType } from '@/types/mediaItem';
-import type { RacingEntry } from '@/types/racingEntry';
 import { useStaffStore } from '@/stores/staffStore';
 import type { StaffRole } from '@/rbac/roles';
 import { can, canEditArticle } from '@/lib/permissions';
-import { Button } from '@/components/ui/button';
-import {Plus, Shield, Users, Bell, AlertCircle, Filter} from 'lucide-react';
+import { AlertCircle} from 'lucide-react';
 import { articleToast } from '@/components/Toast';
-import { cn } from '@/lib/utils';
 import { toast } from 'sonner';
 import {
   getRoleConfig, SIDE_NAV,
@@ -46,6 +31,8 @@ import { AllStoriesView } from './newsroom/views/AllStoriesView';
 import { TeamManagementView } from './newsroom/views/TeamManagementView';
 import { MyAssetsView } from './newsroom/views/MyAssetsView';
 import { CompensationView } from './newsroom/views/CompensationView';
+import { AnalyticsView } from './newsroom/views/AnalyticsView';
+import { SettingsView } from './newsroom/views/SettingsView';
 import { EditorHubView } from './newsroom/editor-hub/EditorHubView';
 import { HorseProductionSystem } from './newsroom/production-systems/HorseProductionSystem';
 import { PartiesProductionSystem } from './newsroom/production-systems/PartiesProductionSystem';
@@ -213,75 +200,6 @@ export default function Newsroom() {
     [userRole]
   );
 
-  const filteredHorses = useMemo(() => {
-    const q = horseSearch.toLowerCase().trim();
-    if (!q) return horses ?? [];
-    return (horses ?? []).filter((h) => {
-      const c = horseConn(h);
-      return (
-        h.name?.toLowerCase().includes(q) ||
-        c.trainer.toLowerCase().includes(q) ||
-        c.jockey.toLowerCase().includes(q) ||
-        c.owner.toLowerCase().includes(q) ||
-        h.country?.toLowerCase().includes(q)
-      );
-    });
-  }, [horses, horseSearch, horseConn]);
-
-  const safeParties = parties ?? [];
-
-  const filteredParties = useMemo(() => {
-    const q = partySearch.toLowerCase().trim();
-    if (!q) return safeParties;
-    return safeParties.filter(
-      (p) =>
-        p.name?.toLowerCase().includes(q) ||
-        p.profession?.toLowerCase().includes(q) ||
-        p.base_location?.toLowerCase().includes(q) ||
-        (p.roles ?? []).some((r) => r.toLowerCase().includes(q))
-    );
-  }, [safeParties, partySearch]);
-
-  // Filtered media items
-  const filteredMediaItems = useMemo(() => {
-    let result = mediaItems ?? [];
-    if (mediaHorseFilter) {
-      result = result.filter((m) => m.horse_id === mediaHorseFilter);
-    }
-    if (mediaTypeFilter) {
-      result = result.filter((m) => m.media_type === mediaTypeFilter);
-    }
-    const q = mediaSearch.toLowerCase().trim();
-    if (q) {
-      result = result.filter(
-        (m) =>
-          m.title?.toLowerCase().includes(q) ||
-          m.subject?.toLowerCase().includes(q) ||
-          m.source_publication?.toLowerCase().includes(q)
-      );
-    }
-    return result;
-  }, [mediaItems, mediaHorseFilter, mediaTypeFilter, mediaSearch]);
-
-  // Filtered racing entries
-  const filteredRacingEntries = useMemo(() => {
-    let result = racingEntries ?? [];
-    if (racingHorseFilter) {
-      result = result.filter((r) => r.horse_id === racingHorseFilter);
-    }
-    const q = racingSearch.toLowerCase().trim();
-    if (q) {
-      result = result.filter(
-        (r) =>
-          r.race_name?.toLowerCase().includes(q) ||
-          r.venue?.toLowerCase().includes(q) ||
-          r.subject?.toLowerCase().includes(q) ||
-          r.country?.toLowerCase().includes(q)
-      );
-    }
-    return result;
-  }, [racingEntries, racingHorseFilter, racingSearch]);
-
   const handleAdvance = (articleId: string, toStatus: KanbanStatus) => {
     const article = (articles ?? []).find((a) => a.id === articleId);
     if (!article) return;
@@ -312,86 +230,6 @@ export default function Newsroom() {
   const handleFormClose = () => {
     setFormOpen(false);
     setEditArticle(null);
-  };
-
-  const handleOpenHorseForm = (horse?: Horse) => {
-    setEditHorse(horse ?? null);
-    setHorseFormOpen(true);
-  };
-
-  const handleCloseHorseForm = () => {
-    setHorseFormOpen(false);
-    setEditHorse(null);
-  };
-
-  const handleOpenPartyForm = (party?: Party) => {
-    setEditParty(party);
-    setPartyFormOpen(true);
-  };
-
-  const handleClosePartyForm = () => {
-    setPartyFormOpen(false);
-    setEditParty(undefined);
-  };
-
-  const handlePartyDelete = (party: Party) => {
-    setPartyDeleteTarget(party);
-    setPartyDeleteConfirm(true);
-  };
-
-  const confirmPartyDelete = async () => {
-    if (!partyDeleteTarget) return;
-    const name = partyDeleteTarget.name;
-    const ok = await removeParty(partyDeleteTarget.id);
-    setPartyDeleteTarget(null);
-    setPartyDeleteConfirm(false);
-    if (ok) toast.success(`${name} has been removed.`);
-  };
-
-  // Media handlers
-  const handleOpenMediaForm = (item?: MediaItem) => {
-    setEditMedia(item);
-    setMediaFormOpen(true);
-  };
-
-  const handleCloseMediaForm = () => {
-    setMediaFormOpen(false);
-    setEditMedia(undefined);
-  };
-
-  const handleMediaDelete = (item: MediaItem) => {
-    setMediaDeleteTarget(item);
-    setMediaDeleteConfirm(true);
-  };
-
-  const confirmMediaDelete = () => {
-    if (!mediaDeleteTarget) return;
-    removeMediaItem(mediaDeleteTarget.id);
-    setMediaDeleteTarget(null);
-    setMediaDeleteConfirm(false);
-  };
-
-  // Racing handlers
-  const handleOpenRacingForm = (entry?: RacingEntry) => {
-    setEditRacing(entry);
-    setRacingFormOpen(true);
-  };
-
-  const handleCloseRacingForm = () => {
-    setRacingFormOpen(false);
-    setEditRacing(undefined);
-  };
-
-  const handleRacingDelete = (entry: RacingEntry) => {
-    setRacingDeleteTarget(entry);
-    setRacingDeleteConfirm(true);
-  };
-
-  const confirmRacingDelete = () => {
-    if (!racingDeleteTarget) return;
-    removeRacingEntry(racingDeleteTarget.id);
-    setRacingDeleteTarget(null);
-    setRacingDeleteConfirm(false);
   };
 
   const totalStories = (articles ?? []).length;
@@ -479,7 +317,7 @@ export default function Newsroom() {
             userRole !== 'editor' &&
             userRole !== 'administrator' && (
               <div
-                className="mb-5 flex items-start gap-2.5 px-4 py-3 rounded-sm border text-xs"
+                className="mb-5 flex items-start gap-2.5 px-4 py-3 rounded-sm border text-sm"
                 style={{ borderColor: `${currentRoleConfig.color}40`, background: `${currentRoleConfig.color}08` }}
               >
                 <AlertCircle size={14} style={{ color: currentRoleConfig.color }} className="flex-shrink-0 mt-0.5" />
@@ -677,53 +515,15 @@ export default function Newsroom() {
           )}
 
           {activeNav === 'analytics' && (
-            <div className="space-y-6">
-              <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
-                {[
-                  { label: 'Total Published', value: publishedCount, color: 'hsl(var(--primary))' },
-                  { label: 'Scheduled', value: scheduledCount, color: 'hsl(var(--chart-1))' },
-                  { label: 'Total Stories', value: totalStories, color: 'hsl(var(--brand-accent))' },
-                  { label: 'In Pipeline', value: pendingReview, color: 'hsl(var(--chart-3))' },
-                ].map((s) => (
-                  <div key={s.label} className="p-4 border border-border/60 rounded-sm bg-card text-center">
-                    <span className="block font-[family-name:var(--font-display)] text-3xl font-bold" style={{ color: s.color }}>
-                      {s.value}
-                    </span>
-                    <span className="block text-[10px] uppercase tracking-[0.1em] text-muted-foreground mt-1">{s.label}</span>
-                  </div>
-                ))}
-              </div>
-              <div className="border border-border/60 rounded-sm p-5 bg-card">
-                <p className="text-sm text-muted-foreground text-center py-8 font-[family-name:var(--font-display)] italic">
-                  Full analytics dashboard — connects to your analytics provider in production.
-                </p>
-              </div>
-            </div>
+            <AnalyticsView
+              publishedCount={publishedCount}
+              scheduledCount={scheduledCount}
+              totalStories={totalStories}
+              pendingReview={pendingReview}
+            />
           )}
 
-          {activeNav === 'settings' && (
-            <div className="max-w-lg space-y-5">
-              {[
-                { label: 'Publication Name', value: 'Stable Press', desc: 'Displayed across all editorial output' },
-                { label: 'Default Category', value: 'Race Report', desc: 'Applied to new stories without a category' },
-                { label: 'Legal Review Required', value: 'Yes', desc: 'All stories pass through legal before scheduling' },
-                { label: 'Workflow Stages', value: '12', desc: 'From Draft through Bulletin Inclusion' },
-              ].map((setting) => (
-                <div key={setting.label} className="p-4 border border-border/60 rounded-sm bg-card">
-                  <div className="flex items-center justify-between mb-1">
-                    <span className="text-sm font-semibold text-foreground">{setting.label}</span>
-                    <span
-                      className="text-xs font-medium px-2 py-0.5 rounded-sm"
-                      style={{ background: 'hsl(var(--brand-accent) / 0.12)', color: 'hsl(var(--brand-accent))' }}
-                    >
-                      {setting.value}
-                    </span>
-                  </div>
-                  <p className="text-xs text-muted-foreground">{setting.desc}</p>
-                </div>
-              ))}
-            </div>
-          )}
+          {activeNav === 'settings' && <SettingsView />}
         </div>
       </div>
 

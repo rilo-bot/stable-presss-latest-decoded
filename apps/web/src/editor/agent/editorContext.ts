@@ -47,9 +47,10 @@ export function resolveCurrentPageId(mag: Magazine | undefined): string | null {
 
 export function buildEditorContext(): EditorContextBlob {
   const ms = useMagazineStore.getState();
+  const attachments = useEditorAgentUi.getState().attachments;
   const magId = ms.currentId;
   const mag = magId ? ms.getMagazine(magId) : undefined;
-  if (!mag) return { magazine: null, currentPage: null, selection: null, otherPages: [] };
+  if (!mag) return { magazine: null, currentPage: null, selection: null, otherPages: [], attachments };
 
   const access = ms.getAccess(mag.id);
   const editable = access?.editablePageIds ?? 'all';
@@ -98,5 +99,6 @@ export function buildEditorContext(): EditorContextBlob {
           editable: isEditable(p.id),
         };
       }),
+    attachments,
   };
 }

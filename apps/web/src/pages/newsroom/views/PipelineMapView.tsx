@@ -23,7 +23,7 @@ export function PipelineMapView({ buckets }: PipelineMapViewProps) {
       <div className="flex items-center gap-3 mb-2">
         <h3 className="font-[family-name:var(--font-display)] text-base font-bold text-foreground">Editorial Pipeline</h3>
         <div className="flex-1 h-px bg-border/50" />
-        <span className="text-[10px] uppercase tracking-[0.1em] text-muted-foreground font-semibold">Full Workflow Map</span>
+        <span className="text-[12px] uppercase tracking-[0.1em] text-muted-foreground font-semibold">Full Workflow Map</span>
       </div>
 
       <div className="relative">
@@ -33,7 +33,7 @@ export function PipelineMapView({ buckets }: PipelineMapViewProps) {
               {stage.isBranch && (
                 <div className="hidden md:flex items-center gap-2 mb-2 ml-4">
                   <div className="h-px w-8 bg-[#e8a020]/40" />
-                  <span className="text-[9px] text-muted-foreground italic">Revision path — returns to Editorial Review</span>
+                  <span className="text-[11px] text-muted-foreground italic">Revision path — returns to Editorial Review</span>
                 </div>
               )}
               <div
@@ -49,7 +49,7 @@ export function PipelineMapView({ buckets }: PipelineMapViewProps) {
                 >
                   <span style={{ color: stage.color }}>{stage.icon}</span>
                   <div>
-                    <p className="text-[11px] font-bold uppercase tracking-[0.1em]" style={{ color: stage.color }}>
+                    <p className="text-[13px] font-bold uppercase tracking-[0.1em]" style={{ color: stage.color }}>
                       {stage.label}
                     </p>
                   </div>
@@ -59,12 +59,12 @@ export function PipelineMapView({ buckets }: PipelineMapViewProps) {
                     <div key={step} className="flex items-center gap-2">
                       <div className="flex items-center gap-1.5 px-2.5 py-1 rounded-sm border border-border/60 bg-background">
                         <span
-                          className="w-4 h-4 rounded-full flex items-center justify-center text-[9px] font-bold text-primary-foreground flex-shrink-0"
+                          className="w-4 h-4 rounded-full flex items-center justify-center text-[11px] font-bold text-primary-foreground flex-shrink-0"
                           style={{ background: stage.color }}
                         >
                           {idx * 3 + stepIdx + 1}
                         </span>
-                        <span className="text-[11px] font-medium text-foreground whitespace-nowrap">{step}</span>
+                        <span className="text-[13px] font-medium text-foreground whitespace-nowrap">{step}</span>
                       </div>
                       {stepIdx < stage.steps.length - 1 && (
                         <ChevronRight size={10} className="text-muted-foreground flex-shrink-0" />
@@ -73,7 +73,7 @@ export function PipelineMapView({ buckets }: PipelineMapViewProps) {
                   ))}
                 </div>
                 <div className="flex items-center px-3 border-l border-border/40 bg-muted/20">
-                  <span className="text-[11px] font-bold tabular-nums" style={{ color: stage.color }}>
+                  <span className="text-[13px] font-bold tabular-nums" style={{ color: stage.color }}>
                     {stage.key === 'contributor'
                       ? buckets.draft.length + buckets.submitted.length
                       : stage.key === 'editorial'

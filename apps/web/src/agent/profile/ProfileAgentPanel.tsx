@@ -5,17 +5,14 @@
 // magazine EditorAgentPanel. Opens/closes via useProfileAgentUi; while open it
 // suppresses the global Stablehand launcher (shared editor suppress flag).
 
-import { useEffect, useMemo, useRef, useState } from 'react';
-import { useChat } from '@ai-sdk/react';
-import { lastAssistantMessageIsCompleteWithToolCalls, type UIMessage } from 'ai';
+import { useEffect, useRef, useState } from 'react';
 import { Sparkles, Send, Square, Undo2, Check, X, UserPlus, PenLine } from 'lucide-react';
 
 import { MarkdownMessage } from '@/components/MarkdownMessage';
 import { useProfileAgentUi, type Proposal } from '@/stores/profileAgentUiStore';
 import { useEditorAgentUi } from '@/stores/editorAgentUiStore';
 import { PARTY_ROLE_LABELS } from '@/types/party';
-import { createProfileTransport } from './profileTransport';
-import { executeProfileTool, isProfileClientTool } from './profileToolExecutor';
+import { useProfileChatSession, messageText } from './useProfileChatSession';
 import { applyProposal, discardProposal, applyAllProposals, discardAllProposals, undoLastProposal } from './applyProposals';
 
 /** Breadcrumb launcher that opens the Stable Studio drawer (edit views only). */
@@ -31,15 +28,6 @@ export function StudioLauncher() {
     </button>
   );
 }
-
-function messageText(m: UIMessage): string {
-  return (m.parts ?? [])
-    .filter((p): p is { type: 'text'; text: string } => p.type === 'text')
-    .map((p) => p.text)
-    .join('');
-}
-
-type AddToolResult = (a: { tool: string; toolCallId: string; output: unknown }) => void;
 
 function ProposalCard({ p }: { p: Proposal }) {
   return (
@@ -85,24 +73,7 @@ export function ProfileAgentPanel() {
   const undoCount = useProfileAgentUi((s) => s.undo.length);
   const pendingPrompt = useProfileAgentUi((s) => s.pendingPrompt);
 
-  const transport = useMemo(() => createProfileTransport(), []);
-  const addToolResultRef = useRef<AddToolResult | null>(null);
-
-  const { messages, sendMessage, status, error, stop, addToolResult } = useChat({
-    transport,
-    sendAutomaticallyWhen: lastAssistantMessageIsCompleteWithToolCalls,
-    onToolCall: async ({ toolCall }) => {
-      if (!isProfileClientTool(toolCall.toolName)) return;
-      let output: unknown;
-      try {
-        output = await executeProfileTool(toolCall.toolName, toolCall.input);
-      } catch (e) {
-        output = { ok: false, error: e instanceof Error ? e.message : String(e) };
-      }
-      addToolResultRef.current?.({ tool: toolCall.toolName, toolCallId: toolCall.toolCallId, output });
-    },
-  });
-  addToolResultRef.current = addToolResult as unknown as AddToolResult;
+  const { messages, sendMessage, status, error, stop } = useProfileChatSession();
 
   const [input, setInput] = useState('');
   const busy = status === 'submitted' || status === 'streaming';

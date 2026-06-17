@@ -58,7 +58,7 @@ export function EditorHubView(props: EditorHubViewProps) {
     <div className="space-y-5">
       {userRole === 'administrator' && (
         <div
-          className="flex items-center gap-2.5 px-3 py-2 rounded-sm border text-[11px] font-medium"
+          className="flex items-center gap-2.5 px-3 py-2 rounded-sm border text-[13px] font-medium"
           style={{ borderColor: 'hsl(var(--primary) / 0.25)', background: 'hsl(var(--primary) / 0.06)', color: 'hsl(var(--primary))' }}
         >
           <Star size={13} />
@@ -72,7 +72,7 @@ export function EditorHubView(props: EditorHubViewProps) {
             key={tab.id}
             onClick={() => setEditorTab(tab.id)}
             className={cn(
-              'flex items-center gap-1.5 px-3 py-2 text-[11px] uppercase tracking-[0.1em] font-semibold border-b-2 transition-all -mb-px',
+              'flex items-center gap-1.5 px-3 py-2 text-[13px] uppercase tracking-[0.1em] font-semibold border-b-2 transition-all -mb-px',
               activeTab === tab.id
                 ? 'text-primary border-primary'
                 : 'text-muted-foreground border-transparent hover:text-foreground hover:border-border'
@@ -86,7 +86,7 @@ export function EditorHubView(props: EditorHubViewProps) {
       </div>
 
       {availableTabs.find((t) => t.id === activeTab) && (
-        <p className="text-[11px] text-muted-foreground leading-relaxed -mt-1">
+        <p className="text-[13px] text-muted-foreground leading-relaxed -mt-1">
           {availableTabs.find((t) => t.id === activeTab)?.description}
         </p>
       )}

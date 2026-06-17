@@ -54,7 +54,7 @@ export function EditorReviewQueue({ buckets, onNewInColumn, onAdvance, onEdit }:
               <span style={{ color: stat.color }}>{stat.icon}</span>
               {stat.urgent && (
                 <span
-                  className="text-[8px] uppercase tracking-wider px-1.5 py-0.5 rounded-full font-bold"
+                  className="text-[10px] uppercase tracking-wider px-1.5 py-0.5 rounded-full font-bold"
                   style={{
                     background: 'hsl(var(--brand-accent))',
                     color: 'hsl(var(--brand-accent-foreground))',
@@ -70,7 +70,7 @@ export function EditorReviewQueue({ buckets, onNewInColumn, onAdvance, onEdit }:
             >
               {stat.value}
             </span>
-            <span className="block text-[10px] uppercase tracking-[0.08em] text-muted-foreground mt-0.5">
+            <span className="block text-[12px] uppercase tracking-[0.08em] text-muted-foreground mt-0.5">
               {stat.label}
             </span>
           </div>
@@ -81,11 +81,11 @@ export function EditorReviewQueue({ buckets, onNewInColumn, onAdvance, onEdit }:
         <div className="px-4 py-3 border-b border-border/40 bg-primary/5 flex items-center justify-between">
           <div className="flex items-center gap-2">
             <Inbox size={13} className="text-primary" />
-            <p className="text-[10px] uppercase tracking-[0.12em] font-bold text-foreground">
+            <p className="text-[12px] uppercase tracking-[0.12em] font-bold text-foreground">
               Submitted — Awaiting Editorial Review
             </p>
             {submitted.length > 0 && (
-              <span className="text-[9px] font-bold px-1.5 py-0.5 rounded-full bg-primary text-primary-foreground tabular-nums">
+              <span className="text-[11px] font-bold px-1.5 py-0.5 rounded-full bg-primary text-primary-foreground tabular-nums">
                 {submitted.length}
               </span>
             )}
@@ -122,11 +122,11 @@ export function EditorReviewQueue({ buckets, onNewInColumn, onAdvance, onEdit }:
       <div className="border border-border/60 rounded-sm overflow-hidden bg-card">
         <div className="px-4 py-3 border-b border-border/40 bg-muted/30 flex items-center gap-2">
           <Eye size={13} className="text-muted-foreground" />
-          <p className="text-[10px] uppercase tracking-[0.12em] font-bold text-muted-foreground">
+          <p className="text-[12px] uppercase tracking-[0.12em] font-bold text-muted-foreground">
             In Editorial Review
           </p>
           {inReview.length > 0 && (
-            <span className="text-[9px] font-bold px-1.5 py-0.5 rounded-full bg-muted text-muted-foreground tabular-nums">
+            <span className="text-[11px] font-bold px-1.5 py-0.5 rounded-full bg-muted text-muted-foreground tabular-nums">
               {inReview.length}
             </span>
           )}
@@ -134,7 +134,7 @@ export function EditorReviewQueue({ buckets, onNewInColumn, onAdvance, onEdit }:
 
         {inReview.length === 0 ? (
           <div className="px-4 py-6 text-center">
-            <p className="text-[11px] text-muted-foreground italic font-[family-name:var(--font-display)]">
+            <p className="text-[13px] text-muted-foreground italic font-[family-name:var(--font-display)]">
               No stories currently under editorial review.
             </p>
           </div>
@@ -159,11 +159,11 @@ export function EditorReviewQueue({ buckets, onNewInColumn, onAdvance, onEdit }:
         <div className="border border-dashed border-border/60 rounded-sm overflow-hidden bg-card">
           <div className="px-4 py-3 border-b border-border/40 bg-muted/20 flex items-center gap-2">
             <RotateCcw size={13} style={{ color: '#e8a020' }} />
-            <p className="text-[10px] uppercase tracking-[0.12em] font-bold" style={{ color: '#e8a020' }}>
+            <p className="text-[12px] uppercase tracking-[0.12em] font-bold" style={{ color: '#e8a020' }}>
               Sent Back for Revision
             </p>
             <span
-              className="text-[9px] font-bold px-1.5 py-0.5 rounded-full tabular-nums"
+              className="text-[11px] font-bold px-1.5 py-0.5 rounded-full tabular-nums"
               style={{ background: 'rgba(232,160,32,0.15)', color: '#e8a020' }}
             >
               {inRevision.length}

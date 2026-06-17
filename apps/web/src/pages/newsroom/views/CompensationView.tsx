@@ -51,10 +51,10 @@ export function CompensationView({ articles, currentUserDisplayName, setActiveNa
             >
               {stat.value}
             </span>
-            <span className="block text-[10px] uppercase tracking-[0.1em] text-muted-foreground font-semibold">
+            <span className="block text-[12px] uppercase tracking-[0.1em] text-muted-foreground font-semibold">
               {stat.label}
             </span>
-            <span className="block text-[10px] text-muted-foreground/60 mt-0.5">
+            <span className="block text-[12px] text-muted-foreground/60 mt-0.5">
               {stat.sub}
             </span>
           </div>
@@ -63,10 +63,10 @@ export function CompensationView({ articles, currentUserDisplayName, setActiveNa
 
       <div className="border border-border/60 rounded-sm bg-card overflow-hidden">
         <div className="px-4 py-3 border-b border-border/40 bg-muted/30 flex items-center justify-between">
-          <p className="text-[10px] uppercase tracking-[0.12em] font-bold text-muted-foreground">
+          <p className="text-[12px] uppercase tracking-[0.12em] font-bold text-muted-foreground">
             Payout History
           </p>
-          <span className="text-[10px] text-muted-foreground/60 italic">
+          <span className="text-[12px] text-muted-foreground/60 italic">
             Personal — only visible to you
           </span>
         </div>
@@ -92,7 +92,7 @@ export function CompensationView({ articles, currentUserDisplayName, setActiveNa
                   {['Story', 'Status', 'Published', 'Rate'].map((h) => (
                     <th
                       key={h}
-                      className="text-left px-4 py-2.5 text-[10px] uppercase tracking-[0.1em] text-muted-foreground font-semibold"
+                      className="text-left px-4 py-2.5 text-[12px] uppercase tracking-[0.1em] text-muted-foreground font-semibold"
                     >
                       {h}
                     </th>
@@ -109,17 +109,17 @@ export function CompensationView({ articles, currentUserDisplayName, setActiveNa
                     )}
                   >
                     <td className="px-4 py-3 max-w-[200px]">
-                      <span className="text-xs font-medium text-foreground line-clamp-1 block">
+                      <span className="text-sm font-medium text-foreground line-clamp-1 block">
                         {article.title}
                       </span>
                     </td>
                     <td className="px-4 py-3">
-                      <span className="text-[9px] uppercase tracking-[0.1em] font-bold px-2 py-0.5 rounded-sm bg-primary text-primary-foreground">
+                      <span className="text-[11px] uppercase tracking-[0.1em] font-bold px-2 py-0.5 rounded-sm bg-primary text-primary-foreground">
                         Published
                       </span>
                     </td>
                     <td className="px-4 py-3">
-                      <span className="text-xs text-muted-foreground">
+                      <span className="text-sm text-muted-foreground">
                         {article.publishedAt
                           ? new Date(article.publishedAt).toLocaleDateString('en-AU', {
                               day: '2-digit',
@@ -130,7 +130,7 @@ export function CompensationView({ articles, currentUserDisplayName, setActiveNa
                       </span>
                     </td>
                     <td className="px-4 py-3">
-                      <span className="text-xs text-muted-foreground italic">
+                      <span className="text-sm text-muted-foreground italic">
                         Connects to payroll
                       </span>
                     </td>
@@ -144,7 +144,7 @@ export function CompensationView({ articles, currentUserDisplayName, setActiveNa
 
       <div className="flex items-start gap-2.5 px-4 py-3 rounded-sm border border-border/50 bg-muted/20">
         <Lock size={13} className="text-muted-foreground mt-0.5 flex-shrink-0" />
-        <p className="text-[11px] text-muted-foreground leading-relaxed">
+        <p className="text-[13px] text-muted-foreground leading-relaxed">
           Your compensation data is private and visible only to you and the Administrator.
           Payment processing connects to your payroll provider in production.
         </p>

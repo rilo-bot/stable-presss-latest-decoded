@@ -65,6 +65,7 @@ export function MagazineEditor({ magazineId, onClose }: { magazineId: string; on
       ui.setOpen(false);
       ui.setCurrentPage(null);
       ui.clearStaged();
+      ui.clearAttachments();
     };
   }, []);
 

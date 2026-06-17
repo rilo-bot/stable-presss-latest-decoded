@@ -39,7 +39,7 @@ export function PartiesProductionSystem({
     <div className="space-y-5">
       <div className="flex items-center justify-between gap-4 flex-wrap">
         <div>
-          <p className="text-[10px] uppercase tracking-[0.14em] font-bold text-muted-foreground mb-0.5">
+          <p className="text-[12px] uppercase tracking-[0.14em] font-bold text-muted-foreground mb-0.5">
             Stable Press Production System
           </p>
           <p className="text-sm text-muted-foreground">
@@ -50,7 +50,7 @@ export function PartiesProductionSystem({
         </div>
         <Button
           size="sm"
-          className="bg-primary text-primary-foreground hover:bg-primary/90 gap-1.5 text-xs"
+          className="bg-primary text-primary-foreground hover:bg-primary/90 gap-1.5 text-sm"
           onClick={() => onOpenPartyForm()}
         >
           <Plus size={13} />
@@ -66,7 +66,7 @@ export function PartiesProductionSystem({
             placeholder="Search by name, role, location…"
             value={partySearch}
             onChange={(e) => setPartySearch(e.target.value)}
-            className="w-full pl-8 pr-3 py-2 text-xs border border-input rounded-sm bg-card focus:outline-none focus:ring-1 focus:ring-ring"
+            className="w-full pl-8 pr-3 py-2 text-sm border border-input rounded-sm bg-card focus:outline-none focus:ring-1 focus:ring-ring"
             aria-label="Search parties"
           />
         </div>
@@ -87,7 +87,7 @@ export function PartiesProductionSystem({
           <p className="text-sm font-semibold text-foreground mb-1">No parties match that search</p>
           <button
             onClick={() => setPartySearch('')}
-            className="text-xs text-primary hover:text-primary/80 transition-colors mt-2"
+            className="text-sm text-primary hover:text-primary/80 transition-colors mt-2"
           >
             Clear search
           </button>
@@ -95,10 +95,10 @@ export function PartiesProductionSystem({
       ) : (
         <div className="border border-border/60 rounded-sm overflow-hidden bg-card">
           <div className="px-4 py-2.5 border-b border-border/40 bg-muted/30 flex items-center justify-between">
-            <p className="text-[10px] uppercase tracking-[0.12em] font-bold text-muted-foreground">
+            <p className="text-[12px] uppercase tracking-[0.12em] font-bold text-muted-foreground">
               Party Records
             </p>
-            <span className="text-[10px] text-muted-foreground tabular-nums">
+            <span className="text-[12px] text-muted-foreground tabular-nums">
               {filteredParties.length} {filteredParties.length === 1 ? 'party' : 'parties'}
             </span>
           </div>
@@ -109,7 +109,7 @@ export function PartiesProductionSystem({
                   {['Party', 'Type', 'Roles', 'Location', 'Since', 'Actions'].map((h) => (
                     <th
                       key={h}
-                      className="text-left px-4 py-2.5 text-[10px] uppercase tracking-[0.1em] text-muted-foreground font-semibold"
+                      className="text-left px-4 py-2.5 text-[12px] uppercase tracking-[0.1em] text-muted-foreground font-semibold"
                     >
                       {h}
                     </th>
@@ -142,11 +142,11 @@ export function PartiesProductionSystem({
                             </div>
                           )}
                           <div className="min-w-0">
-                            <span className="text-xs font-semibold text-foreground block line-clamp-1">
+                            <span className="text-sm font-semibold text-foreground block line-clamp-1">
                               {party.name}
                             </span>
                             {party.profession && (
-                              <span className="text-[10px] text-muted-foreground truncate block">
+                              <span className="text-[12px] text-muted-foreground truncate block">
                                 {party.profession}
                               </span>
                             )}
@@ -154,7 +154,7 @@ export function PartiesProductionSystem({
                         </div>
                       </td>
                       <td className="px-4 py-3">
-                        <span className="text-[9px] uppercase tracking-[0.1em] font-bold px-2 py-0.5 rounded-full border bg-primary/10 text-primary border-primary/25">
+                        <span className="text-[11px] uppercase tracking-[0.1em] font-bold px-2 py-0.5 rounded-full border bg-primary/10 text-primary border-primary/25">
                           Individual
                         </span>
                       </td>
@@ -164,7 +164,7 @@ export function PartiesProductionSystem({
                             <span
                               key={role}
                               className={cn(
-                                'text-[8px] uppercase tracking-[0.08em] font-bold px-1.5 py-0.5 rounded-full border',
+                                'text-[10px] uppercase tracking-[0.08em] font-bold px-1.5 py-0.5 rounded-full border',
                                 ROLE_COLORS[role]
                               )}
                             >
@@ -172,7 +172,7 @@ export function PartiesProductionSystem({
                             </span>
                           ))}
                           {(party.roles ?? []).length > 2 && (
-                            <span className="text-[8px] text-muted-foreground font-semibold">
+                            <span className="text-[10px] text-muted-foreground font-semibold">
                               +{(party.roles ?? []).length - 2}
                             </span>
                           )}
@@ -180,22 +180,22 @@ export function PartiesProductionSystem({
                       </td>
                       <td className="px-4 py-3">
                         {party.base_location ? (
-                          <div className="flex items-center gap-1 text-xs text-muted-foreground">
+                          <div className="flex items-center gap-1 text-sm text-muted-foreground">
                             <MapPin size={10} className="flex-shrink-0 text-primary/50" />
                             <span className="truncate max-w-[120px]">{party.base_location}</span>
                           </div>
                         ) : party.country_of_birth ? (
-                          <div className="flex items-center gap-1 text-xs text-muted-foreground">
+                          <div className="flex items-center gap-1 text-sm text-muted-foreground">
                             <Globe size={10} className="flex-shrink-0 text-primary/50" />
                             <span className="truncate max-w-[120px]">{party.country_of_birth}</span>
                           </div>
                         ) : (
-                          <span className="text-muted-foreground/40 text-xs">—</span>
+                          <span className="text-muted-foreground/40 text-sm">—</span>
                         )}
                       </td>
                       <td className="px-4 py-3">
                         {party.started_year ? (
-                          <div className="flex items-center gap-1 text-xs text-muted-foreground">
+                          <div className="flex items-center gap-1 text-sm text-muted-foreground">
                             <CalendarDays size={10} className="flex-shrink-0 text-primary/50" />
                             <span>{party.started_year}</span>
                             {yearsActive !== null && yearsActive > 0 && (
@@ -203,21 +203,21 @@ export function PartiesProductionSystem({
                             )}
                           </div>
                         ) : (
-                          <span className="text-muted-foreground/40 text-xs">—</span>
+                          <span className="text-muted-foreground/40 text-sm">—</span>
                         )}
                       </td>
                       <td className="px-4 py-3">
                         <div className="flex items-center gap-3">
                           <button
                             onClick={() => onOpenPartyForm(party)}
-                            className="text-[10px] uppercase tracking-[0.08em] font-semibold text-primary hover:text-primary/80 transition-colors"
+                            className="text-[12px] uppercase tracking-[0.08em] font-semibold text-primary hover:text-primary/80 transition-colors"
                             aria-label={`Edit ${party.name}`}
                           >
                             Edit
                           </button>
                           <button
                             onClick={() => onPartyDelete(party)}
-                            className="text-[10px] uppercase tracking-[0.08em] font-semibold text-destructive hover:text-destructive/80 transition-colors"
+                            className="text-[12px] uppercase tracking-[0.08em] font-semibold text-destructive hover:text-destructive/80 transition-colors"
                             aria-label={`Remove ${party.name}`}
                           >
                             Remove
@@ -235,7 +235,7 @@ export function PartiesProductionSystem({
 
       {partyDeleteConfirm && partyDeleteTarget && (
         <div className="border border-destructive/30 rounded-sm bg-destructive/5 px-4 py-3 flex items-center justify-between gap-4 flex-wrap">
-          <p className="text-xs text-foreground">
+          <p className="text-sm text-foreground">
             Remove{' '}
             <span className="font-semibold">{partyDeleteTarget.name}</span>
             {' '}from Stable Press? This cannot be undone.
@@ -244,7 +244,7 @@ export function PartiesProductionSystem({
             <Button
               size="sm"
               variant="outline"
-              className="text-xs"
+              className="text-sm"
               onClick={() => { setPartyDeleteConfirm(false); setPartyDeleteTarget(null); }}
             >
               Cancel
@@ -252,7 +252,7 @@ export function PartiesProductionSystem({
             <Button
               size="sm"
               variant="destructive"
-              className="text-xs"
+              className="text-sm"
               onClick={confirmPartyDelete}
             >
               Remove
@@ -264,7 +264,7 @@ export function PartiesProductionSystem({
       {safeParties.length > 0 && (
         <div className="flex items-start gap-2.5 px-4 py-3 rounded-sm border border-border/50 bg-muted/20">
           <Eye size={13} className="text-muted-foreground mt-0.5 flex-shrink-0" />
-          <p className="text-[11px] text-muted-foreground leading-relaxed">
+          <p className="text-[13px] text-muted-foreground leading-relaxed">
             Parties added here can be linked to thoroughbreds via the <strong className="text-foreground">Thoroughbred Production System</strong>.
             Each record can be associated with thoroughbred profiles and editorial coverage across the platform.
           </p>

@@ -2,7 +2,7 @@ import '@/styles/theme.css';
 import '@/styles/brand.css';
 
 import { useEffect } from 'react';
-import { Routes, Route } from 'react-router-dom';
+import { Routes, Route, useLocation } from 'react-router-dom';
 import { Toaster } from 'sonner';
 
 import { NavBar } from '@/components/NavBar';
@@ -53,6 +53,21 @@ function useVintageFonts() {
   }, []);
 }
 
+/**
+ * React Router does not reset scroll on navigation, so moving to a new route
+ * (e.g. clicking the wordmark from a scrolled-down page) lands you at the old
+ * scroll position — which drops the hero up under the sticky navbar. Reset to
+ * the top on every path change, but leave in-page `#anchor` jumps alone.
+ */
+function ScrollToTop() {
+  const { pathname, hash } = useLocation();
+  useEffect(() => {
+    if (hash) return;
+    window.scrollTo({ top: 0, left: 0, behavior: 'instant' as ScrollBehavior });
+  }, [pathname, hash]);
+  return null;
+}
+
 function NotFound() {
   return (
     <div className="min-h-[60vh] flex flex-col items-center justify-center px-4 text-center">
@@ -95,6 +110,7 @@ export default function App() {
 
   return (
     <>
+      <ScrollToTop />
       <Routes>
         {/* Public routes with nav */}
         <Route

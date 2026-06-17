@@ -56,7 +56,7 @@ export function MediaProductionSystem({
       {/* Header strip */}
       <div className="flex items-center justify-between gap-4 flex-wrap">
         <div>
-          <p className="text-[10px] uppercase tracking-[0.14em] font-bold text-muted-foreground mb-0.5">
+          <p className="text-[12px] uppercase tracking-[0.14em] font-bold text-muted-foreground mb-0.5">
             Stable Press Production System
           </p>
           <p className="text-sm text-muted-foreground">
@@ -67,7 +67,7 @@ export function MediaProductionSystem({
         </div>
         <Button
           size="sm"
-          className="bg-primary text-primary-foreground hover:bg-primary/90 gap-1.5 text-xs"
+          className="bg-primary text-primary-foreground hover:bg-primary/90 gap-1.5 text-sm"
           onClick={() => onOpenMediaForm()}
         >
           <Plus size={13} />
@@ -83,7 +83,7 @@ export function MediaProductionSystem({
               key={type}
               onClick={() => setMediaTypeFilter(mediaTypeFilter === type ? '' : type)}
               className={cn(
-                'flex items-center gap-1.5 text-[10px] font-semibold uppercase tracking-[0.08em] px-2.5 py-1 rounded-full border transition-colors',
+                'flex items-center gap-1.5 text-[12px] font-semibold uppercase tracking-[0.08em] px-2.5 py-1 rounded-full border transition-colors',
                 mediaTypeFilter === type
                   ? MEDIA_TYPE_COLORS[type]
                   : 'border-border/50 text-muted-foreground hover:text-foreground bg-card'
@@ -97,7 +97,7 @@ export function MediaProductionSystem({
           {mediaTypeFilter && (
             <button
               onClick={() => setMediaTypeFilter('')}
-              className="text-[10px] text-muted-foreground hover:text-foreground transition-colors flex items-center gap-1"
+              className="text-[12px] text-muted-foreground hover:text-foreground transition-colors flex items-center gap-1"
             >
               <X size={10} /> Clear filter
             </button>
@@ -115,14 +115,14 @@ export function MediaProductionSystem({
               placeholder="Search title, subject, publication…"
               value={mediaSearch}
               onChange={(e) => setMediaSearch(e.target.value)}
-              className="w-full pl-8 pr-3 py-2 text-xs border border-input rounded-sm bg-card focus:outline-none focus:ring-1 focus:ring-ring"
+              className="w-full pl-8 pr-3 py-2 text-sm border border-input rounded-sm bg-card focus:outline-none focus:ring-1 focus:ring-ring"
               aria-label="Search media records"
             />
           </div>
           <select
             value={mediaHorseFilter}
             onChange={(e) => setMediaHorseFilter(e.target.value)}
-            className="px-3 py-2 text-xs border border-input rounded-sm bg-card focus:outline-none focus:ring-1 focus:ring-ring text-foreground"
+            className="px-3 py-2 text-sm border border-input rounded-sm bg-card focus:outline-none focus:ring-1 focus:ring-ring text-foreground"
             aria-label="Filter by horse"
           >
             <option value="">All Horses</option>
@@ -149,7 +149,7 @@ export function MediaProductionSystem({
           <p className="text-sm font-semibold text-foreground mb-1">No media records match your filters</p>
           <button
             onClick={() => { setMediaSearch(''); setMediaHorseFilter(''); setMediaTypeFilter(''); }}
-            className="text-xs text-primary hover:text-primary/80 transition-colors mt-2"
+            className="text-sm text-primary hover:text-primary/80 transition-colors mt-2"
           >
             Clear all filters
           </button>
@@ -158,10 +158,10 @@ export function MediaProductionSystem({
         /* Media table */
         <div className="border border-border/60 rounded-sm overflow-hidden bg-card">
           <div className="px-4 py-2.5 border-b border-border/40 bg-muted/30 flex items-center justify-between">
-            <p className="text-[10px] uppercase tracking-[0.12em] font-bold text-muted-foreground">
+            <p className="text-[12px] uppercase tracking-[0.12em] font-bold text-muted-foreground">
               Media Records
             </p>
-            <span className="text-[10px] text-muted-foreground tabular-nums">
+            <span className="text-[12px] text-muted-foreground tabular-nums">
               {filteredMediaItems.length} {filteredMediaItems.length === 1 ? 'record' : 'records'}
             </span>
           </div>
@@ -172,7 +172,7 @@ export function MediaProductionSystem({
                   {['Title', 'Type', 'Horse', 'Source', 'Published', 'Actions'].map((h) => (
                     <th
                       key={h}
-                      className="text-left px-4 py-2.5 text-[10px] uppercase tracking-[0.1em] text-muted-foreground font-semibold"
+                      className="text-left px-4 py-2.5 text-[12px] uppercase tracking-[0.1em] text-muted-foreground font-semibold"
                     >
                       {h}
                     </th>
@@ -192,16 +192,16 @@ export function MediaProductionSystem({
                     >
                       {/* Title + subject */}
                       <td className="px-4 py-3 max-w-[220px]">
-                        <span className="text-xs font-semibold text-foreground block line-clamp-1">
+                        <span className="text-sm font-semibold text-foreground block line-clamp-1">
                           {item.title}
                         </span>
                         {item.subject && (
-                          <span className="text-[10px] text-muted-foreground line-clamp-1 block italic mt-0.5">
+                          <span className="text-[12px] text-muted-foreground line-clamp-1 block italic mt-0.5">
                             {item.subject}
                           </span>
                         )}
                         {(item.url || item.file_name) && (
-                          <span className="text-[9px] text-primary/70 mt-0.5 block truncate">
+                          <span className="text-[11px] text-primary/70 mt-0.5 block truncate">
                             {item.url ? '🔗 URL' : '📎 File'}: {item.url ?? item.file_name}
                           </span>
                         )}
@@ -211,7 +211,7 @@ export function MediaProductionSystem({
                       <td className="px-4 py-3">
                         <span
                           className={cn(
-                            'inline-flex items-center gap-1 text-[9px] uppercase tracking-[0.08em] font-bold px-2 py-0.5 rounded-full border',
+                            'inline-flex items-center gap-1 text-[11px] uppercase tracking-[0.08em] font-bold px-2 py-0.5 rounded-full border',
                             MEDIA_TYPE_COLORS[item.media_type]
                           )}
                         >
@@ -223,27 +223,27 @@ export function MediaProductionSystem({
                       {/* Horse */}
                       <td className="px-4 py-3">
                         {horse ? (
-                          <span className="text-xs text-foreground font-medium">{horse.name}</span>
+                          <span className="text-sm text-foreground font-medium">{horse.name}</span>
                         ) : (
-                          <span className="text-muted-foreground/40 text-xs">—</span>
+                          <span className="text-muted-foreground/40 text-sm">—</span>
                         )}
                       </td>
 
                       {/* Source publication */}
                       <td className="px-4 py-3">
                         {item.source_publication ? (
-                          <span className="text-[10px] text-muted-foreground truncate block max-w-[120px]">
+                          <span className="text-[12px] text-muted-foreground truncate block max-w-[120px]">
                             {item.source_publication}
                           </span>
                         ) : (
-                          <span className="text-muted-foreground/40 text-xs">—</span>
+                          <span className="text-muted-foreground/40 text-sm">—</span>
                         )}
                       </td>
 
                       {/* Published date */}
                       <td className="px-4 py-3">
                         {item.published_date ? (
-                          <div className="flex items-center gap-1 text-xs text-muted-foreground">
+                          <div className="flex items-center gap-1 text-sm text-muted-foreground">
                             <CalendarDays size={10} className="text-primary/50 flex-shrink-0" />
                             <span>
                               {new Date(item.published_date).toLocaleDateString('en-AU', {
@@ -254,7 +254,7 @@ export function MediaProductionSystem({
                             </span>
                           </div>
                         ) : (
-                          <span className="text-muted-foreground/40 text-xs">—</span>
+                          <span className="text-muted-foreground/40 text-sm">—</span>
                         )}
                       </td>
 
@@ -263,14 +263,14 @@ export function MediaProductionSystem({
                         <div className="flex items-center gap-3">
                           <button
                             onClick={() => onOpenMediaForm(item)}
-                            className="text-[10px] uppercase tracking-[0.08em] font-semibold text-primary hover:text-primary/80 transition-colors"
+                            className="text-[12px] uppercase tracking-[0.08em] font-semibold text-primary hover:text-primary/80 transition-colors"
                             aria-label={`Edit ${item.title}`}
                           >
                             Edit
                           </button>
                           <button
                             onClick={() => onMediaDelete(item)}
-                            className="text-[10px] uppercase tracking-[0.08em] font-semibold text-destructive hover:text-destructive/80 transition-colors"
+                            className="text-[12px] uppercase tracking-[0.08em] font-semibold text-destructive hover:text-destructive/80 transition-colors"
                             aria-label={`Remove ${item.title}`}
                           >
                             Remove
@@ -289,7 +289,7 @@ export function MediaProductionSystem({
       {/* Delete confirm */}
       {mediaDeleteConfirm && mediaDeleteTarget && (
         <div className="border border-destructive/30 rounded-sm bg-destructive/5 px-4 py-3 flex items-center justify-between gap-4 flex-wrap">
-          <p className="text-xs text-foreground">
+          <p className="text-sm text-foreground">
             Remove{' '}
             <span className="font-semibold">{mediaDeleteTarget.title}</span>
             {' '}from Stable Press? This cannot be undone.
@@ -298,7 +298,7 @@ export function MediaProductionSystem({
             <Button
               size="sm"
               variant="outline"
-              className="text-xs"
+              className="text-sm"
               onClick={() => { setMediaDeleteConfirm(false); setMediaDeleteTarget(null); }}
             >
               Cancel
@@ -306,7 +306,7 @@ export function MediaProductionSystem({
             <Button
               size="sm"
               variant="destructive"
-              className="text-xs"
+              className="text-sm"
               onClick={confirmMediaDelete}
             >
               Remove
@@ -319,7 +319,7 @@ export function MediaProductionSystem({
       {safeMedia.length > 0 && (
         <div className="flex items-start gap-2.5 px-4 py-3 rounded-sm border border-border/50 bg-muted/20">
           <Eye size={13} className="text-muted-foreground mt-0.5 flex-shrink-0" />
-          <p className="text-[11px] text-muted-foreground leading-relaxed">
+          <p className="text-[13px] text-muted-foreground leading-relaxed">
             Media records added here are linked to their horse and surface on the <strong className="text-foreground">Thoroughbred Profile</strong> page.
             Featured parties will also see the media item on their own records.
           </p>

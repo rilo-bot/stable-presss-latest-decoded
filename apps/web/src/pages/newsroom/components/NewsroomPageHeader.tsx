@@ -39,12 +39,12 @@ export function NewsroomPageHeader({
             >
               {publishedCount}
             </span>
-            <span className="text-[10px] uppercase tracking-[0.1em] text-muted-foreground font-semibold">in print</span>
+            <span className="text-[12px] uppercase tracking-[0.1em] text-muted-foreground font-semibold">in print</span>
           </span>
         )}
         {activeNav === 'editor-hub' && pendingReview > 0 && (
           <span
-            className="text-[10px] font-bold px-2 py-0.5 rounded-full"
+            className="text-[12px] font-bold px-2 py-0.5 rounded-full"
             style={{ background: 'hsl(var(--primary) / 0.12)', color: 'hsl(var(--primary))' }}
           >
             {pendingReview} stories need attention
@@ -52,7 +52,7 @@ export function NewsroomPageHeader({
         )}
         {activeNav === 'horses' && (horses ?? []).length > 0 && (
           <span
-            className="text-[10px] font-bold px-2 py-0.5 rounded-full"
+            className="text-[12px] font-bold px-2 py-0.5 rounded-full"
             style={{ background: 'hsl(var(--brand-accent) / 0.12)', color: 'hsl(var(--brand-accent))' }}
           >
             {(horses ?? []).length} in the stables
@@ -60,7 +60,7 @@ export function NewsroomPageHeader({
         )}
         {activeNav === 'parties' && safeParties.length > 0 && (
           <span
-            className="text-[10px] font-bold px-2 py-0.5 rounded-full"
+            className="text-[12px] font-bold px-2 py-0.5 rounded-full"
             style={{ background: 'hsl(var(--primary) / 0.12)', color: 'hsl(var(--primary))' }}
           >
             {safeParties.length} {safeParties.length === 1 ? 'party' : 'parties'} registered
@@ -68,7 +68,7 @@ export function NewsroomPageHeader({
         )}
         {activeNav === 'media-production-system' && (mediaItems ?? []).length > 0 && (
           <span
-            className="text-[10px] font-bold px-2 py-0.5 rounded-full"
+            className="text-[12px] font-bold px-2 py-0.5 rounded-full"
             style={{ background: 'hsl(var(--chart-3) / 0.12)', color: 'hsl(var(--chart-3))' }}
           >
             {(mediaItems ?? []).length} media {(mediaItems ?? []).length === 1 ? 'record' : 'records'}
@@ -76,7 +76,7 @@ export function NewsroomPageHeader({
         )}
         {activeNav === 'racing-production-system' && (racingEntries ?? []).length > 0 && (
           <span
-            className="text-[10px] font-bold px-2 py-0.5 rounded-full"
+            className="text-[12px] font-bold px-2 py-0.5 rounded-full"
             style={{ background: 'hsl(var(--chart-1) / 0.12)', color: 'hsl(var(--chart-1))' }}
           >
             {(racingEntries ?? []).length} racing {(racingEntries ?? []).length === 1 ? 'record' : 'records'}

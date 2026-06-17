@@ -4,10 +4,11 @@ import type { Sponsor } from '@/types/sponsor';
 
 interface LandingFooterProps {
   hasUser: boolean;
+  isStaff: boolean;
   sponsors: Sponsor[];
 }
 
-export function LandingFooter({ hasUser, sponsors }: LandingFooterProps) {
+export function LandingFooter({ hasUser, isStaff, sponsors }: LandingFooterProps) {
   return (
     <>
       {/* ── Full-width Subscription Band ────────────────── */}
@@ -109,7 +110,7 @@ export function LandingFooter({ hasUser, sponsors }: LandingFooterProps) {
                   { to: '/tipping', label: 'Leaderboard' },
                   { to: '/newsletter', label: 'Newsletter' },
                   { to: '/bulletins', label: 'Print Bulletins' },
-                  { to: '/newsroom', label: 'Production System Newsroom' },
+                  ...(isStaff ? [{ to: '/newsroom', label: 'Newsroom' }] : []),
                 ].map((item) => (
                   <li key={item.label}>
                     <Link
@@ -129,10 +130,14 @@ export function LandingFooter({ hasUser, sponsors }: LandingFooterProps) {
               </h4>
               <ul className="space-y-2">
                 {[
-                  { to: '/login', label: 'Sign In' },
-                  { to: '/signup', label: 'Create Account' },
-                  { to: '/signup', label: 'Membership Plans' },
-                  { to: '/newsroom', label: 'Newsroom' },
+                  ...(hasUser
+                    ? [{ to: '/dashboard', label: 'Dashboard' }]
+                    : [
+                        { to: '/login', label: 'Sign In' },
+                        { to: '/signup', label: 'Create Account' },
+                        { to: '/signup', label: 'Membership Plans' },
+                      ]),
+                  ...(isStaff ? [{ to: '/newsroom', label: 'Newsroom' }] : []),
                 ].map((item) => (
                   <li key={item.label}>
                     <Link
@@ -154,14 +159,26 @@ export function LandingFooter({ hasUser, sponsors }: LandingFooterProps) {
                 <span className="text-[9px] uppercase tracking-[0.16em] text-muted-foreground font-semibold">
                   Proudly Supported By
                 </span>
-                {sponsors.map((s) => (
-                  <span
-                    key={s.id}
-                    className="text-[10px] font-semibold text-muted-foreground hover:text-foreground transition-colors cursor-pointer"
-                  >
-                    {s.name}
-                  </span>
-                ))}
+                {sponsors.map((s) =>
+                  s.websiteUrl ? (
+                    <a
+                      key={s.id}
+                      href={s.websiteUrl}
+                      target="_blank"
+                      rel="noreferrer"
+                      className="text-[10px] font-semibold text-muted-foreground hover:text-foreground transition-colors"
+                    >
+                      {s.name}
+                    </a>
+                  ) : (
+                    <span
+                      key={s.id}
+                      className="text-[10px] font-semibold text-muted-foreground"
+                    >
+                      {s.name}
+                    </span>
+                  )
+                )}
               </div>
             </div>
           )}

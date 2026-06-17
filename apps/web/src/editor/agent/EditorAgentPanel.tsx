@@ -6,13 +6,15 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { useChat } from '@ai-sdk/react';
 import { lastAssistantMessageIsCompleteWithToolCalls, type UIMessage } from 'ai';
-import { Sparkles, Send, Square, Undo2, Check, X } from 'lucide-react';
+import { Sparkles, Send, Square, Undo2, Check, X, Paperclip, FileText, Loader2 } from 'lucide-react';
+import { toast } from 'sonner';
 
 import { MarkdownMessage } from '@/components/MarkdownMessage';
 import { useEditorAgentUi } from '@/stores/editorAgentUiStore';
 import { createEditorTransport } from './editorTransport';
 import { executeEditorTool, isEditorClientTool } from './editOpsExecutor';
 import { previewOf } from './editorContext';
+import { ingestFile, ATTACH_ACCEPT } from './documentUpload';
 import { applyStagedEdit, applyBatch, applyAllStaged, discardStaged, discardBatch, discardAll, undoLast } from './applyEdits';
 import type { StagedEdit } from './types';
 
@@ -98,7 +100,27 @@ export function EditorAgentPanel() {
   const staged = useEditorAgentUi((s) => s.staged);
   const undoCount = useEditorAgentUi((s) => s.undo.length);
   const pendingPrompt = useEditorAgentUi((s) => s.pendingPrompt);
+  const attachments = useEditorAgentUi((s) => s.attachments);
+  const addAttachment = useEditorAgentUi((s) => s.addAttachment);
+  const removeAttachment = useEditorAgentUi((s) => s.removeAttachment);
+  const [ingesting, setIngesting] = useState<string[]>([]);
+  const fileRef = useRef<HTMLInputElement>(null);
   const scrollRef = useRef<HTMLDivElement>(null);
+
+  const onPickFiles = async (files: FileList | null) => {
+    if (!files?.length) return;
+    for (const file of Array.from(files)) {
+      setIngesting((prev) => [...prev, file.name]);
+      try {
+        addAttachment(await ingestFile(file));
+      } catch (e) {
+        toast.error(e instanceof Error ? e.message : 'Could not read that file.');
+      } finally {
+        setIngesting((prev) => prev.filter((n) => n !== file.name));
+      }
+    }
+    if (fileRef.current) fileRef.current.value = '';
+  };
 
   // A suggestion chip / inline trigger queued a prompt — send it once.
   useEffect(() => {
@@ -152,7 +174,7 @@ export function EditorAgentPanel() {
       <div ref={scrollRef} className="flex-1 space-y-3 overflow-y-auto px-3 py-3">
         {messages.length === 0 && (
           <p className="text-[12px] leading-relaxed text-white/55">
-            I’m your studio assistant. Ask me to <strong className="text-white/80">write a headline</strong>, <strong className="text-white/80">fill this page</strong>, <strong className="text-white/80">suggest a photo</strong>, or explain what a page is for. I’ll preview anything that overwrites existing content before it’s applied.
+            I’m your studio assistant. Ask me to <strong className="text-white/80">write a headline</strong>, <strong className="text-white/80">fill this page</strong>, <strong className="text-white/80">suggest a photo</strong>, or explain what a page is for. You can also <strong className="text-white/80">upload a PDF, doc or image</strong> (📎) and tell me where to place it. I’ll preview anything that overwrites existing content before it’s applied.
           </p>
         )}
         {messages.map((m) => {
@@ -193,29 +215,67 @@ export function EditorAgentPanel() {
       )}
 
       {/* Composer */}
-      <form
-        onSubmit={(e) => {
-          e.preventDefault();
-          send(input);
-        }}
-        className="flex items-center gap-2 border-t border-white/10 px-2.5 py-2"
-      >
-        <input
-          value={input}
-          onChange={(e) => setInput(e.target.value)}
-          placeholder="Ask the studio assistant…"
-          className="flex-1 rounded-full border border-white/15 bg-white/5 px-3 py-1.5 text-[12px] text-white outline-none placeholder:text-white/30 focus:border-white/30"
-        />
-        {busy ? (
-          <button type="button" onClick={() => stop()} aria-label="Stop" className="flex h-8 w-8 items-center justify-center rounded-full bg-white/10 text-white/70">
-            <Square size={13} />
-          </button>
-        ) : (
-          <button type="submit" aria-label="Send" disabled={!input.trim()} className="flex h-8 w-8 items-center justify-center rounded-full text-[#0b1220] disabled:opacity-40" style={{ background: 'var(--gold-bright)' }}>
-            <Send size={13} />
-          </button>
+      <div className="border-t border-white/10">
+        {(attachments.length > 0 || ingesting.length > 0) && (
+          <div className="flex flex-wrap gap-1.5 px-2.5 pt-2">
+            {attachments.map((a) => (
+              <span key={a.id} className="flex items-center gap-1 rounded-sm border border-emerald-400/30 bg-emerald-400/10 px-2 py-0.5 text-[10px] text-emerald-200" title={a.digest.title || a.name}>
+                <FileText size={11} />
+                <span className="max-w-[130px] truncate">{a.name}</span>
+                <button onClick={() => removeAttachment(a.id)} aria-label={`Remove ${a.name}`} className="text-emerald-200/60 hover:text-emerald-100">
+                  <X size={10} />
+                </button>
+              </span>
+            ))}
+            {ingesting.map((n) => (
+              <span key={n} className="flex items-center gap-1 rounded-sm border border-amber-400/30 bg-amber-400/10 px-2 py-0.5 text-[10px] text-amber-200">
+                <Loader2 size={11} className="animate-spin" />
+                <span className="max-w-[130px] truncate">Reading {n}…</span>
+              </span>
+            ))}
+          </div>
         )}
-      </form>
+        <form
+          onSubmit={(e) => {
+            e.preventDefault();
+            send(input);
+          }}
+          className="flex items-center gap-2 px-2.5 py-2"
+        >
+          <input
+            ref={fileRef}
+            type="file"
+            multiple
+            accept={ATTACH_ACCEPT}
+            className="hidden"
+            onChange={(e) => onPickFiles(e.target.files)}
+          />
+          <button
+            type="button"
+            onClick={() => fileRef.current?.click()}
+            aria-label="Attach a document"
+            title="Attach a PDF, document or image to analyse"
+            className="flex h-8 w-8 flex-shrink-0 items-center justify-center rounded-full border border-white/15 text-white/60 hover:bg-white/10 hover:text-white/90"
+          >
+            <Paperclip size={14} />
+          </button>
+          <input
+            value={input}
+            onChange={(e) => setInput(e.target.value)}
+            placeholder="Ask, or upload a file and say where it goes…"
+            className="flex-1 rounded-full border border-white/15 bg-white/5 px-3 py-1.5 text-[12px] text-white outline-none placeholder:text-white/30 focus:border-white/30"
+          />
+          {busy ? (
+            <button type="button" onClick={() => stop()} aria-label="Stop" className="flex h-8 w-8 items-center justify-center rounded-full bg-white/10 text-white/70">
+              <Square size={13} />
+            </button>
+          ) : (
+            <button type="submit" aria-label="Send" disabled={!input.trim()} className="flex h-8 w-8 items-center justify-center rounded-full text-[#0b1220] disabled:opacity-40" style={{ background: 'var(--gold-bright)' }}>
+              <Send size={13} />
+            </button>
+          )}
+        </form>
+      </div>
     </div>
   );
 }

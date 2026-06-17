@@ -1,5 +1,5 @@
 import { useState, useRef, useEffect } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { useNavigate, useSearchParams } from 'react-router-dom';
 import { useAuthStore } from '@/stores/authStore';
 import { useClaimStore } from '@/stores/claimStore';
 import { useOrgStore } from '@/stores/orgStore';
@@ -17,9 +17,10 @@ type Step = 'details' | 'otp' | 'claim' | 'org';
 export default function Signup() {
   const [step, setStep] = useState<Step>('details');
 
-  // Step 1 state
+  // Step 1 state — email may be prefilled from the landing-page membership form.
+  const [searchParams] = useSearchParams();
   const [displayName, setDisplayName] = useState('');
-  const [email, setEmail] = useState('');
+  const [email, setEmail] = useState(() => searchParams.get('email') ?? '');
   const [accountType, setAccountType] = useState<AccountType>('reader');
   const [fieldErrors, setFieldErrors] = useState<{
     displayName?: string;

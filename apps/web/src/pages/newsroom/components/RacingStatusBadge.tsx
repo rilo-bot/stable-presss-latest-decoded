@@ -11,7 +11,7 @@ export function RacingStatusBadge({ status }: { status: string }) {
   const c = configs[status] ?? configs['Entered'];
   return (
     <span
-      className="text-[9px] uppercase tracking-[0.1em] font-bold px-2 py-0.5 rounded-sm whitespace-nowrap"
+      className="text-[11px] uppercase tracking-[0.1em] font-bold px-2 py-0.5 rounded-sm whitespace-nowrap"
       style={{ background: c.bg, color: c.text }}
     >
       {status}

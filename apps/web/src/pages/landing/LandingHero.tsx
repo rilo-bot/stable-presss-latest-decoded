@@ -1,9 +1,10 @@
-import type { ReactNode } from 'react';
+import { useEffect, useState, type ReactNode } from 'react';
 import { Link } from 'react-router-dom';
-import { motion } from 'framer-motion';
+import { motion, AnimatePresence } from 'framer-motion';
 import { ArrowRight, Play, Zap } from 'lucide-react';
 import type { Article } from '@/types/article';
 import type { BreakingNewsItem } from '@/types/breakingNews';
+import type { SiteMetrics } from '@/stores/metricsStore';
 
 interface MetricCard {
   label: string;
@@ -13,17 +14,35 @@ interface MetricCard {
 
 interface LandingHeroProps {
   tickerItems: BreakingNewsItem[];
-  tickerIdx: number;
   heroArticle: Article | null;
   metricCards: MetricCard[];
+  metrics: SiteMetrics | null;
 }
+
+// Editorial fallback when no lead article carries its own image.
+const FALLBACK_HERO =
+  'https://images.pexels.com/photos/12995066/pexels-photo-12995066.jpeg?auto=compress&cs=tinysrgb&dpr=2&h=650&w=940';
 
 export function LandingHero({
   tickerItems,
-  tickerIdx,
   heroArticle,
   metricCards,
+  metrics,
 }: LandingHeroProps) {
+  // Rotate through every active breaking-news item, not just the first.
+  const [tickerIdx, setTickerIdx] = useState(0);
+  useEffect(() => {
+    setTickerIdx(0);
+    if (tickerItems.length <= 1) return;
+    const t = setInterval(() => {
+      setTickerIdx((i) => (i + 1) % tickerItems.length);
+    }, 5000);
+    return () => clearInterval(t);
+  }, [tickerItems.length]);
+
+  const heroImage = heroArticle?.imageUrl || FALLBACK_HERO;
+  const activeTicker = tickerItems[Math.min(tickerIdx, tickerItems.length - 1)];
+
   return (
     <>
       {/* ── Breaking News Ticker ─────────────────────────── */}
@@ -43,10 +62,24 @@ export function LandingHero({
               Breaking
             </span>
             <div className="overflow-hidden flex-1">
-              <p className="text-[11px] text-foreground/80 font-medium whitespace-nowrap overflow-hidden text-ellipsis">
-                {tickerItems[Math.min(tickerIdx, tickerItems.length - 1)].text}
-              </p>
+              <AnimatePresence mode="wait">
+                <motion.p
+                  key={activeTicker.id ?? tickerIdx}
+                  initial={{ opacity: 0, y: 6 }}
+                  animate={{ opacity: 1, y: 0 }}
+                  exit={{ opacity: 0, y: -6 }}
+                  transition={{ duration: 0.25 }}
+                  className="text-[11px] text-foreground/80 font-medium whitespace-nowrap overflow-hidden text-ellipsis"
+                >
+                  {activeTicker.text}
+                </motion.p>
+              </AnimatePresence>
             </div>
+            {tickerItems.length > 1 && (
+              <span className="flex-shrink-0 text-[9px] tabular-nums text-foreground/40 font-semibold">
+                {tickerIdx + 1}/{tickerItems.length}
+              </span>
+            )}
             <Zap size={12} className="flex-shrink-0 opacity-40" />
           </div>
         </div>
@@ -56,9 +89,12 @@ export function LandingHero({
       <section className="relative w-full overflow-hidden">
         <div className="relative min-h-[600px] h-[80vh] max-h-[840px]">
           <img
-            src="https://images.pexels.com/photos/12995066/pexels-photo-12995066.jpeg?auto=compress&cs=tinysrgb&dpr=2&h=650&w=940"
-            alt="Thoroughbred horses racing — dramatic action at the track"
+            src={heroImage}
+            alt={heroArticle?.title ?? 'Thoroughbred horses racing — dramatic action at the track'}
             crossOrigin="anonymous"
+            width={1880}
+            height={1300}
+            fetchPriority="high"
             className="absolute inset-0 w-full h-full object-cover object-center"
           />
           {/* Editorial dark scrims (left-weighted for legible copy) */}
@@ -127,9 +163,13 @@ export function LandingHero({
                 </Link>
               </div>
 
-              <p className="text-[11px] uppercase tracking-[0.16em] text-white/45 font-medium">
-                Trusted by 12,000+ racing enthusiasts · Published since 2018
-              </p>
+              {metrics && (metrics.activeMembers > 0 || metrics.articlesPublished > 0) && (
+                <p className="text-[11px] uppercase tracking-[0.16em] text-white/55 font-medium">
+                  {metrics.activeMembers.toLocaleString()} member{metrics.activeMembers === 1 ? '' : 's'}
+                  {' · '}
+                  {metrics.articlesPublished.toLocaleString()} stor{metrics.articlesPublished === 1 ? 'y' : 'ies'} published
+                </p>
+              )}
             </div>
           </div>
 
