@@ -20,6 +20,7 @@ import { useAuthStore } from '@/stores/authStore';
 import { canManageHorse } from '@/rbac/can';
 import { useProfileScope } from '@/hooks/useProfileScope';
 import { SEX_OPTIONS, COLOUR_OPTIONS, COUNTRY_OPTIONS } from '@/components/horse-form/constants';
+import { loadSkippedSteps, persistSkippedSteps } from '@/lib/profile/onboardingSkips';
 import type { Horse } from '@/types/horse';
 import { serifStyle, goldStyle, OrnateCrest } from '@/components/profile/kit';
 import { ProfileScaffold, type Crumb } from '@/components/profile/ProfileScaffold';
@@ -65,18 +66,6 @@ const STEP_ICONS: Record<string, React.ReactNode> = {
   basics: <ClipboardList size={14} strokeWidth={1.8} />,
   pedigree: <Dna size={14} strokeWidth={1.8} />,
 };
-
-/* Per-horse "skipped onboarding steps", persisted in localStorage (pure UI state
-   — no server/domain change). A skipped step counts as resolved so the user can
-   finish onboarding without it; the party box stays on the left rail to add later. */
-const SKIP_STORE_KEY = (id: string) => `sp-onb-skip:${id}`;
-function loadSkippedSteps(id: string): Set<string> {
-  try { const raw = localStorage.getItem(SKIP_STORE_KEY(id)); return new Set(raw ? (JSON.parse(raw) as string[]) : []); }
-  catch { return new Set(); }
-}
-function persistSkippedSteps(id: string, set: Set<string>) {
-  try { localStorage.setItem(SKIP_STORE_KEY(id), JSON.stringify([...set])); } catch { /* storage unavailable — non-fatal */ }
-}
 
 /** Snapshot the horse's editable fields + connection counts for the AI assistant. */
 function buildHorseContext(horse: Horse, links: { relationship_type: string }[]): ProfileContext {
@@ -361,7 +350,22 @@ export function HorseProfile({ horseId, mode, onBack }: HorseProfileProps) {
       </div>
       <div className="sku-parchment" style={{ padding: '12px 14px', display: 'flex', flexDirection: 'column', gap: 12 }}>
         <InlineEditRow label="Pull quote" value={horse.pullQuote ?? ''} onSave={(v) => set({ pullQuote: v.trim() || undefined })} editable={editableHorse} />
-        <InlineEditTextArea label="Pedigree / general notes" value={horse.pedigreeNotes ?? ''} onSave={(v) => set({ pedigreeNotes: v })} editable={editableHorse} rows={3} />
+        <InlineEditTextArea
+          label="Pedigree / general notes"
+          value={horse.pedigreeNotes ?? ''}
+          onSave={(v) => set({ pedigreeNotes: v })}
+          editable={editableHorse}
+          rows={3}
+          aiLabel="Pedigree / general notes"
+          aiKey="pedigreeNotes"
+          entityKind="horse"
+          getContext={() => ({
+            name: horseName, sex: horse.sex, colour: horse.colour, country: horse.country,
+            sire: horse.sire, sireSire: horse.sireSire, sireDam: horse.sireDam,
+            dam: horse.dam, damSire: horse.damSire, damDam: horse.damDam,
+            careerRecord: horse.careerRecord,
+          })}
+        />
       </div>
     </div>
   );

@@ -7,11 +7,12 @@
  * one (universal mechanism: writes to the same parties + horsePartyLinks
  * collections). Reports/Forms launcher + a footer button sit below.
  */
-import { useState } from 'react';
-import { ChevronRight, ChevronDown, FileText, Plus, X, Check, Pencil, Trash2 } from 'lucide-react';
+import { useRef, useState } from 'react';
+import { ChevronRight, ChevronDown, FileText, Plus, X, Check, Pencil, Trash2, Camera, Loader2 } from 'lucide-react';
 import { toast } from 'sonner';
 import { useHorsePartyLinkStore } from '@/stores/horsePartyLinkStore';
 import { usePartyStore } from '@/stores/partyStore';
+import { uploadImage } from '@/lib/upload';
 import { serifStyle, goldStyle, Avatar, partyPhoto } from '@/components/profile/kit';
 import { ROLE_ICON } from '@/components/profile/modules';
 import { PARTY_ROLE_LABELS } from '@/types/party';
@@ -50,7 +51,7 @@ function dateLine(l: HorsePartyLink): string {
 
 interface Entry { link: HorsePartyLink; party: Party | undefined }
 
-export interface AddPayload { name: string; startYear: string; endYear: string; present: boolean }
+export interface AddPayload { name: string; startYear: string; endYear: string; present: boolean; photo?: string }
 
 const CURRENT_YEAR = new Date().getFullYear();
 
@@ -96,7 +97,24 @@ function RoleBox({ def, entries, editable, parties, onOpenParty, onAdd, onSaveDa
   const [editingId, setEditingId] = useState<string | null>(null);
   const [form, setForm] = useState<AddPayload>({ name: '', startYear: '', endYear: '', present: true });
   const [busy, setBusy] = useState(false);
+  const [uploading, setUploading] = useState(false);
+  const fileRef = useRef<HTMLInputElement>(null);
   const canAdd = editable && !!def.rel;
+
+  const onPickPhoto = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    e.target.value = '';
+    if (!file) return;
+    setUploading(true);
+    try {
+      const { url } = await uploadImage(file, { kind: 'party', maxDim: 512, quality: 0.8 });
+      setForm((f) => ({ ...f, photo: url }));
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : 'Could not upload the image. Please try again.');
+    } finally {
+      setUploading(false);
+    }
+  };
 
   const submitAdd = async () => {
     setBusy(true);
@@ -175,6 +193,14 @@ function RoleBox({ def, entries, editable, parties, onOpenParty, onAdd, onSaveDa
           {/* Add */}
           {canAdd && (adding ? (
             <div style={{ marginTop: 8, paddingTop: 8, borderTop: '1px solid var(--parchment-dark)', display: 'flex', flexDirection: 'column', gap: 6 }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                <Avatar src={form.photo} alt={form.name || PARTY_ROLE_LABELS[def.role]} size={38} radius={3} icon={ROLE_ICON[def.role]} />
+                <button type="button" onClick={() => fileRef.current?.click()} disabled={uploading} style={{ display: 'inline-flex', alignItems: 'center', gap: 5, padding: '4px 9px', borderRadius: 3, border: '1px solid var(--gold-mid)', background: 'rgba(180,140,30,0.1)', color: 'var(--forest-deep)', cursor: uploading ? 'wait' : 'pointer', fontSize: '0.54rem', fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.06em', ...serifStyle }}>
+                  {uploading ? <Loader2 size={11} className="animate-spin" /> : <Camera size={11} />}
+                  {form.photo ? 'Change photo' : 'Add photo'}
+                </button>
+                <input ref={fileRef} type="file" accept="image/*" className="sr-only" tabIndex={-1} onChange={onPickPhoto} />
+              </div>
               <input list={`parties-all`} placeholder={`${PARTY_ROLE_LABELS[def.role]} name…`} value={form.name} onChange={(e) => setForm((f) => ({ ...f, name: e.target.value }))} style={inputStyle} />
               <DateFields startYear={form.startYear} endYear={form.endYear} present={form.present} set={(p) => setForm((f) => ({ ...f, ...p }))} />
               <div style={{ display: 'flex', gap: 6 }}>
@@ -218,6 +244,7 @@ export function RoleConnectionsRail({ horseId, editable, onOpenParty, reportsAct
   const removeLink = useHorsePartyLinkStore((s) => s.removeLink);
   const parties = usePartyStore((s) => s.parties);
   const addParty = usePartyStore((s) => s.addParty);
+  const updateParty = usePartyStore((s) => s.updateParty);
 
   const horseLinks = allLinks.filter((l) => l.horse_id === horseId);
   const partyById = (id: string) => parties.find((p) => p.id === id);
@@ -250,8 +277,11 @@ export function RoleConnectionsRail({ horseId, editable, onOpenParty, reportsAct
     const existing = parties.find((p) => p.name.trim().toLowerCase() === name.toLowerCase());
     let partyId = existing?.id;
     if (!partyId) {
-      partyId = await addParty({ name, roles: [def.role] });
+      partyId = await addParty({ name, roles: [def.role], photo: payload.photo });
       if (!partyId) return;
+    } else if (existing && payload.photo && !existing.photo) {
+      // fill a missing portrait on the existing party (never overwrite one they have)
+      await updateParty(existing.id, { photo: payload.photo });
     }
     const { start_date, end_date } = datesToFields(payload);
     await addLink({ horse_id: horseId, party_id: partyId, relationship_type: def.rel, start_date, end_date });

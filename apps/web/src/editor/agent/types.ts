@@ -48,7 +48,7 @@ export interface EditorContextBlob {
   currentPage: CtxCurrentPage | null;
   selection: { regionId: string; kind: RegionKind; filled: boolean } | null;
   otherPages: CtxOtherPage[];
-  attachments?: DocAttachment[];
+  attachments?: CtxAttachment[];
 }
 
 // ── Uploaded source documents (analysed into a compact digest) ───────────────
@@ -64,7 +64,12 @@ export interface DocAttachment {
   name: string;
   kind: 'pdf' | 'image' | 'text';
   digest: DocDigest;
+  /** Verbatim extracted text for the bulk compose/fill pass (empty for vision-only docs). */
+  fullText: string;
 }
+
+/** Attachment shape sent in the editor context each turn — digest only, no heavy fullText. */
+export type CtxAttachment = Omit<DocAttachment, 'fullText'>;
 
 // ── Edit operations (preview + apply) ────────────────────────────────────────
 export type EditPayload =

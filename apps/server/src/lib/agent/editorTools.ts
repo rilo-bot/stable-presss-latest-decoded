@@ -141,6 +141,16 @@ export function buildEditorTools(account?: AccountUser): ToolSet {
       description: 'Undo the most recent AI-applied edit.',
       inputSchema: z.object({}),
     }),
+    fillMagazineFromDocument: tool({
+      description:
+        "Bulk-fill the bulletin from the user's uploaded document(s). Call this when the user wants their uploaded " +
+        'document laid out / placed / used to fill the magazine (not for a single region). It reads the full document ' +
+        'text and proposes content for as many pages and regions as the document faithfully supports, staged per page ' +
+        'for the user to review and Apply. Pass the user\'s instruction so placement can be steered. Returns a summary ' +
+        '(pages touched, regions staged, coverage note, anything that did not fit). After it runs, summarise the result ' +
+        'warmly and point the user to the Review & apply cards.',
+      inputSchema: z.object({ instruction: z.string().optional() }),
+    }),
   }
 
   return { ...client, ...grounding }

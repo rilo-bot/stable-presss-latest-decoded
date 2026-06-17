@@ -13,6 +13,7 @@ import { Camera, Check, Loader2, Pencil, Image as ImageIcon, Upload } from 'luci
 import { toast } from 'sonner';
 import { serifStyle } from '@/components/profile/kit';
 import { uploadImage, type UploadKind } from '@/lib/upload';
+import { AiComposeButton } from '@/agent/compose/AiComposeButton';
 
 type SaveState = 'idle' | 'saving' | 'saved';
 
@@ -137,21 +138,26 @@ interface InlineEditTextAreaProps {
   editable?: boolean;
   placeholder?: string;
   rows?: number;
+  /** Show the ✨ AI compose button; uses this label + the entity facts to draft. */
+  aiLabel?: string;
+  aiKey?: string;
+  entityKind?: string;
+  getContext?: () => Record<string, unknown>;
 }
 
 /** A parchment multi-line editor that auto-saves on blur. */
-export function InlineEditTextArea({ label, value, onSave, editable, placeholder, rows = 3 }: InlineEditTextAreaProps) {
+export function InlineEditTextArea({ label, value, onSave, editable, placeholder, rows = 3, aiLabel, aiKey, entityKind, getContext }: InlineEditTextAreaProps) {
   const [val, setVal] = useState(value ?? '');
   const [state, setState] = useState<SaveState>('idle');
   const timer = useRef<number | undefined>(undefined);
   useEffect(() => { setVal(value ?? ''); }, [value]);
   useEffect(() => () => { if (timer.current) window.clearTimeout(timer.current); }, []);
 
-  const commit = async () => {
-    if ((value ?? '') === val) return;
+  const save = async (next: string) => {
+    if ((value ?? '') === next) return;
     setState('saving');
     try {
-      await onSave(val);
+      await onSave(next);
       setState('saved');
       if (timer.current) window.clearTimeout(timer.current);
       timer.current = window.setTimeout(() => setState('idle'), 1400);
@@ -159,6 +165,8 @@ export function InlineEditTextArea({ label, value, onSave, editable, placeholder
       setState('idle');
     }
   };
+  const commit = () => save(val);
+  const acceptAi = (text: string) => { setVal(text); void save(text); };
 
   return (
     <div>
@@ -167,14 +175,28 @@ export function InlineEditTextArea({ label, value, onSave, editable, placeholder
         <SaveBadge state={state} />
       </div>
       {editable ? (
-        <textarea
-          value={val}
-          rows={rows}
-          placeholder={placeholder}
-          onChange={(e) => setVal(e.target.value)}
-          onBlur={commit}
-          style={{ width: '100%', resize: 'vertical', background: 'var(--parchment)', border: '1px solid var(--gold-mid)', borderRadius: 2, padding: '6px 8px', fontSize: '0.72rem', color: 'var(--forest-deep)', lineHeight: 1.5, outline: 'none', boxShadow: 'inset 0 1px 2px rgba(0,0,0,0.1)', ...serifStyle }}
-        />
+        <div style={{ position: 'relative' }}>
+          <textarea
+            value={val}
+            rows={rows}
+            placeholder={placeholder}
+            onChange={(e) => setVal(e.target.value)}
+            onBlur={commit}
+            style={{ width: '100%', resize: 'vertical', background: 'var(--parchment)', border: '1px solid var(--gold-mid)', borderRadius: 2, padding: '6px 8px', paddingBottom: aiLabel ? 30 : 8, fontSize: '0.72rem', color: 'var(--forest-deep)', lineHeight: 1.5, outline: 'none', boxShadow: 'inset 0 1px 2px rgba(0,0,0,0.1)', ...serifStyle }}
+          />
+          {aiLabel && (
+            <div style={{ position: 'absolute', bottom: 6, right: 6 }}>
+              <AiComposeButton
+                label={aiLabel}
+                fieldKey={aiKey}
+                entityKind={entityKind ?? 'record'}
+                getContext={getContext ?? (() => ({}))}
+                getCurrentValue={() => val}
+                onAccept={acceptAi}
+              />
+            </div>
+          )}
+        </div>
       ) : (
         <p style={{ fontSize: '0.72rem', color: value ? 'var(--forest-mid)' : 'var(--gold-dark)', fontStyle: value ? 'normal' : 'italic', lineHeight: 1.6, margin: 0, ...serifStyle }}>{value || 'Not recorded.'}</p>
       )}

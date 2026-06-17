@@ -15,18 +15,15 @@ import { useMemo, useRef, useState, useEffect } from 'react';
 import { useLocation } from 'react-router-dom';
 import { useChat } from '@ai-sdk/react';
 import { DefaultChatTransport, type UIMessage } from 'ai';
-import { AnimatePresence, motion } from 'framer-motion';
-import { MessageCircle, X, Send, Sparkles, Square, Maximize2, Minimize2, Mic, Volume2, VolumeX, Loader2 } from 'lucide-react';
+import { AnimatePresence, motion, useReducedMotion } from 'framer-motion';
+import { X, Send, Sparkles, Square, Maximize2, Minimize2, Mic, Volume2, VolumeX, Loader2 } from 'lucide-react';
 
 import { apiUrl } from '@/lib/api';
 import { useAuthStore } from '@/stores/authStore';
 import { useAgentUi } from '@/stores/agentUiStore';
 import { useEditorAgentUi } from '@/stores/editorAgentUiStore';
 import { MarkdownMessage } from '@/components/MarkdownMessage';
-import {
-  isRecordingSupported, isVoiceEnabled, startRecording, transcribe,
-  startLiveCaption, SpeechStream, type Recorder, type LiveCaption,
-} from '@/agent/voice/voiceClient';
+import { useVoiceChat } from '@/agent/voice/useVoiceChat';
 
 // ── Page-context derivation ────────────────────────────────────────────────
 // Turns the current path into a small hint the assistant can use. The agent
@@ -119,6 +116,7 @@ export function AgentWidget() {
 
   const [expanded, setExpanded] = useState(false);
   const [input, setInput] = useState('');
+  const reduce = useReducedMotion();
   const location = useLocation();
   const scrollRef = useRef<HTMLDivElement>(null);
 
@@ -158,83 +156,10 @@ export function AgentWidget() {
     setInput('');
   };
 
-  // ── Voice (push-to-talk pipeline: OpenAI ears + mouth, Claude stays the brain) ──
-  const [voiceReady, setVoiceReady] = useState(false);   // mic supported AND server has a key
-  const [voiceMode, setVoiceMode] = useState(false);     // read replies aloud
-  const [recording, setRecording] = useState(false);
-  const [transcribing, setTranscribing] = useState(false);
-  const [caption, setCaption] = useState('');     // live interim transcript while speaking
-  const recorderRef = useRef<Recorder | null>(null);
-  const liveRef = useRef<LiveCaption | null>(null);
-  const speechRef = useRef<SpeechStream | null>(null);   // streaming TTS for the current reply
-  const speechMsgIdRef = useRef<string | null>(null);    // assistant msg id we're speaking
-  const speakNextRef = useRef(false);             // speak the next reply (user just spoke)
-
-  useEffect(() => {
-    if (!isRecordingSupported()) return;
-    void isVoiceEnabled().then(setVoiceReady);
-  }, []);
-
-  const toggleMic = async () => {
-    if (recording) {
-      // Stop → transcribe → send through the normal agent flow.
-      const rec = recorderRef.current;
-      recorderRef.current = null;
-      liveRef.current?.stop();
-      liveRef.current = null;
-      setRecording(false);
-      if (!rec) return;
-      setTranscribing(true);
-      try {
-        const clip = await rec.stop();
-        const text = await transcribe(clip);
-        if (text) {
-          speakNextRef.current = true; // they spoke → speak the reply back, even if voice mode is off
-          send(text);
-        }
-      } catch {
-        /* transcription failed — user can try again or type */
-      } finally {
-        setTranscribing(false);
-        setCaption('');
-      }
-      return;
-    }
-    try {
-      speechRef.current?.stop(); // don't record over our own playback
-      recorderRef.current = await startRecording();
-      setCaption('');
-      liveRef.current = startLiveCaption(setCaption); // live words (display-only); null if unsupported
-      setRecording(true);
-    } catch {
-      setVoiceReady(false); // mic denied/unavailable — hide the control
-    }
-  };
-
-  // Stream the reply to speech: start speaking the first sentence WHILE the rest
-  // is still being written (voice mode on, or the user just spoke). Decide once
-  // per assistant message, then feed text incrementally and flush on completion.
-  useEffect(() => {
-    const last = messages[messages.length - 1];
-    if (!last || last.role !== 'assistant') return;
-    if (speechMsgIdRef.current !== last.id) {
-      speechMsgIdRef.current = last.id;
-      speechRef.current?.stop();
-      const shouldSpeak = voiceMode || speakNextRef.current;
-      speakNextRef.current = false;
-      speechRef.current = shouldSpeak ? new SpeechStream() : null;
-    }
-    const stream = speechRef.current;
-    if (stream) {
-      const text = messageText(last);
-      if (busy) stream.update(text);
-      else stream.finish(text);
-    }
-  }, [messages, busy, voiceMode]);
-
-  // Stop playback when voice mode is turned off or the panel closes/unmounts.
-  useEffect(() => { if (!voiceMode || !open) speechRef.current?.stop(); }, [voiceMode, open]);
-  useEffect(() => () => { speechRef.current?.stop(); recorderRef.current?.cancel(); liveRef.current?.stop(); }, []);
+  // ── Voice (push-to-talk: OpenAI ears + mouth, Claude stays the brain) — shared
+  //    with the profile/onboarding assistants via useVoiceChat. ──
+  const { voiceReady, voiceMode, setVoiceMode, recording, transcribing, caption, toggleMic } =
+    useVoiceChat({ messages, send, busy, active: open && !suppressGlobal });
 
   // An inline "Ask" button queued a question — send it once, then clear.
   useEffect(() => {
@@ -256,19 +181,57 @@ export function AgentWidget() {
 
   return (
     <>
-      {/* Floating launcher (forest green + gold) */}
+      {/* Floating launcher — the Stablehand mascot (gold horse), gamified */}
       <motion.button
-        aria-label="Ask the Stablehand"
+        aria-label={open ? 'Close the Stablehand' : 'Ask the Stablehand'}
         onClick={toggle}
-        whileHover={{ scale: 1.05 }}
-        whileTap={{ scale: 0.95 }}
-        className="fixed bottom-5 right-5 z-50 flex h-14 w-14 items-center justify-center rounded-full shadow-lg"
-        style={{ background: FOREST, border: '1px solid var(--gold-mid)' }}
+        whileHover={{ scale: 1.08 }}
+        whileTap={{ scale: 0.9 }}
+        className="fixed bottom-5 right-5 z-50 flex h-14 w-14 items-center justify-center rounded-full"
+        style={{
+          background: FOREST,
+          border: '1px solid var(--gold-mid)',
+          boxShadow: '0 6px 18px rgba(0,0,0,0.45), 0 0 0 4px rgba(212,168,67,0.16)',
+        }}
       >
+        {/* Pulsing gold "attention" ring — a gentle nudge while idle/closed */}
+        {!open && !reduce && (
+          <motion.span
+            aria-hidden
+            className="absolute inset-0 rounded-full"
+            style={{ border: '2px solid var(--gold-bright)' }}
+            initial={{ opacity: 0.55, scale: 1 }}
+            animate={{ opacity: 0, scale: 1.55 }}
+            transition={{ duration: 1.9, repeat: Infinity, ease: 'easeOut' }}
+          />
+        )}
+
         {open ? (
           <X className="h-6 w-6" style={{ color: 'var(--gold-bright)' }} />
         ) : (
-          <MessageCircle className="h-6 w-6" style={{ color: 'var(--gold-bright)' }} />
+          <>
+            {/* Idle gallop: a soft bob + lean, like the horse is cantering in place */}
+            <motion.img
+              src="/images/favicon-gold.png"
+              alt=""
+              className="h-9 w-9 object-contain"
+              style={{ filter: 'drop-shadow(0 1px 2px rgba(0,0,0,0.4))' }}
+              animate={reduce ? undefined : { y: [0, -2.5, 0], rotate: [0, -2.5, 0] }}
+              transition={{ repeat: Infinity, duration: 2.2, ease: 'easeInOut' }}
+            />
+            {/* Sparkle badge */}
+            <motion.span
+              className="absolute -right-0.5 -top-0.5 flex h-4 w-4 items-center justify-center rounded-full"
+              style={{
+                background: 'linear-gradient(135deg, var(--gold-bright), var(--gold-mid))',
+                border: '1.5px solid var(--forest-deep)',
+              }}
+              animate={reduce ? undefined : { scale: [1, 1.18, 1] }}
+              transition={{ repeat: Infinity, duration: 2.2, ease: 'easeInOut' }}
+            >
+              <Sparkles className="h-2 w-2" style={{ color: 'var(--forest-deep)' }} />
+            </motion.span>
+          </>
         )}
       </motion.button>
 
@@ -291,7 +254,12 @@ export function AgentWidget() {
               className="flex items-center gap-2 px-4 py-3"
               style={{ background: FOREST, borderBottom: '2px solid var(--gold-dark)' }}
             >
-              <Sparkles className="h-5 w-5" style={{ color: 'var(--gold-bright)' }} />
+              <img
+                src="/images/favicon-gold.png"
+                alt=""
+                className="h-7 w-7 flex-shrink-0 object-contain"
+                style={{ filter: 'drop-shadow(0 1px 1px rgba(0,0,0,0.4))' }}
+              />
               <div className="leading-tight">
                 <div
                   className="font-[family-name:var(--font-display)] text-sm font-bold"

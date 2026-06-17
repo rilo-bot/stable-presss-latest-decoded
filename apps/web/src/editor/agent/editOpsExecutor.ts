@@ -11,6 +11,7 @@ import { STOCK } from '@/editor/templates/helpers';
 import type { Magazine, MagazinePage, TextStyle } from '@/types/magazine';
 import { filledOf, previewOf, resolveCurrentPageId } from './editorContext';
 import { applyPayload, computeAfter, uid, undoLast, scrollRegionIntoView } from './applyEdits';
+import { runComposeFill } from './composeExecutor';
 import type { EditPayload, StagedEdit } from './types';
 
 /* eslint-disable @typescript-eslint/no-explicit-any */
@@ -22,6 +23,7 @@ const arg = (input: unknown): Record<string, any> => (input ?? {}) as Record<str
 export const EDITOR_CLIENT_TOOLS = new Set<string>([
   'getMagazine', 'getPage', 'getRegion', 'listTemplates', 'pageCatalog', 'suggestImageOptions', 'undoLastEdit',
   'setRegionText', 'setRegionImage', 'setRegionQr', 'patchRegionStyle', 'applyPageFill', 'clearRegion', 'setPageSelected',
+  'fillMagazineFromDocument',
 ]);
 export const isEditorClientTool = (name: string): boolean => EDITOR_CLIENT_TOOLS.has(name);
 
@@ -150,6 +152,8 @@ export async function executeEditorTool(toolName: string, input: unknown): Promi
       return { candidates: suggestImages(a.query) };
     case 'undoLastEdit':
       return undoLast() ? { ok: true, message: 'Reverted the last AI change.' } : { ok: false, message: 'Nothing to undo.' };
+    case 'fillMagazineFromDocument':
+      return runComposeFill(String(a.instruction ?? ''));
   }
 
   if (!mag) return { ok: false, error: 'No magazine is open.' };

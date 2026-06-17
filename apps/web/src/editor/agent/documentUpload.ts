@@ -28,8 +28,10 @@ function kindOf(contentType: string): DocAttachment['kind'] {
   return 'text';
 }
 
-/** Hard ceiling so the composer's "Reading…" chip can never spin forever. */
-const INGEST_TIMEOUT_MS = 120_000;
+/** Hard ceiling so the composer's "Reading…" chip can never spin forever.
+ *  Image-based PDFs are OCR'd page-by-page server-side (several model waves), so
+ *  allow generous headroom — the server bounds the real work per page. */
+const INGEST_TIMEOUT_MS = 210_000;
 
 /** Send one file to the ingest endpoint and return the analysed attachment. */
 export async function ingestFile(file: File): Promise<DocAttachment> {
@@ -56,6 +58,6 @@ export async function ingestFile(file: File): Promise<DocAttachment> {
     const e = (await res.json().catch(() => ({}))) as { error?: string };
     throw new Error(e.error || `Couldn't read that file (${res.status}).`);
   }
-  const { digest } = (await res.json()) as { digest: DocDigest };
-  return { id: uid('doc'), name: file.name, kind: kindOf(contentType), digest };
+  const { digest, fullText } = (await res.json()) as { digest: DocDigest; fullText?: string };
+  return { id: uid('doc'), name: file.name, kind: kindOf(contentType), digest, fullText: fullText ?? '' };
 }

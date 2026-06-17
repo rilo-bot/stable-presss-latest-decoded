@@ -15,6 +15,7 @@ import {
   DialogFooter,
   DialogClose,
 } from '@/components/ui/dialog';
+import { CoverUploader, AudioUploader } from './uploaders';
 
 // ── Create Episode Dialog ─────────────────────────────────────────────────────
 
@@ -43,7 +44,7 @@ export function CreateEpisodeDialog({
 
   const [saving, setSaving] = useState(false);
 
-  const handleSubmit = () => {
+  const handleSubmit = async () => {
     if (!form.title.trim()) {
       toast.error('Episode title is required.');
       return;
@@ -53,36 +54,39 @@ export function CreateEpisodeDialog({
       return;
     }
     setSaving(true);
-    setTimeout(() => {
-      createEpisode({ ...form, publishedAt: '' });
-      toast.success('Episode draft created. Ready for production.');
-      setSaving(false);
-      onClose();
-      setForm({
-        title: '',
-        description: '',
-        host: currentUser?.displayName ?? '',
-        season: 1,
-        episodeNumber: 1,
-        durationSeconds: 0,
-        audioUrl: '',
-        coverUrl: '',
-        relatedArticleIds: [],
-        producedBy: currentUser?.displayName ?? '',
-      });
-    }, 400);
+    const id = await createEpisode({ ...form, publishedAt: '' });
+    setSaving(false);
+    // createEpisode returns undefined and surfaces its own error toast on failure;
+    // only confirm + close when it actually persisted.
+    if (!id) return;
+    toast.success('Episode draft created. Ready for production.');
+    onClose();
+    setForm({
+      title: '',
+      description: '',
+      host: currentUser?.displayName ?? '',
+      season: 1,
+      episodeNumber: 1,
+      durationSeconds: 0,
+      audioUrl: '',
+      coverUrl: '',
+      relatedArticleIds: [],
+      producedBy: currentUser?.displayName ?? '',
+    });
   };
 
   return (
     <Dialog open={open} onOpenChange={(v) => !v && onClose()}>
-      <DialogContent className="max-w-lg w-full">
+      <DialogContent className="max-w-2xl w-full max-h-[88vh] grid-rows-[auto_minmax(0,1fr)_auto] overflow-hidden">
         <DialogHeader>
           <DialogTitle className="font-[family-name:var(--font-display)] text-xl">
             New Episode
           </DialogTitle>
         </DialogHeader>
 
-        <div className="space-y-4 py-2">
+        {/* -mr-6/pr-5 pulls the scroll gutter to the panel edge so the slim
+            scrollbar sits flush rather than floating inside the padding. */}
+        <div className="space-y-4 py-1 overflow-y-auto min-h-0 slim-scroll -mr-6 pr-5">
           <div>
             <Label htmlFor="ep-title">Episode Title</Label>
             <Input
@@ -138,10 +142,10 @@ export function CreateEpisodeDialog({
                 min={0}
                 value={Math.floor(form.durationSeconds / 60) || ''}
                 onChange={(e) =>
-                  setForm((f) => ({ ...f, durationSeconds: Number(e.target.value) * 60 }))
+                  setForm((f) => ({ ...f, durationSeconds: (Number(e.target.value) || 0) * 60 }))
                 }
                 className="mt-1"
-                placeholder="e.g. 52"
+                placeholder="Auto-filled from audio"
               />
             </div>
           </div>
@@ -157,26 +161,32 @@ export function CreateEpisodeDialog({
             />
           </div>
 
-          <div>
-            <Label htmlFor="ep-audio">Audio URL</Label>
-            <Input
-              id="ep-audio"
-              placeholder="https://…/episode.mp3"
-              value={form.audioUrl}
-              onChange={(e) => setForm((f) => ({ ...f, audioUrl: e.target.value }))}
-              className="mt-1"
-            />
-          </div>
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+            <div>
+              <Label>Episode Audio</Label>
+              <div className="mt-1.5">
+                <AudioUploader
+                  value={form.audioUrl}
+                  onChange={(url, seconds) =>
+                    setForm((f) => ({
+                      ...f,
+                      audioUrl: url,
+                      durationSeconds: seconds ?? f.durationSeconds,
+                    }))
+                  }
+                />
+              </div>
+            </div>
 
-          <div>
-            <Label htmlFor="ep-cover">Cover Image URL (optional)</Label>
-            <Input
-              id="ep-cover"
-              placeholder="https://…/cover.jpg"
-              value={form.coverUrl}
-              onChange={(e) => setForm((f) => ({ ...f, coverUrl: e.target.value }))}
-              className="mt-1"
-            />
+            <div>
+              <Label>Cover Image (optional)</Label>
+              <div className="mt-1.5">
+                <CoverUploader
+                  value={form.coverUrl}
+                  onChange={(url) => setForm((f) => ({ ...f, coverUrl: url }))}
+                />
+              </div>
+            </div>
           </div>
         </div>
 

@@ -4,6 +4,8 @@ import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Textarea } from '@/components/ui/textarea';
+import { AiTextarea } from '@/agent/compose/AiTextarea';
+import { ImageUploader } from '@/components/horse-form/ImageUploader';
 import { Badge } from '@/components/ui/badge';
 import {
   Dialog,
@@ -111,6 +113,7 @@ export function ArticleForm({
   const [readingTime, setReadingTime] = useState('');
   const [minTier, setMinTier] = useState<SubscriptionTier>('free');
   const [linkedHorseIds, setLinkedHorseIds] = useState<string[]>([]);
+  const [imageUrl, setImageUrl] = useState('');
   const [saving, setSaving] = useState(false);
 
   const isContributor = userRole === 'contributor';
@@ -138,6 +141,7 @@ export function ArticleForm({
       setReadingTime(editArticle.readingTime?.toString() ?? '');
       setMinTier(editArticle.minTier ?? 'free');
       setLinkedHorseIds(editArticle.linkedHorseIds ?? []);
+      setImageUrl(editArticle.imageUrl ?? '');
     } else {
       setTitle('');
       setSummary('');
@@ -151,6 +155,7 @@ export function ArticleForm({
       setReadingTime('');
       setMinTier('free');
       setLinkedHorseIds([]);
+      setImageUrl('');
     }
   }, [open, editArticle, defaultStatus, isContributor, currentUser?.displayName]);
 
@@ -182,7 +187,7 @@ export function ArticleForm({
         minTier,
         linkedHorseIds,
         publishedAt: status === 'published' ? new Date() : null,
-        imageUrl: editArticle?.imageUrl,
+        imageUrl: imageUrl.trim() || undefined,
       };
 
       if (editArticle) {
@@ -265,13 +270,43 @@ export function ArticleForm({
             >
               Summary / Lead Paragraph
             </Label>
-            <Textarea
+            <AiTextarea
               id="article-summary"
               value={summary}
               onChange={(e) => setSummary(e.target.value)}
               placeholder="The opening paragraph — the paragraph that earns the read."
               rows={4}
               className="resize-none leading-relaxed"
+              aiLabel="Summary / lead paragraph"
+              aiKey="summary"
+              entityKind="article"
+              getContext={() => ({
+                title,
+                category: selectedCatDef ? `${selectedCatDef.section} · ${selectedCatDef.label}` : category,
+                author,
+                linkedHorses: linkedHorseIds.map((id) => horses.find((h) => h.id === id)?.name).filter(Boolean),
+              })}
+              onAccept={setSummary}
+            />
+          </div>
+
+          {/* Lead Image */}
+          <div className="space-y-1.5">
+            <Label
+              htmlFor="article-image"
+              className="text-[10px] uppercase tracking-[0.1em] font-semibold text-muted-foreground"
+            >
+              Lead Image
+            </Label>
+            <p className="text-[10px] text-muted-foreground/70 -mt-0.5">
+              The hero photo shown on the public story and across the news index. Paste a link or upload a file.
+            </p>
+            <ImageUploader
+              value={imageUrl}
+              onChange={setImageUrl}
+              kind="media"
+              label="story image"
+              id="article-image"
             />
           </div>
 

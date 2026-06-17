@@ -2,6 +2,7 @@ import type { Party } from '@/types/party';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Textarea } from '@/components/ui/textarea';
+import { AiTextarea } from '@/agent/compose/AiTextarea';
 import { Users } from 'lucide-react';
 import { Section, SelectField } from './fields';
 import { PartyPicker } from './PartyPicker';
@@ -311,13 +312,22 @@ export function PedigreeSection({ form, setField }: { form: FormData; setField: 
       {/* Pedigree notes */}
       <div className="space-y-1.5">
         <Label htmlFor="horse-pedigree" className="text-xs font-semibold">Pedigree Notes</Label>
-        <Textarea
+        <AiTextarea
           id="horse-pedigree"
           value={form.pedigreeNotes}
           onChange={(e) => setField('pedigreeNotes', e.target.value)}
           placeholder="e.g. By Galileo out of Golden Thread (Danehill). A strong staying pedigree with international Group 1 winners on both sides…"
           className="text-sm resize-none"
           rows={3}
+          aiLabel="Pedigree notes"
+          aiKey="pedigreeNotes"
+          entityKind="horse"
+          getContext={() => ({
+            name: form.name, sex: form.sex, colour: form.colour, country: form.country,
+            sire: form.sire, sireSire: form.sireSire, sireDam: form.sireDam,
+            dam: form.dam, damSire: form.damSire, damDam: form.damDam,
+          })}
+          onAccept={(text) => setField('pedigreeNotes', text)}
         />
       </div>
     </Section>
@@ -576,6 +586,9 @@ export function EditorialSection({ form, setField }: { form: FormData; setField:
           <ImageUploader
             value={form.imageUrl ?? ''}
             onChange={(url) => setField('imageUrl', url)}
+            kind="horse"
+            label="horse photo"
+            id="horse-image"
           />
         </div>
       </div>

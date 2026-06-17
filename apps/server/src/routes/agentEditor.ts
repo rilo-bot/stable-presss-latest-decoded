@@ -16,6 +16,8 @@ import { getAgentModel, isAgentConfigured } from '../lib/agent/provider.js'
 import { buildEditorSystemPrompt, type EditorContext } from '../lib/agent/editorPrompt.js'
 import { buildEditorTools } from '../lib/agent/editorTools.js'
 import { ingestDocument, ingestKind } from '../lib/agent/documentIngest.js'
+import { composeFromDocuments, type ComposeSource } from '../lib/agent/composeFill.js'
+import type { CatalogPage } from '../lib/agent/composeGroups.js'
 
 const router = Router()
 
@@ -47,11 +49,25 @@ router.post('/ingest', attachAccountOptional, rawDoc, async (req, res) => {
     return
   }
   try {
-    const digest = await ingestDocument({ bytes: body, contentType, name })
-    res.json({ digest })
+    const { digest, fullText } = await ingestDocument({ bytes: body, contentType, name })
+    res.json({ digest, fullText })
   } catch (err) {
     console.error('[agent-editor] ingest error:', err)
-    res.status(500).json({ error: "I couldn't read that document just now — try a different file, or paste the key details and I'll place them." })
+    const msg = err instanceof Error ? err.message : ''
+    if (err instanceof Error && (err.name === 'TimeoutError' || /timed out/i.test(msg))) {
+      res.status(504).json({
+        error: 'Reading that document took too long — it may be very long or image-heavy. Try a shorter or text-based PDF.',
+      })
+      return
+    }
+    // ingestDocument throws friendly, user-facing messages for known cases; pass
+    // those straight through (422) rather than masking them with the generic line.
+    const friendly = /image-based|couldn't read any|no pages|looks empty|Unsupported file type/i.test(msg)
+    res.status(friendly ? 422 : 500).json({
+      error: friendly
+        ? msg
+        : "I couldn't read that document just now — try a different file, or paste the key details and I'll place them.",
+    })
   }
 })
 
@@ -86,6 +102,37 @@ router.post('/chat', attachAccountOptional, async (req, res) => {
   } catch (err) {
     console.error('[agent-editor] error:', err)
     if (!res.headersSent) res.status(500).json({ error: 'The studio assistant hit a snag. Please try again.' })
+  }
+})
+
+// POST /api/agent/editor/compose — bulk "fill the bulletin from this document".
+// Given the document text + the open magazine's region catalog, returns a
+// validated fill plan covering as many pages/regions as the doc supports. The
+// client re-validates against the live draft and stages it per page for review.
+router.post('/compose', attachAccountOptional, async (req, res) => {
+  if (!isAgentConfigured()) {
+    res.status(503).json({ error: 'The studio assistant is resting — OPENROUTER_API_KEY is not configured on the server.' })
+    return
+  }
+  const body = req.body as { userPrompt?: string; sources?: ComposeSource[]; pages?: CatalogPage[] }
+  const sources = Array.isArray(body?.sources)
+    ? body.sources.filter((s) => s && typeof s.text === 'string' && s.text.trim().length > 0)
+    : []
+  const pages = Array.isArray(body?.pages) ? body.pages : []
+  if (sources.length === 0) {
+    res.status(400).json({ error: 'No document text to work from — upload a document first.' })
+    return
+  }
+  if (pages.length === 0) {
+    res.status(400).json({ error: 'No editable pages to fill.' })
+    return
+  }
+  try {
+    const result = await composeFromDocuments({ userPrompt: String(body.userPrompt ?? ''), sources, pages })
+    res.json(result)
+  } catch (err) {
+    console.error('[agent-editor] compose error:', err)
+    res.status(500).json({ error: "I couldn't compose the layout just now — please try again." })
   }
 })
 
