@@ -1,13 +1,16 @@
 /**
- * EditableImage — fills its (page-provided) container; clicking selects the
- * region so the inspector opens the image panel. Read-only swaps to ImageView.
+ * EditableImage — fills its (page-provided) container. Clicking the image opens
+ * the OS file picker straight away to upload/replace the photo, and selects the
+ * region so the inspector's fit/position controls are available for follow-up
+ * tweaks. Read-only swaps to ImageView.
  */
 
 import { useMagazineStore } from '@/stores/magazineStore';
 import { useEditorContext } from '../EditorContext';
+import { useImageUpload } from './useImageUpload';
 import type { ImageContent } from '@/types/magazine';
 import { cn } from '@/lib/utils';
-import { ImageIcon } from 'lucide-react';
+import { ImageIcon, Loader2, Upload } from 'lucide-react';
 
 interface Props {
   regionId: string;
@@ -26,6 +29,7 @@ export function EditableImage({ regionId, className, rounded }: Props) {
   const selected = useMagazineStore((s) => s.selectedRegionId === regionId);
   const select = useMagazineStore((s) => s.select);
   const resolveImage = useMagazineStore((s) => s.resolveImage);
+  const { busy, openPicker, inputProps } = useImageUpload(magazineId, pageId, regionId);
 
   if (!content) return null;
   const src = resolveImage(content.src);
@@ -33,7 +37,10 @@ export function EditableImage({ regionId, className, rounded }: Props) {
   return (
     <button
       type="button"
-      onClick={() => select(regionId)}
+      onClick={() => {
+        select(regionId);
+        if (!busy) openPicker();
+      }}
       className={cn(
         'group relative block w-full h-full overflow-hidden bg-black/5',
         rounded,
@@ -41,8 +48,9 @@ export function EditableImage({ regionId, className, rounded }: Props) {
         selected ? 'ring-2 ring-sky-500/90' : 'hover:ring-2 hover:ring-sky-400/50',
         className
       )}
-      aria-label={`Edit image: ${content.alt ?? regionId}`}
+      aria-label={`Upload or replace image: ${content.alt ?? regionId}`}
     >
+      <input {...inputProps} />
       {src ? (
         <img
           src={src}
@@ -60,8 +68,14 @@ export function EditableImage({ regionId, className, rounded }: Props) {
         </span>
       )}
       <span className="absolute inset-x-0 bottom-0 flex items-center justify-center gap-1 py-1 text-[10px] font-semibold uppercase tracking-wider text-white bg-sky-600/80 opacity-0 group-hover:opacity-100 transition-opacity pointer-events-none">
-        <ImageIcon size={11} /> Edit photo
+        {busy ? <Loader2 size={11} className="animate-spin" /> : <Upload size={11} />}
+        {busy ? 'Uploading…' : src ? 'Replace photo' : 'Upload photo'}
       </span>
+      {busy && (
+        <span className="absolute inset-0 flex items-center justify-center bg-black/30">
+          <Loader2 size={22} className="animate-spin text-white" />
+        </span>
+      )}
     </button>
   );
 }
