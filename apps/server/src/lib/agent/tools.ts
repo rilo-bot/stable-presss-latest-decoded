@@ -16,6 +16,7 @@ import { isStaff } from '../rbac.js'
 import { authorisedHorseIds, manageablePartyIds, horsesLinkedToParty } from '../scope.js'
 import type { AccountUser } from '../identity.js'
 import { FEATURE_GUIDES, GUIDE_TOPICS } from './guides.js'
+import { getCapabilities } from './capabilities.js'
 
 type Doc = Record<string, any> & { _id?: string; id?: string }
 
@@ -151,6 +152,13 @@ export function buildTools(account?: AccountUser, authHeader?: string): ToolSet 
             .map((h) => ({ id: idOf(h), name: h.isUnnamed ? '(unnamed)' : h.name })),
         }
       },
+    }),
+
+    whatCanIDo: tool({
+      description:
+        "Exactly what the signed-in reader can and cannot do right now, given their roles, claims, subscription and stable. Each capability says whether it is allowed, why not if blocked, and WHERE to do it — plus their stable/party counts. Call this to give precise, role-aware guidance and concrete next steps (it powers the same quick actions as the dashboard). Returns signedIn:false for guests.",
+      inputSchema: z.object({}),
+      execute: async () => getCapabilities(account),
     }),
 
     searchHorses: tool({

@@ -255,7 +255,7 @@ export default function App() {
             }
           />
           <Route
-            path="/horses/:id/edit"
+            path="/studio/horse/:id"
             element={
               <AppLayout>
                 <HorseEditor />

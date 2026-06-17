@@ -1,0 +1,32 @@
+import { mkPage, text, img, qr, STOCK, P, GOLD } from './_shared';
+
+// ── 4. Important Discussion ─────────────────────────────────────────
+export const discussion = mkPage('important-discussion', 'Important Discussion', {
+  band: text('IMPORTANT DISCUSSION', P.bandLabel),
+  bandSub: text('The future of racing starts with ownership.', { ...P.caption, color: GOLD }),
+  h1a: text('WHY THE OWNER', { ...P.displayNavy, fontSize: 30 }),
+  h1b: text('SHOULD BE AT THE TOP OF THE TREE', { ...P.displayGold, fontSize: 30 }),
+  lead: text('Ownership is the foundation of everything that makes racing possible.', P.pullQuote),
+  body: text('The NZ Blueprint makes one thing clear — without owners, there is no racing industry. Owners are the investors, the believers, and the reason the sport exists. It\'s time ownership is recognised as the strategic priority it truly is.', P.body),
+  treeImg: img(STOCK.tree, 'cover'),
+  pyramidTitle: text('THE OWNERSHIP PYRAMID — A STRONG BASE BUILDS A STRONG INDUSTRY', { ...P.kickerNavy, fontSize: 9 }),
+  tier1: text('VISIONARY OWNERS — Lead, invest, inspire', P.bodySmall),
+  tier2: text('ENGAGED OWNERS — Active, informed, involved', P.bodySmall),
+  tier3: text('NEW &amp; ASPIRING OWNERS — The future of our sport', P.bodySmall),
+  cycleTitle: text('THE STRUCTURAL CYCLE — A CYCLE WE MUST BREAK', { ...P.kickerNavy, fontSize: 9 }),
+  cycleBody: text('Weakening ownership base → smaller fields &amp; less competitiveness → weaker wagering &amp; industry revenue → the cycle reinforces itself. Unless we act together.', P.bodySmall),
+  dataTitle: text('WHAT THE DATA IS TELLING US', { ...P.kickerGold, fontSize: 9 }),
+  data1: text('<b>Ownership fragmentation</b> — more owners per horse, less connection', P.bodySmall),
+  data2: text('<b>Ageing ownership base</b> — threatening long-term sustainability', P.bodySmall),
+  data3: text('<b>Participation quality not quantity</b> — engagement is what matters', P.bodySmall),
+  data4: text('<b>Data not driving outcomes</b> — it exists but isn\'t used coherently', P.bodySmall),
+  quote: text('Every dollar in racing begins with an owner willing to dream.', P.pullQuoteWhite),
+  changeTitle: text('WHAT MUST CHANGE', { ...P.kickerNavy, fontSize: 9 }),
+  changeBody: text('✓ Ownership treated as the foundation of the industry<br>✓ Data shared across stakeholders to enable coordinated action<br>✓ NZTROF enabled to engage directly with all owners<br>✓ A unified ownership strategy with measurable targets', P.bodySmall),
+  blueprintTitle: text('THE NZ MODEL — OUR BLUEPRINT', { ...P.kickerGold, fontSize: 9 }),
+  blueprintBody: text('1. Establish a unified ownership data framework<br>2. Create a direct communication channel between NZTROF and all owners<br>3. Implement measurable targets for ownership growth and retention', P.bodySmall),
+  qrMain: qr('https://nztrof.co.nz/blueprint'),
+  qrNote: text('READ THE FULL NZ BLUEPRINT &amp; JOIN THE DISCUSSION', P.qrLabel),
+  footer: text('STRONG OWNERSHIP. STRONG RACING. STRONGER FUTURE.', P.footer),
+  pageNum: text('PAGE 26', { ...P.footer, align: 'right' }),
+});

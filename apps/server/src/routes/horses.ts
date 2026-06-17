@@ -70,7 +70,9 @@ router.post('/', async (req, res) => {
     verificationStatus: string;
   }>;
 
-  if (!body || !body.name) {
+  // A name is required UNLESS this is an un-named draft (foal / yearling), which
+  // members create photo-first and name later. Un-named drafts store name: ''.
+  if (!body || (!body.name && !body.isUnnamed)) {
     res.status(400).json({ error: 'name is required' });
     return;
   }
@@ -89,6 +91,7 @@ router.post('/', async (req, res) => {
 
   const doc: Record<string, unknown> = {
     ...body,
+    name: body.name ?? '',
     verificationStatus,
     createdByUserId: account?.id,
     createdAt: now,

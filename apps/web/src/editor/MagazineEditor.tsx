@@ -15,7 +15,7 @@ import { ShareDialog } from './ShareDialog';
 import { EditorAgentPanel } from './agent/EditorAgentPanel';
 import { FloatingSuggestions } from './agent/FloatingSuggestions';
 import { useCurrentPageTracker } from './agent/useCurrentPageTracker';
-import { X, ZoomIn, ZoomOut, Send, CheckSquare, Square, ChevronDown, Loader2, Users, Sparkles } from 'lucide-react';
+import { X, ZoomIn, ZoomOut, Send, CheckSquare, Square, ChevronDown, Loader2, Users, Sparkles, Undo2, Redo2 } from 'lucide-react';
 import { toast } from 'sonner';
 
 export function MagazineEditor({ magazineId, onClose }: { magazineId: string; onClose: () => void }) {
@@ -29,6 +29,10 @@ export function MagazineEditor({ magazineId, onClose }: { magazineId: string; on
   const buildIssuePayload = useMagazineStore((s) => s.buildIssuePayload);
   const markPublished = useMagazineStore((s) => s.markPublished);
   const publishIssue = useIssueStore((s) => s.publish);
+  const undo = useMagazineStore((s) => s.undo);
+  const redo = useMagazineStore((s) => s.redo);
+  const canUndo = useMagazineStore((s) => s.history[magazineId]?.canUndo ?? false);
+  const canRedo = useMagazineStore((s) => s.history[magazineId]?.canRedo ?? false);
 
   const meta = useMagazineStore((s) => {
     const m = s.magazines.find((x) => x.id === magazineId);
@@ -87,9 +91,41 @@ export function MagazineEditor({ magazineId, onClose }: { magazineId: string; on
     };
   }, []);
 
+  // Undo/redo keyboard shortcuts (Ctrl/Cmd+Z, Ctrl/Cmd+Shift+Z, Ctrl+Y). Blur the
+  // active region first so EditableText re-syncs from the restored store value.
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if (!(e.ctrlKey || e.metaKey)) return;
+      const tag = document.activeElement?.tagName;
+      if (tag === 'INPUT' || tag === 'TEXTAREA') return; // leave native undo for form fields
+      const k = e.key.toLowerCase();
+      if (k === 'z') {
+        e.preventDefault();
+        (document.activeElement as HTMLElement | null)?.blur();
+        if (e.shiftKey) redo(magazineId);
+        else undo(magazineId);
+      } else if (k === 'y') {
+        e.preventDefault();
+        (document.activeElement as HTMLElement | null)?.blur();
+        redo(magazineId);
+      }
+    };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [magazineId, undo, redo]);
+
   const handleClose = () => {
     flushPending();
     onClose();
+  };
+
+  const handleUndo = () => {
+    (document.activeElement as HTMLElement | null)?.blur();
+    undo(magazineId);
+  };
+  const handleRedo = () => {
+    (document.activeElement as HTMLElement | null)?.blur();
+    redo(magazineId);
   };
 
   if (loadState === 'loading' || !meta) {
@@ -163,6 +199,12 @@ export function MagazineEditor({ magazineId, onClose }: { magazineId: string; on
         )}
 
         <div className="ml-auto flex items-center gap-1.5">
+          {/* undo / redo */}
+          <div className="flex items-center rounded-sm border border-white/15 bg-white/5">
+            <button onClick={handleUndo} disabled={!canUndo} className="px-2 py-1.5 text-white/70 hover:bg-white/10 disabled:opacity-30 disabled:hover:bg-transparent" aria-label="Undo" title="Undo (Ctrl+Z)"><Undo2 size={14} /></button>
+            <button onClick={handleRedo} disabled={!canRedo} className="px-2 py-1.5 text-white/70 hover:bg-white/10 disabled:opacity-30 disabled:hover:bg-transparent" aria-label="Redo" title="Redo (Ctrl+Shift+Z)"><Redo2 size={14} /></button>
+          </div>
+
           {/* zoom */}
           <div className="flex items-center rounded-sm border border-white/15 bg-white/5">
             <button onClick={() => setScale((z) => Math.max(0.35, +(z - 0.08).toFixed(2)))} className="px-2 py-1.5 text-white/70 hover:bg-white/10" aria-label="Zoom out"><ZoomOut size={14} /></button>

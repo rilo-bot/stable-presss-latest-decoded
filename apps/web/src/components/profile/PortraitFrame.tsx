@@ -9,7 +9,7 @@ import type { UploadKind } from '@/lib/upload';
 
 const noop = () => {};
 
-export function PortraitFrame({ src, alt, editable, kind, onUpload, caption, containerStyle }: {
+export function PortraitFrame({ src, alt, editable, kind, onUpload, caption, containerStyle, label }: {
   src?: string;
   alt: string;
   editable: boolean;
@@ -18,6 +18,8 @@ export function PortraitFrame({ src, alt, editable, kind, onUpload, caption, con
   /** Role / name block overlaid on the bottom of the portrait. */
   caption?: React.ReactNode;
   containerStyle?: React.CSSProperties;
+  /** Upload-button label shown in the empty editable state (e.g. onboarding CTA). */
+  label?: string;
 }) {
   return (
     <HeroImageEdit
@@ -27,6 +29,7 @@ export function PortraitFrame({ src, alt, editable, kind, onUpload, caption, con
       kind={kind}
       onUpload={onUpload ?? noop}
       containerStyle={containerStyle}
+      label={label}
     >
       {caption}
     </HeroImageEdit>

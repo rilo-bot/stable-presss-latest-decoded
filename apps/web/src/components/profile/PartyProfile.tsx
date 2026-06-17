@@ -5,9 +5,9 @@
  * descriptors (wired to updateParty in edit mode), and composes the dumb
  * ProfileScaffold + building blocks. One layout, two modes.
  */
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
-import { Clock, Check, Pencil, Plus, Loader2, Users } from 'lucide-react';
+import { Clock, Check, Plus, Loader2, Users } from 'lucide-react';
 import { toast } from 'sonner';
 import { useAuthStore } from '@/stores/authStore';
 import { usePartyStore } from '@/stores/partyStore';
@@ -31,12 +31,26 @@ import { EntityList, type EntityRow } from '@/components/profile/EntityList';
 import { ConnectionsRail, type RelTile } from '@/components/profile/ConnectionsRail';
 import { DataSectionsRail } from '@/components/profile/DataSectionsRail';
 import { REL_ORDER, renderProfileModule, activeModuleLabel } from '@/components/profile/modules';
+import { OnboardingSteps, type OnbStep } from '@/components/profile/OnboardingSteps';
+import { OnboardingComplete } from '@/components/profile/OnboardingComplete';
+import { ProfileAgentPanel, StudioLauncher } from '@/agent/profile/ProfileAgentPanel';
+import { useProfileAgentUi, type ProfileContext } from '@/stores/profileAgentUiStore';
 import { DossierMeter } from '@/components/DossierMeter';
 import { FollowButton } from '@/components/FollowButton';
 import { AskAgentButton } from '@/components/AskAgentButton';
-import { HorseForm } from '@/components/HorseForm';
 
 type Mode = 'view' | 'edit';
+
+/** Snapshot the party's editable fields for the AI assistant. */
+function buildPartyContext(party: Party, horseCount: number): ProfileContext {
+  const f: Record<string, string> = {
+    name: party.name ?? '', profession: party.profession ?? '', base_location: party.base_location ?? '',
+    date_of_birth: party.date_of_birth ?? '', country_of_birth: party.country_of_birth ?? '',
+    started_year: party.started_year != null ? String(party.started_year) : '',
+  };
+  const emptyFields = Object.entries(f).filter(([, v]) => !v.trim()).map(([k]) => k);
+  return { entityKind: 'party', entityId: party.id, name: party.name || 'Your profile', fields: f, emptyFields, roleBoxes: [{ role: 'horses', count: horseCount }] };
+}
 
 /** Whole-years age from a YYYY-MM-DD string, or null. */
 function calcAge(dob?: string): number | null {
@@ -79,7 +93,6 @@ export function PartyProfile({ partyId, mode, onBack }: PartyProfileProps) {
   useEffect(() => { fetchParties(mode === 'edit'); fetchHorses(); }, [fetchParties, fetchHorses, mode]);
 
   const [activeModule, setActiveModule] = useState<string | null>(null);
-  const [registerHorseOpen, setRegisterHorseOpen] = useState(false);
   const [newHorseName, setNewHorseName] = useState('');
   const [adding, setAdding] = useState(false);
 
@@ -105,6 +118,30 @@ export function PartyProfile({ partyId, mode, onBack }: PartyProfileProps) {
     return horses.filter((h) => linked.has(h.id) || h.createdByUserId === currentUser?.id);
   }, [horses, links, partyId, currentUser]);
 
+  // Keep the AI assistant's context in sync with the open party (edit mode only).
+  const setAgentContext = useProfileAgentUi((s) => s.setContext);
+  const askAgent = useProfileAgentUi((s) => s.ask);
+  useEffect(() => {
+    if (mode === 'edit' && party) setAgentContext(buildPartyContext(party, myHorses.length));
+    return () => setAgentContext(null);
+  }, [mode, party, myHorses, setAgentContext]);
+
+  // Onboarding completion (edit mode). Mirrors the `onbSteps` done predicates
+  // below — keep in sync. Hook (before guards) so the one-time celebration toast
+  // fires without breaking the Rules-of-Hooks order.
+  const onbAllDone = useMemo(() => {
+    if (!party || mode !== 'edit' || !editable) return false;
+    return !!party.photo && !!(party.profession && party.base_location) && myHorses.length > 0;
+  }, [party, mode, editable, myHorses]);
+  const celebratedRef = useRef(false);
+  useEffect(() => {
+    if (onbAllDone && !celebratedRef.current) {
+      celebratedRef.current = true;
+      toast.success('🏇 Profile complete — it’s ready to view.');
+    }
+    if (!onbAllDone) celebratedRef.current = false; // re-arm if data is later removed
+  }, [onbAllDone]);
+
   // ── Guards AFTER all hooks (stable hook order) ──
   if (!party) {
     if (mode === 'view' && parties.length > 0) { navigate('/parties', { replace: true }); return null; }
@@ -128,14 +165,26 @@ export function PartyProfile({ partyId, mode, onBack }: PartyProfileProps) {
     void set({ personnel_subtype: next });
   };
 
+  // Register a (named) horse and drop straight into its studio to finish it.
   const onAddHorse = async () => {
     const name = newHorseName.trim();
     if (!name) { toast.error('Enter a horse name.'); return; }
     setAdding(true);
     try {
-      await addHorse({ name, pedigreeNotes: '', ownerIds: [partyId] });
-      toast.success(`${name} registered — open it to add details.`);
-      setNewHorseName('');
+      const created = await addHorse({ name, pedigreeNotes: '', ownerIds: [partyId] });
+      if (created) { setNewHorseName(''); navigate(`/studio/horse/${created.id}`); }
+    } finally {
+      setAdding(false);
+    }
+  };
+
+  // Photo-first path: create an un-named draft (foal / yearling) with no name and
+  // jump into its studio — naming is never a hard gate.
+  const onAddUnnamedFoal = async () => {
+    setAdding(true);
+    try {
+      const created = await addHorse({ name: '', isUnnamed: true, pedigreeNotes: '', ownerIds: [partyId] });
+      if (created) navigate(`/studio/horse/${created.id}`);
     } finally {
       setAdding(false);
     }
@@ -160,6 +209,22 @@ export function PartyProfile({ partyId, mode, onBack }: PartyProfileProps) {
   ];
   const dossierFilled = dossierFlags.filter(Boolean).length;
 
+  // ── Onboarding step guide (edit mode; self-hides once complete) ──
+  const onbSteps: OnbStep[] = [
+    { key: 'photo', label: 'Photo', hint: 'Upload a profile photo.', done: !!party.photo, anchorId: 'onb-identity' },
+    { key: 'details', label: 'Details', hint: 'Add your profession and base location.', done: !!(party.profession && party.base_location), anchorId: 'onb-identity' },
+    { key: 'horses', label: 'Horses', hint: 'Register the horses in your stable.', done: horseCount > 0, anchorId: 'onb-horses' },
+  ];
+  const scrollToAnchor = (id?: string) => { if (id) document.getElementById(id)?.scrollIntoView({ behavior: 'smooth', block: 'center' }); };
+
+  // Per-step prompt that opens the Stable Studio assistant ready to help.
+  const PARTY_STEP_PROMPTS: Record<string, string> = {
+    photo: 'What should I add to complete my profile? Give me a short checklist.',
+    details: `Help me write my profession and base location as a ${roleLabel.toLowerCase()}.`,
+    horses: 'Help me add my first horse.',
+  };
+  const askAiForStep = (step: OnbStep) => askAgent(PARTY_STEP_PROMPTS[step.key] ?? `Help me with my ${step.label.toLowerCase()}.`);
+
   const summaryCells = [
     { label: 'Horses', value: String(horseCount) },
     { label: 'Winnings', value: scope.summary.totalWinnings > 0 ? fmtMoney(scope.summary.totalWinnings) : '—' },
@@ -172,16 +237,17 @@ export function PartyProfile({ partyId, mode, onBack }: PartyProfileProps) {
   const moduleOpen = activeModule !== null;
 
   // Horse open: owners go to the editable horse route, viewers to the public page.
-  const openHorse = (hid: string) => navigate(isEdit || editable ? `/horses/${hid}/edit` : `/horses/${hid}`);
+  // Public view → public horse page (read-only, even for owners); studio → editable horse.
+  const openHorse = (hid: string) => navigate(isEdit ? `/studio/horse/${hid}` : `/horses/${hid}`);
 
   // ── Identity fields (read-only in view, editable in edit) ──
   const age = calcAge(party.date_of_birth);
   const today = new Date().toISOString().split('T')[0];
   const roleChipsRow = (
     <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline', borderBottom: '1px solid var(--parchment-shadow)', paddingBottom: 6, marginBottom: 6, gap: 8 }}>
-      <dt style={{ fontSize: '0.56rem', textTransform: 'uppercase', letterSpacing: '0.1em', color: 'var(--parchment-shadow)', fontWeight: 700, flexShrink: 0 }}>Role</dt>
+      <dt style={{ fontSize: '0.56rem', textTransform: 'uppercase', letterSpacing: '0.1em', color: 'var(--parchment-label)', fontWeight: 700, flexShrink: 0 }}>Role</dt>
       <dd style={{ margin: 0, display: 'flex', flexWrap: 'wrap', gap: 4, justifyContent: 'flex-end' }}>
-        {roles.length === 0 ? <span style={{ fontSize: '0.72rem', color: 'var(--parchment-shadow)' }}>—</span> : roles.map((r) => (
+        {roles.length === 0 ? <span style={{ fontSize: '0.72rem', color: 'var(--parchment-label)' }}>—</span> : roles.map((r) => (
           <span key={r} style={{ fontSize: '0.55rem', fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.06em', padding: '2px 7px', borderRadius: 2, border: '1px solid var(--gold-mid)', background: 'rgba(180,140,30,0.14)', color: 'var(--forest-deep)' }}>{PARTY_ROLE_LABELS[r]}</span>
         ))}
       </dd>
@@ -230,11 +296,15 @@ export function PartyProfile({ partyId, mode, onBack }: PartyProfileProps) {
 
   const breadcrumbRight = (
     <>
-      <AskAgentButton
-        variant="ornate"
-        prompt={isEdit ? 'Help me complete my profile — what details should I add and how?' : "Tell me about this party — who they are and the horses they're connected to."}
-        label="Ask"
-      />
+      {isEdit && editable ? (
+        <StudioLauncher />
+      ) : (
+        <AskAgentButton
+          variant="ornate"
+          prompt="Tell me about this party — who they are and the horses they're connected to."
+          label="Ask"
+        />
+      )}
       <span style={{ fontSize: '0.5rem', letterSpacing: '0.18em', textTransform: 'uppercase', color: 'var(--gold-dark)', ...serifStyle }}>Stable Press · {roleLabel}</span>
     </>
   );
@@ -285,15 +355,9 @@ export function PartyProfile({ partyId, mode, onBack }: PartyProfileProps) {
             </span>
           )
         ) : (
-          <>
-            <FollowButton horseId={`party:${partyId}`} label={`Follow This ${roleLabel}`} />
-            {editable && isUnverified && provisionalBadge}
-            {editable && (
-              <button onClick={() => navigate(`/studio/${partyId}`)} style={{ display: 'flex', alignItems: 'center', gap: 5, padding: '5px 11px', borderRadius: 3, border: '1px solid var(--gold-mid)', background: 'linear-gradient(135deg, var(--gold-bright), var(--gold-mid))', color: 'var(--forest-deep)', fontWeight: 700, fontSize: '0.56rem', textTransform: 'uppercase', letterSpacing: '0.1em', cursor: 'pointer', ...serifStyle }}>
-                <Pencil size={11} /> Edit Profile
-              </button>
-            )}
-          </>
+          /* Public page = read-only preview: no owner edit chrome. Editing is
+             reached only from the private studio (Dashboard → My Profile). */
+          <FollowButton horseId={`party:${partyId}`} label={`Follow This ${roleLabel}`} />
         )}
         <DossierMeter filled={dossierFilled} total={dossierFlags.length} />
       </div>
@@ -301,23 +365,22 @@ export function PartyProfile({ partyId, mode, onBack }: PartyProfileProps) {
   );
 
   // ── Centre default body ──
-  const registerAction = !isEdit && editable ? (
-    <button onClick={() => setRegisterHorseOpen(true)} style={{ display: 'flex', alignItems: 'center', gap: 4, padding: '3px 8px', borderRadius: 3, border: '1px solid var(--gold-mid)', background: 'linear-gradient(135deg, var(--gold-bright), var(--gold-mid))', color: 'var(--forest-deep)', fontWeight: 700, fontSize: '0.5rem', textTransform: 'uppercase', letterSpacing: '0.08em', cursor: 'pointer', ...serifStyle }}>
-      <Plus size={11} /> Register Horse
-    </button>
-  ) : undefined;
-
   const addHorsePrepend = isEdit && editable ? (
-    <div style={{ display: 'flex', gap: 6, marginBottom: 10 }}>
-      <input
-        value={newHorseName}
-        onChange={(e) => setNewHorseName(e.target.value)}
-        onKeyDown={(e) => { if (e.key === 'Enter') void onAddHorse(); }}
-        placeholder="New horse name…"
-        style={{ flex: 1, background: 'var(--parchment)', border: '1px solid var(--gold-mid)', borderRadius: 3, padding: '5px 9px', fontSize: '0.72rem', color: 'var(--forest-deep)', outline: 'none', ...serifStyle }}
-      />
-      <button onClick={onAddHorse} disabled={adding || !newHorseName.trim()} className="sku-gold-btn" style={{ padding: '5px 12px', display: 'flex', alignItems: 'center', gap: 5, fontSize: '0.6rem', textTransform: 'uppercase', letterSpacing: '0.08em', fontWeight: 700, ...serifStyle, opacity: adding || !newHorseName.trim() ? 0.55 : 1 }}>
-        {adding ? <Loader2 size={12} className="animate-spin" /> : <Plus size={12} />} Register
+    <div style={{ marginBottom: 10 }}>
+      <div style={{ display: 'flex', gap: 6 }}>
+        <input
+          value={newHorseName}
+          onChange={(e) => setNewHorseName(e.target.value)}
+          onKeyDown={(e) => { if (e.key === 'Enter') void onAddHorse(); }}
+          placeholder="New horse name…"
+          style={{ flex: 1, background: 'var(--parchment)', border: '1px solid var(--gold-mid)', borderRadius: 3, padding: '5px 9px', fontSize: '0.72rem', color: 'var(--forest-deep)', outline: 'none', ...serifStyle }}
+        />
+        <button onClick={onAddHorse} disabled={adding || !newHorseName.trim()} className="sku-gold-btn" style={{ padding: '5px 12px', display: 'flex', alignItems: 'center', gap: 5, fontSize: '0.6rem', textTransform: 'uppercase', letterSpacing: '0.08em', fontWeight: 700, ...serifStyle, opacity: adding || !newHorseName.trim() ? 0.55 : 1 }}>
+          {adding ? <Loader2 size={12} className="animate-spin" /> : <Plus size={12} />} Register
+        </button>
+      </div>
+      <button onClick={onAddUnnamedFoal} disabled={adding} style={{ marginTop: 5, background: 'none', border: 'none', padding: 0, cursor: adding ? 'wait' : 'pointer', fontSize: '0.6rem', fontStyle: 'italic', color: 'var(--gold-dark)', ...serifStyle }}>
+        + Add an un-named foal (name it later)
       </button>
     </div>
   ) : undefined;
@@ -332,7 +395,12 @@ export function PartyProfile({ partyId, mode, onBack }: PartyProfileProps) {
 
   const centerDefault = (
     <>
-      <div style={{ display: 'grid', gridTemplateColumns: '0.95fr 1.05fr', gap: 14, alignItems: 'stretch' }}>
+      {isEdit && editable && (onbAllDone
+        ? <OnboardingComplete title="Profile complete!" subtitle="Your profile is ready to view." onViewPublic={() => navigate(`/parties/${partyId}`)} />
+        : <OnboardingSteps title="Finish your profile" steps={onbSteps} onStepClick={scrollToAnchor} onAskAI={askAiForStep} />
+      )}
+
+      <div id="onb-identity" style={{ display: 'grid', gridTemplateColumns: '0.95fr 1.05fr', gap: 14, alignItems: 'stretch' }}>
         <IdentityCard title={identityTitle} fields={identityFields} editable={isEdit && editable} />
         <PortraitFrame
           src={party.photo}
@@ -366,15 +434,16 @@ export function PartyProfile({ partyId, mode, onBack }: PartyProfileProps) {
 
       <SummaryGrid title={`${roleLabel} Summary`} cells={summaryCells} columns={4} />
 
-      <EntityList
-        title={isEdit ? 'My Horses' : 'Horses'}
-        count={horseCount}
-        action={registerAction}
-        prepend={addHorsePrepend}
-        rows={horseRows}
-        emptyText={isEdit ? 'No horses yet — register one above to start your stable.' : `No horses connected to this ${roleLabel.toLowerCase()} yet.`}
-        onSelect={openHorse}
-      />
+      <div id="onb-horses">
+        <EntityList
+          title={isEdit ? 'My Horses' : 'Horses'}
+          count={horseCount}
+          prepend={addHorsePrepend}
+          rows={horseRows}
+          emptyText={isEdit ? 'No horses yet — register one above to start your stable.' : `No horses connected to this ${roleLabel.toLowerCase()} yet.`}
+          onSelect={openHorse}
+        />
+      </div>
     </>
   );
 
@@ -410,11 +479,7 @@ export function PartyProfile({ partyId, mode, onBack }: PartyProfileProps) {
         centerModule={activeModule ? renderProfileModule(activeModule, { scope, subjectName: partyName, roleLabel, onClose: closeModule, onOpenHorse: openHorse }) : null}
         moduleKey={activeModule}
         right={<DataSectionsRail activeModule={activeModule} onToggle={openModule} />}
-        overlay={
-          !isEdit && editable ? (
-            <HorseForm open={registerHorseOpen} onClose={() => setRegisterHorseOpen(false)} defaultOwnerId={partyId} memberMode />
-          ) : null
-        }
+        overlay={isEdit && editable ? <ProfileAgentPanel /> : undefined}
       />
     </>
   );

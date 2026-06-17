@@ -1,6 +1,6 @@
-import { useMemo, useState, useEffect } from 'react';
+import { useState, useEffect } from 'react';
 import { Link, useSearchParams } from 'react-router-dom';
-import { motion, AnimatePresence } from 'framer-motion';
+import { motion } from 'framer-motion';
 import { useArticleStore } from '@/stores/articleStore';
 import { useIssueStore } from '@/stores/issueStore';
 import { CATEGORIES } from '@/pages/NewsIndex';
@@ -12,30 +12,11 @@ import {
   ArrowRight,
   Search,
   Calendar,
-  Newspaper,
-  BarChart2,
-  Mic,
-  MapPin,
 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
-
-/* ── Section icon map ────────────────────────────────── */
-
-const SECTION_ICONS: Record<string, React.ReactNode> = {
-  news: <Newspaper size={13} />,
-  analysis: <BarChart2 size={13} />,
-  interviews: <Mic size={13} />,
-};
-
-/* ── Race Venue locations for the map ───────────────── */
-
-const RACE_VENUES = [
-  { name: 'Flemington Racecourse', location: 'Flemington, Melbourne VIC' },
-  { name: 'Royal Randwick', location: 'Randwick, Sydney NSW' },
-  { name: 'Eagle Farm Racecourse', location: 'Eagle Farm, Brisbane QLD' },
-  { name: 'Morphettville', location: 'Morphettville, Adelaide SA' },
-  { name: 'Ascot Racecourse', location: 'Ascot, Perth WA' },
-];
+import SectionGrid from '@/pages/bulletins/SectionGrid';
+import VenueMap from '@/pages/bulletins/VenueMap';
+import { useArticleGroups } from '@/pages/bulletins/useArticleGroups';
 
 /* ── Component ────────────────────────────────────────── */
 
@@ -54,7 +35,6 @@ export default function Bulletins() {
 
   const [search, setSearch] = useState('');
   const [loading, setLoading] = useState(true);
-  const [selectedVenueIdx, setSelectedVenueIdx] = useState(0);
 
   // Published magazine issues (server-persisted bulletin builder output). The
   // list endpoint already returns non-unpublished issues sorted newest-first.
@@ -70,50 +50,12 @@ export default function Bulletins() {
   }, []);
 
   // Production System bulletin articles
-  const bulletinArticles = useMemo(() => {
-    let base = (articles ?? []).filter((a) => a.status === 'bulletin');
-    if (categoryParam) base = base.filter((a) => (a.category ?? '') === categoryParam);
-    if (search.trim()) {
-      const q = search.toLowerCase();
-      base = base.filter(
-        (a) =>
-          a.title.toLowerCase().includes(q) ||
-          a.author.toLowerCase().includes(q) ||
-          (a.category ?? '').toLowerCase().includes(q)
-      );
-    }
-    return base;
-  }, [articles, categoryParam, search]);
-
-  const hasCmsArticles = bulletinArticles.length > 0;
-
-  type AnyItem = (typeof bulletinArticles)[0];
-
-  const source: AnyItem[] = bulletinArticles;
-
-  // Group by category section
-  const sections = useMemo(() => {
-    const allSections = ['news', 'analysis', 'interviews'] as const;
-    const grouped: {
-      section: string;
-      cats: { catDef: (typeof CATEGORIES)[0]; items: AnyItem[] }[];
-    }[] = [];
-    for (const sec of allSections) {
-      const cats = CATEGORIES.filter((c) => c.section === sec);
-      const secItems = cats
-        .map((catDef) => ({
-          catDef,
-          items: source.filter((item) => (item.category ?? '') === catDef.key),
-        }))
-        .filter((g) => g.items.length > 0);
-      if (secItems.length > 0) {
-        grouped.push({ section: sec, cats: secItems });
-      }
-    }
-    return grouped;
-  }, [source]);
-
-  const heroItem = source[0] ?? null;
+  const { source, hasCmsArticles, sections, heroItem } = useArticleGroups(
+    articles,
+    'bulletin',
+    categoryParam,
+    search
+  );
 
   const currentCatDef = categoryParam ? CATEGORIES.find((c) => c.key === categoryParam) : null;
 
@@ -124,9 +66,6 @@ export default function Bulletins() {
       setSearchParams({ category: key });
     }
   };
-
-  const selectedVenue = RACE_VENUES[selectedVenueIdx];
-  const mapSearchQuery = encodeURIComponent(selectedVenue.location);
 
   return (
     <div className="min-h-screen bg-background">
@@ -564,293 +503,14 @@ export default function Bulletins() {
             )}
 
             {/* ── Edition sections, grouped by editorial section ── */}
-            {sections.map((group, groupIdx) => (
-              <section key={group.section}>
-                {/* Section header — broadsheet style */}
-                <div className="flex items-center gap-4 mb-8">
-                  <div
-                    className="flex items-center gap-2 px-3 py-1.5 rounded-sm"
-                    style={{ background: 'hsl(var(--brand-accent) / 0.1)' }}
-                  >
-                    <span style={{ color: 'hsl(var(--brand-accent))' }}>
-                      {SECTION_ICONS[group.section]}
-                    </span>
-                    <span
-                      className="text-[9px] uppercase tracking-[0.22em] font-bold"
-                      style={{ color: 'hsl(var(--brand-accent))' }}
-                    >
-                      {group.section.charAt(0).toUpperCase() + group.section.slice(1)}
-                    </span>
-                  </div>
-                  <div className="flex-1 h-px bg-border/50" />
-                </div>
-
-                {group.cats.map((catGroup, catIdx) => {
-                  const { catDef, items } = catGroup;
-
-                  return (
-                    <div key={catDef.key} className="mb-12">
-                      {/* Category heading */}
-                      <div className="flex items-center gap-3 mb-6">
-                        <div
-                          className="flex-shrink-0 w-1.5 h-5 rounded-full"
-                          style={{ background: 'hsl(var(--brand-accent))' }}
-                        />
-                        <h3 className="font-[family-name:var(--font-display)] text-lg font-bold italic text-foreground">
-                          {catDef.label}
-                        </h3>
-                        <span className="text-[10px] text-muted-foreground uppercase tracking-[0.1em] font-semibold">
-                          {items.length} {items.length === 1 ? 'piece' : 'pieces'}
-                        </span>
-                        <div className="flex-1 h-px bg-border/40" />
-                      </div>
-
-                      {/* Broadsheet-style editorial list */}
-                      <div className="space-y-5">
-                        {items.map((item, itemIdx) => {
-                          const isReal =
-                            hasCmsArticles &&
-                            (item as any).id &&
-                            !(item as any).id.startsWith('bl');
-                          const itemImageUrl =
-                            (item as any).imageUrl ??
-                            'https://images.pexels.com/photos/11341144/pexels-photo-11341144.jpeg?auto=compress&cs=tinysrgb&h=400&w=600';
-                          const itemKey =
-                            (item as any).id ?? `item-${groupIdx}-${catIdx}-${itemIdx}`;
-
-                          const cardContent = (
-                            <div className="group flex flex-col sm:flex-row gap-0 border border-border/50 rounded-sm overflow-hidden bg-card hover:border-primary/30 transition-colors">
-                              {/* Sidebar image */}
-                              <div className="relative sm:w-48 md:w-56 flex-shrink-0 h-44 sm:h-auto overflow-hidden">
-                                <img
-                                  src={itemImageUrl}
-                                  alt={item.title}
-                                  crossOrigin="anonymous"
-                                  className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-500"
-                                />
-                                <div className="absolute inset-0 bg-gradient-to-t from-foreground/50 via-transparent to-transparent sm:bg-gradient-to-r" />
-                              </div>
-
-                              {/* Body */}
-                              <div className="flex flex-col justify-between p-5 flex-1 border-t sm:border-t-0 sm:border-l border-border/40">
-                                <div>
-                                  {/* Top rule */}
-                                  <div
-                                    className="w-8 h-[2px] mb-3"
-                                    style={{ background: 'hsl(var(--brand-accent))' }}
-                                  />
-
-                                  <h4 className="font-[family-name:var(--font-display)] text-base md:text-lg font-bold italic text-foreground leading-snug mb-2 group-hover:opacity-85 transition-opacity line-clamp-2">
-                                    {item.title}
-                                  </h4>
-
-                                  {(item as any).summary && (
-                                    <p className="text-[12px] text-muted-foreground leading-relaxed line-clamp-3 mb-4">
-                                      {(item as any).summary}
-                                    </p>
-                                  )}
-                                </div>
-
-                                <div className="flex items-center justify-between">
-                                  <div className="flex flex-wrap items-center gap-3 text-[10px] text-muted-foreground">
-                                    <span className="font-medium">{item.author}</span>
-                                    {item.readingTime && (
-                                      <>
-                                        <span className="opacity-30">·</span>
-                                        <span className="flex items-center gap-1">
-                                          <Clock size={9} />
-                                          {item.readingTime} min
-                                        </span>
-                                      </>
-                                    )}
-                                    {(item as any).edition && (
-                                      <>
-                                        <span className="opacity-30">·</span>
-                                        <span
-                                          className="text-[9px] uppercase tracking-[0.1em] font-semibold"
-                                          style={{ color: 'hsl(var(--brand-accent))' }}
-                                        >
-                                          {(item as any).edition}
-                                        </span>
-                                      </>
-                                    )}
-                                  </div>
-                                  <span className="flex items-center gap-1 text-[10px] font-semibold uppercase tracking-[0.1em] text-primary opacity-0 group-hover:opacity-100 transition-opacity">
-                                    Read <ArrowRight size={10} />
-                                  </span>
-                                </div>
-                              </div>
-                            </div>
-                          );
-
-                          return (
-                            <motion.div
-                              key={itemKey}
-                              initial={{ opacity: 0, y: 6 }}
-                              animate={{ opacity: 1, y: 0 }}
-                              transition={{
-                                delay: itemIdx * 0.05 + catIdx * 0.08,
-                                duration: 0.22,
-                                ease: 'easeOut',
-                              }}
-                            >
-                              {isReal ? (
-                                <Link
-                                  to={`/articles/${(item as any).id}`}
-                                  className="block"
-                                  aria-label={`Read: ${item.title}`}
-                                >
-                                  {cardContent}
-                                </Link>
-                              ) : (
-                                cardContent
-                              )}
-                            </motion.div>
-                          );
-                        })}
-                      </div>
-                    </div>
-                  );
-                })}
-              </section>
-            ))}
+            <SectionGrid variant="bulletin" sections={sections} hasCmsArticles={hasCmsArticles} />
           </div>
         )}
       </div>
       )}
 
       {/* ── Race Venue Map ───────────────────────────── */}
-      <div className="border-t border-border/40" style={{ background: 'hsl(var(--primary) / 0.04)' }}>
-        <div className="max-w-7xl mx-auto px-4 md:px-8 py-12 md:py-16">
-          {/* Section header */}
-          <div className="flex items-center gap-4 mb-8">
-            <div
-              className="flex items-center gap-2 px-3 py-1.5 rounded-sm"
-              style={{ background: 'hsl(var(--brand-accent) / 0.12)' }}
-            >
-              <MapPin size={13} style={{ color: 'hsl(var(--brand-accent))' }} />
-              <span
-                className="text-[9px] uppercase tracking-[0.22em] font-bold"
-                style={{ color: 'hsl(var(--brand-accent))' }}
-              >
-                Race Venues
-              </span>
-            </div>
-            <div className="flex-1 h-px bg-border/50" />
-            <span className="text-[9px] uppercase tracking-[0.14em] text-muted-foreground font-semibold hidden sm:block">
-              Featured in this edition
-            </span>
-          </div>
-
-          <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-            {/* Venue selector */}
-            <div className="lg:col-span-1 space-y-2">
-              <p className="text-[11px] uppercase tracking-[0.12em] font-semibold text-muted-foreground mb-4">
-                Select a venue to explore
-              </p>
-              {RACE_VENUES.map((venue, idx) => (
-                <button
-                  key={venue.name}
-                  onClick={() => setSelectedVenueIdx(idx)}
-                  className={cn(
-                    'w-full text-left flex items-start gap-3 px-4 py-3 rounded-sm border transition-all',
-                    selectedVenueIdx === idx
-                      ? 'border-transparent text-primary-foreground'
-                      : 'border-border/50 bg-card text-foreground hover:border-primary/30 hover:bg-primary/5'
-                  )}
-                  style={
-                    selectedVenueIdx === idx
-                      ? { background: 'hsl(var(--primary))' }
-                      : undefined
-                  }
-                  aria-label={`View map for ${venue.name}`}
-                >
-                  <MapPin
-                    size={14}
-                    className="mt-0.5 flex-shrink-0"
-                    style={
-                      selectedVenueIdx === idx
-                        ? { color: 'hsl(var(--brand-accent))' }
-                        : { color: 'hsl(var(--brand-accent))' }
-                    }
-                  />
-                  <div>
-                    <span className="block text-[12px] font-semibold leading-tight">
-                      {venue.name}
-                    </span>
-                    <span
-                      className={cn(
-                        'block text-[10px] mt-0.5',
-                        selectedVenueIdx === idx
-                          ? 'text-primary-foreground/70'
-                          : 'text-muted-foreground'
-                      )}
-                    >
-                      {venue.location}
-                    </span>
-                  </div>
-                </button>
-              ))}
-
-              {/* Open in Google Maps link */}
-              <a
-                href={`https://www.google.com/maps/search/${mapSearchQuery}`}
-                target="_blank"
-                rel="noopener noreferrer"
-                className="mt-4 w-full flex items-center justify-center gap-2 px-4 py-2.5 rounded-sm text-[11px] font-semibold uppercase tracking-[0.1em] border border-border/60 bg-card text-foreground hover:border-primary/40 hover:bg-primary/5 transition-all"
-                aria-label={`Open ${selectedVenue.name} in Google Maps`}
-              >
-                <MapPin size={12} className="text-primary" />
-                Open in Google Maps
-              </a>
-            </div>
-
-            {/* Map embed */}
-            <div className="lg:col-span-2">
-              <div className="relative rounded-sm overflow-hidden border border-border/50 shadow-sm" style={{ height: '420px' }}>
-                {/* Broadsheet accent bar */}
-                <div
-                  className="absolute top-0 left-0 right-0 z-10 h-[3px]"
-                  style={{ background: 'hsl(var(--brand-accent))' }}
-                />
-
-                <iframe
-                  key={selectedVenueIdx}
-                  title={`Map of ${selectedVenue.name}`}
-                  src={`https://maps.google.com/maps?q=${mapSearchQuery}&output=embed&z=15`}
-                  width="100%"
-                  height="100%"
-                  style={{ border: 0, display: 'block' }}
-                  allowFullScreen
-                  loading="lazy"
-                  referrerPolicy="no-referrer-when-downgrade"
-                  aria-label={`Google Map showing ${selectedVenue.name} at ${selectedVenue.location}`}
-                />
-
-                {/* Venue label overlay */}
-                <div className="absolute bottom-4 left-4 z-10 flex items-center gap-2 px-3 py-2 rounded-sm backdrop-blur-sm"
-                  style={{ background: 'hsl(var(--primary) / 0.92)' }}
-                >
-                  <MapPin size={12} style={{ color: 'hsl(var(--brand-accent))' }} />
-                  <div>
-                    <span className="block text-[11px] font-bold text-primary-foreground leading-tight">
-                      {selectedVenue.name}
-                    </span>
-                    <span className="block text-[9px] text-primary-foreground/70 uppercase tracking-[0.1em]">
-                      {selectedVenue.location}
-                    </span>
-                  </div>
-                </div>
-              </div>
-
-              {/* Attribution */}
-              <p className="text-[9px] text-muted-foreground/60 mt-2 text-right tracking-wide uppercase">
-                Map data © Google Maps
-              </p>
-            </div>
-          </div>
-        </div>
-      </div>
+      <VenueMap />
 
       {/* ── Subscribe band ───────────────────────────── */}
       <div

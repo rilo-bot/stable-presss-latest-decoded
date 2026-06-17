@@ -59,6 +59,9 @@
   --parchment: #f5edda;
   --parchment-dark: #e8dcc4;
   --parchment-shadow: #c9b99a;
+  /* Readable label / muted-text colour ON parchment (~6:1 on --parchment).
+     --parchment-shadow stays for hairline borders; use this for TEXT. */
+  --parchment-label: #6b5a2f;
 
   /* Forest green surfaces */
   --forest-deep: #1a3322;
@@ -229,7 +232,7 @@
 .sku-table th {
   background: linear-gradient(180deg, var(--forest-light) 0%, var(--forest-deep) 100%);
   color: var(--gold-bright);
-  font-family: 'IM Fell English', 'Palatino Linotype', serif;
+  font-family: Georgia, 'Times New Roman', serif;
   font-size: 0.7rem;
   letter-spacing: 0.1em;
   text-transform: uppercase;
@@ -239,7 +242,7 @@
 }
 .sku-table td {
   color: var(--parchment);
-  font-family: 'IM Fell English', 'Palatino Linotype', serif;
+  font-family: Georgia, 'Times New Roman', serif;
   font-size: 0.82rem;
   padding: 0.45rem 0.75rem;
   border-bottom: 1px solid rgba(212, 168, 67, 0.12);

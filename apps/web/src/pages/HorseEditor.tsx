@@ -1,7 +1,8 @@
 /**
- * HorseEditor — the editable horse page at `/horses/:id/edit` (under RequireAuth).
- * Renders the shared HorseProfile container in "edit" mode. HorseProfile itself
- * redirects a signed-in non-owner to the public `/horses/:id` once links load.
+ * HorseEditor — the editable horse page in the private studio namespace at
+ * `/studio/horse/:id` (under RequireAuth), separate from the read-only public
+ * page `/horses/:id`. Renders the shared HorseProfile container in "edit" mode.
+ * HorseProfile redirects a signed-in non-owner to the public page once links load.
  */
 import { useParams, Navigate, useNavigate } from 'react-router-dom';
 import { HorseProfile } from '@/components/profile/HorseProfile';

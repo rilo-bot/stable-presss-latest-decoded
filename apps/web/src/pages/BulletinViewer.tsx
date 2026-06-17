@@ -14,7 +14,7 @@ import { EditorProvider } from '@/editor/EditorContext';
 import { PAGE_COMPONENTS } from '@/editor/templates/registry';
 import { PAGE_W, PAGE_H } from '@/editor/templates/parts';
 import type { MagazinePage } from '@/types/magazine';
-import { ArrowLeft, BookOpen } from 'lucide-react';
+import { ArrowLeft, BookOpen, Printer } from 'lucide-react';
 
 function ReadonlyPage({ page, maxWidth }: { page: MagazinePage; maxWidth: number }) {
   const Comp = PAGE_COMPONENTS[page.pageType];
@@ -23,7 +23,7 @@ function ReadonlyPage({ page, maxWidth }: { page: MagazinePage; maxWidth: number
   return (
     <div
       style={{ width: PAGE_W * scale, height: PAGE_H * scale }}
-      className="shadow-[0_10px_40px_rgba(0,0,0,0.18)] ring-1 ring-black/10"
+      className="bulletin-print-page shadow-[0_10px_40px_rgba(0,0,0,0.18)] ring-1 ring-black/10"
     >
       <div style={{ width: PAGE_W, height: PAGE_H, transform: `scale(${scale})`, transformOrigin: 'top left' }}>
         <EditorProvider value={ctx}>
@@ -96,8 +96,21 @@ export default function BulletinViewer() {
 
   return (
     <div className="min-h-screen bg-white">
+      {/* Print rules: render each page at natural A4 size, one per sheet, with the
+          screen chrome and scaling removed. Used by the "Download PDF" button. */}
+      <style>{`
+        @media print {
+          @page { size: A4 portrait; margin: 0; }
+          html, body { background: #fff !important; }
+          .bulletin-print-container { max-width: none !important; margin: 0 !important; padding: 0 !important; gap: 0 !important; display: block !important; }
+          .bulletin-print-page { width: ${PAGE_W}px !important; height: ${PAGE_H}px !important; box-shadow: none !important; }
+          .bulletin-print-page > div { transform: none !important; }
+          .bulletin-print-page:not(:last-child) { break-after: page; page-break-after: always; }
+        }
+      `}</style>
+
       {/* Header */}
-      <div className="sticky top-0 z-10 border-b border-black/10 bg-[#0a2342] text-white">
+      <div className="sticky top-0 z-10 border-b border-black/10 bg-[#0a2342] text-white print:hidden">
         <div className="mx-auto flex max-w-5xl items-center gap-4 px-4 py-3">
           <button onClick={() => navigate('/bulletins')} className="flex items-center gap-1.5 text-xs font-semibold text-white/70 hover:text-white">
             <ArrowLeft size={14} /> All bulletins
@@ -109,11 +122,18 @@ export default function BulletinViewer() {
               {issue.scope === 'selected' ? ' · selected pages' : ''}
             </p>
           </div>
+          <button
+            onClick={() => window.print()}
+            className="ml-auto flex flex-shrink-0 items-center gap-1.5 rounded-sm border border-white/20 px-3 py-1.5 text-xs font-semibold text-white/80 hover:bg-white/10"
+            title="Print or save this edition as a PDF"
+          >
+            <Printer size={14} /> Download PDF
+          </button>
         </div>
       </div>
 
       {/* Pages */}
-      <div ref={containerRef} className="mx-auto flex max-w-[820px] flex-col items-center gap-6 px-3 py-8">
+      <div ref={containerRef} className="bulletin-print-container mx-auto flex max-w-[820px] flex-col items-center gap-6 px-3 py-8">
         {issue.pages.map((p) => (
           <ReadonlyPage key={p.id} page={p} maxWidth={maxWidth} />
         ))}

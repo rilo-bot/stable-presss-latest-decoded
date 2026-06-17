@@ -296,12 +296,13 @@ export default function Parties() {
     setDeleteOpen(true);
   };
 
-  const confirmDelete = () => {
+  const confirmDelete = async () => {
     if (!deleteTarget) return;
-    removeParty(deleteTarget.id);
-    toast.success(`${deleteTarget.name} has been removed.`);
+    const name = deleteTarget.name;
+    const ok = await removeParty(deleteTarget.id);
     setDeleteOpen(false);
     setDeleteTarget(null);
+    if (ok) toast.success(`${name} has been removed.`);
   };
 
   const handleAddClick = () => {

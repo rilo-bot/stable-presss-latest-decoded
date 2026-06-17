@@ -23,7 +23,7 @@ export function DataSectionsRail({ activeModule, onToggle, extra }: {
       {extra}
       <div style={{ marginTop: 6, padding: '8px 10px', border: '1px solid var(--gold-dark)', borderRadius: 3, background: 'rgba(26,51,34,0.5)', textAlign: 'center', ...serifStyle }}>
         <span style={{ fontSize: '0.5rem', letterSpacing: '0.14em', textTransform: 'uppercase', color: 'var(--gold-dark)', display: 'block' }}>✦ Stable Press ✦</span>
-        <span style={{ fontSize: '0.52rem', fontStyle: 'italic', color: 'var(--parchment-shadow)', display: 'block', marginTop: 3 }}>Racing Almanac</span>
+        <span style={{ fontSize: '0.52rem', fontStyle: 'italic', color: 'var(--parchment-label)', display: 'block', marginTop: 3 }}>Racing Almanac</span>
       </div>
     </>
   );

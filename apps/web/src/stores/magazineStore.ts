@@ -15,7 +15,13 @@ import { create } from 'zustand';
 import { authFetch } from '@/lib/api';
 import { toast } from 'sonner';
 import { sanitizeRichText } from '@/editor/lib/sanitize';
-import { createDefaultPages, FIRST_COVER_IMAGE, BLUEPRINT_BY_TYPE } from '@/editor/templates/blueprints';
+import {
+  createDefaultPages,
+  FIRST_COVER_IMAGE,
+  BLUEPRINT_BY_TYPE,
+  renumberPages,
+  createPageFromType,
+} from '@/editor/templates/blueprints';
 import type {
   Magazine,
   MagazinePage,
@@ -23,6 +29,7 @@ import type {
   MagazineAccess,
   StaffOption,
   PublishPayload,
+  PageTypeKey,
   RegionContent,
   TextStyle,
   ImageContent,
@@ -32,6 +39,26 @@ import type {
 function nowIso(): string {
   return new Date().toISOString();
 }
+
+/** Short, collision-resistant id for a newly inserted page. */
+function uid(): string {
+  if (typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function') {
+    return crypto.randomUUID().slice(0, 8);
+  }
+  return Math.random().toString(36).slice(2, 10);
+}
+
+// ── undo/redo history (full-pages snapshots, kept out of React state) ─────────
+type PagesSnapshot = MagazinePage[];
+interface MagHistory {
+  past: PagesSnapshot[];
+  future: PagesSnapshot[];
+  /** Coalescing key of the last recorded gesture (so a typing run = one step). */
+  lastKey: string | null;
+  lastAt: number;
+}
+const HIST_CAP = 60;
+const COALESCE_MS = 1500;
 
 function deepClonePages(pages: MagazinePage[]): MagazinePage[] {
   if (typeof structuredClone === 'function') return structuredClone(pages);
@@ -102,6 +129,8 @@ interface MagazineState {
   magazines: Magazine[];
   summaries: MagazineSummary[];
   access: Record<string, MagazineAccess>;
+  /** Per-magazine undo/redo availability (drives toolbar button state). */
+  history: Record<string, { canUndo: boolean; canRedo: boolean }>;
 
   // ephemeral editor state
   currentId: string | null;
@@ -130,6 +159,15 @@ interface MagazineState {
   setTextStyle: (magId: string, pageId: string, regionId: string, patch: Partial<TextStyle>) => void;
   setImage: (magId: string, pageId: string, regionId: string, patch: Partial<ImageContent>) => void;
   setQr: (magId: string, pageId: string, regionId: string, patch: Partial<QrContent>) => void;
+
+  // structural page ops (owner-only; persisted via PUT /:id/pages)
+  addPage: (magId: string, pageType: PageTypeKey, atIndex?: number) => void;
+  deletePage: (magId: string, pageId: string) => void;
+  movePage: (magId: string, pageId: string, dir: -1 | 1) => void;
+
+  // undo / redo of content edits + structural changes (session-scoped)
+  undo: (magId: string) => void;
+  redo: (magId: string) => void;
 
   // page selection for publishing (owner/editor)
   setPageSelected: (magId: string, pageId: string, selected: boolean) => void;
@@ -208,10 +246,82 @@ export const useMagazineStore = create<MagazineState>()((set, get) => {
       .catch(() => noteSaveError());
   }
 
+  // Replace the whole ordered page list (add / remove / reorder) — owner only.
+  function flushStructure(magId: string) {
+    const m = get().magazines.find((x) => x.id === magId);
+    if (!m) return;
+    void authFetch(`/api/magazines/${magId}/pages`, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ pages: m.pages }),
+    })
+      .then((res) => { if (!res.ok) noteSaveError(res.status); })
+      .catch(() => noteSaveError());
+  }
+
+  // ── undo/redo history plumbing ──────────────────────────────────────────────
+  const histories = new Map<string, MagHistory>();
+  function histFor(magId: string): MagHistory {
+    let h = histories.get(magId);
+    if (!h) {
+      h = { past: [], future: [], lastKey: null, lastAt: 0 };
+      histories.set(magId, h);
+    }
+    return h;
+  }
+  function syncHistoryFlags(magId: string) {
+    const h = histories.get(magId);
+    set((s) => ({
+      history: {
+        ...s.history,
+        [magId]: { canUndo: !!h && h.past.length > 0, canRedo: !!h && h.future.length > 0 },
+      },
+    }));
+  }
+  /** Snapshot the pages BEFORE a mutation. Coalesces a continuous gesture
+   *  (typing, dragging a slider) into a single undo step. */
+  function recordHistory(magId: string, key: string) {
+    const m = get().magazines.find((x) => x.id === magId);
+    if (!m) return;
+    const h = histFor(magId);
+    const t = Date.now();
+    if (h.lastKey === key && t - h.lastAt < COALESCE_MS && h.past.length) {
+      h.lastAt = t;
+      if (h.future.length) { h.future = []; syncHistoryFlags(magId); }
+      return;
+    }
+    h.past.push(deepClonePages(m.pages));
+    if (h.past.length > HIST_CAP) h.past.shift();
+    h.future = [];
+    h.lastKey = key;
+    h.lastAt = t;
+    syncHistoryFlags(magId);
+  }
+  /** Persist the pages restored by an undo/redo. The owner replaces the whole
+   *  list in one request; collaborators re-flush only the pages they may edit. */
+  function persistRestored(magId: string) {
+    const access = get().access[magId];
+    if (access?.role === 'owner') { flushStructure(magId); return; }
+    const m = get().magazines.find((x) => x.id === magId);
+    if (!m) return;
+    const ids = access?.editablePageIds ?? [];
+    const editable = ids === 'all' ? m.pages.map((p) => p.id) : ids;
+    for (const pid of editable) flushPage(magId, pid);
+  }
+  function restorePages(magId: string, pages: MagazinePage[]) {
+    set((s) => ({
+      magazines: s.magazines.map((x) => (x.id === magId ? { ...x, pages, updatedAt: nowIso() } : x)),
+      selectedRegionId: null,
+    }));
+    persistRestored(magId);
+    syncHistoryFlags(magId);
+  }
+
   return {
     magazines: [],
     summaries: [],
     access: {},
+    history: {},
     currentId: null,
     selectedRegionId: null,
 
@@ -232,11 +342,17 @@ export const useMagazineStore = create<MagazineState>()((set, get) => {
         const res = await authFetch(`/api/magazines/${id}`);
         if (!res.ok) return false;
         const { magazine, access } = ingest(await res.json());
-        magazine.pages = reconcilePages(magazine.pages);
+        // Fill any newly-added template regions, then derive positional page
+        // numbers so older drafts (with the original out-of-order numbers) display
+        // a clean 1..N sequence.
+        magazine.pages = renumberPages(reconcilePages(magazine.pages));
         set((s) => ({
           magazines: [...s.magazines.filter((m) => m.id !== id), magazine],
           access: { ...s.access, [id]: access },
         }));
+        // Start a fresh undo history for this editing session.
+        histories.delete(id);
+        syncHistoryFlags(id);
         return true;
       } catch {
         return false;
@@ -274,6 +390,7 @@ export const useMagazineStore = create<MagazineState>()((set, get) => {
     deleteMagazine: async (id) => {
       const res = await authFetch(`/api/magazines/${id}`, { method: 'DELETE' });
       if (res.ok) {
+        histories.delete(id);
         set((s) => ({
           magazines: s.magazines.filter((m) => m.id !== id),
           summaries: s.summaries.filter((m) => m.id !== id),
@@ -345,47 +462,113 @@ export const useMagazineStore = create<MagazineState>()((set, get) => {
     select: (regionId) => set({ selectedRegionId: regionId }),
 
     setText: (magId, pageId, regionId, html) => {
-      set((s) => {
-        const page = s.magazines.find((m) => m.id === magId)?.pages.find((p) => p.id === pageId);
-        const cur = page?.content[regionId];
-        if (!cur || cur.kind !== 'text') return {};
-        const next: RegionContent = { ...cur, html: sanitizeRichText(html) };
-        return { magazines: patchRegion(s.magazines, magId, pageId, regionId, next) };
-      });
+      const cur = get().magazines.find((m) => m.id === magId)?.pages.find((p) => p.id === pageId)?.content[regionId];
+      if (!cur || cur.kind !== 'text') return;
+      const clean = sanitizeRichText(html);
+      if (cur.html === clean) return; // no-op (e.g. blur with no change)
+      recordHistory(magId, `text:${pageId}:${regionId}`);
+      const next: RegionContent = { ...cur, html: clean };
+      set((s) => ({ magazines: patchRegion(s.magazines, magId, pageId, regionId, next) }));
       schedule(`page:${magId}:${pageId}`, () => flushPage(magId, pageId));
     },
 
     setTextStyle: (magId, pageId, regionId, patch) => {
-      set((s) => {
-        const page = s.magazines.find((m) => m.id === magId)?.pages.find((p) => p.id === pageId);
-        const cur = page?.content[regionId];
-        if (!cur || cur.kind !== 'text') return {};
-        const next: RegionContent = { ...cur, style: { ...cur.style, ...patch } };
-        return { magazines: patchRegion(s.magazines, magId, pageId, regionId, next) };
-      });
+      const cur = get().magazines.find((m) => m.id === magId)?.pages.find((p) => p.id === pageId)?.content[regionId];
+      if (!cur || cur.kind !== 'text') return;
+      recordHistory(magId, `style:${pageId}:${regionId}`);
+      const next: RegionContent = { ...cur, style: { ...cur.style, ...patch } };
+      set((s) => ({ magazines: patchRegion(s.magazines, magId, pageId, regionId, next) }));
       schedule(`page:${magId}:${pageId}`, () => flushPage(magId, pageId));
     },
 
     setImage: (magId, pageId, regionId, patch) => {
-      set((s) => {
-        const page = s.magazines.find((m) => m.id === magId)?.pages.find((p) => p.id === pageId);
-        const cur = page?.content[regionId];
-        if (!cur || cur.kind !== 'image') return {};
-        const next: RegionContent = { ...cur, ...patch };
-        return { magazines: patchRegion(s.magazines, magId, pageId, regionId, next) };
-      });
+      const cur = get().magazines.find((m) => m.id === magId)?.pages.find((p) => p.id === pageId)?.content[regionId];
+      if (!cur || cur.kind !== 'image') return;
+      recordHistory(magId, `image:${pageId}:${regionId}`);
+      const next: RegionContent = { ...cur, ...patch };
+      set((s) => ({ magazines: patchRegion(s.magazines, magId, pageId, regionId, next) }));
       schedule(`page:${magId}:${pageId}`, () => flushPage(magId, pageId));
     },
 
     setQr: (magId, pageId, regionId, patch) => {
-      set((s) => {
-        const page = s.magazines.find((m) => m.id === magId)?.pages.find((p) => p.id === pageId);
-        const cur = page?.content[regionId];
-        if (!cur || cur.kind !== 'qr') return {};
-        const next: RegionContent = { ...cur, ...patch };
-        return { magazines: patchRegion(s.magazines, magId, pageId, regionId, next) };
-      });
+      const cur = get().magazines.find((m) => m.id === magId)?.pages.find((p) => p.id === pageId)?.content[regionId];
+      if (!cur || cur.kind !== 'qr') return;
+      recordHistory(magId, `qr:${pageId}:${regionId}`);
+      const next: RegionContent = { ...cur, ...patch };
+      set((s) => ({ magazines: patchRegion(s.magazines, magId, pageId, regionId, next) }));
       schedule(`page:${magId}:${pageId}`, () => flushPage(magId, pageId));
+    },
+
+    addPage: (magId, pageType, atIndex) => {
+      if (get().access[magId]?.role !== 'owner') return;
+      recordHistory(magId, `struct:add:${uid()}`);
+      set((s) => ({
+        magazines: s.magazines.map((m) => {
+          if (m.id !== magId) return m;
+          const page = createPageFromType(pageType, `${pageType}-${uid()}`);
+          const idx = atIndex == null ? m.pages.length : Math.max(0, Math.min(atIndex, m.pages.length));
+          const pages = renumberPages([...m.pages.slice(0, idx), page, ...m.pages.slice(idx)]);
+          return { ...m, pages, updatedAt: nowIso() };
+        }),
+      }));
+      flushStructure(magId);
+      syncHistoryFlags(magId);
+    },
+
+    deletePage: (magId, pageId) => {
+      const m0 = get().magazines.find((x) => x.id === magId);
+      if (!m0 || get().access[magId]?.role !== 'owner' || m0.pages.length <= 1) return;
+      recordHistory(magId, `struct:del:${uid()}`);
+      set((s) => ({
+        magazines: s.magazines.map((m) =>
+          m.id !== magId ? m : { ...m, pages: renumberPages(m.pages.filter((p) => p.id !== pageId)), updatedAt: nowIso() }
+        ),
+        selectedRegionId: null,
+      }));
+      flushStructure(magId);
+      syncHistoryFlags(magId);
+    },
+
+    movePage: (magId, pageId, dir) => {
+      const m0 = get().magazines.find((x) => x.id === magId);
+      if (!m0 || get().access[magId]?.role !== 'owner') return;
+      const idx = m0.pages.findIndex((p) => p.id === pageId);
+      const j = idx + dir;
+      if (idx < 0 || j < 0 || j >= m0.pages.length) return;
+      recordHistory(magId, `struct:move:${uid()}`);
+      set((s) => ({
+        magazines: s.magazines.map((m) => {
+          if (m.id !== magId) return m;
+          const pages = [...m.pages];
+          const [moved] = pages.splice(idx, 1);
+          pages.splice(j, 0, moved);
+          return { ...m, pages: renumberPages(pages), updatedAt: nowIso() };
+        }),
+      }));
+      flushStructure(magId);
+      syncHistoryFlags(magId);
+    },
+
+    undo: (magId) => {
+      const h = histories.get(magId);
+      const m = get().magazines.find((x) => x.id === magId);
+      if (!h || !m || h.past.length === 0) return;
+      const prev = h.past.pop()!;
+      h.future.push(deepClonePages(m.pages));
+      if (h.future.length > HIST_CAP) h.future.shift();
+      h.lastKey = null;
+      restorePages(magId, prev);
+    },
+
+    redo: (magId) => {
+      const h = histories.get(magId);
+      const m = get().magazines.find((x) => x.id === magId);
+      if (!h || !m || h.future.length === 0) return;
+      const next = h.future.pop()!;
+      h.past.push(deepClonePages(m.pages));
+      if (h.past.length > HIST_CAP) h.past.shift();
+      h.lastKey = null;
+      restorePages(magId, next);
     },
 
     setPageSelected: (magId, pageId, selected) => {

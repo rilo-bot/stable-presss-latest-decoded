@@ -16,7 +16,7 @@ interface HorsePartyLinkState {
     id: string,
     updates: Partial<Omit<HorsePartyLink, 'id' | 'createdAt'>>
   ) => Promise<void>;
-  removeLink: (id: string) => Promise<void>;
+  removeLink: (id: string) => Promise<boolean>;
   /** Returns all links for a given horse */
   getLinksForHorse: (horseId: string) => HorsePartyLink[];
   /** Returns all links for a given party */
@@ -97,10 +97,12 @@ export const useHorsePartyLinkStore = create<HorsePartyLinkState>()(
           method: 'DELETE',
         });
         if (!res.ok) throw new Error(`HTTP ${res.status}`);
+        return true;
       } catch (err) {
         const message = err instanceof Error ? err.message : 'Could not delete the link — restoring it';
         set({ links: previous, error: message });
         toast.error('Could not delete the link — restoring it');
+        return false;
       }
     },
 

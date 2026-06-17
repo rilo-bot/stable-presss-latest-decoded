@@ -24,7 +24,7 @@ export function SummaryGrid({ title, icon, cells, columns }: {
         {cells.map((s, i) => (
           <div key={s.label} style={{ textAlign: 'center', padding: '4px 2px', borderRight: i < cells.length - 1 ? '1px solid var(--parchment-dark)' : undefined }}>
             <div style={{ fontSize: '0.82rem', fontWeight: 700, color: 'var(--forest-deep)', ...serifStyle, lineHeight: 1.1, wordBreak: 'break-word' }}>{s.value}</div>
-            <div style={{ fontSize: '0.5rem', textTransform: 'uppercase', letterSpacing: '0.1em', color: 'var(--parchment-shadow)', fontWeight: 700, marginTop: 3 }}>{s.label}</div>
+            <div style={{ fontSize: '0.5rem', textTransform: 'uppercase', letterSpacing: '0.1em', color: 'var(--parchment-label)', fontWeight: 700, marginTop: 3 }}>{s.label}</div>
           </div>
         ))}
       </div>

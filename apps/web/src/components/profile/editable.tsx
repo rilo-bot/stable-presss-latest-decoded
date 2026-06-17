@@ -18,7 +18,7 @@ type SaveState = 'idle' | 'saving' | 'saved';
 
 const labelStyle: React.CSSProperties = {
   fontSize: '0.56rem', textTransform: 'uppercase', letterSpacing: '0.1em',
-  color: 'var(--parchment-shadow)', fontWeight: 700, flexShrink: 0, ...serifStyle,
+  color: 'var(--parchment-label)', fontWeight: 700, flexShrink: 0, ...serifStyle,
 };
 
 const inputStyle: React.CSSProperties = {
@@ -99,7 +99,7 @@ export function InlineEditRow({ label, value, onSave, editable, type = 'text', d
             style={{ display: 'inline-flex', alignItems: 'center', gap: 5, background: 'none', border: 'none', padding: 0, cursor: 'pointer', textAlign: 'right', maxWidth: '100%' }}
             title={`Edit ${label.toLowerCase()}`}
           >
-            <span style={{ fontSize: '0.72rem', fontWeight: 600, color: shown ? valueColor : 'var(--parchment-shadow)', fontStyle: shown ? 'normal' : 'italic', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', ...serifStyle }}>
+            <span style={{ fontSize: '0.72rem', fontWeight: 600, color: shown ? valueColor : 'var(--gold-dark)', fontStyle: shown ? 'normal' : 'italic', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', ...serifStyle }}>
               {shown || `Add ${label.toLowerCase()}`}
             </span>
             <Pencil size={9} style={{ color: 'var(--gold-mid)', flexShrink: 0 }} />
@@ -159,7 +159,7 @@ export function InlineEditTextArea({ label, value, onSave, editable, placeholder
           style={{ width: '100%', resize: 'vertical', background: 'var(--parchment)', border: '1px solid var(--gold-mid)', borderRadius: 2, padding: '6px 8px', fontSize: '0.72rem', color: 'var(--forest-deep)', lineHeight: 1.5, outline: 'none', boxShadow: 'inset 0 1px 2px rgba(0,0,0,0.1)', ...serifStyle }}
         />
       ) : (
-        <p style={{ fontSize: '0.72rem', color: value ? 'var(--forest-mid)' : 'var(--parchment-shadow)', fontStyle: value ? 'normal' : 'italic', lineHeight: 1.6, margin: 0, ...serifStyle }}>{value || 'Not recorded.'}</p>
+        <p style={{ fontSize: '0.72rem', color: value ? 'var(--forest-mid)' : 'var(--gold-dark)', fontStyle: value ? 'normal' : 'italic', lineHeight: 1.6, margin: 0, ...serifStyle }}>{value || 'Not recorded.'}</p>
       )}
     </div>
   );
@@ -240,7 +240,7 @@ export function HeroImageEdit({ src, alt, editable, kind, onUpload, containerSty
                 <span style={{ fontSize: '0.56rem', color: 'var(--gold-mid)', ...serifStyle }}>JPG or PNG · nothing uploaded yet</span>
               </>
             ) : (
-              <span style={{ fontSize: '0.6rem', fontStyle: 'italic', color: 'var(--parchment-shadow)', ...serifStyle }}>No photo on file</span>
+              <span style={{ fontSize: '0.6rem', fontStyle: 'italic', color: 'var(--parchment-label)', ...serifStyle }}>No photo on file</span>
             )}
           </div>
         </div>

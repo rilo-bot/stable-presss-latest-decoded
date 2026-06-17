@@ -8,14 +8,64 @@
  * and the "include in publish" toggle is shown only to owner/editor.
  */
 
-import { memo, useMemo, type ReactNode } from 'react';
+import { memo, useMemo, useState, type ReactNode } from 'react';
 import { useMagazineStore } from '@/stores/magazineStore';
 import { EditorProvider } from './EditorContext';
 import { PAGE_COMPONENTS } from './templates/registry';
+import { PAGE_TYPE_OPTIONS } from './templates/blueprints';
 import { PAGE_W, PAGE_H } from './templates/parts';
 import type { PageTypeKey } from '@/types/magazine';
 import { cn } from '@/lib/utils';
-import { Check, Lock } from 'lucide-react';
+import { Check, Lock, ChevronUp, ChevronDown, Trash2, Plus } from 'lucide-react';
+
+/** Dropdown that lets the owner pick a page type to insert. */
+function PageTypePicker({
+  label,
+  onPick,
+  align = 'right',
+}: {
+  label: string;
+  onPick: (t: PageTypeKey) => void;
+  align?: 'left' | 'right';
+}) {
+  const [open, setOpen] = useState(false);
+  return (
+    <div className="relative">
+      <button
+        type="button"
+        onClick={() => setOpen((o) => !o)}
+        className="flex items-center gap-1 rounded-sm border border-white/15 px-2 py-0.5 text-[10px] font-semibold text-white/60 hover:bg-white/10 hover:text-white/90"
+      >
+        <Plus size={11} /> {label}
+      </button>
+      {open && (
+        <>
+          <div className="fixed inset-0 z-40" onClick={() => setOpen(false)} />
+          <div
+            className={cn(
+              'absolute top-full z-50 mt-1 max-h-72 w-60 overflow-auto rounded-sm border border-white/15 bg-[#0d1626] py-1 shadow-xl',
+              align === 'right' ? 'right-0' : 'left-0'
+            )}
+          >
+            {PAGE_TYPE_OPTIONS.map((o) => (
+              <button
+                key={o.pageType}
+                type="button"
+                onClick={() => {
+                  onPick(o.pageType);
+                  setOpen(false);
+                }}
+                className="block w-full px-3 py-1.5 text-left text-[11px] text-white/80 hover:bg-white/10"
+              >
+                {o.label}
+              </button>
+            ))}
+          </div>
+        </>
+      )}
+    </div>
+  );
+}
 
 function ScaledFrame({ scale, children }: { scale: number; children: ReactNode }) {
   return (
@@ -93,6 +143,8 @@ function CanvasPage({
   scale,
   editable,
   canManage,
+  index,
+  total,
 }: {
   magazineId: string;
   pageId: string;
@@ -102,16 +154,21 @@ function CanvasPage({
   scale: number;
   editable: boolean;
   canManage: boolean;
+  index: number;
+  total: number;
 }) {
   const selected = useMagazineStore(
     (s) => s.magazines.find((m) => m.id === magazineId)?.pages.find((p) => p.id === pageId)?.selectedForPublish ?? true
   );
   const setPageSelected = useMagazineStore((s) => s.setPageSelected);
+  const addPage = useMagazineStore((s) => s.addPage);
+  const deletePage = useMagazineStore((s) => s.deletePage);
+  const movePage = useMagazineStore((s) => s.movePage);
 
   return (
     <div className="flex flex-col items-center" data-page-id={pageId}>
       <div
-        className="mb-1.5 flex items-center gap-3 text-white/60"
+        className="mb-1.5 flex items-center gap-2 text-white/60"
         style={{ width: PAGE_W * scale }}
       >
         <span className="text-[11px] font-semibold tabular-nums">
@@ -123,26 +180,58 @@ function CanvasPage({
           </span>
         )}
         {canManage && (
-          <button
-            type="button"
-            onClick={() => setPageSelected(magazineId, pageId, !selected)}
-            className={cn(
-              'ml-auto flex items-center gap-1.5 rounded-sm border px-2 py-0.5 text-[10px] font-semibold transition-colors',
-              selected
-                ? 'border-emerald-400/40 bg-emerald-500/15 text-emerald-300'
-                : 'border-white/15 text-white/40 hover:text-white/70'
-            )}
-          >
-            <span
+          <div className="ml-auto flex items-center gap-1.5">
+            <div className="flex items-center gap-1">
+              <button
+                type="button"
+                disabled={index === 0}
+                onClick={() => movePage(magazineId, pageId, -1)}
+                className="rounded-sm border border-white/15 p-1 text-white/60 hover:bg-white/10 hover:text-white/90 disabled:opacity-25"
+                aria-label="Move page up"
+              >
+                <ChevronUp size={12} />
+              </button>
+              <button
+                type="button"
+                disabled={index === total - 1}
+                onClick={() => movePage(magazineId, pageId, 1)}
+                className="rounded-sm border border-white/15 p-1 text-white/60 hover:bg-white/10 hover:text-white/90 disabled:opacity-25"
+                aria-label="Move page down"
+              >
+                <ChevronDown size={12} />
+              </button>
+              <PageTypePicker label="Insert below" onPick={(t) => addPage(magazineId, t, index + 1)} />
+              <button
+                type="button"
+                disabled={total <= 1}
+                onClick={() => deletePage(magazineId, pageId)}
+                className="rounded-sm border border-white/15 p-1 text-white/50 hover:bg-rose-500/20 hover:text-rose-300 disabled:opacity-25"
+                aria-label="Delete page"
+              >
+                <Trash2 size={12} />
+              </button>
+            </div>
+            <button
+              type="button"
+              onClick={() => setPageSelected(magazineId, pageId, !selected)}
               className={cn(
-                'flex h-3 w-3 items-center justify-center rounded-[3px] border',
-                selected ? 'border-emerald-400 bg-emerald-500' : 'border-white/30'
+                'flex items-center gap-1.5 rounded-sm border px-2 py-0.5 text-[10px] font-semibold transition-colors',
+                selected
+                  ? 'border-emerald-400/40 bg-emerald-500/15 text-emerald-300'
+                  : 'border-white/15 text-white/40 hover:text-white/70'
               )}
             >
-              {selected && <Check size={9} className="text-white" />}
-            </span>
-            Include in publish
-          </button>
+              <span
+                className={cn(
+                  'flex h-3 w-3 items-center justify-center rounded-[3px] border',
+                  selected ? 'border-emerald-400 bg-emerald-500' : 'border-white/30'
+                )}
+              >
+                {selected && <Check size={9} className="text-white" />}
+              </span>
+              Include in publish
+            </button>
+          </div>
         )}
       </div>
       {editable ? (
@@ -161,9 +250,10 @@ export function MagazineCanvas({ magazineId, scale }: { magazineId: string; scal
   });
   const access = useMagazineStore((s) => s.access[magazineId]);
   const select = useMagazineStore((s) => s.select);
+  const addPage = useMagazineStore((s) => s.addPage);
 
   const editableIds = access?.editablePageIds ?? 'all';
-  const canManage = access?.role === 'owner'; // publish-selection is owner-only
+  const canManage = access?.role === 'owner'; // structural ops + publish-selection are owner-only
   const isEditable = (pageId: string) => editableIds === 'all' || editableIds.includes(pageId);
 
   return (
@@ -173,7 +263,7 @@ export function MagazineCanvas({ magazineId, scale }: { magazineId: string; scal
         if (e.target === e.currentTarget) select(null);
       }}
     >
-      {metas.map((m) => (
+      {metas.map((m, i) => (
         <CanvasPage
           key={m.id}
           magazineId={magazineId}
@@ -184,8 +274,18 @@ export function MagazineCanvas({ magazineId, scale }: { magazineId: string; scal
           scale={scale}
           editable={isEditable(m.id)}
           canManage={canManage}
+          index={i}
+          total={metas.length}
         />
       ))}
+      {canManage && (
+        <div style={{ width: PAGE_W * scale }} className="flex justify-center">
+          <div className="flex items-center gap-2 rounded-sm border border-dashed border-white/20 px-4 py-3">
+            <span className="text-[11px] text-white/40">Add a page to the end</span>
+            <PageTypePicker label="Add page" align="left" onPick={(t) => addPage(magazineId, t)} />
+          </div>
+        </div>
+      )}
     </div>
   );
 }

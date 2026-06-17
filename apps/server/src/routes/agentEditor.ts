@@ -28,6 +28,10 @@ router.post('/chat', attachAccountOptional, async (req, res) => {
     res.status(400).json({ error: 'messages[] is required' })
     return
   }
+  if (body.messages.length > 100) {
+    res.status(413).json({ error: 'This conversation is too long — please start a new chat.' })
+    return
+  }
   try {
     const result = streamText({
       model: getAgentModel(),

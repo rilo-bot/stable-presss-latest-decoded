@@ -12,56 +12,17 @@
 
 import { useState, useMemo, useEffect, useRef } from 'react';
 import { toast } from 'sonner';
-import { X, Plus, Link as LinkIcon, Upload, Newspaper, ChevronDown, Check, Search, FileText, Image as ImageIcon, File as FileIcon, FileArchive } from 'lucide-react';
-import { Button } from '@/components/ui/button';
-import { Input } from '@/components/ui/input';
-import { Label } from '@/components/ui/label';
+import { X, Newspaper, ChevronDown, Check, Search } from 'lucide-react';
 import { Textarea } from '@/components/ui/textarea';
-import { Badge } from '@/components/ui/badge';
 import { useMediaStore } from '@/stores/mediaStore';
 import { uploadRawFile } from '@/lib/upload';
 import { useHorseStore } from '@/stores/horseStore';
 import { usePartyStore } from '@/stores/partyStore';
 import { useArticleStore } from '@/stores/articleStore';
 import type { MediaItem, MediaType } from '@/types/mediaItem';
-import { MEDIA_TYPES } from '@/types/mediaItem';
-
-const serifStyle: React.CSSProperties = {
-  fontFamily: "'IM Fell English', 'Palatino Linotype', Georgia, serif",
-};
-
-/* ── Helpers ── */
-function fmtDate(d?: Date | string | null): string {
-  if (!d) return '';
-  try {
-    return new Date(d as string).toLocaleDateString('en-AU', {
-      day: 'numeric', month: 'short', year: 'numeric',
-    });
-  } catch { return String(d); }
-}
-
-function fmtFileSize(bytes: number): string {
-  if (bytes < 1024) return `${bytes} B`;
-  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
-  return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
-}
-
-function getFileIcon(name: string) {
-  const ext = name.split('.').pop()?.toLowerCase() ?? '';
-  if (['jpg', 'jpeg', 'png', 'gif', 'webp', 'svg', 'avif'].includes(ext)) return <ImageIcon size={16} />;
-  if (['mp4', 'mov', 'avi', 'mkv', 'webm'].includes(ext)) return <FileIcon size={16} />;
-  if (['pdf'].includes(ext)) return <FileText size={16} />;
-  if (['zip', 'tar', 'gz', 'rar'].includes(ext)) return <FileArchive size={16} />;
-  return <FileIcon size={16} />;
-}
-
-const MEDIA_TYPE_ICONS: Record<MediaType, string> = {
-  Article: '📰',
-  Photo: '📷',
-  Video: '🎬',
-  'Press Release': '📢',
-  Publication: '📖',
-};
+import { serifStyle, MEDIA_TYPES, MEDIA_TYPE_ICONS } from './media-data-form/constants';
+import { FileUpload } from './media-data-form/FileUpload';
+import { MetadataFields } from './media-data-form/MetadataFields';
 
 interface MediaDataFormProps {
   horseId?: string;
@@ -409,391 +370,52 @@ export function MediaDataForm({ horseId, initial, onSave, onCancel, compact = fa
           </div>
         </div>
 
-        {/* ── 4. Title ── */}
-        <div>
-          <label style={fieldLabelStyle}>Title <span style={{ color: 'var(--gold-bright)' }}>*</span></label>
-          <Input
-            value={title}
-            onChange={(e) => setTitle(e.target.value)}
-            placeholder="Full title of the article, photo, or press release…"
-            style={inputStyle}
-            required
-          />
-        </div>
-
-        {/* ── 5. Source Publication (optional) ── */}
-        <div>
-          <label style={fieldLabelStyle}>Source Publication <span style={{ color: 'var(--parchment-shadow)', fontStyle: 'italic', textTransform: 'none', letterSpacing: 0 }}>(optional)</span></label>
-          <Input
-            value={sourcePublication}
-            onChange={(e) => setSourcePublication(e.target.value)}
-            placeholder="e.g. The Racing Post, Stable Press, Racing NSW Photography…"
-            style={inputStyle}
-          />
-        </div>
-
-        {/* ── 6. Published Date (optional) ── */}
-        <div>
-          <label style={fieldLabelStyle}>Published Date <span style={{ color: 'var(--parchment-shadow)', fontStyle: 'italic', textTransform: 'none', letterSpacing: 0 }}>(optional)</span></label>
-          <Input
-            type="date"
-            value={publishedDate}
-            onChange={(e) => setPublishedDate(e.target.value)}
-            style={inputStyle}
-          />
-        </div>
-
-        {sectionDivider}
-
-        {/* ── 7. URL or File Upload ── */}
-        <div>
-          <label style={{ ...fieldLabelStyle, marginBottom: 8 }}>
-            URL or File Upload <span style={{ color: 'var(--gold-bright)' }}>*</span>
-            <span style={{ color: 'var(--parchment-shadow)', fontStyle: 'italic', textTransform: 'none', letterSpacing: 0, fontWeight: 400 }}> (at least one required)</span>
-          </label>
-          {/* Toggle */}
-          <div style={{ display: 'flex', gap: 0, marginBottom: 10, border: '1px solid var(--parchment-dark)', borderRadius: 3, overflow: 'hidden' }}>
-            {(['url', 'file'] as const).map((opt) => (
-              <button
-                key={opt}
-                type="button"
-                onClick={() => setUrlOrFile(opt)}
-                style={{
-                  flex: 1,
-                  display: 'flex',
-                  alignItems: 'center',
-                  justifyContent: 'center',
-                  gap: 6,
-                  padding: '6px 10px',
-                  background: opt === urlOrFile ? 'linear-gradient(90deg, var(--forest-mid) 0%, var(--forest-light) 100%)' : 'var(--parchment)',
-                  border: 'none',
-                  cursor: 'pointer',
-                  fontSize: '0.64rem',
-                  color: opt === urlOrFile ? 'var(--parchment)' : 'var(--forest-deep)',
-                  fontWeight: opt === urlOrFile ? 700 : 400,
-                  transition: 'all 0.15s',
-                  ...serifStyle,
-                }}
-                aria-pressed={opt === urlOrFile}
-              >
-                {opt === 'url' ? <LinkIcon size={11} /> : <Upload size={11} />}
-                {opt === 'url' ? 'External URL' : 'File Upload'}
-              </button>
-            ))}
-          </div>
-
-          {/* ── URL panel ── */}
-          {urlOrFile === 'url' && (
-            <div>
-              <Input
-                value={url}
-                onChange={(e) => setUrl(e.target.value)}
-                placeholder="https://example.com/article or /articles/art-001"
-                style={inputStyle}
-                type="url"
-              />
-              <p style={{ fontSize: '0.58rem', color: 'var(--parchment-shadow)', fontStyle: 'italic', marginTop: 4 }}>
-                Full external URL or a relative path to a Stable Press article.
-              </p>
-            </div>
-          )}
-
-          {/* ── File Upload panel ── */}
-          {urlOrFile === 'file' && (
-            <div>
-              {/* Hidden native file input */}
-              <input
-                ref={fileInputRef}
-                type="file"
-                onChange={handleFileInputChange}
-                style={{ display: 'none' }}
-                aria-label="Upload file"
-              />
-
-              {/* If no file selected yet — drop zone */}
-              {!selectedFile && !fileName ? (
-                <div
-                  onDrop={handleDrop}
-                  onDragOver={handleDragOver}
-                  onDragLeave={handleDragLeave}
-                  onClick={() => fileInputRef.current?.click()}
-                  role="button"
-                  tabIndex={0}
-                  aria-label="Drop a file here or click to browse"
-                  onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') fileInputRef.current?.click(); }}
-                  style={{
-                    border: `2px dashed ${dragOver ? 'var(--gold-bright)' : 'var(--parchment-dark)'}`,
-                    borderRadius: 4,
-                    padding: '24px 16px',
-                    display: 'flex',
-                    flexDirection: 'column',
-                    alignItems: 'center',
-                    justifyContent: 'center',
-                    gap: 8,
-                    cursor: 'pointer',
-                    background: dragOver
-                      ? 'rgba(180,140,60,0.07)'
-                      : 'repeating-linear-gradient(135deg, transparent, transparent 8px, rgba(0,0,0,0.012) 8px, rgba(0,0,0,0.012) 9px)',
-                    transition: 'border-color 0.15s, background 0.15s',
-                    userSelect: 'none',
-                  }}
-                >
-                  <div style={{
-                    width: 40,
-                    height: 40,
-                    borderRadius: '50%',
-                    background: dragOver ? 'rgba(180,140,60,0.18)' : 'var(--parchment-dark)',
-                    display: 'flex',
-                    alignItems: 'center',
-                    justifyContent: 'center',
-                    transition: 'background 0.15s',
-                  }}>
-                    <Upload size={18} style={{ color: dragOver ? 'var(--gold-bright)' : 'var(--parchment-shadow)' }} />
-                  </div>
-                  <div style={{ textAlign: 'center' }}>
-                    <p style={{ fontSize: '0.72rem', color: 'var(--forest-deep)', fontWeight: 600, margin: 0, ...serifStyle }}>
-                      Drop your file here, or{' '}
-                      <span style={{ color: 'var(--gold-bright)', textDecoration: 'underline' }}>browse</span>
-                    </p>
-                    <p style={{ fontSize: '0.58rem', color: 'var(--parchment-shadow)', fontStyle: 'italic', margin: '4px 0 0', ...serifStyle }}>
-                      PDF, images, video, or any document
-                    </p>
-                  </div>
-                </div>
-              ) : (
-                /* File selected — show file card */
-                <div style={{
-                  display: 'flex',
-                  alignItems: 'center',
-                  gap: 10,
-                  padding: '10px 12px',
-                  border: '1px solid var(--gold-dark)',
-                  borderRadius: 4,
-                  background: 'linear-gradient(90deg, rgba(26,51,34,0.06) 0%, transparent 100%)',
-                }}>
-                  {/* File type icon */}
-                  <div style={{
-                    width: 36,
-                    height: 36,
-                    borderRadius: 3,
-                    background: 'linear-gradient(135deg, var(--forest-mid) 0%, var(--forest-light) 100%)',
-                    display: 'flex',
-                    alignItems: 'center',
-                    justifyContent: 'center',
-                    flexShrink: 0,
-                    color: 'var(--gold-bright)',
-                  }}>
-                    {getFileIcon(fileName)}
-                  </div>
-
-                  {/* File info */}
-                  <div style={{ flex: 1, minWidth: 0 }}>
-                    <p style={{ margin: 0, fontSize: '0.72rem', color: 'var(--forest-deep)', fontWeight: 600, ...serifStyle, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-                      {fileName}
-                    </p>
-                    {selectedFile && (
-                      <p style={{ margin: '2px 0 0', fontSize: '0.58rem', color: 'var(--parchment-shadow)', fontStyle: 'italic', ...serifStyle }}>
-                        {fmtFileSize(selectedFile.size)} · ready to attach
-                      </p>
-                    )}
-                    {!selectedFile && fileName && (
-                      <p style={{ margin: '2px 0 0', fontSize: '0.58rem', color: 'var(--parchment-shadow)', fontStyle: 'italic', ...serifStyle }}>
-                        Previously attached
-                      </p>
-                    )}
-                  </div>
-
-                  {/* Change / remove actions */}
-                  <div style={{ display: 'flex', alignItems: 'center', gap: 6, flexShrink: 0 }}>
-                    <button
-                      type="button"
-                      onClick={() => fileInputRef.current?.click()}
-                      aria-label="Change file"
-                      style={{
-                        background: 'none',
-                        border: '1px solid var(--parchment-dark)',
-                        borderRadius: 2,
-                        padding: '3px 8px',
-                        fontSize: '0.58rem',
-                        color: 'var(--forest-deep)',
-                        cursor: 'pointer',
-                        ...serifStyle,
-                        letterSpacing: '0.06em',
-                        transition: 'border-color 0.15s',
-                      }}
-                    >
-                      Change
-                    </button>
-                    <button
-                      type="button"
-                      onClick={clearFile}
-                      aria-label="Remove file"
-                      style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'var(--parchment-shadow)', display: 'flex', alignItems: 'center', padding: 2 }}
-                    >
-                      <X size={13} />
-                    </button>
-                  </div>
-                </div>
-              )}
-
-              {/* Always-visible helper when a file is selected */}
-              {(selectedFile || fileName) && (
-                <p style={{ fontSize: '0.56rem', color: 'var(--parchment-shadow)', fontStyle: 'italic', marginTop: 5, ...serifStyle }}>
-                  File will be stored in the Stable Press asset library on save.
-                </p>
-              )}
-            </div>
-          )}
-        </div>
-
-        {sectionDivider}
-
-        {/* ── 8. Featured Parties (optional) ── */}
-        <div>
-          <label style={{ ...fieldLabelStyle, marginBottom: 6 }}>
-            Featured Parties <span style={{ color: 'var(--parchment-shadow)', fontStyle: 'italic', textTransform: 'none', letterSpacing: 0, fontWeight: 400 }}>(optional)</span>
-          </label>
-          {/* Selected chips */}
-          {featuredPartyIds.length > 0 && (
-            <div style={{ display: 'flex', flexWrap: 'wrap', gap: 4, marginBottom: 8 }}>
-              {featuredPartyIds.map((pid) => {
-                const p = allParties.find((pp) => pp.id === pid);
-                if (!p) return null;
-                return (
-                  <div key={pid} style={{ display: 'flex', alignItems: 'center', gap: 4, background: 'linear-gradient(90deg, var(--forest-mid) 0%, var(--forest-light) 100%)', border: '1px solid var(--gold-dark)', borderRadius: 2, padding: '2px 6px 2px 8px' }}>
-                    <span style={{ fontSize: '0.62rem', color: 'var(--parchment)', ...serifStyle }}>{p.name}</span>
-                    <button type="button" onClick={() => toggleParty(pid)} aria-label={`Remove ${p.name}`} style={{ background: 'none', border: 'none', cursor: 'pointer', display: 'flex', alignItems: 'center', padding: 0, color: 'var(--gold-mid)' }}>
-                      <X size={10} />
-                    </button>
-                  </div>
-                );
-              })}
-            </div>
-          )}
-          {/* Dropdown trigger */}
-          <div style={{ position: 'relative' }}>
-            <button
-              type="button"
-              onClick={() => setPartyDropOpen((v) => !v)}
-              style={{ ...inputStyle, display: 'flex', alignItems: 'center', gap: 6, cursor: 'pointer' }}
-              aria-expanded={partyDropOpen}
-              aria-label="Add featured party"
-            >
-              <Plus size={12} style={{ color: 'var(--parchment-shadow)', flexShrink: 0 }} />
-              <span style={{ color: 'var(--parchment-shadow)', fontStyle: 'italic', fontSize: '0.72rem' }}>Add featured party…</span>
-            </button>
-            {partyDropOpen && (
-              <div style={{ position: 'absolute', top: '100%', left: 0, right: 0, zIndex: 50, background: 'var(--parchment)', border: '1px solid var(--parchment-dark)', borderTop: 'none', borderRadius: '0 0 3px 3px', boxShadow: '0 4px 12px rgba(0,0,0,0.3)', maxHeight: 220, overflow: 'auto' }}>
-                <div style={{ padding: '6px 8px', borderBottom: '1px solid var(--parchment-dark)', display: 'flex', alignItems: 'center', gap: 6 }}>
-                  <Search size={12} style={{ color: 'var(--parchment-shadow)' }} />
-                  <input
-                    value={partySearch}
-                    onChange={(e) => setPartySearch(e.target.value)}
-                    placeholder="Search parties…"
-                    style={{ flex: 1, border: 'none', background: 'transparent', outline: 'none', fontSize: '0.72rem', color: 'var(--forest-deep)', fontFamily: "'IM Fell English', Georgia, serif" }}
-                    autoFocus
-                  />
-                  <button type="button" onClick={() => setPartyDropOpen(false)} style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'var(--parchment-shadow)' }}><X size={12} /></button>
-                </div>
-                {filteredParties.length === 0 && (
-                  <div style={{ padding: '10px 12px', fontSize: '0.68rem', fontStyle: 'italic', color: 'var(--parchment-shadow)' }}>No parties found.</div>
-                )}
-                {filteredParties.map((p) => {
-                  const selected = featuredPartyIds.includes(p.id);
-                  return (
-                    <button
-                      key={p.id}
-                      type="button"
-                      onClick={() => toggleParty(p.id)}
-                      style={{ width: '100%', display: 'flex', alignItems: 'center', gap: 8, padding: '8px 12px', background: selected ? 'rgba(0,0,0,0.04)' : 'transparent', border: 'none', cursor: 'pointer', textAlign: 'left' }}
-                    >
-                      <div style={{ width: 14, height: 14, borderRadius: 2, border: `1px solid ${selected ? 'var(--gold-bright)' : 'var(--parchment-dark)'}`, background: selected ? 'var(--forest-mid)' : 'transparent', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
-                        {selected && <Check size={9} style={{ color: 'var(--gold-bright)' }} />}
-                      </div>
-                      <div style={{ flex: 1, minWidth: 0 }}>
-                        <span style={{ fontSize: '0.72rem', color: 'var(--forest-deep)', ...serifStyle, display: 'block', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{p.name}</span>
-                        {p.roles && p.roles.length > 0 && (
-                          <span style={{ fontSize: '0.56rem', color: 'var(--parchment-shadow)', textTransform: 'capitalize' }}>{p.roles.join(', ')}</span>
-                        )}
-                      </div>
-                    </button>
-                  );
-                })}
-              </div>
-            )}
-          </div>
-        </div>
-
-        {/* ── 9. Linked Article (optional) ── */}
-        <div>
-          <label style={{ ...fieldLabelStyle, marginBottom: 6 }}>
-            Linked Article <span style={{ color: 'var(--parchment-shadow)', fontStyle: 'italic', textTransform: 'none', letterSpacing: 0, fontWeight: 400 }}>(optional)</span>
-          </label>
-          {linkedArticle && (
-            <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: 6, background: 'linear-gradient(90deg, var(--forest-mid) 0%, var(--forest-light) 100%)', border: '1px solid var(--gold-dark)', borderRadius: 3, padding: '6px 10px' }}>
-              <Newspaper size={11} style={{ color: 'var(--gold-bright)', flexShrink: 0 }} />
-              <span style={{ flex: 1, fontSize: '0.68rem', color: 'var(--parchment)', ...serifStyle, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{linkedArticle.title}</span>
-              <button type="button" onClick={() => setLinkedArticleId('')} aria-label="Unlink article" style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'var(--gold-mid)', flexShrink: 0 }}><X size={11} /></button>
-            </div>
-          )}
-          <div style={{ position: 'relative' }}>
-            <button
-              type="button"
-              onClick={() => setArticleDropOpen((v) => !v)}
-              style={{ ...inputStyle, display: 'flex', alignItems: 'center', gap: 6, cursor: 'pointer' }}
-              aria-expanded={articleDropOpen}
-              aria-label="Link to article"
-            >
-              <Plus size={12} style={{ color: 'var(--parchment-shadow)', flexShrink: 0 }} />
-              <span style={{ color: 'var(--parchment-shadow)', fontStyle: 'italic', fontSize: '0.72rem' }}>
-                {linkedArticleId ? 'Change linked article…' : 'Link to a Stable Press article…'}
-              </span>
-            </button>
-            {articleDropOpen && (
-              <div style={{ position: 'absolute', top: '100%', left: 0, right: 0, zIndex: 50, background: 'var(--parchment)', border: '1px solid var(--parchment-dark)', borderTop: 'none', borderRadius: '0 0 3px 3px', boxShadow: '0 4px 12px rgba(0,0,0,0.3)', maxHeight: 220, overflow: 'auto' }}>
-                <div style={{ padding: '6px 8px', borderBottom: '1px solid var(--parchment-dark)', display: 'flex', alignItems: 'center', gap: 6 }}>
-                  <Search size={12} style={{ color: 'var(--parchment-shadow)' }} />
-                  <input
-                    value={articleSearch}
-                    onChange={(e) => setArticleSearch(e.target.value)}
-                    placeholder="Search articles…"
-                    style={{ flex: 1, border: 'none', background: 'transparent', outline: 'none', fontSize: '0.72rem', color: 'var(--forest-deep)', fontFamily: "'IM Fell English', Georgia, serif" }}
-                    autoFocus
-                  />
-                  <button type="button" onClick={() => setArticleDropOpen(false)} style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'var(--parchment-shadow)' }}><X size={12} /></button>
-                </div>
-                {/* None option */}
-                <button
-                  type="button"
-                  onClick={() => { setLinkedArticleId(''); setArticleDropOpen(false); }}
-                  style={{ width: '100%', display: 'flex', alignItems: 'center', gap: 8, padding: '8px 12px', background: !linkedArticleId ? 'rgba(0,0,0,0.04)' : 'transparent', border: 'none', borderBottom: '1px solid var(--parchment-dark)', cursor: 'pointer', textAlign: 'left' }}
-                >
-                  <span style={{ fontSize: '0.68rem', fontStyle: 'italic', color: 'var(--parchment-shadow)', ...serifStyle }}>— No linked article —</span>
-                </button>
-                {filteredArticles.length === 0 && (
-                  <div style={{ padding: '10px 12px', fontSize: '0.68rem', fontStyle: 'italic', color: 'var(--parchment-shadow)' }}>No articles found.</div>
-                )}
-                {filteredArticles.map((a) => {
-                  const selected = a.id === linkedArticleId;
-                  return (
-                    <button
-                      key={a.id}
-                      type="button"
-                      onClick={() => { setLinkedArticleId(a.id); setArticleDropOpen(false); setArticleSearch(''); }}
-                      style={{ width: '100%', display: 'flex', alignItems: 'center', gap: 8, padding: '8px 12px', background: selected ? 'rgba(0,0,0,0.04)' : 'transparent', border: 'none', cursor: 'pointer', textAlign: 'left' }}
-                    >
-                      {selected && <Check size={11} style={{ color: 'var(--forest-deep)', flexShrink: 0 }} />}
-                      <div style={{ flex: 1, minWidth: 0 }}>
-                        <span style={{ fontSize: '0.72rem', color: 'var(--forest-deep)', ...serifStyle, display: 'block', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{a.title}</span>
-                        <span style={{ fontSize: '0.56rem', color: 'var(--parchment-shadow)', textTransform: 'capitalize' }}>{a.author ?? ''} · {a.status}</span>
-                      </div>
-                    </button>
-                  );
-                })}
-              </div>
-            )}
-          </div>
-        </div>
+        <MetadataFields
+          fieldLabelStyle={fieldLabelStyle}
+          inputStyle={inputStyle}
+          title={title}
+          setTitle={setTitle}
+          sourcePublication={sourcePublication}
+          setSourcePublication={setSourcePublication}
+          publishedDate={publishedDate}
+          setPublishedDate={setPublishedDate}
+          allParties={allParties}
+          featuredPartyIds={featuredPartyIds}
+          filteredParties={filteredParties}
+          toggleParty={toggleParty}
+          partyDropOpen={partyDropOpen}
+          setPartyDropOpen={setPartyDropOpen}
+          partySearch={partySearch}
+          setPartySearch={setPartySearch}
+          linkedArticle={linkedArticle}
+          linkedArticleId={linkedArticleId}
+          setLinkedArticleId={setLinkedArticleId}
+          filteredArticles={filteredArticles}
+          articleDropOpen={articleDropOpen}
+          setArticleDropOpen={setArticleDropOpen}
+          articleSearch={articleSearch}
+          setArticleSearch={setArticleSearch}
+          sectionDivider={sectionDivider}
+          fileUpload={
+            <FileUpload
+              fieldLabelStyle={fieldLabelStyle}
+              inputStyle={inputStyle}
+              urlOrFile={urlOrFile}
+              setUrlOrFile={setUrlOrFile}
+              url={url}
+              setUrl={setUrl}
+              fileInputRef={fileInputRef}
+              handleFileInputChange={handleFileInputChange}
+              selectedFile={selectedFile}
+              fileName={fileName}
+              dragOver={dragOver}
+              handleDrop={handleDrop}
+              handleDragOver={handleDragOver}
+              handleDragLeave={handleDragLeave}
+              clearFile={clearFile}
+            />
+          }
+        />
       </div>
 
       {/* ── Footer actions ── */}
