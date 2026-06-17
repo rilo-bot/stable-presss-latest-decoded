@@ -7,7 +7,7 @@
  */
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
-import { Clock, Check, Plus, Loader2, Users } from 'lucide-react';
+import { Clock, Check, Plus, Loader2, Users, Camera, ClipboardList, Warehouse } from 'lucide-react';
 import { toast } from 'sonner';
 import { useAuthStore } from '@/stores/authStore';
 import { usePartyStore } from '@/stores/partyStore';
@@ -23,6 +23,8 @@ import {
 } from '@/types/party';
 import type { Party, PartyRole, PersonnelSubtype } from '@/types/party';
 import type { Horse } from '@/types/horse';
+import { COUNTRY_OPTIONS } from '@/components/horse-form/constants';
+import { loadSkippedSteps, persistSkippedSteps } from '@/lib/profile/onboardingSkips';
 import { serifStyle, goldStyle, fmtMoney, fmtDate, OrnateCrest } from '@/components/profile/kit';
 import { ProfileScaffold, type Crumb } from '@/components/profile/ProfileScaffold';
 import { IdentityCard, type FieldDescriptor } from '@/components/profile/IdentityCard';
@@ -68,6 +70,13 @@ function calcAge(dob?: string): number | null {
 
 const CURRENT_YEAR = new Date().getFullYear();
 
+/* Milestone icons for the onboarding strip (match the gamified horse strip). */
+const STEP_ICONS: Record<string, React.ReactNode> = {
+  photo: <Camera size={14} strokeWidth={1.8} />,
+  details: <ClipboardList size={14} strokeWidth={1.8} />,
+  horses: <Warehouse size={14} strokeWidth={1.8} />,
+};
+
 interface PartyProfileProps {
   partyId: string;
   mode: Mode;
@@ -87,6 +96,8 @@ export function PartyProfile({ partyId, mode, onBack }: PartyProfileProps) {
   const fetchHorses = useHorseStore((s) => s.fetchHorses);
   const addHorse = useHorseStore((s) => s.addHorse);
   const links = useHorsePartyLinkStore((s) => s.links);
+  const partiesLoaded = usePartyStore((s) => s.loaded);
+  const horsesLoaded = useHorseStore((s) => s.loaded);
   const dismissedWelcome = useMemberOnboardingStore((s) => !!s.dismissedByUser[currentUser?.id ?? '']);
   const dismissWelcome = useMemberOnboardingStore((s) => s.dismiss);
 
@@ -128,21 +139,37 @@ export function PartyProfile({ partyId, mode, onBack }: PartyProfileProps) {
     return () => setAgentContext(null);
   }, [mode, party, myHorses, setAgentContext]);
 
+  // Steps the user explicitly skipped (persisted per party). A skipped step
+  // counts as resolved so onboarding can finish without it.
+  const [skipped, setSkipped] = useState<Set<string>>(() => loadSkippedSteps(`party:${partyId}`));
+  useEffect(() => { setSkipped(loadSkippedSteps(`party:${partyId}`)); }, [partyId]);
+
   // Onboarding completion (edit mode). Mirrors the `onbSteps` done predicates
   // below — keep in sync. Hook (before guards) so the one-time celebration toast
   // fires without breaking the Rules-of-Hooks order.
   const onbAllDone = useMemo(() => {
     if (!party || mode !== 'edit' || !editable) return false;
-    return !!party.photo && !!(party.profession && party.base_location) && myHorses.length > 0;
-  }, [party, mode, editable, myHorses]);
+    const ok = (done: boolean, key: string) => done || skipped.has(key);
+    return ok(!!party.photo, 'photo')
+      && ok(!!(party.profession && party.base_location), 'details')
+      && ok(myHorses.length > 0, 'horses');
+  }, [party, mode, editable, myHorses, skipped]);
+  // Celebrate only a genuine in-session completion (see HorseProfile): require a
+  // loaded-but-incomplete state first, else the toast pops on merely opening an
+  // already-complete / previously-skipped profile (skips load from localStorage).
   const celebratedRef = useRef(false);
+  const sawIncompleteRef = useRef(false);
   useEffect(() => {
-    if (onbAllDone && !celebratedRef.current) {
+    if (!onbAllDone) {
+      if (partiesLoaded && horsesLoaded && mode === 'edit' && editable) sawIncompleteRef.current = true;
+      celebratedRef.current = false; // re-arm if data is later removed
+      return;
+    }
+    if (sawIncompleteRef.current && !celebratedRef.current) {
       celebratedRef.current = true;
       toast.success('🏇 Profile complete — it’s ready to view.');
     }
-    if (!onbAllDone) celebratedRef.current = false; // re-arm if data is later removed
-  }, [onbAllDone]);
+  }, [onbAllDone, partiesLoaded, horsesLoaded, mode, editable]);
 
   // ── Guards AFTER all hooks (stable hook order) ──
   if (!party) {
@@ -222,11 +249,15 @@ export function PartyProfile({ partyId, mode, onBack }: PartyProfileProps) {
 
   // ── Onboarding step guide (edit mode; self-hides once complete) ──
   const onbSteps: OnbStep[] = [
-    { key: 'photo', label: 'Photo', hint: 'Upload a profile photo.', done: !!party.photo, anchorId: 'onb-identity' },
-    { key: 'details', label: 'Details', hint: 'Add your profession and base location.', done: !!(party.profession && party.base_location), anchorId: 'onb-identity' },
-    { key: 'horses', label: 'Horses', hint: 'Register the horses in your stable.', done: horseCount > 0, anchorId: 'onb-horses' },
+    { key: 'photo', label: 'Photo', hint: 'Upload a profile photo.', done: !!party.photo, skipped: skipped.has('photo'), anchorId: 'onb-identity', icon: STEP_ICONS.photo },
+    { key: 'details', label: 'Details', hint: 'Add your profession and base location.', done: !!(party.profession && party.base_location), skipped: skipped.has('details'), anchorId: 'onb-identity', icon: STEP_ICONS.details },
+    { key: 'horses', label: 'Horses', hint: 'Register the horses in your stable.', done: horseCount > 0, skipped: skipped.has('horses'), anchorId: 'onb-horses', icon: STEP_ICONS.horses },
   ];
   const scrollToAnchor = (id?: string) => { if (id) document.getElementById(id)?.scrollIntoView({ behavior: 'smooth', block: 'center' }); };
+  // Mark a step skipped (persisted) so the guide moves on and onboarding can finish.
+  const skipStep = (key: string) => setSkipped((prev) => {
+    const next = new Set(prev); next.add(key); persistSkippedSteps(`party:${partyId}`, next); return next;
+  });
 
   // Per-step prompt that opens the Stable Studio assistant ready to help.
   const PARTY_STEP_PROMPTS: Record<string, string> = {
@@ -242,7 +273,7 @@ export function PartyProfile({ partyId, mode, onBack }: PartyProfileProps) {
     details: { title: 'Add your details', tips: ['Your profession & base location'] },
     horses: { title: 'Add your horses', tips: ['Register the horses in your stable'] },
   };
-  const activeStep = onbSteps.find((s) => !s.done);
+  const activeStep = onbSteps.find((s) => !s.done && !s.skipped);
   const activeKey = activeStep?.key;
   const showGuide = isEdit && editable && !onbAllDone;
   const isActive = (key: string) => showGuide && activeKey === key;
@@ -253,7 +284,7 @@ export function PartyProfile({ partyId, mode, onBack }: PartyProfileProps) {
     tips: PARTY_COACH[s.key]?.tips,
     anchorId: s.anchorId,
     pointerId: s.anchorId && !s.anchorId.startsWith('module:') ? s.anchorId : undefined,
-    done: s.done,
+    done: s.done || !!s.skipped,
   }));
 
   const summaryCells = [
@@ -292,7 +323,7 @@ export function PartyProfile({ partyId, mode, onBack }: PartyProfileProps) {
         { label: 'Role', value: '', render: roleChipsRow },
         { label: 'Profession', value: party.profession ?? '', onSave: (v) => set({ profession: v.trim() || undefined }) },
         { label: 'Date of birth', type: 'date', value: party.date_of_birth ?? '', displayValue: party.date_of_birth ? `${fmtDate(party.date_of_birth)}${age !== null ? ` · ${age}y` : ''}` : '', onSave: (v) => set({ date_of_birth: v || undefined }), max: today },
-        { label: 'Country of birth', value: party.country_of_birth ?? '', onSave: (v) => set({ country_of_birth: v.trim() || undefined }) },
+        { label: 'Country of birth', type: 'select', options: COUNTRY_OPTIONS, value: party.country_of_birth ?? '', onSave: (v) => set({ country_of_birth: v.trim() || undefined }) },
         { label: 'Base location', value: party.base_location ?? '', onSave: (v) => set({ base_location: v.trim() || undefined }) },
         { label: getStartedYearLabel(roles), type: 'number', value: party.started_year ? String(party.started_year) : '', displayValue: party.started_year ? `${party.started_year} · ${CURRENT_YEAR - party.started_year}y` : '', onSave: (v) => set({ started_year: v ? parseInt(v, 10) : undefined }), min: 1900, max: CURRENT_YEAR },
       ]
@@ -513,7 +544,7 @@ export function PartyProfile({ partyId, mode, onBack }: PartyProfileProps) {
         right={<DataSectionsRail activeModule={activeModule} onToggle={openModule} />}
         overlay={isEdit && editable
           ? (showGuide
-            ? <OnboardingGuide steps={guideSteps} name="Stablehand" onShowMe={scrollToAnchor} onAskStep={(s) => askAiForStep(onbSteps.find((o) => o.key === s.key) ?? onbSteps[0])} />
+            ? <OnboardingGuide steps={guideSteps} name="Stablehand" onShowMe={scrollToAnchor} onAskStep={(s) => askAiForStep(onbSteps.find((o) => o.key === s.key) ?? onbSteps[0])} onSkipStep={(s) => skipStep(s.key)} />
             : <ProfileAgentPanel />)
           : undefined}
       />

@@ -128,3 +128,68 @@ export async function uploadImage(file: File, opts: ImageUploadOptions): Promise
 export async function uploadRawFile(file: File, kind: UploadKind): Promise<UploadResult> {
   return uploadBlob(file, file.name, file.type || 'application/octet-stream', kind);
 }
+
+export interface UploadProgress {
+  loaded: number;
+  total: number;
+  /** 0..100, rounded. */
+  pct: number;
+}
+
+/**
+ * Upload a LARGE file (e.g. podcast audio) directly to S3 via a short-lived
+ * presigned PUT, reporting progress as it goes. The browser PUTs straight to
+ * the bucket, so this is not bound by the API-proxied path's body cap and can
+ * carry full-length episodes.
+ *
+ * The bucket must allow PUT from this site's origin (CORS). When S3 isn't
+ * configured at all, the sign endpoint returns 501 and we fall back to the
+ * proxied path (which itself falls back to an inline data URL), so local dev
+ * keeps working with zero setup.
+ */
+export async function uploadLargeFile(
+  file: File,
+  kind: UploadKind,
+  onProgress?: (p: UploadProgress) => void,
+): Promise<UploadResult> {
+  const contentType = file.type || 'application/octet-stream';
+
+  // 1) Ask our API for a presigned PUT URL.
+  const signRes = await authFetch('/api/uploads/sign', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ fileName: file.name, contentType, kind, size: file.size }),
+  });
+  if (signRes.status === 501) {
+    // S3 not configured — use the proxied path (data-URL fallback inside).
+    return uploadRawFile(file, kind);
+  }
+  if (!signRes.ok) {
+    const msg = await signRes.json().catch(() => ({} as { error?: string }));
+    throw new Error(msg.error || `Could not start the upload (HTTP ${signRes.status}).`);
+  }
+  const signed = (await signRes.json()) as { uploadUrl: string; publicUrl: string; key: string };
+
+  // 2) PUT the bytes straight to S3, streaming progress.
+  await new Promise<void>((resolve, reject) => {
+    const xhr = new XMLHttpRequest();
+    xhr.open('PUT', signed.uploadUrl);
+    xhr.setRequestHeader('Content-Type', contentType);
+    xhr.upload.onprogress = (e) => {
+      if (e.lengthComputable && onProgress) {
+        onProgress({ loaded: e.loaded, total: e.total, pct: Math.round((e.loaded / e.total) * 100) });
+      }
+    };
+    xhr.onload = () =>
+      xhr.status >= 200 && xhr.status < 300
+        ? resolve()
+        : reject(new Error(`Storage rejected the upload (HTTP ${xhr.status}).`));
+    xhr.onerror = () =>
+      reject(new Error('Upload to storage failed — the bucket may not allow uploads from this site.'));
+    xhr.send(file);
+  });
+
+  // Private bucket → server returns a relative '/api/...' URL; make it absolute.
+  const url = signed.publicUrl.startsWith('/') ? apiUrl(signed.publicUrl) : signed.publicUrl;
+  return { url, key: signed.key, fallback: false };
+}

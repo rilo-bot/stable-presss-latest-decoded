@@ -21,12 +21,6 @@ import type { StagedEdit, DocAttachment } from './types';
 /** Files shown attached to a sent user message (stored in its metadata). */
 type MsgDoc = { name: string; kind: string };
 
-// Auto-fired the moment an uploaded file finishes analysing (unless the user is
-// typing / has queued their own instruction): the agent reads it, says what's in
-// it, and STAGES recommended placements across the bulletin for one-click review.
-const AUTO_SUGGEST_PROMPT =
-  "I've just uploaded a document. Read it, tell me briefly what's in it (quote a couple of specifics so I know you've read it), then suggest where its content best fits across this bulletin and STAGE your recommended placements so I can review and apply them.";
-
 function messageText(m: UIMessage): string {
   return (m.parts ?? [])
     .filter((p): p is { type: 'text'; text: string } => p.type === 'text')
@@ -113,93 +107,85 @@ export function EditorAgentPanel() {
   const undoCount = useEditorAgentUi((s) => s.undo.length);
   const pendingPrompt = useEditorAgentUi((s) => s.pendingPrompt);
   const addAttachment = useEditorAgentUi((s) => s.addAttachment);
-  const removeAttachment = useEditorAgentUi((s) => s.removeAttachment);
 
-  // Composer attachments (chips shown until they're sent with a message). The
-  // analysed digests also live in the store, where they ride along in the editor
-  // context for the rest of the session so the agent can keep using them.
-  const [pending, setPending] = useState<DocAttachment[]>([]);
-  const pendingRef = useRef<DocAttachment[]>([]);
-  useEffect(() => { pendingRef.current = pending; }, [pending]);
-  const [ingesting, setIngesting] = useState<string[]>([]);
-  // A message typed while a file is still being read — sent automatically once ready.
-  const [queued, setQueued] = useState<string | null>(null);
+  // Files attached to the composer but NOT yet analysed. Picking a file only shows
+  // a chip — the analysis (ingest) is deferred until the user writes a prompt and
+  // presses Enter, so the document and the instruction reach the AI together.
+  const [pendingFiles, setPendingFiles] = useState<File[]>([]);
+  const pendingFilesRef = useRef<File[]>([]);
+  useEffect(() => { pendingFilesRef.current = pendingFiles; }, [pendingFiles]);
+  // True while the just-attached files are being read, after the user hits send.
+  const [ingesting, setIngesting] = useState(false);
   const fileRef = useRef<HTMLInputElement>(null);
   const scrollRef = useRef<HTMLDivElement>(null);
-  // Refs so the async upload handler can read the latest state without stale closures.
-  const queuedRef = useRef<string | null>(null);
-  useEffect(() => { queuedRef.current = queued; }, [queued]);
-  const busyRef = useRef(false);
-  useEffect(() => { busyRef.current = busy; }, [busy]);
-  const inputRef = useRef('');
-  useEffect(() => { inputRef.current = input; }, [input]);
+  const textareaRef = useRef<HTMLTextAreaElement>(null);
 
-  // Dispatch a message, tagging it with whatever files are attached so they show
-  // in the thread, then clear the composer's attachment chips.
-  const performSend = useCallback(
-    (t: string) => {
-      const docs: MsgDoc[] = pendingRef.current.map((a) => ({ name: a.name, kind: a.kind }));
+  // Auto-grow the composer (and shrink back when it's cleared after sending).
+  // scrollHeight excludes the border, but box-sizing is border-box, so add the
+  // top+bottom border (2px) to avoid a spurious 2px overflow → stray scrollbar.
+  useEffect(() => {
+    const el = textareaRef.current;
+    if (!el) return;
+    el.style.height = 'auto';
+    const full = el.scrollHeight + 2;
+    el.style.height = `${Math.min(full, 128)}px`;
+    el.style.overflowY = full > 128 ? 'auto' : 'hidden';
+  }, [input]);
+
+  // Dispatch a message: first analyse any attached files (so the digest is in the
+  // editor context and the fullText is ready for a fill), THEN send the message,
+  // tagging it with the analysed docs so they show in the thread.
+  const dispatch = useCallback(
+    async (t: string) => {
+      if (!t || busy || ingesting) return;
+      let docs: MsgDoc[] = [];
+      const files = pendingFilesRef.current;
+      if (files.length > 0) {
+        setIngesting(true);
+        const ok: DocAttachment[] = [];
+        const failed: File[] = [];
+        for (const file of files) {
+          try {
+            const att = await ingestFile(file);
+            addAttachment(att); // session context: digest rides along, fullText feeds the fill
+            ok.push(att);
+          } catch (e) {
+            failed.push(file);
+            toast.error(e instanceof Error ? e.message : `Couldn't read ${file.name}.`);
+          }
+        }
+        setIngesting(false);
+        setPendingFiles(failed); // keep only the ones that failed, for retry
+        if (ok.length === 0) return; // nothing analysed — leave the prompt in the box
+        docs = ok.map((a) => ({ name: a.name, kind: a.kind }));
+      }
       void sendMessage(docs.length ? { text: t, metadata: { docs } } : { text: t });
-      setPending([]);
       setInput('');
     },
-    [sendMessage],
+    [busy, ingesting, sendMessage, addAttachment],
   );
 
-  const onPickFiles = async (files: FileList | null) => {
+  const onPickFiles = (files: FileList | null) => {
     if (!files?.length) return;
-    let added = 0;
-    for (const file of Array.from(files)) {
-      setIngesting((prev) => [...prev, file.name]);
-      try {
-        const att = await ingestFile(file);
-        addAttachment(att); // session context
-        setPending((prev) => [...prev, att]); // composer chip
-        added++;
-      } catch (e) {
-        toast.error(e instanceof Error ? e.message : 'Could not read that file.');
-      } finally {
-        setIngesting((prev) => prev.filter((n) => n !== file.name));
-      }
-    }
+    // Just stage the raw files as chips — no upload, no analysis yet. The fill
+    // starts when the user types a prompt and presses Enter.
+    setPendingFiles((prev) => [...prev, ...Array.from(files)]);
     if (fileRef.current) fileRef.current.value = '';
-    // As soon as the file is read, proactively analyse it and suggest placements —
-    // unless the user is mid-instruction (typing or already queued a message).
-    if (added > 0 && !queuedRef.current && !inputRef.current.trim() && !busyRef.current) {
-      performSend(AUTO_SUGGEST_PROMPT);
-    }
   };
 
-  const removePending = (id: string) => {
-    removeAttachment(id);
-    setPending((prev) => prev.filter((a) => a.id !== id));
+  const removePendingFile = (idx: number) => {
+    setPendingFiles((prev) => prev.filter((_, i) => i !== idx));
   };
 
   const send = (text: string) => {
-    const t = text.trim();
-    if (!t || busy) return;
-    // If a file is still being read, hold the message and fire it the moment
-    // ingestion finishes (so the assistant always has the document).
-    if (ingesting.length > 0) {
-      setQueued(t);
-      setInput('');
-      return;
-    }
-    performSend(t);
+    void dispatch(text.trim());
   };
 
-  // Fire a queued message once the file(s) finish reading.
+  // A suggestion chip / inline trigger queued a prompt — send it once (analysing
+  // any attached files first, via dispatch).
   useEffect(() => {
-    if (queued && ingesting.length === 0 && !busy) {
-      performSend(queued);
-      setQueued(null);
-    }
-  }, [queued, ingesting, busy, performSend]);
-
-  // A suggestion chip / inline trigger queued a prompt — send it once.
-  useEffect(() => {
-    if (pendingPrompt && !busy && ingesting.length === 0) {
-      performSend(pendingPrompt);
+    if (pendingPrompt && !busy && !ingesting) {
+      void dispatch(pendingPrompt);
       useEditorAgentUi.getState().consumePrompt();
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -293,28 +279,23 @@ export function EditorAgentPanel() {
 
       {/* Composer */}
       <div className="border-t border-white/10">
-        {(pending.length > 0 || ingesting.length > 0 || queued) && (
+        {pendingFiles.length > 0 && (
           <div className="flex flex-wrap gap-1.5 px-2.5 pt-2">
-            {pending.map((a) => (
-              <span key={a.id} className="flex items-center gap-1 rounded-sm border border-emerald-400/30 bg-emerald-400/10 px-2 py-0.5 text-[10px] text-emerald-200" title={a.digest.title || a.name}>
-                <FileText size={11} />
-                <span className="max-w-[130px] truncate">{a.name}</span>
-                <button onClick={() => removePending(a.id)} aria-label={`Remove ${a.name}`} className="text-emerald-200/60 hover:text-emerald-100">
-                  <X size={10} />
-                </button>
+            {pendingFiles.map((f, i) => (
+              <span
+                key={`${f.name}-${i}`}
+                className="flex items-center gap-1 rounded-sm border border-emerald-400/30 bg-emerald-400/10 px-2 py-0.5 text-[10px] text-emerald-200"
+                title={f.name}
+              >
+                {ingesting ? <Loader2 size={11} className="animate-spin" /> : <FileText size={11} />}
+                <span className="max-w-[130px] truncate">{ingesting ? `Reading ${f.name}…` : f.name}</span>
+                {!ingesting && (
+                  <button onClick={() => removePendingFile(i)} aria-label={`Remove ${f.name}`} className="text-emerald-200/60 hover:text-emerald-100">
+                    <X size={10} />
+                  </button>
+                )}
               </span>
             ))}
-            {ingesting.map((n) => (
-              <span key={n} className="flex items-center gap-1 rounded-sm border border-amber-400/30 bg-amber-400/10 px-2 py-0.5 text-[10px] text-amber-200">
-                <Loader2 size={11} className="animate-spin" />
-                <span className="max-w-[130px] truncate">Reading {n}…</span>
-              </span>
-            ))}
-            {queued && (
-              <span className="flex items-center gap-1 rounded-sm border border-white/15 px-2 py-0.5 text-[10px] text-white/55">
-                <Loader2 size={11} className="animate-spin" /> Sending once your file’s ready…
-              </span>
-            )}
           </div>
         )}
         <form
@@ -322,7 +303,7 @@ export function EditorAgentPanel() {
             e.preventDefault();
             send(input);
           }}
-          className="flex items-center gap-2 px-2.5 py-2"
+          className="flex items-end gap-2 px-2.5 py-2"
         >
           <input
             ref={fileRef}
@@ -341,19 +322,28 @@ export function EditorAgentPanel() {
           >
             <Paperclip size={14} />
           </button>
-          <input
+          <textarea
+            ref={textareaRef}
             value={input}
+            rows={1}
             onChange={(e) => setInput(e.target.value)}
-            placeholder="Ask, or upload a file and say where it goes…"
-            className="flex-1 rounded-full border border-white/15 bg-white/5 px-3 py-1.5 text-[12px] text-white outline-none placeholder:text-white/30 focus:border-white/30"
+            onKeyDown={(e) => {
+              // Standard chat composer: Enter sends, Shift+Enter inserts a newline.
+              if (e.key === 'Enter' && !e.shiftKey && !e.nativeEvent.isComposing) {
+                e.preventDefault();
+                send(input);
+              }
+            }}
+            placeholder={pendingFiles.length > 0 ? 'Describe the document, then Enter to fill the bulletin…' : 'Ask the studio assistant…  (Shift+Enter for a new line)'}
+            className="max-h-32 flex-1 resize-none rounded-2xl border border-white/15 bg-white/5 px-3 py-1.5 text-[12px] leading-snug text-white outline-none placeholder:text-white/30 focus:border-white/30"
           />
           {busy ? (
             <button type="button" onClick={() => stop()} aria-label="Stop" className="flex h-8 w-8 items-center justify-center rounded-full bg-white/10 text-white/70">
               <Square size={13} />
             </button>
           ) : (
-            <button type="submit" aria-label="Send" disabled={!input.trim()} className="flex h-8 w-8 items-center justify-center rounded-full text-[#0b1220] disabled:opacity-40" style={{ background: 'var(--gold-bright)' }}>
-              <Send size={13} />
+            <button type="submit" aria-label="Send" disabled={!input.trim() || ingesting} className="flex h-8 w-8 items-center justify-center rounded-full text-[#0b1220] disabled:opacity-40" style={{ background: 'var(--gold-bright)' }}>
+              {ingesting ? <Loader2 size={13} className="animate-spin" /> : <Send size={13} />}
             </button>
           )}
         </form>

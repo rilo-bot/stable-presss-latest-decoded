@@ -13,6 +13,7 @@ import { cn } from '@/lib/utils';
 import { DISTRIBUTION_CHANNELS } from './constants';
 import { formatDuration, formatDate } from './helpers';
 import { DistributionBadges, StatusPill } from './components';
+import { CoverUploader } from './uploaders';
 
 type DetailTab = 'overview' | 'guests' | 'distribution' | 'review';
 
@@ -25,6 +26,7 @@ export function OverviewTab({
   descEdit,
   setDescEdit,
   handleSaveDesc,
+  onCoverChange,
   renderNextStep,
   canDelete,
   handleDelete,
@@ -35,20 +37,30 @@ export function OverviewTab({
   descEdit: string;
   setDescEdit: React.Dispatch<React.SetStateAction<string>>;
   handleSaveDesc: () => void;
+  onCoverChange: (url: string) => void;
   renderNextStep: () => React.ReactNode;
   canDelete: boolean;
   handleDelete: () => void;
 }) {
+  const canEdit =
+    (can(role, 'podcast.episode.edit_own') || can(role, 'podcast.episode.edit_any')) && isOwn;
   return (
     <>
-      {liveEpisode.coverUrl && (
+      {canEdit ? (
+        <div>
+          <p className="text-[10px] uppercase tracking-[0.08em] text-muted-foreground mb-2">
+            Cover Image
+          </p>
+          <CoverUploader value={liveEpisode.coverUrl ?? ''} onChange={onCoverChange} />
+        </div>
+      ) : liveEpisode.coverUrl ? (
         <img
           src={liveEpisode.coverUrl}
           alt={liveEpisode.title}
           crossOrigin="anonymous"
           className="w-full h-44 object-cover rounded-sm"
         />
-      )}
+      ) : null}
 
       <div className="flex items-center gap-4 text-sm text-muted-foreground">
         <span className="flex items-center gap-1.5">
@@ -269,11 +281,13 @@ export function DistributionTab({
   liveEpisode,
   liveChannels,
   role,
+  isOwn,
   handleToggleChannel,
 }: {
   liveEpisode: PodcastEpisode;
   liveChannels: DistributionChannel[];
   role: UserRole | undefined;
+  isOwn: boolean;
   handleToggleChannel: (ch: DistributionChannel) => void;
 }) {
   return (
@@ -288,7 +302,11 @@ export function DistributionTab({
       <div className="space-y-2">
         {DISTRIBUTION_CHANNELS.map((ch) => {
           const active = liveChannels.includes(ch.id);
-          const canToggle = can(role, 'podcast.distribution.manage') && liveEpisode.status !== 'published';
+          // Server only persists channel edits for episodes you can edit
+          // (edit_any, or your own via edit_own). Gate on isOwn so the toggle
+          // isn't enabled into a silent 403 for other producers' episodes.
+          const canToggle =
+            can(role, 'podcast.distribution.manage') && isOwn && liveEpisode.status !== 'published';
           return (
             <button
               key={ch.id}

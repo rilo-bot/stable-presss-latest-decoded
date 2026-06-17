@@ -14,6 +14,7 @@ import { cn } from '@/lib/utils';
 
 import { WORKFLOW_STAGES } from './constants';
 import { OverviewTab, GuestsTab, DistributionTab, ReviewTab } from './detail-tabs';
+import { AudioUploader } from './uploaders';
 
 // ── Episode Detail Panel ──────────────────────────────────────────────────────
 
@@ -31,7 +32,6 @@ export function EpisodeDetailPanel({
   const addGuest = usePodcastStore((s) => s.addGuest);
   const removeGuest = usePodcastStore((s) => s.removeGuest);
   const setDistributionChannels = usePodcastStore((s) => s.setDistributionChannels);
-  const setSchedule = usePodcastStore((s) => s.setSchedule);
   const addReviewNote = usePodcastStore((s) => s.addReviewNote);
   const updateEpisode = usePodcastStore((s) => s.updateEpisode);
   const deleteEpisode = usePodcastStore((s) => s.deleteEpisode);
@@ -80,13 +80,17 @@ export function EpisodeDetailPanel({
     setDistributionChannels(liveEpisode.id, updated);
   };
 
+  // Schedule + advance in ONE update so the date and status can't race or land
+  // half-applied. Anchored at local noon so the chosen day doesn't drift across
+  // time zones when serialised to UTC.
   const handleSchedule = () => {
     if (!scheduleDate) {
       toast.error('Please select a publish date.');
       return;
     }
-    setSchedule(liveEpisode.id, new Date(scheduleDate).toISOString());
-    toast.success('Publish date set.');
+    const iso = new Date(`${scheduleDate}T12:00:00`).toISOString();
+    updateEpisode(liveEpisode.id, { scheduledFor: iso, status: 'scheduled' });
+    toast.success('Publish date set. Episode scheduled.');
   };
 
   const handleSaveDesc = () => {
@@ -94,9 +98,19 @@ export function EpisodeDetailPanel({
     toast.success('Description saved.');
   };
 
+  // Save copy + advance to description_written atomically (single PUT).
+  const handleMarkCopyDone = () => {
+    updateEpisode(liveEpisode.id, { description: descEdit, status: 'description_written' });
+    toast.success('Copy marked as done.');
+  };
+
   const handleSaveNote = () => {
     addReviewNote(liveEpisode.id, reviewNote);
     toast.success('Review note saved.');
+  };
+
+  const handleCoverChange = (url: string) => {
+    updateEpisode(liveEpisode.id, { coverUrl: url });
   };
 
   const handleDelete = () => {
@@ -175,10 +189,7 @@ export function EpisodeDetailPanel({
           </div>
           <Button
             className="bg-primary text-primary-foreground"
-            onClick={() => {
-              handleSchedule();
-              advanceStatus(liveEpisode.id, 'scheduled');
-            }}
+            onClick={handleSchedule}
           >
             <Calendar size={14} className="mr-1.5" />
             Schedule
@@ -191,10 +202,7 @@ export function EpisodeDetailPanel({
       return (
         <Button
           className="w-full bg-primary text-primary-foreground"
-          onClick={() => {
-            handleSaveDesc();
-            advanceStatus(liveEpisode.id, 'description_written');
-          }}
+          onClick={handleMarkCopyDone}
         >
           <Star size={14} className="mr-1.5" />
           Mark Copy as Done
@@ -212,16 +220,31 @@ export function EpisodeDetailPanel({
 
     if (canAdvanceToAudio) {
       return (
-        <Button
-          className="w-full bg-primary text-primary-foreground"
-          onClick={() => {
-            advanceStatus(liveEpisode.id, 'audio_uploaded');
-            toast.success('Audio marked as uploaded. Ready for guests.');
-          }}
-        >
-          <Upload size={14} className="mr-1.5" />
-          Mark Audio as Uploaded
-        </Button>
+        <div className="space-y-3">
+          <p className="text-xs text-muted-foreground">
+            Upload the episode audio, then continue to guests.
+          </p>
+          <AudioUploader
+            value={liveEpisode.audioUrl ?? ''}
+            onChange={(url, seconds) =>
+              updateEpisode(liveEpisode.id, {
+                audioUrl: url,
+                ...(seconds ? { durationSeconds: seconds } : {}),
+              })
+            }
+          />
+          <Button
+            className="w-full bg-primary text-primary-foreground"
+            disabled={!liveEpisode.audioUrl}
+            onClick={() => {
+              advanceStatus(liveEpisode.id, 'audio_uploaded');
+              toast.success('Audio ready. Next: add guests.');
+            }}
+          >
+            <Upload size={14} className="mr-1.5" />
+            Confirm Audio &amp; Continue
+          </Button>
+        </div>
       );
     }
 
@@ -320,7 +343,7 @@ export function EpisodeDetailPanel({
         </div>
 
         {/* Body */}
-        <div className="flex-1 overflow-y-auto p-6 space-y-6">
+        <div className="flex-1 overflow-y-auto slim-scroll p-6 space-y-6">
           {/* ── OVERVIEW ── */}
           {tab === 'overview' && (
             <OverviewTab
@@ -330,6 +353,7 @@ export function EpisodeDetailPanel({
               descEdit={descEdit}
               setDescEdit={setDescEdit}
               handleSaveDesc={handleSaveDesc}
+              onCoverChange={handleCoverChange}
               renderNextStep={renderNextStep}
               canDelete={canDelete}
               handleDelete={handleDelete}
@@ -358,6 +382,7 @@ export function EpisodeDetailPanel({
               liveEpisode={liveEpisode}
               liveChannels={liveChannels}
               role={role}
+              isOwn={isOwn}
               handleToggleChannel={handleToggleChannel}
             />
           )}

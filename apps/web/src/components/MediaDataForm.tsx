@@ -14,6 +14,7 @@ import { useState, useMemo, useEffect, useRef } from 'react';
 import { toast } from 'sonner';
 import { X, Newspaper, ChevronDown, Check, Search } from 'lucide-react';
 import { Textarea } from '@/components/ui/textarea';
+import { AiTextarea } from '@/agent/compose/AiTextarea';
 import { useMediaStore } from '@/stores/mediaStore';
 import { uploadRawFile } from '@/lib/upload';
 import { useHorseStore } from '@/stores/horseStore';
@@ -327,13 +328,18 @@ export function MediaDataForm({ horseId, initial, onSave, onCancel, compact = fa
         {/* ── 2. Subject ── */}
         <div>
           <label style={fieldLabelStyle}>Subject <span style={{ color: 'var(--gold-bright)' }}>*</span></label>
-          <Textarea
+          <AiTextarea
             value={subject}
             onChange={(e) => setSubject(e.target.value)}
             placeholder="Brief description of what this media item covers…"
             rows={2}
-            style={{ ...inputStyle, resize: 'vertical', minHeight: 60 }}
+            style={{ ...inputStyle, resize: 'vertical', minHeight: 60, paddingBottom: 34 }}
             required
+            aiLabel="Subject"
+            aiKey="subject"
+            entityKind="media item"
+            getContext={() => ({ horse: selectedHorse?.name, mediaType, title, source: sourcePublication })}
+            onAccept={setSubject}
           />
         </div>
 

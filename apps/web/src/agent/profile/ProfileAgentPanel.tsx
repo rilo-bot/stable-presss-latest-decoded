@@ -6,13 +6,14 @@
 // suppresses the global Stablehand launcher (shared editor suppress flag).
 
 import { useEffect, useRef, useState } from 'react';
-import { Sparkles, Send, Square, Undo2, Check, X, UserPlus, PenLine } from 'lucide-react';
+import { Sparkles, Send, Square, Undo2, Check, X, UserPlus, PenLine, Mic, Volume2, VolumeX, Loader2 } from 'lucide-react';
 
 import { MarkdownMessage } from '@/components/MarkdownMessage';
 import { useProfileAgentUi, type Proposal } from '@/stores/profileAgentUiStore';
 import { useEditorAgentUi } from '@/stores/editorAgentUiStore';
 import { PARTY_ROLE_LABELS } from '@/types/party';
 import { useProfileChatSession, messageText } from './useProfileChatSession';
+import { useVoiceChat } from '@/agent/voice/useVoiceChat';
 import { applyProposal, discardProposal, applyAllProposals, discardAllProposals, undoLastProposal } from './applyProposals';
 
 /** Breadcrumb launcher that opens the Stable Studio drawer (edit views only). */
@@ -97,14 +98,17 @@ export function ProfileAgentPanel() {
     scrollRef.current?.scrollTo({ top: scrollRef.current.scrollHeight, behavior: 'smooth' });
   }, [messages, status, staged]);
 
-  if (!open) return null;
-
   const send = (text: string) => {
     const t = text.trim();
     if (!t || busy) return;
     void sendMessage({ text: t });
     setInput('');
   };
+  // Push-to-talk + spoken replies, shared with the concierge/onboarding guide.
+  const { voiceReady, voiceMode, setVoiceMode, recording, transcribing, caption, toggleMic } =
+    useVoiceChat({ messages, send, busy, active: open });
+
+  if (!open) return null;
 
   const isHorse = ctx?.entityKind === 'horse';
   const chips = isHorse
@@ -124,6 +128,11 @@ export function ProfileAgentPanel() {
           {undoCount > 0 && (
             <button onClick={() => void undoLastProposal()} title="Undo last applied change" className="flex items-center gap-1 rounded-sm border border-white/15 px-2 py-1 text-[10px] text-white/70 hover:bg-white/10">
               <Undo2 size={11} /> Undo
+            </button>
+          )}
+          {voiceReady && (
+            <button onClick={() => setVoiceMode((v) => !v)} aria-label={voiceMode ? 'Turn off spoken replies' : 'Read replies aloud'} title={voiceMode ? 'Spoken replies on' : 'Read replies aloud'} className="flex h-7 w-7 items-center justify-center rounded-sm border border-white/15 hover:bg-white/10" style={{ color: voiceMode ? 'var(--gold-bright)' : 'var(--gold-mid)' }}>
+              {voiceMode ? <Volume2 size={14} /> : <VolumeX size={14} />}
             </button>
           )}
           <button onClick={() => setOpen(false)} aria-label="Close" className="flex h-7 w-7 items-center justify-center rounded-sm border border-white/15 text-white/70 hover:bg-white/10">
@@ -181,14 +190,28 @@ export function ProfileAgentPanel() {
         </div>
       )}
 
+      {/* Live caption while recording (interim words; OpenAI gives the final transcript) */}
+      {(recording || transcribing) && (
+        <div className="flex items-center gap-2 border-t border-white/10 bg-white/[0.03] px-3 py-1.5 text-[11px] text-white/60">
+          <span className={'inline-block h-2 w-2 rounded-full ' + (recording ? 'animate-pulse bg-red-500' : 'bg-white/30')} />
+          <span className="line-clamp-2 italic">{caption || (transcribing ? 'Transcribing…' : 'Listening… speak now')}</span>
+        </div>
+      )}
+
       {/* Composer */}
       <form onSubmit={(e) => { e.preventDefault(); send(input); }} className="flex items-center gap-2 border-t border-white/10 px-2.5 py-2">
         <input
           value={input}
           onChange={(e) => setInput(e.target.value)}
-          placeholder="Ask the studio assistant…"
-          className="flex-1 rounded-full border border-white/15 bg-white/5 px-3 py-1.5 text-[12px] text-white outline-none placeholder:text-white/30 focus:border-white/30"
+          disabled={recording || transcribing}
+          placeholder={recording ? 'Listening…' : transcribing ? 'Transcribing…' : 'Ask the studio assistant…'}
+          className="flex-1 rounded-full border border-white/15 bg-white/5 px-3 py-1.5 text-[12px] text-white outline-none placeholder:text-white/30 focus:border-white/30 disabled:opacity-70"
         />
+        {voiceReady && !busy && (
+          <button type="button" onClick={() => void toggleMic()} disabled={transcribing} aria-label={recording ? 'Stop recording' : 'Speak to the studio assistant'} title={recording ? 'Stop & send' : 'Speak'} className={'flex h-8 w-8 items-center justify-center rounded-full border transition-colors disabled:opacity-50 ' + (recording ? 'animate-pulse border-red-500 bg-red-500/15 text-red-400' : 'border-white/15 text-white/60 hover:bg-white/10')}>
+            {transcribing ? <Loader2 size={13} className="animate-spin" /> : recording ? <Square size={13} /> : <Mic size={13} />}
+          </button>
+        )}
         {busy ? (
           <button type="button" onClick={() => stop()} aria-label="Stop" className="flex h-8 w-8 items-center justify-center rounded-full bg-white/10 text-white/70">
             <Square size={13} />

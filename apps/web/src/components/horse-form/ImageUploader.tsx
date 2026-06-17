@@ -4,14 +4,24 @@ import { Upload, Link, Image, AlertTriangle, X } from 'lucide-react';
 import { toast } from 'sonner';
 import { cn } from '@/lib/utils';
 import { uploadImage } from '@/lib/upload';
+import type { UploadKind } from '@/lib/upload';
 
 /* ── Image uploader: paste URL or upload file ── */
 export function ImageUploader({
   value,
   onChange,
+  kind = 'horse',
+  label = 'image',
+  id = 'image-upload',
 }: {
   value: string;
   onChange: (url: string) => void;
+  /** S3 folder the upload lands in. Defaults to 'horse' for back-compat. */
+  kind?: UploadKind;
+  /** Short noun used in alt text / aria-labels, e.g. 'horse photo', 'story image'. */
+  label?: string;
+  /** id for the URL <input>, so an external <Label htmlFor> can target it. */
+  id?: string;
 }) {
   const [mode, setMode] = useState<'url' | 'upload'>('url');
   const [dragging, setDragging] = useState(false);
@@ -29,7 +39,7 @@ export function ImageUploader({
     }
     setUploading(true);
     try {
-      const { url } = await uploadImage(file, { kind: 'horse', maxDim: 1280, quality: 0.72 });
+      const { url } = await uploadImage(file, { kind, maxDim: 1280, quality: 0.72 });
       onChange(url);
       toast.success('Image uploaded.');
     } catch (err) {
@@ -101,11 +111,11 @@ export function ImageUploader({
       {mode === 'url' && (
         <div className="space-y-1.5">
           <Input
-            id="horse-image"
+            id={id}
             type="url"
             value={isDataUrl ? '' : (value ?? '')}
             onChange={(e) => onChange(e.target.value)}
-            placeholder="https://example.com/horse-photo.jpg"
+            placeholder="https://example.com/photo.jpg"
             className="text-sm"
           />
           <p className="text-[10px] text-muted-foreground">
@@ -146,7 +156,7 @@ export function ImageUploader({
               accept="image/*"
               className="sr-only"
               onChange={handleInputChange}
-              aria-label="Upload horse image"
+              aria-label={`Upload ${label}`}
             />
           </div>
 
@@ -167,7 +177,7 @@ export function ImageUploader({
         <div className="relative rounded-sm overflow-hidden border border-border/40 bg-muted/20">
           <img
             src={value}
-            alt="Horse preview"
+            alt={`${label} preview`}
             crossOrigin="anonymous"
             className="w-full h-40 object-cover"
             onError={() => {

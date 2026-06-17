@@ -12,6 +12,7 @@ import { useEditorFonts } from './fonts/useEditorFonts';
 import { MagazineCanvas } from './MagazineCanvas';
 import { Inspector } from './inspector/Inspector';
 import { ShareDialog } from './ShareDialog';
+import { PublishDialog } from './PublishDialog';
 import { EditorAgentPanel } from './agent/EditorAgentPanel';
 import { FloatingSuggestions } from './agent/FloatingSuggestions';
 import { useCurrentPageTracker } from './agent/useCurrentPageTracker';
@@ -47,6 +48,7 @@ export function MagazineEditor({ magazineId, onClose }: { magazineId: string; on
 
   const [scale, setScale] = useState(0.62);
   const [pubOpen, setPubOpen] = useState(false);
+  const [pickerOpen, setPickerOpen] = useState(false);
   const [publishing, setPublishing] = useState(false);
   const [shareOpen, setShareOpen] = useState(false);
   const [aiOpen, setAiOpen] = useState(true);
@@ -156,6 +158,7 @@ export function MagazineEditor({ magazineId, onClose }: { magazineId: string; on
     const id = await publishIssue(payload);
     setPublishing(false);
     if (!id) return; // issueStore surfaced the error toast already
+    setPickerOpen(false);
     markPublished(magazineId, id);
     toast.success(`Published ${scope === 'full' ? 'full edition' : 'selected pages'} to Bulletins.`, {
       action: {
@@ -257,11 +260,14 @@ export function MagazineEditor({ magazineId, onClose }: { magazineId: string; on
                   <span className="block text-[10px] text-white/40">All {meta.pages} pages</span>
                 </button>
                 <button
-                  onClick={() => doPublish('selected')}
+                  onClick={() => {
+                    setPubOpen(false);
+                    setPickerOpen(true);
+                  }}
                   className="block w-full border-t border-white/10 px-3 py-2.5 text-left text-xs text-white hover:bg-white/10"
                 >
-                  <span className="font-semibold">Publish selected pages</span>
-                  <span className="block text-[10px] text-white/40">{selectedCount} page{selectedCount !== 1 ? 's' : ''} selected</span>
+                  <span className="font-semibold">Publish selected pages…</span>
+                  <span className="block text-[10px] text-white/40">Choose pages · {selectedCount} selected</span>
                 </button>
               </div>
             )}
@@ -290,6 +296,14 @@ export function MagazineEditor({ magazineId, onClose }: { magazineId: string; on
       </div>
 
       {shareOpen && <ShareDialog magazineId={magazineId} onClose={() => setShareOpen(false)} />}
+      {pickerOpen && (
+        <PublishDialog
+          magazineId={magazineId}
+          publishing={publishing}
+          onPublish={() => doPublish('selected')}
+          onClose={() => setPickerOpen(false)}
+        />
+      )}
     </div>
   );
 }

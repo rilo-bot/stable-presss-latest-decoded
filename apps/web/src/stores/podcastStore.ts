@@ -23,7 +23,6 @@ interface PodcastState {
   addGuest: (episodeId: string, guest: Omit<EpisodeGuest, 'id'>) => Promise<void>;
   removeGuest: (episodeId: string, guestId: string) => Promise<void>;
   setDistributionChannels: (episodeId: string, channels: DistributionChannel[]) => Promise<void>;
-  setSchedule: (episodeId: string, isoDate: string) => Promise<void>;
   addReviewNote: (episodeId: string, note: string) => Promise<void>;
   deleteEpisode: (id: string) => Promise<void>;
 }
@@ -42,7 +41,11 @@ export const usePodcastStore = create<PodcastState>()(
     error: null,
 
     fetchPodcastEpisodes: async () => {
-      if (get().loading || get().loaded) return;
+      // Refresh in the background on each visit so cross-session changes show up.
+      // We don't clear `episodes` first, so the current list stays visible (no
+      // empty flash) until the new data lands. Guard only against overlapping
+      // in-flight fetches.
+      if (get().loading) return;
       set({ loading: true, error: null });
       try {
         const res = await authFetch('/api/podcastEpisodes');
@@ -148,10 +151,6 @@ export const usePodcastStore = create<PodcastState>()(
 
     setDistributionChannels: async (episodeId, channels) => {
       await get().updateEpisode(episodeId, { distributionChannels: channels });
-    },
-
-    setSchedule: async (episodeId, isoDate) => {
-      await get().updateEpisode(episodeId, { scheduledFor: isoDate });
     },
 
     addReviewNote: async (episodeId, note) => {

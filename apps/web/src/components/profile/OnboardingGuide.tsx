@@ -14,12 +14,13 @@
  */
 import { useEffect, useRef, useState } from 'react';
 import { motion, useReducedMotion } from 'framer-motion';
-import { Sparkles, Send, Square, ArrowRight, ArrowUp, ArrowDown, X, Check, Undo2, MessageCircle, UserPlus, PenLine, SkipForward } from 'lucide-react';
+import { Sparkles, Send, Square, ArrowRight, ArrowUp, ArrowDown, X, Check, Undo2, MessageCircle, UserPlus, PenLine, SkipForward, Mic, Volume2, VolumeX, Loader2 } from 'lucide-react';
 import { MarkdownMessage } from '@/components/MarkdownMessage';
 import { useProfileAgentUi, type Proposal } from '@/stores/profileAgentUiStore';
 import { useEditorAgentUi } from '@/stores/editorAgentUiStore';
 import { PARTY_ROLE_LABELS } from '@/types/party';
 import { useProfileChatSession, messageText } from '@/agent/profile/useProfileChatSession';
+import { useVoiceChat } from '@/agent/voice/useVoiceChat';
 import { applyProposal, discardProposal, applyAllProposals, discardAllProposals, undoLastProposal } from '@/agent/profile/applyProposals';
 import { serifStyle, displayStyle } from '@/components/profile/kit';
 
@@ -148,14 +149,17 @@ export function OnboardingGuide({ steps, name, onShowMe, onAskStep, onSkipStep }
     return () => cancelAnimationFrame(raf);
   }, [open, targetId]);
 
-  if (!activeStep) return null;
-
   const send = (text: string) => {
     const t = text.trim();
     if (!t || busy) return;
     void sendMessage({ text: t });
     setInput('');
   };
+  // Push-to-talk + spoken replies, shared with the concierge/drawer.
+  const { voiceReady, voiceMode, setVoiceMode, recording, transcribing, caption, toggleMic } =
+    useVoiceChat({ messages, send, busy, active: open });
+
+  if (!activeStep) return null;
 
   const bob = reduce ? {} : { animate: { y: [0, -6, 0] }, transition: { repeat: Infinity, duration: 2.6, ease: 'easeInOut' as const } };
 
@@ -264,6 +268,11 @@ export function OnboardingGuide({ steps, name, onShowMe, onAskStep, onSkipStep }
             {undoCount > 0 && (
               <button onClick={() => void undoLastProposal()} title="Undo last applied change" className="flex items-center gap-1 rounded-sm border border-white/15 px-1.5 py-1 text-[10px] text-white/75 hover:bg-white/10"><Undo2 size={11} /> Undo</button>
             )}
+            {voiceReady && (
+              <button onClick={() => setVoiceMode((v) => !v)} aria-label={voiceMode ? 'Turn off spoken replies' : 'Read replies aloud'} title={voiceMode ? 'Spoken replies on' : 'Read replies aloud'} style={{ background: 'none', border: '1px solid var(--gold-dark)', borderRadius: 3, color: voiceMode ? 'var(--gold-bright)' : 'var(--gold-mid)', cursor: 'pointer', display: 'flex', padding: 4 }}>
+                {voiceMode ? <Volume2 size={13} /> : <VolumeX size={13} />}
+              </button>
+            )}
             <button onClick={() => setOpen(false)} aria-label="Close" style={{ background: 'none', border: '1px solid var(--gold-dark)', borderRadius: 3, color: 'var(--gold-mid)', cursor: 'pointer', display: 'flex', padding: 4 }}><X size={13} /></button>
           </div>
 
@@ -308,8 +317,20 @@ export function OnboardingGuide({ steps, name, onShowMe, onAskStep, onSkipStep }
             </div>
           )}
 
+          {(recording || transcribing) && (
+            <div style={{ display: 'flex', alignItems: 'center', gap: 8, borderTop: '1px solid var(--parchment-dark)', background: 'rgba(180,140,30,0.1)', padding: '6px 11px', ...serifStyle }}>
+              <span className={recording ? 'animate-pulse' : undefined} style={{ width: 8, height: 8, borderRadius: '50%', background: recording ? '#c0392b' : 'var(--parchment-label)', flexShrink: 0 }} />
+              <span style={{ fontSize: '0.62rem', fontStyle: 'italic', color: 'var(--forest-mid)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{caption || (transcribing ? 'Transcribing…' : 'Listening… speak now')}</span>
+            </div>
+          )}
+
           <form onSubmit={(e) => { e.preventDefault(); send(input); }} className="sku-green-header" style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '7px 9px' }}>
-            <input value={input} onChange={(e) => setInput(e.target.value)} placeholder={`Ask ${name}…`} style={{ flex: 1, borderRadius: 14, border: '1px solid var(--gold-dark)', background: 'rgba(0,0,0,0.25)', color: 'var(--parchment)', padding: '5px 11px', fontSize: '0.72rem', outline: 'none', ...serifStyle }} />
+            <input value={input} onChange={(e) => setInput(e.target.value)} disabled={recording || transcribing} placeholder={recording ? 'Listening…' : transcribing ? 'Transcribing…' : `Ask ${name}…`} style={{ flex: 1, borderRadius: 14, border: '1px solid var(--gold-dark)', background: 'rgba(0,0,0,0.25)', color: 'var(--parchment)', padding: '5px 11px', fontSize: '0.72rem', outline: 'none', ...serifStyle }} />
+            {voiceReady && !busy && (
+              <button type="button" onClick={() => void toggleMic()} disabled={transcribing} aria-label={recording ? 'Stop recording' : `Speak to ${name}`} title={recording ? 'Stop & send' : 'Speak'} className={recording ? 'animate-pulse' : undefined} style={{ flexShrink: 0, width: 30, height: 30, borderRadius: '50%', border: `1px solid ${recording ? '#c0392b' : 'var(--gold-dark)'}`, background: recording ? 'rgba(192,57,43,0.22)' : 'rgba(0,0,0,0.25)', color: recording ? '#e74c3c' : 'var(--parchment)', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+                {transcribing ? <Loader2 size={12} className="animate-spin" /> : recording ? <Square size={12} /> : <Mic size={12} />}
+              </button>
+            )}
             {busy ? (
               <button type="button" onClick={() => stop()} aria-label="Stop" style={{ flexShrink: 0, width: 30, height: 30, borderRadius: '50%', background: 'rgba(255,255,255,0.12)', color: 'var(--parchment)', border: 'none', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center' }}><Square size={12} /></button>
             ) : (
