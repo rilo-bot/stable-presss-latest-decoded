@@ -68,7 +68,19 @@ const SYSTEM =
   'names, figures, dates, results and quotes EXACTLY as written. Do NOT invent, infer or embellish anything that is ' +
   'not present in the source. Keep it well-organised and reasonably concise (skip boilerplate and legal footers).'
 
-const MAX_TEXT_CHARS = 100_000
+// Bounds so a slow/stalled model call or a pathological PDF can never hang the
+// request forever (the route would otherwise wait indefinitely on the network).
+const MAX_TEXT_CHARS = 40_000 // plenty for a faithful digest; keeps the call fast
+const MODEL_ABORT_MS = 90_000 // generateObject ceiling
+const PDF_PARSE_MS = 30_000 // text-extraction ceiling
+const VISION_MAX_BYTES = 8 * 1024 * 1024 // cap the image/scanned-PDF fallback
+
+function withTimeout<T>(p: Promise<T>, ms: number, label: string): Promise<T> {
+  return Promise.race([
+    p,
+    new Promise<T>((_, reject) => setTimeout(() => reject(new Error(`${label} timed out after ${ms}ms`)), ms)),
+  ])
+}
 
 /** Build a digest from already-extracted plain text. */
 async function digestFromText(name: string, contentType: string, text: string): Promise<DocDigest> {
@@ -76,6 +88,8 @@ async function digestFromText(name: string, contentType: string, text: string): 
     model: getAgentModel(),
     schema: DocDigestSchema,
     system: SYSTEM,
+    maxRetries: 1,
+    abortSignal: AbortSignal.timeout(MODEL_ABORT_MS),
     messages: [
       {
         role: 'user',
@@ -100,6 +114,8 @@ async function digestFromFile(name: string, bytes: Buffer, contentType: string):
     model: getAgentModel(),
     schema: DocDigestSchema,
     system: SYSTEM,
+    maxRetries: 1,
+    abortSignal: AbortSignal.timeout(MODEL_ABORT_MS),
     messages: [
       {
         role: 'user',
@@ -133,17 +149,25 @@ export async function ingestDocument(opts: {
     let text = ''
     let pages = 0
     try {
-      const parsed = await pdfParse(opts.bytes)
+      const parsed = await withTimeout(pdfParse(opts.bytes), PDF_PARSE_MS, 'PDF text extraction')
       text = (parsed.text ?? '').trim()
       pages = parsed.numpages ?? 0
     } catch (e) {
-      console.warn('[ingest] PDF text extraction failed, falling back to vision:', e instanceof Error ? e.message : e)
+      console.warn('[ingest] PDF text extraction failed/slow, falling back to vision:', e instanceof Error ? e.message : e)
     }
     console.log(`[ingest] PDF "${opts.name}": ${pages} pages, ${text.length} chars extracted`)
     if (text.length >= 40) {
       return digestFromText(opts.name, 'application/pdf', text)
     }
-    // Likely a scanned / image-only PDF — let the model read it visually.
+    // Little/no extractable text — likely a scanned/image-only PDF. Reading it
+    // visually is heavy, so only attempt it for smaller files; otherwise bail
+    // clearly rather than risk a very slow call.
+    if (opts.bytes.length > VISION_MAX_BYTES) {
+      throw new Error(
+        'This PDF looks image-based (no selectable text), and it\'s too large for me to read visually. ' +
+          'Please upload a text-based PDF or a smaller version.',
+      )
+    }
     return digestFromFile(opts.name, opts.bytes, opts.contentType)
   }
 

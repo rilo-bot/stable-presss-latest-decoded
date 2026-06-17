@@ -181,10 +181,11 @@ export function OnboardingGuide({ steps, name, onShowMe, onAskStep, onSkipStep }
           type="button"
           onClick={() => setOpen(!open)}
           title={open ? `Hide ${name}` : `Chat with ${name}`}
+          aria-label={open ? `Hide ${name}` : `Chat with ${name}`}
           {...bob}
           style={{ flexShrink: 0, width: 56, height: 56, borderRadius: '50%', border: '2px solid var(--gold-bright)', background: 'radial-gradient(circle at 50% 35%, var(--forest-light), var(--forest-deep))', boxShadow: '0 4px 16px rgba(0,0,0,0.5), 0 0 0 4px rgba(212,168,67,0.18)', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', position: 'relative', padding: 0 }}
         >
-          <motion.span key={activeKey} initial={reduce ? false : { scale: 0.6, rotate: -12 }} animate={{ scale: 1, rotate: 0 }} transition={{ type: 'spring', stiffness: 280, damping: 12 }} style={{ fontSize: 28, lineHeight: 1 }}>{MASCOT}</motion.span>
+          <motion.span aria-hidden key={activeKey} initial={reduce ? false : { scale: 0.6, rotate: -12 }} animate={{ scale: 1, rotate: 0 }} transition={{ type: 'spring', stiffness: 280, damping: 12 }} style={{ fontSize: 28, lineHeight: 1 }}>{MASCOT}</motion.span>
           <span style={{ position: 'absolute', top: -3, right: -3, width: 18, height: 18, borderRadius: '50%', background: 'linear-gradient(135deg, var(--gold-bright), var(--gold-mid))', border: '1.5px solid var(--forest-deep)', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
             <Sparkles size={9} style={{ color: 'var(--forest-deep)' }} />
           </span>
@@ -255,7 +256,7 @@ export function OnboardingGuide({ steps, name, onShowMe, onAskStep, onSkipStep }
           style={{ position: 'fixed', left: 18, bottom: 86, zIndex: 71, width: 'min(92vw, 340px)', maxHeight: '66vh', display: 'flex', flexDirection: 'column', overflow: 'hidden' }}
         >
           <div className="sku-green-header" style={{ padding: '8px 11px', display: 'flex', alignItems: 'center', gap: 8 }}>
-            <span style={{ fontSize: 18 }}>{MASCOT}</span>
+            <span aria-hidden style={{ fontSize: 18 }}>{MASCOT}</span>
             <div style={{ lineHeight: 1.1, flex: 1, minWidth: 0 }}>
               <div style={{ ...displayStyle, fontSize: '0.82rem', fontWeight: 700, color: 'var(--parchment)' }}>{name}</div>
               <div style={{ fontSize: '0.56rem', color: 'var(--gold-mid)' }}>{ctx?.name ? `Helping with ${ctx.name}` : 'Your onboarding guide'}</div>

@@ -3,7 +3,7 @@
 // executeEditorTool → addToolResult), renders the conversation, and shows the
 // staged-edit preview cards (Apply / Discard) plus an Undo control.
 
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useChat } from '@ai-sdk/react';
 import { lastAssistantMessageIsCompleteWithToolCalls, type UIMessage } from 'ai';
 import { Sparkles, Send, Square, Undo2, Check, X, Paperclip, FileText, Loader2 } from 'lucide-react';
@@ -16,13 +16,25 @@ import { executeEditorTool, isEditorClientTool } from './editOpsExecutor';
 import { previewOf } from './editorContext';
 import { ingestFile, ATTACH_ACCEPT } from './documentUpload';
 import { applyStagedEdit, applyBatch, applyAllStaged, discardStaged, discardBatch, discardAll, undoLast } from './applyEdits';
-import type { StagedEdit } from './types';
+import type { StagedEdit, DocAttachment } from './types';
+
+/** Files shown attached to a sent user message (stored in its metadata). */
+type MsgDoc = { name: string; kind: string };
+
+// Auto-fired the moment an uploaded file finishes analysing (unless the user is
+// typing / has queued their own instruction): the agent reads it, says what's in
+// it, and STAGES recommended placements across the bulletin for one-click review.
+const AUTO_SUGGEST_PROMPT =
+  "I've just uploaded a document. Read it, tell me briefly what's in it (quote a couple of specifics so I know you've read it), then suggest where its content best fits across this bulletin and STAGE your recommended placements so I can review and apply them.";
 
 function messageText(m: UIMessage): string {
   return (m.parts ?? [])
     .filter((p): p is { type: 'text'; text: string } => p.type === 'text')
     .map((p) => p.text)
     .join('');
+}
+function messageDocs(m: UIMessage): MsgDoc[] {
+  return (m.metadata as { docs?: MsgDoc[] } | undefined)?.docs ?? [];
 }
 
 type AddToolResult = (a: { tool: string; toolCallId: string; output: unknown }) => void;
@@ -100,19 +112,50 @@ export function EditorAgentPanel() {
   const staged = useEditorAgentUi((s) => s.staged);
   const undoCount = useEditorAgentUi((s) => s.undo.length);
   const pendingPrompt = useEditorAgentUi((s) => s.pendingPrompt);
-  const attachments = useEditorAgentUi((s) => s.attachments);
   const addAttachment = useEditorAgentUi((s) => s.addAttachment);
   const removeAttachment = useEditorAgentUi((s) => s.removeAttachment);
+
+  // Composer attachments (chips shown until they're sent with a message). The
+  // analysed digests also live in the store, where they ride along in the editor
+  // context for the rest of the session so the agent can keep using them.
+  const [pending, setPending] = useState<DocAttachment[]>([]);
+  const pendingRef = useRef<DocAttachment[]>([]);
+  useEffect(() => { pendingRef.current = pending; }, [pending]);
   const [ingesting, setIngesting] = useState<string[]>([]);
+  // A message typed while a file is still being read — sent automatically once ready.
+  const [queued, setQueued] = useState<string | null>(null);
   const fileRef = useRef<HTMLInputElement>(null);
   const scrollRef = useRef<HTMLDivElement>(null);
+  // Refs so the async upload handler can read the latest state without stale closures.
+  const queuedRef = useRef<string | null>(null);
+  useEffect(() => { queuedRef.current = queued; }, [queued]);
+  const busyRef = useRef(false);
+  useEffect(() => { busyRef.current = busy; }, [busy]);
+  const inputRef = useRef('');
+  useEffect(() => { inputRef.current = input; }, [input]);
+
+  // Dispatch a message, tagging it with whatever files are attached so they show
+  // in the thread, then clear the composer's attachment chips.
+  const performSend = useCallback(
+    (t: string) => {
+      const docs: MsgDoc[] = pendingRef.current.map((a) => ({ name: a.name, kind: a.kind }));
+      void sendMessage(docs.length ? { text: t, metadata: { docs } } : { text: t });
+      setPending([]);
+      setInput('');
+    },
+    [sendMessage],
+  );
 
   const onPickFiles = async (files: FileList | null) => {
     if (!files?.length) return;
+    let added = 0;
     for (const file of Array.from(files)) {
       setIngesting((prev) => [...prev, file.name]);
       try {
-        addAttachment(await ingestFile(file));
+        const att = await ingestFile(file);
+        addAttachment(att); // session context
+        setPending((prev) => [...prev, att]); // composer chip
+        added++;
       } catch (e) {
         toast.error(e instanceof Error ? e.message : 'Could not read that file.');
       } finally {
@@ -120,27 +163,51 @@ export function EditorAgentPanel() {
       }
     }
     if (fileRef.current) fileRef.current.value = '';
+    // As soon as the file is read, proactively analyse it and suggest placements —
+    // unless the user is mid-instruction (typing or already queued a message).
+    if (added > 0 && !queuedRef.current && !inputRef.current.trim() && !busyRef.current) {
+      performSend(AUTO_SUGGEST_PROMPT);
+    }
   };
 
-  // A suggestion chip / inline trigger queued a prompt — send it once.
-  useEffect(() => {
-    if (pendingPrompt && !busy) {
-      void sendMessage({ text: pendingPrompt });
-      useEditorAgentUi.getState().consumePrompt();
-    }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [pendingPrompt]);
-
-  useEffect(() => {
-    scrollRef.current?.scrollTo({ top: scrollRef.current.scrollHeight, behavior: 'smooth' });
-  }, [messages, status, staged]);
+  const removePending = (id: string) => {
+    removeAttachment(id);
+    setPending((prev) => prev.filter((a) => a.id !== id));
+  };
 
   const send = (text: string) => {
     const t = text.trim();
     if (!t || busy) return;
-    void sendMessage({ text: t });
-    setInput('');
+    // If a file is still being read, hold the message and fire it the moment
+    // ingestion finishes (so the assistant always has the document).
+    if (ingesting.length > 0) {
+      setQueued(t);
+      setInput('');
+      return;
+    }
+    performSend(t);
   };
+
+  // Fire a queued message once the file(s) finish reading.
+  useEffect(() => {
+    if (queued && ingesting.length === 0 && !busy) {
+      performSend(queued);
+      setQueued(null);
+    }
+  }, [queued, ingesting, busy, performSend]);
+
+  // A suggestion chip / inline trigger queued a prompt — send it once.
+  useEffect(() => {
+    if (pendingPrompt && !busy && ingesting.length === 0) {
+      performSend(pendingPrompt);
+      useEditorAgentUi.getState().consumePrompt();
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [pendingPrompt, busy, ingesting]);
+
+  useEffect(() => {
+    scrollRef.current?.scrollTo({ top: scrollRef.current.scrollHeight, behavior: 'smooth' });
+  }, [messages, status, staged]);
 
   // Group staged edits into cards (batch shares batchId).
   const groups = useMemo(() => {
@@ -180,10 +247,20 @@ export function EditorAgentPanel() {
         {messages.map((m) => {
           const text = messageText(m);
           const mine = m.role === 'user';
+          const docs = mine ? messageDocs(m) : [];
           if (!text && !mine) return null;
           return (
             <div key={m.id} className={mine ? 'flex justify-end' : 'flex justify-start'}>
               <div className={mine ? 'max-w-[88%] whitespace-pre-wrap rounded-lg rounded-br-sm bg-emerald-600/90 px-2.5 py-1.5 text-[12px]' : 'max-w-[92%] rounded-lg rounded-bl-sm bg-white/5 px-2.5 py-1.5 text-[12px]'}>
+                {docs.length > 0 && (
+                  <div className="mb-1 flex flex-wrap gap-1">
+                    {docs.map((d, i) => (
+                      <span key={i} className="inline-flex items-center gap-1 rounded-sm bg-black/25 px-1.5 py-0.5 text-[10px] text-white/90">
+                        <FileText size={10} /> <span className="max-w-[150px] truncate">{d.name}</span>
+                      </span>
+                    ))}
+                  </div>
+                )}
                 {mine ? text : <MarkdownMessage text={text} />}
               </div>
             </div>
@@ -216,13 +293,13 @@ export function EditorAgentPanel() {
 
       {/* Composer */}
       <div className="border-t border-white/10">
-        {(attachments.length > 0 || ingesting.length > 0) && (
+        {(pending.length > 0 || ingesting.length > 0 || queued) && (
           <div className="flex flex-wrap gap-1.5 px-2.5 pt-2">
-            {attachments.map((a) => (
+            {pending.map((a) => (
               <span key={a.id} className="flex items-center gap-1 rounded-sm border border-emerald-400/30 bg-emerald-400/10 px-2 py-0.5 text-[10px] text-emerald-200" title={a.digest.title || a.name}>
                 <FileText size={11} />
                 <span className="max-w-[130px] truncate">{a.name}</span>
-                <button onClick={() => removeAttachment(a.id)} aria-label={`Remove ${a.name}`} className="text-emerald-200/60 hover:text-emerald-100">
+                <button onClick={() => removePending(a.id)} aria-label={`Remove ${a.name}`} className="text-emerald-200/60 hover:text-emerald-100">
                   <X size={10} />
                 </button>
               </span>
@@ -233,6 +310,11 @@ export function EditorAgentPanel() {
                 <span className="max-w-[130px] truncate">Reading {n}…</span>
               </span>
             ))}
+            {queued && (
+              <span className="flex items-center gap-1 rounded-sm border border-white/15 px-2 py-0.5 text-[10px] text-white/55">
+                <Loader2 size={11} className="animate-spin" /> Sending once your file’s ready…
+              </span>
+            )}
           </div>
         )}
         <form

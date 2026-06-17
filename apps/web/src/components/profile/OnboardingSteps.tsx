@@ -77,9 +77,9 @@ export function OnboardingSteps({ title, steps, onStepClick }: {
           <div style={{ position: 'absolute', top: 7, left: 0, right: 0, height: 6, borderRadius: 4, background: 'rgba(26,51,34,0.16)', boxShadow: 'inset 0 1px 2px rgba(0,0,0,0.25)', backgroundImage: 'repeating-linear-gradient(90deg, transparent 0 13px, rgba(0,0,0,0.06) 13px 15px)' }} />
           <motion.div initial={false} animate={{ width: `${pct}%` }} transition={spring} style={{ position: 'absolute', top: 7, left: 0, height: 6, borderRadius: 4, background: 'linear-gradient(90deg, var(--gold-mid), var(--gold-bright))', boxShadow: '0 0 8px rgba(212,168,67,0.55)' }} />
           <motion.div initial={false} animate={{ left: `${pct}%` }} transition={spring} style={{ position: 'absolute', top: 0 }}>
-            <motion.span animate={reduce ? {} : { y: [0, -2, 0] }} transition={{ repeat: Infinity, duration: 0.65, ease: 'easeInOut' }} style={{ display: 'inline-block', marginLeft: -10, fontSize: 17, lineHeight: 1, filter: 'drop-shadow(0 1px 2px rgba(0,0,0,0.5))' }}>🏇</motion.span>
+            <motion.span aria-hidden animate={reduce ? {} : { y: [0, -2, 0] }} transition={{ repeat: Infinity, duration: 0.65, ease: 'easeInOut' }} style={{ display: 'inline-block', marginLeft: -10, fontSize: 17, lineHeight: 1, filter: 'drop-shadow(0 1px 2px rgba(0,0,0,0.5))' }}>🏇</motion.span>
           </motion.div>
-          <div style={{ position: 'absolute', right: -3, top: 1, fontSize: 15, lineHeight: 1, opacity: pct >= 70 ? 1 : 0.55, filter: pct >= 70 ? 'drop-shadow(0 0 5px rgba(212,168,67,0.85))' : 'grayscale(0.4)', transition: 'opacity 0.3s, filter 0.3s' }}>🏁</div>
+          <div aria-hidden style={{ position: 'absolute', right: -3, top: 1, fontSize: 15, lineHeight: 1, opacity: pct >= 70 ? 1 : 0.55, filter: pct >= 70 ? 'drop-shadow(0 0 5px rgba(212,168,67,0.85))' : 'grayscale(0.4)', transition: 'opacity 0.3s, filter 0.3s' }}>🏁</div>
         </div>
 
         {/* Milestone nodes */}

@@ -28,18 +28,30 @@ function kindOf(contentType: string): DocAttachment['kind'] {
   return 'text';
 }
 
+/** Hard ceiling so the composer's "Reading…" chip can never spin forever. */
+const INGEST_TIMEOUT_MS = 120_000;
+
 /** Send one file to the ingest endpoint and return the analysed attachment. */
 export async function ingestFile(file: File): Promise<DocAttachment> {
   const contentType = contentTypeFor(file);
   const token = useAuthStore.getState().token;
-  const res = await fetch(apiUrl(`/api/agent/editor/ingest?filename=${encodeURIComponent(file.name)}`), {
-    method: 'POST',
-    headers: {
-      'Content-Type': contentType,
-      ...(token ? { Authorization: `Bearer ${token}` } : {}),
-    },
-    body: file,
-  });
+  let res: Response;
+  try {
+    res = await fetch(apiUrl(`/api/agent/editor/ingest?filename=${encodeURIComponent(file.name)}`), {
+      method: 'POST',
+      headers: {
+        'Content-Type': contentType,
+        ...(token ? { Authorization: `Bearer ${token}` } : {}),
+      },
+      body: file,
+      signal: AbortSignal.timeout(INGEST_TIMEOUT_MS),
+    });
+  } catch (e) {
+    if (e instanceof DOMException && e.name === 'TimeoutError') {
+      throw new Error('Reading that file took too long — try a smaller or text-based file.');
+    }
+    throw new Error("Couldn't reach the assistant to read that file. Please try again.");
+  }
   if (!res.ok) {
     const e = (await res.json().catch(() => ({}))) as { error?: string };
     throw new Error(e.error || `Couldn't read that file (${res.status}).`);

@@ -165,14 +165,24 @@ export function HorseProfile({ horseId, mode, onBack }: HorseProfileProps) {
       && ok(!!(horse.sire || horse.dam), 'pedigree')
       && CONNECTION_STEPS.every((c) => ok(linked(c.rel), c.key));
   }, [horse, horseLinks, mode, editable, skipped]);
+  // Celebrate only a GENUINE completion during this session — i.e. a
+  // loaded-but-incomplete profile that then becomes complete. Without the
+  // "saw incomplete first" gate the toast would pop on merely opening an
+  // already-complete (or previously fully-skipped, loaded from localStorage)
+  // horse, since onbAllDone is true on the first committed render.
   const celebratedRef = useRef(false);
+  const sawIncompleteRef = useRef(false);
   useEffect(() => {
-    if (onbAllDone && !celebratedRef.current) {
+    if (!onbAllDone) {
+      if (horsesLoaded && linksLoaded && mode === 'edit' && editable) sawIncompleteRef.current = true;
+      celebratedRef.current = false; // re-arm if data is later removed
+      return;
+    }
+    if (sawIncompleteRef.current && !celebratedRef.current) {
       celebratedRef.current = true;
       toast.success('🏇 Profile complete — it’s ready to view.');
     }
-    if (!onbAllDone) celebratedRef.current = false; // re-arm if data is later removed
-  }, [onbAllDone]);
+  }, [onbAllDone, horsesLoaded, linksLoaded, mode, editable]);
 
   // ── Guards AFTER all hooks (stable hook order) ──
   if (!horse) {

@@ -157,10 +157,14 @@ ${describeContext(ctx)}
   figure, name, quote or section heading). Never give a generic structural review that could apply to any bulletin — if
   the only thing you can say is generic, the document didn't come through, so tell the user that plainly and ask them to
   re-upload (don't pretend you read it).
-- Then propose a concrete placement plan: which document pieces go into which pages/regions, and offer to do it. When the
-  user tells you WHERE it goes ("use this press release for the headline story", "fill Owners of Winners from this sheet"),
-  read the target with getPage / pageCatalog and place the relevant pieces. If they haven't said where, suggest the best
-  fit and confirm before writing.
+- Proactively SUGGEST placements without waiting to be told where: read the most relevant target pages with getPage /
+  pageCatalog, decide where each piece of the document best fits across the bulletin, and STAGE those edits (setRegionText
+  / applyPageFill with review:true) so they appear as one-click Apply cards. Then summarise what you've suggested in chat
+  as a short numbered list, e.g. "1. Aeliana opening → Headline Story intro  2. Career stats → the four stat boxes". If the
+  user named a specific destination, do that; otherwise propose the best fits and stage them for review.
+- Prioritise within your step budget: stage the highest-impact placements first (headline/intro/stats/feature body), use
+  applyPageFill to stage several regions on one page in a single step, and tell the user there's more you can place if they
+  want it — rather than trying to fill everything at once.
 - ALWAYS STAGE document-derived edits for review — pass review:true on setRegionText / setRegionImage / setRegionQr
   (applyPageFill is always staged). Never auto-fill straight from a document: the user wants to verify imported content
   before it goes live. Point them to the **Review & apply** card as usual.
