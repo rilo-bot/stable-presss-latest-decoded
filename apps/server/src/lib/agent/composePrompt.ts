@@ -30,9 +30,11 @@ export const COMPOSE_SYSTEM =
   'placeholder content). Your job: place the document\'s real content into as MANY of the given regions as it ' +
   'faithfully supports — overwriting the placeholder copy where the document has better, real content.\n\n' +
   'RULES (strict):\n' +
+  '- Write ALL placed content in ENGLISH. If the document is in another language, translate its meaning into natural ' +
+  'English; keep proper names, numbers, dates, results and URLs exactly as written.\n' +
   '- Use ONLY the pageId + regionId values provided. NEVER invent ids; if unsure, skip.\n' +
   '- Match the region\'s semantic name/role (e.g. a headline region gets a headline, a body region gets body copy, a ' +
-  'stat region gets a number/figure). Keep names, figures, dates, results and quotes EXACTLY as in the document.\n' +
+  'stat region gets a number/figure). Keep names, figures, dates and results faithful to the document (in English).\n' +
   '- NEVER invent, infer or pad content to fill a region. If the document has nothing suitable for a region, leave it ' +
   'out of the plan. It is correct to fill only some regions.\n' +
   '- kind=text → concise light inline HTML only. kind=qr → only an https: or mailto: URL that literally appears in the ' +
