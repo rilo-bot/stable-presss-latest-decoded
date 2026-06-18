@@ -31,13 +31,15 @@ export function Inspector() {
     if (!s.currentId || !s.selectedRegionId) return null;
     const m = s.magazines.find((x) => x.id === s.currentId);
     if (!m) return null;
-    for (const p of m.pages) {
-      const c = p.content[s.selectedRegionId];
-      if (c) {
-        return { magazineId: m.id, pageId: p.id, pageLabel: p.label, regionId: s.selectedRegionId, content: c };
-      }
-    }
-    return null;
+    // Target the exact page the region was selected on — region ids repeat across
+    // pages of the same type, so a first-match scan would edit the wrong page.
+    const page = s.selectedPageId
+      ? m.pages.find((p) => p.id === s.selectedPageId)
+      : m.pages.find((p) => s.selectedRegionId! in p.content);
+    if (!page) return null;
+    const c = page.content[s.selectedRegionId];
+    if (!c) return null;
+    return { magazineId: m.id, pageId: page.id, pageLabel: page.label, regionId: s.selectedRegionId, content: c };
   });
 
   if (!resolved) {

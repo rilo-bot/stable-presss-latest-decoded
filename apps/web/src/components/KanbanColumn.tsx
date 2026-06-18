@@ -206,6 +206,9 @@ function KanbanCard({
   // Contributors can only advance their own articles from draft→submitted or revision→editorial_review
   const isContributor = userRole === 'contributor';
   const isOwnArticle = article.author === currentUserDisplayName;
+
+  // Legacy/seed articles may lack linkedHorseIds entirely — guard the read.
+  const linkedCount = article.linkedHorseIds?.length ?? 0;
   const contributorCanAdvance =
     !isContributor ||
     (isOwnArticle &&
@@ -268,11 +271,11 @@ function KanbanCard({
       </p>
 
       {/* Linked horses */}
-      {article.linkedHorseIds.length > 0 && (
+      {linkedCount > 0 && (
         <div className="flex items-center gap-1 mb-2">
           <span className="text-[11px] uppercase tracking-[0.08em] text-muted-foreground border border-border/50 rounded-sm px-1.5 py-0.5">
-            {article.linkedHorseIds.length} horse
-            {article.linkedHorseIds.length !== 1 ? 's' : ''}
+            {linkedCount} horse
+            {linkedCount !== 1 ? 's' : ''}
           </span>
         </div>
       )}

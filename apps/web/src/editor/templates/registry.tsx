@@ -6,6 +6,7 @@ import { CoverPage, PresidentPage, EditorLetterPage, DiscussionPage, HeadlinePag
 import { WomenPage, RegionNorthPage, RegionSouthPage, LoungePage, KarakaPage, CelebrationPage } from './pagesB';
 import { FuturePage, BreederPage, WelfarePage, BusinessPage, LeaderboardsPage, GamificationPage } from './pagesC';
 import { PredictionsPage, FollowupPage, EducationPage, WinningPage, VoicePage, BackCoverPage } from './pagesD';
+import { CoverPremium, HeadlinePremium, PresidentPremium } from './premium/pages';
 
 export const PAGE_COMPONENTS: Record<PageTypeKey, FC> = {
   cover: CoverPage,
@@ -32,4 +33,8 @@ export const PAGE_COMPONENTS: Record<PageTypeKey, FC> = {
   'winning-moments': WinningPage,
   'owners-voice': VoicePage,
   'back-cover': BackCoverPage,
+  // Premium template (#2)
+  'cover-px': CoverPremium,
+  'headline-px': HeadlinePremium,
+  'president-px': PresidentPremium,
 };

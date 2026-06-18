@@ -17,6 +17,7 @@ import { toast } from 'sonner';
 import { sanitizeRichText } from '@/editor/lib/sanitize';
 import {
   createDefaultPages,
+  createPagesFromTypes,
   FIRST_COVER_IMAGE,
   BLUEPRINT_BY_TYPE,
   renumberPages,
@@ -135,11 +136,19 @@ interface MagazineState {
   // ephemeral editor state
   currentId: string | null;
   selectedRegionId: string | null;
+  /** Page of the selected region — region ids are only unique per page type, so
+   *  selection MUST carry the page to target the right one when a type repeats. */
+  selectedPageId: string | null;
 
   // lifecycle (server-backed)
   fetchMagazines: () => Promise<void>;
   loadMagazine: (id: string) => Promise<boolean>;
-  createMagazine: (init?: { title?: string; edition?: string }) => Promise<string | null>;
+  createMagazine: (init?: {
+    title?: string;
+    edition?: string;
+    /** Ordered page types to assemble (a template); omitted = full bulletin. */
+    pageTypes?: PageTypeKey[];
+  }) => Promise<string | null>;
   deleteMagazine: (id: string) => Promise<void>;
   updateMagazineMeta: (id: string, patch: Partial<Pick<Magazine, 'title' | 'edition' | 'coverImage'>>) => void;
 
@@ -151,8 +160,8 @@ interface MagazineState {
   ) => Promise<boolean>;
   removeCollaborator: (magId: string, userId: string) => Promise<boolean>;
 
-  // selection
-  select: (regionId: string | null) => void;
+  // selection — pageId scopes the region to one page (ids repeat across page types)
+  select: (regionId: string | null, pageId?: string | null) => void;
 
   // live content edits (no save button — debounced per-page persistence)
   setText: (magId: string, pageId: string, regionId: string, html: string) => void;
@@ -312,6 +321,7 @@ export const useMagazineStore = create<MagazineState>()((set, get) => {
     set((s) => ({
       magazines: s.magazines.map((x) => (x.id === magId ? { ...x, pages, updatedAt: nowIso() } : x)),
       selectedRegionId: null,
+      selectedPageId: null,
     }));
     persistRestored(magId);
     syncHistoryFlags(magId);
@@ -324,6 +334,7 @@ export const useMagazineStore = create<MagazineState>()((set, get) => {
     history: {},
     currentId: null,
     selectedRegionId: null,
+    selectedPageId: null,
 
     fetchMagazines: async () => {
       try {
@@ -337,7 +348,7 @@ export const useMagazineStore = create<MagazineState>()((set, get) => {
     },
 
     loadMagazine: async (id) => {
-      set({ currentId: id, selectedRegionId: null });
+      set({ currentId: id, selectedRegionId: null, selectedPageId: null });
       try {
         const res = await authFetch(`/api/magazines/${id}`);
         if (!res.ok) return false;
@@ -368,7 +379,7 @@ export const useMagazineStore = create<MagazineState>()((set, get) => {
             title: init?.title ?? 'NZTROF Bulletin',
             edition: init?.edition ?? 'Advanced Bulletin · Prototype Issue',
             coverImage: FIRST_COVER_IMAGE,
-            pages: createDefaultPages(),
+            pages: init?.pageTypes ? createPagesFromTypes(init.pageTypes) : createDefaultPages(),
           }),
         });
         if (!res.ok) throw new Error(`HTTP ${res.status}`);
@@ -379,6 +390,7 @@ export const useMagazineStore = create<MagazineState>()((set, get) => {
           access: { ...s.access, [magazine.id]: access },
           currentId: magazine.id,
           selectedRegionId: null,
+          selectedPageId: null,
         }));
         return magazine.id;
       } catch (err) {
@@ -459,7 +471,8 @@ export const useMagazineStore = create<MagazineState>()((set, get) => {
       }
     },
 
-    select: (regionId) => set({ selectedRegionId: regionId }),
+    select: (regionId, pageId) =>
+      set({ selectedRegionId: regionId, selectedPageId: regionId ? pageId ?? null : null }),
 
     setText: (magId, pageId, regionId, html) => {
       const cur = get().magazines.find((m) => m.id === magId)?.pages.find((p) => p.id === pageId)?.content[regionId];
@@ -524,6 +537,7 @@ export const useMagazineStore = create<MagazineState>()((set, get) => {
           m.id !== magId ? m : { ...m, pages: renumberPages(m.pages.filter((p) => p.id !== pageId)), updatedAt: nowIso() }
         ),
         selectedRegionId: null,
+        selectedPageId: null,
       }));
       flushStructure(magId);
       syncHistoryFlags(magId);

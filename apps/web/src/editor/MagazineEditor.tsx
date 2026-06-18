@@ -46,7 +46,7 @@ export function MagazineEditor({ magazineId, onClose }: { magazineId: string; on
   const myRole = useMagazineStore((s) => s.access[magazineId]?.role);
   const canManage = myRole === 'owner';
 
-  const [scale, setScale] = useState(0.62);
+  const [scale, setScale] = useState(0.94);
   const [pubOpen, setPubOpen] = useState(false);
   const [pickerOpen, setPickerOpen] = useState(false);
   const [publishing, setPublishing] = useState(false);

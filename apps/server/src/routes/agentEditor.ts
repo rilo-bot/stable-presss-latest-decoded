@@ -11,7 +11,8 @@
 import { Router, raw } from 'express'
 import { streamText, generateObject, convertToModelMessages, stepCountIs, type UIMessage } from 'ai'
 import { z } from 'zod'
-import { attachAccountOptional } from '../lib/auth.js'
+import { attachAccount } from '../lib/auth.js'
+import { isStaff } from '../lib/rbac.js'
 import { getAgentModel, isAgentConfigured } from '../lib/agent/provider.js'
 import { buildEditorSystemPrompt, type EditorContext } from '../lib/agent/editorPrompt.js'
 import { buildEditorTools } from '../lib/agent/editorTools.js'
@@ -21,12 +22,25 @@ import type { CatalogPage } from '../lib/agent/composeGroups.js'
 
 const router = Router()
 
+// The in-editor assistant only backs the staff-gated magazine studio, so every
+// route here requires a signed-in STAFF account. (Without this the LLM/OCR
+// endpoints would be an open, unauthenticated proxy — see routes/magazines.ts,
+// which gates the editor itself the same way.)
+router.use(attachAccount)
+router.use((req, res, next) => {
+  if (!isStaff(req.account)) {
+    res.status(403).json({ error: 'Staff access required.' })
+    return
+  }
+  next()
+})
+
 // POST /api/agent/editor/ingest?filename=  — analyse an uploaded PDF/image/text
 // file ONCE into a compact digest the agent can place from. Body: raw file bytes;
 // Content-Type header = the file's type. Same proxied pattern as /api/uploads.
 const MB = 1024 * 1024
 const rawDoc = raw({ type: () => true, limit: '26mb' })
-router.post('/ingest', attachAccountOptional, rawDoc, async (req, res) => {
+router.post('/ingest', rawDoc, async (req, res) => {
   if (!isAgentConfigured()) {
     res.status(503).json({ error: 'The studio assistant is resting — OPENROUTER_API_KEY is not configured on the server.' })
     return
@@ -71,7 +85,7 @@ router.post('/ingest', attachAccountOptional, rawDoc, async (req, res) => {
   }
 })
 
-router.post('/chat', attachAccountOptional, async (req, res) => {
+router.post('/chat', async (req, res) => {
   if (!isAgentConfigured()) {
     res.status(503).json({ error: 'The studio assistant is resting — OPENROUTER_API_KEY is not configured on the server.' })
     return
@@ -109,7 +123,7 @@ router.post('/chat', attachAccountOptional, async (req, res) => {
 // Given the document text + the open magazine's region catalog, returns a
 // validated fill plan covering as many pages/regions as the doc supports. The
 // client re-validates against the live draft and stages it per page for review.
-router.post('/compose', attachAccountOptional, async (req, res) => {
+router.post('/compose', async (req, res) => {
   if (!isAgentConfigured()) {
     res.status(503).json({ error: 'The studio assistant is resting — OPENROUTER_API_KEY is not configured on the server.' })
     return
@@ -148,7 +162,7 @@ const SUGGESTIONS_SCHEMA = z.object({
     .describe('Exactly three, most useful first.'),
 })
 
-router.post('/suggestions', attachAccountOptional, async (req, res) => {
+router.post('/suggestions', async (req, res) => {
   if (!isAgentConfigured()) {
     res.status(503).json({ suggestions: [] })
     return

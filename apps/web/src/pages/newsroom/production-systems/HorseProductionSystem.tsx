@@ -1,7 +1,11 @@
+import { useState } from 'react';
+import { useNavigate } from 'react-router-dom';
 import { Plus, Search, Eye, Link, ChevronDown, X } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { EmptyState } from '@/components/EmptyState';
 import { HorsePartyLinkPanel } from '@/components/HorsePartyLinkPanel';
+import { AddHorseChoice } from '@/components/AddHorseChoice';
+import { useHorseStore } from '@/stores/horseStore';
 import { cn } from '@/lib/utils';
 import type { Horse } from '@/types/horse';
 import type { connectionResolver } from '@/lib/horseConnections';
@@ -28,6 +32,17 @@ export function HorseProductionSystem({
   onOpenHorseForm,
 }: HorseProductionSystemProps) {
   const safeHorses = horses ?? [];
+  const navigate = useNavigate();
+  const addHorse = useHorseStore((s) => s.addHorse);
+  const [chooser, setChooser] = useState(false);
+
+  // Guided path: create an un-named draft and drop into the gamified studio.
+  const onGuided = async () => {
+    setChooser(false);
+    const created = await addHorse({ name: '', isUnnamed: true, pedigreeNotes: '' });
+    if (created) navigate(`/studio/horse/${created.id}`);
+  };
+
   return (
     <div className="space-y-5">
       <div className="flex items-center justify-between gap-4 flex-wrap">
@@ -44,7 +59,7 @@ export function HorseProductionSystem({
         <Button
           size="sm"
           className="bg-primary text-primary-foreground hover:bg-primary/90 gap-1.5 text-sm"
-          onClick={() => onOpenHorseForm()}
+          onClick={() => setChooser(true)}
         >
           <Plus size={13} />
           Add Thoroughbred
@@ -71,7 +86,7 @@ export function HorseProductionSystem({
           heading="The stables await their first resident."
           description="No thoroughbred profiles have been entered yet. Add the first horse to begin building the stable record — profiles will appear on the public Thoroughbred hub."
           ctaLabel="Add a Thoroughbred"
-          onCta={() => onOpenHorseForm()}
+          onCta={() => setChooser(true)}
           size="lg"
         />
       ) : filteredHorses.length === 0 ? (
@@ -245,6 +260,13 @@ export function HorseProductionSystem({
           </p>
         </div>
       )}
+
+      <AddHorseChoice
+        open={chooser}
+        onClose={() => setChooser(false)}
+        onGuided={onGuided}
+        onQuick={() => { setChooser(false); onOpenHorseForm(); }}
+      />
     </div>
   );
 }

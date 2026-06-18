@@ -29,7 +29,7 @@ export function EditableText({ regionId, className }: Props) {
     const c = p?.content[regionId];
     return c && c.kind === 'text' ? (c as TextContent) : undefined;
   });
-  const selected = useMagazineStore((s) => s.selectedRegionId === regionId);
+  const selected = useMagazineStore((s) => s.selectedRegionId === regionId && s.selectedPageId === pageId);
   const setText = useMagazineStore((s) => s.setText);
   const select = useMagazineStore((s) => s.select);
 
@@ -71,9 +71,9 @@ export function EditableText({ regionId, className }: Props) {
       data-region-id={regionId}
       onFocus={() => {
         focusedRef.current = true;
-        select(regionId);
+        select(regionId, pageId);
       }}
-      onMouseDown={() => select(regionId)}
+      onMouseDown={() => select(regionId, pageId)}
       onInput={onInput}
       onBlur={() => {
         focusedRef.current = false;

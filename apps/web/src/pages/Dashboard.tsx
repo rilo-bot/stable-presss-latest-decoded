@@ -14,6 +14,8 @@ import { TIER_ORDER, TIER_LABELS } from '@/rbac/entitlement';
 import type { SubscriptionTier } from '@/rbac/entitlement';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
+import { HorseForm } from '@/components/HorseForm';
+import { AddHorseChoice } from '@/components/AddHorseChoice';
 import { toast } from 'sonner';
 import {
   Newspaper, Star, Mic, HelpCircle, Building2, ShieldCheck, Users, PlusCircle, Loader2, Crown, Check, BookOpen, Clock, Lock,
@@ -47,6 +49,8 @@ export default function Dashboard() {
   const [claimRole, setClaimRole] = useState<PartyRole>('owner');
   const [orgName, setOrgName] = useState('');
   const [busy, setBusy] = useState<string | null>(null);
+  const [addChooser, setAddChooser] = useState(false); // pick guided vs quick form
+  const [quickForm, setQuickForm] = useState(false);   // the quick HorseForm modal
 
   useEffect(() => {
     void fetchMine();
@@ -102,12 +106,20 @@ export default function Dashboard() {
   // straight into its studio. We tag the creating party in the *Ids field for
   // THEIR role (owner→ownerIds, trainer→trainerIds, …) so the server auto-links
   // them under that role and they appear in the matching connection box.
-  const onAddHorse = async () => {
-    setBusy('horse');
+  // Pre-link the member to a new horse under THEIR claimed role (owner→ownerIds,
+  // trainer→trainerIds, …) so the server auto-links them in the matching box.
+  const myConnect = (): Partial<Horse> => {
     const myRole: PartyRole = claims.find((c) => c.partyId === myPartyId)?.role ?? 'owner';
-    const connect: Partial<Horse> = {};
-    if (myPartyId) (connect as Record<string, string[]>)[ROLE_BINDINGS[myRole].horseField] = [myPartyId];
-    const created = await addHorse({ ...connect, name: '', isUnnamed: true, pedigreeNotes: '' });
+    const c: Partial<Horse> = {};
+    if (myPartyId) (c as Record<string, string[]>)[ROLE_BINDINGS[myRole].horseField] = [myPartyId];
+    return c;
+  };
+
+  // Guided path: create an un-named draft (photo-first) and drop into its studio.
+  const onAddHorseGuided = async () => {
+    setAddChooser(false);
+    setBusy('horse');
+    const created = await addHorse({ ...myConnect(), name: '', isUnnamed: true, pedigreeNotes: '' });
     setBusy(null);
     if (created) navigate(`/studio/horse/${created.id}`);
   };
@@ -308,7 +320,7 @@ export default function Dashboard() {
             <div className="flex flex-wrap items-center gap-3 mb-3">
               <button
                 type="button"
-                onClick={onAddHorse}
+                onClick={() => setAddChooser(true)}
                 disabled={busy === 'horse'}
                 className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-sm bg-primary text-primary-foreground text-sm font-medium hover:opacity-90 transition-opacity disabled:opacity-60"
               >
@@ -371,6 +383,15 @@ export default function Dashboard() {
             </div>
           )}
         </Section>
+
+        {/* Add-a-horse: pick guided studio vs quick form */}
+        <AddHorseChoice
+          open={addChooser}
+          onClose={() => setAddChooser(false)}
+          onGuided={onAddHorseGuided}
+          onQuick={() => { setAddChooser(false); setQuickForm(true); }}
+        />
+        <HorseForm open={quickForm} onClose={() => setQuickForm(false)} memberMode defaultConnect={myConnect()} />
 
         {/* Organisations */}
         <Section title="Organisations" icon={<Building2 size={15} />}>

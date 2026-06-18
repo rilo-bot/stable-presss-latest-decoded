@@ -24,23 +24,25 @@ import { Sidebar } from './article-detail/Sidebar';
 import { RelatedPanel } from './article-detail/RelatedPanel';
 
 export default function ArticleDetail() {
-  // === auto fetch-on-mount (backend planner) ===
-  const fetchHorses = useHorseStore((s) => s.fetchHorses);
-  const fetchParties = usePartyStore((s) => s.fetchParties);
-  useEffect(() => {
-    fetchHorses();
-    fetchParties();
-  }, [fetchHorses, fetchParties]);
-  // === end auto fetch-on-mount ===
-
+  // All hooks run unconditionally, before any early return (Rules of Hooks):
+  // the guards below branch only on the resulting values.
   const { id } = useParams<{ id: string }>();
   const navigate = useNavigate();
 
-  if (!id) return <Navigate to="/" replace />;
+  const fetchHorses = useHorseStore((s) => s.fetchHorses);
+  const fetchParties = usePartyStore((s) => s.fetchParties);
+  const fetchArticles = useArticleStore((s) => s.fetchArticles);
+  useEffect(() => {
+    fetchHorses();
+    fetchParties();
+    fetchArticles();
+  }, [fetchHorses, fetchParties, fetchArticles]);
 
   const articles = useArticleStore((s) => s.articles);
+  const articlesLoaded = useArticleStore((s) => s.loaded);
   const horses = useHorseStore((s) => s.horses);
   const parties = usePartyStore((s) => s.parties);
+  const currentUser = useAuthStore((s) => s.currentUser);
   const horseConn = useMemo(() => connectionResolver(parties), [parties]);
 
   const article = useMemo(() => articles.find((a) => a.id === id), [articles, id]);
@@ -63,7 +65,25 @@ export default function ArticleDetail() {
       .slice(0, 3);
   }, [articles, article, id]);
 
-  if (!article) return <Navigate to="/news" replace />;
+  if (!id) return <Navigate to="/" replace />;
+
+  // Don't redirect while the store is still loading. On a hard refresh (or a
+  // direct link) the article list starts empty and arrives asynchronously —
+  // redirecting on the first render would bounce the reader to /news before
+  // their story ever loads. Only treat a missing article as "not found" once
+  // the fetch has completed.
+  if (!article) {
+    if (!articlesLoaded) {
+      return (
+        <div className="min-h-screen bg-background flex items-center justify-center px-4">
+          <p className="font-[family-name:var(--font-display)] italic text-muted-foreground">
+            Loading the story…
+          </p>
+        </div>
+      );
+    }
+    return <Navigate to="/news" replace />;
+  }
 
   const heroImage = article.imageUrl ?? DEFAULT_HERO;
 
@@ -90,7 +110,6 @@ export default function ArticleDetail() {
   const paragraphs = splitIntoParagraphs(article.summary ?? '');
 
   // Premium gate (entitlement axis) — independent of roles. Defaults to free/ungated.
-  const currentUser = useAuthStore((s) => s.currentUser);
   const locked = !canViewPremium(currentUser, article.minTier);
 
   return (

@@ -28,3 +28,27 @@ export function authFetch(path: string, init: RequestInit = {}): Promise<Respons
   if (token) headers.set('Authorization', `Bearer ${token}`);
   return fetch(apiUrl(path), { ...init, headers });
 }
+
+/**
+ * authFetch with bounded retry for TRANSIENT failures — a network error, 429, or
+ * 5xx (e.g. a Render cold-start returning 502 before the server is warm). A real
+ * client error (4xx other than 429) returns immediately, and a definite success
+ * returns immediately. Use ONLY for idempotent reads (GET); never for writes.
+ */
+export async function authFetchRetry(path: string, init: RequestInit = {}, attempts = 3): Promise<Response> {
+  let lastError: unknown = new Error('Request failed');
+  for (let attempt = 0; attempt < attempts; attempt++) {
+    try {
+      const res = await authFetch(path, init);
+      // Success, or a genuine client error we shouldn't retry — return as-is.
+      if (res.ok || (res.status >= 400 && res.status < 500 && res.status !== 429)) return res;
+      lastError = new Error(`HTTP ${res.status}`); // 5xx / 429 — worth retrying
+    } catch (err) {
+      lastError = err; // network/CORS failure — worth retrying
+    }
+    if (attempt < attempts - 1) {
+      await new Promise((resolve) => setTimeout(resolve, 400 * (attempt + 1))); // 400ms, 800ms backoff
+    }
+  }
+  throw lastError instanceof Error ? lastError : new Error('Request failed');
+}

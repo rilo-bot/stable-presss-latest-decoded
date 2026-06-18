@@ -37,7 +37,10 @@ export function resolveCurrentPageId(mag: Magazine | undefined): string | null {
   if (!mag) return null;
   const tracked = useEditorAgentUi.getState().currentPageId;
   if (tracked && mag.pages.some((p) => p.id === tracked)) return tracked;
-  const sel = useMagazineStore.getState().selectedRegionId;
+  const ms = useMagazineStore.getState();
+  const selPage = ms.selectedPageId;
+  if (selPage && mag.pages.some((p) => p.id === selPage)) return selPage;
+  const sel = ms.selectedRegionId;
   if (sel) {
     const page = mag.pages.find((p) => sel in p.content);
     if (page) return page.id;

@@ -1,6 +1,6 @@
 import { create } from 'zustand';
 import type { Party } from '@/types/party';
-import { authFetch } from '@/lib/api';
+import { authFetch, authFetchRetry } from '@/lib/api';
 import { toast } from 'sonner';
 
 interface PartyState {
@@ -25,7 +25,7 @@ export const usePartyStore = create<PartyState>()((set, get) => ({
     if (get().loaded && !force) return;
     set({ loading: true, error: null });
     try {
-      const res = await authFetch('/api/parties');
+      const res = await authFetchRetry('/api/parties');
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
       const parties = await res.json();
       set({ parties, loading: false, loaded: true });

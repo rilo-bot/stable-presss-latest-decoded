@@ -68,11 +68,17 @@ export default function NewsIndex() {
 
   const activeCategory = categoryParam;
 
-  // Filter live articles by category and search
+  // Filter live articles by section/category and search. A specific category
+  // narrows to the exact match; a bare section selection (no sub-category chosen)
+  // narrows to every category that belongs to that section — otherwise the
+  // top-level section tabs wouldn't filter the list at all.
   const filteredArticles = useMemo(() => {
     let base = liveArticles;
     if (activeCategory) {
       base = base.filter((a) => (a.category ?? '') === activeCategory);
+    } else if (activeSection) {
+      const sectionCatKeys = CATEGORIES.filter((c) => c.section === activeSection).map((c) => c.key);
+      base = base.filter((a) => sectionCatKeys.includes(a.category ?? ''));
     }
     if (search.trim()) {
       const q = search.toLowerCase();
@@ -84,7 +90,7 @@ export default function NewsIndex() {
       );
     }
     return base;
-  }, [liveArticles, activeCategory, search]);
+  }, [liveArticles, activeCategory, activeSection, search]);
 
   // Editorial features filtered by section/category for the showcase
   const showcaseFeatures = useMemo(() => {

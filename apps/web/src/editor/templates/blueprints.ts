@@ -31,6 +31,7 @@ import { predictions, followup } from './blueprints/predictions';
 import { education } from './blueprints/education';
 import { winning, voice } from './blueprints/winning';
 import { backCover } from './blueprints/back-cover';
+import { PREMIUM_BLUEPRINTS } from './premium/blueprints';
 
 export type { PageBlueprint };
 export { FIRST_COVER_IMAGE } from './blueprints/_shared';
@@ -43,9 +44,11 @@ export const BLUEPRINTS: PageBlueprint[] = [
   followup, education, winning, voice, backCover,
 ];
 
-/** Lookup a blueprint by its page type. */
+/** Lookup a blueprint by its page type. Premium (#2) blueprints are merged in
+ *  for content/reconcile lookups but kept OUT of the classic print-order array
+ *  above, so template #1's default document is unaffected. */
 export const BLUEPRINT_BY_TYPE: Record<string, PageBlueprint> = Object.fromEntries(
-  BLUEPRINTS.map((b) => [b.pageType, b])
+  [...BLUEPRINTS, ...PREMIUM_BLUEPRINTS].map((b) => [b.pageType, b])
 );
 
 /** Page types offered in the editor's "add page" picker, in canonical order. */
@@ -92,17 +95,27 @@ export function createPageFromType(pageType: PageTypeKey, id: string): MagazineP
   };
 }
 
-/** Build the default 24-page document for a brand-new magazine. */
-export function createDefaultPages(): MagazinePage[] {
-  // Deep clone so each magazine owns its content; renumberPages then derives the
-  // positional page numbers (1..N) and writes them into the footer regions.
-  const pages: MagazinePage[] = BLUEPRINTS.map((bp, i) => ({
-    id: `${bp.pageType}-${i + 1}`,
-    pageType: bp.pageType,
-    label: bp.label,
-    number: i + 1,
-    selectedForPublish: true,
-    content: structuredClone(bp.defaultContent),
-  }));
+/**
+ * Assemble a document from an ordered list of page types (a template). Each page
+ * is deep-cloned from its blueprint so the new magazine owns its content, gets a
+ * stable index-based id (unique even if a type repeats), and renumberPages then
+ * derives the 1..N print order and writes it into the footer regions.
+ */
+export function createPagesFromTypes(pageTypes: PageTypeKey[]): MagazinePage[] {
+  const pages: MagazinePage[] = pageTypes
+    .filter((t) => BLUEPRINT_BY_TYPE[t])
+    .map((t, i) => ({
+      id: `${t}-${i + 1}`,
+      pageType: t,
+      label: BLUEPRINT_BY_TYPE[t].label,
+      number: i + 1,
+      selectedForPublish: true,
+      content: structuredClone(BLUEPRINT_BY_TYPE[t].defaultContent),
+    }));
   return renumberPages(pages);
+}
+
+/** Build the default full-bulletin document (all blueprints, in print order). */
+export function createDefaultPages(): MagazinePage[] {
+  return createPagesFromTypes(BLUEPRINTS.map((b) => b.pageType));
 }

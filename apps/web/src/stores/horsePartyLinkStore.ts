@@ -1,6 +1,6 @@
 import { create } from 'zustand';
 import { toast } from 'sonner';
-import { authFetch } from '@/lib/api';
+import { authFetch, authFetchRetry } from '@/lib/api';
 import type { HorsePartyLink } from '@/types/horsePartyLink';
 
 interface HorsePartyLinkState {
@@ -37,7 +37,7 @@ export const useHorsePartyLinkStore = create<HorsePartyLinkState>()(
       if (get().loaded && !force) return;
       set({ loading: true, error: null });
       try {
-        const res = await authFetch('/api/horsePartyLinks');
+        const res = await authFetchRetry('/api/horsePartyLinks');
         if (!res.ok) throw new Error(`HTTP ${res.status}`);
         const links = await res.json();
         set({ links, loading: false, loaded: true });

@@ -39,6 +39,8 @@ import { PartiesProductionSystem } from './newsroom/production-systems/PartiesPr
 import { MediaProductionSystem } from './newsroom/production-systems/MediaProductionSystem';
 import { RacingProductionSystem } from './newsroom/production-systems/RacingProductionSystem';
 import { MagazineStudio } from './newsroom/production-systems/MagazineStudio';
+import { TemplateGallery } from '@/editor/TemplateGallery';
+import type { MagazineTemplate } from '@/editor/templates/galleryTemplates';
 import { MediaFormPanel } from './newsroom/production-systems/MediaFormPanel';
 import { RacingFormPanel } from './newsroom/production-systems/RacingFormPanel';
 import { useProductionSystems } from './newsroom/useProductionSystems';
@@ -52,6 +54,7 @@ export default function Newsroom() {
   const articles = useArticleStore((s) => s.articles);
   const setStatus = useArticleStore((s) => s.setStatus);
   const updateArticle = useArticleStore((s) => s.updateArticle);
+  const fetchArticles = useArticleStore((s) => s.fetchArticles);
   const currentUser = useAuthStore((s) => s.currentUser);
 
   // Horse, party, media, racing & sales/report registers (state, filters, handlers).
@@ -102,6 +105,14 @@ export default function Newsroom() {
   const loadMagazine = useMagazineStore((s) => s.loadMagazine);
   const fetchMagazines = useMagazineStore((s) => s.fetchMagazines);
   const buildIssuePayload = useMagazineStore((s) => s.buildIssuePayload);
+  const [galleryOpen, setGalleryOpen] = useState(false);
+  // Load the newsroom's stories on mount. The store guards against duplicate
+  // fetches, so this is a no-op if a public page already populated it — but it's
+  // essential when the newsroom (or a story page) is the first route loaded, e.g.
+  // after a hard refresh, when the in-memory store starts empty.
+  useEffect(() => {
+    fetchArticles();
+  }, [fetchArticles]);
   useEffect(() => {
     fetchMagazines();
   }, [fetchMagazines]);
@@ -256,9 +267,20 @@ export default function Newsroom() {
 
   /* ── Magazine Studio panel ────────────────────────────── */
 
-  const handleNewMagazine = async () => {
-    const id = await createMagazine();
-    if (id) navigate(`/newsroom/magazine/${id}`);
+  // "New Magazine" opens the template gallery; picking one assembles its pages
+  // and drops into the same builder route.
+  const handleNewMagazine = () => setGalleryOpen(true);
+
+  const handlePickTemplate = async (template: MagazineTemplate) => {
+    const id = await createMagazine({
+      title: template.title,
+      edition: template.edition,
+      pageTypes: template.pageTypes,
+    });
+    if (id) {
+      setGalleryOpen(false);
+      navigate(`/newsroom/magazine/${id}`);
+    }
   };
 
   /* ── Main render ── */
@@ -581,6 +603,11 @@ export default function Newsroom() {
           onSave={() => { setReportFormOpen(false); setEditReport(undefined); fetchReports(); }}
           onCancel={() => { setReportFormOpen(false); setEditReport(undefined); }}
         />
+      )}
+
+      {/* New-magazine template gallery */}
+      {galleryOpen && (
+        <TemplateGallery onPick={handlePickTemplate} onClose={() => setGalleryOpen(false)} />
       )}
     </div>
   );

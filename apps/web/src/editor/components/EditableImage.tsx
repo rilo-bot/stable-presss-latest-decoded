@@ -26,7 +26,7 @@ export function EditableImage({ regionId, className, rounded }: Props) {
     const c = p?.content[regionId];
     return c && c.kind === 'image' ? (c as ImageContent) : undefined;
   });
-  const selected = useMagazineStore((s) => s.selectedRegionId === regionId);
+  const selected = useMagazineStore((s) => s.selectedRegionId === regionId && s.selectedPageId === pageId);
   const select = useMagazineStore((s) => s.select);
   const resolveImage = useMagazineStore((s) => s.resolveImage);
   const { busy, openPicker, inputProps } = useImageUpload(magazineId, pageId, regionId);
@@ -38,7 +38,7 @@ export function EditableImage({ regionId, className, rounded }: Props) {
     <button
       type="button"
       onClick={() => {
-        select(regionId);
+        select(regionId, pageId);
         if (!busy) openPicker();
       }}
       className={cn(

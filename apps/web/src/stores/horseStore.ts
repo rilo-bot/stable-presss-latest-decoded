@@ -1,7 +1,7 @@
 import { create } from 'zustand';
 import { toast } from 'sonner';
 import type { Horse } from '@/types/horse';
-import { authFetch } from '@/lib/api';
+import { authFetch, authFetchRetry } from '@/lib/api';
 import { useHorsePartyLinkStore } from '@/stores/horsePartyLinkStore';
 
 interface HorseState {
@@ -9,7 +9,9 @@ interface HorseState {
   loading: boolean;
   error: string | null;
   loaded: boolean;
-  fetchHorses: () => Promise<void>;
+  /** Pass force=true to refetch even when already loaded (e.g. after login, so a
+   *  member's own unverified/draft horses appear with the now-attached token). */
+  fetchHorses: (force?: boolean) => Promise<void>;
   addHorse: (horse: Omit<Horse, 'id' | 'createdAt'>) => Promise<Horse | null>;
   updateHorse: (id: string, updates: Partial<Omit<Horse, 'id' | 'createdAt'>>) => Promise<void>;
   removeHorse: (id: string) => Promise<void>;
@@ -21,11 +23,16 @@ export const useHorseStore = create<HorseState>()((set, get) => ({
   error: null,
   loaded: false,
 
-  fetchHorses: async () => {
-    if (get().loading || get().loaded) return;
+  // Guard mirrors the link store: in-flight calls dedupe; an already-loaded list
+  // is reused unless force=true. A FAILED load leaves loaded=false so the next
+  // mount retries — and the GET itself retries transient cold-start 5xx/network
+  // errors (authFetchRetry), the usual "sometimes the horses don't load" cause.
+  fetchHorses: async (force = false) => {
+    if (get().loading) return;
+    if (get().loaded && !force) return;
     set({ loading: true, error: null });
     try {
-      const res = await authFetch('/api/horses');
+      const res = await authFetchRetry('/api/horses');
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
       const horses = await res.json();
       set({ horses, loading: false, loaded: true });

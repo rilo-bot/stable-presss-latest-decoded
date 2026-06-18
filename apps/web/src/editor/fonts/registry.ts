@@ -30,7 +30,11 @@ export const FONT_REGISTRY: FontDef[] = [
     label: 'Playfair Display',
     category: 'classic',
     stack: "'Playfair Display', Georgia, serif",
-    alreadyLoaded: true,
+    // The app's base stylesheet loads Playfair 400–700 upright only, but the
+    // bulletin house style uses weight 800 (display headlines / stat figures) and
+    // italic (pull quotes). Request those faces here so the editor AND the public
+    // viewer render them for real instead of faux-bold/italic.
+    googleSpec: 'Playfair+Display:ital,wght@0,700;0,800;0,900;1,400;1,500;1,600;1,700',
   },
   {
     id: 'im-fell',

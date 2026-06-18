@@ -15,17 +15,22 @@ import {
   EditorialSection,
 } from './horse-form/sections';
 
+type ConnectFields = Partial<Pick<Horse,
+  'ownerIds' | 'trainerIds' | 'jockeyIds' | 'breederIds' | 'bloodstockAgentIds' | 'syndicateManagerIds' | 'personnelIds'>>;
+
 interface HorseFormProps {
   open: boolean;
   onClose: () => void;
   editHorse?: Horse | null;
   /** Pre-select this party as owner when creating (member self-registration). */
   defaultOwnerId?: string;
-  /** Member self-service mode: relax the trainer requirement (owner is enough). */
+  /** Role-aware pre-link when creating (e.g. a trainer member → { trainerIds:[id] }). */
+  defaultConnect?: ConnectFields;
+  /** Member self-service mode: relax the owner/trainer requirement (self-link is enough). */
   memberMode?: boolean;
 }
 
-export function HorseForm({ open, onClose, editHorse, defaultOwnerId, memberMode }: HorseFormProps) {
+export function HorseForm({ open, onClose, editHorse, defaultOwnerId, defaultConnect, memberMode }: HorseFormProps) {
   const addHorse = useHorseStore((s) => s.addHorse);
   const updateHorse = useHorseStore((s) => s.updateHorse);
   const removeHorse = useHorseStore((s) => s.removeHorse);
@@ -86,12 +91,12 @@ export function HorseForm({ open, onClose, editHorse, defaultOwnerId, memberMode
               imageUrl: editHorse.imageUrl ?? '',
               age: editHorse.age,
             }
-          : { ...empty(), ownerIds: defaultOwnerId ? [defaultOwnerId] : [] }
+          : { ...empty(), ...(defaultOwnerId ? { ownerIds: [defaultOwnerId] } : {}), ...(defaultConnect ?? {}) }
       );
       setConfirmDelete(false);
       setSaving(false);
     }
-  }, [open, editHorse, defaultOwnerId]);
+  }, [open, editHorse, defaultOwnerId, defaultConnect]);
 
   const setField = (field: keyof FormData, value: string | number | boolean | string[] | undefined) =>
     setForm((prev) => ({ ...prev, [field]: value }));
@@ -104,11 +109,13 @@ export function HorseForm({ open, onClose, editHorse, defaultOwnerId, memberMode
       return;
     }
 
-    // Check that at least one owner and one trainer are selected
+    // Owner/trainer are required for STAFF entry (a full record). Members self-
+    // register with just their own party linked (via defaultConnect), so the
+    // requirement is relaxed in memberMode.
     const hasOwner = (form.ownerIds ?? []).length > 0;
     const hasTrainer = (form.trainerIds ?? []).length > 0;
 
-    if (!hasOwner) {
+    if (!memberMode && !hasOwner) {
       toast.error('At least one owner is required. Add owners in the Parties Production System first.');
       return;
     }
@@ -125,10 +132,11 @@ export function HorseForm({ open, onClose, editHorse, defaultOwnerId, memberMode
       const displayName = form.isUnnamed ? 'Un-Named' : form.name;
 
       if (editHorse) {
-        updateHorse(editHorse.id, form);
+        await updateHorse(editHorse.id, form);
         toast.success(`${displayName} has been updated.`);
       } else {
-        addHorse(form);
+        const created = await addHorse(form);
+        if (!created) return; // store already surfaced the error
         toast.success(`${displayName} has been added to the stables.`);
       }
 

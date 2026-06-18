@@ -1,7 +1,7 @@
 import type { TextContent, TextStyle } from '@/types/magazine';
 import { useMagazineStore } from '@/stores/magazineStore';
 import { Section, Stepper, Segmented, ColorControl, FontFamilyMenu } from './controls';
-import { Bold, Italic, Underline, AlignLeft, AlignCenter, AlignRight, AlignJustify } from 'lucide-react';
+import { Italic, Underline, AlignLeft, AlignCenter, AlignRight, AlignJustify } from 'lucide-react';
 
 export function TextInspector({
   magazineId,
@@ -39,13 +39,10 @@ export function TextInspector({
         </div>
       </Section>
 
+      {/* Weight lives solely in "Size & weight" above; this row is italic/underline
+          only, so the two controls can't disagree on fontWeight. */}
       <Section title="Style">
         <div className="flex gap-2">
-          <Segmented<number>
-            value={s.fontWeight >= 700 ? 1 : 0}
-            options={[{ value: 1, label: <Bold size={13} />, title: 'Bold' }]}
-            onChange={() => patch({ fontWeight: s.fontWeight >= 700 ? 400 : 700 })}
-          />
           <Segmented<number>
             value={s.italic ? 1 : 0}
             options={[{ value: 1, label: <Italic size={13} />, title: 'Italic' }]}

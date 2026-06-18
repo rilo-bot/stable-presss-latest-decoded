@@ -38,7 +38,11 @@ export type PageTypeKey =
   | 'ownership-education'
   | 'winning-moments'
   | 'owners-voice'
-  | 'back-cover';
+  | 'back-cover'
+  // ── Premium template (#2) pages — own keys so template #1 is untouched ──
+  | 'cover-px'
+  | 'headline-px'
+  | 'president-px';
 
 // ── Text styling ────────────────────────────────────────────────────────────
 

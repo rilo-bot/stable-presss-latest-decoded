@@ -1,7 +1,7 @@
 import '@/styles/theme.css';
 import '@/styles/brand.css';
 
-import { useEffect } from 'react';
+import { useEffect, useRef } from 'react';
 import { Routes, Route, useLocation } from 'react-router-dom';
 import { Toaster } from 'sonner';
 
@@ -9,6 +9,9 @@ import { NavBar } from '@/components/NavBar';
 import { AgentWidget } from '@/components/AgentWidget';
 import { RequireAuth, RequireStaff, RequireRole } from '@/rbac/guards';
 import { useAuthStore } from '@/stores/authStore';
+import { useHorseStore } from '@/stores/horseStore';
+import { usePartyStore } from '@/stores/partyStore';
+import { useHorsePartyLinkStore } from '@/stores/horsePartyLinkStore';
 
 import Landing from '@/pages/Landing';
 import Login from '@/pages/Login';
@@ -19,6 +22,7 @@ import HorseEditor from '@/pages/HorseEditor';
 import ArticleDetail from '@/pages/ArticleDetail';
 import Newsroom from '@/pages/Newsroom';
 import MagazineStudio from '@/pages/MagazineStudio';
+import PremiumPreview from '@/pages/__PremiumPreview'; // TEMP — remove with its route
 import TippingRing from '@/pages/TippingRing';
 import PodcastHub from '@/pages/PodcastHub';
 import PodcastWorkflow from '@/pages/PodcastWorkflow';
@@ -107,6 +111,20 @@ export default function App() {
   useEffect(() => {
     void useAuthStore.getState().verifySession();
   }, []);
+
+  // When the signed-in identity changes (login / logout / dropped session),
+  // force-reload user-scoped data with the new token. Without this the horse /
+  // party / link stores keep the first (often logged-out) result and a member's
+  // own unverified/draft horses never appear after login. Skips the initial run
+  // (the pages load their own data on mount with the already-hydrated token).
+  const authToken = useAuthStore((s) => s.token);
+  const firstAuthRun = useRef(true);
+  useEffect(() => {
+    if (firstAuthRun.current) { firstAuthRun.current = false; return; }
+    void useHorseStore.getState().fetchHorses(true);
+    void usePartyStore.getState().fetchParties(true);
+    void useHorsePartyLinkStore.getState().fetchHorsePartyLinks(true);
+  }, [authToken]);
 
   return (
     <>
@@ -213,6 +231,8 @@ export default function App() {
         {/* Auth routes — full-screen, no nav */}
         <Route path="/login" element={<Login />} />
         <Route path="/signup" element={<Signup />} />
+        {/* TEMP preview route for visual QA — remove */}
+        <Route path="/__preview/premium" element={<PremiumPreview />} />
 
         {/* Staff-only routes — readers/parties are redirected home */}
         <Route element={<RequireStaff />}>

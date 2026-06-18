@@ -26,7 +26,7 @@ export function EditableQr({ regionId, size = 72, className }: Props) {
     const c = p?.content[regionId];
     return c && c.kind === 'qr' ? (c as QrContent) : undefined;
   });
-  const selected = useMagazineStore((s) => s.selectedRegionId === regionId);
+  const selected = useMagazineStore((s) => s.selectedRegionId === regionId && s.selectedPageId === pageId);
   const select = useMagazineStore((s) => s.select);
 
   if (!content) return null;
@@ -34,7 +34,7 @@ export function EditableQr({ regionId, size = 72, className }: Props) {
   return (
     <button
       type="button"
-      onClick={() => select(regionId)}
+      onClick={() => select(regionId, pageId)}
       className={cn(
         'inline-flex items-center justify-center bg-white p-1 rounded-[2px] transition-shadow',
         selected ? 'ring-2 ring-sky-500/90' : 'hover:ring-2 hover:ring-sky-400/50',

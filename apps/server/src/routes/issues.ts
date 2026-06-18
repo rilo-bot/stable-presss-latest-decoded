@@ -18,9 +18,28 @@
 
 import { Router } from 'express';
 import { db } from '../lib/db.js';
-import { isStaff } from '../lib/rbac.js';
+import { isStaff, isAdmin } from '../lib/rbac.js';
+import { sanitizePages } from '../lib/sanitizeHtml.js';
+import type { AccountUser } from '../lib/identity.js';
 
 type WithMongoId = { _id: string; [key: string]: unknown };
+
+/**
+ * Who may manage (republish / unpublish / delete) an existing issue: an admin,
+ * the staff member who published it, or the owner of the source magazine. This
+ * mirrors the owner-only management on magazine drafts (routes/magazines.ts) so
+ * one editor can't tamper with another's published edition.
+ */
+async function canManageIssue(issue: WithMongoId, account: AccountUser | undefined): Promise<boolean> {
+  if (!account) return false;
+  if (isAdmin(account)) return true;
+  if (issue.createdByUserId && issue.createdByUserId === account.id) return true;
+  if (issue.magazineId) {
+    const mag = await db.collection('magazines').findById(String(issue.magazineId));
+    if (mag && mag.ownerId === account.id) return true;
+  }
+  return false;
+}
 
 /** Full detail projection (_id → id). */
 function project<T extends WithMongoId>(doc: T): Omit<T, '_id'> & { id: string } {
@@ -88,6 +107,15 @@ router.post('/', async (req, res) => {
     return;
   }
 
+  // Only the owner of the source magazine (or an admin) may publish from it.
+  if (body.magazineId) {
+    const mag = await db.collection('magazines').findById(String(body.magazineId));
+    if (!mag || (mag.ownerId !== req.account?.id && !isAdmin(req.account))) {
+      res.status(403).json({ error: 'Only the magazine owner can publish this edition.' });
+      return;
+    }
+  }
+
   const now = new Date().toISOString();
   const doc: Record<string, unknown> = {
     magazineId: body.magazineId ?? null,
@@ -95,7 +123,9 @@ router.post('/', async (req, res) => {
     edition: body.edition ?? '',
     coverImage: body.coverImage ?? '',
     coverImageUrl: body.coverImageUrl ?? '',
-    pages: body.pages,
+    // Trust boundary: re-sanitize page rich text server-side before freezing it
+    // into the public copy (mirrors the magazine draft route).
+    pages: sanitizePages(body.pages),
     scope: body.scope === 'selected' ? 'selected' : 'full',
     pageCount: body.pages.length,
     version: 1,
@@ -122,6 +152,10 @@ router.patch('/:id', async (req, res) => {
     res.status(404).json({ error: 'Not found' });
     return;
   }
+  if (!(await canManageIssue(found, req.account))) {
+    res.status(403).json({ error: 'Only the magazine owner can manage this edition.' });
+    return;
+  }
 
   const body = req.body as Partial<{
     action: 'unpublish' | 'republish';
@@ -143,7 +177,7 @@ router.patch('/:id', async (req, res) => {
     update.publishedAt = now;
     // Optional fresh snapshot — only replace content when the client sends new pages.
     if (Array.isArray(body.pages) && body.pages.length > 0) {
-      update.pages = body.pages;
+      update.pages = sanitizePages(body.pages);
       update.pageCount = body.pages.length;
       if (typeof body.title === 'string') update.title = body.title;
       if (typeof body.edition === 'string') update.edition = body.edition;
@@ -164,13 +198,18 @@ router.patch('/:id', async (req, res) => {
   res.json(project(updated));
 });
 
-// delete — staff
+// delete — issue creator, source-magazine owner, or admin
 router.delete('/:id', async (req, res) => {
-  const deleted = await db.collection('issues').deleteOne(req.params.id);
-  if (!deleted) {
+  const found = await db.collection('issues').findById(req.params.id);
+  if (!found) {
     res.status(404).json({ error: 'Not found' });
     return;
   }
+  if (!(await canManageIssue(found, req.account))) {
+    res.status(403).json({ error: 'Only the magazine owner can delete this edition.' });
+    return;
+  }
+  await db.collection('issues').deleteOne(req.params.id);
   res.json({ success: true });
 });
 

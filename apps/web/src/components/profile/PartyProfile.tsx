@@ -42,6 +42,8 @@ import { useProfileAgentUi, type ProfileContext } from '@/stores/profileAgentUiS
 import { DossierMeter } from '@/components/DossierMeter';
 import { FollowButton } from '@/components/FollowButton';
 import { AskAgentButton } from '@/components/AskAgentButton';
+import { HorseForm } from '@/components/HorseForm';
+import { AddHorseChoice } from '@/components/AddHorseChoice';
 
 type Mode = 'view' | 'edit';
 
@@ -106,8 +108,9 @@ export function PartyProfile({ partyId, mode, onBack }: PartyProfileProps) {
   useEffect(() => { fetchParties(mode === 'edit'); fetchHorses(); }, [fetchParties, fetchHorses, mode]);
 
   const [activeModule, setActiveModule] = useState<string | null>(null);
-  const [newHorseName, setNewHorseName] = useState('');
   const [adding, setAdding] = useState(false);
+  const [addChooser, setAddChooser] = useState(false); // pick guided vs quick form
+  const [quickForm, setQuickForm] = useState(false);   // the quick HorseForm modal
 
   // Reset any open module when the subject / role changes.
   useEffect(() => { setActiveModule(null); }, [partyId, searchParams.get('role')]);
@@ -201,19 +204,6 @@ export function PartyProfile({ partyId, mode, onBack }: PartyProfileProps) {
     const c: Partial<Horse> = {};
     (c as Record<string, string[]>)[ROLE_BINDINGS[activeRole].horseField] = [partyId];
     return c;
-  };
-
-  // Register a (named) horse and drop straight into its studio to finish it.
-  const onAddHorse = async () => {
-    const name = newHorseName.trim();
-    if (!name) { toast.error('Enter a horse name.'); return; }
-    setAdding(true);
-    try {
-      const created = await addHorse({ ...selfConnect(), name, pedigreeNotes: '' });
-      if (created) { setNewHorseName(''); navigate(`/studio/horse/${created.id}`); }
-    } finally {
-      setAdding(false);
-    }
   };
 
   // Photo-first path: create an un-named draft (foal / yearling) with no name and
@@ -429,20 +419,8 @@ export function PartyProfile({ partyId, mode, onBack }: PartyProfileProps) {
   // ── Centre default body ──
   const addHorsePrepend = isEdit && editable ? (
     <div style={{ marginBottom: 10 }}>
-      <div style={{ display: 'flex', gap: 6 }}>
-        <input
-          value={newHorseName}
-          onChange={(e) => setNewHorseName(e.target.value)}
-          onKeyDown={(e) => { if (e.key === 'Enter') void onAddHorse(); }}
-          placeholder="New horse name…"
-          style={{ flex: 1, background: 'var(--parchment)', border: '1px solid var(--gold-mid)', borderRadius: 3, padding: '5px 9px', fontSize: '0.72rem', color: 'var(--forest-deep)', outline: 'none', ...serifStyle }}
-        />
-        <button onClick={onAddHorse} disabled={adding || !newHorseName.trim()} className="sku-gold-btn" style={{ padding: '5px 12px', display: 'flex', alignItems: 'center', gap: 5, fontSize: '0.6rem', textTransform: 'uppercase', letterSpacing: '0.08em', fontWeight: 700, ...serifStyle, opacity: adding || !newHorseName.trim() ? 0.55 : 1 }}>
-          {adding ? <Loader2 size={12} className="animate-spin" /> : <Plus size={12} />} Register
-        </button>
-      </div>
-      <button onClick={onAddUnnamedFoal} disabled={adding} style={{ marginTop: 5, background: 'none', border: 'none', padding: 0, cursor: adding ? 'wait' : 'pointer', fontSize: '0.6rem', fontStyle: 'italic', color: 'var(--gold-dark)', ...serifStyle }}>
-        + Add an un-named foal (name it later)
+      <button onClick={() => setAddChooser(true)} disabled={adding} className="sku-gold-btn" style={{ padding: '7px 14px', display: 'inline-flex', alignItems: 'center', gap: 6, fontSize: '0.6rem', textTransform: 'uppercase', letterSpacing: '0.08em', fontWeight: 700, ...serifStyle, opacity: adding ? 0.6 : 1 }}>
+        {adding ? <Loader2 size={12} className="animate-spin" /> : <Plus size={12} />} Add a horse
       </button>
     </div>
   ) : undefined;
@@ -548,6 +526,13 @@ export function PartyProfile({ partyId, mode, onBack }: PartyProfileProps) {
             : <ProfileAgentPanel />)
           : undefined}
       />
+      <AddHorseChoice
+        open={addChooser}
+        onClose={() => setAddChooser(false)}
+        onGuided={() => { setAddChooser(false); void onAddUnnamedFoal(); }}
+        onQuick={() => { setAddChooser(false); setQuickForm(true); }}
+      />
+      <HorseForm open={quickForm} onClose={() => setQuickForm(false)} memberMode defaultConnect={selfConnect()} />
     </>
   );
 }

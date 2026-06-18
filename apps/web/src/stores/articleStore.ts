@@ -3,6 +3,16 @@ import { authFetch } from '@/lib/api';
 import { toast } from 'sonner';
 import type { Article, ArticleStatus } from '@/types/article';
 
+/**
+ * Coerce a raw API article into the shape the UI relies on. The server doesn't
+ * default array fields, so legacy/seed docs can arrive without linkedHorseIds —
+ * which the type claims is always present. Normalising here keeps every
+ * consumer (board cards, detail page, forms) safe from undefined-array reads.
+ */
+function normalizeArticle(a: Article): Article {
+  return { ...a, linkedHorseIds: a.linkedHorseIds ?? [] };
+}
+
 interface ArticleState {
   articles: Article[];
   loading: boolean;
@@ -28,8 +38,8 @@ export const useArticleStore = create<ArticleState>()((set, get) => ({
     try {
       const res = await authFetch('/api/articles');
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
-      const articles = await res.json();
-      set({ articles, loading: false, loaded: true });
+      const articles = (await res.json()) as Article[];
+      set({ articles: articles.map(normalizeArticle), loading: false, loaded: true });
     } catch (err) {
       const message = err instanceof Error ? err.message : 'Failed to load articles';
       set({ loading: false, error: message });
@@ -45,7 +55,7 @@ export const useArticleStore = create<ArticleState>()((set, get) => ({
         body: JSON.stringify(article),
       });
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
-      const created = await res.json();
+      const created = normalizeArticle(await res.json());
       set((state) => ({ articles: [...state.articles, created] }));
     } catch (err) {
       const message = err instanceof Error ? err.message : 'Failed to create article';
@@ -66,7 +76,7 @@ export const useArticleStore = create<ArticleState>()((set, get) => ({
         body: JSON.stringify(updates),
       });
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
-      const updated = await res.json();
+      const updated = normalizeArticle(await res.json());
       set((state) => ({
         articles: state.articles.map((a) => (a.id === id ? updated : a)),
       }));
@@ -106,7 +116,7 @@ export const useArticleStore = create<ArticleState>()((set, get) => ({
         body: JSON.stringify({ status: 'published', publishedAt: new Date() }),
       });
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
-      const updated = await res.json();
+      const updated = normalizeArticle(await res.json());
       set((state) => ({
         articles: state.articles.map((a) => (a.id === id ? updated : a)),
       }));
@@ -129,7 +139,7 @@ export const useArticleStore = create<ArticleState>()((set, get) => ({
         body: JSON.stringify({ status }),
       });
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
-      const updated = await res.json();
+      const updated = normalizeArticle(await res.json());
       set((state) => ({
         articles: state.articles.map((a) => (a.id === id ? updated : a)),
       }));
