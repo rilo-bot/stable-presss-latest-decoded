@@ -38,6 +38,12 @@ export const FEATURE_GUIDES: Record<string, string> = {
   newsroom:
     'The Newsroom is the editorial workspace for staff: an editorial Kanban, story drafting and review, the Magazine Studio for bulletins, and Production System modules for horses, parties, media and racing data. It is available to editorial staff accounts.',
 
+  'file-story':
+    'Filing a story is an editorial-staff action. Go to the Newsroom — from there start a new story/draft on the editorial board, write the headline, summary and body, link any horses, set the category, then submit it for review. Editors move it along the pipeline (draft → review → published / newsletter / bulletin). If you are not editorial staff yet, I can show you what you can do instead, or you can ask an editor to grant access.',
+
+  'edit-bulletin':
+    'Bulletins (the print magazine) are built in the Newsroom → Magazine Studio. Open or create a magazine, edit each page\'s regions, and use the in-editor Studio Assistant to write/fill pages. When ready, owners/editors Publish it to the public Bulletins page.',
+
   organisations:
     'An organisation (syndicate, stud, stable or agency) groups members and the parties/horses it manages under one umbrella. Create one during sign-up (choose Organisation) or manage it from My Organisation: invite members, add managed parties, and verify members’ role claims for parties your organisation controls.',
 

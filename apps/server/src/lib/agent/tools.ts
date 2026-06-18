@@ -423,6 +423,24 @@ export function buildTools(account?: AccountUser, authHeader?: string): ToolSet 
       },
     }),
 
+    // Client-executed (no execute): the browser handles this via the widget's
+    // onToolCall and routes the app there with react-router. Use it to actually
+    // TAKE the reader to where they can do something (then tell them the next step).
+    navigateTo: tool({
+      description:
+        "Navigate the reader to a page so they can do the thing they asked about (e.g. 'file a story' → newsroom, 'place a tip' → tipping). Pair it with a short note on what to do once there. For a specific horse/party/article/bulletin/organisation, pass its id. Don't send a reader to a staff-only page (newsroom/site-content/claims/staff) unless they're staff/admin — guide them instead.",
+      inputSchema: z.object({
+        to: z
+          .enum([
+            'home', 'news', 'newsletter', 'bulletins', 'horses', 'parties', 'tipping', 'podcast',
+            'dashboard', 'newsroom', 'site-content', 'claims', 'staff', 'login', 'signup',
+            'horse', 'party', 'article', 'bulletin', 'organisation',
+          ])
+          .describe('Destination. The last five need an id.'),
+        id: z.string().optional().describe('Entity id, required for horse/party/article/bulletin/organisation.'),
+      }),
+    }),
+
     // ── ACTION tools (Phase 3) — only for signed-in users. Each PROXIES to the
     // app's own gated endpoint as the user, so the real route enforces RBAC and
     // runs all side effects. Each requires `confirmed:true`, which the assistant

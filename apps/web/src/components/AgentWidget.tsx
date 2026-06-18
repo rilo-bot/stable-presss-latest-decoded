@@ -12,9 +12,9 @@
 // ---------------------------------------------------------------------------
 
 import { useMemo, useRef, useState, useEffect } from 'react';
-import { useLocation } from 'react-router-dom';
+import { useLocation, useNavigate } from 'react-router-dom';
 import { useChat } from '@ai-sdk/react';
-import { DefaultChatTransport, type UIMessage } from 'ai';
+import { DefaultChatTransport, lastAssistantMessageIsCompleteWithToolCalls, type UIMessage } from 'ai';
 import { AnimatePresence, motion, useReducedMotion } from 'framer-motion';
 import { X, Send, Sparkles, Square, Maximize2, Minimize2, Mic, Volume2, VolumeX, Loader2 } from 'lucide-react';
 
@@ -106,6 +106,33 @@ function messageText(m: UIMessage): string {
 const FOREST = 'linear-gradient(180deg, var(--forest-light) 0%, var(--forest-deep) 100%)';
 const GOLD = 'hsl(var(--brand-accent))';
 
+// Map a navigateTo destination (+ optional entity id) to an in-app route.
+function navPathFor(to: string, id?: string): string | null {
+  switch (to) {
+    case 'home': return '/';
+    case 'news': return '/news';
+    case 'newsletter': return '/newsletter';
+    case 'bulletins': return '/bulletins';
+    case 'horses': return '/horses';
+    case 'parties': return '/parties';
+    case 'tipping': return '/tipping';
+    case 'podcast': return '/podcast';
+    case 'dashboard': return '/dashboard';
+    case 'newsroom': return '/newsroom';
+    case 'site-content': return '/site-content';
+    case 'claims': return '/claims';
+    case 'staff': return '/staff';
+    case 'login': return '/login';
+    case 'signup': return '/signup';
+    case 'horse': return id ? `/horses/${id}` : '/horses';
+    case 'party': return id ? `/parties/${id}` : '/parties';
+    case 'article': return id ? `/articles/${id}` : '/news';
+    case 'bulletin': return id ? `/bulletins/${id}` : '/bulletins';
+    case 'organisation': return id ? `/orgs/${id}` : '/dashboard';
+    default: return null;
+  }
+}
+
 export function AgentWidget() {
   const open = useAgentUi((s) => s.open);
   const setOpen = useAgentUi((s) => s.setOpen);
@@ -146,7 +173,26 @@ export function AgentWidget() {
     [],
   );
 
-  const { messages, sendMessage, status, error, stop } = useChat({ transport });
+  const navigate = useNavigate();
+  const addToolResultRef = useRef<((a: { tool: string; toolCallId: string; output: unknown }) => void) | null>(null);
+
+  const { messages, sendMessage, status, error, stop, addToolResult } = useChat({
+    transport,
+    sendAutomaticallyWhen: lastAssistantMessageIsCompleteWithToolCalls,
+    onToolCall: async ({ toolCall }) => {
+      // navigateTo is the only client-executed tool; server tools resolve server-side.
+      if (toolCall.toolName !== 'navigateTo') return;
+      const { to, id } = (toolCall.input ?? {}) as { to?: string; id?: string };
+      const path = to ? navPathFor(to, id) : null;
+      if (path) navigate(path);
+      addToolResultRef.current?.({
+        tool: 'navigateTo',
+        toolCallId: toolCall.toolCallId,
+        output: path ? { ok: true, navigatedTo: path } : { ok: false, error: `Unknown destination "${to}"` },
+      });
+    },
+  });
+  addToolResultRef.current = addToolResult as unknown as (a: { tool: string; toolCallId: string; output: unknown }) => void;
   const busy = status === 'submitted' || status === 'streaming';
 
   const send = (text: string) => {
