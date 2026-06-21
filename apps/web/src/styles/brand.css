@@ -147,15 +147,6 @@
   .onb-spotlight { animation: none; outline-color: var(--gold-bright); }
 }
 
-/* Onboarding guide pointer — the mascot's dashed "marching ants" arrow. */
-.onb-arrow {
-  stroke-dasharray: 7 6;
-  animation: onb-dash 0.6s linear infinite;
-  filter: drop-shadow(0 0 3px rgba(212, 168, 67, 0.6));
-}
-@keyframes onb-dash { to { stroke-dashoffset: -13; } }
-@media (prefers-reduced-motion: reduce) { .onb-arrow { animation: none; } }
-
 /* Add-a-horse chooser cards — lift on hover/focus. */
 .onb-choice-card:hover, .onb-choice-card:focus-visible {
   border-color: var(--gold-bright);

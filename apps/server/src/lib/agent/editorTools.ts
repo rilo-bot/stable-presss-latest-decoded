@@ -108,6 +108,17 @@ export function buildEditorTools(account?: AccountUser): ToolSet {
       description: 'Set a QR region\'s target. Only https: or mailto: URLs are allowed.',
       inputSchema: z.object({ ...pageRef, regionId: z.string(), targetUrl: z.string(), fg: z.string().optional(), ...reviewFlag }),
     }),
+    setRegionIcon: tool({
+      description:
+        'Set an icon region to a best-guess Lucide glyph by NAME (PascalCase, e.g. Trophy, Star, Mail, Award, Users, Globe, Crown, Medal, Heart, Calendar). Use this when an uploaded PDF/image clearly shows an icon/symbol at that spot — place the closest matching glyph; the placed icon is a PLACEHOLDER the user can click to upload their own. Pass review:true for content drawn from an uploaded document.',
+      inputSchema: z.object({
+        ...pageRef,
+        regionId: z.string(),
+        name: z.string().describe('A Lucide icon name in PascalCase, e.g. "Trophy".'),
+        color: z.string().optional().describe('hex tint, e.g. #0a2342'),
+        ...reviewFlag,
+      }),
+    }),
     patchRegionStyle: tool({
       description:
         'Adjust a text region\'s style. Always staged for the user to approve before it changes the layout.',
@@ -121,10 +132,11 @@ export function buildEditorTools(account?: AccountUser): ToolSet {
         edits: z.array(
           z.object({
             regionId: z.string(),
-            kind: z.enum(['text', 'image', 'qr']),
+            kind: z.enum(['text', 'image', 'qr', 'icon']),
             html: z.string().optional(),
             src: z.string().optional(),
             targetUrl: z.string().optional(),
+            name: z.string().optional().describe('For kind=icon: a Lucide icon name (PascalCase), e.g. "Trophy".'),
           }),
         ),
       }),

@@ -31,7 +31,7 @@ function pagesBlock(pages: CatalogPage[]): string {
   return pages
     .map((p) => {
       const regions = p.regions
-        .filter((r) => r.kind === 'text' || r.kind === 'qr')
+        .filter((r) => r.kind === 'text' || r.kind === 'qr' || r.kind === 'icon')
         .map((r) => `    - ${r.regionId} [${r.kind}${r.name ? ` · ${r.name}` : ''}]${r.preview ? ` current: "${r.preview}"` : ''}`)
         .join('\n')
       return `Page ${p.pageId} — type ${p.pageType}${p.label ? ` (${p.label})` : ''}:\n${regions}`
@@ -44,9 +44,9 @@ export async function composeFromDocuments(opts: {
   sources: ComposeSource[]
   pages: CatalogPage[]
 }): Promise<ComposeResult> {
-  // Only editable pages that actually have text/qr regions.
+  // Only editable pages that actually have fillable (text/qr/icon) regions.
   const usable = opts.pages.filter(
-    (p) => p.editable !== false && p.regions.some((r) => r.kind === 'text' || r.kind === 'qr'),
+    (p) => p.editable !== false && p.regions.some((r) => r.kind === 'text' || r.kind === 'qr' || r.kind === 'icon'),
   )
   const groups = groupCatalog(usable)
   const src = sourcesBlock(opts.sources)
@@ -97,6 +97,7 @@ export async function composeFromDocuments(opts: {
         const u = (e.targetUrl || '').trim()
         if (!/^https:\/\//i.test(u) && !/^mailto:/i.test(u)) continue
       }
+      if (e.kind === 'icon' && !(e.iconName && e.iconName.trim())) continue
       seen.add(key)
       plan.push(e)
     }

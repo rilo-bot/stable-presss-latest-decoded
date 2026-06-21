@@ -35,6 +35,7 @@ import type {
   TextStyle,
   ImageContent,
   QrContent,
+  IconContent,
 } from '@/types/magazine';
 
 function nowIso(): string {
@@ -168,6 +169,7 @@ interface MagazineState {
   setTextStyle: (magId: string, pageId: string, regionId: string, patch: Partial<TextStyle>) => void;
   setImage: (magId: string, pageId: string, regionId: string, patch: Partial<ImageContent>) => void;
   setQr: (magId: string, pageId: string, regionId: string, patch: Partial<QrContent>) => void;
+  setIcon: (magId: string, pageId: string, regionId: string, patch: Partial<IconContent>) => void;
 
   // structural page ops (owner-only; persisted via PUT /:id/pages)
   addPage: (magId: string, pageType: PageTypeKey, atIndex?: number) => void;
@@ -507,6 +509,15 @@ export const useMagazineStore = create<MagazineState>()((set, get) => {
       const cur = get().magazines.find((m) => m.id === magId)?.pages.find((p) => p.id === pageId)?.content[regionId];
       if (!cur || cur.kind !== 'qr') return;
       recordHistory(magId, `qr:${pageId}:${regionId}`);
+      const next: RegionContent = { ...cur, ...patch };
+      set((s) => ({ magazines: patchRegion(s.magazines, magId, pageId, regionId, next) }));
+      schedule(`page:${magId}:${pageId}`, () => flushPage(magId, pageId));
+    },
+
+    setIcon: (magId, pageId, regionId, patch) => {
+      const cur = get().magazines.find((m) => m.id === magId)?.pages.find((p) => p.id === pageId)?.content[regionId];
+      if (!cur || cur.kind !== 'icon') return;
+      recordHistory(magId, `icon:${pageId}:${regionId}`);
       const next: RegionContent = { ...cur, ...patch };
       set((s) => ({ magazines: patchRegion(s.magazines, magId, pageId, regionId, next) }));
       schedule(`page:${magId}:${pageId}`, () => flushPage(magId, pageId));

@@ -44,7 +44,14 @@ export const MAGAZINE_TEMPLATES: MagazineTemplate[] = [
     description: 'The polished, icon-rich house design — gold iconography, navy feature spreads and infographics. (Flagship pages live; more rolling out.)',
     title: 'NZTROF Bulletin',
     edition: 'Premium Owner Experience Edition',
-    pageTypes: ['cover-px', 'president-px', 'headline-px'],
+    pageTypes: [
+      'cover-px', 'president-px', 'editor-px', 'discussion-px', 'headline-px', 'young-owners-px',
+      'women-in-racing-px', 'regional-north-px', 'regional-south-px', 'owners-lounge-px',
+      'karaka-sales-px', 'celebration-wall-px', 'future-together-px', 'breeder-feature-px',
+      'horse-welfare-px', 'business-owners-px', 'leaderboards-px', 'gamification-px',
+      'predictions-px', 'predictions-followup-px', 'ownership-education-px', 'winning-moments-px',
+      'owners-voice-px', 'back-cover-px',
+    ],
   },
 ];
 

@@ -3,7 +3,7 @@
  * import blueprints without pulling in the editor component tree).
  */
 
-import type { TextContent, ImageContent, QrContent, TextStyle, ImageFit } from '@/types/magazine';
+import type { TextContent, ImageContent, QrContent, IconContent, TextStyle, ImageFit } from '@/types/magazine';
 
 export function text(html: string, style: TextStyle): TextContent {
   return { kind: 'text', html, style };
@@ -15,6 +15,12 @@ export function img(src: string, fit: ImageFit = 'cover', focal?: { x?: number; 
 
 export function qr(targetUrl: string, fg = '#0a2342'): QrContent {
   return { kind: 'qr', targetUrl, fg, bg: '#ffffff' };
+}
+
+/** An editable icon region — defaults to a curated Lucide glyph by `name`; the
+ *  user can swap it for another library glyph or upload a custom SVG/PNG. */
+export function icon(name: string, color?: string): IconContent {
+  return { kind: 'icon', name, ...(color ? { color } : {}) };
 }
 
 // Stable stock imagery — reuses the app's known-good Pexels racing photos so the

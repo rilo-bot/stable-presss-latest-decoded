@@ -8,45 +8,48 @@
  */
 
 import type { LucideIcon } from 'lucide-react';
-import { RText, RQr } from '../../components/Region';
+import { RText, RQr, RIcon } from '../../components/Region';
 import { NAVY, GOLD, WHITE, NAVY_SOFT } from '../styles';
 
-/** Gold disc (solid) or gold ring (outline) wrapping a lucide glyph. */
+/** Gold disc (solid) or gold ring (outline) wrapping an EDITABLE icon region
+ *  (pass `iconId`) — or a static lucide glyph (`icon`) for non-editable use. */
 export function IconBadge({
+  iconId,
   icon: Icon,
   size = 38,
   variant = 'solid',
 }: {
-  icon: LucideIcon;
+  iconId?: string;
+  icon?: LucideIcon;
   size?: number;
   variant?: 'solid' | 'outline';
 }) {
   const inner = Math.round(size * 0.5);
-  if (variant === 'outline') {
-    return (
-      <span
-        className="flex flex-shrink-0 items-center justify-center rounded-full"
-        style={{ width: size, height: size, border: `2px solid ${GOLD}` }}
-      >
-        <Icon size={inner} color={GOLD} strokeWidth={1.6} />
-      </span>
-    );
-  }
+  const color = variant === 'outline' ? GOLD : NAVY;
+  const strokeWidth = variant === 'outline' ? 1.6 : 2.2;
   return (
     <span
       className="flex flex-shrink-0 items-center justify-center rounded-full"
-      style={{ width: size, height: size, background: GOLD }}
+      style={
+        variant === 'outline'
+          ? { width: size, height: size, border: `2px solid ${GOLD}` }
+          : { width: size, height: size, background: GOLD }
+      }
     >
-      <Icon size={inner} color={NAVY} strokeWidth={2.2} />
+      {iconId ? (
+        <RIcon id={iconId} size={inner} color={color} strokeWidth={strokeWidth} />
+      ) : Icon ? (
+        <Icon size={inner} color={color} strokeWidth={strokeWidth} />
+      ) : null}
     </span>
   );
 }
 
 /** Centered stat: gold icon badge + big figure + caption (both editable). */
-export function IconStat({ icon, numId, labelId }: { icon: LucideIcon; numId: string; labelId: string }) {
+export function IconStat({ iconId, numId, labelId }: { iconId: string; numId: string; labelId: string }) {
   return (
     <div className="flex flex-col items-center gap-1.5 text-center">
-      <IconBadge icon={icon} size={34} />
+      <IconBadge iconId={iconId} size={34} />
       <RText id={numId} className="!text-center" />
       <RText id={labelId} className="!text-center" />
     </div>
@@ -69,20 +72,20 @@ export function NumberStep({ n, id }: { n: number; id: string }) {
 }
 
 /** Icon + text row (data points, structural-cycle items). */
-export function IconRow({ icon, id }: { icon: LucideIcon; id: string }) {
+export function IconRow({ iconId, id }: { iconId: string; id: string }) {
   return (
     <div className="flex items-start gap-2.5">
-      <IconBadge icon={icon} size={26} />
+      <IconBadge iconId={iconId} size={26} />
       <RText id={id} />
     </div>
   );
 }
 
 /** Circular outline icon + title + body, stacked (feature grids / "what you said"). */
-export function IconFeature({ icon, titleId, bodyId }: { icon: LucideIcon; titleId: string; bodyId?: string }) {
+export function IconFeature({ iconId, titleId, bodyId }: { iconId: string; titleId: string; bodyId?: string }) {
   return (
     <div className="flex flex-col items-center gap-2 text-center">
-      <IconBadge icon={icon} size={44} variant="outline" />
+      <IconBadge iconId={iconId} size={44} variant="outline" />
       <RText id={titleId} className="!text-center" />
       {bodyId && <RText id={bodyId} className="!text-center" />}
     </div>
@@ -90,10 +93,10 @@ export function IconFeature({ icon, titleId, bodyId }: { icon: LucideIcon; title
 }
 
 /** Explore column: outline icon + QR + caption (the Aeliana "explore" strip). */
-export function ExploreItem({ icon, qrId, labelId }: { icon: LucideIcon; qrId: string; labelId: string }) {
+export function ExploreItem({ iconId, qrId, labelId }: { iconId: string; qrId: string; labelId: string }) {
   return (
     <div className="flex flex-col items-center gap-1.5">
-      <IconBadge icon={icon} size={28} variant="outline" />
+      <IconBadge iconId={iconId} size={28} variant="outline" />
       <div className="rounded-sm bg-white p-1">
         <RQr id={qrId} size={46} />
       </div>

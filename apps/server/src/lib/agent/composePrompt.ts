@@ -11,9 +11,10 @@ export const ComposeSchema = z.object({
       z.object({
         pageId: z.string().describe('A pageId from the provided list — never invent one.'),
         regionId: z.string().describe('A regionId from that page — never invent one.'),
-        kind: z.enum(['text', 'qr']).describe('text fills copy; qr sets a scan target. (Images are out of scope here.)'),
+        kind: z.enum(['text', 'qr', 'icon']).describe('text fills copy; qr sets a scan target; icon sets a best-guess glyph. (Photos are out of scope here.)'),
         html: z.string().optional().describe('For kind=text: light inline HTML (<b><i><u><br>). Faithful to the source.'),
         targetUrl: z.string().optional().describe('For kind=qr: an https: or mailto: URL that appears in the source.'),
+        iconName: z.string().optional().describe('For kind=icon: a Lucide icon NAME in PascalCase, e.g. "Trophy", "Mail", "Award".'),
         reason: z.string().describe('The document fact/section this came from (keeps the fill honest).'),
       }),
     )
@@ -38,6 +39,9 @@ export const COMPOSE_SYSTEM =
   '- NEVER invent, infer or pad content to fill a region. If the document has nothing suitable for a region, leave it ' +
   'out of the plan. It is correct to fill only some regions.\n' +
   '- kind=text → concise light inline HTML only. kind=qr → only an https: or mailto: URL that literally appears in the ' +
-  'document; otherwise do not propose a QR. Do NOT propose image fills.\n' +
+  'document; otherwise do not propose a QR. Do NOT propose photo/image fills.\n' +
+  '- kind=icon → ONLY when the source clearly shows an icon/symbol at that spot: give a best-guess Lucide icon name ' +
+  '(PascalCase, e.g. Trophy, Mail, Award, Users, Globe, Star) in iconName. The detected icons are listed in the ' +
+  'document block; map each to the closest matching icon region. Never invent decorative icons.\n' +
   '- Prefer headlines, intros, body copy, stats, captions and list items. Spread coverage across all the pages given.\n' +
   '- Put anything important that does not fit into unplacedFacts.'

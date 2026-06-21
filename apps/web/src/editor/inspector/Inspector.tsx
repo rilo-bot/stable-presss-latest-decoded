@@ -9,7 +9,8 @@ import { useMagazineStore } from '@/stores/magazineStore';
 import { TextInspector } from './TextInspector';
 import { ImageInspector } from './ImageInspector';
 import { QrInspector } from './QrInspector';
-import { MousePointerClick, Type, Image as ImageIcon, QrCode } from 'lucide-react';
+import { IconInspector } from './IconInspector';
+import { MousePointerClick, Type, Image as ImageIcon, QrCode, Shapes } from 'lucide-react';
 import type { RegionContent } from '@/types/magazine';
 
 interface Resolved {
@@ -24,6 +25,7 @@ const KIND_META: Record<RegionContent['kind'], { label: string; icon: typeof Typ
   text: { label: 'Text', icon: Type },
   image: { label: 'Image', icon: ImageIcon },
   qr: { label: 'QR Code', icon: QrCode },
+  icon: { label: 'Icon', icon: Shapes },
 };
 
 export function Inspector() {
@@ -88,6 +90,14 @@ export function Inspector() {
         )}
         {resolved.content.kind === 'qr' && (
           <QrInspector
+            magazineId={resolved.magazineId}
+            pageId={resolved.pageId}
+            regionId={resolved.regionId}
+            content={resolved.content}
+          />
+        )}
+        {resolved.content.kind === 'icon' && (
+          <IconInspector
             magazineId={resolved.magazineId}
             pageId={resolved.pageId}
             regionId={resolved.regionId}

@@ -8,6 +8,7 @@ import { useMagazineStore } from '@/stores/magazineStore';
 import { useEditorAgentUi } from '@/stores/editorAgentUiStore';
 import { BLUEPRINT_BY_TYPE, BLUEPRINTS } from '@/editor/templates/blueprints';
 import { STOCK } from '@/editor/templates/helpers';
+import { isKnownIcon } from '@/editor/templates/iconRegistry';
 import type { Magazine, MagazinePage, TextStyle } from '@/types/magazine';
 import { filledOf, previewOf, resolveCurrentPageId } from './editorContext';
 import { applyPayload, computeAfter, uid, undoLast, scrollRegionIntoView } from './applyEdits';
@@ -22,7 +23,7 @@ const arg = (input: unknown): Record<string, any> => (input ?? {}) as Record<str
 // be handled here — onToolCall checks this so we never double-resolve them.
 export const EDITOR_CLIENT_TOOLS = new Set<string>([
   'getMagazine', 'getPage', 'getRegion', 'listTemplates', 'pageCatalog', 'suggestImageOptions', 'undoLastEdit',
-  'setRegionText', 'setRegionImage', 'setRegionQr', 'patchRegionStyle', 'applyPageFill', 'clearRegion', 'setPageSelected',
+  'setRegionText', 'setRegionImage', 'setRegionQr', 'setRegionIcon', 'patchRegionStyle', 'applyPageFill', 'clearRegion', 'setPageSelected',
   'fillMagazineFromDocument',
 ]);
 export const isEditorClientTool = (name: string): boolean => EDITOR_CLIENT_TOOLS.has(name);
@@ -202,6 +203,11 @@ export async function executeEditorTool(toolName: string, input: unknown): Promi
       if (!/^https:\/\//i.test(url) && !/^mailto:/i.test(url)) return { ok: false, error: 'QR target must be an https: or mailto: URL.' };
       return writeRegion(mag, page, String(a.regionId), { kind: 'qr', patch: { targetUrl: url, ...(a.fg ? { fg: String(a.fg) } : {}) } }, `Set QR on “${a.regionId}”`, allowAuto);
     }
+    case 'setRegionIcon': {
+      const name = String(a.name ?? '');
+      if (!isKnownIcon(name)) return { ok: false, error: `Unknown icon "${name}". Use a known Lucide name (PascalCase), e.g. Trophy, Star, Mail, Award.` };
+      return writeRegion(mag, page, String(a.regionId), { kind: 'icon', patch: { name, src: undefined, ...(a.color ? { color: String(a.color) } : {}) } }, `Set icon on “${a.regionId}”`, allowAuto);
+    }
     case 'patchRegionStyle':
       return writeRegion(mag, page, String(a.regionId), { kind: 'style', patch: (a.style ?? {}) as Partial<TextStyle> }, `Restyle “${a.regionId}”`, false);
     case 'clearRegion': {
@@ -230,6 +236,7 @@ export async function executeEditorTool(toolName: string, input: unknown): Promi
         if (e.kind === 'text') payload = { kind: 'text', html: String(e.html ?? '') };
         else if (e.kind === 'image') payload = { kind: 'image', patch: { src: String(e.src ?? '') } };
         else if (e.kind === 'qr') payload = { kind: 'qr', patch: { targetUrl: String(e.targetUrl ?? '') } };
+        else if (e.kind === 'icon' && isKnownIcon(String(e.name ?? ''))) payload = { kind: 'icon', patch: { name: String(e.name), src: undefined } };
         if (!payload) {
           skipped.push(rid);
           continue;
