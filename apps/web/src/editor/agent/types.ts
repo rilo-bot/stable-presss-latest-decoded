@@ -5,6 +5,7 @@ import type {
   RegionKind,
   ImageContent,
   QrContent,
+  IconContent,
   TextStyle,
   MagazineRole,
 } from '@/types/magazine';
@@ -58,6 +59,8 @@ export interface DocDigest {
   sections: { heading: string; body: string }[];
   facts: string[];
   tables?: { caption?: string; rows: string[][] }[];
+  /** Icons/symbols seen in the source: a nearby label + best-guess Lucide name. */
+  icons?: { label: string; name: string }[];
 }
 export interface DocAttachment {
   id: string;
@@ -76,6 +79,7 @@ export type EditPayload =
   | { kind: 'text'; html: string }
   | { kind: 'image'; patch: Partial<ImageContent> }
   | { kind: 'qr'; patch: Partial<QrContent> }
+  | { kind: 'icon'; patch: Partial<IconContent> }
   | { kind: 'style'; patch: Partial<TextStyle> }
   | { kind: 'clear'; targetKind: RegionKind };
 

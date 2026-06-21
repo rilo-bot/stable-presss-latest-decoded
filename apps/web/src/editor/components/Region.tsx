@@ -12,8 +12,9 @@ import { useEditorContext } from '../EditorContext';
 import { EditableText } from './EditableText';
 import { EditableImage } from './EditableImage';
 import { EditableQr } from './EditableQr';
-import { TextView, ImageView, QrView } from './readonly';
-import type { TextContent, ImageContent, QrContent } from '@/types/magazine';
+import { EditableIcon } from './EditableIcon';
+import { TextView, ImageView, QrView, IconView } from './readonly';
+import type { TextContent, ImageContent, QrContent, IconContent } from '@/types/magazine';
 
 export function RText({ id, className }: { id: string; className?: string }) {
   const { mode, viewContent } = useEditorContext();
@@ -45,4 +46,25 @@ export function RQr({ id, size, className }: { id: string; size?: number; classN
   const c = viewContent?.[id];
   if (!c || c.kind !== 'qr') return null;
   return <QrView content={c as QrContent} size={size} className={className} />;
+}
+
+export function RIcon({
+  id,
+  size,
+  color,
+  strokeWidth,
+  className,
+}: {
+  id: string;
+  size?: number;
+  /** Layout default colour; the region's own colour (if set) wins. */
+  color?: string;
+  strokeWidth?: number;
+  className?: string;
+}) {
+  const { mode, viewContent } = useEditorContext();
+  if (mode === 'edit') return <EditableIcon regionId={id} size={size} color={color} strokeWidth={strokeWidth} className={className} />;
+  const c = viewContent?.[id];
+  if (!c || c.kind !== 'icon') return null;
+  return <IconView content={c as IconContent} size={size} color={color} strokeWidth={strokeWidth} className={className} />;
 }

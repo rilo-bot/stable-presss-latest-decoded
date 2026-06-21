@@ -11,6 +11,7 @@ import type { CtxRegion, EditorContextBlob } from './types';
 export function filledOf(c: RegionContent): boolean {
   if (c.kind === 'text') return toPlainText(c.html).trim() !== '';
   if (c.kind === 'image') return (c.src ?? '').trim() !== '';
+  if (c.kind === 'icon') return !!((c.name ?? '').trim() || (c.src ?? '').trim());
   return (c.targetUrl ?? '').trim() !== '';
 }
 
@@ -20,6 +21,7 @@ export function previewOf(c: RegionContent, max = 80): string {
     return t ? (t.length > max ? t.slice(0, max) + '…' : t) : '(empty)';
   }
   if (c.kind === 'image') return c.src ? 'image set' : '(empty)';
+  if (c.kind === 'icon') return c.src ? 'custom icon' : c.name ? `icon: ${c.name}` : '(empty)';
   return c.targetUrl ? c.targetUrl : '(empty)';
 }
 

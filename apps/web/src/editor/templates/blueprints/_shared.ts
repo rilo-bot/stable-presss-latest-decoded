@@ -8,7 +8,7 @@
  */
 
 import type { PageTypeKey, RegionContent, RegionKind } from '@/types/magazine';
-import { text, img, qr, STOCK } from '../helpers';
+import { text, img, qr, icon, STOCK } from '../helpers';
 import { PRESET as P, GOLD, WHITE } from '../styles';
 
 export interface PageBlueprint {
@@ -86,5 +86,5 @@ export function winnerCard(prefix: string, photo: string, race: string, horse: s
 
 // Re-export the content/style primitives so each page file can import them
 // from a single place.
-export { text, img, qr, STOCK, P, GOLD, WHITE };
+export { text, img, qr, icon, STOCK, P, GOLD, WHITE };
 export { NAVY } from '../styles';

@@ -37,6 +37,7 @@ import { REL_ORDER, renderProfileModule, activeModuleLabel } from '@/components/
 import { OnboardingSteps, type OnbStep } from '@/components/profile/OnboardingSteps';
 import { OnboardingGuide, type GuideStep } from '@/components/profile/OnboardingGuide';
 import { OnboardingComplete } from '@/components/profile/OnboardingComplete';
+import { OnboardingFocus } from '@/components/profile/OnboardingFocus';
 import { ProfileAgentPanel, StudioLauncher } from '@/agent/profile/ProfileAgentPanel';
 import { useProfileAgentUi, type ProfileContext } from '@/stores/profileAgentUiStore';
 import { DossierMeter } from '@/components/DossierMeter';
@@ -137,6 +138,7 @@ export function PartyProfile({ partyId, mode, onBack }: PartyProfileProps) {
   // Keep the AI assistant's context in sync with the open party (edit mode only).
   const setAgentContext = useProfileAgentUi((s) => s.setContext);
   const askAgent = useProfileAgentUi((s) => s.ask);
+  const chatOpen = useProfileAgentUi((s) => s.open);
   useEffect(() => {
     if (mode === 'edit' && party) setAgentContext(buildPartyContext(party, myHorses.length));
     return () => setAgentContext(null);
@@ -265,6 +267,7 @@ export function PartyProfile({ partyId, mode, onBack }: PartyProfileProps) {
   };
   const activeStep = onbSteps.find((s) => !s.done && !s.skipped);
   const activeKey = activeStep?.key;
+  const activeIdx = onbSteps.findIndex((s) => s.key === activeKey);
   const showGuide = isEdit && editable && !onbAllDone;
   const isActive = (key: string) => showGuide && activeKey === key;
   const guideSteps: GuideStep[] = onbSteps.map((s) => ({
@@ -325,6 +328,26 @@ export function PartyProfile({ partyId, mode, onBack }: PartyProfileProps) {
         ...(party.base_location ? [{ label: 'Base', value: party.base_location }] : []),
         ...(party.started_year ? [{ label: `${roleLabel} Since`, value: String(party.started_year) }] : []),
       ];
+
+  // Centered editor for the active onboarding step (focus mode). `horses` is an
+  // action, not a fillable box → a CTA that opens the existing add-horse chooser.
+  const focusContent = (key: string): React.ReactNode => {
+    if (key === 'photo') {
+      return <PortraitFrame src={party.photo} alt={partyName} editable kind="party" onUpload={(url) => set({ photo: url })} containerStyle={{ height: 'clamp(200px, 36vh, 340px)', minHeight: 200 }} label={!party.photo ? 'Add a photo' : undefined} />;
+    }
+    if (key === 'details') return <IdentityCard title="Identity" fields={identityFields} editable />;
+    if (key === 'horses') {
+      return (
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 10, alignItems: 'flex-start' }}>
+          <p style={{ fontSize: '0.72rem', color: 'var(--forest-mid)', lineHeight: 1.5, margin: 0 }}>Register the horses in your stable. Start with a photo — you can name and finish the details later.</p>
+          <button onClick={() => setAddChooser(true)} className="sku-gold-btn" style={{ padding: '7px 14px', display: 'inline-flex', alignItems: 'center', gap: 6, fontSize: '0.6rem', textTransform: 'uppercase', letterSpacing: '0.08em', fontWeight: 700, ...serifStyle }}>
+            <Plus size={12} /> Add a horse
+          </button>
+        </div>
+      );
+    }
+    return null;
+  };
 
   const portraitCaption = (
     <div style={{ position: 'absolute', bottom: 0, left: 0, right: 0, background: 'linear-gradient(0deg, rgba(26,51,34,0.92) 0%, transparent 100%)', padding: '24px 14px 10px', ...serifStyle }}>
@@ -522,7 +545,22 @@ export function PartyProfile({ partyId, mode, onBack }: PartyProfileProps) {
         right={<DataSectionsRail activeModule={activeModule} onToggle={openModule} />}
         overlay={isEdit && editable
           ? (showGuide
-            ? <OnboardingGuide steps={guideSteps} name="Stablehand" onShowMe={scrollToAnchor} onAskStep={(s) => askAiForStep(onbSteps.find((o) => o.key === s.key) ?? onbSteps[0])} onSkipStep={(s) => skipStep(s.key)} />
+            ? <>
+                <OnboardingGuide steps={guideSteps} name="Stablehand" showStepBubble={false} onShowMe={scrollToAnchor} onAskStep={(s) => askAiForStep(onbSteps.find((o) => o.key === s.key) ?? onbSteps[0])} onSkipStep={(s) => skipStep(s.key)} />
+                <OnboardingFocus
+                  open={showGuide && !chatOpen}
+                  stepKey={activeKey ?? 'none'}
+                  stepIndex={activeIdx < 0 ? 0 : activeIdx}
+                  total={onbSteps.length}
+                  title={(activeKey && PARTY_COACH[activeKey]?.title) || activeStep?.label || ''}
+                  tips={activeKey ? PARTY_COACH[activeKey]?.tips : undefined}
+                  content={activeKey ? focusContent(activeKey) : null}
+                  originId={activeStep?.anchorId}
+                  skippable
+                  onSkip={() => { if (activeKey) skipStep(activeKey); }}
+                  onAsk={() => { if (activeStep) askAiForStep(activeStep); }}
+                />
+              </>
             : <ProfileAgentPanel />)
           : undefined}
       />

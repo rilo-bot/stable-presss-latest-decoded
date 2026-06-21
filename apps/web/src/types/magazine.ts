@@ -42,7 +42,28 @@ export type PageTypeKey =
   // ── Premium template (#2) pages — own keys so template #1 is untouched ──
   | 'cover-px'
   | 'headline-px'
-  | 'president-px';
+  | 'president-px'
+  | 'editor-px'
+  | 'discussion-px'
+  | 'young-owners-px'
+  | 'women-in-racing-px'
+  | 'regional-north-px'
+  | 'regional-south-px'
+  | 'breeder-feature-px'
+  | 'horse-welfare-px'
+  | 'gamification-px'
+  | 'predictions-px'
+  | 'owners-lounge-px'
+  | 'karaka-sales-px'
+  | 'business-owners-px'
+  | 'leaderboards-px'
+  | 'celebration-wall-px'
+  | 'future-together-px'
+  | 'predictions-followup-px'
+  | 'ownership-education-px'
+  | 'winning-moments-px'
+  | 'owners-voice-px'
+  | 'back-cover-px';
 
 // ── Text styling ────────────────────────────────────────────────────────────
 
@@ -98,7 +119,17 @@ export interface QrContent {
   bg?: string;
 }
 
-export type RegionContent = TextContent | ImageContent | QrContent;
+export interface IconContent {
+  kind: 'icon';
+  /** Curated Lucide icon name (PascalCase, e.g. "Trophy") — the default glyph. */
+  name?: string;
+  /** Uploaded custom icon URL (SVG/PNG). When set, OVERRIDES `name`. */
+  src?: string;
+  /** Optional hex tint — applies to Lucide glyphs only (uploaded art renders as-is). */
+  color?: string;
+}
+
+export type RegionContent = TextContent | ImageContent | QrContent | IconContent;
 export type RegionKind = RegionContent['kind'];
 
 /** Declarative description of an editable region inside a page template. */

@@ -74,6 +74,47 @@ export function compressImageToBlob(
   });
 }
 
+const ACCEPTED_ICON_RASTER = /^image\/(jpeg|png|webp|gif|avif)$/i;
+
+/**
+ * Compress a raster image File to a PNG Blob via canvas. Unlike
+ * compressImageToBlob (which outputs JPEG and flattens transparency), this keeps
+ * the alpha channel — essential for icons that sit on coloured badges/pages.
+ */
+export function compressToPngBlob(
+  file: File,
+  { maxDim = 256 }: { maxDim?: number } = {},
+): Promise<Blob> {
+  return new Promise((resolve, reject) => {
+    if (!ACCEPTED_ICON_RASTER.test(file.type)) {
+      reject(new Error('Please choose an SVG, PNG, WebP or JPG icon.'));
+      return;
+    }
+    const reader = new FileReader();
+    reader.onerror = () => reject(new Error('Could not read the icon file.'));
+    reader.onload = (evt) => {
+      const img = new Image();
+      img.onerror = () => reject(new Error('That icon could not be decoded.'));
+      img.onload = () => {
+        const { naturalWidth: w, naturalHeight: h } = img;
+        const scale = Math.min(1, maxDim / Math.max(w, h));
+        const canvas = document.createElement('canvas');
+        canvas.width = Math.max(1, Math.round(w * scale));
+        canvas.height = Math.max(1, Math.round(h * scale));
+        const ctx = canvas.getContext('2d');
+        if (!ctx) { reject(new Error('Canvas not available.')); return; }
+        ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
+        canvas.toBlob(
+          (blob) => (blob ? resolve(blob) : reject(new Error('Could not encode the icon.'))),
+          'image/png',
+        );
+      };
+      img.src = evt.target?.result as string;
+    };
+    reader.readAsDataURL(file);
+  });
+}
+
 function blobToDataUrl(blob: Blob): Promise<string> {
   return new Promise((resolve, reject) => {
     const reader = new FileReader();
@@ -127,6 +168,20 @@ export async function uploadImage(file: File, opts: ImageUploadOptions): Promise
 /** Upload a file as-is (documents, audio, video, etc.). Returns the stored URL. */
 export async function uploadRawFile(file: File, kind: UploadKind): Promise<UploadResult> {
   return uploadBlob(file, file.name, file.type || 'application/octet-stream', kind);
+}
+
+/**
+ * Upload an ICON. SVGs upload as-is to preserve their vector + transparency
+ * (rendered only via <img>, so embedded scripts never execute); raster icons are
+ * re-encoded to PNG at a small size, keeping their alpha channel.
+ */
+export async function uploadIcon(file: File): Promise<UploadResult> {
+  if (file.type === 'image/svg+xml' || /\.svg$/i.test(file.name)) {
+    return uploadBlob(file, file.name || 'icon.svg', 'image/svg+xml', 'media');
+  }
+  const blob = await compressToPngBlob(file, { maxDim: 256 });
+  const stem = (file.name || 'icon').replace(/\.[^.]+$/, '');
+  return uploadBlob(blob, `${stem}.png`, 'image/png', 'media');
 }
 
 export interface UploadProgress {

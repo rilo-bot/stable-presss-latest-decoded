@@ -7,7 +7,7 @@ import { BLUEPRINT_BY_TYPE } from '@/editor/templates/blueprints';
 import { PAGE_W, PAGE_H } from '@/editor/templates/parts';
 import type { PageTypeKey } from '@/types/magazine';
 
-const PAGES: PageTypeKey[] = ['cover-px', 'president-px', 'headline-px'];
+const PAGES: PageTypeKey[] = ['cover-px', 'president-px', 'editor-px', 'discussion-px', 'headline-px'];
 
 export default function PremiumPreview() {
   useEditorFonts();

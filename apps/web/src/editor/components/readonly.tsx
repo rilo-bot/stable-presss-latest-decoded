@@ -8,7 +8,8 @@ import { QRCodeSVG } from 'qrcode.react';
 import { useMagazineStore } from '@/stores/magazineStore';
 import { textStyleToCss } from './regionStyle';
 import { sanitizeRichText } from '../lib/sanitize';
-import type { TextContent, ImageContent, QrContent } from '@/types/magazine';
+import { resolveIcon } from '../templates/iconRegistry';
+import type { TextContent, ImageContent, QrContent, IconContent } from '@/types/magazine';
 import { cn } from '@/lib/utils';
 
 export function TextView({ content, className }: { content: TextContent; className?: string }) {
@@ -47,6 +48,39 @@ export function ImageView({
       )}
     </div>
   );
+}
+
+export function IconView({
+  content,
+  size = 24,
+  color,
+  strokeWidth,
+  className,
+}: {
+  content: IconContent;
+  size?: number;
+  /** Layout default colour; overridden by content.color. */
+  color?: string;
+  strokeWidth?: number;
+  className?: string;
+}) {
+  const resolveImage = useMagazineStore((s) => s.resolveImage);
+  // A custom uploaded icon overrides the library glyph. SVG/PNG render via <img>
+  // only (no inline SVG markup), so an uploaded SVG can never execute script.
+  if (content.src) {
+    const src = resolveImage(content.src);
+    return (
+      <img
+        src={src}
+        alt=""
+        draggable={false}
+        className={cn('object-contain select-none', className)}
+        style={{ width: size, height: size }}
+      />
+    );
+  }
+  const Icon = resolveIcon(content.name);
+  return <Icon size={size} color={content.color ?? color} strokeWidth={strokeWidth} className={className} />;
 }
 
 export function QrView({

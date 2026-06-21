@@ -10,12 +10,13 @@ import { useEditorAgentUi } from '@/stores/editorAgentUiStore';
 import { apiUrl } from '@/lib/api';
 import { useAuthStore } from '@/stores/authStore';
 import { sanitizeRichText } from '@/editor/lib/sanitize';
+import { isKnownIcon } from '@/editor/templates/iconRegistry';
 import { filledOf, previewOf } from './editorContext';
 import { computeAfter, uid } from './applyEdits';
 import type { EditPayload, StagedEdit } from './types';
 import type { Magazine } from '@/types/magazine';
 
-interface ComposeEntry { pageId: string; regionId: string; kind: 'text' | 'qr'; html?: string; targetUrl?: string; reason?: string }
+interface ComposeEntry { pageId: string; regionId: string; kind: 'text' | 'qr' | 'icon'; html?: string; targetUrl?: string; iconName?: string; reason?: string }
 interface ComposeResponse { plan: ComposeEntry[]; coverageNote: string; unplacedFacts: string[]; groupsOk: number; groupsFailed: number }
 
 const COMPOSE_TIMEOUT_MS = 180_000;
@@ -38,7 +39,7 @@ function buildCatalog(mag: Magazine) {
       label: p.label,
       editable: true,
       regions: Object.entries(p.content)
-        .filter(([, c]) => c.kind === 'text' || c.kind === 'qr')
+        .filter(([, c]) => c.kind === 'text' || c.kind === 'qr' || c.kind === 'icon')
         .map(([regionId, c]) => ({
           regionId,
           kind: c.kind,
@@ -54,15 +55,19 @@ function buildCatalog(mag: Magazine) {
 function sources(): { name: string; text: string }[] {
   return useEditorAgentUi
     .getState()
-    .attachments.map((a) => ({
-      name: a.name,
-      text:
+    .attachments.map((a) => {
+      const base =
         a.fullText && a.fullText.trim()
           ? a.fullText
           : [a.digest?.summary, ...(a.digest?.sections ?? []).map((s) => `${s.heading}: ${s.body}`), ...(a.digest?.facts ?? [])]
               .filter(Boolean)
-              .join('\n'),
-    }))
+              .join('\n');
+      // Detected icons live in the digest (vision), not the verbatim text — append
+      // them so the text-only compose pass can map them onto icon regions.
+      const icons = a.digest?.icons ?? [];
+      const iconsLine = icons.length ? `\n\nDetected icons: ${icons.map((ic) => `${ic.label} → ${ic.name}`).join(', ')}` : '';
+      return { name: a.name, text: `${base}${iconsLine}` };
+    })
     .filter((s) => s.text.trim().length > 0);
 }
 
@@ -113,6 +118,9 @@ export async function runComposeFill(instruction: string): Promise<Record<string
     } else if (e.kind === 'qr' && before.kind === 'qr') {
       const u = (e.targetUrl || '').trim();
       if (/^https:\/\//i.test(u) || /^mailto:/i.test(u)) payload = { kind: 'qr', patch: { targetUrl: u } };
+    } else if (e.kind === 'icon' && before.kind === 'icon') {
+      const n = (e.iconName || '').trim();
+      if (isKnownIcon(n)) payload = { kind: 'icon', patch: { name: n, src: undefined } };
     }
     if (!payload) { skipped++; continue; }
 

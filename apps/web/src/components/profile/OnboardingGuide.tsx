@@ -2,9 +2,8 @@
  * OnboardingGuide — "the Stablehand": a floating, gamified guide character that
  * lives bottom-left during onboarding. It:
  *   - bobs idly and hops to celebrate each step,
- *   - shows a speech bubble for the current step (what to do + tips + Show me),
- *   - draws a dashed pointer arrow to the glowing active section (a direction
- *     nudge + Show me when that section is off-screen),
+ *   - optionally shows a speech bubble for the current step (`showStepBubble`);
+ *     when the centered OnboardingFocus card owns the per-step UI we pass `false`,
  *   - expands into a chat popover that IS the Stable Studio assistant (replies
  *     appear as the character's bubbles, with the same staged Apply/Discard).
  *
@@ -14,7 +13,7 @@
  */
 import { useEffect, useRef, useState } from 'react';
 import { motion, useReducedMotion } from 'framer-motion';
-import { Sparkles, Send, Square, ArrowRight, ArrowUp, ArrowDown, X, Check, Undo2, MessageCircle, UserPlus, PenLine, SkipForward, Mic, Volume2, VolumeX, Loader2 } from 'lucide-react';
+import { Sparkles, Send, Square, ArrowRight, X, Check, Undo2, MessageCircle, UserPlus, PenLine, SkipForward, Mic, Volume2, VolumeX, Loader2 } from 'lucide-react';
 import { MarkdownMessage } from '@/components/MarkdownMessage';
 import { useProfileAgentUi, type Proposal } from '@/stores/profileAgentUiStore';
 import { useEditorAgentUi } from '@/stores/editorAgentUiStore';
@@ -61,13 +60,15 @@ function ProposalCard({ p }: { p: Proposal }) {
   );
 }
 
-export function OnboardingGuide({ steps, name, onShowMe, onAskStep, onSkipStep }: {
+export function OnboardingGuide({ steps, name, onShowMe, onAskStep, onSkipStep, showStepBubble = true }: {
   steps: GuideStep[];
   name: string;
   onShowMe: (anchorId?: string) => void;
   onAskStep: (step: GuideStep) => void;
   /** Skip the current step (optional — when wired, a Skip button appears). */
   onSkipStep?: (step: GuideStep) => void;
+  /** Per-step guidance bubble. Off when the centered focus card owns the step UI. */
+  showStepBubble?: boolean;
 }) {
   const reduce = useReducedMotion();
   const open = useProfileAgentUi((s) => s.open);
@@ -82,17 +83,13 @@ export function OnboardingGuide({ steps, name, onShowMe, onAskStep, onSkipStep }
 
   const [input, setInput] = useState('');
   const [bubbleOpen, setBubbleOpen] = useState(true);
-  const [pointer, setPointer] = useState<{ show: boolean; dir: 'up' | 'down' | null }>({ show: false, dir: null });
 
   const mascotRef = useRef<HTMLButtonElement>(null);
-  const pathRef = useRef<SVGPathElement>(null);
   const scrollRef = useRef<HTMLDivElement>(null);
-  const lastPointer = useRef('');
 
   const activeStep = steps.find((s) => !s.done);
   const activeKey = activeStep?.key;
   const activeIdx = steps.findIndex((s) => s.key === activeKey);
-  const targetId = activeStep?.pointerId ?? (activeStep?.anchorId && !activeStep.anchorId.startsWith('module:') ? activeStep.anchorId : undefined);
 
   // Suppress the global Stablehand widget while the guide is on screen (one character).
   useEffect(() => {
@@ -113,42 +110,6 @@ export function OnboardingGuide({ steps, name, onShowMe, onAskStep, onSkipStep }
     scrollRef.current?.scrollTo({ top: scrollRef.current.scrollHeight, behavior: 'smooth' });
   }, [messages, status, staged]);
 
-  // Pointer arrow: a rAF loop glues the dashed path from the mascot to the active
-  // section. Path is mutated via ref (no per-frame re-render); only show/dir state
-  // changes trigger React updates.
-  useEffect(() => {
-    // Re-evaluate from scratch on every open/target change. Without this reset the
-    // stale signature survives a chat open→close, so the arrow never re-shows when
-    // "Show me" is tapped again after asking the Stablehand.
-    lastPointer.current = '';
-    if (open || !targetId) { setPointer((p) => (p.show || p.dir ? { show: false, dir: null } : p)); return; }
-    let raf = 0;
-    const tick = () => {
-      const target = document.getElementById(targetId);
-      const mascot = mascotRef.current?.getBoundingClientRect();
-      if (target && mascot) {
-        const r = target.getBoundingClientRect();
-        const margin = 64;
-        if (r.bottom < margin) { commit(false, 'up'); }
-        else if (r.top > window.innerHeight - margin) { commit(false, 'down'); }
-        else {
-          const sx = mascot.right - 12, sy = mascot.top + 8;
-          const ex = r.left + 4, ey = r.top + r.height / 2;
-          const cx = (sx + ex) / 2, cy = Math.min(sy, ey) - 50;
-          pathRef.current?.setAttribute('d', `M ${sx} ${sy} Q ${cx} ${cy} ${ex} ${ey}`);
-          commit(true, null);
-        }
-      } else { commit(false, null); }
-      raf = requestAnimationFrame(tick);
-    };
-    const commit = (show: boolean, dir: 'up' | 'down' | null) => {
-      const sig = `${show}:${dir}`;
-      if (sig !== lastPointer.current) { lastPointer.current = sig; setPointer({ show, dir }); }
-    };
-    raf = requestAnimationFrame(tick);
-    return () => cancelAnimationFrame(raf);
-  }, [open, targetId]);
-
   const send = (text: string) => {
     const t = text.trim();
     if (!t || busy) return;
@@ -165,18 +126,6 @@ export function OnboardingGuide({ steps, name, onShowMe, onAskStep, onSkipStep }
 
   return (
     <>
-      {/* Pointer arrow overlay */}
-      {!open && (
-        <svg style={{ position: 'fixed', inset: 0, width: '100vw', height: '100vh', pointerEvents: 'none', zIndex: 60, opacity: pointer.show ? 1 : 0, transition: 'opacity 0.2s' }} aria-hidden>
-          <defs>
-            <marker id="onb-arrowhead" markerWidth="9" markerHeight="9" refX="6" refY="3" orient="auto">
-              <path d="M0,0 L7,3 L0,6 Z" fill="var(--gold-bright)" />
-            </marker>
-          </defs>
-          <path ref={pathRef} className="onb-arrow" fill="none" stroke="var(--gold-bright)" strokeWidth={2.5} strokeLinecap="round" markerEnd="url(#onb-arrowhead)" />
-        </svg>
-      )}
-
       {/* Mascot + bubble / chat, docked bottom-left */}
       <div style={{ position: 'fixed', left: 18, bottom: 18, zIndex: 70, display: 'flex', alignItems: 'flex-end', gap: 12, maxWidth: 'min(92vw, 380px)' }}>
         {/* Mascot */}
@@ -196,7 +145,7 @@ export function OnboardingGuide({ steps, name, onShowMe, onAskStep, onSkipStep }
         </motion.button>
 
         {/* Guidance bubble (when chat closed) */}
-        {!open && bubbleOpen && (
+        {showStepBubble && !open && bubbleOpen && (
           <motion.div
             key={activeKey}
             initial={reduce ? false : { opacity: 0, y: 8, scale: 0.96 }}
@@ -220,11 +169,6 @@ export function OnboardingGuide({ steps, name, onShowMe, onAskStep, onSkipStep }
                   ))}
                 </ul>
               )}
-              {pointer.dir && (
-                <div style={{ marginTop: 6, fontSize: '0.6rem', fontStyle: 'italic', color: 'var(--gold-dark)', display: 'flex', alignItems: 'center', gap: 4 }}>
-                  {pointer.dir === 'up' ? <ArrowUp size={11} /> : <ArrowDown size={11} />} It’s {pointer.dir === 'up' ? 'above' : 'below'} — tap Show me.
-                </div>
-              )}
               <div style={{ display: 'flex', alignItems: 'center', gap: 7, marginTop: 9, flexWrap: 'wrap' }}>
                 <button type="button" onClick={() => onShowMe(activeStep.anchorId)} className="sku-gold-btn" style={{ padding: '5px 11px', display: 'inline-flex', alignItems: 'center', gap: 5, fontSize: '0.56rem', fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.06em', ...serifStyle }}>
                   Show me <ArrowRight size={11} />
@@ -243,7 +187,7 @@ export function OnboardingGuide({ steps, name, onShowMe, onAskStep, onSkipStep }
         )}
 
         {/* Re-open guidance puck */}
-        {!open && !bubbleOpen && (
+        {showStepBubble && !open && !bubbleOpen && (
           <button onClick={() => setBubbleOpen(true)} title="Show the guide" style={{ alignSelf: 'center', width: 30, height: 30, borderRadius: '50%', border: '1px solid var(--gold-mid)', background: 'rgba(14,36,22,0.85)', color: 'var(--gold-bright)', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
             <MessageCircle size={14} />
           </button>

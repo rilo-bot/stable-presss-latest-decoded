@@ -58,11 +58,14 @@ export function computeAfter(before: RegionContent, payload: EditPayload): Regio
       return before.kind === 'image' ? { ...before, ...payload.patch } : before;
     case 'qr':
       return before.kind === 'qr' ? { ...before, ...payload.patch } : before;
+    case 'icon':
+      return before.kind === 'icon' ? { ...before, ...payload.patch } : before;
     case 'style':
       return before.kind === 'text' ? { ...before, style: { ...before.style, ...payload.patch } } : before;
     case 'clear':
       if (before.kind === 'text') return { ...before, html: '' };
       if (before.kind === 'image') return { ...before, src: '' };
+      if (before.kind === 'icon') return { ...before, name: undefined, src: undefined };
       return { ...before, targetUrl: '' };
   }
 }
@@ -87,12 +90,16 @@ export function applyPayload(
     case 'qr':
       ms.setQr(magId, pageId, regionId, payload.patch);
       break;
+    case 'icon':
+      ms.setIcon(magId, pageId, regionId, payload.patch);
+      break;
     case 'style':
       ms.setTextStyle(magId, pageId, regionId, payload.patch);
       break;
     case 'clear':
       if (payload.targetKind === 'text') ms.setText(magId, pageId, regionId, '');
       else if (payload.targetKind === 'image') ms.setImage(magId, pageId, regionId, { src: '' });
+      else if (payload.targetKind === 'icon') ms.setIcon(magId, pageId, regionId, { name: undefined, src: undefined });
       else ms.setQr(magId, pageId, regionId, { targetUrl: '' });
       break;
   }
@@ -114,6 +121,8 @@ function restoreContent(magId: string, pageId: string, regionId: string, content
       focalY: content.focalY,
       alt: content.alt,
     });
+  } else if (content.kind === 'icon') {
+    ms.setIcon(magId, pageId, regionId, { name: content.name, src: content.src, color: content.color });
   } else {
     ms.setQr(magId, pageId, regionId, { targetUrl: content.targetUrl, fg: content.fg, bg: content.bg });
   }

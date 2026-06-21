@@ -62,6 +62,15 @@ const DocDigestSchema = z.object({
     )
     .optional()
     .describe('Any tabular data, e.g. results or rosters.'),
+  icons: z
+    .array(
+      z.object({
+        label: z.string().describe('The nearby text/concept the icon sits with, e.g. "email", "phone", "trophy", "website".'),
+        name: z.string().describe('Best-guess Lucide icon NAME in PascalCase, e.g. "Mail", "Phone", "Trophy", "Globe", "Award", "Users".'),
+      }),
+    )
+    .optional()
+    .describe('Distinct icons/symbols visible in the document (contact/social glyphs, badges, award/trophy marks), each mapped to the closest common Lucide icon name. Omit if none are clearly present.'),
 })
 
 export type DocDigest = z.infer<typeof DocDigestSchema>
@@ -70,7 +79,11 @@ const SYSTEM =
   'You are a careful document analyst working for a magazine editor. Read the supplied document and extract a ' +
   'faithful, structured, editor-ready digest so the editor can place its content into a publication. Preserve real ' +
   'names, figures, dates, results and quotes EXACTLY as written. Do NOT invent, infer or embellish anything that is ' +
-  'not present in the source. Keep it well-organised and reasonably concise (skip boilerplate and legal footers).'
+  'not present in the source. Keep it well-organised and reasonably concise (skip boilerplate and legal footers).\n' +
+  'Also note any DISTINCT ICONS or symbols you actually see (contact/social glyphs like email/phone, award/trophy ' +
+  'marks, badges) in the `icons` field: for each, give the nearby label and the closest common Lucide icon name in ' +
+  'PascalCase (e.g. Mail, Phone, Globe, Trophy, Award, Users, Star, Heart, Calendar, MapPin). Only include icons that ' +
+  'are genuinely present — never invent decorative icons.'
 
 const OCR_SYSTEM =
   'You are a precise OCR transcriber for a magazine editor. Transcribe ALL text visible on the page EXACTLY as ' +

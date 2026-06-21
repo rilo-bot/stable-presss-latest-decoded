@@ -33,6 +33,9 @@ import { InlineEditRow, InlineEditTextArea } from '@/components/profile/editable
 import { OnboardingSteps, type OnbStep } from '@/components/profile/OnboardingSteps';
 import { OnboardingGuide, type GuideStep } from '@/components/profile/OnboardingGuide';
 import { OnboardingComplete } from '@/components/profile/OnboardingComplete';
+import { OnboardingFocus } from '@/components/profile/OnboardingFocus';
+import { RoleConnectionBox, roleDefByRel } from '@/components/profile/RoleConnectionBox';
+import { useRoleConnections } from '@/components/profile/useRoleConnections';
 import { ProfileAgentPanel, StudioLauncher } from '@/agent/profile/ProfileAgentPanel';
 import { useProfileAgentUi, type ProfileContext } from '@/stores/profileAgentUiStore';
 import { DossierMeter } from '@/components/DossierMeter';
@@ -109,6 +112,7 @@ export function HorseProfile({ horseId, mode, onBack }: HorseProfileProps) {
   const allLinks = useHorsePartyLinkStore((s) => s.links);
   const linksLoaded = useHorsePartyLinkStore((s) => s.loaded);
   const currentUser = useAuthStore((s) => s.currentUser);
+  const conn = useRoleConnections(horseId);
 
   // Fetch horses + parties on mount; useProfileScope fetches links + entries.
   // (The old HorseDetail fetched neither horses nor links → empty on cold load.)
@@ -132,6 +136,7 @@ export function HorseProfile({ horseId, mode, onBack }: HorseProfileProps) {
   // Keep the AI assistant's context in sync with the open horse (edit mode only).
   const setAgentContext = useProfileAgentUi((s) => s.setContext);
   const askAgent = useProfileAgentUi((s) => s.ask);
+  const chatOpen = useProfileAgentUi((s) => s.open);
   useEffect(() => {
     if (mode === 'edit' && horse) setAgentContext(buildHorseContext(horse, horseLinks));
     return () => setAgentContext(null);
@@ -271,6 +276,7 @@ export function HorseProfile({ horseId, mode, onBack }: HorseProfileProps) {
   };
   const activeStep = onbSteps.find((s) => !s.done && !s.skipped);
   const activeKey = activeStep?.key;
+  const activeIdx = onbSteps.findIndex((s) => s.key === activeKey);
   const showGuide = editableHorse && !onbAllDone;
   const isActive = (key: string) => showGuide && activeKey === key;
   // When the active step is a connection, glow + point at that left-rail box.
@@ -313,6 +319,20 @@ export function HorseProfile({ horseId, mode, onBack }: HorseProfileProps) {
     { label: "Dam's Sire", value: horse.damSire ?? '', onSave: (v) => set({ damSire: v.trim() || undefined }) },
     { label: "Dam's Dam", value: horse.damDam ?? '', onSave: (v) => set({ damDam: v.trim() || undefined }) },
   ];
+
+  // Centered editor for the active onboarding step (focus mode). Reuses the same
+  // self-contained widgets rendered in place; a single connection box for conns.
+  const focusContent = (key: string): React.ReactNode => {
+    if (key === 'photo') {
+      return <PortraitFrame src={horse.imageUrl} alt={horseName} editable kind="horse" onUpload={(url) => set({ imageUrl: url })} containerStyle={{ height: 'clamp(220px, 38vh, 360px)', minHeight: 220 }} label={!horse.imageUrl ? 'Add a photo to begin' : undefined} />;
+    }
+    if (key === 'basics') return <IdentityCard title="Identity" fields={idFields} editable />;
+    if (key === 'pedigree') return <IdentityCard title="Pedigree" fields={pedFields} editable />;
+    const rel = CONNECTION_STEPS.find((c) => c.key === key)?.rel;
+    const def = rel ? roleDefByRel[rel] : null;
+    if (!def) return null;
+    return <RoleConnectionBox def={def} entries={conn.entriesFor(def)} editable parties={conn.parties} defaultAdding onOpenParty={(pid) => navigate(`/parties/${pid}`)} onAdd={conn.onAdd} onSaveDates={conn.onSaveDates} onRemove={conn.onRemove} />;
+  };
 
   const racingFields: FieldDescriptor[] = [
     { label: 'Career record', value: horse.careerRecord ?? '', onSave: (v) => set({ careerRecord: v.trim() || undefined }) },
@@ -525,7 +545,22 @@ export function HorseProfile({ horseId, mode, onBack }: HorseProfileProps) {
       right={<DataSectionsRail activeModule={activeModule} onToggle={openModule} />}
       overlay={editableHorse
         ? (showGuide
-          ? <OnboardingGuide steps={guideSteps} name="Stablehand" onShowMe={scrollToAnchor} onAskStep={(s) => askAiForStep(onbSteps.find((o) => o.key === s.key) ?? onbSteps[0])} onSkipStep={(s) => skipStep(s.key)} />
+          ? <>
+              <OnboardingGuide steps={guideSteps} name="Stablehand" showStepBubble={false} onShowMe={scrollToAnchor} onAskStep={(s) => askAiForStep(onbSteps.find((o) => o.key === s.key) ?? onbSteps[0])} onSkipStep={(s) => skipStep(s.key)} />
+              <OnboardingFocus
+                open={showGuide && !chatOpen}
+                stepKey={activeKey ?? 'none'}
+                stepIndex={activeIdx < 0 ? 0 : activeIdx}
+                total={onbSteps.length}
+                title={(activeKey && HORSE_COACH[activeKey]?.title) || activeStep?.label || ''}
+                tips={activeKey ? HORSE_COACH[activeKey]?.tips : undefined}
+                content={activeKey ? focusContent(activeKey) : null}
+                originId={activeStep?.anchorId}
+                skippable
+                onSkip={() => { if (activeKey) skipStep(activeKey); }}
+                onAsk={() => { if (activeStep) askAiForStep(activeStep); }}
+              />
+            </>
           : <ProfileAgentPanel />)
         : undefined}
     />
