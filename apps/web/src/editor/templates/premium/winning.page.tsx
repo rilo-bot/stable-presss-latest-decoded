@@ -42,16 +42,20 @@ export function WinningPremium() {
       </div>
 
       <div className="flex flex-1 min-h-0 flex-col px-9 pt-5 pb-[64px]">
-        {/* Headline + hero */}
-        <div className="grid grid-cols-[1fr_300px] items-start gap-6">
-          <div>
+        {/* Hero zone — winners photo bleeds to the top-right page edge, blended
+            into the cream so the headline reads over it. */}
+        <div className="relative" style={{ height: 196 }}>
+          <div className="absolute bottom-0 top-0 overflow-hidden" style={{ right: -36, width: 372 }}>
+            <RImage id="winning-moments-px.heroImg" className="absolute inset-0" />
+            <div className="absolute inset-y-0 left-0" style={{ width: 160, background: `linear-gradient(90deg, ${PREMIUM_CREAM} 14%, rgba(243,236,218,0))` }} />
+          </div>
+          <div className="relative z-10 max-w-[430px] pt-1">
             <RText id="winning-moments-px.h1a" />
             <RText id="winning-moments-px.h1b" />
             <PGoldRule className="mt-2 mb-1 max-w-[130px]" />
             <div className="mt-1"><RText id="winning-moments-px.sub" /></div>
-            <RText id="winning-moments-px.intro" className="mt-2 max-w-[340px]" />
+            <RText id="winning-moments-px.intro" className="mt-2 max-w-[320px]" />
           </div>
-          <RImage id="winning-moments-px.heroImg" rounded="rounded-sm" className="h-[180px]" />
         </div>
 
         {/* Six cells — five winner cards + the share/upload QR strip */}

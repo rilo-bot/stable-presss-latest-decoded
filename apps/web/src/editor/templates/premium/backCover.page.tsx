@@ -15,20 +15,23 @@ export function BackCoverPremium() {
   const partners = [1, 2, 3, 4, 5];
   return (
     <PPage tone="navy">
-      <div className="flex flex-1 min-h-0 flex-col px-9 pt-8 pb-[54px]">
-        {/* Masthead + hero */}
-        <div className="flex items-start justify-between">
-          <div>
-            <RText id="back-cover-px.masthead" />
-            <RText id="back-cover-px.mastheadSub" className="mt-1" />
-          </div>
-          <div className="overflow-hidden rounded-sm" style={{ border: `1px solid ${GOLD}55` }}>
-            <RImage id="back-cover-px.heroImg" rounded="" className="h-[120px] w-[230px]" />
-          </div>
+      {/* Hero — full-bleed in the top-right corner behind the masthead + title;
+          navy gradients on its left and bottom blend it into the page. */}
+      <div className="absolute right-0 top-0 overflow-hidden" style={{ width: 400, height: 250 }}>
+        <RImage id="back-cover-px.heroImg" className="absolute inset-0" />
+        <div className="absolute inset-y-0 left-0" style={{ width: 200, background: `linear-gradient(90deg, ${NAVY} 16%, rgba(10,35,66,0))` }} />
+        <div className="absolute inset-x-0 bottom-0" style={{ height: 90, background: `linear-gradient(0deg, ${NAVY} 6%, rgba(10,35,66,0))` }} />
+      </div>
+
+      <div className="relative flex flex-1 min-h-0 flex-col px-9 pt-8 pb-[54px]">
+        {/* Masthead */}
+        <div>
+          <RText id="back-cover-px.masthead" />
+          <RText id="back-cover-px.mastheadSub" className="mt-1" />
         </div>
 
         {/* Big title */}
-        <div className="mt-4">
+        <div className="mt-5 max-w-[470px]">
           <RText id="back-cover-px.h1a" />
           <RText id="back-cover-px.h1b" />
           <PGoldRule className="mt-2 mb-2 max-w-[200px]" />
