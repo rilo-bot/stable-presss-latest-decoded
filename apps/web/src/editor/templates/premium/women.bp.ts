@@ -21,12 +21,13 @@ export const womenPx = mkPage('women-in-racing-px', 'Women in Racing', {
     { ...P.body, fontSize: 12 }
   ),
 
-  // 3-photo collage hero
-  collage1: img(STOCK.women, 'cover'),
-  collage2: img(STOCK.champagne, 'cover'),
-  collage3: img(STOCK.crowd, 'cover'),
+  // Full-bleed hero (women in hats) — blends behind the headline
+  hero: img(STOCK.women, 'cover'),
 
-  // Three feature columns
+  // Three feature columns (each: candid photo + gold icon + title + body)
+  col1Img: img(STOCK.champagne, 'cover'),
+  col2Img: img(STOCK.crowd, 'cover'),
+  col3Img: img(STOCK.celebrate2, 'cover'),
   col1Icon: icon('UsersGroup', GOLD),
   col1Title: text('OWNERSHIP GROUPS', { ...P.kickerNavy, fontSize: 12 }),
   col1Body: text('Strong women. Shared dreams. Lasting friendships. Together we celebrate every moment.', { ...P.bodySmall, fontSize: 10.5 }),

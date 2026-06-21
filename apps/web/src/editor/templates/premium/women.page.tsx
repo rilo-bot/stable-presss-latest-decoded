@@ -13,9 +13,9 @@ const MAROON_BAND = '#5a2a3a';
 const navy = { background: NAVY };
 
 const COLS = [
-  { icon: 'col1Icon', title: 'col1Title', body: 'col1Body' },
-  { icon: 'col2Icon', title: 'col2Title', body: 'col2Body' },
-  { icon: 'col3Icon', title: 'col3Title', body: 'col3Body' },
+  { img: 'col1Img', icon: 'col1Icon', title: 'col1Title', body: 'col1Body' },
+  { img: 'col2Img', icon: 'col2Icon', title: 'col2Title', body: 'col2Body' },
+  { img: 'col3Img', icon: 'col3Icon', title: 'col3Title', body: 'col3Body' },
 ];
 
 export function WomenPremium() {
@@ -28,34 +28,46 @@ export function WomenPremium() {
       </div>
 
       <div className="flex flex-1 min-h-0 flex-col px-9 pt-5 pb-[58px]">
-        {/* Headline + 3-photo collage hero */}
-        <div className="grid grid-cols-[1fr_340px] items-start gap-6">
-          <div>
+        {/* Hero zone — full-bleed photo bleeding to the top-right page edge,
+            blended into the cream so the STYLE / PASSION / LEADERSHIP headline
+            reads over it (matching the printed Women in Racing spread). */}
+        <div className="relative" style={{ height: 286 }}>
+          {/* Full-bleed photo — right:-36 cancels the px-9 padding to reach the
+              page edge; the gradient feathers its inner edge into the cream. */}
+          <div className="absolute bottom-0 top-0 overflow-hidden" style={{ right: -36, width: 430 }}>
+            <RImage id="women-in-racing-px.hero" className="absolute inset-0" />
+            <div
+              className="absolute inset-y-0 left-0"
+              style={{ width: 180, background: `linear-gradient(90deg, ${PREMIUM_CREAM} 14%, rgba(243,236,218,0))` }}
+            />
+          </div>
+          {/* Headline — in front of the photo */}
+          <div className="relative z-10 max-w-[440px] pt-1">
             <RText id="women-in-racing-px.h1a" />
             <RText id="women-in-racing-px.h1b" />
             <RText id="women-in-racing-px.h1c" />
             <PGoldRule className="my-2.5 max-w-[120px]" />
             <RText id="women-in-racing-px.sub" />
-            <RText id="women-in-racing-px.body" className="mt-3 max-w-[400px]" />
-          </div>
-          <div className="grid grid-cols-2 grid-rows-2 gap-2">
-            <RImage id="women-in-racing-px.collage1" rounded="rounded-sm" className="row-span-2 h-full" />
-            <RImage id="women-in-racing-px.collage2" rounded="rounded-sm" className="h-[128px]" />
-            <RImage id="women-in-racing-px.collage3" rounded="rounded-sm" className="h-[128px]" />
+            <RText id="women-in-racing-px.body" className="mt-3 max-w-[300px]" />
           </div>
         </div>
 
-        {/* Three gold-icon feature columns */}
-        <div className="mt-6 grid grid-cols-3 gap-4">
+        {/* Three feature columns — candid photo + gold icon + title + body */}
+        <div className="mt-5 grid grid-cols-3 gap-4">
           {COLS.map((c) => (
             <div
               key={c.icon}
-              className="flex flex-col gap-2 rounded-sm border p-4"
+              className="flex flex-col overflow-hidden rounded-sm border"
               style={{ borderColor: `${GOLD}55`, background: '#fbf6ec' }}
             >
-              <IconBadge iconId={`women-in-racing-px.${c.icon}`} size={38} variant="outline" />
-              <RText id={`women-in-racing-px.${c.title}`} className="mt-1" />
-              <RText id={`women-in-racing-px.${c.body}`} />
+              <RImage id={`women-in-racing-px.${c.img}`} className="h-[90px]" />
+              <div className="flex flex-col gap-1.5 p-3.5">
+                <div className="flex items-center gap-2">
+                  <IconBadge iconId={`women-in-racing-px.${c.icon}`} size={26} variant="outline" />
+                  <RText id={`women-in-racing-px.${c.title}`} />
+                </div>
+                <RText id={`women-in-racing-px.${c.body}`} />
+              </div>
             </div>
           ))}
         </div>
