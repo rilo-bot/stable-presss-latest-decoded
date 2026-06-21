@@ -104,12 +104,17 @@ export function HeadlinePremium() {
     <PPage tone="navy">
       <PTab labelId="headline-px.band" taglineId="headline-px.bandSub" />
       <div className="flex flex-1 min-h-0 flex-col px-9 pt-2 pb-[70px]">
-        <div className="grid grid-cols-[1fr_300px] items-start gap-5">
-          <div>
+        {/* Hero zone — the jockey photo bleeds to the right page edge behind the
+            AELIANA title; a navy gradient feathers its inner edge. */}
+        <div className="relative" style={{ height: 150 }}>
+          <div className="absolute bottom-0 top-0 overflow-hidden" style={{ right: -36, width: 420 }}>
+            <RImage id="headline-px.hero" className="absolute inset-0" />
+            <div className="absolute inset-y-0 left-0" style={{ width: 180, background: `linear-gradient(90deg, ${NAVY} 14%, rgba(10,35,66,0))` }} />
+          </div>
+          <div className="relative z-10 max-w-[440px] pt-1">
             <RText id="headline-px.title" />
             <RText id="headline-px.subtitle" className="mt-1" />
           </div>
-          <RImage id="headline-px.hero" rounded="rounded-sm" className="h-[150px]" />
         </div>
 
         {/* Stat row with gold icon badges */}

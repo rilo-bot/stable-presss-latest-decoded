@@ -8,7 +8,7 @@
  */
 
 import { IconBadge } from './kit';
-import { PPage, PFooter, PGoldRule } from './parts';
+import { PPage, PFooter, PGoldRule, PREMIUM_CREAM } from './parts';
 import { RText, RImage, RQr, RIcon } from '../../components/Region';
 import { NAVY, GOLD } from '../styles';
 
@@ -31,16 +31,20 @@ export function BusinessPremium() {
       </div>
 
       <div className="flex flex-1 min-h-0 flex-col px-9 pt-5 pb-[64px]">
-        {/* Headline + hero */}
-        <div className="grid grid-cols-[1fr_320px] items-start gap-6">
-          <div>
+        {/* Hero zone — group photo bleeds to the top-right page edge, blended
+            into the cream so the headline reads over it. */}
+        <div className="relative" style={{ height: 222 }}>
+          <div className="absolute bottom-0 top-0 overflow-hidden" style={{ right: -36, width: 380 }}>
+            <RImage id="business-owners-px.heroImg" className="absolute inset-0" />
+            <div className="absolute inset-y-0 left-0" style={{ width: 160, background: `linear-gradient(90deg, ${PREMIUM_CREAM} 14%, rgba(243,236,218,0))` }} />
+          </div>
+          <div className="relative z-10 max-w-[430px] pt-1">
             <RText id="business-owners-px.h1a" />
             <RText id="business-owners-px.h1b" />
             <RText id="business-owners-px.h1c" />
             <div className="mt-1"><RText id="business-owners-px.sub" /></div>
-            <RText id="business-owners-px.body" className="mt-3 max-w-[360px]" />
+            <RText id="business-owners-px.body" className="mt-3 max-w-[300px]" />
           </div>
-          <RImage id="business-owners-px.heroImg" rounded="rounded-sm" className="h-[190px]" />
         </div>
 
         {/* Three gold-icon features */}

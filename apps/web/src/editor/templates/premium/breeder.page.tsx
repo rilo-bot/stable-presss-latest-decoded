@@ -20,19 +20,23 @@ export function BreederPremium() {
       </div>
 
       <div className="flex flex-1 min-h-0 flex-col px-9 pt-5 pb-[64px]">
-        {/* Headline + intro + navy pull-quote on the left; family hero on the right */}
-        <div className="grid grid-cols-[1fr_300px] items-start gap-6">
-          <div>
+        {/* Hero zone — family photo bleeds to the top-right page edge, blended
+            into the cream so the headline + pull-quote read over it. */}
+        <div className="relative" style={{ height: 300 }}>
+          <div className="absolute bottom-0 top-0 overflow-hidden" style={{ right: -36, width: 360 }}>
+            <RImage id="breeder-feature-px.familyImg" className="absolute inset-0" />
+            <div className="absolute inset-y-0 left-0" style={{ width: 160, background: `linear-gradient(90deg, ${PREMIUM_CREAM} 14%, rgba(243,236,218,0))` }} />
+          </div>
+          <div className="relative z-10 max-w-[430px] pt-1">
             <RText id="breeder-feature-px.h1a" />
             <RText id="breeder-feature-px.h1b" />
             <div className="mt-1"><RText id="breeder-feature-px.sub" /></div>
-            <RText id="breeder-feature-px.body" className="mt-3 max-w-[380px]" />
-            <div className="mt-4 rounded-sm p-4" style={{ ...navy, borderLeft: `4px solid ${GOLD}` }}>
+            <RText id="breeder-feature-px.body" className="mt-3 max-w-[300px]" />
+            <div className="mt-4 max-w-[330px] rounded-sm p-4" style={{ ...navy, borderLeft: `4px solid ${GOLD}` }}>
               <RText id="breeder-feature-px.quote" />
               <RText id="breeder-feature-px.quoteBy" className="mt-1.5" />
             </div>
           </div>
-          <RImage id="breeder-feature-px.familyImg" rounded="rounded-sm" className="h-[260px]" />
         </div>
 
         {/* Breeding journey + mare/foal | stakes-winner photo + a family effort */}

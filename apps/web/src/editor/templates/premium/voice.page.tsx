@@ -27,16 +27,20 @@ export function VoicePremium() {
       </div>
 
       <div className="flex flex-1 min-h-0 flex-col px-9 pt-5 pb-[62px]">
-        {/* Headline + hero */}
-        <div className="grid grid-cols-[1fr_260px] items-start gap-6">
-          <div>
+        {/* Hero zone — crowd photo bleeds to the top-right page edge, blended
+            into the cream so the headline reads over it. */}
+        <div className="relative" style={{ height: 166 }}>
+          <div className="absolute bottom-0 top-0 overflow-hidden" style={{ right: -36, width: 320 }}>
+            <RImage id="owners-voice-px.heroImg" className="absolute inset-0" />
+            <div className="absolute inset-y-0 left-0" style={{ width: 150, background: `linear-gradient(90deg, ${PREMIUM_CREAM} 14%, rgba(243,236,218,0))` }} />
+          </div>
+          <div className="relative z-10 max-w-[440px] pt-1">
             <RText id="owners-voice-px.h1a" />
             <RText id="owners-voice-px.h1b" />
             <PGoldRule className="mt-2 mb-1 max-w-[120px]" />
             <div className="mt-1"><RText id="owners-voice-px.sub" /></div>
-            <RText id="owners-voice-px.intro" className="mt-2 max-w-[440px]" />
+            <RText id="owners-voice-px.intro" className="mt-2 max-w-[320px]" />
           </div>
-          <RImage id="owners-voice-px.heroImg" rounded="rounded-sm" className="h-[150px]" />
         </div>
 
         {/* Four feature columns — gold icon + What You Said + Ideas for Change */}
