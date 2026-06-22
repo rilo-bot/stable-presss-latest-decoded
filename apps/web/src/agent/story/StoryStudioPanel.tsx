@@ -1,40 +1,25 @@
 // The "Story Studio" assistant — a right-side drawer that streams from
-// /api/agent/story/chat, writes a story draft with the user, collects the
-// metadata through inline cards (the model's client tools park a PendingInteraction
-// that each card resolves), files the draft, and opens it. Voice (push-to-talk +
-// spoken replies) is shared via useVoiceChat. Modeled on ProfileAgentPanel.
+// /api/agent/story/chat and writes a story draft WITH the user as a natural
+// conversation: the user answers every question by typing or speaking (no option
+// buttons — each question lists its choices in the text). The byline is the
+// signed-in member, the reading time and draft stage are automatic, and the lead
+// photo is attached with the composer's 📎 button. Voice (push-to-talk + spoken
+// replies) is shared via useVoiceChat — with the speak toggle on, every reply is
+// read aloud. The conversation is preserved while the drawer is closed; the
+// "New chat" button starts a fresh one.
 
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { Sparkles, Send, Square, X, Check, Mic, Volume2, VolumeX, Loader2, ImageIcon, Search } from 'lucide-react';
+import { Sparkles, Send, Square, X, Paperclip, SquarePen, Mic, Volume2, VolumeX, Loader2 } from 'lucide-react';
 import { toast } from 'sonner';
 
 import { MarkdownMessage } from '@/components/MarkdownMessage';
-import { ImageUploader } from '@/components/horse-form/ImageUploader';
-import { useStoryStudioUi, type PendingInteraction } from '@/stores/storyStudioUiStore';
+import { useStoryStudioUi } from '@/stores/storyStudioUiStore';
 import { useEditorAgentUi } from '@/stores/editorAgentUiStore';
-import { useAuthStore } from '@/stores/authStore';
-import { useHorseStore } from '@/stores/horseStore';
-import { usePartyStore } from '@/stores/partyStore';
-import { connectionResolver } from '@/lib/horseConnections';
-import { TIER_ORDER, TIER_LABELS } from '@/rbac/entitlement';
+import { uploadImage } from '@/lib/upload';
 import { useStoryChatSession, messageText } from './useStoryChatSession';
 import { useVoiceChat } from '@/agent/voice/useVoiceChat';
 import { useAutoGrowTextarea } from '@/lib/useAutoGrowTextarea';
-
-/* ── Category taxonomy (mirrors ArticleForm's CATEGORY_DEFS) ── */
-const CATEGORY_DEFS: { value: string; label: string; section: 'News' | 'Analysis' | 'Interviews' }[] = [
-  { value: 'race-reports', label: 'Race Reports', section: 'News' },
-  { value: 'industry-news', label: 'Industry News', section: 'News' },
-  { value: 'morning-edition', label: 'Morning Edition', section: 'News' },
-  { value: 'form-guide', label: 'Form Guide', section: 'Analysis' },
-  { value: 'track-notes', label: 'Track Notes', section: 'Analysis' },
-  { value: 'bloodstock', label: 'Bloodstock', section: 'Analysis' },
-  { value: 'trainer-profiles', label: 'Trainer Profiles', section: 'Interviews' },
-  { value: 'jockey-desk', label: 'Jockey Desk', section: 'Interviews' },
-  { value: 'owner-stories', label: 'Owner Stories', section: 'Interviews' },
-];
-const CATEGORY_SECTIONS = ['News', 'Analysis', 'Interviews'] as const;
 
 const STARTERS = [
   'A feature on a rising sprinter at Flemington',
@@ -42,272 +27,20 @@ const STARTERS = [
   'A trainer profile for a country stable',
 ];
 
-const resolve = (output: unknown) => useStoryStudioUi.getState().resolvePending(output);
-
-/* ── Inline interaction cards ─────────────────────────────── */
-
-function StoryCard({ data }: { data?: Record<string, unknown> }) {
-  const [editing, setEditing] = useState(false);
-  const [title, setTitle] = useState(String(data?.title ?? ''));
-  const [summary, setSummary] = useState(String(data?.summary ?? ''));
-  const paragraphs = summary.split(/\n{2,}/).map((p) => p.trim()).filter(Boolean);
-
-  return (
-    <div className="rounded-md border border-amber-400/30 bg-amber-400/5 p-3">
-      <div className="mb-2 text-[10px] font-bold uppercase tracking-wider text-amber-300">Story draft</div>
-      {editing ? (
-        <div className="space-y-2">
-          <input
-            value={title}
-            onChange={(e) => setTitle(e.target.value)}
-            className="w-full rounded-sm border border-white/15 bg-white/5 px-2 py-1.5 text-[13px] font-semibold text-white outline-none focus:border-white/30"
-            placeholder="Headline"
-          />
-          <textarea
-            value={summary}
-            onChange={(e) => setSummary(e.target.value)}
-            rows={8}
-            className="w-full resize-y rounded-sm border border-white/15 bg-white/5 px-2 py-1.5 text-[12px] leading-relaxed text-white/90 outline-none focus:border-white/30"
-            placeholder="The full story…"
-          />
-        </div>
-      ) : (
-        <>
-          <h3 className="mb-1.5 text-[14px] font-bold leading-snug text-white">{title || '(no headline)'}</h3>
-          <div className="max-h-48 space-y-1.5 overflow-y-auto pr-1 text-[12px] leading-relaxed text-white/75">
-            {paragraphs.map((p, i) => <p key={i}>{p}</p>)}
-          </div>
-        </>
-      )}
-      <div className="mt-3 flex items-center gap-1.5">
-        <button
-          onClick={() => resolve({ accepted: true, title: title.trim(), summary: summary.trim() })}
-          disabled={!title.trim() || !summary.trim()}
-          className="flex items-center gap-1 rounded-sm bg-emerald-500 px-2.5 py-1 text-[11px] font-semibold text-white hover:bg-emerald-600 disabled:opacity-40"
-        >
-          <Check size={12} /> Accept
-        </button>
-        <button
-          onClick={() => setEditing((v) => !v)}
-          className="rounded-sm border border-white/15 px-2.5 py-1 text-[11px] text-white/70 hover:bg-white/10"
-        >
-          {editing ? 'Preview' : 'Edit'}
-        </button>
-        <button
-          onClick={() => resolve({ accepted: false })}
-          className="rounded-sm border border-white/15 px-2.5 py-1 text-[11px] text-white/70 hover:bg-white/10"
-        >
-          Regenerate
-        </button>
-      </div>
-    </div>
-  );
-}
-
-function PhotoCard() {
-  const [mode, setMode] = useState<'ask' | 'upload'>('ask');
-  const [url, setUrl] = useState('');
-  if (mode === 'ask') {
-    return (
-      <CardShell title="Add a lead photo?">
-        <div className="flex items-center gap-1.5">
-          <button onClick={() => setMode('upload')} className="rounded-sm bg-emerald-500 px-3 py-1 text-[11px] font-semibold text-white hover:bg-emerald-600">Yes, add a photo</button>
-          <button onClick={() => resolve({ imageUrl: null })} className="rounded-sm border border-white/15 px-3 py-1 text-[11px] text-white/70 hover:bg-white/10">No photo</button>
-        </div>
-      </CardShell>
-    );
-  }
-  return (
-    <CardShell title="Lead photo">
-      <div className="rounded-sm bg-white/95 p-2 text-foreground">
-        <ImageUploader value={url} onChange={setUrl} kind="media" label="story image" id="story-studio-image" />
-      </div>
-      <div className="mt-2 flex items-center gap-1.5">
-        <button
-          onClick={() => resolve({ imageUrl: url.trim() || null })}
-          disabled={!url.trim()}
-          className="flex items-center gap-1 rounded-sm bg-emerald-500 px-3 py-1 text-[11px] font-semibold text-white hover:bg-emerald-600 disabled:opacity-40"
-        >
-          <ImageIcon size={12} /> Use this photo
-        </button>
-        <button onClick={() => resolve({ imageUrl: null })} className="rounded-sm border border-white/15 px-3 py-1 text-[11px] text-white/70 hover:bg-white/10">Skip</button>
-      </div>
-    </CardShell>
-  );
-}
-
-function BylineCard({ data }: { data?: Record<string, unknown> }) {
-  const currentUser = useAuthStore((s) => s.currentUser);
-  const isContributor = currentUser?.role === 'contributor';
-  const locked = isContributor;
-  const initial = String(data?.suggested ?? '') || (isContributor ? (currentUser?.displayName ?? '') : '');
-  const [author, setAuthor] = useState(initial);
-  return (
-    <CardShell title="Byline / author">
-      <input
-        value={author}
-        onChange={(e) => !locked && setAuthor(e.target.value)}
-        readOnly={locked}
-        placeholder="Correspondent name"
-        className="w-full rounded-sm border border-white/15 bg-white/5 px-2 py-1.5 text-[12px] text-white outline-none focus:border-white/30 read-only:opacity-70"
-        onKeyDown={(e) => { if (e.key === 'Enter' && author.trim()) resolve({ author: author.trim() }); }}
-      />
-      {locked && <p className="mt-1 text-[10px] text-white/40">Automatically set to your account name.</p>}
-      <button
-        onClick={() => author.trim() && resolve({ author: author.trim() })}
-        disabled={!author.trim()}
-        className="mt-2 flex items-center gap-1 rounded-sm bg-emerald-500 px-3 py-1 text-[11px] font-semibold text-white hover:bg-emerald-600 disabled:opacity-40"
-      >
-        <Check size={12} /> Confirm byline
-      </button>
-    </CardShell>
-  );
-}
-
-function TierCard() {
-  return (
-    <CardShell title="Who can read this story?">
-      <div className="flex flex-col gap-1.5">
-        {TIER_ORDER.map((t) => (
-          <button
-            key={t}
-            onClick={() => resolve({ minTier: t })}
-            className="flex items-center justify-between rounded-sm border border-white/15 bg-white/5 px-2.5 py-1.5 text-[12px] text-white/85 hover:border-white/30 hover:bg-white/10"
-          >
-            <span>{t === 'free' ? 'Free — everyone' : `${TIER_LABELS[t]} members & up`}</span>
-          </button>
-        ))}
-      </div>
-    </CardShell>
-  );
-}
-
-function CategoryCard() {
-  return (
-    <CardShell title="Pick a category">
-      <div className="space-y-2">
-        {CATEGORY_SECTIONS.map((section) => (
-          <div key={section}>
-            <div className="mb-1 text-[9px] font-bold uppercase tracking-[0.16em] text-amber-300/80">{section}</div>
-            <div className="flex flex-wrap gap-1.5">
-              {CATEGORY_DEFS.filter((c) => c.section === section).map((c) => (
-                <button
-                  key={c.value}
-                  onClick={() => resolve({ category: c.value })}
-                  className="rounded-full border border-white/15 bg-white/5 px-2.5 py-1 text-[11px] text-white/80 hover:border-white/30 hover:bg-white/10"
-                >
-                  {c.label}
-                </button>
-              ))}
-            </div>
-          </div>
-        ))}
-      </div>
-    </CardShell>
-  );
-}
-
-function HorseLinkCard() {
-  const horses = useHorseStore((s) => s.horses);
-  const fetchHorses = useHorseStore((s) => s.fetchHorses);
-  const parties = usePartyStore((s) => s.parties);
-  const fetchParties = usePartyStore((s) => s.fetchParties);
-  const horseConn = useMemo(() => connectionResolver(parties), [parties]);
-  const [search, setSearch] = useState('');
-  const [selected, setSelected] = useState<string[]>([]);
-
-  useEffect(() => { void fetchHorses(); void fetchParties(); }, [fetchHorses, fetchParties]);
-
-  const filtered = useMemo(() => {
-    const q = search.trim().toLowerCase();
-    const list = q ? horses.filter((h) => h.name.toLowerCase().includes(q)) : horses;
-    return list.slice(0, 40);
-  }, [horses, search]);
-
-  const toggle = (id: string) =>
-    setSelected((prev) => (prev.includes(id) ? prev.filter((x) => x !== id) : [...prev, id]));
-
-  return (
-    <CardShell title="Link horse profiles (optional)">
-      {horses.length === 0 ? (
-        <p className="text-[11px] italic text-white/50">No horses in the register yet.</p>
-      ) : (
-        <>
-          <div className="relative mb-2">
-            <Search size={12} className="absolute left-2 top-1/2 -translate-y-1/2 text-white/40" />
-            <input
-              value={search}
-              onChange={(e) => setSearch(e.target.value)}
-              placeholder="Search horses…"
-              className="w-full rounded-sm border border-white/15 bg-white/5 py-1.5 pl-7 pr-2 text-[12px] text-white outline-none focus:border-white/30"
-            />
-          </div>
-          <div className="max-h-40 space-y-1 overflow-y-auto pr-1">
-            {filtered.map((h) => {
-              const on = selected.includes(h.id);
-              return (
-                <button
-                  key={h.id}
-                  onClick={() => toggle(h.id)}
-                  className={'flex w-full items-center gap-2 rounded-sm border px-2 py-1.5 text-left text-[12px] ' + (on ? 'border-emerald-400/50 bg-emerald-400/10' : 'border-white/10 hover:bg-white/5')}
-                >
-                  <span className={'flex h-4 w-4 flex-shrink-0 items-center justify-center rounded-sm border ' + (on ? 'border-emerald-400 bg-emerald-400' : 'border-white/25')}>
-                    {on && <Check size={10} className="text-[#0b1220]" />}
-                  </span>
-                  <span className="min-w-0">
-                    <span className="block truncate font-semibold text-white/90">{h.name}</span>
-                    <span className="block truncate text-[10px] text-white/40">{horseConn(h).trainer || '—'}</span>
-                  </span>
-                </button>
-              );
-            })}
-          </div>
-        </>
-      )}
-      <button
-        onClick={() => resolve({ linkedHorseIds: selected })}
-        className="mt-2 flex items-center gap-1 rounded-sm bg-emerald-500 px-3 py-1 text-[11px] font-semibold text-white hover:bg-emerald-600"
-      >
-        <Check size={12} /> {selected.length > 0 ? `Link ${selected.length} & continue` : 'Continue without linking'}
-      </button>
-    </CardShell>
-  );
-}
-
-function CardShell({ title, children }: { title: string; children: React.ReactNode }) {
-  return (
-    <div className="rounded-md border border-amber-400/30 bg-amber-400/5 p-3">
-      <div className="mb-2 text-[10px] font-bold uppercase tracking-wider text-amber-300">{title}</div>
-      {children}
-    </div>
-  );
-}
-
-function InteractionCard({ pending }: { pending: PendingInteraction }) {
-  switch (pending.kind) {
-    case 'story': return <StoryCard data={pending.data} />;
-    case 'photo': return <PhotoCard />;
-    case 'byline': return <BylineCard data={pending.data} />;
-    case 'tier': return <TierCard />;
-    case 'category': return <CategoryCard />;
-    case 'horses': return <HorseLinkCard />;
-    default: return null;
-  }
-}
-
-/* ── Panel ────────────────────────────────────────────────── */
-
 export function StoryStudioPanel() {
   const open = useStoryStudioUi((s) => s.open);
   const setOpen = useStoryStudioUi((s) => s.setOpen);
-  const pending = useStoryStudioUi((s) => s.pending);
   const pendingPrompt = useStoryStudioUi((s) => s.pendingPrompt);
+  const attachedImageUrl = useStoryStudioUi((s) => s.attachedImageUrl);
+  const horseOptions = useStoryStudioUi((s) => s.horseOptions);
   const createdDraftId = useStoryStudioUi((s) => s.createdDraftId);
 
   const navigate = useNavigate();
   const { messages, sendMessage, setMessages, status, error, stop } = useStoryChatSession();
 
   const [input, setInput] = useState('');
+  const [uploading, setUploading] = useState(false);
+  const fileRef = useRef<HTMLInputElement>(null);
   const busy = status === 'submitted' || status === 'streaming';
   const scrollRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLTextAreaElement>(null);
@@ -330,7 +63,7 @@ export function StoryStudioPanel() {
 
   useEffect(() => {
     scrollRef.current?.scrollTo({ top: scrollRef.current.scrollHeight, behavior: 'smooth' });
-  }, [messages, status, pending]);
+  }, [messages, status]);
 
   // Draft filed → open it for the user and reset the studio for next time.
   useEffect(() => {
@@ -346,18 +79,45 @@ export function StoryStudioPanel() {
 
   const send = (text: string) => {
     const t = text.trim();
-    if (!t || busy || pending) return;
+    if (!t || busy) return;
     void sendMessage({ text: t });
     setInput('');
   };
 
+  // Push-to-talk + spoken replies. With the speak toggle on, every assistant
+  // reply is read aloud (voiceMode); when the user speaks, the next reply is too.
   const { voiceReady, voiceMode, setVoiceMode, recording, transcribing, caption, toggleMic } =
     useVoiceChat({ messages, send, busy, active: open });
 
-  const close = () => {
-    setOpen(false);
+  // Closing the drawer PRESERVES the conversation (just hides it). "New chat" clears it.
+  const close = () => setOpen(false);
+  const newChat = () => {
     setMessages([]);
+    setInput('');
     useStoryStudioUi.getState().reset();
+  };
+
+  const onAttach = async (file: File | undefined) => {
+    if (!file) return;
+    if (!file.type.startsWith('image/')) {
+      toast.error('Please choose an image file (JPG, PNG, WebP).');
+      return;
+    }
+    if (file.size > 5 * 1024 * 1024) {
+      toast.error('Image must be under 5 MB.');
+      return;
+    }
+    setUploading(true);
+    try {
+      const { url } = await uploadImage(file, { kind: 'media', maxDim: 1280, quality: 0.72 });
+      useStoryStudioUi.getState().setAttachedImage(url);
+      toast.success('Photo attached — it will be the story’s lead image.');
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : 'Could not upload the image.');
+    } finally {
+      setUploading(false);
+      if (fileRef.current) fileRef.current.value = '';
+    }
   };
 
   if (!open) return null;
@@ -372,6 +132,9 @@ export function StoryStudioPanel() {
           <div className="text-[10px]" style={{ color: 'var(--gold-mid)' }}>Write a story draft with AI</div>
         </div>
         <div className="ml-auto flex items-center gap-1">
+          <button onClick={newChat} aria-label="New chat" title="Start a new story" className="flex h-7 w-7 items-center justify-center rounded-sm border border-white/15 hover:bg-white/10" style={{ color: 'var(--gold-mid)' }}>
+            <SquarePen size={14} />
+          </button>
           {voiceReady && (
             <button onClick={() => setVoiceMode((v) => !v)} aria-label={voiceMode ? 'Turn off spoken replies' : 'Read replies aloud'} title={voiceMode ? 'Spoken replies on' : 'Read replies aloud'} className="flex h-7 w-7 items-center justify-center rounded-sm border border-white/15 hover:bg-white/10" style={{ color: voiceMode ? 'var(--gold-bright)' : 'var(--gold-mid)' }}>
               {voiceMode ? <Volume2 size={14} /> : <VolumeX size={14} />}
@@ -388,7 +151,7 @@ export function StoryStudioPanel() {
         {messages.length === 0 && (
           <div className="space-y-3">
             <p className="text-[12px] leading-relaxed text-white/55">
-              Tell me your story idea or a headline — type or <strong className="text-white/80">speak it</strong> — and I’ll write the full story, then walk you through the photo, byline, tier, category and linked horses, and file it as a <strong className="text-white/80">draft</strong>.
+              Tell me your story idea or a headline — type or <strong className="text-white/80">speak it</strong> — and I’ll write the full story, then ask you about the photo, tier, category and linked horses, and file it as a <strong className="text-white/80">draft</strong>. Just reply in your own words.
             </p>
             <div className="flex flex-wrap gap-1.5">
               {STARTERS.map((c) => (
@@ -409,11 +172,8 @@ export function StoryStudioPanel() {
             </div>
           );
         })}
-        {busy && !pending && <div className="text-[12px] text-white/40">…working</div>}
+        {busy && <div className="text-[12px] text-white/40">…working</div>}
         {error && <p className="text-[11px] text-red-300">{error.message?.includes('resting') ? 'Story Studio isn’t switched on yet — set OPENROUTER_API_KEY on the server.' : 'Something went wrong — please try again.'}</p>}
-
-        {/* The card the model is currently waiting on */}
-        {pending && <InteractionCard pending={pending} />}
       </div>
 
       {/* Live caption while recording */}
@@ -424,8 +184,48 @@ export function StoryStudioPanel() {
         </div>
       )}
 
-      {/* Composer */}
+      {/* Horses on file — read-only reference list (not selectable); name the ones to link */}
+      {horseOptions && horseOptions.length > 0 && (
+        <div className="border-t border-white/10 bg-white/[0.03] px-3 py-2">
+          <div className="mb-1 text-[10px] font-bold uppercase tracking-wider text-amber-300/80">
+            Horses on file — say which to link
+          </div>
+          {/* ~4 rows visible; scroll inside the box for the rest */}
+          <ul className="max-h-[7rem] divide-y divide-white/5 overflow-y-auto rounded-sm border border-white/10 bg-white/[0.02]">
+            {horseOptions.map((h) => (
+              <li key={h.id} className="flex items-baseline justify-between gap-2 px-2.5 py-1.5">
+                <span className="truncate text-[12px] font-semibold text-white/85">{h.name}</span>
+                <span className="flex-shrink-0 truncate text-[10px] text-white/40">{h.trainer || '—'}</span>
+              </li>
+            ))}
+          </ul>
+        </div>
+      )}
+
+      {/* Attached lead-photo chip */}
+      {attachedImageUrl && (
+        <div className="flex items-center gap-2 border-t border-white/10 bg-white/[0.03] px-3 py-1.5">
+          <img src={attachedImageUrl} alt="Attached lead" crossOrigin="anonymous" className="h-7 w-10 flex-shrink-0 rounded-sm object-cover" />
+          <span className="flex-1 truncate text-[11px] text-white/60">Lead photo attached</span>
+          <button onClick={() => useStoryStudioUi.getState().setAttachedImage(null)} aria-label="Remove attached photo" className="text-white/50 hover:text-white/80">
+            <X size={13} />
+          </button>
+        </div>
+      )}
+
+      {/* Composer — the user answers everything here by typing or speaking */}
       <form onSubmit={(e) => { e.preventDefault(); send(input); }} className="flex items-center gap-2 border-t border-white/10 px-2.5 py-2">
+        <input ref={fileRef} type="file" accept="image/*" className="sr-only" onChange={(e) => void onAttach(e.target.files?.[0])} aria-label="Attach a lead photo" />
+        <button
+          type="button"
+          onClick={() => fileRef.current?.click()}
+          disabled={uploading}
+          aria-label="Attach a lead photo"
+          title="Attach a lead photo"
+          className="flex h-8 w-8 flex-shrink-0 items-center justify-center rounded-full border border-white/15 text-white/60 transition-colors hover:bg-white/10 disabled:opacity-50"
+        >
+          {uploading ? <Loader2 size={14} className="animate-spin" /> : <Paperclip size={14} />}
+        </button>
         <textarea
           ref={inputRef}
           value={input}
@@ -437,12 +237,12 @@ export function StoryStudioPanel() {
               send(input);
             }
           }}
-          disabled={recording || transcribing || !!pending}
-          placeholder={pending ? 'Use the card above…' : recording ? 'Listening…' : transcribing ? 'Transcribing…' : 'Describe your story idea…'}
+          disabled={recording || transcribing}
+          placeholder={recording ? 'Listening…' : transcribing ? 'Transcribing…' : 'Type or speak your answer…'}
           className="flex-1 resize-none rounded-2xl border border-white/15 bg-white/5 px-3 py-1.5 text-[12px] leading-snug text-white outline-none placeholder:text-white/30 focus:border-white/30 disabled:opacity-60"
         />
-        {voiceReady && !busy && !pending && (
-          <button type="button" onClick={() => void toggleMic()} disabled={transcribing} aria-label={recording ? 'Stop recording' : 'Speak your idea'} title={recording ? 'Stop & send' : 'Speak'} className={'flex h-8 w-8 items-center justify-center rounded-full border transition-colors disabled:opacity-50 ' + (recording ? 'animate-pulse border-red-500 bg-red-500/15 text-red-400' : 'border-white/15 text-white/60 hover:bg-white/10')}>
+        {voiceReady && !busy && (
+          <button type="button" onClick={() => void toggleMic()} disabled={transcribing} aria-label={recording ? 'Stop recording' : 'Speak your answer'} title={recording ? 'Stop & send' : 'Speak'} className={'flex h-8 w-8 items-center justify-center rounded-full border transition-colors disabled:opacity-50 ' + (recording ? 'animate-pulse border-red-500 bg-red-500/15 text-red-400' : 'border-white/15 text-white/60 hover:bg-white/10')}>
             {transcribing ? <Loader2 size={13} className="animate-spin" /> : recording ? <Square size={13} /> : <Mic size={13} />}
           </button>
         )}
@@ -451,7 +251,7 @@ export function StoryStudioPanel() {
             <Square size={13} />
           </button>
         ) : (
-          <button type="submit" aria-label="Send" disabled={!input.trim() || !!pending} className="flex h-8 w-8 items-center justify-center rounded-full text-[#0b1220] disabled:opacity-40" style={{ background: 'var(--gold-bright)' }}>
+          <button type="submit" aria-label="Send" disabled={!input.trim()} className="flex h-8 w-8 items-center justify-center rounded-full text-[#0b1220] disabled:opacity-40" style={{ background: 'var(--gold-bright)' }}>
             <Send size={13} />
           </button>
         )}

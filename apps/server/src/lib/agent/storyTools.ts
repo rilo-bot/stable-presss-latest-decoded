@@ -1,11 +1,15 @@
 // ---------------------------------------------------------------------------
 // Tools for the "Story Studio" assistant.
 //
-// Every tool is CLIENT-EXECUTED (declared WITHOUT `execute`): the AI SDK streams
-// the calls to the browser, which renders the matching card / runs the side
-// effect via onToolCall (apps/web/src/agent/story/storyToolExecutor.ts) and sends
-// the result back. The model writes the story; the browser collects the metadata
-// and files the draft.
+// The assistant is CONVERSATIONAL: it writes the story and collects the access
+// tier, category and which horses by letting the user type or speak — never via
+// buttons. The byline (the logged-in member), the reading time and the draft
+// stage are all set automatically, and the lead photo is attached client-side via
+// the composer's 📎 button — so the model needs none of those. Only two tools
+// remain, both CLIENT-EXECUTED (declared WITHOUT `execute`):
+//   - listHorses       — returns the register so the model can map spoken names to ids
+//   - createStoryDraft — files the finished draft
+// They run in the browser via onToolCall (apps/web/src/agent/story/storyToolExecutor.ts).
 // ---------------------------------------------------------------------------
 
 import { tool, type ToolSet } from 'ai'
@@ -19,52 +23,20 @@ const CATEGORY_VALUES = [
 
 export function buildStoryTools(): ToolSet {
   return {
-    proposeStory: tool({
+    listHorses: tool({
       description:
-        'Stage the written story for the user to review. Pass the headline as `title` and the FULL multi-paragraph story (blank-line separated) as `summary`. It is NOT saved — the user can Accept, request a Regenerate, or edit it. Returns { accepted, title, summary }. If not accepted, revise and call this again.',
-      inputSchema: z.object({
-        title: z.string().describe('The headline.'),
-        summary: z.string().describe('The full story text — several paragraphs separated by blank lines. The first paragraph is the lead.'),
-      }),
-    }),
-    requestPhoto: tool({
-      description:
-        'Ask the user whether to add a lead photo. Opens an optional image upload card. Returns { imageUrl: string | null } — null means no photo.',
-      inputSchema: z.object({}),
-    }),
-    requestByline: tool({
-      description:
-        'Ask the user for the byline / author. Returns { author }. For a contributor, pass their name as `suggested` so the card pre-fills and locks it.',
-      inputSchema: z.object({
-        suggested: z.string().optional().describe('A suggested author name to pre-fill.'),
-      }),
-    }),
-    requestAccessTier: tool({
-      description:
-        'Ask the user which subscription tier may read the story. Returns { minTier } — one of "free", "standard", "premium".',
-      inputSchema: z.object({}),
-    }),
-    requestCategory: tool({
-      description:
-        'Ask the user to pick the editorial category. Returns { category } — one of the valid category values.',
-      inputSchema: z.object({}),
-    }),
-    requestHorseLinks: tool({
-      description:
-        'Ask the user to link horse profiles to the story via a searchable multi-select. Returns { linkedHorseIds: string[] } (may be empty).',
+        'Return the horse register so you can match the horse names the user typed/spoke to their ids. Call this before asking which horses to link. Returns { horses: [{ id, name, trainer }] }.',
       inputSchema: z.object({}),
     }),
     createStoryDraft: tool({
       description:
-        'File the finished story as a DRAFT and open it for the user. Reading time and the draft stage are set automatically. Returns { ok, id }.',
+        'File the finished story as a DRAFT and open it for the user. The byline (logged-in member), reading time, draft stage and any attached lead photo are all applied automatically. Returns { ok, id }.',
       inputSchema: z.object({
-        title: z.string().describe('The accepted headline.'),
-        summary: z.string().describe('The accepted full story text.'),
-        author: z.string().describe('The byline returned by requestByline.'),
-        category: z.enum(CATEGORY_VALUES).optional().describe('The category returned by requestCategory.'),
-        minTier: z.enum(['free', 'standard', 'premium']).describe('The tier returned by requestAccessTier.'),
-        imageUrl: z.string().optional().describe('The image URL returned by requestPhoto, if any.'),
-        linkedHorseIds: z.array(z.string()).describe('Horse ids returned by requestHorseLinks (may be empty).'),
+        title: z.string().describe('The approved headline.'),
+        summary: z.string().describe('The approved full story text — paragraphs separated by blank lines.'),
+        category: z.enum(CATEGORY_VALUES).optional().describe('The category the user chose, mapped to one of the valid values.'),
+        minTier: z.enum(['free', 'standard', 'premium']).describe('The access tier the user chose.'),
+        linkedHorseIds: z.array(z.string()).describe('Ids (from listHorses) of the horses the user named — may be empty.'),
       }),
     }),
   }

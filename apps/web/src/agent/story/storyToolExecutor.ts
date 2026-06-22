@@ -1,38 +1,38 @@
 // Browser-side execution of the Story Studio assistant's client tools.
 //
-// The interactive tools (proposeStory / requestPhoto / requestByline /
-// requestAccessTier / requestCategory / requestHorseLinks) park a PendingInteraction
-// in the store and return a Promise that resolves when the matching card is
-// completed by the user. createStoryDraft computes the reading time, files the
-// draft through the article store, and records the new id so the panel can open it.
+// The assistant is conversational — tier, category and horse choices are gathered
+// in plain chat (typed or spoken). The byline is the signed-in member, the reading
+// time is computed, the draft stage is fixed, and the lead photo is attached via
+// the composer's 📎 button — so the model supplies none of those. Two tools run
+// here: listHorses returns the register so the model can map spoken names to ids;
+// createStoryDraft fills in the automatic fields, files the draft, and records the
+// new id so the panel can open it.
 
-import { useStoryStudioUi, type InteractionKind } from '@/stores/storyStudioUiStore';
+import { useStoryStudioUi } from '@/stores/storyStudioUiStore';
 import { useArticleStore } from '@/stores/articleStore';
+import { useHorseStore } from '@/stores/horseStore';
+import { usePartyStore } from '@/stores/partyStore';
+import { useAuthStore } from '@/stores/authStore';
+import { connectionResolver } from '@/lib/horseConnections';
 import type { SubscriptionTier } from '@/rbac/entitlement';
 
-const CLIENT_TOOLS = new Set([
-  'proposeStory',
-  'requestPhoto',
-  'requestByline',
-  'requestAccessTier',
-  'requestCategory',
-  'requestHorseLinks',
-  'createStoryDraft',
-]);
+const CLIENT_TOOLS = new Set(['listHorses', 'createStoryDraft']);
 
 export function isStoryClientTool(name: string): boolean {
   return CLIENT_TOOLS.has(name);
 }
 
-function newId(): string {
-  try { return crypto.randomUUID(); } catch { return `s-${Date.now()}-${Math.round(Math.random() * 1e6)}`; }
-}
-
-/** Park a card in the store and wait for the user to finish it. */
-function waitForInteraction(kind: InteractionKind, data?: Record<string, unknown>): Promise<unknown> {
-  return new Promise((resolve) => {
-    useStoryStudioUi.getState().setPending({ id: newId(), kind, data, resolve });
-  });
+async function listHorses(): Promise<unknown> {
+  await Promise.all([
+    useHorseStore.getState().fetchHorses(),
+    usePartyStore.getState().fetchParties(),
+  ]);
+  const horses = useHorseStore.getState().horses;
+  const conn = connectionResolver(usePartyStore.getState().parties);
+  const list = horses.slice(0, 200).map((h) => ({ id: h.id, name: h.name, trainer: conn(h).trainer || '' }));
+  // Also surface the list to the user as an on-screen, read-only reference box.
+  useStoryStudioUi.getState().setHorseOptions(list);
+  return { horses: list };
 }
 
 const VALID_TIERS: SubscriptionTier[] = ['free', 'standard', 'premium'];
@@ -46,12 +46,16 @@ async function createDraft(arg: Record<string, unknown>): Promise<unknown> {
   const words = summary.split(/\s+/).filter(Boolean).length;
   const readingTime = Math.max(1, Math.round(words / 200));
 
-  const author = String(arg.author ?? '').trim() || 'Staff Correspondent';
+  // Byline = the signed-in member (never asked).
+  const author = useAuthStore.getState().currentUser?.displayName?.trim() || 'Staff Correspondent';
+
   const category = arg.category ? String(arg.category) : undefined;
   const rawTier = String(arg.minTier ?? 'free') as SubscriptionTier;
   const minTier: SubscriptionTier = VALID_TIERS.includes(rawTier) ? rawTier : 'free';
-  const imageUrl = arg.imageUrl ? String(arg.imageUrl).trim() : undefined;
   const linkedHorseIds = Array.isArray(arg.linkedHorseIds) ? arg.linkedHorseIds.map(String) : [];
+
+  // Lead photo = whatever the user attached via the composer (kept out of the model's context).
+  const imageUrl = useStoryStudioUi.getState().attachedImageUrl?.trim() || undefined;
 
   const created = await useArticleStore.getState().addArticle({
     title,
@@ -75,22 +79,8 @@ export async function executeStoryTool(name: string, input: unknown): Promise<un
   const arg = (input ?? {}) as Record<string, unknown>;
 
   switch (name) {
-    case 'proposeStory': {
-      const title = String(arg.title ?? '').trim();
-      const summary = String(arg.summary ?? '').trim();
-      if (!title || !summary) return { accepted: false, error: 'title and summary are required' };
-      return waitForInteraction('story', { title, summary });
-    }
-    case 'requestPhoto':
-      return waitForInteraction('photo');
-    case 'requestByline':
-      return waitForInteraction('byline', { suggested: arg.suggested ? String(arg.suggested) : '' });
-    case 'requestAccessTier':
-      return waitForInteraction('tier');
-    case 'requestCategory':
-      return waitForInteraction('category');
-    case 'requestHorseLinks':
-      return waitForInteraction('horses');
+    case 'listHorses':
+      return listHorses();
     case 'createStoryDraft':
       return createDraft(arg);
     default:

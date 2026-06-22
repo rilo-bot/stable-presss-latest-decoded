@@ -1,32 +1,29 @@
 // ---------------------------------------------------------------------------
 // UI state for the "Story Studio" assistant — a right-side drawer that writes a
-// story draft with the user and files it. Holds the open flag, a one-shot pending
-// prompt (suggestion chips), the current PENDING INTERACTION (the on-screen card
-// the model is waiting on), and the id of the draft it just created (so the panel
-// can navigate to it). The model's client tools (storyToolExecutor.ts) park a
-// pending interaction here and await its `resolve`; the matching card calls
-// resolvePending() when the user finishes.
+// story draft with the user (a natural type-or-speak conversation) and files it.
+// Holds the open flag, a one-shot pending prompt (suggestion chips), the photo
+// the user attached via the composer's 📎 button (kept out of the model's context
+// so big data-URLs never bloat the chat), and the id of the draft just created
+// (so the panel can navigate to it). The conversation itself lives in the panel's
+// useChat hook and is preserved while the drawer is merely closed.
 // ---------------------------------------------------------------------------
 
 import { create } from 'zustand';
 
-/** The kinds of inline cards the Story Studio renders, one at a time. */
-export type InteractionKind = 'story' | 'photo' | 'byline' | 'tier' | 'category' | 'horses';
-
-/** A card the model is currently waiting on. `resolve` sends the result back to the model. */
-export interface PendingInteraction {
-  /** The tool call id this interaction answers. */
+/** A horse shown in the read-only reference list during the link step. */
+export interface HorseOption {
   id: string;
-  kind: InteractionKind;
-  /** Card seed data, e.g. the proposed { title, summary } or a suggested byline. */
-  data?: Record<string, unknown>;
-  resolve: (output: unknown) => void;
+  name: string;
+  trainer: string;
 }
 
 interface StoryStudioUiState {
   open: boolean;
   pendingPrompt: string | null;
-  pending: PendingInteraction | null;
+  /** Lead photo the user attached via the composer — injected at file-draft time. */
+  attachedImageUrl: string | null;
+  /** Display-only list of horses on file — shown when the model reaches the link step. */
+  horseOptions: HorseOption[] | null;
   /** Set once createStoryDraft succeeds — the panel navigates to it, then clears. */
   createdDraftId: string | null;
 
@@ -35,19 +32,18 @@ interface StoryStudioUiState {
   ask: (prompt: string) => void;
   consumePrompt: () => void;
 
-  setPending: (p: PendingInteraction | null) => void;
-  /** Resolve the current interaction with `output` and clear it. */
-  resolvePending: (output: unknown) => void;
-
+  setAttachedImage: (url: string | null) => void;
+  setHorseOptions: (list: HorseOption[] | null) => void;
   setCreatedDraft: (id: string | null) => void;
-  /** Clear transient per-session state (called when the drawer closes). */
+  /** Clear transient per-conversation state (called on "New chat" / after filing). */
   reset: () => void;
 }
 
-export const useStoryStudioUi = create<StoryStudioUiState>((set, get) => ({
+export const useStoryStudioUi = create<StoryStudioUiState>((set) => ({
   open: false,
   pendingPrompt: null,
-  pending: null,
+  attachedImageUrl: null,
+  horseOptions: null,
   createdDraftId: null,
 
   setOpen: (open) => set({ open }),
@@ -55,14 +51,8 @@ export const useStoryStudioUi = create<StoryStudioUiState>((set, get) => ({
   ask: (prompt) => set({ open: true, pendingPrompt: prompt }),
   consumePrompt: () => set({ pendingPrompt: null }),
 
-  setPending: (pending) => set({ pending }),
-  resolvePending: (output) => {
-    const { pending } = get();
-    if (!pending) return;
-    pending.resolve(output);
-    set({ pending: null });
-  },
-
+  setAttachedImage: (attachedImageUrl) => set({ attachedImageUrl }),
+  setHorseOptions: (horseOptions) => set({ horseOptions }),
   setCreatedDraft: (createdDraftId) => set({ createdDraftId }),
-  reset: () => set({ pending: null, pendingPrompt: null, createdDraftId: null }),
+  reset: () => set({ pendingPrompt: null, attachedImageUrl: null, horseOptions: null, createdDraftId: null }),
 }));
