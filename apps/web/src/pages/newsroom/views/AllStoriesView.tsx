@@ -16,6 +16,7 @@ interface AllStoriesViewProps {
   setSearchQuery: (v: string) => void;
   filteredArticles: Article[];
   onNewInColumn: (status: KanbanStatus) => void;
+  onOpenStudio: () => void;
   userRole: UserRole | null;
   currentUserDisplayName: string | undefined;
   onEdit: (article: Article) => void;
@@ -28,6 +29,7 @@ export function AllStoriesView({
   setSearchQuery,
   filteredArticles,
   onNewInColumn,
+  onOpenStudio,
   userRole,
   currentUserDisplayName,
   onEdit,
@@ -70,6 +72,8 @@ export function AllStoriesView({
           description="File your first dispatch to begin the newsroom record."
           ctaLabel="File a Story"
           onCta={() => onNewInColumn('draft')}
+          secondaryCtaLabel="Story Studio AI"
+          onSecondaryCta={onOpenStudio}
         />
       ) : (
         <div className="border border-border/60 rounded-sm overflow-auto">

@@ -11,6 +11,7 @@ import { toast } from 'sonner';
 
 import { MarkdownMessage } from '@/components/MarkdownMessage';
 import { useVoiceChat } from '@/agent/voice/useVoiceChat';
+import { useAutoGrowTextarea } from '@/lib/useAutoGrowTextarea';
 import { useEditorAgentUi } from '@/stores/editorAgentUiStore';
 import { createEditorTransport } from './editorTransport';
 import { executeEditorTool, isEditorClientTool } from './editOpsExecutor';
@@ -121,17 +122,9 @@ export function EditorAgentPanel() {
   const scrollRef = useRef<HTMLDivElement>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
 
-  // Auto-grow the composer (and shrink back when it's cleared after sending).
-  // scrollHeight excludes the border, but box-sizing is border-box, so add the
-  // top+bottom border (2px) to avoid a spurious 2px overflow → stray scrollbar.
-  useEffect(() => {
-    const el = textareaRef.current;
-    if (!el) return;
-    el.style.height = 'auto';
-    const full = el.scrollHeight + 2;
-    el.style.height = `${Math.min(full, 128)}px`;
-    el.style.overflowY = full > 128 ? 'auto' : 'hidden';
-  }, [input]);
+  // Auto-grow the composer (and shrink back when it's cleared after sending):
+  // wraps, grows up to 5 lines, then scrolls.
+  useAutoGrowTextarea(textareaRef, input);
 
   // Dispatch a message: first analyse any attached files (so the digest is in the
   // editor context and the fullText is ready for a fill), THEN send the message,
@@ -360,7 +353,7 @@ export function EditorAgentPanel() {
             }}
             disabled={recording || transcribing}
             placeholder={recording ? 'Listening…' : transcribing ? 'Transcribing…' : pendingFiles.length > 0 ? 'Describe the document, then Enter to fill the bulletin…' : 'Ask the studio assistant…  (Shift+Enter for a new line)'}
-            className="max-h-32 flex-1 resize-none rounded-2xl border border-white/15 bg-white/5 px-3 py-1.5 text-[12px] leading-snug text-white outline-none placeholder:text-white/30 focus:border-white/30 disabled:opacity-60"
+            className="flex-1 resize-none rounded-2xl border border-white/15 bg-white/5 px-3 py-1.5 text-[12px] leading-snug text-white outline-none placeholder:text-white/30 focus:border-white/30 disabled:opacity-60"
           />
           {voiceReady && !busy && (
             <button

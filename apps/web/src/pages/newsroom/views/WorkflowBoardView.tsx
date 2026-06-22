@@ -13,6 +13,7 @@ interface WorkflowBoardViewProps {
   myStories: number;
   totalStories: number;
   onNewInColumn: (status: KanbanStatus) => void;
+  onOpenStudio: () => void;
   visibleStages: typeof WORKFLOW_STAGES;
   activeColumn: KanbanStatus;
   setActiveColumn: (status: KanbanStatus) => void;
@@ -28,6 +29,7 @@ export function WorkflowBoardView({
   myStories,
   totalStories,
   onNewInColumn,
+  onOpenStudio,
   visibleStages,
   activeColumn,
   setActiveColumn,
@@ -47,6 +49,8 @@ export function WorkflowBoardView({
           description="File your first dispatch to begin the newsroom record. The board will fill as your team starts writing."
           ctaLabel="File Your First Story"
           onCta={() => onNewInColumn('draft')}
+          secondaryCtaLabel="Story Studio AI"
+          onSecondaryCta={onOpenStudio}
           className="mb-6"
         />
       )}

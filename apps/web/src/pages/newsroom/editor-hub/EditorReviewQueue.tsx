@@ -8,11 +8,12 @@ import { EditorReviewRow } from '../components/EditorReviewRow';
 interface EditorReviewQueueProps {
   buckets: Record<KanbanStatus, Article[]>;
   onNewInColumn: (status: KanbanStatus) => void;
+  onOpenStudio: () => void;
   onAdvance: (articleId: string, toStatus: KanbanStatus) => void;
   onEdit: (article: Article) => void;
 }
 
-export function EditorReviewQueue({ buckets, onNewInColumn, onAdvance, onEdit }: EditorReviewQueueProps) {
+export function EditorReviewQueue({ buckets, onNewInColumn, onOpenStudio, onAdvance, onEdit }: EditorReviewQueueProps) {
   const submitted = buckets.submitted;
   const inReview = buckets.editorial_review;
   const inRevision = buckets.revision;
@@ -100,6 +101,8 @@ export function EditorReviewQueue({ buckets, onNewInColumn, onAdvance, onEdit }:
               description="Submitted stories from contributors will appear here. Once a story lands, you can pull it into editorial review or send it back for revision."
               ctaLabel="File a Story"
               onCta={() => onNewInColumn('draft')}
+              secondaryCtaLabel="Story Studio AI"
+              onSecondaryCta={onOpenStudio}
             />
           </div>
         ) : (

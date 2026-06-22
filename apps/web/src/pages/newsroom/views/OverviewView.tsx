@@ -32,6 +32,7 @@ interface OverviewViewProps {
   publishedCount: number;
   buckets: Record<KanbanStatus, Article[]>;
   onNewInColumn: (status: KanbanStatus) => void;
+  onOpenStudio: () => void;
   filteredArticles: Article[];
   currentUserDisplayName: string | undefined;
   onEdit: (article: Article) => void;
@@ -52,6 +53,7 @@ export function OverviewView({
   publishedCount,
   buckets,
   onNewInColumn,
+  onOpenStudio,
   filteredArticles,
   currentUserDisplayName,
   onEdit,
@@ -295,6 +297,8 @@ export function OverviewView({
           description="File your first story to begin building the newsroom record."
           ctaLabel="File a Story"
           onCta={() => onNewInColumn('draft')}
+          secondaryCtaLabel="Story Studio AI"
+          onSecondaryCta={onOpenStudio}
         />
       )}
 

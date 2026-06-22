@@ -7,6 +7,7 @@ import { useRef, useState } from 'react';
 import { Sparkles, Mic, Square, Loader2, Check, RotateCcw, X } from 'lucide-react';
 import { composeField } from './composeClient';
 import { isRecordingSupported, startRecording, transcribe, type Recorder } from '@/agent/voice/voiceClient';
+import { useAutoGrowTextarea } from '@/lib/useAutoGrowTextarea';
 
 export interface AiComposeButtonProps {
   /** Human label of the field, e.g. "Summary". */
@@ -33,6 +34,10 @@ export function AiComposeButton({ label, fieldKey, entityKind, getContext, getCu
   const [transcribing, setTranscribing] = useState(false);
   const [error, setError] = useState('');
   const recorderRef = useRef<Recorder | null>(null);
+  const briefRef = useRef<HTMLTextAreaElement>(null);
+  // Drive sizing off `brief` (not the textarea's value, which is swapped to a
+  // status string while recording) so it grows to 5 lines then scrolls.
+  useAutoGrowTextarea(briefRef, brief);
 
   const reset = () => { setBrief(''); setDraft(''); setError(''); };
   const close = () => { setOpen(false); recorderRef.current?.cancel(); recorderRef.current = null; setRecording(false); };
@@ -109,12 +114,13 @@ export function AiComposeButton({ label, fieldKey, entityKind, getContext, getCu
             {/* Brief: type or dictate (optional) */}
             <div className="relative">
               <textarea
+                ref={briefRef}
                 value={recording ? 'Listening…' : transcribing ? 'Transcribing…' : brief}
                 onChange={(e) => setBrief(e.target.value)}
                 readOnly={recording || transcribing}
                 rows={2}
                 placeholder="Optional — tell me what to write, or just Generate from the form."
-                className="w-full resize-none rounded-md border border-input bg-background px-2.5 py-2 pr-8 text-xs outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                className="w-full resize-none rounded-md border border-input bg-background px-2.5 py-2 pr-8 text-xs leading-snug outline-none focus-visible:ring-2 focus-visible:ring-ring"
               />
               {isRecordingSupported() && (
                 <button

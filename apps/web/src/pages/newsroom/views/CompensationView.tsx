@@ -9,9 +9,10 @@ interface CompensationViewProps {
   currentUserDisplayName: string | undefined;
   setActiveNav: (nav: string) => void;
   onNewInColumn: (status: KanbanStatus) => void;
+  onOpenStudio: () => void;
 }
 
-export function CompensationView({ articles, currentUserDisplayName, setActiveNav, onNewInColumn }: CompensationViewProps) {
+export function CompensationView({ articles, currentUserDisplayName, setActiveNav, onNewInColumn, onOpenStudio }: CompensationViewProps) {
   const myPublished = (articles ?? []).filter(
     (a) =>
       a.author === currentUserDisplayName &&
@@ -82,6 +83,8 @@ export function CompensationView({ articles, currentUserDisplayName, setActiveNa
                 setActiveNav('workflow');
                 onNewInColumn('draft');
               }}
+              secondaryCtaLabel="Story Studio AI"
+              onSecondaryCta={onOpenStudio}
             />
           </div>
         ) : (
