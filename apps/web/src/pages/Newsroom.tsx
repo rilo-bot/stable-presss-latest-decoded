@@ -47,6 +47,8 @@ import { useProductionSystems } from './newsroom/useProductionSystems';
 import { NewsroomSidebar } from './newsroom/components/NewsroomSidebar';
 import { NewsroomTopBar } from './newsroom/components/NewsroomTopBar';
 import { NewsroomPageHeader } from './newsroom/components/NewsroomPageHeader';
+import { StoryStudioPanel } from '@/agent/story/StoryStudioPanel';
+import { useStoryStudioUi } from '@/stores/storyStudioUiStore';
 
 /* ── Component ────────────────────────────────────────── */
 
@@ -238,6 +240,12 @@ export default function Newsroom() {
     setFormOpen(true);
   };
 
+  // Open the Story Studio AI drawer (same gate as filing a story manually).
+  const handleOpenStudio = () => {
+    if (!can(userRole, 'content.draft.create')) return;
+    useStoryStudioUi.getState().setOpen(true);
+  };
+
   const handleFormClose = () => {
     setFormOpen(false);
     setEditArticle(null);
@@ -317,6 +325,7 @@ export default function Newsroom() {
           onOpenMediaForm={handleOpenMediaForm}
           onOpenRacingForm={handleOpenRacingForm}
           onNewInColumn={handleNewInColumn}
+          onOpenStudio={handleOpenStudio}
         />
 
         {/* Page body */}
@@ -370,6 +379,7 @@ export default function Newsroom() {
               publishedCount={publishedCount}
               buckets={buckets}
               onNewInColumn={handleNewInColumn}
+              onOpenStudio={handleOpenStudio}
               filteredArticles={filteredArticles}
               currentUserDisplayName={currentUser?.displayName}
               onEdit={handleEdit}
@@ -381,6 +391,7 @@ export default function Newsroom() {
               myStories={myStories}
               totalStories={totalStories}
               onNewInColumn={handleNewInColumn}
+              onOpenStudio={handleOpenStudio}
               visibleStages={visibleStages}
               activeColumn={activeColumn}
               setActiveColumn={setActiveColumn}
@@ -400,6 +411,7 @@ export default function Newsroom() {
               setSearchQuery={setSearchQuery}
               filteredArticles={filteredArticles}
               onNewInColumn={handleNewInColumn}
+              onOpenStudio={handleOpenStudio}
               userRole={userRole}
               currentUserDisplayName={currentUser?.displayName}
               onEdit={handleEdit}
@@ -415,6 +427,7 @@ export default function Newsroom() {
               onAdvance={handleAdvance}
               onEdit={handleEdit}
               onNewInColumn={handleNewInColumn}
+              onOpenStudio={handleOpenStudio}
               assignDialogArticle={assignDialogArticle}
               setAssignDialogArticle={setAssignDialogArticle}
               assignNote={assignNote}
@@ -441,6 +454,7 @@ export default function Newsroom() {
               currentUserDisplayName={currentUser?.displayName}
               setActiveNav={setActiveNav}
               onNewInColumn={handleNewInColumn}
+              onOpenStudio={handleOpenStudio}
             />
           )}
           {activeNav === 'horses' && (
@@ -557,6 +571,9 @@ export default function Newsroom() {
         defaultStatus={defaultStatus}
         userRole={userRole}
       />
+
+      {/* Story Studio AI drawer — writes & files a draft conversationally */}
+      <StoryStudioPanel />
 
       {/* Horse form dialog */}
       <HorseForm

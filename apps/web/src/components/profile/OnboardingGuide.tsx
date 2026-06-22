@@ -20,6 +20,7 @@ import { useEditorAgentUi } from '@/stores/editorAgentUiStore';
 import { PARTY_ROLE_LABELS } from '@/types/party';
 import { useProfileChatSession, messageText } from '@/agent/profile/useProfileChatSession';
 import { useVoiceChat } from '@/agent/voice/useVoiceChat';
+import { useAutoGrowTextarea } from '@/lib/useAutoGrowTextarea';
 import { applyProposal, discardProposal, applyAllProposals, discardAllProposals, undoLastProposal } from '@/agent/profile/applyProposals';
 import { serifStyle, displayStyle } from '@/components/profile/kit';
 
@@ -86,6 +87,8 @@ export function OnboardingGuide({ steps, name, onShowMe, onAskStep, onSkipStep, 
 
   const mascotRef = useRef<HTMLButtonElement>(null);
   const scrollRef = useRef<HTMLDivElement>(null);
+  const inputRef = useRef<HTMLTextAreaElement>(null);
+  useAutoGrowTextarea(inputRef, input);
 
   const activeStep = steps.find((s) => !s.done);
   const activeKey = activeStep?.key;
@@ -269,7 +272,7 @@ export function OnboardingGuide({ steps, name, onShowMe, onAskStep, onSkipStep, 
           )}
 
           <form onSubmit={(e) => { e.preventDefault(); send(input); }} className="sku-green-header" style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '7px 9px' }}>
-            <input value={input} onChange={(e) => setInput(e.target.value)} disabled={recording || transcribing} placeholder={recording ? 'Listening…' : transcribing ? 'Transcribing…' : `Ask ${name}…`} style={{ flex: 1, borderRadius: 14, border: '1px solid var(--gold-dark)', background: 'rgba(0,0,0,0.25)', color: 'var(--parchment)', padding: '5px 11px', fontSize: '0.72rem', outline: 'none', ...serifStyle }} />
+            <textarea ref={inputRef} value={input} rows={1} onChange={(e) => setInput(e.target.value)} onKeyDown={(e) => { if (e.key === 'Enter' && !e.shiftKey && !e.nativeEvent.isComposing) { e.preventDefault(); send(input); } }} disabled={recording || transcribing} placeholder={recording ? 'Listening…' : transcribing ? 'Transcribing…' : `Ask ${name}…`} style={{ flex: 1, borderRadius: 14, border: '1px solid var(--gold-dark)', background: 'rgba(0,0,0,0.25)', color: 'var(--parchment)', padding: '5px 11px', fontSize: '0.72rem', lineHeight: 1.4, resize: 'none', outline: 'none', ...serifStyle }} />
             {voiceReady && !busy && (
               <button type="button" onClick={() => void toggleMic()} disabled={transcribing} aria-label={recording ? 'Stop recording' : `Speak to ${name}`} title={recording ? 'Stop & send' : 'Speak'} className={recording ? 'animate-pulse' : undefined} style={{ flexShrink: 0, width: 30, height: 30, borderRadius: '50%', border: `1px solid ${recording ? '#c0392b' : 'var(--gold-dark)'}`, background: recording ? 'rgba(192,57,43,0.22)' : 'rgba(0,0,0,0.25)', color: recording ? '#e74c3c' : 'var(--parchment)', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
                 {transcribing ? <Loader2 size={12} className="animate-spin" /> : recording ? <Square size={12} /> : <Mic size={12} />}

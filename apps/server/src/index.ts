@@ -89,6 +89,7 @@ import metricsRouter from './routes/metrics.js'
 import agentRouter from './routes/agent.js'
 import agentEditorRouter from './routes/agentEditor.js'
 import agentProfileRouter from './routes/agentProfile.js'
+import agentStoryRouter from './routes/agentStory.js'
 import agentVoiceRouter from './routes/agentVoice.js'
 import agentComposeRouter from './routes/agentCompose.js'
 import newsroomRouter from './routes/newsroom.js'
@@ -143,6 +144,7 @@ app.use('/api/newsroom', newsroomRouter)
 // Editor route is mounted first (more specific path) so /editor/* resolves here.
 app.use('/api/agent/editor', agentEditorRouter)  // in-editor Studio Assistant (client-executed editor tools)
 app.use('/api/agent/profile', agentProfileRouter) // in-profile Stable Studio assistant (client-executed, staged proposals)
+app.use('/api/agent/story', agentStoryRouter)    // Story Studio — writes & files a story draft (client-executed tools)
 app.use('/api/agent/voice', agentVoiceRouter)    // OpenAI STT/TTS for the concierge (key stays server-side)
 app.use('/api/agent/compose', agentComposeRouter) // AI field-composer for form fields (✨ button)
 app.use('/api/agent', agentRouter)

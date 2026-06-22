@@ -1,4 +1,4 @@
-import { Bell, Plus } from 'lucide-react';
+import { Bell, Plus, Sparkles } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { can } from '@/lib/permissions';
 import type { UserRole } from '@/stores/authStore';
@@ -16,6 +16,7 @@ interface NewsroomTopBarProps {
   onOpenMediaForm: () => void;
   onOpenRacingForm: () => void;
   onNewInColumn: (status: 'draft') => void;
+  onOpenStudio: () => void;
 }
 
 export function NewsroomTopBar({
@@ -30,6 +31,7 @@ export function NewsroomTopBar({
   onOpenMediaForm,
   onOpenRacingForm,
   onNewInColumn,
+  onOpenStudio,
 }: NewsroomTopBarProps) {
   return (
     <div className="flex items-center justify-between px-4 md:px-6 py-3.5 border-b border-border/40 bg-card">
@@ -130,15 +132,27 @@ export function NewsroomTopBar({
         )}
 
         {activeNav !== 'horses' && activeNav !== 'parties' && activeNav !== 'media-production-system' && activeNav !== 'racing-production-system' && activeNav !== 'bulletin-templates' && can(userRole, 'content.draft.create') && (
-          <Button
-            size="sm"
-            className="bg-primary text-primary-foreground hover:bg-primary/90 gap-1.5 text-sm"
-            onClick={() => onNewInColumn('draft')}
-          >
-            <Plus size={13} />
-            <span className="hidden sm:inline">File a Story</span>
-            <span className="sm:hidden">New</span>
-          </Button>
+          <>
+            <Button
+              size="sm"
+              variant="outline"
+              className="gap-1.5 text-sm"
+              onClick={onOpenStudio}
+            >
+              <Sparkles size={13} />
+              <span className="hidden sm:inline">Story Studio AI</span>
+              <span className="sm:hidden">AI</span>
+            </Button>
+            <Button
+              size="sm"
+              className="bg-primary text-primary-foreground hover:bg-primary/90 gap-1.5 text-sm"
+              onClick={() => onNewInColumn('draft')}
+            >
+              <Plus size={13} />
+              <span className="hidden sm:inline">File a Story</span>
+              <span className="sm:hidden">New</span>
+            </Button>
+          </>
         )}
       </div>
     </div>

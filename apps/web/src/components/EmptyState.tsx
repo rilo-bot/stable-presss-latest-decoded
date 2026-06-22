@@ -1,7 +1,7 @@
 import { cn } from '@/lib/utils';
 import { Button } from '@/components/ui/button';
 import { Link } from 'react-router-dom';
-import type { LucideIcon } from 'lucide-react';
+import { Sparkles, type LucideIcon } from 'lucide-react';
 
 interface EmptyStateProps {
   icon: LucideIcon;
@@ -10,6 +10,9 @@ interface EmptyStateProps {
   ctaLabel?: string;
   onCta?: () => void;
   ctaHref?: string;
+  /** Optional secondary action shown beside the primary CTA (e.g. "Story Studio AI"). */
+  secondaryCtaLabel?: string;
+  onSecondaryCta?: () => void;
   className?: string;
   /** Subdued variant — no border, used inline within larger containers */
   subdued?: boolean;
@@ -29,6 +32,8 @@ export function EmptyState({
   ctaLabel,
   onCta,
   ctaHref,
+  secondaryCtaLabel,
+  onSecondaryCta,
   className,
   subdued = false,
   size = 'md',
@@ -90,25 +95,36 @@ export function EmptyState({
       </p>
 
       {/* CTA */}
-      {ctaLabel && (onCta || ctaHref) && (
-        <div className="mt-6">
-          {onCta ? (
+      {((ctaLabel && (onCta || ctaHref)) || (secondaryCtaLabel && onSecondaryCta)) && (
+        <div className="mt-6 flex flex-wrap items-center justify-center gap-2">
+          {ctaLabel && onCta ? (
             <Button
-              size={size === 'sm' ? 'sm' : 'sm'}
+              size="sm"
               className="bg-primary text-primary-foreground hover:bg-primary/90"
               onClick={onCta}
             >
               {ctaLabel}
             </Button>
-          ) : ctaHref ? (
+          ) : ctaLabel && ctaHref ? (
             <Button
-              size={size === 'sm' ? 'sm' : 'sm'}
+              size="sm"
               className="bg-primary text-primary-foreground hover:bg-primary/90"
               asChild
             >
               <Link to={ctaHref}>{ctaLabel}</Link>
             </Button>
           ) : null}
+          {secondaryCtaLabel && onSecondaryCta && (
+            <Button
+              size="sm"
+              variant="outline"
+              className="gap-1.5"
+              onClick={onSecondaryCta}
+            >
+              <Sparkles size={13} />
+              {secondaryCtaLabel}
+            </Button>
+          )}
         </div>
       )}
     </div>

@@ -3,9 +3,11 @@
  * memoized and wrapped in a content-visibility container so offscreen pages
  * skip layout/paint and editing one region never re-renders the others.
  *
- * Per-user access (collaboration): pages the current user may edit render
- * interactively; pages outside their assignment render read-only (view mode),
- * and the "include in publish" toggle is shown only to owner/editor.
+ * Per-user access (collaboration): the owner (and collaborators granted all
+ * pages) see every page and edit it interactively. A collaborator assigned a
+ * specific set of pages only sees those pages — pages outside their assignment
+ * are hidden from their canvas entirely. The "include in publish" toggle and
+ * structural controls are shown only to the owner.
  */
 
 import { memo, useMemo, useState, type ReactNode } from 'react';
@@ -256,6 +258,10 @@ export function MagazineCanvas({ magazineId, scale }: { magazineId: string; scal
   const canManage = access?.role === 'owner'; // structural ops + publish-selection are owner-only
   const isEditable = (pageId: string) => editableIds === 'all' || editableIds.includes(pageId);
 
+  // Collaborators scoped to specific pages only see those pages; the owner and
+  // anyone granted all pages see the whole magazine.
+  const visibleMetas = editableIds === 'all' ? metas : metas.filter((m) => editableIds.includes(m.id));
+
   return (
     <div
       className="flex flex-col items-center gap-9 px-6 py-10"
@@ -263,7 +269,7 @@ export function MagazineCanvas({ magazineId, scale }: { magazineId: string; scal
         if (e.target === e.currentTarget) select(null);
       }}
     >
-      {metas.map((m, i) => (
+      {visibleMetas.map((m, i) => (
         <CanvasPage
           key={m.id}
           magazineId={magazineId}
@@ -275,7 +281,7 @@ export function MagazineCanvas({ magazineId, scale }: { magazineId: string; scal
           editable={isEditable(m.id)}
           canManage={canManage}
           index={i}
-          total={metas.length}
+          total={visibleMetas.length}
         />
       ))}
       {canManage && (

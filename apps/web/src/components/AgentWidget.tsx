@@ -24,6 +24,7 @@ import { useAgentUi } from '@/stores/agentUiStore';
 import { useEditorAgentUi } from '@/stores/editorAgentUiStore';
 import { MarkdownMessage } from '@/components/MarkdownMessage';
 import { useVoiceChat } from '@/agent/voice/useVoiceChat';
+import { useAutoGrowTextarea } from '@/lib/useAutoGrowTextarea';
 
 // ── Page-context derivation ────────────────────────────────────────────────
 // Turns the current path into a small hint the assistant can use. The agent
@@ -146,6 +147,8 @@ export function AgentWidget() {
   const reduce = useReducedMotion();
   const location = useLocation();
   const scrollRef = useRef<HTMLDivElement>(null);
+  const inputRef = useRef<HTMLTextAreaElement>(null);
+  useAutoGrowTextarea(inputRef, input);
 
   // Created once. The custom fetch reads the token + current page at SEND time,
   // so a single transport stays correct as the user navigates and signs in/out.
@@ -430,12 +433,20 @@ export function AgentWidget() {
               }}
               className="flex items-center gap-2 border-t border-border bg-card px-3 py-2.5"
             >
-              <input
+              <textarea
+                ref={inputRef}
                 value={input}
+                rows={1}
                 onChange={(e) => setInput(e.target.value)}
+                onKeyDown={(e) => {
+                  if (e.key === 'Enter' && !e.shiftKey && !e.nativeEvent.isComposing) {
+                    e.preventDefault();
+                    send(input);
+                  }
+                }}
                 placeholder={recording ? 'Listening…' : transcribing ? 'Transcribing…' : 'Ask me anything…'}
                 disabled={recording || transcribing}
-                className="flex-1 rounded-full border border-border bg-background px-3 py-2 text-sm outline-none focus:ring-2 disabled:opacity-70"
+                className="flex-1 resize-none rounded-2xl border border-border bg-background px-3 py-2 text-sm leading-snug outline-none focus:ring-2 disabled:opacity-70"
                 style={{ ['--tw-ring-color' as string]: GOLD }}
               />
               {voiceReady && !busy && (

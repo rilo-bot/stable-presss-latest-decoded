@@ -10,7 +10,7 @@ const ROLE_GOLD = '#8a6b1e';
 // celebrations, a navy pull-quote tile, and a view-galleries QR row.
 const tile = (i: number, photo: string, cap: string) => ({
   [`photo${i}`]: img(photo, 'cover'),
-  [`photo${i}Cap`]: text(cap, { ...P.qrLabel, color: ROLE_GOLD }),
+  [`photo${i}Cap`]: text(cap, { ...P.kickerWhite, fontSize: 9.5, letterSpacing: 0.8 }),
 });
 
 export const loungePx: PageBlueprint = mkPage('owners-lounge-px', 'Owners Lounge', {
@@ -27,17 +27,20 @@ export const loungePx: PageBlueprint = mkPage('owners-lounge-px', 'Owners Lounge
     { ...P.pullQuote, color: ROLE_GOLD, fontSize: 15 }
   ),
 
-  // Labelled photo tiles
+  // Labelled photo collage (captions overlaid on each photo)
   ...tile(1, STOCK.champagne, 'RACE-DAY GATHERINGS'),
   ...tile(2, STOCK.crowd, 'OWNERS BARS'),
   ...tile(3, STOCK.ownersCelebrate, 'FAMILY GROUPS'),
   ...tile(4, STOCK.women, 'SYNDICATES'),
-  ...tile(5, STOCK.raceFinish, 'CELEBRATIONS'),
+  ...tile(5, STOCK.winnersCircle, 'CELEBRATIONS'),
+  photo6: img(STOCK.crowd2, 'cover'), // wide panorama strip
+  photo7: img(STOCK.celebrate2, 'cover'),
+  photo8: img(STOCK.champagne, 'cover'),
 
   // Pull quote (navy tile)
   quote: text(
     "Racing gives us the opportunity to create memories that last a lifetime. That's what makes it so special.",
-    { ...P.pullQuote, color: WHITE, italic: true }
+    { ...P.pullQuote, color: WHITE, italic: true, fontSize: 14 }
   ),
 
   // Gallery QR row

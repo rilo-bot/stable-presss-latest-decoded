@@ -14,6 +14,7 @@ import { useEditorAgentUi } from '@/stores/editorAgentUiStore';
 import { PARTY_ROLE_LABELS } from '@/types/party';
 import { useProfileChatSession, messageText } from './useProfileChatSession';
 import { useVoiceChat } from '@/agent/voice/useVoiceChat';
+import { useAutoGrowTextarea } from '@/lib/useAutoGrowTextarea';
 import { applyProposal, discardProposal, applyAllProposals, discardAllProposals, undoLastProposal } from './applyProposals';
 
 /** Breadcrumb launcher that opens the Stable Studio drawer (edit views only). */
@@ -79,6 +80,8 @@ export function ProfileAgentPanel() {
   const [input, setInput] = useState('');
   const busy = status === 'submitted' || status === 'streaming';
   const scrollRef = useRef<HTMLDivElement>(null);
+  const inputRef = useRef<HTMLTextAreaElement>(null);
+  useAutoGrowTextarea(inputRef, input);
 
   // While open, hide the global Stablehand launcher (shared editor suppress flag).
   useEffect(() => {
@@ -200,12 +203,20 @@ export function ProfileAgentPanel() {
 
       {/* Composer */}
       <form onSubmit={(e) => { e.preventDefault(); send(input); }} className="flex items-center gap-2 border-t border-white/10 px-2.5 py-2">
-        <input
+        <textarea
+          ref={inputRef}
           value={input}
+          rows={1}
           onChange={(e) => setInput(e.target.value)}
+          onKeyDown={(e) => {
+            if (e.key === 'Enter' && !e.shiftKey && !e.nativeEvent.isComposing) {
+              e.preventDefault();
+              send(input);
+            }
+          }}
           disabled={recording || transcribing}
           placeholder={recording ? 'Listening…' : transcribing ? 'Transcribing…' : 'Ask the studio assistant…'}
-          className="flex-1 rounded-full border border-white/15 bg-white/5 px-3 py-1.5 text-[12px] text-white outline-none placeholder:text-white/30 focus:border-white/30 disabled:opacity-70"
+          className="flex-1 resize-none rounded-2xl border border-white/15 bg-white/5 px-3 py-1.5 text-[12px] leading-snug text-white outline-none placeholder:text-white/30 focus:border-white/30 disabled:opacity-70"
         />
         {voiceReady && !busy && (
           <button type="button" onClick={() => void toggleMic()} disabled={transcribing} aria-label={recording ? 'Stop recording' : 'Speak to the studio assistant'} title={recording ? 'Stop & send' : 'Speak'} className={'flex h-8 w-8 items-center justify-center rounded-full border transition-colors disabled:opacity-50 ' + (recording ? 'animate-pulse border-red-500 bg-red-500/15 text-red-400' : 'border-white/15 text-white/60 hover:bg-white/10')}>

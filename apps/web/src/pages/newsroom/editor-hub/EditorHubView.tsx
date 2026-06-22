@@ -27,6 +27,7 @@ interface EditorHubViewProps {
   onAdvance: (articleId: string, toStatus: KanbanStatus) => void;
   onEdit: (article: Article) => void;
   onNewInColumn: (status: KanbanStatus) => void;
+  onOpenStudio: () => void;
   // Assignments
   assignDialogArticle: Article | null;
   setAssignDialogArticle: (a: Article | null) => void;
@@ -96,6 +97,7 @@ export function EditorHubView(props: EditorHubViewProps) {
           <EditorReviewQueue
             buckets={props.buckets}
             onNewInColumn={props.onNewInColumn}
+            onOpenStudio={props.onOpenStudio}
             onAdvance={props.onAdvance}
             onEdit={props.onEdit}
           />
@@ -109,6 +111,7 @@ export function EditorHubView(props: EditorHubViewProps) {
             setAssignNote={props.setAssignNote}
             updateArticle={props.updateArticle}
             onNewInColumn={props.onNewInColumn}
+            onOpenStudio={props.onOpenStudio}
             onEdit={props.onEdit}
           />
         )}

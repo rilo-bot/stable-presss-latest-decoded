@@ -19,7 +19,8 @@ interface ArticleState {
   loaded: boolean;
   error: string | null;
   fetchArticles: () => Promise<void>;
-  addArticle: (article: Omit<Article, 'id' | 'createdAt'>) => Promise<void>;
+  /** Resolves with the created article (with server-assigned id), or null on failure. */
+  addArticle: (article: Omit<Article, 'id' | 'createdAt'>) => Promise<Article | null>;
   updateArticle: (id: string, updates: Partial<Article>) => Promise<void>;
   removeArticle: (id: string) => Promise<void>;
   publishArticle: (id: string) => Promise<void>;
@@ -57,10 +58,12 @@ export const useArticleStore = create<ArticleState>()((set, get) => ({
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
       const created = normalizeArticle(await res.json());
       set((state) => ({ articles: [...state.articles, created] }));
+      return created;
     } catch (err) {
       const message = err instanceof Error ? err.message : 'Failed to create article';
       set({ error: message });
       toast.error(message);
+      return null;
     }
   },
 

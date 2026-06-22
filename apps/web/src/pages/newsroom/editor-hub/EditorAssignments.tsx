@@ -15,6 +15,7 @@ interface EditorAssignmentsProps {
   setAssignNote: (v: string) => void;
   updateArticle: (id: string, updates: Partial<Article>) => Promise<void>;
   onNewInColumn: (status: KanbanStatus) => void;
+  onOpenStudio: () => void;
   onEdit: (article: Article) => void;
 }
 
@@ -26,6 +27,7 @@ export function EditorAssignments({
   setAssignNote,
   updateArticle,
   onNewInColumn,
+  onOpenStudio,
   onEdit,
 }: EditorAssignmentsProps) {
   const allArticles = articles ?? [];
@@ -118,6 +120,8 @@ export function EditorAssignments({
               description="Stories in Draft, Revision, and Editorial Review stages will appear here."
               ctaLabel="File a Story"
               onCta={() => onNewInColumn('draft')}
+              secondaryCtaLabel="Story Studio AI"
+              onSecondaryCta={onOpenStudio}
             />
           </div>
         ) : (
