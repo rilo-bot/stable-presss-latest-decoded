@@ -5,6 +5,7 @@ import { cn } from '@/lib/utils';
 import { toast } from 'sonner';
 import type { KanbanStatus } from '@/components/KanbanColumn';
 import type { Article } from '@/types/article';
+import type { ArticleUpdate } from '@/stores/articleStore';
 import { StatusBadge } from '../components/StatusBadge';
 
 interface EditorAssignmentsProps {
@@ -13,7 +14,7 @@ interface EditorAssignmentsProps {
   setAssignDialogArticle: (a: Article | null) => void;
   assignNote: string;
   setAssignNote: (v: string) => void;
-  updateArticle: (id: string, updates: Partial<Article>) => Promise<void>;
+  updateArticle: (id: string, updates: ArticleUpdate) => Promise<boolean>;
   onNewInColumn: (status: KanbanStatus) => void;
   onOpenStudio: () => void;
   onEdit: (article: Article) => void;

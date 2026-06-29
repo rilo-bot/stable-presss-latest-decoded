@@ -4,6 +4,19 @@ import { toast } from 'sonner';
 import type { Article, ArticleStatus } from '@/types/article';
 
 /**
+ * Fields a partial article edit may set. `null` is allowed on the optional
+ * `category` / `readingTime` so an editor can explicitly CLEAR them: a bare
+ * `undefined` is dropped by JSON.stringify and the server would keep the old
+ * value, whereas `null` is sent and persisted (the store does a `$set`/merge).
+ */
+export type ArticleUpdate = Partial<Omit<Article, 'category' | 'readingTime' | 'imageUrl' | 'tags'>> & {
+  category?: string | null;
+  readingTime?: number | null;
+  imageUrl?: string | null;
+  tags?: string[] | null;
+};
+
+/**
  * Coerce a raw API article into the shape the UI relies on. The server doesn't
  * default array fields, so legacy/seed docs can arrive without linkedHorseIds —
  * which the type claims is always present. Normalising here keeps every
@@ -21,7 +34,8 @@ interface ArticleState {
   fetchArticles: () => Promise<void>;
   /** Resolves with the created article (with server-assigned id), or null on failure. */
   addArticle: (article: Omit<Article, 'id' | 'createdAt'>) => Promise<Article | null>;
-  updateArticle: (id: string, updates: Partial<Article>) => Promise<void>;
+  /** Resolves `true` if the save reached the server, `false` if it failed (and was rolled back). */
+  updateArticle: (id: string, updates: ArticleUpdate) => Promise<boolean>;
   removeArticle: (id: string) => Promise<void>;
   publishArticle: (id: string) => Promise<void>;
   setStatus: (id: string, status: ArticleStatus) => Promise<void>;
@@ -70,7 +84,7 @@ export const useArticleStore = create<ArticleState>()((set, get) => ({
   updateArticle: async (id, updates) => {
     const previous = get().articles;
     set({
-      articles: previous.map((a) => (a.id === id ? { ...a, ...updates } : a)),
+      articles: previous.map((a) => (a.id === id ? ({ ...a, ...updates } as Article) : a)),
     });
     try {
       const res = await authFetch(`/api/articles/${id}`, {
@@ -83,10 +97,12 @@ export const useArticleStore = create<ArticleState>()((set, get) => ({
       set((state) => ({
         articles: state.articles.map((a) => (a.id === id ? updated : a)),
       }));
+      return true;
     } catch (err) {
       const message = err instanceof Error ? err.message : 'Failed to update article';
       set({ articles: previous, error: message });
       toast.error(message);
+      return false;
     }
   },
 
