@@ -3,9 +3,32 @@ import { toast } from 'sonner';
 import { useRacingEntryStore } from '@/stores/racingEntryStore';
 import { usePartyStore } from '@/stores/partyStore';
 import { useHorseStore } from '@/stores/horseStore';
+import { loadDraft, useFormDraft } from '@/hooks/useFormDraft';
+import { DraftRestoredHint } from './DraftRestoredHint';
 import type { RacingEntry, RaceStatus } from '@/types/racingEntry';
 import { RACE_STATUSES } from '@/types/racingEntry';
 import { Flag, ChevronDown, X, AlertCircle } from 'lucide-react';
+
+interface RacingDraft {
+  selectedHorseId: string;
+  subject: string;
+  raceName: string;
+  raceDate: string;
+  venue: string;
+  country: string;
+  classGrade: string;
+  distance: string;
+  trackCondition: string;
+  status: RaceStatus;
+  finishPosition: string;
+  margin: string;
+  time: string;
+  prizeMoney: string;
+  barrier: string;
+  weightCarried: string;
+  jockeyId: string;
+  trainerId: string;
+}
 
 const serifStyle: React.CSSProperties = { fontFamily: "'IM Fell English', 'Palatino Linotype', Georgia, serif" };
 
@@ -150,33 +173,60 @@ export function RacingDataForm({ horseId, initial, compact = false, onSave, onCa
   const jockeys = useMemo(() => allParties.filter((p) => p.roles.includes('jockey')), [allParties]);
   const trainers = useMemo(() => allParties.filter((p) => p.roles.includes('trainer')), [allParties]);
 
-  // ── Form state ──
-  const [selectedHorseId, setSelectedHorseId] = useState(initial?.horse_id ?? horseId ?? '');
-  const [subject, setSubject] = useState(initial?.subject ?? '');
-  const [raceName, setRaceName] = useState(initial?.race_name ?? '');
-  const [raceDate, setRaceDate] = useState(initial?.race_date ?? '');
-  const [venue, setVenue] = useState(initial?.venue ?? '');
-  const [country, setCountry] = useState(initial?.country ?? '');
-  const [classGrade, setClassGrade] = useState(initial?.class_grade ?? '');
-  const [distance, setDistance] = useState(initial?.distance ?? '');
-  const [trackCondition, setTrackCondition] = useState(initial?.track_condition ?? '');
-  const [status, setStatus] = useState<RaceStatus>(initial?.status ?? 'Entered');
-  const [finishPosition, setFinishPosition] = useState(initial?.finish_position !== undefined ? String(initial.finish_position) : '');
-  const [margin, setMargin] = useState(initial?.margin ?? '');
-  const [time, setTime] = useState(initial?.time ?? '');
-  const [prizeMoney, setPrizeMoney] = useState(initial?.prize_money !== undefined ? String(initial.prize_money) : '');
-  const [barrier, setBarrier] = useState(initial?.barrier !== undefined ? String(initial.barrier) : '');
-  const [weightCarried, setWeightCarried] = useState(initial?.weight_carried ?? '');
-  const [jockeyId, setJockeyId] = useState(initial?.jockey_id ?? '');
-  const [trainerId, setTrainerId] = useState(initial?.trainer_id ?? '');
-
-  const [errors, setErrors] = useState<FormErrors>({});
-  const [saving, setSaving] = useState(false);
-
   const isEdit = !!initial;
 
   /* Lock horse selector when horseId is pre-supplied */
   const horseLocked = !!horseId;
+
+  // Restore an in-progress draft (new records only — never overwrite an edit).
+  const draftKey = `racing:${horseId ?? 'global'}`;
+  const draft = useMemo(() => (isEdit ? null : loadDraft<RacingDraft>(draftKey)), [isEdit, draftKey]);
+
+  // ── Form state ──
+  const [selectedHorseId, setSelectedHorseId] = useState(initial?.horse_id ?? horseId ?? draft?.selectedHorseId ?? '');
+  const [subject, setSubject] = useState(initial?.subject ?? draft?.subject ?? '');
+  const [raceName, setRaceName] = useState(initial?.race_name ?? draft?.raceName ?? '');
+  const [raceDate, setRaceDate] = useState(initial?.race_date ?? draft?.raceDate ?? '');
+  const [venue, setVenue] = useState(initial?.venue ?? draft?.venue ?? '');
+  const [country, setCountry] = useState(initial?.country ?? draft?.country ?? '');
+  const [classGrade, setClassGrade] = useState(initial?.class_grade ?? draft?.classGrade ?? '');
+  const [distance, setDistance] = useState(initial?.distance ?? draft?.distance ?? '');
+  const [trackCondition, setTrackCondition] = useState(initial?.track_condition ?? draft?.trackCondition ?? '');
+  const [status, setStatus] = useState<RaceStatus>(initial?.status ?? draft?.status ?? 'Entered');
+  const [finishPosition, setFinishPosition] = useState(initial?.finish_position !== undefined ? String(initial.finish_position) : (draft?.finishPosition ?? ''));
+  const [margin, setMargin] = useState(initial?.margin ?? draft?.margin ?? '');
+  const [time, setTime] = useState(initial?.time ?? draft?.time ?? '');
+  const [prizeMoney, setPrizeMoney] = useState(initial?.prize_money !== undefined ? String(initial.prize_money) : (draft?.prizeMoney ?? ''));
+  const [barrier, setBarrier] = useState(initial?.barrier !== undefined ? String(initial.barrier) : (draft?.barrier ?? ''));
+  const [weightCarried, setWeightCarried] = useState(initial?.weight_carried ?? draft?.weightCarried ?? '');
+  const [jockeyId, setJockeyId] = useState(initial?.jockey_id ?? draft?.jockeyId ?? '');
+  const [trainerId, setTrainerId] = useState(initial?.trainer_id ?? draft?.trainerId ?? '');
+
+  const [errors, setErrors] = useState<FormErrors>({});
+  const [saving, setSaving] = useState(false);
+
+  const { clearDraft, restored } = useFormDraft<RacingDraft>(
+    draftKey,
+    {
+      selectedHorseId, subject, raceName, raceDate, venue, country, classGrade, distance,
+      trackCondition, status, finishPosition, margin, time, prizeMoney, barrier, weightCarried,
+      jockeyId, trainerId,
+    },
+    {
+      enabled: !isEdit,
+      isEmpty: (d) => !d.subject.trim() && !d.raceName.trim() && !d.raceDate && !d.venue.trim(),
+    },
+  );
+  const [draftRestored, setDraftRestored] = useState(restored);
+  function discardDraft() {
+    clearDraft();
+    setSelectedHorseId(horseId ?? '');
+    setSubject(''); setRaceName(''); setRaceDate(''); setVenue(''); setCountry('');
+    setClassGrade(''); setDistance(''); setTrackCondition(''); setStatus('Entered');
+    setFinishPosition(''); setMargin(''); setTime(''); setPrizeMoney(''); setBarrier('');
+    setWeightCarried(''); setJockeyId(''); setTrainerId('');
+    setDraftRestored(false);
+  }
 
   function validate(): boolean {
     const e: FormErrors = {};
@@ -224,6 +274,7 @@ export function RacingDataForm({ horseId, initial, compact = false, onSave, onCa
         await addEntry(payload);
         toast.success('Racing record saved');
       }
+      clearDraft();
       onSave();
     } catch {
       toast.error('Failed to save — please try again');
@@ -257,6 +308,8 @@ export function RacingDataForm({ horseId, initial, compact = false, onSave, onCa
 
   const formBody = (
     <div style={{ padding: compact ? '12px 14px 14px' : '18px 20px 20px', overflowY: 'auto', maxHeight: compact ? 'calc(100vh - 280px)' : '70vh', background: 'var(--parchment)', backgroundImage: 'repeating-linear-gradient(0deg, transparent, transparent 20px, rgba(0,0,0,0.018) 20px, rgba(0,0,0,0.018) 21px)' }}>
+
+      {draftRestored && <DraftRestoredHint onDiscard={discardDraft} />}
 
       {/* ── SECTION: Core Fields ── */}
       <SectionDivider label="Race Identity" />

@@ -54,12 +54,10 @@ export function EditableImage({ regionId, className, rounded }: Props) {
       aria-label={`${name} — click to upload or replace this photo`}
     >
       <input {...inputProps} />
-      {/* The photo's name — so editors know what to call it (incl. when asking the AI). */}
+      {/* The photo's name — always visible in the top-right corner so editors
+          know what to call it (incl. when asking the AI), not just on hover. */}
       <span
-        className={cn(
-          'absolute left-0 top-0 z-10 max-w-full truncate rounded-br-sm bg-sky-600/85 px-1.5 py-0.5 text-[9px] font-semibold uppercase tracking-wide text-white transition-opacity pointer-events-none',
-          selected ? 'opacity-100' : 'opacity-0 group-hover:opacity-100'
-        )}
+        className="absolute right-0 top-0 z-10 max-w-full truncate rounded-bl-sm bg-sky-600/85 px-1.5 py-0.5 text-[9px] font-semibold uppercase tracking-wide text-white pointer-events-none"
       >
         {name}
       </span>

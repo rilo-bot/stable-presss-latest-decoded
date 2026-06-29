@@ -10,7 +10,7 @@
 
 import { useEffect, useRef, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { Sparkles, Send, Square, X, Paperclip, SquarePen, Mic, Volume2, VolumeX, Loader2 } from 'lucide-react';
+import { Sparkles, Send, Square, X, Paperclip, SquarePen, Mic, Volume2, VolumeX, Loader2, Image as ImageIcon } from 'lucide-react';
 import { toast } from 'sonner';
 
 import { MarkdownMessage } from '@/components/MarkdownMessage';
@@ -20,6 +20,9 @@ import { uploadImage } from '@/lib/upload';
 import { useStoryChatSession, messageText } from './useStoryChatSession';
 import { useVoiceChat } from '@/agent/voice/useVoiceChat';
 import { useAutoGrowTextarea } from '@/lib/useAutoGrowTextarea';
+import { useChatAttachments } from '@/agent/attachments/useChatAttachments';
+import { attachmentsToFileParts, CHAT_ATTACH_ACCEPT } from '@/agent/attachments/attachments';
+import { AttachmentBar, MessageAttachments } from '@/agent/attachments/AttachmentViews';
 
 const STARTERS = [
   'A feature on a rising sprinter at Flemington',
@@ -41,10 +44,14 @@ export function StoryStudioPanel() {
   const [input, setInput] = useState('');
   const [uploading, setUploading] = useState(false);
   const fileRef = useRef<HTMLInputElement>(null);
+  const attachFileRef = useRef<HTMLInputElement>(null);
   const busy = status === 'submitted' || status === 'streaming';
   const scrollRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLTextAreaElement>(null);
   useAutoGrowTextarea(inputRef, input);
+  // Generic attach: images/PDFs (📎 or paste) the assistant reads — separate
+  // from the lead-photo (which becomes the published article image).
+  const attach = useChatAttachments();
 
   // While open, hide the global Stablehand launcher (shared editor suppress flag).
   useEffect(() => {
@@ -79,8 +86,11 @@ export function StoryStudioPanel() {
 
   const send = (text: string) => {
     const t = text.trim();
-    if (!t || busy) return;
-    void sendMessage({ text: t });
+    if ((!t && !attach.hasAttachments) || busy || attach.busy) return;
+    void sendMessage(
+      attach.hasAttachments ? { text: t, files: attachmentsToFileParts(attach.attachments) } : { text: t },
+    );
+    attach.clear();
     setInput('');
   };
 
@@ -167,6 +177,7 @@ export function StoryStudioPanel() {
           return (
             <div key={m.id} className={mine ? 'flex justify-end' : 'flex justify-start'}>
               <div className={mine ? 'max-w-[88%] whitespace-pre-wrap rounded-lg rounded-br-sm bg-emerald-600/90 px-2.5 py-1.5 text-[12px]' : 'max-w-[92%] rounded-lg rounded-bl-sm bg-white/5 px-2.5 py-1.5 text-[12px]'}>
+                {mine && <MessageAttachments message={m} tone="dark" />}
                 {mine ? text : <MarkdownMessage text={text} />}
               </div>
             </div>
@@ -214,23 +225,46 @@ export function StoryStudioPanel() {
       )}
 
       {/* Composer — the user answers everything here by typing or speaking */}
-      <form onSubmit={(e) => { e.preventDefault(); send(input); }} className="flex items-center gap-2 border-t border-white/10 px-2.5 py-2">
-        <input ref={fileRef} type="file" accept="image/*" className="sr-only" onChange={(e) => void onAttach(e.target.files?.[0])} aria-label="Attach a lead photo" />
+      <div className="border-t border-white/10">
+      <AttachmentBar attachments={attach.attachments} onRemove={attach.remove} busy={attach.busy} tone="dark" />
+      <form onSubmit={(e) => { e.preventDefault(); send(input); }} className="flex items-center gap-2 px-2.5 py-2">
+        {/* Lead photo — becomes the published article's lead image */}
+        <input ref={fileRef} type="file" accept="image/*" className="sr-only" onChange={(e) => void onAttach(e.target.files?.[0])} aria-label="Attach the story's lead photo" />
         <button
           type="button"
           onClick={() => fileRef.current?.click()}
           disabled={uploading}
-          aria-label="Attach a lead photo"
-          title="Attach a lead photo"
+          aria-label="Attach the story's lead photo"
+          title="Attach the story's lead photo"
           className="flex h-8 w-8 flex-shrink-0 items-center justify-center rounded-full border border-white/15 text-white/60 transition-colors hover:bg-white/10 disabled:opacity-50"
         >
-          {uploading ? <Loader2 size={14} className="animate-spin" /> : <Paperclip size={14} />}
+          {uploading ? <Loader2 size={14} className="animate-spin" /> : <ImageIcon size={14} />}
+        </button>
+        {/* Generic attach — images/PDFs for the assistant to read */}
+        <input
+          ref={attachFileRef}
+          type="file"
+          multiple
+          accept={CHAT_ATTACH_ACCEPT}
+          className="hidden"
+          onChange={(e) => { void attach.addFiles(e.target.files); if (attachFileRef.current) attachFileRef.current.value = ''; }}
+        />
+        <button
+          type="button"
+          onClick={() => attachFileRef.current?.click()}
+          disabled={recording || transcribing}
+          aria-label="Attach an image or PDF for the assistant to read"
+          title="Attach an image or PDF for the assistant to read (or paste one)"
+          className="flex h-8 w-8 flex-shrink-0 items-center justify-center rounded-full border border-white/15 text-white/60 transition-colors hover:bg-white/10 disabled:opacity-50"
+        >
+          <Paperclip size={14} />
         </button>
         <textarea
           ref={inputRef}
           value={input}
           rows={1}
           onChange={(e) => setInput(e.target.value)}
+          onPaste={attach.onPaste}
           onKeyDown={(e) => {
             if (e.key === 'Enter' && !e.shiftKey && !e.nativeEvent.isComposing) {
               e.preventDefault();
@@ -251,11 +285,12 @@ export function StoryStudioPanel() {
             <Square size={13} />
           </button>
         ) : (
-          <button type="submit" aria-label="Send" disabled={!input.trim()} className="flex h-8 w-8 items-center justify-center rounded-full text-[#0b1220] disabled:opacity-40" style={{ background: 'var(--gold-bright)' }}>
+          <button type="submit" aria-label="Send" disabled={!input.trim() && !attach.hasAttachments} className="flex h-8 w-8 items-center justify-center rounded-full text-[#0b1220] disabled:opacity-40" style={{ background: 'var(--gold-bright)' }}>
             <Send size={13} />
           </button>
         )}
       </form>
+      </div>
     </div>
   );
 }

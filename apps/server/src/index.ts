@@ -47,11 +47,23 @@ app.use(cors({ origin: '*' }))
 //
 // Exception: /api/issues + /api/magazines aggregate a whole magazine and, in
 // local dev (no S3), embed inline data-URL images — so they parse their bodies
-// with a larger limit at their own mount points below. The global parser must
-// skip them here, otherwise it would 413 the large body first.
+// with a larger limit at their own mount points below. /api/agent chats now
+// carry inline data-URL file attachments (images/PDFs the user hands the AI), so
+// they get the larger parser too. The global parser must skip all three here,
+// otherwise it would 413 the large body first.
 const jsonSmall = express.json({ limit: '2mb' })
+// Attachments are downscaled (images) or capped (PDFs ≤ 8 MB) client-side, but
+// the whole conversation — including prior turns' attachments — is re-sent each
+// turn, so allow comfortable headroom. express.json only parses application/json,
+// so the editor's raw /ingest and voice's raw /transcribe bodies pass through.
+const jsonAgent = express.json({ limit: '30mb' })
 app.use((req, res, next) => {
-  if (req.path.startsWith('/api/issues') || req.path.startsWith('/api/magazines')) return next()
+  if (
+    req.path.startsWith('/api/issues') ||
+    req.path.startsWith('/api/magazines') ||
+    req.path.startsWith('/api/agent')
+  )
+    return next()
   return jsonSmall(req, res, next)
 })
 
@@ -156,13 +168,13 @@ app.use('/api/newsroom', newsroomRouter)
 // AI concierge ("the Stablehand"). Read-only tools, RBAC-scoped to the caller
 // (attachAccountOptional inside the route); answers stream back to the browser.
 // Editor route is mounted first (more specific path) so /editor/* resolves here.
-app.use('/api/agent/editor', agentEditorRouter)  // in-editor Studio Assistant (client-executed editor tools)
-app.use('/api/agent/profile', agentProfileRouter) // in-profile Stable Studio assistant (client-executed, staged proposals)
-app.use('/api/agent/story', agentStoryRouter)    // Story Studio — writes & files a story draft (client-executed tools)
-app.use('/api/agent/article', agentArticleRouter) // Article Studio — edits one open article in place (client-executed tools)
-app.use('/api/agent/voice', agentVoiceRouter)    // OpenAI STT/TTS for the concierge (key stays server-side)
-app.use('/api/agent/compose', agentComposeRouter) // AI field-composer for form fields (✨ button)
-app.use('/api/agent', agentRouter)
+app.use('/api/agent/editor', jsonAgent, agentEditorRouter)  // in-editor Studio Assistant (client-executed editor tools)
+app.use('/api/agent/profile', jsonAgent, agentProfileRouter) // in-profile Stable Studio assistant (client-executed, staged proposals)
+app.use('/api/agent/story', jsonAgent, agentStoryRouter)    // Story Studio — writes & files a story draft (client-executed tools)
+app.use('/api/agent/article', jsonAgent, agentArticleRouter) // Article Studio — edits one open article in place (client-executed tools)
+app.use('/api/agent/voice', jsonAgent, agentVoiceRouter)    // OpenAI STT/TTS for the concierge (key stays server-side)
+app.use('/api/agent/compose', jsonAgent, agentComposeRouter) // AI field-composer for form fields (✨ button)
+app.use('/api/agent', jsonAgent, agentRouter)
 // === end auto-mounted routers ===
 
 

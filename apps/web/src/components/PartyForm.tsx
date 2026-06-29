@@ -1,7 +1,8 @@
 import { useState, useRef, useCallback, useMemo, useEffect } from 'react';
 import { toast } from 'sonner';
-import { Calendar } from 'lucide-react';
+import { Calendar, RotateCcw, X } from 'lucide-react';
 import { cn } from '@/lib/utils';
+import { loadDraft, useFormDraft } from '@/hooks/useFormDraft';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
@@ -27,6 +28,18 @@ import {
 import { PhotoUpload } from './party-form/PhotoUpload';
 import { RolePicker } from './party-form/RolePicker';
 
+interface PartyDraft {
+  name: string;
+  roles: PartyRole[];
+  photo?: string;
+  profession: string;
+  dateOfBirth: string;
+  countryOfBirth: string;
+  baseLocation: string;
+  startedYear: string;
+  personnelSubtypes: PersonnelSubtype[];
+}
+
 /* ─────────────────────────────────────────────
    Component
 ───────────────────────────────────────────── */
@@ -49,6 +62,10 @@ export function PartyForm({ open, onOpenChange, party, defaultRole, onSaved }: P
   const fileInputRef = useRef<HTMLInputElement>(null);
   const dropZoneRef = useRef<HTMLDivElement>(null);
   const [dragOver, setDragOver] = useState(false);
+  const [draftRestored, setDraftRestored] = useState(false);
+
+  // Drafting is scoped to the entry point (e.g. "Add Owner" vs "Add Trainer").
+  const draftKey = `party:${defaultRole ?? 'global'}`;
 
   /* ── New field state ── */
   const [profession, setProfession] = useState(party?.profession ?? '');
@@ -96,23 +113,59 @@ export function PartyForm({ open, onOpenChange, party, defaultRole, onSaved }: P
    */
   useEffect(() => {
     if (open && !isEdit) {
-      setRoles(defaultRole ? [defaultRole] : []);
-      // Clear everything else back to blank
-      setName('');
-      setPhoto(undefined);
+      // Restore an in-progress draft if one was saved from a previous session.
+      const draft = loadDraft<PartyDraft>(draftKey);
+      setDraftRestored(!!draft);
+      setRoles(draft?.roles ?? (defaultRole ? [defaultRole] : []));
+      setName(draft?.name ?? '');
+      setPhoto(draft?.photo);
       setPhotoFile(null);
-      setPhotoPreview(undefined);
+      setPhotoPreview(draft?.photo);
       setErrors({});
       setSaving(false);
-      setProfession('');
-      setDateOfBirth('');
-      setCountryOfBirth('');
-      setBaseLocation('');
-      setStartedYear('');
-      setPersonnelSubtypes([]);
+      setProfession(draft?.profession ?? '');
+      setDateOfBirth(draft?.dateOfBirth ?? '');
+      setCountryOfBirth(draft?.countryOfBirth ?? '');
+      setBaseLocation(draft?.baseLocation ?? '');
+      setStartedYear(draft?.startedYear ?? '');
+      setPersonnelSubtypes(draft?.personnelSubtypes ?? []);
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [open, defaultRole]);
+
+  // Auto-save an in-progress draft so an accidental close doesn't lose work.
+  const { clearDraft } = useFormDraft<PartyDraft>(
+    draftKey,
+    {
+      name, roles, profession, dateOfBirth, countryOfBirth, baseLocation, startedYear,
+      personnelSubtypes,
+      // Skip transient data: URLs (preview blobs) — they can blow the localStorage quota.
+      photo: photo?.startsWith('data:') ? undefined : photo,
+    },
+    {
+      enabled: open && !isEdit,
+      // Roles default to the entry-point role, so don't count them as "real" input.
+      isEmpty: (d) =>
+        !d.name.trim() && !d.profession.trim() && !d.dateOfBirth &&
+        !d.countryOfBirth.trim() && !d.baseLocation.trim() && !d.startedYear && !d.photo,
+    },
+  );
+
+  const discardDraft = () => {
+    clearDraft();
+    setRoles(defaultRole ? [defaultRole] : []);
+    setName('');
+    setPhoto(undefined);
+    setPhotoFile(null);
+    setPhotoPreview(undefined);
+    setProfession('');
+    setDateOfBirth('');
+    setCountryOfBirth('');
+    setBaseLocation('');
+    setStartedYear('');
+    setPersonnelSubtypes([]);
+    setDraftRestored(false);
+  };
 
   /* ── Role toggle ── */
   const toggleRole = (role: PartyRole) => {
@@ -236,6 +289,8 @@ export function PartyForm({ open, onOpenChange, party, defaultRole, onSaved }: P
         onSaved?.(party.id);
       } else {
         const id = await addParty(payload);
+        clearDraft();
+        setDraftRestored(false);
         toast.success('Party added to Stable Press.');
         onSaved?.(id);
       }
@@ -279,6 +334,22 @@ export function PartyForm({ open, onOpenChange, party, defaultRole, onSaved }: P
 
         {/* ── Scrollable body ── */}
         <div className="flex-1 overflow-y-auto px-6 py-5 space-y-6">
+
+          {draftRestored && !isEdit && (
+            <div className="flex items-center gap-2 px-3 py-2 rounded-sm border border-border/60 bg-muted/40 text-xs">
+              <RotateCcw size={12} className="flex-shrink-0 text-muted-foreground" />
+              <span className="flex-1 text-muted-foreground">
+                Unsaved draft restored from your last session.
+              </span>
+              <button
+                type="button"
+                onClick={discardDraft}
+                className="flex items-center gap-1 px-2 py-0.5 rounded-sm border border-border/60 text-[10px] uppercase tracking-[0.08em] font-semibold text-muted-foreground hover:text-foreground transition-colors"
+              >
+                <X size={9} /> Discard
+              </button>
+            </div>
+          )}
 
           {/* ── Name ── */}
           <div className="space-y-1.5">
