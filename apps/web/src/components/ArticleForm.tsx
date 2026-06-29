@@ -20,14 +20,29 @@ import { useHorseStore } from '@/stores/horseStore';
 import { usePartyStore } from '@/stores/partyStore';
 import { connectionResolver } from '@/lib/horseConnections';
 import { useAuthStore } from '@/stores/authStore';
+import { loadDraft, useFormDraft } from '@/hooks/useFormDraft';
 import type { Article } from '@/types/article';
 import { TIER_ORDER, TIER_LABELS } from '@/rbac/entitlement';
 import type { SubscriptionTier } from '@/rbac/entitlement';
 import type { KanbanStatus } from '@/components/KanbanColumn';
 import type { UserRole } from '@/stores/authStore';
 import { can } from '@/lib/permissions';
-import { X, Check, Lock, Newspaper, BarChart2, Mic } from 'lucide-react';
+import { X, Check, Lock, Newspaper, BarChart2, Mic, RotateCcw } from 'lucide-react';
 import { toast } from 'sonner';
+
+const ARTICLE_DRAFT_KEY = 'article';
+
+interface ArticleDraft {
+  title: string;
+  summary: string;
+  author: string;
+  category: string;
+  status: KanbanStatus;
+  readingTime: string;
+  minTier: SubscriptionTier;
+  linkedHorseIds: string[];
+  imageUrl: string;
+}
 
 interface ArticleFormProps {
   open: boolean;
@@ -115,6 +130,7 @@ export function ArticleForm({
   const [linkedHorseIds, setLinkedHorseIds] = useState<string[]>([]);
   const [imageUrl, setImageUrl] = useState('');
   const [saving, setSaving] = useState(false);
+  const [draftRestored, setDraftRestored] = useState(false);
 
   const isContributor = userRole === 'contributor';
   const statusOptions = isContributor ? CONTRIBUTOR_STATUS_OPTIONS : ALL_STATUS_OPTIONS;
@@ -143,21 +159,52 @@ export function ArticleForm({
       setLinkedHorseIds(editArticle.linkedHorseIds ?? []);
       setImageUrl(editArticle.imageUrl ?? '');
     } else {
-      setTitle('');
-      setSummary('');
-      // Auto-fill byline for contributors
-      setAuthor(isContributor ? (currentUser?.displayName ?? '') : '');
-      setCategory('');
+      // New story: restore an in-progress draft if one was saved.
+      const draft = loadDraft<ArticleDraft>(ARTICLE_DRAFT_KEY);
       const clampedDefault = isContributor
         ? (['draft', 'submitted'].includes(defaultStatus) ? defaultStatus : 'draft')
         : defaultStatus;
-      setStatus(clampedDefault);
-      setReadingTime('');
-      setMinTier('free');
-      setLinkedHorseIds([]);
-      setImageUrl('');
+      setTitle(draft?.title ?? '');
+      setSummary(draft?.summary ?? '');
+      // Contributors are always attributed to their own account — never restore a byline for them.
+      setAuthor(isContributor ? (currentUser?.displayName ?? '') : (draft?.author ?? ''));
+      setCategory(draft?.category ?? '');
+      setStatus(draft?.status ?? clampedDefault);
+      setReadingTime(draft?.readingTime ?? '');
+      setMinTier(draft?.minTier ?? 'free');
+      setLinkedHorseIds(draft?.linkedHorseIds ?? []);
+      setImageUrl(draft?.imageUrl ?? '');
+      setDraftRestored(!!draft);
     }
   }, [open, editArticle, defaultStatus, isContributor, currentUser?.displayName]);
+
+  // Auto-save an in-progress draft so an accidental close doesn't lose work.
+  const { clearDraft } = useFormDraft<ArticleDraft>(
+    ARTICLE_DRAFT_KEY,
+    {
+      title, summary, author, category, status, readingTime, minTier, linkedHorseIds,
+      // Skip transient data: URLs — they can blow the localStorage quota.
+      imageUrl: imageUrl.startsWith('data:') ? '' : imageUrl,
+    },
+    {
+      enabled: open && !editArticle,
+      isEmpty: (d) => !d.title.trim() && !d.summary.trim() && !d.category && d.linkedHorseIds.length === 0 && !d.imageUrl,
+    },
+  );
+
+  const discardDraft = () => {
+    clearDraft();
+    setTitle('');
+    setSummary('');
+    setAuthor(isContributor ? (currentUser?.displayName ?? '') : '');
+    setCategory('');
+    setStatus(isContributor ? (['draft', 'submitted'].includes(defaultStatus) ? defaultStatus : 'draft') : defaultStatus);
+    setReadingTime('');
+    setMinTier('free');
+    setLinkedHorseIds([]);
+    setImageUrl('');
+    setDraftRestored(false);
+  };
 
   const toggleHorse = (horseId: string) => {
     setLinkedHorseIds((prev) =>
@@ -195,6 +242,8 @@ export function ArticleForm({
         toast.success('Story updated — the file has been revised.');
       } else {
         addArticle(payload);
+        clearDraft();
+        setDraftRestored(false);
         if (status === 'submitted') {
           toast.success('Story submitted — it is now in the editorial queue.');
         } else {
@@ -245,6 +294,21 @@ export function ArticleForm({
 
         {/* Scrollable body */}
         <div className="flex-1 overflow-y-auto px-6 py-5 space-y-5">
+          {draftRestored && !editArticle && (
+            <div className="flex items-center gap-2 px-3 py-2 rounded-sm border border-border/60 bg-muted/40 text-xs">
+              <RotateCcw size={12} className="flex-shrink-0 text-muted-foreground" />
+              <span className="flex-1 text-muted-foreground">
+                Unsaved draft restored from your last session.
+              </span>
+              <button
+                type="button"
+                onClick={discardDraft}
+                className="flex items-center gap-1 px-2 py-0.5 rounded-sm border border-border/60 text-[10px] uppercase tracking-[0.08em] font-semibold text-muted-foreground hover:text-foreground transition-colors"
+              >
+                <X size={9} /> Discard
+              </button>
+            </div>
+          )}
           {/* Headline */}
           <div className="space-y-1.5">
             <Label

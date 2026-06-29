@@ -20,10 +20,26 @@ import { uploadRawFile } from '@/lib/upload';
 import { useHorseStore } from '@/stores/horseStore';
 import { usePartyStore } from '@/stores/partyStore';
 import { useArticleStore } from '@/stores/articleStore';
+import { loadDraft, useFormDraft } from '@/hooks/useFormDraft';
+import { DraftRestoredHint } from './DraftRestoredHint';
 import type { MediaItem, MediaType } from '@/types/mediaItem';
 import { serifStyle, MEDIA_TYPES, MEDIA_TYPE_ICONS } from './media-data-form/constants';
 import { FileUpload } from './media-data-form/FileUpload';
 import { MetadataFields } from './media-data-form/MetadataFields';
+
+// Text fields only — uploaded File objects cannot be persisted to localStorage.
+interface MediaDraft {
+  selectedHorseId: string;
+  subject: string;
+  mediaType: MediaType;
+  title: string;
+  sourcePublication: string;
+  publishedDate: string;
+  urlOrFile: 'url' | 'file';
+  url: string;
+  featuredPartyIds: string[];
+  linkedArticleId: string;
+}
 
 interface MediaDataFormProps {
   horseId?: string;
@@ -49,15 +65,19 @@ export function MediaDataForm({ horseId, initial, onSave, onCancel, compact = fa
   useEffect(() => { fetchParties(); }, [fetchParties]);
   useEffect(() => { fetchArticles(); }, [fetchArticles]);
 
+  // Restore an in-progress draft (new records only — never overwrite an edit).
+  const draftKey = `media:${horseId ?? 'global'}`;
+  const draft = useMemo(() => (initial ? null : loadDraft<MediaDraft>(draftKey)), [initial, draftKey]);
+
   // ── Form state ──
-  const [selectedHorseId, setSelectedHorseId] = useState(horseId ?? initial?.horse_id ?? '');
-  const [subject, setSubject] = useState(initial?.subject ?? '');
-  const [mediaType, setMediaType] = useState<MediaType>(initial?.media_type ?? 'Article');
-  const [title, setTitle] = useState(initial?.title ?? '');
-  const [sourcePublication, setSourcePublication] = useState(initial?.source_publication ?? '');
-  const [publishedDate, setPublishedDate] = useState(initial?.published_date ?? '');
-  const [urlOrFile, setUrlOrFile] = useState<'url' | 'file'>(initial?.file_name ? 'file' : 'url');
-  const [url, setUrl] = useState(initial?.url ?? '');
+  const [selectedHorseId, setSelectedHorseId] = useState(horseId ?? initial?.horse_id ?? draft?.selectedHorseId ?? '');
+  const [subject, setSubject] = useState(initial?.subject ?? draft?.subject ?? '');
+  const [mediaType, setMediaType] = useState<MediaType>(initial?.media_type ?? draft?.mediaType ?? 'Article');
+  const [title, setTitle] = useState(initial?.title ?? draft?.title ?? '');
+  const [sourcePublication, setSourcePublication] = useState(initial?.source_publication ?? draft?.sourcePublication ?? '');
+  const [publishedDate, setPublishedDate] = useState(initial?.published_date ?? draft?.publishedDate ?? '');
+  const [urlOrFile, setUrlOrFile] = useState<'url' | 'file'>(initial?.file_name ? 'file' : (draft?.urlOrFile ?? 'url'));
+  const [url, setUrl] = useState(initial?.url ?? draft?.url ?? '');
 
   // File upload state
   const [selectedFile, setSelectedFile] = useState<globalThis.File | null>(null);
@@ -66,8 +86,8 @@ export function MediaDataForm({ horseId, initial, onSave, onCancel, compact = fa
   const [dragOver, setDragOver] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
-  const [featuredPartyIds, setFeaturedPartyIds] = useState<string[]>(initial?.featured_party_ids ?? []);
-  const [linkedArticleId, setLinkedArticleId] = useState(initial?.linked_article_id ?? '');
+  const [featuredPartyIds, setFeaturedPartyIds] = useState<string[]>(initial?.featured_party_ids ?? draft?.featuredPartyIds ?? []);
+  const [linkedArticleId, setLinkedArticleId] = useState(initial?.linked_article_id ?? draft?.linkedArticleId ?? '');
 
   // ── UI state ──
   const [saving, setSaving] = useState(false);
@@ -80,6 +100,24 @@ export function MediaDataForm({ horseId, initial, onSave, onCancel, compact = fa
 
   const isEdit = !!initial;
   const horseFixed = !!horseId;
+
+  const { clearDraft, restored } = useFormDraft<MediaDraft>(
+    draftKey,
+    { selectedHorseId, subject, mediaType, title, sourcePublication, publishedDate, urlOrFile, url, featuredPartyIds, linkedArticleId },
+    {
+      enabled: !isEdit,
+      isEmpty: (d) => !d.subject.trim() && !d.title.trim() && !d.sourcePublication.trim() && !d.url.trim() && d.featuredPartyIds.length === 0 && !d.linkedArticleId,
+    },
+  );
+  const [draftRestored, setDraftRestored] = useState(restored);
+  function discardDraft() {
+    clearDraft();
+    setSelectedHorseId(horseId ?? '');
+    setSubject(''); setMediaType('Article'); setTitle(''); setSourcePublication('');
+    setPublishedDate(''); setUrlOrFile('url'); setUrl('');
+    setFeaturedPartyIds([]); setLinkedArticleId('');
+    setDraftRestored(false);
+  }
 
   // ── Derived ──
   const selectedHorse = useMemo(
@@ -191,11 +229,13 @@ export function MediaDataForm({ horseId, initial, onSave, onCancel, compact = fa
       if (isEdit && initial) {
         await updateItem(initial.id, payload);
         toast.success('Media record updated');
+        clearDraft();
         onSave?.(initial.id);
       } else {
         const newId = await addItem(payload);
         if (newId) {
           toast.success('Media record saved');
+          clearDraft();
           onSave?.(newId);
         }
       }
@@ -266,6 +306,8 @@ export function MediaDataForm({ horseId, initial, onSave, onCancel, compact = fa
       )}
 
       <div style={{ background: 'var(--parchment)', backgroundImage: 'repeating-linear-gradient(0deg, transparent, transparent 22px, rgba(0,0,0,0.018) 22px, rgba(0,0,0,0.018) 23px)', padding: '18px 18px 20px', display: 'flex', flexDirection: 'column', gap: 14 }}>
+
+        {draftRestored && <DraftRestoredHint onDiscard={discardDraft} />}
 
         {/* ── 1. Horse ── */}
         <div>

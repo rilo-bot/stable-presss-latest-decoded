@@ -5,7 +5,7 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useChat } from '@ai-sdk/react';
-import { lastAssistantMessageIsCompleteWithToolCalls, type UIMessage } from 'ai';
+import { lastAssistantMessageIsCompleteWithToolCalls, type UIMessage, type FileUIPart } from 'ai';
 import { Sparkles, Send, Square, Undo2, Check, X, Paperclip, FileText, Loader2, Mic, Volume2, VolumeX } from 'lucide-react';
 import { toast } from 'sonner';
 
@@ -17,6 +17,7 @@ import { createEditorTransport } from './editorTransport';
 import { executeEditorTool, isEditorClientTool } from './editOpsExecutor';
 import { previewOf } from './editorContext';
 import { ingestFile, ATTACH_ACCEPT } from './documentUpload';
+import { fileToAttachment, attachmentsToFileParts, type ChatAttachment } from '@/agent/attachments/attachments';
 import { applyStagedEdit, applyBatch, applyAllStaged, discardStaged, discardBatch, discardAll, undoLast } from './applyEdits';
 import type { StagedEdit, DocAttachment } from './types';
 
@@ -133,16 +134,24 @@ export function EditorAgentPanel() {
     async (t: string) => {
       if (!t || busy || ingesting) return;
       let docs: MsgDoc[] = [];
+      let fileParts: FileUIPart[] = [];
       const files = pendingFilesRef.current;
       if (files.length > 0) {
         setIngesting(true);
         const ok: DocAttachment[] = [];
         const failed: File[] = [];
+        const visionAtts: ChatAttachment[] = [];
         for (const file of files) {
           try {
             const att = await ingestFile(file);
             addAttachment(att); // session context: digest rides along, fullText feeds the fill
             ok.push(att);
+            // Also let the assistant SEE attached images directly (vision), on top
+            // of the OCR/text digest. PDFs stay digest-only — full bytes can exceed
+            // the chat body limit and the digest already carries their text.
+            if (file.type.startsWith('image/')) {
+              try { visionAtts.push(await fileToAttachment(file)); } catch { /* vision is best-effort */ }
+            }
           } catch (e) {
             failed.push(file);
             toast.error(e instanceof Error ? e.message : `Couldn't read ${file.name}.`);
@@ -152,8 +161,9 @@ export function EditorAgentPanel() {
         setPendingFiles(failed); // keep only the ones that failed, for retry
         if (ok.length === 0) return; // nothing analysed — leave the prompt in the box
         docs = ok.map((a) => ({ name: a.name, kind: a.kind }));
+        fileParts = attachmentsToFileParts(visionAtts);
       }
-      void sendMessage(docs.length ? { text: t, metadata: { docs } } : { text: t });
+      void sendMessage(docs.length ? { text: t, files: fileParts, metadata: { docs } } : { text: t });
       setInput('');
     },
     [busy, ingesting, sendMessage, addAttachment],
@@ -165,6 +175,16 @@ export function EditorAgentPanel() {
     // starts when the user types a prompt and presses Enter.
     setPendingFiles((prev) => [...prev, ...Array.from(files)]);
     if (fileRef.current) fileRef.current.value = '';
+  };
+
+  // Paste an image or PDF straight into the composer — same staged-ingest path.
+  const onPasteFiles = (e: React.ClipboardEvent) => {
+    const pasted = Array.from(e.clipboardData?.files ?? []).filter(
+      (f) => f.type.startsWith('image/') || f.type === 'application/pdf',
+    );
+    if (pasted.length === 0) return; // plain text — let the textarea handle it
+    e.preventDefault();
+    setPendingFiles((prev) => [...prev, ...pasted]);
   };
 
   const removePendingFile = (idx: number) => {
@@ -344,6 +364,7 @@ export function EditorAgentPanel() {
             value={input}
             rows={1}
             onChange={(e) => setInput(e.target.value)}
+            onPaste={onPasteFiles}
             onKeyDown={(e) => {
               // Standard chat composer: Enter sends, Shift+Enter inserts a newline.
               if (e.key === 'Enter' && !e.shiftKey && !e.nativeEvent.isComposing) {

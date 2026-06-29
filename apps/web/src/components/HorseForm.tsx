@@ -3,9 +3,10 @@ import { useHorseStore } from '@/stores/horseStore';
 import { usePartyStore } from '@/stores/partyStore';
 import type { Horse } from '@/types/horse';
 import { Button } from '@/components/ui/button';
-import { X, Share as HorseIcon, Save, Trash } from 'lucide-react';
+import { X, Share as HorseIcon, Save, Trash, RotateCcw } from 'lucide-react';
 import { toast } from 'sonner';
 import { cn } from '@/lib/utils';
+import { loadDraft, useFormDraft } from '@/hooks/useFormDraft';
 import { empty, type FormData } from './horse-form/constants';
 import {
   BasicSection,
@@ -39,9 +40,15 @@ export function HorseForm({ open, onClose, editHorse, defaultOwnerId, defaultCon
   const [form, setForm] = useState<FormData>(empty());
   const [saving, setSaving] = useState(false);
   const [confirmDelete, setConfirmDelete] = useState(false);
+  const [draftRestored, setDraftRestored] = useState(false);
+
+  // Drafting is scoped to the entry context (staff full-entry vs member self-service).
+  const draftKey = `horse:${memberMode ? 'member' : 'staff'}`;
 
   useEffect(() => {
     if (open) {
+      const draft = editHorse ? null : loadDraft<Partial<FormData>>(draftKey);
+      setDraftRestored(!!draft);
       setForm(
         editHorse
           ? {
@@ -91,15 +98,45 @@ export function HorseForm({ open, onClose, editHorse, defaultOwnerId, defaultCon
               imageUrl: editHorse.imageUrl ?? '',
               age: editHorse.age,
             }
-          : { ...empty(), ...(defaultOwnerId ? { ownerIds: [defaultOwnerId] } : {}), ...(defaultConnect ?? {}) }
+          : {
+              ...empty(),
+              ...(draft ?? {}),
+              // Keep the member's own pre-link intact even when a draft is restored.
+              ...(defaultOwnerId ? { ownerIds: [defaultOwnerId] } : {}),
+              ...(defaultConnect ?? {}),
+            }
       );
       setConfirmDelete(false);
       setSaving(false);
     }
+    // draftKey is derived from memberMode; loadDraft is stable.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [open, editHorse, defaultOwnerId, defaultConnect]);
 
   const setField = (field: keyof FormData, value: string | number | boolean | string[] | undefined) =>
     setForm((prev) => ({ ...prev, [field]: value }));
+
+  // Auto-save an in-progress draft so an accidental close doesn't lose work.
+  const { clearDraft } = useFormDraft<FormData>(
+    draftKey,
+    // Skip transient data: URLs — they can blow the localStorage quota.
+    { ...form, imageUrl: form.imageUrl?.startsWith('data:') ? '' : form.imageUrl },
+    {
+      enabled: open && !editHorse,
+      isEmpty: (d) =>
+        !d.name.trim() && !d.isUnnamed && !d.sire?.trim() && !d.dam?.trim() && !d.imageUrl?.trim(),
+    },
+  );
+
+  const discardDraft = () => {
+    clearDraft();
+    setForm({
+      ...empty(),
+      ...(defaultOwnerId ? { ownerIds: [defaultOwnerId] } : {}),
+      ...(defaultConnect ?? {}),
+    });
+    setDraftRestored(false);
+  };
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -137,6 +174,8 @@ export function HorseForm({ open, onClose, editHorse, defaultOwnerId, defaultCon
       } else {
         const created = await addHorse(form);
         if (!created) return; // store already surfaced the error
+        clearDraft();
+        setDraftRestored(false);
         toast.success(`${displayName} has been added to the stables.`);
       }
 
@@ -221,6 +260,22 @@ export function HorseForm({ open, onClose, editHorse, defaultOwnerId, defaultCon
         {/* ── Scrollable body ── */}
         <form onSubmit={handleSubmit} className="flex flex-col flex-1 overflow-hidden">
           <div className="flex-1 overflow-y-auto px-5 py-5 space-y-6">
+
+            {draftRestored && !editHorse && (
+              <div className="flex items-center gap-2 px-3 py-2 rounded-sm border border-border/60 bg-muted/40 text-xs">
+                <RotateCcw size={12} className="flex-shrink-0 text-muted-foreground" />
+                <span className="flex-1 text-muted-foreground">
+                  Unsaved draft restored from your last session.
+                </span>
+                <button
+                  type="button"
+                  onClick={discardDraft}
+                  className="flex items-center gap-1 px-2 py-0.5 rounded-sm border border-border/60 text-[10px] uppercase tracking-[0.08em] font-semibold text-muted-foreground hover:text-foreground transition-colors"
+                >
+                  <X size={9} /> Discard
+                </button>
+              </div>
+            )}
 
             <BasicSection form={form} setField={setField} />
 

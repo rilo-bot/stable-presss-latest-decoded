@@ -1,11 +1,26 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useMemo } from 'react';
 import { toast } from 'sonner';
 import { useSaleStore } from '@/stores/saleStore';
 import { usePartyStore } from '@/stores/partyStore';
 import { useHorseStore } from '@/stores/horseStore';
+import { loadDraft, useFormDraft } from '@/hooks/useFormDraft';
+import { DraftRestoredHint } from './DraftRestoredHint';
 import type { Sale, SaleType } from '@/types/sale';
 import { SALE_TYPES } from '@/types/sale';
 import { ShoppingCart, ChevronDown, X, AlertCircle } from 'lucide-react';
+
+interface SaleDraft {
+  selectedHorseId: string;
+  saleDate: string;
+  saleType: SaleType;
+  venue: string;
+  lot: string;
+  price: string;
+  currency: string;
+  buyerId: string;
+  vendor: string;
+  notes: string;
+}
 
 const serifStyle: React.CSSProperties = { fontFamily: "'IM Fell English', 'Palatino Linotype', Georgia, serif" };
 
@@ -52,21 +67,42 @@ export function SalesDataForm({ horseId, initial, compact = false, onSave, onCan
   const fetchHorses = useHorseStore((s) => s.fetchHorses);
   useEffect(() => { fetchParties(); fetchHorses(); }, [fetchParties, fetchHorses]);
 
-  const [selectedHorseId, setSelectedHorseId] = useState(initial?.horse_id ?? horseId ?? '');
-  const [saleDate, setSaleDate] = useState(initial?.sale_date ?? '');
-  const [saleType, setSaleType] = useState<SaleType>(initial?.sale_type ?? 'Yearling Sale');
-  const [venue, setVenue] = useState(initial?.venue ?? '');
-  const [lot, setLot] = useState(initial?.lot ?? '');
-  const [price, setPrice] = useState(initial?.price !== undefined ? String(initial.price) : '');
-  const [currency, setCurrency] = useState(initial?.currency ?? 'AUD');
-  const [buyerId, setBuyerId] = useState(initial?.buyer_party_id ?? '');
-  const [vendor, setVendor] = useState(initial?.vendor ?? '');
-  const [notes, setNotes] = useState(initial?.notes ?? '');
+  const isEdit = !!initial;
+  const horseLocked = !!horseId;
+
+  // Restore an in-progress draft (new records only — never overwrite an edit).
+  const draftKey = `sales:${horseId ?? 'global'}`;
+  const draft = useMemo(() => (isEdit ? null : loadDraft<SaleDraft>(draftKey)), [isEdit, draftKey]);
+
+  const [selectedHorseId, setSelectedHorseId] = useState(initial?.horse_id ?? horseId ?? draft?.selectedHorseId ?? '');
+  const [saleDate, setSaleDate] = useState(initial?.sale_date ?? draft?.saleDate ?? '');
+  const [saleType, setSaleType] = useState<SaleType>(initial?.sale_type ?? draft?.saleType ?? 'Yearling Sale');
+  const [venue, setVenue] = useState(initial?.venue ?? draft?.venue ?? '');
+  const [lot, setLot] = useState(initial?.lot ?? draft?.lot ?? '');
+  const [price, setPrice] = useState(initial?.price !== undefined ? String(initial.price) : (draft?.price ?? ''));
+  const [currency, setCurrency] = useState(initial?.currency ?? draft?.currency ?? 'AUD');
+  const [buyerId, setBuyerId] = useState(initial?.buyer_party_id ?? draft?.buyerId ?? '');
+  const [vendor, setVendor] = useState(initial?.vendor ?? draft?.vendor ?? '');
+  const [notes, setNotes] = useState(initial?.notes ?? draft?.notes ?? '');
   const [errors, setErrors] = useState<{ horse_id?: string; sale_date?: string; venue?: string }>({});
   const [saving, setSaving] = useState(false);
 
-  const isEdit = !!initial;
-  const horseLocked = !!horseId;
+  const { clearDraft, restored } = useFormDraft<SaleDraft>(
+    draftKey,
+    { selectedHorseId, saleDate, saleType, venue, lot, price, currency, buyerId, vendor, notes },
+    {
+      enabled: !isEdit,
+      isEmpty: (d) => !d.venue.trim() && !d.saleDate && !d.lot.trim() && !d.price && !d.vendor.trim() && !d.notes.trim(),
+    },
+  );
+  const [draftRestored, setDraftRestored] = useState(restored);
+  function discardDraft() {
+    clearDraft();
+    setSelectedHorseId(horseId ?? '');
+    setSaleDate(''); setSaleType('Yearling Sale'); setVenue(''); setLot(''); setPrice('');
+    setCurrency('AUD'); setBuyerId(''); setVendor(''); setNotes('');
+    setDraftRestored(false);
+  }
 
   async function handleSubmit() {
     const e: typeof errors = {};
@@ -84,6 +120,7 @@ export function SalesDataForm({ horseId, initial, compact = false, onSave, onCan
     try {
       if (isEdit && initial) { await updateSale(initial.id, payload); toast.success('Sale record updated'); }
       else { await addSale(payload); toast.success('Sale record saved'); }
+      clearDraft();
       onSave();
     } catch { toast.error('Failed to save — please try again'); }
     finally { setSaving(false); }
@@ -104,6 +141,7 @@ export function SalesDataForm({ horseId, initial, compact = false, onSave, onCan
 
   const body = (
     <div style={{ padding: '16px 18px', overflowY: 'auto', maxHeight: compact ? 'calc(100vh - 240px)' : '70vh', background: 'var(--parchment)' }}>
+      {draftRestored && <DraftRestoredHint onDiscard={discardDraft} />}
       <div style={{ marginBottom: 10 }}>
         <FieldLabel required>Horse</FieldLabel>
         {horseLocked ? (
