@@ -83,8 +83,8 @@ export function InlineEdit({
       }}
       className={cn(
         'outline-none cursor-text rounded-sm transition-shadow',
-        'ring-2 ring-sky-400/70 ring-offset-2 ring-offset-transparent focus:ring-sky-500',
-        'bg-sky-400/10 px-1.5 -mx-1.5 py-0.5',
+        'ring-2 ring-purple-400/70 ring-offset-2 ring-offset-transparent focus:ring-purple-500',
+        'bg-purple-400/10 px-1.5 -mx-1.5 py-0.5',
         // Show the placeholder when the field is empty.
         'empty:before:content-[attr(data-placeholder)] empty:before:opacity-50',
         multiline && 'whitespace-pre-wrap',

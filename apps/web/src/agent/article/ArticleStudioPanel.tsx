@@ -7,33 +7,33 @@
 // photo with the 📎 button. Mirrors StoryStudioPanel, minus the draft-filing /
 // horse-linking flow.
 
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { Sparkles, Send, Square, X, SquarePen, Undo2, MousePointerClick, Paperclip, Mic, Volume2, VolumeX, Loader2 } from 'lucide-react';
 import { toast } from 'sonner';
 
 import { MarkdownMessage } from '@/components/MarkdownMessage';
 import { useAutoGrowTextarea } from '@/lib/useAutoGrowTextarea';
 import { uploadImage } from '@/lib/upload';
+import { useArticleStore } from '@/stores/articleStore';
 import { useArticleStudioUi } from '@/stores/articleStudioUiStore';
 import { useEditorAgentUi } from '@/stores/editorAgentUiStore';
 import { useVoiceChat } from '@/agent/voice/useVoiceChat';
 import { fieldDef } from './articleFields';
+import { suggestForArticle, type ArticleSuggestion } from './articleSuggestions';
 import { applyImage, undoLastArticleEdit } from './articleToolExecutor';
 import { useArticleChatSession, messageText } from './useArticleChatSession';
 
-const STARTERS = [
-  'Tighten the headline',
-  'Make the intro punchier',
-  'Suggest a hero photo',
-  'Proofread the body',
-];
-
 export function ArticleStudioPanel() {
   const open = useArticleStudioUi((s) => s.open);
+  const articleId = useArticleStudioUi((s) => s.articleId);
   const pendingPrompt = useArticleStudioUi((s) => s.pendingPrompt);
   const selectedFieldId = useArticleStudioUi((s) => s.selectedFieldId);
   const undoPatch = useArticleStudioUi((s) => s.undoPatch);
   const imageOptions = useArticleStudioUi((s) => s.imageOptions);
+
+  // The open article (re-selected on every edit, so suggestions stay current).
+  const article = useArticleStore((s) => s.articles.find((a) => a.id === articleId));
+  const suggestions = useMemo(() => (article ? suggestForArticle(article) : []), [article]);
 
   const { messages, sendMessage, setMessages, status, error, stop } = useArticleChatSession();
 
@@ -71,6 +71,12 @@ export function ArticleStudioPanel() {
     if (!t || busy) return;
     void sendMessage({ text: t });
     setInput('');
+  };
+
+  // A suggestion chip: focus the field it targets, then send its prompt.
+  const runSuggestion = (s: ArticleSuggestion) => {
+    if (s.fieldId) useArticleStudioUi.getState().select(s.fieldId);
+    send(s.prompt);
   };
 
   // Push-to-talk + spoken replies. With the speak toggle on, every assistant
@@ -176,8 +182,8 @@ export function ArticleStudioPanel() {
               Click a field on the article — the <strong className="text-white/80">headline</strong>, body, byline, category, hero photo or tags — then tell me how to change it (type or <strong className="text-white/80">speak it</strong>). I’ll edit it right here, and you can <strong className="text-white/80">Undo</strong> any change.
             </p>
             <div className="flex flex-wrap gap-1.5">
-              {STARTERS.map((c) => (
-                <button key={c} onClick={() => send(c)} className="rounded-full border border-white/15 bg-white/5 px-2.5 py-1 text-[11px] text-white/75 hover:bg-white/10">{c}</button>
+              {suggestions.map((s) => (
+                <button key={s.label} onClick={() => runSuggestion(s)} className="rounded-full border border-white/15 bg-white/5 px-2.5 py-1 text-[11px] text-white/75 hover:bg-white/10">{s.label}</button>
               ))}
             </div>
           </div>
@@ -224,6 +230,18 @@ export function ArticleStudioPanel() {
               </button>
             ))}
           </div>
+        </div>
+      )}
+
+      {/* Next-step suggestions — refresh as the article changes */}
+      {messages.length > 0 && !busy && suggestions.length > 0 && (
+        <div className="flex items-center gap-1.5 overflow-x-auto border-t border-white/10 bg-white/[0.02] px-3 py-1.5">
+          <span className="flex-shrink-0 text-[10px] font-bold uppercase tracking-wider text-purple-300/70">Next</span>
+          {suggestions.map((s) => (
+            <button key={s.label} onClick={() => runSuggestion(s)} className="flex-shrink-0 rounded-full border border-white/15 bg-white/5 px-2.5 py-1 text-[11px] text-white/75 hover:bg-white/10">
+              {s.label}
+            </button>
+          ))}
         </div>
       )}
 

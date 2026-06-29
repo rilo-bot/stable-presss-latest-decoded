@@ -7,6 +7,7 @@ import { DefaultChatTransport } from 'ai';
 import { apiUrl } from '@/lib/api';
 import { useAuthStore } from '@/stores/authStore';
 import { useProfileAgentUi } from '@/stores/profileAgentUiStore';
+import { profileBoxDef } from './profileStudioFields';
 
 export function createProfileTransport() {
   return new DefaultChatTransport({
@@ -19,7 +20,12 @@ export function createProfileTransport() {
       if (typeof body === 'string') {
         try {
           const parsed = JSON.parse(body);
-          parsed.profileContext = useProfileAgentUi.getState().context;
+          const { context, selectedFieldId } = useProfileAgentUi.getState();
+          // Merge the focused data-box (purple ring) into the context so the
+          // assistant acts on it by default — same shape as the article studio.
+          const box = profileBoxDef(selectedFieldId);
+          const selection = box ? { key: box.key, label: box.label, kind: box.kind, fields: box.fields, role: box.role } : null;
+          parsed.profileContext = context ? { ...context, selection } : context;
           body = JSON.stringify(parsed);
         } catch {
           /* leave body untouched */

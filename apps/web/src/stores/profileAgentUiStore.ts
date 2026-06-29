@@ -44,18 +44,32 @@ export type UndoEntry =
   | { kind: 'field'; entityKind: 'horse' | 'party'; entityId: string; field: string; prevValue: unknown }
   | { kind: 'connection'; linkId: string };
 
+/** A stock-photo candidate surfaced by the suggestImageOptions tool. */
+export interface ImageOption {
+  name: string;
+  url: string;
+}
+
 interface ProfileAgentUiState {
   open: boolean;
   context: ProfileContext | null;
   pendingPrompt: string | null;
   staged: Proposal[];
   undo: UndoEntry[];
+  /** The data-box the member clicked — purple-ringed, the assistant's focus. */
+  selectedFieldId: string | null;
+  /** Latest stock-photo candidates, shown as a clickable strip in the panel. */
+  imageOptions: ImageOption[] | null;
 
   setOpen: (open: boolean) => void;
   toggle: () => void;
   setContext: (ctx: ProfileContext | null) => void;
   ask: (prompt: string) => void;
   consumePrompt: () => void;
+
+  /** Focus a data-box for the assistant (null clears). */
+  select: (fieldId: string | null) => void;
+  setImageOptions: (options: ImageOption[] | null) => void;
 
   addProposal: (p: Proposal) => void;
   removeProposal: (id: string) => void;
@@ -71,12 +85,17 @@ export const useProfileAgentUi = create<ProfileAgentUiState>((set, get) => ({
   pendingPrompt: null,
   staged: [],
   undo: [],
+  selectedFieldId: null,
+  imageOptions: null,
 
   setOpen: (open) => set({ open }),
   toggle: () => set((s) => ({ open: !s.open })),
   setContext: (context) => set({ context }),
   ask: (prompt) => set({ open: true, pendingPrompt: prompt }),
   consumePrompt: () => set({ pendingPrompt: null }),
+
+  select: (selectedFieldId) => set({ selectedFieldId }),
+  setImageOptions: (imageOptions) => set({ imageOptions }),
 
   addProposal: (p) => set((s) => ({ staged: [...s.staged, p] })),
   removeProposal: (id) => set((s) => ({ staged: s.staged.filter((p) => p.id !== id) })),

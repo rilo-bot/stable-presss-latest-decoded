@@ -400,7 +400,7 @@ export default function ArticleDetail() {
                     }
                     aria-label="Reading time in minutes"
                     placeholder="0"
-                    className="w-12 rounded-sm bg-sky-400/10 px-1.5 py-0.5 text-primary-foreground outline-none ring-2 ring-sky-400/70 focus:ring-sky-500"
+                    className="w-12 rounded-sm bg-purple-400/10 px-1.5 py-0.5 text-primary-foreground outline-none ring-2 ring-purple-400/70 focus:ring-purple-500"
                   />
                   min read
                 </span>

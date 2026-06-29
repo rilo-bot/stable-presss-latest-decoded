@@ -226,7 +226,7 @@ export function OnboardingGuide({ steps, name, onShowMe, onAskStep, onSkipStep, 
           <div ref={scrollRef} className="sku-parchment" style={{ flex: 1, overflowY: 'auto', padding: '10px 11px', display: 'flex', flexDirection: 'column', gap: 8 }}>
             {messages.length === 0 && (
               <p style={{ fontSize: '0.66rem', color: 'var(--forest-mid)', fontStyle: 'italic', lineHeight: 1.5 }}>
-                Hi! I’m {name}. Tell me about this {ctx?.entityKind ?? 'profile'} and I’ll draft values for you to review and Apply — nothing saves without your tap.
+                Hi! I’m {name}. Tell me about this {ctx?.entityKind ?? 'profile'} and I’ll fill it in for you as we go — you can Undo anything with one tap.
               </p>
             )}
             {messages.map((m) => {

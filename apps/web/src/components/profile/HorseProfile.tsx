@@ -34,6 +34,7 @@ import { OnboardingSteps, type OnbStep } from '@/components/profile/OnboardingSt
 import { OnboardingGuide, type GuideStep } from '@/components/profile/OnboardingGuide';
 import { OnboardingComplete } from '@/components/profile/OnboardingComplete';
 import { OnboardingFocus } from '@/components/profile/OnboardingFocus';
+import { StudioField } from '@/components/profile/StudioField';
 import { RoleConnectionBox, roleDefByRel } from '@/components/profile/RoleConnectionBox';
 import { useRoleConnections } from '@/components/profile/useRoleConnections';
 import { ProfileAgentPanel, StudioLauncher } from '@/agent/profile/ProfileAgentPanel';
@@ -418,17 +419,25 @@ export function HorseProfile({ horseId, mode, onBack }: HorseProfileProps) {
 
       {/* Identity + Pedigree sit ABOVE the portrait (reference layout). */}
       <div id="onb-identity" style={{ display: 'grid', gridTemplateColumns: '0.85fr 1.15fr', gap: 14, alignItems: 'stretch' }}>
-        <IdentityCard title="Identity" fields={idFields} editable={editableHorse} className={isActive('basics') ? 'onb-spotlight' : undefined} />
-        <IdentityCard title="Pedigree" icon={<BookMarked size={12} style={{ color: 'var(--gold-bright)' }} />} fields={pedFields} editable={editableHorse} className={isActive('pedigree') ? 'onb-spotlight' : undefined} />
+        <StudioField fieldId="basics" label="Identity" enabled={editableHorse}>
+          <IdentityCard title="Identity" fields={idFields} editable={editableHorse} className={isActive('basics') ? 'onb-spotlight' : undefined} />
+        </StudioField>
+        <StudioField fieldId="pedigree" label="Pedigree" enabled={editableHorse}>
+          <IdentityCard title="Pedigree" icon={<BookMarked size={12} style={{ color: 'var(--gold-bright)' }} />} fields={pedFields} editable={editableHorse} className={isActive('pedigree') ? 'onb-spotlight' : undefined} />
+        </StudioField>
       </div>
 
       <div id="onb-photo">
-        <PortraitFrame src={horse.imageUrl} alt={horseName} editable={editableHorse} kind="horse" onUpload={(url) => set({ imageUrl: url })} containerStyle={{ height: 'clamp(300px, 46vh, 520px)', minHeight: 300 }} caption={featuredCaption} label={!horse.imageUrl ? 'Add a photo to begin' : undefined} className={isActive('photo') ? 'onb-spotlight' : undefined} />
+        <StudioField fieldId="photo" label="Photo" enabled={editableHorse}>
+          <PortraitFrame src={horse.imageUrl} alt={horseName} editable={editableHorse} kind="horse" onUpload={(url) => set({ imageUrl: url })} containerStyle={{ height: 'clamp(300px, 46vh, 520px)', minHeight: 300 }} caption={featuredCaption} label={!horse.imageUrl ? 'Add a photo to begin' : undefined} className={isActive('photo') ? 'onb-spotlight' : undefined} />
+        </StudioField>
       </div>
 
       {/* Racing Summary plaque BELOW the portrait. Editable card in studio, a
           read-only banded table on the public page. */}
-      {editableHorse ? racingCard : <RacingSummaryBar stats={racingStats} />}
+      {editableHorse ? (
+        <StudioField fieldId="racing" label="Racing Summary" enabled={editableHorse}>{racingCard}</StudioField>
+      ) : <RacingSummaryBar stats={racingStats} />}
 
       {editableHorse && !isActive('racing') && (
         <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 6, padding: '4px 0', fontSize: '0.58rem', fontStyle: 'italic', color: 'var(--gold-dark)', ...serifStyle }}>
@@ -457,9 +466,21 @@ export function HorseProfile({ horseId, mode, onBack }: HorseProfileProps) {
       : null)
     : null;
 
+  // Which focusable box the open module card maps to (racing/studbook/notes).
+  const moduleBox: Record<string, { key: string; label: string }> = {
+    racing: { key: 'racing', label: 'Racing Summary' },
+    studbook: { key: 'studbook', label: 'Stud Book' },
+    pedigree: { key: 'notes', label: 'Notes' },
+  };
   const centerModule = activeModule ? (
     <>
-      {moduleEditCard && <div style={{ marginBottom: 10 }}>{moduleEditCard}</div>}
+      {moduleEditCard && (
+        <div style={{ marginBottom: 10 }}>
+          {moduleBox[activeModule] ? (
+            <StudioField fieldId={moduleBox[activeModule].key} label={moduleBox[activeModule].label} enabled={editableHorse}>{moduleEditCard}</StudioField>
+          ) : moduleEditCard}
+        </div>
+      )}
       {editableHorse && canAdd && (
         <div style={{ marginBottom: 10 }}>
           {addOpen ? (
@@ -579,6 +600,7 @@ export function HorseProfile({ horseId, mode, onBack }: HorseProfileProps) {
                 title={(activeKey && HORSE_COACH[activeKey]?.title) || activeStep?.label || ''}
                 tips={activeKey ? HORSE_COACH[activeKey]?.tips : undefined}
                 content={activeKey ? focusContent(activeKey) : null}
+                boxKey={activeConnRel ? `conn:${activeConnRel}` : activeKey}
                 originId={activeStep?.anchorId}
                 skippable
                 onSkip={() => { if (activeKey) skipStep(activeKey); }}
