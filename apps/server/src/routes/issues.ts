@@ -20,7 +20,22 @@ import { Router } from 'express';
 import { db } from '../lib/db.js';
 import { isStaff, isAdmin } from '../lib/rbac.js';
 import { sanitizePages } from '../lib/sanitizeHtml.js';
+import { renderBulletinPdf } from '../lib/pdf.js';
 import type { AccountUser } from '../lib/identity.js';
+
+// Origin of the public web app the PDF renderer navigates to. Dev: Vite on 5173.
+// Deployment: set WEB_PUBLIC_URL to the deployed frontend origin.
+const WEB_PUBLIC_URL = (process.env.WEB_PUBLIC_URL ?? 'http://localhost:5173').replace(/\/$/, '');
+
+/** Turn an issue title into a safe download file name. */
+function pdfFileName(title: unknown): string {
+  const base = String(title ?? '')
+    .trim()
+    .replace(/[^\w\-]+/g, '-')
+    .replace(/-+/g, '-')
+    .replace(/^-|-$/g, '');
+  return `${base || 'bulletin'}.pdf`;
+}
 
 type WithMongoId = { _id: string; [key: string]: unknown };
 
@@ -88,6 +103,48 @@ router.get('/:id', async (req, res) => {
     return;
   }
   res.json(project(doc));
+});
+
+// download as PDF — renders the public viewer route in headless Chromium.
+// Public for published issues; staff may also export an unpublished (preview)
+// edition (their Bearer token is forwarded into the headless browser's API call).
+router.get('/:id/pdf', async (req, res) => {
+  const doc = await db.collection('issues').findById(req.params.id);
+  if (!doc) {
+    res.status(404).json({ error: 'Not found' });
+    return;
+  }
+  const staff = isStaff(req.account);
+  if (doc.unpublishedAt && !staff) {
+    res.status(404).json({ error: 'Not found' });
+    return;
+  }
+
+  const url = `${WEB_PUBLIC_URL}/bulletins/${req.params.id}`;
+  // Forward the caller's token only when it's needed to render a non-public issue.
+  const auth = req.headers.authorization;
+  const token = doc.unpublishedAt && staff && auth?.startsWith('Bearer ')
+    ? auth.slice('Bearer '.length)
+    : undefined;
+  // Content-addressed cache key: a frozen issue only changes when republished
+  // (version/updatedAt bump). Unpublished previews are rendered with the caller's
+  // token, so don't share their output across the public cache — bypass it.
+  const cacheKey = doc.unpublishedAt ? '' : `${req.params.id}:${doc.version ?? 1}:${doc.updatedAt ?? ''}`;
+
+  // ?refresh=1 forces a fresh render (e.g. after fixing artwork) and replaces
+  // the cached copy.
+  const forceRefresh = req.query.refresh === '1';
+
+  try {
+    const pdf = await renderBulletinPdf(url, cacheKey, token, forceRefresh);
+    res.setHeader('Content-Type', 'application/pdf');
+    res.setHeader('Content-Disposition', `attachment; filename="${pdfFileName(doc.title)}"`);
+    res.setHeader('Content-Length', pdf.length);
+    res.send(pdf);
+  } catch (err) {
+    console.error('[issues] PDF render failed:', err instanceof Error ? err.message : err);
+    res.status(500).json({ error: 'Could not generate the PDF.' });
+  }
 });
 
 // create — publish a snapshot (staff)

@@ -170,6 +170,8 @@ interface MagazineState {
   setImage: (magId: string, pageId: string, regionId: string, patch: Partial<ImageContent>) => void;
   setQr: (magId: string, pageId: string, regionId: string, patch: Partial<QrContent>) => void;
   setIcon: (magId: string, pageId: string, regionId: string, patch: Partial<IconContent>) => void;
+  /** Remove a region (text / image / qr / icon) from a page entirely. Undoable. */
+  deleteRegion: (magId: string, pageId: string, regionId: string) => void;
 
   // structural page ops (owner-only; persisted via PUT /:id/pages)
   addPage: (magId: string, pageType: PageTypeKey, atIndex?: number) => void;
@@ -520,6 +522,33 @@ export const useMagazineStore = create<MagazineState>()((set, get) => {
       recordHistory(magId, `icon:${pageId}:${regionId}`);
       const next: RegionContent = { ...cur, ...patch };
       set((s) => ({ magazines: patchRegion(s.magazines, magId, pageId, regionId, next) }));
+      schedule(`page:${magId}:${pageId}`, () => flushPage(magId, pageId));
+    },
+
+    deleteRegion: (magId, pageId, regionId) => {
+      const page = get().magazines.find((m) => m.id === magId)?.pages.find((p) => p.id === pageId);
+      if (!page || !(regionId in page.content)) return;
+      // Distinct (non-coalescing) key so each delete is its own undo step.
+      recordHistory(magId, `delete:${pageId}:${regionId}:${uid()}`);
+      set((s) => ({
+        magazines: s.magazines.map((m) =>
+          m.id !== magId
+            ? m
+            : {
+                ...m,
+                updatedAt: nowIso(),
+                pages: m.pages.map((p) => {
+                  if (p.id !== pageId) return p;
+                  const content = { ...p.content };
+                  delete content[regionId];
+                  return { ...p, content };
+                }),
+              }
+        ),
+        // Drop the selection — the region (and its inspector panel) is gone.
+        selectedRegionId: s.selectedRegionId === regionId && s.selectedPageId === pageId ? null : s.selectedRegionId,
+        selectedPageId: s.selectedRegionId === regionId && s.selectedPageId === pageId ? null : s.selectedPageId,
+      }));
       schedule(`page:${magId}:${pageId}`, () => flushPage(magId, pageId));
     },
 

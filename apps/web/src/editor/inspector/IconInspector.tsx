@@ -3,6 +3,7 @@ import { useMagazineStore } from '@/stores/magazineStore';
 import { useIconUpload } from '../components/useIconUpload';
 import { ICON_NAMES, resolveIcon } from '../templates/iconRegistry';
 import { Section, ColorControl } from './controls';
+import { DeleteRegionButton } from './DeleteRegionButton';
 import { Upload, RotateCcw, Loader2 } from 'lucide-react';
 import { cn } from '@/lib/utils';
 
@@ -80,6 +81,8 @@ export function IconInspector({
           </button>
         </Section>
       )}
+
+      <DeleteRegionButton magazineId={magazineId} pageId={pageId} regionId={regionId} label="icon" />
     </div>
   );
 }

@@ -54,12 +54,16 @@ function matchesQuery(doc: Doc, query: Record<string, unknown>): boolean {
 function memoryCollection(name: string) {
   return {
     async find(query?: Record<string, unknown>): Promise<Doc[]> {
-      const docs = getStore(name)
+      // Soft delete: never surface tombstoned docs to readers.
+      const docs = getStore(name).filter((d) => !d.deletedAt)
       if (!query || Object.keys(query).length === 0) return [...docs]
       return docs.filter((d) => matchesQuery(d, query))
     },
     async findById(id: string): Promise<Doc | null> {
-      return getStore(name).find((d) => d._id === id) ?? null
+      const doc = getStore(name).find((d) => d._id === id) ?? null
+      // A soft-deleted doc is treated as gone.
+      if (doc && doc.deletedAt) return null
+      return doc
     },
     async insertOne(doc: Record<string, unknown>): Promise<string> {
       const id = genId()
@@ -70,15 +74,18 @@ function memoryCollection(name: string) {
     async updateOne(id: string, update: Record<string, unknown>): Promise<boolean> {
       const docs = getStore(name)
       const idx = docs.findIndex((d) => d._id === id)
-      if (idx === -1) return false
+      if (idx === -1 || docs[idx]!.deletedAt) return false
       docs[idx] = { ...docs[idx]!, ...update, _id: id }
       return true
     },
+    // Soft delete only — we never splice the row out of the store. The doc is
+    // stamped with `deletedAt` so find()/findById() hide it while the data
+    // remains recoverable. There is no hard-delete path anywhere.
     async deleteOne(id: string): Promise<boolean> {
       const docs = getStore(name)
       const idx = docs.findIndex((d) => d._id === id)
-      if (idx === -1) return false
-      docs.splice(idx, 1)
+      if (idx === -1 || docs[idx]!.deletedAt) return false
+      docs[idx] = { ...docs[idx]!, deletedAt: new Date().toISOString(), _id: id }
       return true
     },
   }
@@ -90,22 +97,43 @@ function memoryCollection(name: string) {
 
 let mongoDb: Db | null = null
 let mongoConnected = false
+// Cache the in-flight connect so concurrent requests share ONE attempt instead
+// of each spawning a client. Cleared on failure so the next request can retry —
+// important for transient DNS/network blips reaching Atlas (mongodb+srv needs
+// extra SRV/TXT lookups that can intermittently fail behind some resolvers).
+let mongoDbPromise: Promise<Db> | null = null
 
 async function getMongoDb(): Promise<Db> {
   if (mongoDb) return mongoDb
-  const client = new MongoClient(MONGODB_URI)
-  await client.connect()
-  mongoDb = client.db()
-  mongoConnected = true
-  console.log('[db] MongoDB connected:', MONGODB_URI.replace(/:([^@]+)@/, ':***@'))
-  return mongoDb
+  if (!mongoDbPromise) {
+    // serverSelectionTimeoutMS: fail in 8s instead of the 30s default so a bad
+    // request errors quickly rather than hanging the connection pool.
+    const client = new MongoClient(MONGODB_URI, { serverSelectionTimeoutMS: 8000 })
+    mongoDbPromise = client
+      .connect()
+      .then((c) => {
+        mongoDb = c.db()
+        mongoConnected = true
+        console.log('[db] MongoDB connected:', MONGODB_URI.replace(/:([^@]+)@/, ':***@'))
+        return mongoDb
+      })
+      .catch((err) => {
+        // Drop the cached attempt so the NEXT request reconnects from scratch.
+        mongoDbPromise = null
+        throw err
+      })
+  }
+  return mongoDbPromise
 }
 
 function mongoCollection(name: string) {
   return {
     async find(query?: Record<string, unknown>): Promise<Doc[]> {
       const db = await getMongoDb()
-      const docs = await db.collection(name).find(query ?? {}).toArray()
+      // Soft delete: `deletedAt: null` matches both missing and null, so
+      // tombstoned docs are excluded from every read.
+      const finalQuery = { ...(query ?? {}), deletedAt: null }
+      const docs = await db.collection(name).find(finalQuery).toArray()
       return docs.map((d) => ({ ...d, _id: d._id.toString() })) as Doc[]
     },
     async findById(id: string): Promise<Doc | null> {
@@ -116,7 +144,8 @@ function mongoCollection(name: string) {
       } catch {
         doc = await db.collection(name).findOne({ _id: id as any })
       }
-      if (!doc) return null
+      // A soft-deleted doc is treated as gone.
+      if (!doc || doc.deletedAt) return null
       return { ...doc, _id: doc._id.toString() } as Doc
     },
     async insertOne(doc: Record<string, unknown>): Promise<string> {
@@ -127,22 +156,27 @@ function mongoCollection(name: string) {
     async updateOne(id: string, update: Record<string, unknown>): Promise<boolean> {
       const db = await getMongoDb()
       let result
+      // Guard with `deletedAt: null` so a soft-deleted doc can't be mutated.
       try {
-        result = await db.collection(name).updateOne({ _id: new ObjectId(id) }, { $set: update })
+        result = await db.collection(name).updateOne({ _id: new ObjectId(id), deletedAt: null }, { $set: update })
       } catch {
-        result = await db.collection(name).updateOne({ _id: id as any }, { $set: update })
+        result = await db.collection(name).updateOne({ _id: id as any, deletedAt: null }, { $set: update })
       }
       return result.modifiedCount > 0
     },
+    // Soft delete only — stamp `deletedAt` instead of removing the document, so
+    // find()/findById() hide it while the data stays recoverable. There is no
+    // hard-delete path anywhere.
     async deleteOne(id: string): Promise<boolean> {
       const db = await getMongoDb()
+      const deletedAt = new Date().toISOString()
       let result
       try {
-        result = await db.collection(name).deleteOne({ _id: new ObjectId(id) })
+        result = await db.collection(name).updateOne({ _id: new ObjectId(id), deletedAt: null }, { $set: { deletedAt } })
       } catch {
-        result = await db.collection(name).deleteOne({ _id: id as any })
+        result = await db.collection(name).updateOne({ _id: id as any, deletedAt: null }, { $set: { deletedAt } })
       }
-      return result.deletedCount > 0
+      return result.modifiedCount > 0
     },
   }
 }

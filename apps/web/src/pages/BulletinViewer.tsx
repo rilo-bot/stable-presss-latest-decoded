@@ -14,7 +14,10 @@ import { EditorProvider } from '@/editor/EditorContext';
 import { PAGE_COMPONENTS } from '@/editor/templates/registry';
 import { PAGE_W, PAGE_H } from '@/editor/templates/parts';
 import type { MagazinePage } from '@/types/magazine';
-import { ArrowLeft, BookOpen, Printer } from 'lucide-react';
+import { apiUrl } from '@/lib/api';
+import { useAuthStore } from '@/stores/authStore';
+import { ArrowLeft, BookOpen, Download, Loader2 } from 'lucide-react';
+import { toast } from 'sonner';
 
 function ReadonlyPage({ page, maxWidth }: { page: MagazinePage; maxWidth: number }) {
   const Comp = PAGE_COMPONENTS[page.pageType];
@@ -60,6 +63,41 @@ export default function BulletinViewer() {
   const containerRef = useRef<HTMLDivElement>(null);
   const [maxWidth, setMaxWidth] = useState(PAGE_W);
 
+  // PDF export: the server renders this very route in headless Chromium and
+  // streams back a real A4 PDF (see GET /api/issues/:id/pdf). We just fetch it
+  // and trigger a download — no client-side rasterization, so the magazine
+  // layout is reproduced exactly.
+  const [exporting, setExporting] = useState(false);
+  // Marker the server's renderer waits for: set once the issue, its web fonts,
+  // and its images have finished loading, so nothing is captured half-painted.
+  const [printReady, setPrintReady] = useState(false);
+
+  const handleDownload = async () => {
+    if (exporting || !issue || !id) return;
+    setExporting(true);
+    try {
+      const token = useAuthStore.getState().token;
+      const res = await fetch(apiUrl(`/api/issues/${id}/pdf`), {
+        headers: token ? { Authorization: `Bearer ${token}` } : undefined,
+      });
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      const blob = await res.blob();
+      const objectUrl = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = objectUrl;
+      a.download = `${(issue.title || 'bulletin').replace(/[^\w-]+/g, '-').replace(/-+/g, '-')}.pdf`;
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      URL.revokeObjectURL(objectUrl);
+    } catch (err) {
+      console.error('Bulletin PDF download failed', err);
+      toast.error('Could not generate the PDF. Please try again.');
+    } finally {
+      setExporting(false);
+    }
+  };
+
   useEffect(() => {
     const el = containerRef.current;
     if (!el) return;
@@ -68,6 +106,39 @@ export default function BulletinViewer() {
     const ro = new ResizeObserver(measure);
     ro.observe(el);
     return () => ro.disconnect();
+  }, [status]);
+
+  // Signal print-readiness for the server-side renderer: wait for the issue to
+  // be rendered, web fonts to load, and every page image to finish.
+  useEffect(() => {
+    if (status !== 'ready') return;
+    let cancelled = false;
+    (async () => {
+      try {
+        await (document as Document).fonts?.ready;
+      } catch {
+        /* fonts API unavailable — proceed anyway */
+      }
+      const el = containerRef.current;
+      if (el) {
+        const imgs = Array.from(el.querySelectorAll('img'));
+        await Promise.all(
+          imgs
+            .filter((img) => !img.complete || img.naturalWidth === 0)
+            .map(
+              (img) =>
+                new Promise<void>((resolve) => {
+                  img.addEventListener('load', () => resolve(), { once: true });
+                  img.addEventListener('error', () => resolve(), { once: true });
+                }),
+            ),
+        );
+      }
+      if (!cancelled) setPrintReady(true);
+    })();
+    return () => {
+      cancelled = true;
+    };
   }, [status]);
 
   if (status === 'loading') {
@@ -95,15 +166,17 @@ export default function BulletinViewer() {
   }
 
   return (
-    <div className="min-h-screen bg-white">
+    <div className="min-h-screen bg-white" data-bulletin-ready={printReady ? 'true' : undefined}>
       {/* Print rules: render each page at natural A4 size, one per sheet, with the
-          screen chrome and scaling removed. Used by the "Download PDF" button. */}
+          screen chrome and scaling removed. These are what the "Download PDF" button
+          uses — the server prints this exact route in headless Chromium — and they
+          also apply to native browser print (Ctrl+P). */}
       <style>{`
         @media print {
           @page { size: A4 portrait; margin: 0; }
           html, body { background: #fff !important; }
           .bulletin-print-container { max-width: none !important; margin: 0 !important; padding: 0 !important; gap: 0 !important; display: block !important; }
-          .bulletin-print-page { width: ${PAGE_W}px !important; height: ${PAGE_H}px !important; box-shadow: none !important; }
+          .bulletin-print-page { width: ${PAGE_W}px !important; height: ${PAGE_H}px !important; box-shadow: none !important; overflow: hidden !important; }
           .bulletin-print-page > div { transform: none !important; }
           .bulletin-print-page:not(:last-child) { break-after: page; page-break-after: always; }
         }
@@ -123,11 +196,13 @@ export default function BulletinViewer() {
             </p>
           </div>
           <button
-            onClick={() => window.print()}
-            className="ml-auto flex flex-shrink-0 items-center gap-1.5 rounded-sm border border-white/20 px-3 py-1.5 text-xs font-semibold text-white/80 hover:bg-white/10"
-            title="Print or save this edition as a PDF"
+            onClick={handleDownload}
+            disabled={exporting}
+            className="ml-auto flex flex-shrink-0 items-center gap-1.5 rounded-sm border border-white/20 px-3 py-1.5 text-xs font-semibold text-white/80 hover:bg-white/10 disabled:cursor-not-allowed disabled:opacity-60"
+            title="Download this edition as a PDF"
           >
-            <Printer size={14} /> Download PDF
+            {exporting ? <Loader2 size={14} className="animate-spin" /> : <Download size={14} />}
+            {exporting ? 'Preparing PDF…' : 'Download PDF'}
           </button>
         </div>
       </div>

@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useMemo, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { Plus, Search, Eye, Link, ChevronDown, X } from 'lucide-react';
 import { Button } from '@/components/ui/button';
@@ -8,11 +8,13 @@ import { AddHorseChoice } from '@/components/AddHorseChoice';
 import { useHorseStore } from '@/stores/horseStore';
 import { cn } from '@/lib/utils';
 import type { Horse } from '@/types/horse';
+import type { Party } from '@/types/party';
 import type { connectionResolver } from '@/lib/horseConnections';
 
 interface HorseProductionSystemProps {
   horses: Horse[];
   filteredHorses: Horse[];
+  parties: Party[];
   horseSearch: string;
   setHorseSearch: (v: string) => void;
   expandedHorseId: string | null;
@@ -24,6 +26,7 @@ interface HorseProductionSystemProps {
 export function HorseProductionSystem({
   horses,
   filteredHorses,
+  parties,
   horseSearch,
   setHorseSearch,
   expandedHorseId,
@@ -35,6 +38,39 @@ export function HorseProductionSystem({
   const navigate = useNavigate();
   const addHorse = useHorseStore((s) => s.addHorse);
   const [chooser, setChooser] = useState(false);
+
+  // Index parties once so owner/breeder cells can render each linked person as a
+  // clickable link through to their public party profile (/parties/:id).
+  const partyById = useMemo(
+    () => new Map((parties ?? []).map((p) => [p.id, p])),
+    [parties]
+  );
+
+  // Render a comma-separated list of party names, each linking to its profile.
+  const renderPartyLinks = (ids?: string[]) => {
+    const linked = (ids ?? [])
+      .map((id) => partyById.get(id))
+      .filter((p): p is Party => Boolean(p));
+    if (linked.length === 0) {
+      return <span className="text-muted-foreground/40 text-sm">—</span>;
+    }
+    return (
+      <span className="text-sm line-clamp-1">
+        {linked.map((p, i) => (
+          <span key={p.id}>
+            <button
+              type="button"
+              onClick={() => navigate(`/parties/${p.id}`)}
+              className="text-primary hover:text-primary/80 hover:underline transition-colors"
+            >
+              {p.name}
+            </button>
+            {i < linked.length - 1 && <span className="text-muted-foreground">, </span>}
+          </span>
+        ))}
+      </span>
+    );
+  };
 
   // Guided path: create an un-named draft and drop into the gamified studio.
   const onGuided = async () => {
@@ -111,10 +147,10 @@ export function HorseProductionSystem({
             </span>
           </div>
           <div className="overflow-x-auto">
-            <table className="w-full text-sm min-w-[620px]">
+            <table className="w-full text-sm min-w-[720px]">
               <thead>
                 <tr className="border-b border-border/40 bg-muted/20">
-                  {['Horse', 'Colour / Age', 'Owner', 'Trainer', 'Jockey', 'Country', 'Actions'].map((h) => (
+                  {['Horse', 'Colour / Age', 'Owner', 'Breeder', 'Trainer', 'Jockey', 'Country', 'Actions'].map((h) => (
                     <th
                       key={h}
                       className="text-left px-4 py-2.5 text-[12px] uppercase tracking-[0.1em] text-muted-foreground font-semibold"
@@ -137,9 +173,14 @@ export function HorseProductionSystem({
                         )}
                       >
                         <td className="px-4 py-3 max-w-[160px]">
-                          <span className="text-sm font-semibold text-foreground block line-clamp-1">
-                            {horse.name}
-                          </span>
+                          <button
+                            type="button"
+                            onClick={() => navigate(`/horses/${horse.id}`)}
+                            className="text-sm font-semibold text-foreground block line-clamp-1 text-left hover:text-primary hover:underline transition-colors"
+                            aria-label={`Open profile for ${horse.name || 'this horse'}`}
+                          >
+                            {horse.name || 'Unnamed'}
+                          </button>
                           {horse.pullQuote && (
                             <span className="text-[12px] text-muted-foreground italic line-clamp-1 block">
                               {horse.pullQuote}
@@ -165,13 +206,16 @@ export function HorseProductionSystem({
                           </div>
                         </td>
                         <td className="px-4 py-3">
-                          <span className="text-sm text-muted-foreground line-clamp-1">{horseConn(horse).owner || '—'}</span>
+                          {renderPartyLinks(horse.ownerIds)}
                         </td>
                         <td className="px-4 py-3">
-                          <span className="text-sm text-muted-foreground">{horseConn(horse).trainer || '—'}</span>
+                          {renderPartyLinks(horse.breederIds)}
                         </td>
                         <td className="px-4 py-3">
-                          <span className="text-sm text-muted-foreground">{horseConn(horse).jockey || '—'}</span>
+                          {renderPartyLinks(horse.trainerIds)}
+                        </td>
+                        <td className="px-4 py-3">
+                          {renderPartyLinks(horse.jockeyIds)}
                         </td>
                         <td className="px-4 py-3">
                           {horse.country ? (
@@ -219,7 +263,7 @@ export function HorseProductionSystem({
 
                       {isExpanded && (
                         <tr key={`${horse.id}-links`} className="border-b border-primary/20">
-                          <td colSpan={7} className="bg-primary/3 px-0 py-0">
+                          <td colSpan={8} className="bg-primary/3 px-0 py-0">
                             <div className="px-6 py-5 border-l-4 border-primary/30 bg-primary/[0.03]">
                               <div className="flex items-center gap-2 mb-4">
                                 <Link size={13} className="text-primary flex-shrink-0" />

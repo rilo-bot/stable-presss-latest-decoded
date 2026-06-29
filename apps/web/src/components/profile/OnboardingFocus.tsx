@@ -12,7 +12,7 @@
  */
 import { useLayoutEffect, useRef } from 'react';
 import { AnimatePresence, motion, useReducedMotion, useAnimationControls } from 'framer-motion';
-import { Sparkles, SkipForward } from 'lucide-react';
+import { Sparkles, SkipForward, X } from 'lucide-react';
 import { serifStyle, displayStyle, goldStyle } from '@/components/profile/kit';
 
 export interface OnboardingFocusProps {
@@ -32,6 +32,8 @@ export interface OnboardingFocusProps {
   onSkip?: () => void;
   /** Opens the Stablehand chat primed for this step. */
   onAsk?: () => void;
+  /** Closes the whole guided journey (anything entered is already saved). */
+  onClose?: () => void;
 }
 
 /** The centered card; owns the FLIP from the in-place box's rect to screen centre. */
@@ -89,7 +91,7 @@ function FocusCard({ stepKey, originId, reduce, children }: {
   );
 }
 
-export function OnboardingFocus({ open, stepKey, stepIndex, total, title, tips, content, originId, skippable, onSkip, onAsk }: OnboardingFocusProps) {
+export function OnboardingFocus({ open, stepKey, stepIndex, total, title, tips, content, originId, skippable, onSkip, onAsk, onClose }: OnboardingFocusProps) {
   const reduce = useReducedMotion();
 
   return (
@@ -117,6 +119,11 @@ export function OnboardingFocus({ open, stepKey, stepIndex, total, title, tips, 
               <Sparkles size={14} style={{ color: 'var(--gold-bright)' }} />
               <span style={{ ...displayStyle, ...goldStyle, fontSize: '0.92rem', fontWeight: 700, flex: 1, minWidth: 0 }}>{title}</span>
               <span style={{ fontSize: '0.56rem', fontWeight: 700, letterSpacing: '0.08em', color: 'var(--gold-mid)', textTransform: 'uppercase', whiteSpace: 'nowrap' }}>Step {stepIndex + 1} of {total}</span>
+              {onClose && (
+                <button type="button" onClick={onClose} title="Close the guide — you can finish the rest anytime" aria-label="Close guided journey" style={{ flexShrink: 0, display: 'flex', alignItems: 'center', justifyContent: 'center', background: 'none', border: '1px solid var(--gold-dark)', borderRadius: 3, color: 'var(--gold-mid)', cursor: 'pointer', padding: 4, lineHeight: 0 }}>
+                  <X size={14} />
+                </button>
+              )}
             </div>
             <div className="sku-parchment" style={{ padding: '14px 16px', display: 'flex', flexDirection: 'column', gap: 12 }}>
               {tips && tips.length > 0 && (

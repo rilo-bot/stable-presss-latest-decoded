@@ -10,6 +10,7 @@ import { TextInspector } from './TextInspector';
 import { ImageInspector } from './ImageInspector';
 import { QrInspector } from './QrInspector';
 import { IconInspector } from './IconInspector';
+import { regionDisplayName } from '../templates/regionNames';
 import { MousePointerClick, Type, Image as ImageIcon, QrCode, Shapes } from 'lucide-react';
 import type { RegionContent } from '@/types/magazine';
 
@@ -66,8 +67,8 @@ export function Inspector() {
           <Icon size={14} />
         </span>
         <div className="min-w-0">
-          <p className="text-xs font-bold text-white">{meta.label}</p>
-          <p className="truncate text-[10px] text-white/40">{resolved.pageLabel}</p>
+          <p className="truncate text-xs font-bold text-white">{regionDisplayName(resolved.regionId)}</p>
+          <p className="truncate text-[10px] text-white/40">{meta.label} · {resolved.pageLabel}</p>
         </div>
       </div>
 

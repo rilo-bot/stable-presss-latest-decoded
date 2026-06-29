@@ -13,6 +13,8 @@ import type {
 // ── Context blob sent to the server with each chat turn ──────────────────────
 export interface CtxRegion {
   regionId: string;
+  /** Human-friendly name shown to the user (e.g. "Hero photo"); how they refer to it. */
+  name: string;
   kind: RegionKind;
   filled: boolean;
   preview: string;
@@ -47,7 +49,7 @@ export interface EditorContextBlob {
       }
     | null;
   currentPage: CtxCurrentPage | null;
-  selection: { regionId: string; kind: RegionKind; filled: boolean } | null;
+  selection: { regionId: string; name: string; kind: RegionKind; filled: boolean } | null;
   otherPages: CtxOtherPage[];
   attachments?: CtxAttachment[];
 }

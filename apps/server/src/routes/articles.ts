@@ -9,10 +9,10 @@ function project<T extends WithMongoId>(doc: T): Omit<T, '_id'> & { id: string }
 
 const router = Router();
 
-// list
+// list — soft-deleted articles (deletedAt set) are excluded.
 router.get('/', async (req, res) => {
   const items = await db.collection('articles').find();
-  res.json(items.map(project));
+  res.json(items.filter((d) => !d.deletedAt).map(project));
 });
 
 // create
@@ -90,13 +90,19 @@ router.put('/:id', async (req, res) => {
   res.json(project(updated));
 });
 
-// delete
+// delete — soft delete: stamp deletedAt instead of removing the document, so
+// the story drops off the board/list but the record is retained.
 router.delete('/:id', async (req, res) => {
-  const deleted = await db.collection('articles').deleteOne(req.params.id);
-  if (!deleted) {
+  const found = await db.collection('articles').findById(req.params.id);
+  if (!found) {
     res.status(404).json({ error: 'Not found' });
     return;
   }
+  const now = new Date().toISOString();
+  await db.collection('articles').updateOne(req.params.id, {
+    deletedAt: now,
+    updatedAt: now,
+  });
   res.json({ success: true });
 });
 

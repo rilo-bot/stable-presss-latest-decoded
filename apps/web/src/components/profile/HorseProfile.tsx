@@ -20,9 +20,9 @@ import { useAuthStore } from '@/stores/authStore';
 import { canManageHorse } from '@/rbac/can';
 import { useProfileScope } from '@/hooks/useProfileScope';
 import { SEX_OPTIONS, COLOUR_OPTIONS, COUNTRY_OPTIONS } from '@/components/horse-form/constants';
-import { loadSkippedSteps, persistSkippedSteps } from '@/lib/profile/onboardingSkips';
+import { loadSkippedSteps, persistSkippedSteps, loadGuideDismissed, persistGuideDismissed } from '@/lib/profile/onboardingSkips';
 import type { Horse } from '@/types/horse';
-import { serifStyle, goldStyle, OrnateCrest } from '@/components/profile/kit';
+import { serifStyle, goldStyle, OrnateCrest, RacingSummaryBar, type RacingStat } from '@/components/profile/kit';
 import { ProfileScaffold, type Crumb } from '@/components/profile/ProfileScaffold';
 import { IdentityCard, type FieldDescriptor } from '@/components/profile/IdentityCard';
 import { PortraitFrame } from '@/components/profile/PortraitFrame';
@@ -146,6 +146,13 @@ export function HorseProfile({ horseId, mode, onBack }: HorseProfileProps) {
   // counts as resolved so onboarding can finish without it.
   const [skipped, setSkipped] = useState<Set<string>>(() => loadSkippedSteps(horseId));
   useEffect(() => { setSkipped(loadSkippedSteps(horseId)); }, [horseId]);
+
+  // Whether the member closed the guided journey (persisted per horse). Closing
+  // hides the focus overlay + mascot so they needn't skip all nine steps; data
+  // already entered is saved (fields commit immediately) and the in-place
+  // editors + checklist remain to finish later.
+  const [guideDismissed, setGuideDismissed] = useState<boolean>(() => loadGuideDismissed(horseId));
+  useEffect(() => { setGuideDismissed(loadGuideDismissed(horseId)); }, [horseId]);
 
   // Onboarding completion (edit mode). Mirrors the `onbSteps` done predicates
   // below — keep in sync. Computed as a hook (before the guards) so the one-time
@@ -277,7 +284,9 @@ export function HorseProfile({ horseId, mode, onBack }: HorseProfileProps) {
   const activeStep = onbSteps.find((s) => !s.done && !s.skipped);
   const activeKey = activeStep?.key;
   const activeIdx = onbSteps.findIndex((s) => s.key === activeKey);
-  const showGuide = editableHorse && !onbAllDone;
+  const showGuide = editableHorse && !onbAllDone && !guideDismissed;
+  // Close the whole guided journey (data already saved); persisted per horse.
+  const dismissGuide = () => { setGuideDismissed(true); persistGuideDismissed(horseId, true); };
   const isActive = (key: string) => showGuide && activeKey === key;
   // When the active step is a connection, glow + point at that left-rail box.
   const activeConnRel = CONNECTION_STEPS.find((c) => c.key === activeKey)?.rel ?? null;
@@ -361,6 +370,16 @@ export function HorseProfile({ horseId, mode, onBack }: HorseProfileProps) {
   // in the centre when their matching right-rail tile is clicked (keeps the page
   // lean: default = photo + Identity + Pedigree). See `moduleEditCard` below.
   const racingCard = <IdentityCard title="Racing Summary" icon={<Trophy size={12} style={{ color: 'var(--gold-bright)' }} />} fields={racingFields} editable={editableHorse} />;
+  // Read-only banded stat plaque shown beneath the portrait on the public page
+  // (matches the reference "RACING SUMMARY" table). Edit mode uses racingCard so
+  // the figures stay inline-editable.
+  const racingStats: RacingStat[] = [
+    { label: 'Career', value: horse.careerRecord ?? '' },
+    { label: 'Winnings', value: horse.careerWinnings != null ? '$' + horse.careerWinnings.toLocaleString('en-AU') : '', highlight: true },
+    { label: 'Last 10', value: horse.lastTenForm ?? '' },
+    { label: 'Season', value: horse.seasonRecord ?? '' },
+    { label: 'Rating', value: horse.currentRating != null ? String(horse.currentRating) : '', highlight: true },
+  ];
   const studbookCard = <IdentityCard title="Stud Book" icon={<Binary size={12} style={{ color: 'var(--gold-bright)' }} />} fields={studbookFields} editable={editableHorse} />;
   const notesCard = (
     <div className="sku-gold-card" style={{ ...serifStyle }}>
@@ -397,18 +416,23 @@ export function HorseProfile({ horseId, mode, onBack }: HorseProfileProps) {
         : <OnboardingSteps title={`Finish ${horseName}'s profile`} steps={onbSteps} onStepClick={scrollToAnchor} />
       )}
 
-      <div id="onb-photo">
-        <PortraitFrame src={horse.imageUrl} alt={horseName} editable={editableHorse} kind="horse" onUpload={(url) => set({ imageUrl: url })} containerStyle={{ height: 'clamp(300px, 46vh, 520px)', minHeight: 300 }} caption={featuredCaption} label={!horse.imageUrl ? 'Add a photo to begin' : undefined} className={isActive('photo') ? 'onb-spotlight' : undefined} />
-      </div>
-
+      {/* Identity + Pedigree sit ABOVE the portrait (reference layout). */}
       <div id="onb-identity" style={{ display: 'grid', gridTemplateColumns: '0.85fr 1.15fr', gap: 14, alignItems: 'stretch' }}>
         <IdentityCard title="Identity" fields={idFields} editable={editableHorse} className={isActive('basics') ? 'onb-spotlight' : undefined} />
         <IdentityCard title="Pedigree" icon={<BookMarked size={12} style={{ color: 'var(--gold-bright)' }} />} fields={pedFields} editable={editableHorse} className={isActive('pedigree') ? 'onb-spotlight' : undefined} />
       </div>
 
+      <div id="onb-photo">
+        <PortraitFrame src={horse.imageUrl} alt={horseName} editable={editableHorse} kind="horse" onUpload={(url) => set({ imageUrl: url })} containerStyle={{ height: 'clamp(300px, 46vh, 520px)', minHeight: 300 }} caption={featuredCaption} label={!horse.imageUrl ? 'Add a photo to begin' : undefined} className={isActive('photo') ? 'onb-spotlight' : undefined} />
+      </div>
+
+      {/* Racing Summary plaque BELOW the portrait. Editable card in studio, a
+          read-only banded table on the public page. */}
+      {editableHorse ? racingCard : <RacingSummaryBar stats={racingStats} />}
+
       {editableHorse && !isActive('racing') && (
         <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 6, padding: '4px 0', fontSize: '0.58rem', fontStyle: 'italic', color: 'var(--gold-dark)', ...serifStyle }}>
-          <ArrowRight size={11} /> Racing, Stud Book, Notes &amp; more open here — pick a Data Section on the right.
+          <ArrowRight size={11} /> Stud Book, Notes, Media &amp; more open here — pick a Data Section on the right.
         </div>
       )}
     </>
@@ -559,6 +583,7 @@ export function HorseProfile({ horseId, mode, onBack }: HorseProfileProps) {
                 skippable
                 onSkip={() => { if (activeKey) skipStep(activeKey); }}
                 onAsk={() => { if (activeStep) askAiForStep(activeStep); }}
+                onClose={dismissGuide}
               />
             </>
           : <ProfileAgentPanel />)
