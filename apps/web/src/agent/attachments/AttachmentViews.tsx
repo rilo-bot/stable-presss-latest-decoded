@@ -41,11 +41,19 @@ export function AttachmentBar({
               title={a.name}
               className={`h-12 w-12 rounded-md border object-cover ${thumbBorder(tone)}`}
             />
+            {/* Always-visible filename label pinned to the top-right corner */}
+            <span
+              title={a.name}
+              className="pointer-events-none absolute right-0.5 top-0.5 max-w-[calc(100%-4px)] truncate rounded bg-black/70 px-1 py-px text-[8px] leading-tight text-white"
+            >
+              {a.name}
+            </span>
+            {/* Remove control moved to top-left so it doesn't clash with the label */}
             <button
               type="button"
               onClick={() => onRemove(a.id)}
               aria-label={`Remove ${a.name}`}
-              className="absolute -right-1.5 -top-1.5 flex h-4 w-4 items-center justify-center rounded-full bg-black/70 text-white opacity-90 hover:bg-black"
+              className="absolute -left-1.5 -top-1.5 flex h-4 w-4 items-center justify-center rounded-full bg-black/70 text-white opacity-90 hover:bg-black"
             >
               <X size={10} />
             </button>
@@ -86,12 +94,19 @@ export function MessageAttachments({ message, tone = 'dark' }: { message: UIMess
     <div className="mb-1.5 flex flex-wrap gap-1.5">
       {files.map((f, i) =>
         f.kind === 'image' ? (
-          <a key={i} href={f.url} target="_blank" rel="noreferrer" title={f.name}>
+          <a key={i} href={f.url} target="_blank" rel="noreferrer" title={f.name} className="relative block">
             <img
               src={f.url}
               alt={f.name}
               className={`h-16 w-16 rounded-md border object-cover ${thumbBorder(tone)}`}
             />
+            {/* Always-visible filename label pinned to the top-right corner */}
+            <span
+              title={f.name}
+              className="pointer-events-none absolute right-0.5 top-0.5 max-w-[calc(100%-4px)] truncate rounded bg-black/70 px-1 py-px text-[8px] leading-tight text-white"
+            >
+              {f.name}
+            </span>
           </a>
         ) : (
           <span
