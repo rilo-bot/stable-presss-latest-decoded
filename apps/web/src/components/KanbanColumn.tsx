@@ -2,7 +2,7 @@ import { cn } from '@/lib/utils';
 import type { Article, ArticleStatus } from '@/types/article';
 import {
   Clock, ChevronRight, Shield, Eye, Send, FileEdit, AlertTriangle,
-  CheckCircle, BookOpen, Newspaper, Scale, ClipboardCheck, TrendingDown, Lock,
+  CheckCircle, BookOpen, Newspaper, Scale, ClipboardCheck, TrendingDown, Lock, Trash2,
 } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
 import { canEditArticle, can } from '@/lib/permissions';
@@ -174,6 +174,7 @@ interface KanbanCardProps {
   onAdvance: () => void;
   onSendRevision: () => void;
   onEdit: () => void;
+  onDelete: () => void;
   canAdvance: boolean;
   canRevision: boolean;
   // Permission context
@@ -189,6 +190,7 @@ function KanbanCard({
   onAdvance,
   onSendRevision,
   onEdit,
+  onDelete,
   canAdvance,
   canRevision,
   userRole,
@@ -283,13 +285,23 @@ function KanbanCard({
       {/* Actions */}
       <div className="flex items-center gap-2 pt-2 border-t border-border/40 flex-wrap">
         {canEdit ? (
-          <button
-            onClick={onEdit}
-            className="text-[12px] uppercase tracking-[0.08em] text-muted-foreground hover:text-foreground transition-colors font-semibold focus-visible:ring-2 focus-visible:ring-ring rounded-sm"
-            aria-label="Edit article"
-          >
-            Edit
-          </button>
+          <>
+            <button
+              onClick={onEdit}
+              className="text-[12px] uppercase tracking-[0.08em] text-muted-foreground hover:text-foreground transition-colors font-semibold focus-visible:ring-2 focus-visible:ring-ring rounded-sm"
+              aria-label="Edit article"
+            >
+              Edit
+            </button>
+            <button
+              onClick={onDelete}
+              className="flex items-center gap-1 text-[12px] uppercase tracking-[0.08em] text-muted-foreground hover:text-destructive transition-colors font-semibold focus-visible:ring-2 focus-visible:ring-ring rounded-sm"
+              aria-label="Delete article"
+            >
+              <Trash2 size={11} />
+              Delete
+            </button>
+          </>
         ) : (
           <span className="flex items-center gap-1 text-[12px] text-muted-foreground/40">
             <Lock size={9} />
@@ -333,6 +345,7 @@ interface KanbanColumnProps {
   isActiveColumn: boolean;
   onAdvance: (articleId: string, toStatus: KanbanStatus) => void;
   onEdit: (article: Article) => void;
+  onDelete: (article: Article) => void;
   // Permission context
   userRole?: UserRole | null;
   currentUserDisplayName?: string | null;
@@ -345,6 +358,7 @@ export function KanbanColumn({
   isActiveColumn,
   onAdvance,
   onEdit,
+  onDelete,
   userRole = null,
   currentUserDisplayName = null,
 }: KanbanColumnProps) {
@@ -451,6 +465,7 @@ export function KanbanColumn({
                 onAdvance={() => nextStatus && onAdvance(article.id, nextStatus)}
                 onSendRevision={() => onAdvance(article.id, 'revision')}
                 onEdit={() => onEdit(article)}
+                onDelete={() => onDelete(article)}
               />
             );
           })

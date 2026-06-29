@@ -1,4 +1,5 @@
 import { AlertCircle, Search, Filter, PenLine, Lock } from 'lucide-react';
+import { useNavigate } from 'react-router-dom';
 import { Button } from '@/components/ui/button';
 import { EmptyState } from '@/components/EmptyState';
 import { cn } from '@/lib/utils';
@@ -34,6 +35,7 @@ export function AllStoriesView({
   currentUserDisplayName,
   onEdit,
 }: AllStoriesViewProps) {
+  const navigate = useNavigate();
   return (
     <div className="space-y-4">
       {isContributor && (
@@ -91,7 +93,14 @@ export function AllStoriesView({
                 return (
                   <tr key={article.id} className={cn('border-b border-border/30 transition-colors', idx % 2 === 0 ? 'bg-card' : 'bg-background')}>
                     <td className="px-4 py-3 max-w-[240px]">
-                      <span className="font-medium text-sm text-foreground line-clamp-1 block">{article.title}</span>
+                      <button
+                        type="button"
+                        onClick={() => navigate(`/articles/${article.id}`)}
+                        className="text-left w-full focus-visible:outline-none"
+                        aria-label={`Open story: ${article.title}`}
+                      >
+                        <span className="font-medium text-sm text-foreground line-clamp-1 block hover:opacity-75 transition-opacity">{article.title}</span>
+                      </button>
                       {article.readingTime && (
                         <span className="text-[12px] text-muted-foreground">{article.readingTime} min read</span>
                       )}

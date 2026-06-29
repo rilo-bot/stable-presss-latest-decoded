@@ -89,6 +89,30 @@ export function OrnateCrest({ name, subtitle, partyName, compact }: { name: stri
   );
 }
 
+/* ─── Racing Summary bar (centre column, image-1 banded stat table) ─── */
+export interface RacingStat { label: string; value: string; highlight?: boolean }
+
+/** The "RACING SUMMARY" plaque shown beneath the portrait — a green header over a
+ *  row of gold-framed stat cells. Read-only; empty stats render an em-dash. */
+export function RacingSummaryBar({ stats }: { stats: RacingStat[] }) {
+  return (
+    <div className="sku-gold-card" style={{ ...serifStyle, overflow: 'hidden' }}>
+      <div className="sku-green-header" style={{ padding: '8px 12px', textAlign: 'center' }}>
+        <span style={{ ...goldStyle, fontSize: '0.64rem', letterSpacing: '0.22em', textTransform: 'uppercase', fontWeight: 700 }}>Racing Summary</span>
+      </div>
+      <div style={{ display: 'grid', gridTemplateColumns: `repeat(${stats.length}, 1fr)`, background: 'linear-gradient(180deg, var(--forest-mid) 0%, var(--forest-deep) 100%)' }}>
+        {stats.map((s, i) => (
+          <div key={s.label} style={{ padding: '10px 8px', textAlign: 'center', borderLeft: i ? '1px solid var(--gold-dark)' : undefined }}>
+            <div style={{ fontSize: '0.5rem', letterSpacing: '0.14em', textTransform: 'uppercase', color: 'var(--gold-mid)', marginBottom: 5 }}>{s.label}</div>
+            <div style={{ fontSize: '0.84rem', fontWeight: 700, color: s.highlight ? 'var(--gold-bright)' : 'var(--parchment)', textShadow: '0 1px 3px rgba(0,0,0,0.7)', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{s.value || '—'}</div>
+          </div>
+        ))}
+      </div>
+      <div style={{ height: 2, background: 'linear-gradient(90deg, var(--gold-dark) 0%, var(--gold-bright) 50%, var(--gold-dark) 100%)' }} />
+    </div>
+  );
+}
+
 /* ─── Section panel shell (record modules) ─── */
 export function SectionPanel({ title, icon, onClose, children }: { title: string; icon: React.ReactNode; imgKey?: DataCardImgKey; onClose: () => void; children: React.ReactNode }) {
   return (
@@ -163,9 +187,9 @@ export function DataCategoryCard({ label, sublabel, icon, active, onClick, id }:
   const lit = hovered || active;
   return (
     <button id={id} onClick={onClick} onMouseEnter={() => setHovered(true)} onMouseLeave={() => setHovered(false)} aria-label={`${active ? 'Close' : 'View'} ${label} data`} aria-pressed={active} style={{ width: '100%', border: `2px solid ${lit ? 'var(--gold-bright)' : 'var(--gold-dark)'}`, borderRadius: 4, overflow: 'hidden', cursor: 'pointer', background: 'none', padding: 0, display: 'flex', flexDirection: 'column', boxShadow: lit ? '0 0 0 1px var(--gold-bright), 0 6px 20px rgba(0,0,0,0.6)' : '0 0 0 1px var(--gold-dark), 0 3px 10px rgba(0,0,0,0.45)', transition: 'border-color 0.18s, box-shadow 0.18s', outline: active ? '2px solid var(--gold-bright)' : 'none', outlineOffset: 2, ...serifStyle }}>
-      <div style={{ position: 'relative', width: '100%', height: 64, overflow: 'hidden', background: active ? 'linear-gradient(135deg, var(--forest-light) 0%, var(--forest-mid) 100%)' : 'linear-gradient(135deg, var(--forest-mid) 0%, var(--forest-deep) 100%)', display: 'flex', alignItems: 'center', justifyContent: 'center', transition: 'background 0.2s' }}>
+      <div style={{ position: 'relative', width: '100%', height: 72, overflow: 'hidden', background: active ? 'linear-gradient(135deg, var(--forest-light) 0%, var(--forest-mid) 100%)' : 'linear-gradient(135deg, var(--forest-mid) 0%, var(--forest-deep) 100%)', display: 'flex', alignItems: 'center', justifyContent: 'center', transition: 'background 0.2s' }}>
         <div style={{ position: 'absolute', inset: 0, opacity: 0.5, backgroundImage: 'radial-gradient(circle at 1px 1px, rgba(255,224,154,0.1) 1px, transparent 0)', backgroundSize: '13px 13px' }} />
-        <div style={{ width: 32, height: 32, borderRadius: '50%', background: 'rgba(14,36,22,0.65)', border: `1px solid ${active ? 'var(--gold-bright)' : 'var(--gold-dark)'}`, display: 'flex', alignItems: 'center', justifyContent: 'center', transform: lit ? 'scale(1.08)' : 'scale(1)', transition: 'transform 0.25s, border-color 0.18s' }}>{icon}</div>
+        <div style={{ width: 40, height: 40, borderRadius: '50%', background: 'radial-gradient(circle at 50% 35%, rgba(40,70,48,0.95) 0%, rgba(14,36,22,0.92) 100%)', border: `1px solid ${active ? 'var(--gold-bright)' : 'var(--gold-dark)'}`, boxShadow: `inset 0 0 0 2px rgba(14,36,22,0.9), inset 0 0 0 3px ${active ? 'rgba(255,224,154,0.5)' : 'rgba(180,140,30,0.4)'}`, display: 'flex', alignItems: 'center', justifyContent: 'center', transform: lit ? 'scale(1.08)' : 'scale(1)', transition: 'transform 0.25s, border-color 0.18s' }}>{icon}</div>
         {active && <div style={{ position: 'absolute', top: 5, right: 6, width: 16, height: 16, borderRadius: 2, background: 'var(--gold-bright)', display: 'flex', alignItems: 'center', justifyContent: 'center', boxShadow: '0 1px 4px rgba(0,0,0,0.5)' }}><X size={9} strokeWidth={3} style={{ color: 'var(--forest-deep)' }} /></div>}
         <div style={{ position: 'absolute', bottom: 0, left: 0, right: 0, padding: '4px 7px 4px', background: 'linear-gradient(0deg, rgba(14,36,22,0.88) 0%, transparent 100%)' }}><span style={{ fontSize: '0.56rem', letterSpacing: '0.18em', textTransform: 'uppercase', fontWeight: 700, color: 'var(--gold-bright)', textShadow: '0 1px 3px rgba(0,0,0,0.9)', display: 'block', textAlign: 'center' }}>{label}</span></div>
       </div>

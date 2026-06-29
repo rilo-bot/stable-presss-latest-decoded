@@ -24,6 +24,13 @@ const pageRef = {
     .describe('Target page id. Omit to use the page the editor is currently viewing.'),
 }
 
+// A region can be addressed by its machine id ("cover.hero") OR its friendly
+// display name ("Hero photo") — whichever the user used. getPage/pageCatalog
+// return both so you can pass either.
+const regionRef = z
+  .string()
+  .describe('The region\'s id (e.g. "cover.hero") OR its friendly name (e.g. "Hero photo"). Use the name the user said.')
+
 // Force a write to be STAGED for review (Apply/Discard) instead of auto-applying
 // into an empty region. REQUIRED for any content drawn from an uploaded document.
 const reviewFlag = {
@@ -64,12 +71,12 @@ export function buildEditorTools(account?: AccountUser): ToolSet {
     }),
     getPage: tool({
       description:
-        'Get the full region map of a page (defaults to the current page): every region with id, kind (text/image/qr), whether it is filled, and a short content preview.',
+        'Get the full region map of a page (defaults to the current page): every region with its friendly NAME, id, kind (text/image/qr/icon), whether it is filled, and a short content preview. Use the names to match what the user says.',
       inputSchema: z.object({ ...pageRef }),
     }),
     getRegion: tool({
-      description: 'Get one region: its kind, current content, and whether it is filled.',
-      inputSchema: z.object({ ...pageRef, regionId: z.string() }),
+      description: 'Get one region (by id or friendly name): its name, kind, current content, and whether it is filled.',
+      inputSchema: z.object({ ...pageRef, regionId: regionRef }),
     }),
     listTemplates: tool({
       description: 'List every magazine page TYPE with its human label, so you know which pages exist.',
@@ -77,7 +84,7 @@ export function buildEditorTools(account?: AccountUser): ToolSet {
     }),
     pageCatalog: tool({
       description:
-        'Get the region catalog for a page TYPE: every region id and kind it supports. Use this to learn exactly what can go on a page before proposing edits — never invent region ids.',
+        'Get the region catalog for a page TYPE: every region id, friendly name and kind it supports. Use this to learn exactly what can go on a page before proposing edits — never invent region ids or names.',
       inputSchema: z.object({ pageType: z.string() }),
     }),
     suggestImageOptions: tool({
@@ -90,14 +97,14 @@ export function buildEditorTools(account?: AccountUser): ToolSet {
     setRegionText: tool({
       description:
         'Set a text region. Provide light inline HTML (<b><i><u><s><br><span>); it is sanitized. Filling an EMPTY region applies instantly; overwriting filled text is staged for the user to approve. Pass review:true (always, for content from an uploaded document) to stage it for review even when the region is empty.',
-      inputSchema: z.object({ ...pageRef, regionId: z.string(), html: z.string(), ...reviewFlag }),
+      inputSchema: z.object({ ...pageRef, regionId: regionRef, html: z.string(), ...reviewFlag }),
     }),
     setRegionImage: tool({
       description:
-        'Set an image region to a known/approved image URL (e.g. one returned by suggestImageOptions). Never invent URLs.',
+        'Set an image region (addressed by its friendly photo NAME or id) to a known/approved image URL (e.g. one returned by suggestImageOptions). Never invent URLs.',
       inputSchema: z.object({
         ...pageRef,
-        regionId: z.string(),
+        regionId: regionRef,
         src: z.string(),
         fit: z.enum(['cover', 'contain']).optional(),
         alt: z.string().optional(),
@@ -106,14 +113,14 @@ export function buildEditorTools(account?: AccountUser): ToolSet {
     }),
     setRegionQr: tool({
       description: 'Set a QR region\'s target. Only https: or mailto: URLs are allowed.',
-      inputSchema: z.object({ ...pageRef, regionId: z.string(), targetUrl: z.string(), fg: z.string().optional(), ...reviewFlag }),
+      inputSchema: z.object({ ...pageRef, regionId: regionRef, targetUrl: z.string(), fg: z.string().optional(), ...reviewFlag }),
     }),
     setRegionIcon: tool({
       description:
         'Set an icon region to a best-guess Lucide glyph by NAME (PascalCase, e.g. Trophy, Star, Mail, Award, Users, Globe, Crown, Medal, Heart, Calendar). Use this when an uploaded PDF/image clearly shows an icon/symbol at that spot — place the closest matching glyph; the placed icon is a PLACEHOLDER the user can click to upload their own. Pass review:true for content drawn from an uploaded document.',
       inputSchema: z.object({
         ...pageRef,
-        regionId: z.string(),
+        regionId: regionRef,
         name: z.string().describe('A Lucide icon name in PascalCase, e.g. "Trophy".'),
         color: z.string().optional().describe('hex tint, e.g. #0a2342'),
         ...reviewFlag,
@@ -122,7 +129,7 @@ export function buildEditorTools(account?: AccountUser): ToolSet {
     patchRegionStyle: tool({
       description:
         'Adjust a text region\'s style. Always staged for the user to approve before it changes the layout.',
-      inputSchema: z.object({ ...pageRef, regionId: z.string(), style: styleShape }),
+      inputSchema: z.object({ ...pageRef, regionId: regionRef, style: styleShape }),
     }),
     applyPageFill: tool({
       description:
@@ -131,7 +138,7 @@ export function buildEditorTools(account?: AccountUser): ToolSet {
         ...pageRef,
         edits: z.array(
           z.object({
-            regionId: z.string(),
+            regionId: regionRef,
             kind: z.enum(['text', 'image', 'qr', 'icon']),
             html: z.string().optional(),
             src: z.string().optional(),
@@ -142,8 +149,8 @@ export function buildEditorTools(account?: AccountUser): ToolSet {
       }),
     }),
     clearRegion: tool({
-      description: 'Clear a region\'s content. Always staged for approval.',
-      inputSchema: z.object({ ...pageRef, regionId: z.string() }),
+      description: 'Clear a region\'s content (by id or friendly name). Always staged for approval.',
+      inputSchema: z.object({ ...pageRef, regionId: regionRef }),
     }),
     setPageSelected: tool({
       description: 'Include or exclude a page from the published edition.',

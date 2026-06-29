@@ -7,6 +7,15 @@ import {
 } from '@/components/KanbanColumn';
 import type { KanbanStatus } from '@/components/KanbanColumn';
 import { ArticleForm } from '@/components/ArticleForm';
+import {
+  Dialog,
+  DialogContent,
+  DialogHeader,
+  DialogFooter,
+  DialogTitle,
+  DialogDescription,
+} from '@/components/ui/dialog';
+import { Button } from '@/components/ui/button';
 import { HorseForm } from '@/components/HorseForm';
 import { PartyForm } from '@/components/PartyForm';
 import { SalesDataForm } from '@/components/SalesDataForm';
@@ -56,6 +65,7 @@ export default function Newsroom() {
   const articles = useArticleStore((s) => s.articles);
   const setStatus = useArticleStore((s) => s.setStatus);
   const updateArticle = useArticleStore((s) => s.updateArticle);
+  const removeArticle = useArticleStore((s) => s.removeArticle);
   const fetchArticles = useArticleStore((s) => s.fetchArticles);
   const currentUser = useAuthStore((s) => s.currentUser);
 
@@ -89,6 +99,9 @@ export default function Newsroom() {
 
   const [formOpen, setFormOpen] = useState(false);
   const [editArticle, setEditArticle] = useState<Article | null>(null);
+  // Story pending deletion — drives the confirmation dialog (null = closed).
+  const [deleteTarget, setDeleteTarget] = useState<Article | null>(null);
+  const [deleting, setDeleting] = useState(false);
   const [defaultStatus, setDefaultStatus] = useState<KanbanStatus>('draft');
   const [activeColumn, setActiveColumn] = useState<KanbanStatus>('draft');
   const [activeNav, setActiveNav] = useState<string>('workflow');
@@ -231,6 +244,20 @@ export default function Newsroom() {
     if (!canEditArticle(userRole, article.author, currentUser?.displayName)) return;
     setEditArticle(article);
     setFormOpen(true);
+  };
+
+  const handleDelete = (article: Article) => {
+    if (!canEditArticle(userRole, article.author, currentUser?.displayName)) return;
+    setDeleteTarget(article);
+  };
+
+  const confirmDelete = async () => {
+    if (!deleteTarget) return;
+    setDeleting(true);
+    await removeArticle(deleteTarget.id);
+    setDeleting(false);
+    setDeleteTarget(null);
+    toast.success('Story deleted.');
   };
 
   const handleNewInColumn = (status: KanbanStatus) => {
@@ -399,6 +426,7 @@ export default function Newsroom() {
               userRole={userRole}
               onAdvance={handleAdvance}
               onEdit={handleEdit}
+              onDelete={handleDelete}
               currentUserDisplayName={currentUser?.displayName ?? null}
             />
           )}
@@ -461,6 +489,7 @@ export default function Newsroom() {
             <HorseProductionSystem
               horses={horses ?? []}
               filteredHorses={filteredHorses}
+              parties={parties ?? []}
               horseSearch={horseSearch}
               setHorseSearch={setHorseSearch}
               expandedHorseId={expandedHorseId}
@@ -571,6 +600,42 @@ export default function Newsroom() {
         defaultStatus={defaultStatus}
         userRole={userRole}
       />
+
+      {/* Delete story confirmation */}
+      <Dialog
+        open={deleteTarget !== null}
+        onOpenChange={(open) => { if (!open && !deleting) setDeleteTarget(null); }}
+      >
+        <DialogContent className="sm:max-w-md">
+          <DialogHeader>
+            <DialogTitle>Delete this story?</DialogTitle>
+            <DialogDescription>
+              {deleteTarget ? (
+                <>
+                  “<span className="font-semibold text-foreground">{deleteTarget.title}</span>” will be
+                  removed from the workflow board. This can be restored by an administrator.
+                </>
+              ) : null}
+            </DialogDescription>
+          </DialogHeader>
+          <DialogFooter>
+            <Button
+              variant="outline"
+              onClick={() => setDeleteTarget(null)}
+              disabled={deleting}
+            >
+              Cancel
+            </Button>
+            <Button
+              variant="destructive"
+              onClick={confirmDelete}
+              disabled={deleting}
+            >
+              {deleting ? 'Deleting…' : 'Delete'}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
 
       {/* Story Studio AI drawer — writes & files a draft conversationally */}
       <StoryStudioPanel />

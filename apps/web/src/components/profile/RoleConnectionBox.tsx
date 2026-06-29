@@ -20,18 +20,19 @@ import type { Party, PartyRole } from '@/types/party';
 import type { HorsePartyLink, HorsePartyRelationshipType } from '@/types/horsePartyLink';
 import { isCurrentLink } from '@/types/horsePartyLink';
 
-export interface RoleDef { role: PartyRole; rel?: HorsePartyRelationshipType; label: string }
+export interface RoleDef { role: PartyRole; rel?: HorsePartyRelationshipType; label: string; desc: string }
 
 /* Always-shown boxes, in the order of the reference layout. Syndicate Manager has
-   no relationship_type — it's derived from a linked party's roles (read-only). */
+   no relationship_type — it's derived from a linked party's roles (read-only).
+   `desc` is the reference card's summary line, shown beneath the title. */
 export const ROLE_BOXES: RoleDef[] = [
-  { role: 'owner',             rel: 'ownership', label: 'Owners Data' },
-  { role: 'breeder',           rel: 'bred-by',   label: 'Breeders Data' },
-  { role: 'trainer',           rel: 'training',  label: 'Trainers Data' },
-  { role: 'personnel',         rel: 'personnel', label: 'Personnel Data' },
-  { role: 'jockey',            rel: 'riding',    label: 'Jockey(s) Data' },
-  { role: 'syndicate manager', rel: undefined,   label: 'Syndicate Manager' },
-  { role: 'bloodstock agent',  rel: 'agent',     label: 'Bloodstock Agents' },
+  { role: 'owner',             rel: 'ownership', label: 'Owners Data',       desc: 'Summary of the current and past owners' },
+  { role: 'breeder',           rel: 'bred-by',   label: 'Breeders Data',     desc: 'Summary of the breeders of the subject horse' },
+  { role: 'trainer',           rel: 'training',  label: 'Trainers Data',     desc: 'Summary of current and past trainers' },
+  { role: 'personnel',         rel: 'personnel', label: 'Personnel Data',    desc: 'Summary of the personnel who have worked with the subject horse' },
+  { role: 'jockey',            rel: 'riding',    label: 'Jockey(s) Data',    desc: 'Summary of all jockeys who have ridden the subject horse' },
+  { role: 'syndicate manager', rel: undefined,   label: 'Syndicate Manager', desc: 'Summary of the syndicate manager of the subject horse' },
+  { role: 'bloodstock agent',  rel: 'agent',     label: 'Bloodstock Agents', desc: 'Summary of the bloodstock agents for the subject horse' },
 ];
 
 /** Lookup a role box definition by its relationship_type (rel-less boxes excluded). */
@@ -107,6 +108,9 @@ export function RoleConnectionBox({ def, entries, editable, parties, onOpenParty
   const [uploading, setUploading] = useState(false);
   const fileRef = useRef<HTMLInputElement>(null);
   const canAdd = editable && !!def.rel;
+  // Reference cards lead with a thumbnail — use the first linked party's photo,
+  // else fall back to the role medallion (no stock imagery).
+  const thumb = partyPhoto(entries[0]?.party);
 
   const onPickPhoto = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
@@ -156,6 +160,14 @@ export function RoleConnectionBox({ def, entries, editable, parties, onOpenParty
 
       {open && (
         <div className="sku-parchment" style={{ padding: '8px 10px' }}>
+          {/* Reference-style summary: medallion thumbnail + description line */}
+          <div style={{ display: 'flex', gap: 9, alignItems: 'center', paddingBottom: 8, marginBottom: 8, borderBottom: '1px solid var(--parchment-dark)' }}>
+            <div style={{ boxShadow: '0 2px 6px rgba(0,0,0,0.3)', borderRadius: 3, flexShrink: 0 }}>
+              <Avatar src={thumb} alt={def.label} size={40} radius={3} icon={ROLE_ICON[def.role]} />
+            </div>
+            <p style={{ margin: 0, fontSize: '0.6rem', fontStyle: 'italic', color: 'var(--forest-mid)', lineHeight: 1.35 }}>{def.desc}</p>
+          </div>
+
           {/* Entries */}
           {entries.length === 0 ? (
             <p style={{ fontSize: '0.66rem', fontStyle: 'italic', color: 'var(--parchment-label)', textAlign: 'center', padding: '6px 0' }}>Not Recorded</p>
@@ -230,6 +242,17 @@ export function RoleConnectionBox({ def, entries, editable, parties, onOpenParty
             {entries.length} {entries.length === 1 ? 'record' : 'records'} on file
           </div>
         </div>
+      )}
+
+      {/* Collapsed: keep the reference summary look (medallion + description). */}
+      {!open && (
+        <button onClick={() => setOpen(true)} className="sku-parchment" style={{ width: '100%', border: 'none', cursor: 'pointer', padding: '8px 10px', display: 'flex', alignItems: 'center', gap: 9, textAlign: 'left' }}>
+          <div style={{ boxShadow: '0 2px 6px rgba(0,0,0,0.3)', borderRadius: 3, flexShrink: 0 }}>
+            <Avatar src={thumb} alt={def.label} size={36} radius={3} icon={ROLE_ICON[def.role]} />
+          </div>
+          <p style={{ flex: 1, minWidth: 0, margin: 0, fontSize: '0.6rem', fontStyle: 'italic', color: 'var(--forest-mid)', lineHeight: 1.3 }}>{def.desc}</p>
+          <ChevronRight size={13} style={{ color: 'var(--gold-mid)', flexShrink: 0 }} />
+        </button>
       )}
     </div>
   );

@@ -8,6 +8,7 @@
 import { useMagazineStore } from '@/stores/magazineStore';
 import { useEditorContext } from '../EditorContext';
 import { useImageUpload } from './useImageUpload';
+import { regionDisplayName } from '../templates/regionNames';
 import type { ImageContent } from '@/types/magazine';
 import { cn } from '@/lib/utils';
 import { ImageIcon, Loader2, Upload } from 'lucide-react';
@@ -33,6 +34,7 @@ export function EditableImage({ regionId, className, rounded }: Props) {
 
   if (!content) return null;
   const src = resolveImage(content.src);
+  const name = regionDisplayName(regionId);
 
   return (
     <button
@@ -48,9 +50,19 @@ export function EditableImage({ regionId, className, rounded }: Props) {
         selected ? 'ring-2 ring-sky-500/90' : 'hover:ring-2 hover:ring-sky-400/50',
         className
       )}
-      aria-label={`Upload or replace image: ${content.alt ?? regionId}`}
+      title={name}
+      aria-label={`${name} — click to upload or replace this photo`}
     >
       <input {...inputProps} />
+      {/* The photo's name — so editors know what to call it (incl. when asking the AI). */}
+      <span
+        className={cn(
+          'absolute left-0 top-0 z-10 max-w-full truncate rounded-br-sm bg-sky-600/85 px-1.5 py-0.5 text-[9px] font-semibold uppercase tracking-wide text-white transition-opacity pointer-events-none',
+          selected ? 'opacity-100' : 'opacity-0 group-hover:opacity-100'
+        )}
+      >
+        {name}
+      </span>
       {src ? (
         <img
           src={src}

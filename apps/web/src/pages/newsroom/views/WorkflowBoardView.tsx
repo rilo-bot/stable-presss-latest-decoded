@@ -21,6 +21,7 @@ interface WorkflowBoardViewProps {
   userRole: UserRole | null;
   onAdvance: (articleId: string, toStatus: KanbanStatus) => void;
   onEdit: (article: Article) => void;
+  onDelete: (article: Article) => void;
   currentUserDisplayName: string | null;
 }
 
@@ -37,6 +38,7 @@ export function WorkflowBoardView({
   userRole,
   onAdvance,
   onEdit,
+  onDelete,
   currentUserDisplayName,
 }: WorkflowBoardViewProps) {
   const displayCount = isContributor ? myStories : totalStories;
@@ -107,6 +109,7 @@ export function WorkflowBoardView({
                 isActiveColumn={col.status === activeColumn}
                 onAdvance={onAdvance}
                 onEdit={onEdit}
+                onDelete={onDelete}
                 currentUserDisplayName={currentUserDisplayName}
                 userRole={userRole}
               />
@@ -137,6 +140,7 @@ export function WorkflowBoardView({
                 isActiveColumn
                 onAdvance={onAdvance}
                 onEdit={onEdit}
+                onDelete={onDelete}
                 currentUserDisplayName={currentUserDisplayName}
                 userRole={userRole}
               />

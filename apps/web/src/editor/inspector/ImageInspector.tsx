@@ -1,8 +1,10 @@
 import type { ImageContent } from '@/types/magazine';
 import { useMagazineStore } from '@/stores/magazineStore';
 import { useImageUpload } from '../components/useImageUpload';
+import { regionDisplayName } from '../templates/regionNames';
 import { Section, Segmented } from './controls';
-import { Upload, Trash2, Loader2 } from 'lucide-react';
+import { DeleteRegionButton } from './DeleteRegionButton';
+import { Upload, Trash2, Loader2, Sparkles } from 'lucide-react';
 
 export function ImageInspector({
   magazineId,
@@ -17,9 +19,18 @@ export function ImageInspector({
 }) {
   const setImage = useMagazineStore((s) => s.setImage);
   const { busy, openPicker, inputProps } = useImageUpload(magazineId, pageId, regionId);
+  const name = regionDisplayName(regionId);
 
   return (
     <div>
+      <Section title="Photo name">
+        <p className="text-sm font-semibold text-white">{name}</p>
+        <p className="mt-1 flex items-start gap-1.5 text-[10px] leading-relaxed text-white/45">
+          <Sparkles size={11} className="mt-px shrink-0 text-sky-300" />
+          <span>Ask the Studio Assistant to change it by name — e.g. “replace the {name}”.</span>
+        </p>
+      </Section>
+
       <Section title="Upload from device">
         <input {...inputProps} />
         <button
@@ -84,6 +95,8 @@ export function ImageInspector({
           <Trash2 size={13} /> Clear photo
         </button>
       </Section>
+
+      <DeleteRegionButton magazineId={magazineId} pageId={pageId} regionId={regionId} label="image" />
     </div>
   );
 }

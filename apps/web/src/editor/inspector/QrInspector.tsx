@@ -1,6 +1,7 @@
 import type { QrContent } from '@/types/magazine';
 import { useMagazineStore } from '@/stores/magazineStore';
 import { Section } from './controls';
+import { DeleteRegionButton } from './DeleteRegionButton';
 import { QRCodeSVG } from 'qrcode.react';
 
 export function QrInspector({
@@ -43,6 +44,8 @@ export function QrInspector({
           />
         </div>
       </Section>
+
+      <DeleteRegionButton magazineId={magazineId} pageId={pageId} regionId={regionId} label="QR code" />
     </div>
   );
 }

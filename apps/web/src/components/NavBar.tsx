@@ -57,7 +57,7 @@ export function NavBar() {
 
   return (
     <header
-      className="sticky top-0 z-50 bg-primary text-primary-foreground border-b"
+      className="sticky top-0 z-50 bg-primary text-primary-foreground border-b print:hidden"
       style={{ borderColor: 'hsl(var(--brand-accent) / 0.22)' }}
     >
       {/* ── Masthead strip ── */}

@@ -24,9 +24,9 @@ export interface EditorContext {
     label?: string
     number?: number
     editable?: boolean
-    regions?: Array<{ regionId: string; kind: string; filled: boolean; preview?: string }>
+    regions?: Array<{ regionId: string; name?: string; kind: string; filled: boolean; preview?: string }>
   } | null
-  selection?: { regionId: string; kind: string; filled: boolean } | null
+  selection?: { regionId: string; name?: string; kind: string; filled: boolean } | null
   otherPages?: Array<{ pageId: string; pageType: string; label?: string; number?: number; filledCount?: number; totalRegions?: number; editable?: boolean }>
   attachments?: Array<{
     id: string
@@ -89,13 +89,16 @@ function describeContext(ctx?: EditorContext): string {
     )
     if (p.regions?.length) {
       lines.push(
-        'Current page regions: ' +
-          p.regions.map((r) => `${r.regionId}[${r.kind}${r.filled ? '·filled' : '·empty'}]`).join(', '),
+        'Current page regions (NAME → id): ' +
+          p.regions
+            .map((r) => `"${r.name ?? r.regionId}" → ${r.regionId} [${r.kind}${r.filled ? '·filled' : '·empty'}]`)
+            .join(', '),
       )
     }
   }
   if (ctx.selection) {
-    lines.push(`Selected region: ${ctx.selection.regionId} (${ctx.selection.kind}, ${ctx.selection.filled ? 'filled' : 'empty'}). "This region" = this one.`)
+    const s = ctx.selection
+    lines.push(`Selected region: "${s.name ?? s.regionId}" (id ${s.regionId}, ${s.kind}, ${s.filled ? 'filled' : 'empty'}). "This region" = this one.`)
   }
   if (ctx.attachments?.length) {
     lines.push('', `Uploaded source documents (${ctx.attachments.length}) — the user's own material to draw content from:`)
@@ -135,8 +138,18 @@ user's language, never mix in another language. Replies are read aloud (voice), 
 A bulletin has exactly one of each of these 24 fixed page types (layout is locked; only region CONTENT is editable):
 ${PAGE_TYPES.map(([k, d]) => `- ${k}: ${d}`).join('\n')}
 
-Each page has named regions of kind text / image / qr / icon. Region ids look like "<pageType>.<name>" (e.g. cover.h1, young-owners.hero).
-NEVER invent a region id — call getPage (current page) or pageCatalog(pageType) to see the real ids first.
+Each page has named regions of kind text / image / qr / icon. Every region has BOTH a friendly NAME (what the user sees and says,
+e.g. "Hero photo", "Auckland / Northland photo", "Sally Blyth headshot") AND a machine id like "<pageType>.<name>" (e.g.
+cover.h1, young-owners.hero). getPage / getRegion / pageCatalog return both — the NAME → id mapping.
+
+# Images by name (important — this is how users refer to photos)
+- Users almost always refer to a photo by its NAME, not its id ("change the cover hero photo", "swap the Auckland photo",
+  "replace Charlie's photo"). Match their words to the region NAME shown in the page's region list, then act on it.
+- The edit tools accept EITHER the region id OR its friendly name for regionId — so you can pass the name the user used
+  (e.g. setRegionImage with regionId:"Hero photo"). It resolves to the right slot. Prefer the exact name/id you saw in getPage.
+- If a name is ambiguous or you're unsure which photo they mean, call getPage first to see the exact names, and if still
+  unclear, ask which one (naming the candidates) — never guess and overwrite the wrong photo.
+- NEVER invent a region id or name — call getPage (current page) or pageCatalog(pageType) to see the real ones first.
 
 # Live context
 ${describeContext(ctx)}

@@ -22,6 +22,19 @@ if (isProd && !hasSendgrid) {
   console.warn('[server] ⚠ PROD=true but SendGrid is not configured — OTP codes will be exposed in API responses')
 }
 
+// ── Crash guards ──
+// Express 4 does NOT forward rejections from async route handlers to the error
+// middleware, so a transient failure (e.g. a momentary DNS/network blip reaching
+// MongoDB Atlas) surfaces as an unhandled rejection and Node would otherwise kill
+// the whole API process. Log and stay up — that request already got a 500; one
+// blip must not take the server down and require a manual restart.
+process.on('unhandledRejection', (reason) => {
+  console.error('[server] Unhandled promise rejection (server kept alive):', reason instanceof Error ? reason.stack ?? reason.message : reason)
+})
+process.on('uncaughtException', (err) => {
+  console.error('[server] Uncaught exception (server kept alive):', err.stack ?? err.message)
+})
+
 const app = express()
 const PORT = process.env.PORT ? parseInt(process.env.PORT) : 3001
 

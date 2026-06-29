@@ -12,6 +12,8 @@ import {
   COLOUR_OPTIONS,
   COUNTRY_OPTIONS,
   CURRENT_YEAR,
+  handsToCm,
+  cmToHands,
   type FormData,
 } from './constants';
 
@@ -111,9 +113,11 @@ export function BasicSection({ form, setField }: { form: FormData; setField: Set
               max={20}
               step={0.1}
               value={form.handsSize ?? ''}
-              onChange={(e) =>
-                setField('handsSize', e.target.value ? parseFloat(e.target.value) : undefined)
-              }
+              onChange={(e) => {
+                const hands = e.target.value ? parseFloat(e.target.value) : undefined;
+                setField('handsSize', hands);
+                setField('metricSize', hands !== undefined ? handsToCm(hands) : undefined);
+              }}
               placeholder="e.g. 16.2"
               className="text-sm pr-14"
             />
@@ -128,9 +132,11 @@ export function BasicSection({ form, setField }: { form: FormData; setField: Set
               min={100}
               max={220}
               value={form.metricSize ?? ''}
-              onChange={(e) =>
-                setField('metricSize', e.target.value ? parseInt(e.target.value, 10) : undefined)
-              }
+              onChange={(e) => {
+                const cm = e.target.value ? parseInt(e.target.value, 10) : undefined;
+                setField('metricSize', cm);
+                setField('handsSize', cm !== undefined ? cmToHands(cm) : undefined);
+              }}
               placeholder="e.g. 168"
               className="text-sm pr-7"
             />
@@ -140,7 +146,7 @@ export function BasicSection({ form, setField }: { form: FormData; setField: Set
           </div>
         </div>
         <p className="text-[10px] text-muted-foreground">
-          Enter height in hands (e.g. 16.2) and/or centimetres.
+          Enter height in hands (e.g. 16.2) and/or centimetres. (1 hand = 4 inches, 1 inch = 2.54 cm)
         </p>
       </div>
     </Section>

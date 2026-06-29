@@ -72,7 +72,8 @@ export function NewsroomTopBar({
         </div>
 
         {/* Quick action buttons per active tab */}
-        {activeNav === 'horses' && (
+        {/* Add Thoroughbred button hidden here — the one in the Horse Production System section is used instead */}
+        {/* {activeNav === 'horses' && (
           <Button
             size="sm"
             className="bg-primary text-primary-foreground hover:bg-primary/90 gap-1.5 text-sm"
@@ -82,7 +83,7 @@ export function NewsroomTopBar({
             <span className="hidden sm:inline">Add Thoroughbred</span>
             <span className="sm:hidden">Add</span>
           </Button>
-        )}
+        )} */}
 
         {activeNav === 'parties' && (
           <Button

@@ -24,7 +24,7 @@ import {
 import type { Party, PartyRole, PersonnelSubtype } from '@/types/party';
 import type { Horse } from '@/types/horse';
 import { COUNTRY_OPTIONS } from '@/components/horse-form/constants';
-import { loadSkippedSteps, persistSkippedSteps } from '@/lib/profile/onboardingSkips';
+import { loadSkippedSteps, persistSkippedSteps, loadGuideDismissed, persistGuideDismissed } from '@/lib/profile/onboardingSkips';
 import { serifStyle, goldStyle, fmtMoney, fmtDate, OrnateCrest } from '@/components/profile/kit';
 import { ProfileScaffold, type Crumb } from '@/components/profile/ProfileScaffold';
 import { IdentityCard, type FieldDescriptor } from '@/components/profile/IdentityCard';
@@ -149,6 +149,13 @@ export function PartyProfile({ partyId, mode, onBack }: PartyProfileProps) {
   const [skipped, setSkipped] = useState<Set<string>>(() => loadSkippedSteps(`party:${partyId}`));
   useEffect(() => { setSkipped(loadSkippedSteps(`party:${partyId}`)); }, [partyId]);
 
+  // Whether the member closed the guided journey (persisted per party). Closing
+  // hides the focus overlay + mascot so they needn't skip every step; data
+  // already entered is saved (fields commit immediately) and the in-place
+  // editors + checklist remain to finish later.
+  const [guideDismissed, setGuideDismissed] = useState<boolean>(() => loadGuideDismissed(`party:${partyId}`));
+  useEffect(() => { setGuideDismissed(loadGuideDismissed(`party:${partyId}`)); }, [partyId]);
+
   // Onboarding completion (edit mode). Mirrors the `onbSteps` done predicates
   // below — keep in sync. Hook (before guards) so the one-time celebration toast
   // fires without breaking the Rules-of-Hooks order.
@@ -268,7 +275,9 @@ export function PartyProfile({ partyId, mode, onBack }: PartyProfileProps) {
   const activeStep = onbSteps.find((s) => !s.done && !s.skipped);
   const activeKey = activeStep?.key;
   const activeIdx = onbSteps.findIndex((s) => s.key === activeKey);
-  const showGuide = isEdit && editable && !onbAllDone;
+  const showGuide = isEdit && editable && !onbAllDone && !guideDismissed;
+  // Close the whole guided journey (data already saved); persisted per party.
+  const dismissGuide = () => { setGuideDismissed(true); persistGuideDismissed(`party:${partyId}`, true); };
   const isActive = (key: string) => showGuide && activeKey === key;
   const guideSteps: GuideStep[] = onbSteps.map((s) => ({
     key: s.key,
@@ -559,6 +568,7 @@ export function PartyProfile({ partyId, mode, onBack }: PartyProfileProps) {
                   skippable
                   onSkip={() => { if (activeKey) skipStep(activeKey); }}
                   onAsk={() => { if (activeStep) askAiForStep(activeStep); }}
+                  onClose={dismissGuide}
                 />
               </>
             : <ProfileAgentPanel />)

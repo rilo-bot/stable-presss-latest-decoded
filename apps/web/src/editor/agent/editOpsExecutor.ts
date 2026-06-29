@@ -9,7 +9,8 @@ import { useEditorAgentUi } from '@/stores/editorAgentUiStore';
 import { BLUEPRINT_BY_TYPE, BLUEPRINTS } from '@/editor/templates/blueprints';
 import { STOCK } from '@/editor/templates/helpers';
 import { isKnownIcon } from '@/editor/templates/iconRegistry';
-import type { Magazine, MagazinePage, TextStyle } from '@/types/magazine';
+import { regionDisplayName, findRegionIdByName } from '@/editor/templates/regionNames';
+import type { Magazine, MagazinePage, TextStyle, RegionKind } from '@/types/magazine';
 import { filledOf, previewOf, resolveCurrentPageId } from './editorContext';
 import { applyPayload, computeAfter, uid, undoLast, scrollRegionIntoView } from './applyEdits';
 import { runComposeFill } from './composeExecutor';
@@ -36,6 +37,17 @@ function currentMag(): Magazine | undefined {
 function resolvePage(mag: Magazine, pageId?: string): MagazinePage | undefined {
   const id = pageId || resolveCurrentPageId(mag) || mag.pages[0]?.id;
   return mag.pages.find((p) => p.id === id);
+}
+
+/**
+ * Resolve a region reference (an exact region id OR a friendly name like
+ * "Hero photo") to the real region id on a page. Falls back to the raw ref so
+ * the caller still produces a clear "region not found" error for the AI.
+ * Pass `kind` when known so a name only resolves to a same-kind slot.
+ */
+function resolveRegionRef(page: MagazinePage, ref: string, kind?: RegionKind): string {
+  if (page.content[ref]) return ref;
+  return findRegionIdByName(page.content, ref, kind) ?? ref;
 }
 
 function isEditable(mag: Magazine, pageId: string): boolean {
@@ -84,7 +96,7 @@ function writeRegion(
   }
   const before = page.content[regionId];
   if (!before) {
-    return { ok: false, error: `Region "${regionId}" doesn't exist on a ${page.pageType} page. Call getPage or pageCatalog for the real ids.` };
+    return { ok: false, error: `No region matches "${regionId}" on a ${page.pageType} page. Call getPage or pageCatalog for the real region ids and names.` };
   }
   const needKind = payload.kind === 'style' ? 'text' : payload.kind === 'clear' ? before.kind : payload.kind;
   if (before.kind !== needKind) {
@@ -146,7 +158,7 @@ export async function executeEditorTool(toolName: string, input: unknown): Promi
       return {
         pageType: bp.pageType,
         label: bp.label,
-        regions: Object.entries(bp.defaultContent).map(([regionId, c]) => ({ regionId, kind: c.kind })),
+        regions: Object.entries(bp.defaultContent).map(([regionId, c]) => ({ regionId, name: regionDisplayName(regionId), kind: c.kind })),
       };
     }
     case 'suggestImageOptions':
@@ -168,14 +180,15 @@ export async function executeEditorTool(toolName: string, input: unknown): Promi
       label: page.label,
       number: page.number,
       editable: isEditable(mag, page.id),
-      regions: Object.entries(page.content).map(([regionId, c]) => ({ regionId, kind: c.kind, filled: filledOf(c), preview: previewOf(c, 140) })),
+      regions: Object.entries(page.content).map(([regionId, c]) => ({ regionId, name: regionDisplayName(regionId), kind: c.kind, filled: filledOf(c), preview: previewOf(c, 140) })),
     };
   }
   if (toolName === 'getRegion') {
     const page = resolvePage(mag, a.pageId);
-    const c = page?.content[String(a.regionId)];
+    const regionId = page ? resolveRegionRef(page, String(a.regionId)) : String(a.regionId);
+    const c = page?.content[regionId];
     if (!page || !c) return { error: `Region "${a.regionId}" not found.` };
-    return { regionId: a.regionId, pageId: page.id, kind: c.kind, filled: filledOf(c), preview: previewOf(c, 240) };
+    return { regionId, name: regionDisplayName(regionId), pageId: page.id, kind: c.kind, filled: filledOf(c), preview: previewOf(c, 240) };
   }
 
   // ── writes ────────────────────────────────────────────────────────────────
@@ -186,34 +199,54 @@ export async function executeEditorTool(toolName: string, input: unknown): Promi
   // write to be staged for Apply/Discard rather than auto-applied into an empty region.
   const allowAuto = !a.review;
 
+  // Accept either an exact region id or the friendly NAME the user/AI saw. Pass
+  // the expected kind so a name resolves to the right-kind slot (never an image
+  // phrase landing on a text region).
+  const regionRef = String(a.regionId ?? '');
+  const named = (kind?: RegionKind) => {
+    const id = resolveRegionRef(page, regionRef, kind);
+    return { id, name: regionDisplayName(id) };
+  };
+
   switch (toolName) {
-    case 'setRegionText':
-      return writeRegion(mag, page, String(a.regionId), { kind: 'text', html: String(a.html ?? '') }, `Write “${a.regionId}”`, allowAuto);
-    case 'setRegionImage':
+    case 'setRegionText': {
+      const r = named('text');
+      return writeRegion(mag, page, r.id, { kind: 'text', html: String(a.html ?? '') }, `Write “${r.name}”`, allowAuto);
+    }
+    case 'setRegionImage': {
+      const r = named('image');
+      const src = String(a.src ?? '');
+      if (!src.trim()) return { ok: false, error: 'No image URL provided. Use suggestImageOptions to get a URL, or clearRegion to empty a photo.' };
       return writeRegion(
         mag,
         page,
-        String(a.regionId),
-        { kind: 'image', patch: { src: String(a.src ?? ''), ...(a.fit ? { fit: a.fit } : {}), ...(a.alt ? { alt: String(a.alt) } : {}) } },
-        `Set photo on “${a.regionId}”`,
+        r.id,
+        { kind: 'image', patch: { src, ...(a.fit ? { fit: a.fit } : {}), ...(a.alt ? { alt: String(a.alt) } : {}) } },
+        `Set photo on “${r.name}”`,
         allowAuto,
       );
+    }
     case 'setRegionQr': {
+      const r = named('qr');
       const url = String(a.targetUrl ?? '');
       if (!/^https:\/\//i.test(url) && !/^mailto:/i.test(url)) return { ok: false, error: 'QR target must be an https: or mailto: URL.' };
-      return writeRegion(mag, page, String(a.regionId), { kind: 'qr', patch: { targetUrl: url, ...(a.fg ? { fg: String(a.fg) } : {}) } }, `Set QR on “${a.regionId}”`, allowAuto);
+      return writeRegion(mag, page, r.id, { kind: 'qr', patch: { targetUrl: url, ...(a.fg ? { fg: String(a.fg) } : {}) } }, `Set QR on “${r.name}”`, allowAuto);
     }
     case 'setRegionIcon': {
+      const r = named('icon');
       const name = String(a.name ?? '');
       if (!isKnownIcon(name)) return { ok: false, error: `Unknown icon "${name}". Use a known Lucide name (PascalCase), e.g. Trophy, Star, Mail, Award.` };
-      return writeRegion(mag, page, String(a.regionId), { kind: 'icon', patch: { name, src: undefined, ...(a.color ? { color: String(a.color) } : {}) } }, `Set icon on “${a.regionId}”`, allowAuto);
+      return writeRegion(mag, page, r.id, { kind: 'icon', patch: { name, src: undefined, ...(a.color ? { color: String(a.color) } : {}) } }, `Set icon on “${r.name}”`, allowAuto);
     }
-    case 'patchRegionStyle':
-      return writeRegion(mag, page, String(a.regionId), { kind: 'style', patch: (a.style ?? {}) as Partial<TextStyle> }, `Restyle “${a.regionId}”`, false);
+    case 'patchRegionStyle': {
+      const r = named('text');
+      return writeRegion(mag, page, r.id, { kind: 'style', patch: (a.style ?? {}) as Partial<TextStyle> }, `Restyle “${r.name}”`, false);
+    }
     case 'clearRegion': {
-      const c = page.content[String(a.regionId)];
-      if (!c) return { ok: false, error: `Region "${a.regionId}" not found.` };
-      return writeRegion(mag, page, String(a.regionId), { kind: 'clear', targetKind: c.kind }, `Clear “${a.regionId}”`, false);
+      const id = resolveRegionRef(page, regionRef);
+      const c = page.content[id];
+      if (!c) return { ok: false, error: `No region matches "${regionRef}". Call getPage for the real region names and ids.` };
+      return writeRegion(mag, page, id, { kind: 'clear', targetKind: c.kind }, `Clear “${regionDisplayName(id)}”`, false);
     }
     case 'setPageSelected':
       if (!isEditable(mag, page.id)) return { ok: false, message: "That page isn't shared with you." };
@@ -226,7 +259,7 @@ export async function executeEditorTool(toolName: string, input: unknown): Promi
       const staged: StagedEdit[] = [];
       const skipped: string[] = [];
       for (const e of edits) {
-        const rid = String(e.regionId);
+        const rid = resolveRegionRef(page, String(e.regionId), e.kind as RegionKind);
         const before = page.content[rid];
         if (!before || before.kind !== e.kind) {
           skipped.push(rid);
@@ -250,7 +283,7 @@ export async function executeEditorTool(toolName: string, input: unknown): Promi
           payload,
           before,
           afterPreview: computeAfter(before, payload),
-          summary: `Fill “${rid}”`,
+          summary: `Fill “${regionDisplayName(rid)}”`,
           batchId,
         });
       }

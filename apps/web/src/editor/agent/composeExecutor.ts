@@ -11,6 +11,7 @@ import { apiUrl } from '@/lib/api';
 import { useAuthStore } from '@/stores/authStore';
 import { sanitizeRichText } from '@/editor/lib/sanitize';
 import { isKnownIcon } from '@/editor/templates/iconRegistry';
+import { regionDisplayName } from '@/editor/templates/regionNames';
 import { filledOf, previewOf } from './editorContext';
 import { computeAfter, uid } from './applyEdits';
 import type { EditPayload, StagedEdit } from './types';
@@ -43,7 +44,7 @@ function buildCatalog(mag: Magazine) {
         .map(([regionId, c]) => ({
           regionId,
           kind: c.kind,
-          name: regionId.split('.').pop() ?? regionId,
+          name: regionDisplayName(regionId),
           filled: filledOf(c),
           preview: previewOf(c, 80),
         })),
@@ -135,7 +136,7 @@ export async function runComposeFill(instruction: string): Promise<Record<string
       payload,
       before,
       afterPreview: computeAfter(before, payload),
-      summary: `Fill “${e.regionId.split('.').pop()}”`,
+      summary: `Fill “${regionDisplayName(e.regionId)}”`,
       batchId,
     });
   }

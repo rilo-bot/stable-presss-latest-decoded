@@ -1,6 +1,7 @@
-import { useMemo, useEffect } from 'react'
+import { useMemo, useEffect, useState } from 'react'
 import { useParams, Navigate, Link, useNavigate } from 'react-router-dom';
 import { motion } from 'framer-motion';
+import { toast } from 'sonner';
 import { useArticleStore } from '@/stores/articleStore';
 import { useHorseStore } from '@/stores/horseStore';
 import { usePartyStore } from '@/stores/partyStore';
@@ -14,14 +15,20 @@ import {
   ChevronLeft,
   BookOpen,
   Calendar,
+  Pencil,
+  Check,
+  X,
+  Loader2,
 } from 'lucide-react';
 import { useAuthStore } from '@/stores/authStore';
 import { canViewPremium } from '@/rbac/can';
+import { canEditArticle } from '@/lib/permissions';
 import { Paywall } from '@/components/Paywall';
 import { AskAgentButton } from '@/components/AskAgentButton';
 import { STATUS_LABELS, splitIntoParagraphs, DEFAULT_HERO } from './article-detail/helpers';
 import { Sidebar } from './article-detail/Sidebar';
 import { RelatedPanel } from './article-detail/RelatedPanel';
+import { InlineEdit } from './article-detail/InlineEdit';
 
 export default function ArticleDetail() {
   // All hooks run unconditionally, before any early return (Rules of Hooks):
@@ -40,12 +47,77 @@ export default function ArticleDetail() {
 
   const articles = useArticleStore((s) => s.articles);
   const articlesLoaded = useArticleStore((s) => s.loaded);
+  const updateArticle = useArticleStore((s) => s.updateArticle);
   const horses = useHorseStore((s) => s.horses);
   const parties = usePartyStore((s) => s.parties);
   const currentUser = useAuthStore((s) => s.currentUser);
   const horseConn = useMemo(() => connectionResolver(parties), [parties]);
 
   const article = useMemo(() => articles.find((a) => a.id === id), [articles, id]);
+
+  // ── Inline editing (admins / editors / the article's own author) ──────────
+  // Draft holds only the fields editable in place; it is seeded when edit mode
+  // opens and committed via the article store on save.
+  type Draft = {
+    title: string;
+    summary: string;
+    author: string;
+    category: string;
+    readingTime: string; // kept as a string for the <input>; coerced on save
+  };
+  const [editing, setEditing] = useState(false);
+  const [saving, setSaving] = useState(false);
+  const [draft, setDraft] = useState<Draft | null>(null);
+
+  const canEdit = canEditArticle(
+    currentUser?.role ?? null,
+    article?.author ?? '',
+    currentUser?.displayName,
+  );
+
+  const startEditing = () => {
+    if (!article) return;
+    setDraft({
+      title: article.title ?? '',
+      summary: article.summary ?? '',
+      author: article.author ?? '',
+      category: article.category ?? '',
+      readingTime: article.readingTime != null ? String(article.readingTime) : '',
+    });
+    setEditing(true);
+  };
+
+  const cancelEditing = () => {
+    setEditing(false);
+    setDraft(null);
+  };
+
+  const saveEditing = async () => {
+    if (!article || !draft) return;
+    const title = draft.title.trim();
+    if (!title) {
+      toast.error('The headline can’t be empty.');
+      return;
+    }
+    const parsedReadingTime = parseInt(draft.readingTime, 10);
+    setSaving(true);
+    try {
+      await updateArticle(article.id, {
+        title,
+        summary: draft.summary.trim(),
+        author: draft.author.trim(),
+        category: draft.category.trim() || undefined,
+        readingTime: Number.isFinite(parsedReadingTime) && parsedReadingTime > 0
+          ? parsedReadingTime
+          : undefined,
+      });
+      toast.success('Article updated.');
+      setEditing(false);
+      setDraft(null);
+    } finally {
+      setSaving(false);
+    }
+  };
 
   const linkedHorses = useMemo(() => {
     if (!article) return [];
@@ -115,6 +187,34 @@ export default function ArticleDetail() {
   return (
     <div className="min-h-screen bg-background">
 
+      {/* ── Inline-edit toolbar (admins) ──────────────── */}
+      {editing && (
+        <div className="fixed bottom-6 left-1/2 z-50 -translate-x-1/2">
+          <div className="flex items-center gap-3 rounded-full border border-border/60 bg-background/95 px-3 py-2 shadow-xl backdrop-blur">
+            <span className="hidden sm:flex items-center gap-1.5 pl-2 text-[11px] font-semibold uppercase tracking-[0.1em] text-primary">
+              <Pencil size={12} />
+              Editing
+            </span>
+            <button
+              onClick={cancelEditing}
+              disabled={saving}
+              className="flex items-center gap-1.5 rounded-full px-3 py-1.5 text-xs font-semibold text-muted-foreground hover:bg-muted hover:text-foreground transition-colors disabled:opacity-50"
+            >
+              <X size={14} />
+              Cancel
+            </button>
+            <button
+              onClick={saveEditing}
+              disabled={saving}
+              className="flex items-center gap-1.5 rounded-full bg-primary px-4 py-1.5 text-xs font-semibold text-primary-foreground hover:bg-primary/90 transition-colors disabled:opacity-60"
+            >
+              {saving ? <Loader2 size={14} className="animate-spin" /> : <Check size={14} />}
+              {saving ? 'Saving…' : 'Save changes'}
+            </button>
+          </div>
+        </div>
+      )}
+
       {/* ── Full-bleed Hero ───────────────────────────── */}
       <div className="relative w-full h-[60vh] min-h-[400px] max-h-[680px] overflow-hidden">
         <img
@@ -158,17 +258,28 @@ export default function ArticleDetail() {
         <div className="absolute bottom-0 left-0 right-0 px-4 md:px-10 pb-8 md:pb-12">
           <div className="max-w-4xl">
             {/* Category stamp */}
-            {article.category && (
+            {(article.category || editing) && (
               <div className="flex items-center gap-3 mb-4">
-                <span
-                  className="text-[9px] uppercase tracking-[0.22em] font-bold px-2.5 py-1 rounded-sm"
-                  style={{
-                    background: 'hsl(var(--brand-accent))',
-                    color: 'hsl(var(--brand-accent-foreground))',
-                  }}
-                >
-                  {article.category}
-                </span>
+                {editing && draft ? (
+                  <InlineEdit
+                    as="span"
+                    value={draft.category}
+                    onChange={(v) => setDraft((d) => (d ? { ...d, category: v } : d))}
+                    ariaLabel="Article category"
+                    placeholder="Category"
+                    className="text-[9px] uppercase tracking-[0.22em] font-bold text-primary-foreground"
+                  />
+                ) : (
+                  <span
+                    className="text-[9px] uppercase tracking-[0.22em] font-bold px-2.5 py-1 rounded-sm"
+                    style={{
+                      background: 'hsl(var(--brand-accent))',
+                      color: 'hsl(var(--brand-accent-foreground))',
+                    }}
+                  >
+                    {article.category}
+                  </span>
+                )}
                 {isLive && (
                   <span className="flex items-center gap-1.5 text-[9px] uppercase tracking-[0.14em] font-semibold text-primary-foreground/60">
                     <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 inline-block animate-pulse" />
@@ -184,7 +295,17 @@ export default function ArticleDetail() {
               transition={{ duration: 0.28, ease: 'easeOut' }}
               className="font-[family-name:var(--font-display)] text-3xl sm:text-4xl md:text-5xl font-bold text-primary-foreground leading-[1.08] mb-4 max-w-3xl"
             >
-              {article.title}
+              {editing && draft ? (
+                <InlineEdit
+                  as="span"
+                  value={draft.title}
+                  onChange={(v) => setDraft((d) => (d ? { ...d, title: v } : d))}
+                  ariaLabel="Article headline"
+                  placeholder="Headline"
+                />
+              ) : (
+                article.title
+              )}
             </motion.h1>
 
             {/* Byline row */}
@@ -206,9 +327,19 @@ export default function ArticleDetail() {
                   {(article.author ?? 'A').charAt(0).toUpperCase()}
                 </div>
                 <div>
-                  <p className="text-xs font-semibold text-primary-foreground/90">
-                    {article.author}
-                  </p>
+                  {editing && draft ? (
+                    <InlineEdit
+                      value={draft.author}
+                      onChange={(v) => setDraft((d) => (d ? { ...d, author: v } : d))}
+                      ariaLabel="Byline / author"
+                      placeholder="Author"
+                      className="text-xs font-semibold text-primary-foreground/90"
+                    />
+                  ) : (
+                    <p className="text-xs font-semibold text-primary-foreground/90">
+                      {article.author}
+                    </p>
+                  )}
                   <p className="text-[10px] text-primary-foreground/50 uppercase tracking-[0.08em]">
                     Staff Correspondent
                   </p>
@@ -224,11 +355,29 @@ export default function ArticleDetail() {
                 </span>
               )}
 
-              {article.readingTime && (
+              {editing && draft ? (
                 <span className="flex items-center gap-1.5 text-[11px] text-primary-foreground/60">
                   <Clock size={11} />
-                  {article.readingTime} min read
+                  <input
+                    type="number"
+                    min={1}
+                    value={draft.readingTime}
+                    onChange={(e) =>
+                      setDraft((d) => (d ? { ...d, readingTime: e.target.value } : d))
+                    }
+                    aria-label="Reading time in minutes"
+                    placeholder="0"
+                    className="w-12 rounded-sm bg-sky-400/10 px-1.5 py-0.5 text-primary-foreground outline-none ring-2 ring-sky-400/70 focus:ring-sky-500"
+                  />
+                  min read
                 </span>
+              ) : (
+                article.readingTime && (
+                  <span className="flex items-center gap-1.5 text-[11px] text-primary-foreground/60">
+                    <Clock size={11} />
+                    {article.readingTime} min read
+                  </span>
+                )
               )}
             </motion.div>
           </div>
@@ -265,6 +414,16 @@ export default function ArticleDetail() {
               </button>
 
               <div className="flex items-center gap-3">
+                {canEdit && !editing && (
+                  <button
+                    onClick={startEditing}
+                    className="flex items-center gap-1.5 text-[10px] uppercase tracking-[0.1em] font-semibold text-primary hover:text-primary/80 transition-colors"
+                    aria-label="Edit this article"
+                  >
+                    <Pencil size={13} />
+                    <span className="hidden sm:inline">Edit</span>
+                  </button>
+                )}
                 <AskAgentButton
                   prompt="Give me a quick summary of this article and why it matters."
                   label="Ask"
@@ -311,8 +470,29 @@ export default function ArticleDetail() {
               </div>
             )}
 
+            {/* Editable body — admins edit the raw copy in one place; the
+                reader-facing drop-cap / pull-quote layout returns on save. */}
+            {editing && draft && (
+              <div className="mb-8">
+                <p className="mb-2 text-[10px] font-bold uppercase tracking-[0.14em] text-muted-foreground">
+                  Article body
+                </p>
+                <InlineEdit
+                  multiline
+                  value={draft.summary}
+                  onChange={(v) => setDraft((d) => (d ? { ...d, summary: v } : d))}
+                  ariaLabel="Article body copy"
+                  placeholder="Write the story…"
+                  className="min-h-[8rem] text-base leading-relaxed text-foreground/90"
+                />
+                <p className="mt-2 text-[11px] text-muted-foreground">
+                  Separate paragraphs with a blank line.
+                </p>
+              </div>
+            )}
+
             {/* Lead deck — editorial intro */}
-            {paragraphs.length > 0 && (
+            {!editing && paragraphs.length > 0 && (
               <div className="mb-8">
                 {/* Drop-cap first paragraph */}
                 <p
@@ -377,7 +557,7 @@ export default function ArticleDetail() {
             )}
 
             {/* When no body copy yet (draft / pending) */}
-            {paragraphs.length === 0 && (
+            {!editing && paragraphs.length === 0 && (
               <div className="py-10 flex flex-col items-center justify-center border border-dashed border-border/60 rounded-sm bg-muted/20 mb-8">
                 <BookOpen size={32} className="text-primary/30 mb-3" />
                 <p className="font-[family-name:var(--font-display)] italic text-muted-foreground text-base text-center max-w-sm">

@@ -1,6 +1,7 @@
 import type { TextContent, TextStyle } from '@/types/magazine';
 import { useMagazineStore } from '@/stores/magazineStore';
 import { Section, Stepper, Segmented, ColorControl, FontFamilyMenu } from './controls';
+import { DeleteRegionButton } from './DeleteRegionButton';
 import { Italic, Underline, AlignLeft, AlignCenter, AlignRight, AlignJustify } from 'lucide-react';
 
 export function TextInspector({
@@ -111,6 +112,8 @@ export function TextInspector({
           onChange={(v) => patch({ textTransform: v })}
         />
       </Section>
+
+      <DeleteRegionButton magazineId={magazineId} pageId={pageId} regionId={regionId} label="text" />
     </div>
   );
 }

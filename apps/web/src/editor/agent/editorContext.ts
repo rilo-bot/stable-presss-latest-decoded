@@ -5,6 +5,7 @@
 import { useMagazineStore } from '@/stores/magazineStore';
 import { useEditorAgentUi } from '@/stores/editorAgentUiStore';
 import { toPlainText } from '@/editor/lib/sanitize';
+import { regionDisplayName } from '@/editor/templates/regionNames';
 import type { Magazine, MagazinePage, RegionContent } from '@/types/magazine';
 import type { CtxRegion, EditorContextBlob } from './types';
 
@@ -28,6 +29,7 @@ export function previewOf(c: RegionContent, max = 80): string {
 function regionsOf(page: MagazinePage): CtxRegion[] {
   return Object.entries(page.content).map(([regionId, c]) => ({
     regionId,
+    name: regionDisplayName(regionId),
     kind: c.kind,
     filled: filledOf(c),
     preview: previewOf(c),
@@ -89,7 +91,12 @@ export function buildEditorContext(): EditorContextBlob {
         }
       : null,
     selection: selContent
-      ? { regionId: selRegionId as string, kind: selContent.kind, filled: filledOf(selContent) }
+      ? {
+          regionId: selRegionId as string,
+          name: regionDisplayName(selRegionId as string),
+          kind: selContent.kind,
+          filled: filledOf(selContent),
+        }
       : null,
     otherPages: mag.pages
       .filter((p) => p.id !== currentPageId)
