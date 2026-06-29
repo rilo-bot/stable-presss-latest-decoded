@@ -16,7 +16,7 @@ import { useLocation, useNavigate } from 'react-router-dom';
 import { useChat } from '@ai-sdk/react';
 import { DefaultChatTransport, lastAssistantMessageIsCompleteWithToolCalls, type UIMessage } from 'ai';
 import { AnimatePresence, motion, useReducedMotion } from 'framer-motion';
-import { X, Send, Sparkles, Square, Maximize2, Minimize2, Mic, Volume2, VolumeX, Loader2 } from 'lucide-react';
+import { X, Send, Sparkles, Square, Maximize2, Minimize2, Mic, Volume2, VolumeX, Loader2, Paperclip } from 'lucide-react';
 
 import { apiUrl } from '@/lib/api';
 import { useAuthStore } from '@/stores/authStore';
@@ -25,6 +25,9 @@ import { useEditorAgentUi } from '@/stores/editorAgentUiStore';
 import { MarkdownMessage } from '@/components/MarkdownMessage';
 import { useVoiceChat } from '@/agent/voice/useVoiceChat';
 import { useAutoGrowTextarea } from '@/lib/useAutoGrowTextarea';
+import { useChatAttachments } from '@/agent/attachments/useChatAttachments';
+import { attachmentsToFileParts, CHAT_ATTACH_ACCEPT } from '@/agent/attachments/attachments';
+import { AttachmentBar, MessageAttachments } from '@/agent/attachments/AttachmentViews';
 
 // ── Page-context derivation ────────────────────────────────────────────────
 // Turns the current path into a small hint the assistant can use. The agent
@@ -148,7 +151,10 @@ export function AgentWidget() {
   const location = useLocation();
   const scrollRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLTextAreaElement>(null);
+  const fileRef = useRef<HTMLInputElement>(null);
   useAutoGrowTextarea(inputRef, input);
+  // Attach images/PDFs (📎 or paste) to hand the assistant — sent as file parts.
+  const attach = useChatAttachments();
 
   // Created once. The custom fetch reads the token + current page at SEND time,
   // so a single transport stays correct as the user navigates and signs in/out.
@@ -200,8 +206,11 @@ export function AgentWidget() {
 
   const send = (text: string) => {
     const t = text.trim();
-    if (!t || busy) return;
-    void sendMessage({ text: t });
+    if ((!t && !attach.hasAttachments) || busy || attach.busy) return;
+    void sendMessage(
+      attach.hasAttachments ? { text: t, files: attachmentsToFileParts(attach.attachments) } : { text: t },
+    );
+    attach.clear();
     setInput('');
   };
 
@@ -387,6 +396,7 @@ export function AgentWidget() {
                           : 'max-w-[85%] rounded-2xl rounded-bl-sm bg-muted px-3 py-2 text-sm text-foreground'
                       }
                     >
+                      {mine && <MessageAttachments message={m} tone="light" />}
                       {mine ? text : <MarkdownMessage text={text} />}
                     </div>
                   </div>
@@ -426,18 +436,39 @@ export function AgentWidget() {
             )}
 
             {/* Composer */}
+            <div className="border-t border-border bg-card">
+            <AttachmentBar attachments={attach.attachments} onRemove={attach.remove} busy={attach.busy} tone="light" />
             <form
               onSubmit={(e) => {
                 e.preventDefault();
                 send(input);
               }}
-              className="flex items-center gap-2 border-t border-border bg-card px-3 py-2.5"
+              className="flex items-center gap-2 px-3 py-2.5"
             >
+              <input
+                ref={fileRef}
+                type="file"
+                multiple
+                accept={CHAT_ATTACH_ACCEPT}
+                className="hidden"
+                onChange={(e) => { void attach.addFiles(e.target.files); if (fileRef.current) fileRef.current.value = ''; }}
+              />
+              <button
+                type="button"
+                onClick={() => fileRef.current?.click()}
+                disabled={recording || transcribing}
+                aria-label="Attach an image or PDF"
+                title="Attach an image or PDF (or paste one)"
+                className="flex h-9 w-9 flex-shrink-0 items-center justify-center rounded-full border border-border text-muted-foreground transition-colors hover:bg-muted disabled:opacity-50"
+              >
+                <Paperclip className="h-4 w-4" />
+              </button>
               <textarea
                 ref={inputRef}
                 value={input}
                 rows={1}
                 onChange={(e) => setInput(e.target.value)}
+                onPaste={attach.onPaste}
                 onKeyDown={(e) => {
                   if (e.key === 'Enter' && !e.shiftKey && !e.nativeEvent.isComposing) {
                     e.preventDefault();
@@ -477,7 +508,7 @@ export function AgentWidget() {
                 <button
                   type="submit"
                   aria-label="Send"
-                  disabled={!input.trim()}
+                  disabled={!input.trim() && !attach.hasAttachments}
                   className="flex h-9 w-9 items-center justify-center rounded-full text-primary-foreground disabled:opacity-40"
                   style={{ background: GOLD }}
                 >
@@ -485,6 +516,7 @@ export function AgentWidget() {
                 </button>
               )}
             </form>
+            </div>
           </motion.div>
         )}
       </AnimatePresence>

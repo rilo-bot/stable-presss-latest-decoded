@@ -1,10 +1,22 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useMemo } from 'react';
 import { toast } from 'sonner';
 import { useReportStore } from '@/stores/reportStore';
 import { useHorseStore } from '@/stores/horseStore';
+import { loadDraft, useFormDraft } from '@/hooks/useFormDraft';
 import type { HorseReport, ReportDocType, ReportVisibility } from '@/types/horseReport';
 import { REPORT_DOC_TYPES } from '@/types/horseReport';
 import { FileText, ChevronDown, X, AlertCircle } from 'lucide-react';
+import { DraftRestoredHint } from './DraftRestoredHint';
+
+interface ReportDraft {
+  selectedHorseId: string;
+  docType: ReportDocType;
+  title: string;
+  issuedDate: string;
+  issuingBody: string;
+  url: string;
+  visibility: ReportVisibility;
+}
 
 const serifStyle: React.CSSProperties = { fontFamily: "'IM Fell English', 'Palatino Linotype', Georgia, serif" };
 
@@ -49,18 +61,39 @@ export function ReportsDataForm({ horseId, initial, compact = false, onSave, onC
   const fetchHorses = useHorseStore((s) => s.fetchHorses);
   useEffect(() => { fetchHorses(); }, [fetchHorses]);
 
-  const [selectedHorseId, setSelectedHorseId] = useState(initial?.horse_id ?? horseId ?? '');
-  const [docType, setDocType] = useState<ReportDocType>(initial?.doc_type ?? 'Registration');
-  const [title, setTitle] = useState(initial?.title ?? '');
-  const [issuedDate, setIssuedDate] = useState(initial?.issued_date ?? '');
-  const [issuingBody, setIssuingBody] = useState(initial?.issuing_body ?? '');
-  const [url, setUrl] = useState(initial?.url ?? '');
-  const [visibility, setVisibility] = useState<ReportVisibility>(initial?.visibility ?? 'public');
+  const isEdit = !!initial;
+  const horseLocked = !!horseId;
+
+  // Restore an in-progress draft (new records only — never overwrite an edit).
+  const draftKey = `reports:${horseId ?? 'global'}`;
+  const draft = useMemo(() => (isEdit ? null : loadDraft<ReportDraft>(draftKey)), [isEdit, draftKey]);
+
+  const [selectedHorseId, setSelectedHorseId] = useState(initial?.horse_id ?? horseId ?? draft?.selectedHorseId ?? '');
+  const [docType, setDocType] = useState<ReportDocType>(initial?.doc_type ?? draft?.docType ?? 'Registration');
+  const [title, setTitle] = useState(initial?.title ?? draft?.title ?? '');
+  const [issuedDate, setIssuedDate] = useState(initial?.issued_date ?? draft?.issuedDate ?? '');
+  const [issuingBody, setIssuingBody] = useState(initial?.issuing_body ?? draft?.issuingBody ?? '');
+  const [url, setUrl] = useState(initial?.url ?? draft?.url ?? '');
+  const [visibility, setVisibility] = useState<ReportVisibility>(initial?.visibility ?? draft?.visibility ?? 'public');
   const [errors, setErrors] = useState<{ horse_id?: string; title?: string }>({});
   const [saving, setSaving] = useState(false);
 
-  const isEdit = !!initial;
-  const horseLocked = !!horseId;
+  const { clearDraft, restored } = useFormDraft<ReportDraft>(
+    draftKey,
+    { selectedHorseId, docType, title, issuedDate, issuingBody, url, visibility },
+    {
+      enabled: !isEdit,
+      isEmpty: (d) => !d.title.trim() && !d.issuingBody.trim() && !d.url.trim() && !d.issuedDate,
+    },
+  );
+  const [draftRestored, setDraftRestored] = useState(restored);
+  function discardDraft() {
+    clearDraft();
+    setSelectedHorseId(horseId ?? '');
+    setDocType('Registration');
+    setTitle(''); setIssuedDate(''); setIssuingBody(''); setUrl(''); setVisibility('public');
+    setDraftRestored(false);
+  }
 
   async function handleSubmit() {
     const e: typeof errors = {};
@@ -77,6 +110,7 @@ export function ReportsDataForm({ horseId, initial, compact = false, onSave, onC
     try {
       if (isEdit && initial) { await updateReport(initial.id, payload); toast.success('Document updated'); }
       else { await addReport(payload); toast.success('Document saved'); }
+      clearDraft();
       onSave();
     } catch { toast.error('Failed to save — please try again'); }
     finally { setSaving(false); }
@@ -97,6 +131,7 @@ export function ReportsDataForm({ horseId, initial, compact = false, onSave, onC
 
   const body = (
     <div style={{ padding: '16px 18px', overflowY: 'auto', maxHeight: compact ? 'calc(100vh - 240px)' : '70vh', background: 'var(--parchment)' }}>
+      {draftRestored && <DraftRestoredHint onDiscard={discardDraft} />}
       <div style={{ marginBottom: 10 }}>
         <FieldLabel required>Horse</FieldLabel>
         {horseLocked ? (
