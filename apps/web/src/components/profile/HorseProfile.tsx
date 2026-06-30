@@ -41,6 +41,7 @@ import { ProfileAgentPanel, StudioLauncher } from '@/agent/profile/ProfileAgentP
 import { useProfileAgentUi, type ProfileContext } from '@/stores/profileAgentUiStore';
 import { DossierMeter } from '@/components/DossierMeter';
 import { FollowButton } from '@/components/FollowButton';
+import { PedigreeTree } from '@/components/profile/PedigreeTree';
 import { AskAgentButton } from '@/components/AskAgentButton';
 import { MediaDataForm } from '@/components/MediaDataForm';
 import { RacingDataForm } from '@/components/RacingDataForm';
@@ -320,6 +321,11 @@ export function HorseProfile({ horseId, mode, onBack }: HorseProfileProps) {
     { label: 'Metric (cm)', type: 'number', value: horse.metricSize != null ? String(horse.metricSize) : '', onSave: (v) => set({ metricSize: num(v) }) },
   ];
 
+  // Public dossier variant: the horse name becomes the card header, so drop the
+  // Name row. Order leaves DOB (Foaled) · Sex · Colour first — the three shown
+  // by default — with Country/Hands/Metric tucked behind the "More" toggle.
+  const idFieldsView = idFields.filter((f) => f.label !== 'Name' && f.label !== '__unnamed');
+
   const pedFields: FieldDescriptor[] = [
     { label: 'Sire', value: horse.sire ?? '', onSave: (v) => set({ sire: v.trim() || undefined }), highlight: true },
     { label: "Sire's Sire", value: horse.sireSire ?? '', onSave: (v) => set({ sireSire: v.trim() || undefined }) },
@@ -418,18 +424,36 @@ export function HorseProfile({ horseId, mode, onBack }: HorseProfileProps) {
       )}
 
       {/* Identity + Pedigree sit ABOVE the portrait (reference layout). */}
-      <div id="onb-identity" style={{ display: 'grid', gridTemplateColumns: '0.85fr 1.15fr', gap: 14, alignItems: 'stretch' }}>
+      <div id="onb-identity" style={{ display: 'grid', gridTemplateColumns: '0.85fr 1.15fr', gap: 14, alignItems: 'start' }}>
         <StudioField fieldId="basics" label="Identity" enabled={editableHorse}>
-          <IdentityCard title="Identity" fields={idFields} editable={editableHorse} className={isActive('basics') ? 'onb-spotlight' : undefined} />
+          {editableHorse ? (
+            <IdentityCard title="Identity" fields={idFields} editable className={isActive('basics') ? 'onb-spotlight' : undefined} />
+          ) : (
+            /* Public dossier: name is the header; DOB · Sex · Colour shown by
+               default, the rest expand in place (pushing the portrait down). */
+            <IdentityCard title={horseName} fields={idFieldsView} editable={false} collapsibleAfter={3} />
+          )}
         </StudioField>
         <StudioField fieldId="pedigree" label="Pedigree" enabled={editableHorse}>
-          <IdentityCard title="Pedigree" icon={<BookMarked size={12} style={{ color: 'var(--gold-bright)' }} />} fields={pedFields} editable={editableHorse} className={isActive('pedigree') ? 'onb-spotlight' : undefined} />
+          {editableHorse ? (
+            <IdentityCard title="Pedigree" icon={<BookMarked size={12} style={{ color: 'var(--gold-bright)' }} />} fields={pedFields} editable className={isActive('pedigree') ? 'onb-spotlight' : undefined} />
+          ) : (
+            <PedigreeTree
+              horseName={horseName}
+              sire={horse.sire}
+              sireSire={horse.sireSire}
+              sireDam={horse.sireDam}
+              dam={horse.dam}
+              damSire={horse.damSire}
+              damDam={horse.damDam}
+            />
+          )}
         </StudioField>
       </div>
 
       <div id="onb-photo">
         <StudioField fieldId="photo" label="Photo" enabled={editableHorse}>
-          <PortraitFrame src={horse.imageUrl} alt={horseName} editable={editableHorse} kind="horse" onUpload={(url) => set({ imageUrl: url })} containerStyle={{ height: 'clamp(300px, 46vh, 520px)', minHeight: 300 }} caption={featuredCaption} label={!horse.imageUrl ? 'Add a photo to begin' : undefined} className={isActive('photo') ? 'onb-spotlight' : undefined} />
+          <PortraitFrame src={horse.imageUrl} alt={horseName} editable={editableHorse} kind="horse" onUpload={(url) => set({ imageUrl: url })} containerStyle={editableHorse ? { height: 'clamp(300px, 46vh, 520px)', minHeight: 300 } : { height: 'clamp(220px, 34vh, 380px)', minHeight: 220 }} caption={featuredCaption} label={!horse.imageUrl ? 'Add a photo to begin' : undefined} className={isActive('photo') ? 'onb-spotlight' : undefined} />
         </StudioField>
       </div>
 
@@ -533,6 +557,7 @@ export function HorseProfile({ horseId, mode, onBack }: HorseProfileProps) {
   const crest = (
     <div className="sku-gold-card">
       <OrnateCrest name={horseName} subtitle={crestSubtitle} compact />
+      {/* Action bar (Follow this horse + Dossier completion meter) hidden by request.
       <div style={{ background: 'linear-gradient(180deg, var(--forest-mid) 0%, var(--forest-deep) 100%)', borderTop: '2px solid var(--gold-dark)', padding: '10px 14px', display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12, flexWrap: 'wrap' }}>
         {isEdit ? (
           isUnverified ? provisionalBadge : (
@@ -541,12 +566,13 @@ export function HorseProfile({ horseId, mode, onBack }: HorseProfileProps) {
             </span>
           )
         ) : (
-          /* Public page = read-only preview: no owner edit chrome. Editing is
-             reached only from the private studio (Dashboard → your horses). */
+          // Public page = read-only preview: no owner edit chrome. Editing is
+          // reached only from the private studio (Dashboard → your horses).
           <FollowButton horseId={horse.id} />
         )}
         <DossierMeter filled={dossierFilled} total={dossierFlags.length} />
       </div>
+      */}
     </div>
   );
 

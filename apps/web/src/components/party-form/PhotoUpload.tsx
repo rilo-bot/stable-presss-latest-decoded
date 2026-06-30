@@ -33,10 +33,10 @@ export function PhotoUpload({
   return (
     <div className="space-y-2">
       <Label className="text-xs uppercase tracking-[0.1em] font-semibold text-muted-foreground">
-        Photo <span className="text-destructive">*</span>
+        Photo <span className="text-muted-foreground/70 normal-case tracking-normal font-normal">(optional)</span>
       </Label>
       <p className="text-[11px] text-muted-foreground -mt-1">
-        A clear headshot is required for all individuals. JPEG, PNG or WebP, max {MAX_FILE_SIZE_MB} MB.
+        A clear headshot is recommended. JPEG, PNG or WebP, max {MAX_FILE_SIZE_MB} MB.
       </p>
 
       {photoPreview ? (

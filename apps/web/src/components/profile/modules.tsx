@@ -56,6 +56,7 @@ export type { DataCardImgKey };
 export function activeModuleLabel(key: string | null): string | null {
   if (!key) return null;
   if (key === 'reports') return 'Reports / Forms';
+  if (key === 'token') return 'Token Data';
   return DATA_CATEGORIES.find((c) => c.key === key)?.label ?? key;
 }
 

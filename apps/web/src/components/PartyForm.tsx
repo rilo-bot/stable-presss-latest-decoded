@@ -243,7 +243,6 @@ export function PartyForm({ open, onOpenChange, party, defaultRole, onSaved }: P
     const next: Record<string, string> = {};
     if (!name.trim()) next.name = 'Name is required.';
     if (roles.length === 0) next.roles = 'Select at least one role.';
-    if (!photo) next.photo = 'A photo is required.';
     if (startedYear) {
       const yr = parseInt(startedYear, 10);
       if (isNaN(yr) || yr < 1900 || yr > CURRENT_YEAR) {

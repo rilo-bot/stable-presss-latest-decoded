@@ -7,7 +7,7 @@
  */
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
-import { Clock, Check, Plus, Loader2, Users, Camera, ClipboardList, Warehouse } from 'lucide-react';
+import { Clock, Check, Plus, Loader2, Users, Camera, ClipboardList, Warehouse, Coins, FileText } from 'lucide-react';
 import { toast } from 'sonner';
 import { useAuthStore } from '@/stores/authStore';
 import { usePartyStore } from '@/stores/partyStore';
@@ -21,17 +21,18 @@ import { ROLE_BINDINGS, PROFILE_ROLES, resolveActiveRole } from '@/lib/profile/r
 import {
   PARTY_ROLE_LABELS, PERSONNEL_SUBTYPES, PERSONNEL_SUBTYPE_LABELS, getStartedYearLabel,
 } from '@/types/party';
-import type { Party, PartyRole, PersonnelSubtype } from '@/types/party';
+import type { Party, PersonnelSubtype } from '@/types/party';
 import type { Horse } from '@/types/horse';
 import { COUNTRY_OPTIONS } from '@/components/horse-form/constants';
 import { loadSkippedSteps, persistSkippedSteps, loadGuideDismissed, persistGuideDismissed } from '@/lib/profile/onboardingSkips';
-import { serifStyle, goldStyle, fmtMoney, fmtDate, OrnateCrest } from '@/components/profile/kit';
+import { serifStyle, goldStyle, fmtMoney, fmtDate, OrnateCrest, RacingSummaryBar, SectionPanel, DataCategoryCard, type RacingStat } from '@/components/profile/kit';
 import { ProfileScaffold, type Crumb } from '@/components/profile/ProfileScaffold';
 import { IdentityCard, type FieldDescriptor } from '@/components/profile/IdentityCard';
 import { PortraitFrame } from '@/components/profile/PortraitFrame';
 import { SummaryGrid } from '@/components/profile/SummaryGrid';
 import { EntityList, type EntityRow } from '@/components/profile/EntityList';
 import { ConnectionsRail, type RelTile } from '@/components/profile/ConnectionsRail';
+import { OwnerDataRail } from '@/components/profile/OwnerDataRail';
 import { DataSectionsRail } from '@/components/profile/DataSectionsRail';
 import { REL_ORDER, renderProfileModule, activeModuleLabel } from '@/components/profile/modules';
 import { OnboardingSteps, type OnbStep } from '@/components/profile/OnboardingSteps';
@@ -41,7 +42,6 @@ import { OnboardingFocus } from '@/components/profile/OnboardingFocus';
 import { ProfileAgentPanel, StudioLauncher } from '@/agent/profile/ProfileAgentPanel';
 import { useProfileAgentUi, type ProfileContext } from '@/stores/profileAgentUiStore';
 import { DossierMeter } from '@/components/DossierMeter';
-import { FollowButton } from '@/components/FollowButton';
 import { AskAgentButton } from '@/components/AskAgentButton';
 import { HorseForm } from '@/components/HorseForm';
 import { AddHorseChoice } from '@/components/AddHorseChoice';
@@ -296,6 +296,17 @@ export function PartyProfile({ partyId, mode, onBack }: PartyProfileProps) {
     { label: 'Top Rating', value: scope.summary.topRating !== undefined ? String(scope.summary.topRating) : '—' },
   ];
 
+  // Public dossier "details box below the photo" — the banded racing summary
+  // (reference layout). Owner-level aggregates rolled up across their horses;
+  // per-horse-only figures (career/last-10/season/ranking) have no party
+  // aggregate, so we surface the four real rollups Stable Press computes.
+  const partyRacingStats: RacingStat[] = [
+    { label: 'Horses', value: String(scope.summary.horseCount) },
+    { label: 'Winnings', value: scope.summary.totalWinnings > 0 ? fmtMoney(scope.summary.totalWinnings) : '—', highlight: true },
+    { label: 'Wins', value: String(scope.summary.wins) },
+    { label: 'Top Rating', value: scope.summary.topRating !== undefined ? String(scope.summary.topRating) : '—', highlight: true },
+  ];
+
   const openModule = (key: string) => setActiveModule((p) => (p === key ? null : key));
   const closeModule = () => setActiveModule(null);
   const moduleOpen = activeModule !== null;
@@ -330,12 +341,16 @@ export function PartyProfile({ partyId, mode, onBack }: PartyProfileProps) {
         { label: getStartedYearLabel(roles), type: 'number', value: party.started_year ? String(party.started_year) : '', displayValue: party.started_year ? `${party.started_year} · ${CURRENT_YEAR - party.started_year}y` : '', onSave: (v) => set({ started_year: v ? parseInt(v, 10) : undefined }), min: 1900, max: CURRENT_YEAR },
       ]
     : [
-        { label: 'Role', value: roleLabel },
-        ...(party.profession ? [{ label: 'Profession', value: party.profession }] : []),
+        // Reference order — DOB · Age · Country · Profession show by default
+        // (collapsibleAfter={4}); Base · Started · Role expand on demand. Each is
+        // spread-guarded so missing data is omitted, never faked.
         ...(party.date_of_birth ? [{ label: 'Date of Birth', value: fmtDate(party.date_of_birth) }] : []),
-        ...(party.country_of_birth ? [{ label: 'Country', value: party.country_of_birth }] : []),
+        ...(age !== null ? [{ label: 'Age', value: `${age} yrs old` }] : []),
+        ...(party.country_of_birth ? [{ label: 'Country of Birth', value: party.country_of_birth }] : []),
+        ...(party.profession ? [{ label: 'Profession', value: party.profession }] : []),
         ...(party.base_location ? [{ label: 'Base', value: party.base_location }] : []),
-        ...(party.started_year ? [{ label: `${roleLabel} Since`, value: String(party.started_year) }] : []),
+        ...(party.started_year ? [{ label: getStartedYearLabel(roles), value: String(party.started_year) }] : []),
+        { label: 'Role', value: roleLabel },
       ];
 
   // Centered editor for the active onboarding step (focus mode). `horses` is an
@@ -431,20 +446,19 @@ export function PartyProfile({ partyId, mode, onBack }: PartyProfileProps) {
           ))}
         </div>
       )}
-      <div style={{ background: 'linear-gradient(180deg, var(--forest-mid) 0%, var(--forest-deep) 100%)', borderTop: '2px solid var(--gold-dark)', padding: '10px 14px', display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12, flexWrap: 'wrap' }}>
-        {isEdit ? (
-          isUnverified ? provisionalBadge : (
+      {/* Action bar — studio only (verification badge + dossier completion).
+          The public dossier hides it by request: no "Follow This Owner" CTA and
+          no profile-complete meter. */}
+      {isEdit && (
+        <div style={{ background: 'linear-gradient(180deg, var(--forest-mid) 0%, var(--forest-deep) 100%)', borderTop: '2px solid var(--gold-dark)', padding: '10px 14px', display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12, flexWrap: 'wrap' }}>
+          {isUnverified ? provisionalBadge : (
             <span style={{ display: 'flex', alignItems: 'center', gap: 5, color: 'var(--gold-mid)', fontWeight: 700, fontSize: '0.52rem', textTransform: 'uppercase', letterSpacing: '0.1em', ...serifStyle }}>
               <Check size={11} /> Verified profile
             </span>
-          )
-        ) : (
-          /* Public page = read-only preview: no owner edit chrome. Editing is
-             reached only from the private studio (Dashboard → My Profile). */
-          <FollowButton horseId={`party:${partyId}`} label={`Follow This ${roleLabel}`} />
-        )}
-        <DossierMeter filled={dossierFilled} total={dossierFlags.length} />
-      </div>
+          )}
+          <DossierMeter filled={dossierFilled} total={dossierFlags.length} />
+        </div>
+      )}
     </div>
   );
 
@@ -472,19 +486,39 @@ export function PartyProfile({ partyId, mode, onBack }: PartyProfileProps) {
         : <OnboardingSteps title="Finish your profile" steps={onbSteps} onStepClick={scrollToAnchor} />
       )}
 
-      <div id="onb-identity" style={{ display: 'grid', gridTemplateColumns: '0.95fr 1.05fr', gap: 14, alignItems: 'stretch' }}>
-        <IdentityCard title={identityTitle} fields={identityFields} editable={isEdit && editable} className={isActive('details') ? 'onb-spotlight' : undefined} />
-        <PortraitFrame
-          src={party.photo}
-          alt={partyName}
-          editable={isEdit && editable}
-          kind="party"
-          onUpload={(url) => set({ photo: url })}
-          containerStyle={{ minHeight: isEdit ? 200 : 180 }}
-          caption={portraitCaption}
-          className={isActive('photo') ? 'onb-spotlight' : undefined}
-        />
-      </div>
+      {isEdit ? (
+        <div id="onb-identity" style={{ display: 'grid', gridTemplateColumns: '0.95fr 1.05fr', gap: 14, alignItems: 'stretch' }}>
+          <IdentityCard title={identityTitle} fields={identityFields} editable={editable} className={isActive('details') ? 'onb-spotlight' : undefined} />
+          <PortraitFrame
+            src={party.photo}
+            alt={partyName}
+            editable={editable}
+            kind="party"
+            onUpload={(url) => set({ photo: url })}
+            containerStyle={{ minHeight: 200 }}
+            caption={portraitCaption}
+            className={isActive('photo') ? 'onb-spotlight' : undefined}
+          />
+        </div>
+      ) : (
+        /* Public dossier: image only, centred in the middle column. No identity
+            box — the crest already carries the name + role. */
+        <div id="onb-identity">
+          <PortraitFrame
+            src={party.photo}
+            alt={partyName}
+            editable={false}
+            kind="party"
+            containerStyle={{ height: 'clamp(240px, 42vh, 460px)', minHeight: 240 }}
+            caption={portraitCaption}
+          />
+        </div>
+      )}
+
+      {/* Public dossier: banded racing summary directly below the portrait
+          (reference's "details box below"). Studio keeps the SummaryGrid +
+          editable My Horses list instead. */}
+      {!isEdit && <RacingSummaryBar stats={partyRacingStats} />}
 
       {isEdit && roles.includes('personnel') && (
         <div className="sku-gold-card" style={{ ...serifStyle }}>
@@ -505,18 +539,23 @@ export function PartyProfile({ partyId, mode, onBack }: PartyProfileProps) {
         </div>
       )}
 
-      <SummaryGrid title={`${roleLabel} Summary`} cells={summaryCells} columns={4} />
+      {/* Studio-only: the 4-cell roll-up + editable My Horses list. The public
+          dossier surfaces these via the racing-summary band + the left "Owner's
+          Data" box + the right-rail data modules, keeping the page viewport-fit. */}
+      {isEdit && <SummaryGrid title={`${roleLabel} Summary`} cells={summaryCells} columns={4} />}
 
-      <div id="onb-horses" className={isActive('horses') ? 'onb-spotlight' : undefined}>
-        <EntityList
-          title={isEdit ? 'My Horses' : 'Horses'}
-          count={horseCount}
-          prepend={addHorsePrepend}
-          rows={horseRows}
-          emptyText={isEdit ? 'No horses yet — register one above to start your stable.' : `No horses connected to this ${roleLabel.toLowerCase()} yet.`}
-          onSelect={openHorse}
-        />
-      </div>
+      {isEdit && (
+        <div id="onb-horses" className={isActive('horses') ? 'onb-spotlight' : undefined}>
+          <EntityList
+            title="My Horses"
+            count={horseCount}
+            prepend={addHorsePrepend}
+            rows={horseRows}
+            emptyText="No horses yet — register one above to start your stable."
+            onSelect={openHorse}
+          />
+        </div>
+      )}
     </>
   );
 
@@ -531,6 +570,27 @@ export function PartyProfile({ partyId, mode, onBack }: PartyProfileProps) {
     </button>
   );
 
+  // Public dossier right rail also carries Token + Reports/Forms tiles (reference
+  // layout). Token has no module yet → opens a placeholder; Reports reuses the
+  // existing reports module (moved here from the left rail).
+  const rightExtra = !isEdit ? (
+    <>
+      <DataCategoryCard compact label="Token Data" sublabel="Ownership tokens" icon={<Coins size={11} strokeWidth={1.8} style={{ color: 'var(--gold-bright)' }} />} imgKey="racing" active={activeModule === 'token'} onClick={() => openModule('token')} />
+      <DataCategoryCard compact label="Reports / Forms" sublabel="Documents & forms" icon={<FileText size={11} strokeWidth={1.8} style={{ color: 'var(--gold-bright)' }} />} imgKey="media" active={activeModule === 'reports'} onClick={() => openModule('reports')} />
+    </>
+  ) : undefined;
+
+  // Resolve the open module; `token` has no section yet so fall back to a
+  // placeholder panel rather than blanking the centre.
+  const moduleNode = activeModule ? renderProfileModule(activeModule, { scope, subjectName: partyName, roleLabel, onClose: closeModule, onOpenHorse: openHorse }) : null;
+  const centerModule = activeModule
+    ? (moduleNode ?? (activeModule === 'token'
+      ? <SectionPanel title="Token Data" icon={<Coins size={16} style={{ color: 'var(--gold-bright)' }} />} onClose={closeModule}>
+          <p style={{ fontSize: '0.72rem', color: 'var(--forest-mid)', lineHeight: 1.5, margin: 0, ...serifStyle }}>SyndT ownership tokens for {partyName}&rsquo;s horses will appear here once token records are available.</p>
+        </SectionPanel>
+      : null))
+    : null;
+
   return (
     <>
       <ProfileScaffold
@@ -538,20 +598,28 @@ export function PartyProfile({ partyId, mode, onBack }: PartyProfileProps) {
         breadcrumbRight={breadcrumbRight}
         banner={banner}
         left={
-          <ConnectionsRail
-            tiles={relTiles}
-            emptyText={isEdit ? 'No connected parties yet. Link them from a horse’s screen.' : 'No connected parties yet.'}
-            onOpenParty={(pid) => navigate(`/parties/${pid}`)}
-            reportsActive={activeModule === 'reports'}
-            onOpenReports={() => openModule('reports')}
-            footer={railFooter}
-          />
+          isEdit ? (
+            <ConnectionsRail
+              tiles={relTiles}
+              emptyText="No connected parties yet. Link them from a horse’s screen."
+              onOpenParty={(pid) => navigate(`/parties/${pid}`)}
+              reportsActive={activeModule === 'reports'}
+              onOpenReports={() => openModule('reports')}
+              footer={railFooter}
+            />
+          ) : (
+            <OwnerDataRail
+              tiles={scope.relationshipTiles}
+              onOpenParty={(pid) => navigate(`/parties/${pid}`)}
+              footer={railFooter}
+            />
+          )
         }
         crest={crest}
         centerDefault={centerDefault}
-        centerModule={activeModule ? renderProfileModule(activeModule, { scope, subjectName: partyName, roleLabel, onClose: closeModule, onOpenHorse: openHorse }) : null}
+        centerModule={centerModule}
         moduleKey={activeModule}
-        right={<DataSectionsRail activeModule={activeModule} onToggle={openModule} />}
+        right={<DataSectionsRail activeModule={activeModule} onToggle={openModule} extra={rightExtra} compact={!isEdit} />}
         overlay={isEdit && editable
           ? (showGuide
             ? <>
