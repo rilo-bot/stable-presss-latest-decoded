@@ -6,13 +6,16 @@
 // suppresses the global Stablehand launcher (shared editor suppress flag).
 
 import { useEffect, useRef, useState } from 'react';
-import { Sparkles, Send, Square, Undo2, Check, X, UserPlus, PenLine, Mic, Volume2, VolumeX, Loader2, Paperclip } from 'lucide-react';
+import { Sparkles, Send, Square, Undo2, Check, X, UserPlus, PenLine, Mic, Volume2, VolumeX, Loader2, MousePointerClick, Paperclip } from 'lucide-react';
+import { toast } from 'sonner';
 
 import { MarkdownMessage } from '@/components/MarkdownMessage';
 import { useProfileAgentUi, type Proposal } from '@/stores/profileAgentUiStore';
 import { useEditorAgentUi } from '@/stores/editorAgentUiStore';
 import { PARTY_ROLE_LABELS } from '@/types/party';
 import { useProfileChatSession, messageText } from './useProfileChatSession';
+import { profileBoxDef } from './profileStudioFields';
+import { executeProfileTool } from './profileToolExecutor';
 import { useVoiceChat } from '@/agent/voice/useVoiceChat';
 import { useAutoGrowTextarea } from '@/lib/useAutoGrowTextarea';
 import { useChatAttachments } from '@/agent/attachments/useChatAttachments';
@@ -77,6 +80,9 @@ export function ProfileAgentPanel() {
   const staged = useProfileAgentUi((s) => s.staged);
   const undoCount = useProfileAgentUi((s) => s.undo.length);
   const pendingPrompt = useProfileAgentUi((s) => s.pendingPrompt);
+  const selectedFieldId = useProfileAgentUi((s) => s.selectedFieldId);
+  const imageOptions = useProfileAgentUi((s) => s.imageOptions);
+  const selectedName = profileBoxDef(selectedFieldId)?.label;
 
   const { messages, sendMessage, status, error, stop } = useProfileChatSession();
 
@@ -88,6 +94,13 @@ export function ProfileAgentPanel() {
   useAutoGrowTextarea(inputRef, input);
   // Attach images/PDFs (📎 or paste) for the studio assistant to read.
   const attach = useChatAttachments();
+
+  // Set a stock photo (from suggestImageOptions) straight onto the portrait.
+  const onPickPhoto = async (src: string, name: string) => {
+    const res = (await executeProfileTool('setPhoto', { src })) as { ok?: boolean; error?: string };
+    if (res?.ok) toast.success(`Portrait set — “${name}”.`);
+    else toast.error(res?.error ?? 'Could not set that photo.');
+  };
 
   // While open, hide the global Stablehand launcher (shared editor suppress flag).
   useEffect(() => {
@@ -153,12 +166,24 @@ export function ProfileAgentPanel() {
         </div>
       </div>
 
+      {/* Selection indicator — which data-box the AI is focused on */}
+      <div className="flex items-center gap-2 border-b border-white/10 bg-white/[0.03] px-3 py-1.5 text-[11px]">
+        <MousePointerClick size={13} className="flex-shrink-0" style={{ color: 'var(--gold-mid)' }} />
+        {selectedName ? (
+          <span className="text-white/70">
+            Focused on <strong style={{ color: 'var(--gold-bright)' }}>{selectedName}</strong> — ask me to change it.
+          </span>
+        ) : (
+          <span className="text-white/45">Click any box on the profile to focus it (it turns purple).</span>
+        )}
+      </div>
+
       {/* Conversation */}
       <div ref={scrollRef} className="flex-1 space-y-3 overflow-y-auto px-3 py-3">
         {messages.length === 0 && (
           <div className="space-y-3">
             <p className="text-[12px] leading-relaxed text-white/55">
-              I’m your Stable Studio assistant. Tell me about this {ctx?.entityKind ?? 'profile'} and I’ll <strong className="text-white/80">draft field values</strong>{isHorse ? <> and <strong className="text-white/80">connections</strong></> : null} for you to review and Apply. I never save anything without your tap.
+              I’m your Stable Studio assistant. Click a box on the profile — the <strong className="text-white/80">photo</strong>, identity, pedigree{isHorse ? <>, racing or a <strong className="text-white/80">connection</strong></> : null} — then tell me how to change it. I edit it right here, and you can <strong className="text-white/80">Undo</strong> any change.
             </p>
             <div className="flex flex-wrap gap-1.5">
               {chips.map((c) => (
@@ -200,6 +225,27 @@ export function ProfileAgentPanel() {
             )}
           </div>
           {staged.map((p) => <ProposalCard key={p.id} p={p} />)}
+        </div>
+      )}
+
+      {/* Photo candidates — click one to set it as the portrait */}
+      {imageOptions && imageOptions.length > 0 && (
+        <div className="border-t border-white/10 bg-white/[0.03] px-3 py-2">
+          <div className="mb-1 text-[10px] font-bold uppercase tracking-wider" style={{ color: 'var(--gold-mid)' }}>
+            Photo options — click to set as the portrait
+          </div>
+          <div className="flex gap-1.5 overflow-x-auto pb-1">
+            {imageOptions.map((opt) => (
+              <button
+                key={opt.url}
+                onClick={() => void onPickPhoto(opt.url, opt.name)}
+                title={opt.name}
+                className="group relative h-12 w-16 flex-shrink-0 overflow-hidden rounded-sm border border-white/15 hover:border-[var(--gold-bright)]"
+              >
+                <img src={opt.url} alt={opt.name} crossOrigin="anonymous" className="h-full w-full object-cover transition-transform group-hover:scale-105" />
+              </button>
+            ))}
+          </div>
         </div>
       )}
 
@@ -246,7 +292,7 @@ export function ProfileAgentPanel() {
             }
           }}
           disabled={recording || transcribing}
-          placeholder={recording ? 'Listening…' : transcribing ? 'Transcribing…' : 'Ask the studio assistant…'}
+          placeholder={recording ? 'Listening…' : transcribing ? 'Transcribing…' : selectedName ? `Change the ${selectedName.toLowerCase()}…` : 'Ask the studio assistant…'}
           className="flex-1 resize-none rounded-2xl border border-white/15 bg-white/5 px-3 py-1.5 text-[12px] leading-snug text-white outline-none placeholder:text-white/30 focus:border-white/30 disabled:opacity-70"
         />
         {voiceReady && !busy && (

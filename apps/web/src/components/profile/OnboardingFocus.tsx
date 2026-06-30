@@ -10,10 +10,11 @@
  * and the in-place box's DOM id (`originId`). Backdrop is intentionally inert
  * (no dismiss) — the only ways forward are completing the field or pressing Skip.
  */
-import { useLayoutEffect, useRef } from 'react';
+import { useEffect, useLayoutEffect, useRef } from 'react';
 import { AnimatePresence, motion, useReducedMotion, useAnimationControls } from 'framer-motion';
 import { Sparkles, SkipForward, X } from 'lucide-react';
 import { serifStyle, displayStyle, goldStyle } from '@/components/profile/kit';
+import { useProfileAgentUi } from '@/stores/profileAgentUiStore';
 
 export interface OnboardingFocusProps {
   /** Show the overlay. False → render nothing (e.g. chat open, or onboarding done). */
@@ -26,6 +27,8 @@ export interface OnboardingFocusProps {
   tips?: string[];
   /** The centered editor for this step (PortraitFrame / IdentityCard / RoleConnectionBox / CTA). */
   content: React.ReactNode;
+  /** Focusable box key for the active step, so the assistant + purple ring track it. */
+  boxKey?: string;
   /** DOM id of the in-place box for the FLIP origin (skipped for `module:` / missing ids). */
   originId?: string;
   skippable?: boolean;
@@ -91,8 +94,17 @@ function FocusCard({ stepKey, originId, reduce, children }: {
   );
 }
 
-export function OnboardingFocus({ open, stepKey, stepIndex, total, title, tips, content, originId, skippable, onSkip, onAsk, onClose }: OnboardingFocusProps) {
+export function OnboardingFocus({ open, stepKey, stepIndex, total, title, tips, content, boxKey, originId, skippable, onSkip, onAsk, onClose }: OnboardingFocusProps) {
   const reduce = useReducedMotion();
+
+  // Keep the assistant's focus (and the purple ring on the in-place box) in sync
+  // with the step the guide is on — tracked by boxKey (not `open`, which toggles
+  // off when the chat opens), so opening the chat mid-step stays scoped. Mounted
+  // only during the guided journey; clears the selection when it unmounts.
+  useEffect(() => {
+    if (boxKey) useProfileAgentUi.getState().select(boxKey);
+    return () => useProfileAgentUi.getState().select(null);
+  }, [boxKey]);
 
   return (
     <>

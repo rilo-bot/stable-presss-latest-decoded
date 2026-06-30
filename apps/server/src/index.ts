@@ -115,6 +115,7 @@ import agentRouter from './routes/agent.js'
 import agentEditorRouter from './routes/agentEditor.js'
 import agentProfileRouter from './routes/agentProfile.js'
 import agentStoryRouter from './routes/agentStory.js'
+import agentArticleRouter from './routes/agentArticle.js'
 import agentVoiceRouter from './routes/agentVoice.js'
 import agentComposeRouter from './routes/agentCompose.js'
 import newsroomRouter from './routes/newsroom.js'
@@ -170,6 +171,7 @@ app.use('/api/newsroom', newsroomRouter)
 app.use('/api/agent/editor', jsonAgent, agentEditorRouter)  // in-editor Studio Assistant (client-executed editor tools)
 app.use('/api/agent/profile', jsonAgent, agentProfileRouter) // in-profile Stable Studio assistant (client-executed, staged proposals)
 app.use('/api/agent/story', jsonAgent, agentStoryRouter)    // Story Studio — writes & files a story draft (client-executed tools)
+app.use('/api/agent/article', jsonAgent, agentArticleRouter) // Article Studio — edits one open article in place (client-executed tools)
 app.use('/api/agent/voice', jsonAgent, agentVoiceRouter)    // OpenAI STT/TTS for the concierge (key stays server-side)
 app.use('/api/agent/compose', jsonAgent, agentComposeRouter) // AI field-composer for form fields (✨ button)
 app.use('/api/agent', jsonAgent, agentRouter)

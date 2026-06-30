@@ -19,6 +19,7 @@ import {
   Check,
   X,
   Loader2,
+  Sparkles,
 } from 'lucide-react';
 import { useAuthStore } from '@/stores/authStore';
 import { canViewPremium } from '@/rbac/can';
@@ -29,6 +30,9 @@ import { STATUS_LABELS, splitIntoParagraphs, DEFAULT_HERO } from './article-deta
 import { Sidebar } from './article-detail/Sidebar';
 import { RelatedPanel } from './article-detail/RelatedPanel';
 import { InlineEdit } from './article-detail/InlineEdit';
+import { SelectableField } from './article-detail/SelectableField';
+import { useArticleStudioUi } from '@/stores/articleStudioUiStore';
+import { ArticleStudioPanel } from '@/agent/article/ArticleStudioPanel';
 
 export default function ArticleDetail() {
   // All hooks run unconditionally, before any early return (Rules of Hooks):
@@ -69,6 +73,16 @@ export default function ArticleDetail() {
   const [saving, setSaving] = useState(false);
   const [draft, setDraft] = useState<Draft | null>(null);
 
+  // ── Article Studio (AI in-place editing) ───────────────────────────────────
+  const studioOpen = useArticleStudioUi((s) => s.open);
+  // Keep the studio bound to whichever article is on screen (e.g. if the reader
+  // follows a related-article link while the drawer is open).
+  useEffect(() => {
+    if (studioOpen && article) useArticleStudioUi.setState({ articleId: article.id });
+  }, [studioOpen, article]);
+  // Closing the page closes the studio so it never lingers on another route.
+  useEffect(() => () => useArticleStudioUi.getState().close(), []);
+
   const canEdit = canEditArticle(
     currentUser?.role ?? null,
     article?.author ?? '',
@@ -102,18 +116,26 @@ export default function ArticleDetail() {
     const parsedReadingTime = parseInt(draft.readingTime, 10);
     setSaving(true);
     try {
-      await updateArticle(article.id, {
+      // `null` (not `undefined`) so an emptied category / reading time is
+      // actually cleared on the server rather than silently retaining the old
+      // value — see ArticleUpdate in the store.
+      const ok = await updateArticle(article.id, {
         title,
         summary: draft.summary.trim(),
         author: draft.author.trim(),
-        category: draft.category.trim() || undefined,
+        category: draft.category.trim() || null,
         readingTime: Number.isFinite(parsedReadingTime) && parsedReadingTime > 0
           ? parsedReadingTime
-          : undefined,
+          : null,
       });
-      toast.success('Article updated.');
-      setEditing(false);
-      setDraft(null);
+      // Only close + confirm on a real success. On failure the store has
+      // already shown an error toast and rolled back; keep edit mode open so
+      // the user's draft survives and they can retry.
+      if (ok) {
+        toast.success('Article updated.');
+        setEditing(false);
+        setDraft(null);
+      }
     } finally {
       setSaving(false);
     }
@@ -187,6 +209,9 @@ export default function ArticleDetail() {
   return (
     <div className="min-h-screen bg-background">
 
+      {/* ── Article Studio (AI in-place editing) ──────── */}
+      <ArticleStudioPanel />
+
       {/* ── Inline-edit toolbar (admins) ──────────────── */}
       {editing && (
         <div className="fixed bottom-6 left-1/2 z-50 -translate-x-1/2">
@@ -217,12 +242,14 @@ export default function ArticleDetail() {
 
       {/* ── Full-bleed Hero ───────────────────────────── */}
       <div className="relative w-full h-[60vh] min-h-[400px] max-h-[680px] overflow-hidden">
-        <img
-          src={heroImage}
-          alt={article.title}
-          crossOrigin="anonymous"
-          className="absolute inset-0 w-full h-full object-cover object-center"
-        />
+        <SelectableField fieldId="heroImage" label="Hero image" className="absolute inset-0">
+          <img
+            src={heroImage}
+            alt={article.title}
+            crossOrigin="anonymous"
+            className="absolute inset-0 w-full h-full object-cover object-center"
+          />
+        </SelectableField>
         {/* Multi-stop scrim: bottom-to-top opacity for text legibility */}
         <div className="absolute inset-0 bg-gradient-to-t from-foreground/95 via-foreground/50 to-foreground/10" />
         <div className="absolute inset-0 bg-gradient-to-r from-foreground/20 via-transparent to-transparent" />
@@ -270,15 +297,17 @@ export default function ArticleDetail() {
                     className="text-[9px] uppercase tracking-[0.22em] font-bold text-primary-foreground"
                   />
                 ) : (
-                  <span
-                    className="text-[9px] uppercase tracking-[0.22em] font-bold px-2.5 py-1 rounded-sm"
-                    style={{
-                      background: 'hsl(var(--brand-accent))',
-                      color: 'hsl(var(--brand-accent-foreground))',
-                    }}
-                  >
-                    {article.category}
-                  </span>
+                  <SelectableField fieldId="category" label="Category">
+                    <span
+                      className="text-[9px] uppercase tracking-[0.22em] font-bold px-2.5 py-1 rounded-sm inline-block"
+                      style={{
+                        background: 'hsl(var(--brand-accent))',
+                        color: 'hsl(var(--brand-accent-foreground))',
+                      }}
+                    >
+                      {article.category}
+                    </span>
+                  </SelectableField>
                 )}
                 {isLive && (
                   <span className="flex items-center gap-1.5 text-[9px] uppercase tracking-[0.14em] font-semibold text-primary-foreground/60">
@@ -289,24 +318,26 @@ export default function ArticleDetail() {
               </div>
             )}
 
-            <motion.h1
-              initial={{ opacity: 0, y: 12 }}
-              animate={{ opacity: 1, y: 0 }}
-              transition={{ duration: 0.28, ease: 'easeOut' }}
-              className="font-[family-name:var(--font-display)] text-3xl sm:text-4xl md:text-5xl font-bold text-primary-foreground leading-[1.08] mb-4 max-w-3xl"
-            >
-              {editing && draft ? (
-                <InlineEdit
-                  as="span"
-                  value={draft.title}
-                  onChange={(v) => setDraft((d) => (d ? { ...d, title: v } : d))}
-                  ariaLabel="Article headline"
-                  placeholder="Headline"
-                />
-              ) : (
-                article.title
-              )}
-            </motion.h1>
+            <SelectableField fieldId="title" label="Headline">
+              <motion.h1
+                initial={{ opacity: 0, y: 12 }}
+                animate={{ opacity: 1, y: 0 }}
+                transition={{ duration: 0.28, ease: 'easeOut' }}
+                className="font-[family-name:var(--font-display)] text-3xl sm:text-4xl md:text-5xl font-bold text-primary-foreground leading-[1.08] mb-4 max-w-3xl"
+              >
+                {editing && draft ? (
+                  <InlineEdit
+                    as="span"
+                    value={draft.title}
+                    onChange={(v) => setDraft((d) => (d ? { ...d, title: v } : d))}
+                    ariaLabel="Article headline"
+                    placeholder="Headline"
+                  />
+                ) : (
+                  article.title
+                )}
+              </motion.h1>
+            </SelectableField>
 
             {/* Byline row */}
             <motion.div
@@ -336,9 +367,11 @@ export default function ArticleDetail() {
                       className="text-xs font-semibold text-primary-foreground/90"
                     />
                   ) : (
-                    <p className="text-xs font-semibold text-primary-foreground/90">
-                      {article.author}
-                    </p>
+                    <SelectableField fieldId="author" label="Byline">
+                      <p className="text-xs font-semibold text-primary-foreground/90">
+                        {article.author}
+                      </p>
+                    </SelectableField>
                   )}
                   <p className="text-[10px] text-primary-foreground/50 uppercase tracking-[0.08em]">
                     Staff Correspondent
@@ -367,7 +400,7 @@ export default function ArticleDetail() {
                     }
                     aria-label="Reading time in minutes"
                     placeholder="0"
-                    className="w-12 rounded-sm bg-sky-400/10 px-1.5 py-0.5 text-primary-foreground outline-none ring-2 ring-sky-400/70 focus:ring-sky-500"
+                    className="w-12 rounded-sm bg-purple-400/10 px-1.5 py-0.5 text-primary-foreground outline-none ring-2 ring-purple-400/70 focus:ring-purple-500"
                   />
                   min read
                 </span>
@@ -414,15 +447,25 @@ export default function ArticleDetail() {
               </button>
 
               <div className="flex items-center gap-3">
-                {canEdit && !editing && (
-                  <button
-                    onClick={startEditing}
-                    className="flex items-center gap-1.5 text-[10px] uppercase tracking-[0.1em] font-semibold text-primary hover:text-primary/80 transition-colors"
-                    aria-label="Edit this article"
-                  >
-                    <Pencil size={13} />
-                    <span className="hidden sm:inline">Edit</span>
-                  </button>
+                {canEdit && !editing && !studioOpen && (
+                  <>
+                    <button
+                      onClick={startEditing}
+                      className="flex items-center gap-1.5 text-[10px] uppercase tracking-[0.1em] font-semibold text-primary hover:text-primary/80 transition-colors"
+                      aria-label="Edit this article"
+                    >
+                      <Pencil size={13} />
+                      <span className="hidden sm:inline">Edit</span>
+                    </button>
+                    <button
+                      onClick={() => useArticleStudioUi.getState().openFor(article.id)}
+                      className="flex items-center gap-1.5 text-[10px] uppercase tracking-[0.1em] font-semibold text-purple-600 hover:text-purple-500 transition-colors"
+                      aria-label="Edit this article with AI Studio"
+                    >
+                      <Sparkles size={13} />
+                      <span className="hidden sm:inline">Studio</span>
+                    </button>
+                  </>
                 )}
                 <AskAgentButton
                   prompt="Give me a quick summary of this article and why it matters."
@@ -493,6 +536,7 @@ export default function ArticleDetail() {
 
             {/* Lead deck — editorial intro */}
             {!editing && paragraphs.length > 0 && (
+              <SelectableField fieldId="summary" label="Body">
               <div className="mb-8">
                 {/* Drop-cap first paragraph */}
                 <p
@@ -554,16 +598,19 @@ export default function ArticleDetail() {
                   </>
                 )}
               </div>
+              </SelectableField>
             )}
 
             {/* When no body copy yet (draft / pending) */}
             {!editing && paragraphs.length === 0 && (
+              <SelectableField fieldId="summary" label="Body">
               <div className="py-10 flex flex-col items-center justify-center border border-dashed border-border/60 rounded-sm bg-muted/20 mb-8">
                 <BookOpen size={32} className="text-primary/30 mb-3" />
                 <p className="font-[family-name:var(--font-display)] italic text-muted-foreground text-base text-center max-w-sm">
                   The full text of this story is being prepared for print. Check back soon.
                 </p>
               </div>
+              </SelectableField>
             )}
 
             {/* ── Ornate divider ── */}
@@ -571,19 +618,21 @@ export default function ArticleDetail() {
 
             {/* Tags strip */}
             {article.tags && article.tags.length > 0 && (
-              <div className="flex flex-wrap items-center gap-2 mb-8">
-                <span className="text-[9px] uppercase tracking-[0.14em] font-bold text-muted-foreground mr-1">
-                  Filed under
-                </span>
-                {article.tags.map((tag) => (
-                  <span
-                    key={tag}
-                    className="text-[10px] uppercase tracking-[0.1em] px-2.5 py-1 rounded-full border border-border/60 text-muted-foreground hover:text-foreground hover:border-primary/40 transition-colors cursor-pointer font-medium"
-                  >
-                    {tag}
+              <SelectableField fieldId="tags" label="Tags">
+                <div className="flex flex-wrap items-center gap-2 mb-8">
+                  <span className="text-[9px] uppercase tracking-[0.14em] font-bold text-muted-foreground mr-1">
+                    Filed under
                   </span>
-                ))}
-              </div>
+                  {article.tags.map((tag) => (
+                    <span
+                      key={tag}
+                      className="text-[10px] uppercase tracking-[0.1em] px-2.5 py-1 rounded-full border border-border/60 text-muted-foreground hover:text-foreground hover:border-primary/40 transition-colors cursor-pointer font-medium"
+                    >
+                      {tag}
+                    </span>
+                  ))}
+                </div>
+              </SelectableField>
             )}
 
             {/* Author card */}

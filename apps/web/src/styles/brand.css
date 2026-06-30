@@ -147,6 +147,20 @@
   .onb-spotlight { animation: none; outline-color: var(--gold-bright); }
 }
 
+/* Stable Studio focus — purple ring on the data-box the AI is acting on. Mirrors
+   the article page's purple selection. `outline` (not box-shadow) so it never
+   clips or shifts layout; a hover hint invites a click while the studio is open. */
+.studio-focus-ring { transition: outline-color 0.15s ease; outline: 2px solid transparent; outline-offset: 3px; }
+.studio-focus-ring:hover { outline-color: rgba(147, 51, 234, 0.5); }
+.studio-focus-ring--on { outline-color: #9333ea; animation: studio-focus-pulse 2s ease-in-out infinite; scroll-margin-top: 90px; }
+@keyframes studio-focus-pulse {
+  0%, 100% { outline-color: rgba(147, 51, 234, 0.6); filter: drop-shadow(0 0 4px rgba(147, 51, 234, 0.4)); }
+  50%      { outline-color: rgba(147, 51, 234, 1);   filter: drop-shadow(0 0 11px rgba(147, 51, 234, 0.7)); }
+}
+@media (prefers-reduced-motion: reduce) {
+  .studio-focus-ring--on { animation: none; outline-color: #9333ea; }
+}
+
 /* Add-a-horse chooser cards — lift on hover/focus. */
 .onb-choice-card:hover, .onb-choice-card:focus-visible {
   border-color: var(--gold-bright);

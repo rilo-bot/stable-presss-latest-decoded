@@ -14,6 +14,7 @@ import { ChevronRight, X, FileText } from 'lucide-react';
 import { serifStyle } from '@/components/profile/kit';
 import { RoleConnectionBox, ROLE_BOXES } from '@/components/profile/RoleConnectionBox';
 import { useRoleConnections } from '@/components/profile/useRoleConnections';
+import { StudioField } from '@/components/profile/StudioField';
 
 export function RoleConnectionsRail({ horseId, editable, onOpenParty, reportsActive, onOpenReports, footer, spotlightRel }: {
   horseId: string;
@@ -34,10 +35,16 @@ export function RoleConnectionsRail({ horseId, editable, onOpenParty, reportsAct
         <span style={{ fontSize: '0.5rem', color: 'var(--gold-dark)', ...serifStyle }}>✦</span>
       </div>
 
-      {ROLE_BOXES.map((def) => (
-        <RoleConnectionBox key={def.role} def={def} entries={conn.entriesFor(def)} editable={editable} parties={conn.parties} onOpenParty={onOpenParty} onAdd={conn.onAdd} onSaveDates={conn.onSaveDates} onRemove={conn.onRemove}
-          id={def.rel ? `onb-conn-${def.rel}` : undefined} spotlight={!!def.rel && def.rel === spotlightRel} />
-      ))}
+      {ROLE_BOXES.map((def) => {
+        const box = (
+          <RoleConnectionBox key={def.role} def={def} entries={conn.entriesFor(def)} editable={editable} parties={conn.parties} onOpenParty={onOpenParty} onAdd={conn.onAdd} onSaveDates={conn.onSaveDates} onRemove={conn.onRemove}
+            id={def.rel ? `onb-conn-${def.rel}` : undefined} spotlight={!!def.rel && def.rel === spotlightRel} />
+        );
+        // Connection boxes with a relationship_type are AI-focusable (purple ring).
+        return def.rel
+          ? <StudioField key={def.role} fieldId={`conn:${def.rel}`} label={def.label.replace(/\s*Data$/i, '')} enabled={editable}>{box}</StudioField>
+          : box;
+      })}
 
       {/* Shared datalist of existing parties for the add inputs */}
       <datalist id="parties-all">

@@ -4,6 +4,7 @@ import { can } from '@/lib/permissions';
 import type { UserRole } from '@/stores/authStore';
 import type { KanbanStatus } from '@/components/KanbanColumn';
 import type { Article } from '@/types/article';
+import type { ArticleUpdate } from '@/stores/articleStore';
 import type { Horse } from '@/types/horse';
 import type { MediaItem } from '@/types/mediaItem';
 import type { Sale } from '@/types/sale';
@@ -33,7 +34,7 @@ interface EditorHubViewProps {
   setAssignDialogArticle: (a: Article | null) => void;
   assignNote: string;
   setAssignNote: (v: string) => void;
-  updateArticle: (id: string, updates: Partial<Article>) => Promise<void>;
+  updateArticle: (id: string, updates: ArticleUpdate) => Promise<boolean>;
   // Media library
   mediaItems: MediaItem[];
   horses: Horse[];
