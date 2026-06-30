@@ -182,9 +182,27 @@ export function RaceStatusBadge({ status }: { status: RaceStatus }) {
 /* ─── Data Category Card (right column tile) — gradient + icon, no stock photo ─── */
 export interface DataCategoryDef { key: string; label: string; sublabel: string; icon: React.ReactNode; imgKey: DataCardImgKey; }
 
-export function DataCategoryCard({ label, sublabel, icon, active, onClick, id }: Omit<DataCategoryDef, 'key'> & { active: boolean; onClick: () => void; id?: string }) {
+export function DataCategoryCard({ label, sublabel, icon, active, onClick, id, compact }: Omit<DataCategoryDef, 'key'> & { active: boolean; onClick: () => void; id?: string; compact?: boolean }) {
   const [hovered, setHovered] = useState(false);
   const lit = hovered || active;
+
+  // Compact single-row tile (dossier rails that must fit the viewport) — icon +
+  // label + sublabel + chevron, ~40px tall instead of the ~125px image card.
+  if (compact) {
+    return (
+      <button id={id} onClick={onClick} onMouseEnter={() => setHovered(true)} onMouseLeave={() => setHovered(false)} aria-label={`${active ? 'Close' : 'View'} ${label} data`} aria-pressed={active} style={{ width: '100%', display: 'flex', alignItems: 'center', gap: 8, padding: '6px 9px', border: `2px solid ${lit ? 'var(--gold-bright)' : 'var(--gold-dark)'}`, borderRadius: 4, cursor: 'pointer', background: lit ? 'linear-gradient(90deg, var(--forest-mid) 0%, var(--forest-light) 100%)' : 'linear-gradient(90deg, var(--forest-deep) 0%, var(--forest-mid) 100%)', boxShadow: lit ? '0 0 0 1px var(--gold-bright), 0 3px 10px rgba(0,0,0,0.5)' : '0 0 0 1px var(--gold-dark), 0 2px 6px rgba(0,0,0,0.4)', transition: 'border-color 0.18s, background 0.18s', ...serifStyle }}>
+        <span style={{ width: 24, height: 24, borderRadius: '50%', flexShrink: 0, background: 'radial-gradient(circle at 50% 35%, rgba(40,70,48,0.95) 0%, rgba(14,36,22,0.92) 100%)', border: `1px solid ${active ? 'var(--gold-bright)' : 'var(--gold-dark)'}`, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>{icon}</span>
+        <span style={{ flex: 1, minWidth: 0, textAlign: 'left' }}>
+          <span style={{ display: 'block', fontSize: '0.55rem', letterSpacing: '0.12em', textTransform: 'uppercase', fontWeight: 700, color: 'var(--gold-bright)', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{label}</span>
+          <span style={{ display: 'block', fontSize: '0.5rem', fontStyle: 'italic', color: lit ? 'var(--parchment)' : 'var(--parchment-shadow)', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{active ? 'Tap to hide' : sublabel}</span>
+        </span>
+        <span style={{ width: 20, height: 20, borderRadius: 2, flexShrink: 0, background: active || lit ? 'linear-gradient(135deg, var(--gold-bright) 0%, var(--gold-mid) 100%)' : 'linear-gradient(135deg, var(--gold-mid) 0%, var(--gold-dark) 100%)', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+          {active ? <X size={10} strokeWidth={2.5} style={{ color: 'var(--forest-deep)' }} /> : <ChevronRight size={11} strokeWidth={2.5} style={{ color: 'var(--forest-deep)' }} />}
+        </span>
+      </button>
+    );
+  }
+
   return (
     <button id={id} onClick={onClick} onMouseEnter={() => setHovered(true)} onMouseLeave={() => setHovered(false)} aria-label={`${active ? 'Close' : 'View'} ${label} data`} aria-pressed={active} style={{ width: '100%', border: `2px solid ${lit ? 'var(--gold-bright)' : 'var(--gold-dark)'}`, borderRadius: 4, overflow: 'hidden', cursor: 'pointer', background: 'none', padding: 0, display: 'flex', flexDirection: 'column', boxShadow: lit ? '0 0 0 1px var(--gold-bright), 0 6px 20px rgba(0,0,0,0.6)' : '0 0 0 1px var(--gold-dark), 0 3px 10px rgba(0,0,0,0.45)', transition: 'border-color 0.18s, box-shadow 0.18s', outline: active ? '2px solid var(--gold-bright)' : 'none', outlineOffset: 2, ...serifStyle }}>
       <div style={{ position: 'relative', width: '100%', height: 72, overflow: 'hidden', background: active ? 'linear-gradient(135deg, var(--forest-light) 0%, var(--forest-mid) 100%)' : 'linear-gradient(135deg, var(--forest-mid) 0%, var(--forest-deep) 100%)', display: 'flex', alignItems: 'center', justifyContent: 'center', transition: 'background 0.2s' }}>

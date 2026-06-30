@@ -71,6 +71,13 @@ export interface DocAttachment {
   digest: DocDigest;
   /** Verbatim extracted text for the bulk compose/fill pass (empty for vision-only docs). */
   fullText: string;
+  /**
+   * For uploaded IMAGES: the persisted (S3 or data-URL fallback) URL of the image
+   * itself, so the assistant can PLACE it into a photo region. The agent refers to
+   * it as `upload:<id>` and setRegionImage resolves that back to this URL. Absent
+   * for PDFs/text (vision/digest only).
+   */
+  uploadedUrl?: string;
 }
 
 /** Attachment shape sent in the editor context each turn — digest only, no heavy fullText. */

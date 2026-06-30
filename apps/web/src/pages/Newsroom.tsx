@@ -78,6 +78,7 @@ export default function Newsroom() {
     reportRecords, fetchReports, removeReport,
     horseFormOpen, setHorseFormOpen, editHorse, setEditHorse,
     horseSearch, setHorseSearch, expandedHorseId, setExpandedHorseId,
+    horseDeleteTarget, setHorseDeleteTarget, horseDeleteConfirm, setHorseDeleteConfirm,
     partyFormOpen, setPartyFormOpen, editParty, setEditParty,
     partySearch, setPartySearch, partyDeleteTarget, setPartyDeleteTarget,
     partyDeleteConfirm, setPartyDeleteConfirm,
@@ -91,7 +92,7 @@ export default function Newsroom() {
     racingSearch, setRacingSearch, racingHorseFilter, setRacingHorseFilter,
     racingDeleteTarget, setRacingDeleteTarget, racingDeleteConfirm, setRacingDeleteConfirm,
     safeParties, filteredHorses, filteredParties, filteredMediaItems, filteredRacingEntries,
-    handleOpenHorseForm, handleCloseHorseForm,
+    handleOpenHorseForm, handleCloseHorseForm, handleHorseDelete, confirmHorseDelete,
     handleOpenPartyForm, handleClosePartyForm, handlePartyDelete, confirmPartyDelete,
     handleOpenMediaForm, handleCloseMediaForm, handleMediaDelete, confirmMediaDelete,
     handleOpenRacingForm, handleCloseRacingForm, handleRacingDelete, confirmRacingDelete,
@@ -496,6 +497,12 @@ export default function Newsroom() {
               setExpandedHorseId={setExpandedHorseId}
               horseConn={horseConn}
               onOpenHorseForm={handleOpenHorseForm}
+              onHorseDelete={handleHorseDelete}
+              horseDeleteConfirm={horseDeleteConfirm}
+              horseDeleteTarget={horseDeleteTarget}
+              setHorseDeleteConfirm={setHorseDeleteConfirm}
+              setHorseDeleteTarget={setHorseDeleteTarget}
+              confirmHorseDelete={confirmHorseDelete}
             />
           )}
           {activeNav === 'parties' && (

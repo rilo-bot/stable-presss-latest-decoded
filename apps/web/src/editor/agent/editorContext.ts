@@ -55,7 +55,7 @@ export function resolveCurrentPageId(mag: Magazine | undefined): string | null {
 export function buildEditorContext(): EditorContextBlob {
   const ms = useMagazineStore.getState();
   // Digest only in context (compact); the heavy fullText is sent separately to /compose.
-  const attachments = useEditorAgentUi.getState().attachments.map((a) => ({ id: a.id, name: a.name, kind: a.kind, digest: a.digest }));
+  const attachments = useEditorAgentUi.getState().attachments.map((a) => ({ id: a.id, name: a.name, kind: a.kind, digest: a.digest, uploadedUrl: a.uploadedUrl }));
   const magId = ms.currentId;
   const mag = magId ? ms.getMagazine(magId) : undefined;
   if (!mag) return { magazine: null, currentPage: null, selection: null, otherPages: [], attachments };

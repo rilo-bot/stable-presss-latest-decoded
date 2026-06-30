@@ -100,7 +100,10 @@ export function RoleConnectionBox({ def, entries, editable, parties, onOpenParty
   /** Open the add-form on mount (used by the centered onboarding instance). */
   defaultAdding?: boolean;
 }) {
-  const [open, setOpen] = useState(true);
+  // Public dossier: collapse to the compact medallion + summary by default so the
+  // left rail stays tidy and the page fits the viewport. Edit/studio (and the
+  // onboarding add-form instance) start open so connections are ready to fill in.
+  const [open, setOpen] = useState(editable || !!defaultAdding);
   const [adding, setAdding] = useState(!!defaultAdding);
   const [editingId, setEditingId] = useState<string | null>(null);
   const [form, setForm] = useState<AddPayload>({ name: '', startYear: '', endYear: '', present: true });

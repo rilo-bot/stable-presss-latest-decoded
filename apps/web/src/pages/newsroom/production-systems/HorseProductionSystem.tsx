@@ -1,6 +1,6 @@
 import { useMemo, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { Plus, Search, Eye, Link, ChevronDown, X } from 'lucide-react';
+import { Plus, Search, Eye, Link, ChevronDown, X, Trash2 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { EmptyState } from '@/components/EmptyState';
 import { HorsePartyLinkPanel } from '@/components/HorsePartyLinkPanel';
@@ -21,6 +21,12 @@ interface HorseProductionSystemProps {
   setExpandedHorseId: React.Dispatch<React.SetStateAction<string | null>>;
   horseConn: ReturnType<typeof connectionResolver>;
   onOpenHorseForm: (horse?: Horse) => void;
+  onHorseDelete: (horse: Horse) => void;
+  horseDeleteConfirm: boolean;
+  horseDeleteTarget: Horse | null;
+  setHorseDeleteConfirm: (v: boolean) => void;
+  setHorseDeleteTarget: (v: Horse | null) => void;
+  confirmHorseDelete: () => void;
 }
 
 export function HorseProductionSystem({
@@ -33,6 +39,12 @@ export function HorseProductionSystem({
   setExpandedHorseId,
   horseConn,
   onOpenHorseForm,
+  onHorseDelete,
+  horseDeleteConfirm,
+  horseDeleteTarget,
+  setHorseDeleteConfirm,
+  setHorseDeleteTarget,
+  confirmHorseDelete,
 }: HorseProductionSystemProps) {
   const safeHorses = horses ?? [];
   const navigate = useNavigate();
@@ -257,6 +269,14 @@ export function HorseProductionSystem({
                                 className={cn('transition-transform', isExpanded && 'rotate-180')}
                               />
                             </button>
+                            <button
+                              onClick={() => onHorseDelete(horse)}
+                              className="text-destructive hover:text-destructive/80 transition-colors"
+                              aria-label={`Delete ${horse.name || 'this horse'}`}
+                              title="Delete"
+                            >
+                              <Trash2 size={14} />
+                            </button>
                           </div>
                         </td>
                       </tr>
@@ -291,6 +311,52 @@ export function HorseProductionSystem({
                 })}
               </tbody>
             </table>
+          </div>
+        </div>
+      )}
+
+      {horseDeleteConfirm && horseDeleteTarget && (
+        <div
+          role="dialog"
+          aria-modal="true"
+          aria-label="Confirm delete"
+          className="fixed inset-0 z-[90] flex items-center justify-center p-4"
+        >
+          <div
+            aria-hidden
+            onClick={() => { setHorseDeleteConfirm(false); setHorseDeleteTarget(null); }}
+            className="absolute inset-0 bg-foreground/40 backdrop-blur-[2px]"
+          />
+          <div className="relative z-[1] w-[min(94vw,440px)] rounded-sm border border-destructive/30 bg-card shadow-xl">
+            <div className="flex items-center gap-2 px-5 py-3 border-b border-border/50">
+              <Trash2 size={15} className="text-destructive flex-shrink-0" />
+              <span className="text-sm font-bold text-foreground">Delete thoroughbred</span>
+            </div>
+            <div className="px-5 py-4">
+              <p className="text-sm text-foreground leading-relaxed">
+                Remove{' '}
+                <span className="font-semibold">{horseDeleteTarget.name || 'Unnamed'}</span>
+                {' '}from Stable Press? This cannot be undone.
+              </p>
+            </div>
+            <div className="flex items-center justify-end gap-2 px-5 py-3 border-t border-border/50 bg-muted/20">
+              <Button
+                size="sm"
+                variant="outline"
+                className="text-sm"
+                onClick={() => { setHorseDeleteConfirm(false); setHorseDeleteTarget(null); }}
+              >
+                Cancel
+              </Button>
+              <Button
+                size="sm"
+                variant="destructive"
+                className="text-sm"
+                onClick={confirmHorseDelete}
+              >
+                Delete
+              </Button>
+            </div>
           </div>
         </div>
       )}

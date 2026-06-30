@@ -29,6 +29,7 @@ export function useProductionSystems() {
   }, [fetchParties]);
 
   const horses = useHorseStore((s) => s.horses);
+  const removeHorse = useHorseStore((s) => s.removeHorse);
   const parties = usePartyStore((s) => s.parties);
   const removeParty = usePartyStore((s) => s.removeParty);
   const horseConn = useMemo(() => connectionResolver(parties ?? []), [parties]);
@@ -57,6 +58,8 @@ export function useProductionSystems() {
   const [editHorse, setEditHorse] = useState<Horse | null>(null);
   const [horseSearch, setHorseSearch] = useState('');
   const [expandedHorseId, setExpandedHorseId] = useState<string | null>(null);
+  const [horseDeleteTarget, setHorseDeleteTarget] = useState<Horse | null>(null);
+  const [horseDeleteConfirm, setHorseDeleteConfirm] = useState(false);
 
   // === Parties Production System state ===
   const [partyFormOpen, setPartyFormOpen] = useState(false);
@@ -165,6 +168,20 @@ export function useProductionSystems() {
     setEditHorse(null);
   };
 
+  const handleHorseDelete = (horse: Horse) => {
+    setHorseDeleteTarget(horse);
+    setHorseDeleteConfirm(true);
+  };
+
+  const confirmHorseDelete = async () => {
+    if (!horseDeleteTarget) return;
+    const name = horseDeleteTarget.name || 'Unnamed';
+    await removeHorse(horseDeleteTarget.id);
+    setHorseDeleteTarget(null);
+    setHorseDeleteConfirm(false);
+    toast.success(`${name} has been removed.`);
+  };
+
   const handleOpenPartyForm = (party?: Party) => {
     setEditParty(party);
     setPartyFormOpen(true);
@@ -243,6 +260,7 @@ export function useProductionSystems() {
     // horse state
     horseFormOpen, setHorseFormOpen, editHorse, setEditHorse,
     horseSearch, setHorseSearch, expandedHorseId, setExpandedHorseId,
+    horseDeleteTarget, setHorseDeleteTarget, horseDeleteConfirm, setHorseDeleteConfirm,
     // party state
     partyFormOpen, setPartyFormOpen, editParty, setEditParty,
     partySearch, setPartySearch, partyDeleteTarget, setPartyDeleteTarget,
@@ -261,7 +279,7 @@ export function useProductionSystems() {
     // derived
     safeParties, filteredHorses, filteredParties, filteredMediaItems, filteredRacingEntries,
     // handlers
-    handleOpenHorseForm, handleCloseHorseForm,
+    handleOpenHorseForm, handleCloseHorseForm, handleHorseDelete, confirmHorseDelete,
     handleOpenPartyForm, handleClosePartyForm, handlePartyDelete, confirmPartyDelete,
     handleOpenMediaForm, handleCloseMediaForm, handleMediaDelete, confirmMediaDelete,
     handleOpenRacingForm, handleCloseRacingForm, handleRacingDelete, confirmRacingDelete,

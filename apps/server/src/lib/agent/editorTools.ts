@@ -101,11 +101,13 @@ export function buildEditorTools(account?: AccountUser): ToolSet {
     }),
     setRegionImage: tool({
       description:
-        'Set an image region (addressed by its friendly photo NAME or id) to a known/approved image URL (e.g. one returned by suggestImageOptions). Never invent URLs.',
+        'Set an image region (addressed by its friendly photo NAME or id). For a user-UPLOADED photo, pass src:"upload:<id>" ' +
+        '(the id from the uploaded image listed in your context) — this places the actual file the user gave you. Otherwise ' +
+        'pass a known/approved stock URL (e.g. one returned by suggestImageOptions). Never invent URLs.',
       inputSchema: z.object({
         ...pageRef,
         regionId: regionRef,
-        src: z.string(),
+        src: z.string().describe('"upload:<id>" to place a user-uploaded image, or a known stock URL. Never an invented URL.'),
         fit: z.enum(['cover', 'contain']).optional(),
         alt: z.string().optional(),
         ...reviewFlag,
@@ -141,7 +143,7 @@ export function buildEditorTools(account?: AccountUser): ToolSet {
             regionId: regionRef,
             kind: z.enum(['text', 'image', 'qr', 'icon']),
             html: z.string().optional(),
-            src: z.string().optional(),
+            src: z.string().optional().describe('For kind=image: "upload:<id>" for a user-uploaded image, or a known stock URL.'),
             targetUrl: z.string().optional(),
             name: z.string().optional().describe('For kind=icon: a Lucide icon name (PascalCase), e.g. "Trophy".'),
           }),

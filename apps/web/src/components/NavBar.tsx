@@ -1,10 +1,10 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { Link, useNavigate, useLocation } from 'react-router-dom';
 import { cn } from '@/lib/utils';
 import { useAuthStore } from '@/stores/authStore';
 import { can } from '@/lib/permissions';
 import { isStaff, primaryPartyId } from '@/rbac/can';
-import { Menu, X } from 'lucide-react';
+import { ChevronDown, ChevronUp, Menu, X } from 'lucide-react';
 import { toast } from 'sonner';
 import { type NavSection } from './navbar/config';
 import { DesktopMenu } from './navbar/DesktopMenu';
@@ -18,6 +18,29 @@ export function NavBar() {
   const logout = useAuthStore((s) => s.logout);
   const navigate = useNavigate();
   const location = useLocation();
+
+  // The horse (`/horses/:id`) and owner/party (`/parties/:id`) detail pages are
+  // dense, viewport-fit dossiers — not the `/horses` or `/parties` indexes.
+  // Collapse the three header bars by default there so the dossier fits on one
+  // screen; a single arrow toggle re-expands them.
+  const isDossier = /^\/(horses|parties)\/[^/]+$/.test(location.pathname);
+  const [collapsed, setCollapsed] = useState(isDossier);
+
+  // Re-evaluate on navigation: collapse when entering a dossier page, expand
+  // again everywhere else.
+  useEffect(() => {
+    setCollapsed(isDossier);
+  }, [location.pathname, isDossier]);
+
+  // Publish the real header height so viewport-fit pages (ProfileScaffold reads
+  // `--navbar-h`) size against the collapsed strip rather than the full chrome.
+  useEffect(() => {
+    const root = document.documentElement;
+    root.style.setProperty('--navbar-h', collapsed ? '36px' : '112px');
+    return () => {
+      root.style.removeProperty('--navbar-h');
+    };
+  }, [collapsed]);
 
   const role = currentUser?.role;
   const staff = isStaff(currentUser);
@@ -54,6 +77,55 @@ export function NavBar() {
     }
     return pathname === '/';
   };
+
+  // ── Collapsed header ── a slim brand strip with the wordmark + an arrow
+  // that expands the full navigation back in. Shown on horse detail pages.
+  if (collapsed) {
+    return (
+      <header
+        className="sticky top-0 z-50 bg-primary text-primary-foreground border-b print:hidden"
+        style={{ borderColor: 'hsl(var(--brand-accent) / 0.22)' }}
+      >
+        <div className="max-w-7xl mx-auto px-4 md:px-8">
+          <div className="flex items-center justify-between h-9">
+            <Link
+              to="/"
+              className="flex items-center gap-2 group"
+              aria-label="Stable Press — home"
+            >
+              <span
+                aria-hidden="true"
+                className="h-6 w-6 flex-shrink-0 group-hover:opacity-90 transition-opacity"
+                style={{
+                  backgroundColor: 'hsl(var(--brand-accent))',
+                  WebkitMaskImage: "url('/images/Stable_Press.png')",
+                  maskImage: "url('/images/Stable_Press.png')",
+                  WebkitMaskSize: 'contain',
+                  maskSize: 'contain',
+                  WebkitMaskRepeat: 'no-repeat',
+                  maskRepeat: 'no-repeat',
+                  WebkitMaskPosition: 'center',
+                  maskPosition: 'center',
+                }}
+              />
+              <span className="font-[family-name:var(--font-display)] text-sm font-bold tracking-tight leading-none group-hover:text-[hsl(var(--brand-accent))] transition-colors">
+                Stable Press
+              </span>
+            </Link>
+            <button
+              onClick={() => setCollapsed(false)}
+              className="flex items-center gap-1.5 px-2.5 py-1 rounded-sm text-[10px] uppercase tracking-[0.12em] text-primary-foreground/70 hover:text-primary-foreground hover:bg-primary-foreground/10 transition-colors"
+              aria-label="Expand navigation"
+              title="Expand navigation"
+            >
+              <span className="hidden sm:inline">Show menu</span>
+              <ChevronDown size={16} style={{ color: 'hsl(var(--brand-accent))' }} />
+            </button>
+          </div>
+        </div>
+      </header>
+    );
+  }
 
   return (
     <header
@@ -243,6 +315,20 @@ export function NavBar() {
         staff={staff}
         pathname={location.pathname}
       />
+
+      {/* ── Collapse toggle ── only on a dossier page, lets the reader hide
+          the header again to reclaim the viewport. */}
+      {isDossier && (
+        <button
+          onClick={() => setCollapsed(true)}
+          className="w-full flex items-center justify-center gap-1.5 py-0.5 text-[10px] uppercase tracking-[0.12em] text-primary-foreground/60 hover:text-primary-foreground hover:bg-primary-foreground/10 transition-colors border-t border-primary-foreground/10"
+          aria-label="Collapse navigation"
+          title="Collapse navigation"
+        >
+          <span className="hidden sm:inline">Hide menu</span>
+          <ChevronUp size={14} style={{ color: 'hsl(var(--brand-accent))' }} />
+        </button>
+      )}
 
       {/* ── Mobile drawer ── */}
       {mobileOpen && (

@@ -1,8 +1,10 @@
 import { useState, useMemo } from 'react';
 import type { Party, PartyRole } from '@/types/party';
+import { PARTY_ROLE_LABELS } from '@/types/party';
 import { Label } from '@/components/ui/label';
 import { X, ChevronDown, Plus, Check } from 'lucide-react';
 import { cn } from '@/lib/utils';
+import { PartyForm } from '@/components/PartyForm';
 
 /* ── Party multi-select picker ── */
 export function PartyPicker({
@@ -29,6 +31,13 @@ export function PartyPicker({
   );
 
   const [open, setOpen] = useState(false);
+  const [creating, setCreating] = useState(false);
+
+  // Role + label used when creating a new party inline. When the picker filters
+  // on multiple roles, the first is the one a freshly-created party is given so
+  // it immediately matches this picker's filter.
+  const createRole = roles[0];
+  const createLabel = PARTY_ROLE_LABELS[createRole] ?? label;
 
   const toggle = (id: string) => {
     const next = selectedIds.includes(id)
@@ -81,7 +90,7 @@ export function PartyPicker({
         >
           <span className="text-muted-foreground text-xs">
             {filtered.length === 0
-              ? 'No parties with this role yet — add them in the Production System'
+              ? `No ${createLabel.toLowerCase()} yet — create one below`
               : selectedIds.length === 0
               ? `Select ${label.toLowerCase()}…`
               : `${selectedIds.length} selected`}
@@ -127,6 +136,16 @@ export function PartyPicker({
                 </button>
               );
             })}
+
+            {/* Sticky inline-create row — always reachable while the list is open */}
+            <button
+              type="button"
+              onClick={() => { setOpen(false); setCreating(true); }}
+              className="sticky bottom-0 w-full flex items-center gap-2 px-3 py-2 text-left text-xs font-semibold text-primary bg-card border-t border-border hover:bg-primary/5 transition-colors"
+            >
+              <Plus size={12} className="flex-shrink-0" />
+              Add new {createLabel.toLowerCase()}…
+            </button>
           </div>
         )}
 
@@ -141,14 +160,27 @@ export function PartyPicker({
       </div>
 
       {filtered.length === 0 && (
-        <p className="text-[10px] text-muted-foreground flex items-center gap-1">
-          <Plus size={10} />
-          Create parties in the Production System Parties section, then they will appear here.
-        </p>
+        <button
+          type="button"
+          onClick={() => setCreating(true)}
+          className="text-[11px] font-semibold text-primary flex items-center gap-1 hover:underline"
+        >
+          <Plus size={11} />
+          Create {createLabel.toLowerCase()}
+        </button>
       )}
       {hint && filtered.length > 0 && (
         <p className="text-[10px] text-muted-foreground">{hint}</p>
       )}
+
+      {/* Inline party creation — reuses the full Parties form; the new party is
+          auto-selected here on save and appears in the dropdown immediately. */}
+      <PartyForm
+        open={creating}
+        onOpenChange={setCreating}
+        defaultRole={createRole}
+        onSaved={(id) => { if (id) onChange([...selectedIds, id]); }}
+      />
     </div>
   );
 }

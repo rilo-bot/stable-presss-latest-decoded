@@ -32,6 +32,8 @@ export interface EditorContext {
     id: string
     name: string
     kind?: string
+    /** For uploaded IMAGES: the persisted URL. Present => the image can be placed via setRegionImage src "upload:<id>". */
+    uploadedUrl?: string
     digest?: {
       title?: string
       summary?: string
@@ -105,6 +107,8 @@ function describeContext(ctx?: EditorContext): string {
     for (const a of ctx.attachments) {
       const d = a.digest ?? {}
       const block: string[] = [`• "${a.name}"${d.title ? ` — ${d.title}` : ''}`]
+      if (a.uploadedUrl)
+        block.push(`  ▶ This image is uploaded and ready to PLACE into any photo region — call setRegionImage with src:"upload:${a.id}".`)
       if (d.summary) block.push(`  Summary: ${d.summary}`)
       if (d.sections?.length) block.push('  Sections:\n' + d.sections.map((s) => `    - ${s.heading}: ${s.body}`).join('\n'))
       if (d.facts?.length) block.push('  Key facts:\n' + d.facts.map((f) => `    - ${f}`).join('\n'))
@@ -158,6 +162,13 @@ ${describeContext(ctx)}
 - Use your tools for everything. Read with getMagazine / getPage / getRegion / pageCatalog before proposing edits.
 - You generate the actual content yourself (headlines, body copy, captions). For images, call suggestImageOptions and let
   the user pick — never invent image URLs. For QR, only https: or mailto: targets.
+- PLACING A USER-UPLOADED PHOTO (important): when the user uploads an image and asks to put it on the page / replace an
+  existing photo with it ("use this photo", "replace Sally's portrait with this", "swap in the one I just sent"), DO NOT
+  go to suggestImageOptions and DO NOT invent a URL — that image is already available. Each uploaded image is listed under
+  "Uploaded source documents" with a ready-to-place line; call setRegionImage on the target photo region with
+  src:"upload:<id>" (the id shown there). The editor resolves that to the real stored image, so it actually appears on the
+  page and survives publish. If several images are uploaded, use the vision view + their names to pick the right one; if
+  unsure which photo region they mean, ask (naming the candidates) before overwriting.
 - For ICON regions, use setRegionIcon with a Lucide glyph NAME (PascalCase, e.g. Trophy, Mail, Award, Users, Globe). The
   placed glyph is a placeholder the user can click to upload their own — so when an uploaded PDF/image shows an icon at a
   spot, place the closest matching glyph and tell them they can swap it for their own artwork.
