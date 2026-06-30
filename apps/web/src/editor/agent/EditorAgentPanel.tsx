@@ -18,6 +18,7 @@ import { executeEditorTool, isEditorClientTool } from './editOpsExecutor';
 import { previewOf } from './editorContext';
 import { ingestFile, ATTACH_ACCEPT } from './documentUpload';
 import { fileToAttachment, attachmentsToFileParts, type ChatAttachment } from '@/agent/attachments/attachments';
+import { uploadImage } from '@/lib/upload';
 import { applyStagedEdit, applyBatch, applyAllStaged, discardStaged, discardBatch, discardAll, undoLast } from './applyEdits';
 import type { StagedEdit, DocAttachment } from './types';
 
@@ -144,7 +145,17 @@ export function EditorAgentPanel() {
         for (const file of files) {
           try {
             const att = await ingestFile(file);
-            addAttachment(att); // session context: digest rides along, fullText feeds the fill
+            // For an IMAGE, also persist it to storage so the assistant can PLACE it
+            // into a photo region. Without this the upload only exists as an ephemeral
+            // vision data-URL the AI can't reference, so a "replace this photo" stages
+            // a broken/empty src. The persisted URL is addressed as `upload:<id>`.
+            if (file.type.startsWith('image/')) {
+              try {
+                const { url } = await uploadImage(file, { kind: 'media' });
+                att.uploadedUrl = url;
+              } catch { /* placement is best-effort; vision/digest still work */ }
+            }
+            addAttachment(att); // session context: digest + uploadedUrl ride along, fullText feeds the fill
             ok.push(att);
             // Also let the assistant SEE attached images directly (vision), on top
             // of the OCR/text digest. PDFs stay digest-only — full bytes can exceed

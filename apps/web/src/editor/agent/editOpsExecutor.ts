@@ -121,6 +121,23 @@ function writeRegion(
   return { staged: true, regionId, summary, note: 'Staged for the user to review and Apply.' };
 }
 
+/**
+ * Resolve an image `src` the AI passed for an UPLOADED image. The assistant
+ * addresses a user-uploaded photo as `upload:<attachmentId>` (or the bare id);
+ * we map that to the image's persisted URL so the staged edit — and the applied
+ * region — carry a real, durable URL instead of an unresolvable ref or an
+ * ephemeral vision data-URL. Returns null when an `upload:` ref doesn't match a
+ * known uploaded image (so the caller can tell the AI to ask for a re-upload);
+ * any non-upload src (e.g. a stock URL) passes through unchanged.
+ */
+function resolveImageSrc(src: string): string | null {
+  const isRef = src.startsWith('upload:');
+  const ref = isRef ? src.slice('upload:'.length) : src;
+  const att = useEditorAgentUi.getState().attachments.find((a) => a.id === ref && a.uploadedUrl);
+  if (att?.uploadedUrl) return att.uploadedUrl;
+  return isRef ? null : src;
+}
+
 function suggestImages(query?: string): Array<{ name: string; url: string }> {
   const entries = Object.entries(STOCK);
   const q = (query ?? '').toLowerCase().trim();
@@ -215,8 +232,10 @@ export async function executeEditorTool(toolName: string, input: unknown): Promi
     }
     case 'setRegionImage': {
       const r = named('image');
-      const src = String(a.src ?? '');
-      if (!src.trim()) return { ok: false, error: 'No image URL provided. Use suggestImageOptions to get a URL, or clearRegion to empty a photo.' };
+      const raw = String(a.src ?? '');
+      if (!raw.trim()) return { ok: false, error: 'No image provided. Pass the uploaded image as src "upload:<id>", use suggestImageOptions for a stock URL, or clearRegion to empty a photo.' };
+      const src = resolveImageSrc(raw);
+      if (src === null) return { ok: false, error: `No uploaded image matches "${raw}". The user must upload that image first; uploaded images appear in your context as upload:<id>.` };
       return writeRegion(
         mag,
         page,
@@ -267,7 +286,10 @@ export async function executeEditorTool(toolName: string, input: unknown): Promi
         }
         let payload: EditPayload | null = null;
         if (e.kind === 'text') payload = { kind: 'text', html: String(e.html ?? '') };
-        else if (e.kind === 'image') payload = { kind: 'image', patch: { src: String(e.src ?? '') } };
+        else if (e.kind === 'image') {
+          const src = resolveImageSrc(String(e.src ?? ''));
+          if (src) payload = { kind: 'image', patch: { src } };
+        }
         else if (e.kind === 'qr') payload = { kind: 'qr', patch: { targetUrl: String(e.targetUrl ?? '') } };
         else if (e.kind === 'icon' && isKnownIcon(String(e.name ?? ''))) payload = { kind: 'icon', patch: { name: String(e.name), src: undefined } };
         if (!payload) {
