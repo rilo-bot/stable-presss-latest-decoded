@@ -42,3 +42,16 @@ export interface HorsePartyLink {
 export function isCurrentLink(link: HorsePartyLink): boolean {
   return !link.end_date;
 }
+
+/**
+ * Prefix marking a SYNTHESIZED link derived from a horse's legacy direct
+ * id-array field (ownerIds, trainerIds, …) rather than a real horsePartyLinks
+ * row. The staff Horse form writes those arrays, so the horse page folds them
+ * into its connection boxes — but they have no store row, so they render
+ * read-only (edit them via the Horse management form, not the inline rail).
+ */
+export const LEGACY_LINK_ID_PREFIX = 'legacy:';
+
+export function isLegacyLink(link: HorsePartyLink): boolean {
+  return link.id.startsWith(LEGACY_LINK_ID_PREFIX);
+}

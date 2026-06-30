@@ -9,7 +9,11 @@
 import { toast } from 'sonner';
 import { useHorsePartyLinkStore } from '@/stores/horsePartyLinkStore';
 import { usePartyStore } from '@/stores/partyStore';
+import { useHorseStore } from '@/stores/horseStore';
+import { ROLE_BINDINGS } from '@/lib/profile/roleMap';
 import type { Party } from '@/types/party';
+import type { HorsePartyLink } from '@/types/horsePartyLink';
+import { LEGACY_LINK_ID_PREFIX } from '@/types/horsePartyLink';
 import type { RoleDef, Entry, AddPayload } from '@/components/profile/RoleConnectionBox';
 
 export interface RoleConnections {
@@ -28,23 +32,53 @@ export function useRoleConnections(horseId: string): RoleConnections {
   const parties = usePartyStore((s) => s.parties);
   const addParty = usePartyStore((s) => s.addParty);
   const updateParty = usePartyStore((s) => s.updateParty);
+  const horse = useHorseStore((s) => s.horses.find((h) => h.id === horseId));
 
   const horseLinks = allLinks.filter((l) => l.horse_id === horseId);
   const partyById = (id: string) => parties.find((p) => p.id === id);
 
+  // A horse connection can live in EITHER store: a dated horsePartyLinks row
+  // (created via the inline rail / member onboarding) OR the legacy direct
+  // id-array field the staff Horse management form writes (ownerIds, etc.).
+  // We fold both so details entered in either place show on the public page.
+  // Legacy ids have no store row, so we synthesize a read-only link for them.
+  const syntheticLink = (def: RoleDef, partyId: string): HorsePartyLink => ({
+    id: `${LEGACY_LINK_ID_PREFIX}${def.role}:${partyId}`,
+    createdAt: new Date(0),
+    horse_id: horseId,
+    party_id: partyId,
+    // Never read for synthetic links; kept type-valid for the role's relation.
+    relationship_type: ROLE_BINDINGS[def.role].relType ?? 'personnel',
+    start_date: '',
+    end_date: null,
+  });
+
   const entriesFor = (def: RoleDef): Entry[] => {
-    if (def.rel) {
-      return horseLinks
-        .filter((l) => l.relationship_type === def.rel)
-        .map((l) => ({ link: l, party: partyById(l.party_id) }));
-    }
-    // Syndicate manager: linked parties whose roles include the role (derived).
     const seen = new Set<string>();
     const out: Entry[] = [];
-    for (const l of horseLinks) {
-      const p = partyById(l.party_id);
-      if (p && p.roles.includes('syndicate manager') && !seen.has(p.id)) { seen.add(p.id); out.push({ link: l, party: p }); }
+
+    if (def.rel) {
+      for (const l of horseLinks) {
+        if (l.relationship_type !== def.rel) continue;
+        seen.add(l.party_id);
+        out.push({ link: l, party: partyById(l.party_id) });
+      }
+    } else {
+      // Syndicate manager: linked parties whose roles include the role (derived).
+      for (const l of horseLinks) {
+        const p = partyById(l.party_id);
+        if (p && p.roles.includes('syndicate manager') && !seen.has(p.id)) { seen.add(p.id); out.push({ link: l, party: p }); }
+      }
     }
+
+    // Fold in the legacy id-array field (skip parties already linked above).
+    const legacyIds = (horse?.[ROLE_BINDINGS[def.role].horseField] as string[] | undefined) ?? [];
+    for (const partyId of legacyIds) {
+      if (seen.has(partyId)) continue;
+      seen.add(partyId);
+      out.push({ link: syntheticLink(def, partyId), party: partyById(partyId) });
+    }
+
     return out;
   };
 

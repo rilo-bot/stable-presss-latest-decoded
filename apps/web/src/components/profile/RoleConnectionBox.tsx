@@ -18,7 +18,7 @@ import { ROLE_ICON } from '@/components/profile/modules';
 import { PARTY_ROLE_LABELS } from '@/types/party';
 import type { Party, PartyRole } from '@/types/party';
 import type { HorsePartyLink, HorsePartyRelationshipType } from '@/types/horsePartyLink';
-import { isCurrentLink } from '@/types/horsePartyLink';
+import { isCurrentLink, isLegacyLink } from '@/types/horsePartyLink';
 
 export interface RoleDef { role: PartyRole; rel?: HorsePartyRelationshipType; label: string; desc: string }
 
@@ -197,7 +197,7 @@ export function RoleConnectionBox({ def, entries, editable, parties, onOpenParty
                         </div>
                         <div style={{ fontSize: '0.56rem', color: 'var(--parchment-label)' }}>{dateLine(e.link) || PARTY_ROLE_LABELS[def.role]}</div>
                       </button>
-                      {editable && def.rel ? (
+                      {editable && def.rel && !isLegacyLink(e.link) ? (
                         <span style={{ display: 'flex', gap: 4, flexShrink: 0 }}>
                           <button onClick={() => startEdit(e)} title="Edit dates" style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'var(--gold-mid)', padding: 2 }}><Pencil size={12} /></button>
                           <button onClick={() => onRemove(e.link.id)} title="Remove link" style={{ background: 'none', border: 'none', cursor: 'pointer', color: '#a85', padding: 2 }}><Trash2 size={12} /></button>
