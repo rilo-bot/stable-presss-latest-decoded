@@ -20,7 +20,7 @@ import { Router } from 'express';
 import { db } from '../lib/db.js';
 import { attachAccount } from '../lib/auth.js';
 import { isStaff } from '../lib/rbac.js';
-import { MAGAZINE_V2_ENABLED, PAGE_W, PAGE_H, MAX_PAGES_PER_ISSUE } from '../lib/magazineV2/config.js';
+import { MAGAZINE_V2_ENABLED, PAGE_W, PAGE_H, MAX_PAGES_PER_ISSUE, MAX_SOURCE_BYTES, ALLOWED_SOURCE_MIME } from '../lib/magazineV2/config.js';
 import { COL } from '../lib/magazineV2/collections.js';
 import { rateLimit } from '../lib/magazineV2/rateLimit.js';
 import { roleOnMagazine, isOwner, canEditPage, editablePageIds } from '../lib/magazineV2/access.js';
@@ -28,6 +28,8 @@ import { normalizeElements, normalizeElementPatch } from '../lib/magazineV2/writ
 import { MAX_ELEMENTS_PER_PAGE, type MagazineElement } from '../lib/magazineV2/model.js';
 import { isAgentConfigured } from '../lib/agent/provider.js';
 import { generateMagazineIssue, generateMorePages } from '../lib/magazineV2/generate.js';
+import { storage } from '../lib/storage.js';
+import { enqueueJob } from '../lib/magazineV2/jobs.js';
 import { runPageAgent } from '../lib/magazineV2/agent.js';
 
 /* eslint-disable @typescript-eslint/no-explicit-any */
@@ -270,6 +272,128 @@ router.post('/issues/generate', rateLimit('mag2-generate', 10, 60_000), async (r
   void generateMagazineIssue(id, prompt, pageCount, sourceText);
   const created = await loadIssue(id);
   res.status(202).json({ issue: created ? withViewer(created, uid) : { id } });
+});
+
+// ── PDF import lifecycle (upload → confirm → background extraction) ──────────
+// Upload bytes go browser→S3 directly via a presigned PUT (never through the
+// API), matching campaign-hq. confirm-upload verifies the object landed
+// (headObject — never trusts the client's size/type) and enqueues extraction on
+// the worker; the client polls GET /issues/:id exactly like generation.
+
+// create an 'uploading' issue + return a presigned S3 PUT for its source PDF
+router.post('/issues/upload', async (req, res) => {
+  const uid = req.account!.id;
+  if (!storage.isConfigured()) {
+    res.status(501).json({ error: 'File storage is not configured on this server.' });
+    return;
+  }
+  const filename = typeof req.body?.filename === 'string' ? req.body.filename.trim() : '';
+  const contentType = typeof req.body?.contentType === 'string' ? req.body.contentType.trim() : '';
+  const size = Number(req.body?.size);
+  if (!ALLOWED_SOURCE_MIME.has(contentType)) {
+    res.status(415).json({ error: 'Only PDF files can be imported.' });
+    return;
+  }
+  if (!Number.isFinite(size) || size <= 0 || size > MAX_SOURCE_BYTES) {
+    res.status(413).json({ error: `The file must be under ${Math.round(MAX_SOURCE_BYTES / 1024 / 1024)} MB.` });
+    return;
+  }
+  const baseTitle = (filename ? filename.replace(/\.[^.]+$/, '') : '').trim().slice(0, 120) || 'Untitled issue';
+  const now = new Date().toISOString();
+  const id = await db.collection(COL.issues).insertOne({
+    title: baseTitle,
+    slug: await uniqueSlug(baseTitle),
+    status: 'uploading',
+    origin: 'upload',
+    coverImage: '',
+    pagesProcessed: 0,
+    pagesTotal: 0,
+    ownerId: uid,
+    ownerName: req.account!.displayName,
+    collaborators: [],
+    publishedIssueIds: [],
+    schemaVersion: 2,
+    createdAt: now,
+    updatedAt: now,
+  });
+  const key = `magazinesV2/${id}/source.pdf`;
+  const uploadUrl = await storage.presignPutUrl({ key, contentType, expiresIn: 300 });
+  const created = await loadIssue(id);
+  res.status(201).json({ issue: created ? withViewer(created, uid) : { id }, uploadUrl, key });
+});
+
+// confirm the PUT landed → verify via headObject → enqueue extraction (owner)
+router.post('/issues/:id/confirm-upload', async (req, res) => {
+  const uid = req.account!.id;
+  const doc = await loadIssue(req.params.id);
+  if (!doc || !roleOnMagazine(doc, uid)) {
+    res.status(404).json({ error: 'Not found' });
+    return;
+  }
+  if (!isOwner(roleOnMagazine(doc, uid))) {
+    res.status(403).json({ error: 'Only the owner can do this.' });
+    return;
+  }
+  const key = `magazinesV2/${doc._id}/source.pdf`;
+  let head: { contentLength: number; contentType: string };
+  try {
+    head = await storage.headObject(key); // never trust the client — read real size/type from S3
+  } catch {
+    res.status(400).json({ error: 'Upload not found — please try uploading again.' });
+    return;
+  }
+  const originalName = typeof req.body?.originalName === 'string' ? req.body.originalName.slice(0, 200) : '';
+  const now = new Date().toISOString();
+  await db.collection(COL.issues).updateOne(doc._id, {
+    sourceFile: { key, url: storage.publicUrl(key), originalName, mimeType: head.contentType || 'application/pdf', size: head.contentLength, pageCount: 0 },
+    status: 'processing',
+    stage: 'Preparing to digitize',
+    updatedAt: now,
+  });
+  await enqueueJob('processIssue', { issueId: doc._id });
+  const fresh = await loadIssue(doc._id);
+  res.status(202).json({ issue: fresh ? withViewer(fresh, uid) : { id: doc._id } });
+});
+
+// re-extract a single page (owner) — sets it 'pending' and enqueues processPage
+router.post('/issues/:id/pages/:pageId/retry', async (req, res) => {
+  const uid = req.account!.id;
+  const doc = await loadIssue(req.params.id);
+  if (!doc || !roleOnMagazine(doc, uid)) {
+    res.status(404).json({ error: 'Not found' });
+    return;
+  }
+  if (!isOwner(roleOnMagazine(doc, uid))) {
+    res.status(403).json({ error: 'Only the owner can retry a page.' });
+    return;
+  }
+  const src = doc.sourceFile as { key?: string } | undefined;
+  if (!src?.key) {
+    res.status(400).json({ error: 'This issue has no source file to re-extract from.' });
+    return;
+  }
+  const page = await pageById(req.params.pageId);
+  if (!page || page.magazineId !== doc._id) {
+    res.status(404).json({ error: 'Page not found' });
+    return;
+  }
+  await db.collection(COL.pages).updateOne(page._id, { status: 'pending', error: '', updatedAt: new Date().toISOString() });
+  await enqueueJob('processPage', { issueId: doc._id, pageId: page._id, index: Number(page.index) || 0 });
+  res.status(202).json({ ok: true });
+});
+
+// list the issue's media library (extracted photos/graphics + stock/uploads)
+router.get('/issues/:id/media', async (req, res) => {
+  const uid = req.account!.id;
+  const doc = await loadIssue(req.params.id);
+  if (!doc || !roleOnMagazine(doc, uid)) {
+    res.status(404).json({ error: 'Not found' });
+    return;
+  }
+  const assets = (await db.collection(COL.media).find({ magazineId: doc._id })) as Doc[];
+  res.json({
+    assets: assets.map((a) => ({ id: a._id, url: a.url, alt: a.alt, kind: a.kind, pageIndex: a.pageIndex, contentType: a.contentType, size: a.size })),
+  });
 });
 
 // get issue meta + page summaries (NOT full element payloads)

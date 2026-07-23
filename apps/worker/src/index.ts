@@ -16,10 +16,14 @@
 
 import './env.js'; // MUST be first: loads MONGODB_URI before db.ts reads it.
 import { startQueueLoop, type JobHandlers } from './queue.js';
+import { processIssue, processPageJob } from './jobs/processIssue.js';
 
 const handlers: JobHandlers = {
-  // Heartbeat / smoke-test handler — does nothing, always succeeds. Real
-  // extraction handlers are wired here in Phase 4d.
+  // Digitize a freshly-uploaded PDF into pages + editable elements.
+  processIssue: (payload) => processIssue(payload as { issueId: string }),
+  // Re-run extraction for a single page (the retry endpoint).
+  processPage: (payload) => processPageJob(payload as { issueId: string; pageId: string; index: number }),
+  // Harmless heartbeat / liveness + smoke-test handler.
   noop: async () => {
     /* no-op */
   },

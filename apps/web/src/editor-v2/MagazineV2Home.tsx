@@ -4,7 +4,7 @@
 
 import { useEffect, useRef, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { Plus, Sparkles, FileUp, FilePlus, X, Loader2, FileText } from 'lucide-react';
+import { Plus, Sparkles, FileUp, FilePlus, X, Loader2, FileText, FileScan } from 'lucide-react';
 import * as api from './api';
 import type { IssueSummary } from './api';
 import { ingestFile, ATTACH_ACCEPT } from '@/editor/agent/documentUpload';
@@ -24,6 +24,7 @@ export default function MagazineV2Home() {
   const [file, setFile] = useState<File | null>(null); // optional source document to build from
   const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const fileRef = useRef<HTMLInputElement>(null);
+  const importRef = useRef<HTMLInputElement>(null); // PDF import (pixel-faithful extraction)
 
   useEffect(() => {
     api.listIssues().then(setIssues).catch((e) => setError(e instanceof Error ? e.message : 'Failed to load')).finally(() => setLoading(false));
@@ -82,6 +83,44 @@ export default function MagazineV2Home() {
     }
   };
 
+  // PDF IMPORT — pixel-faithful extraction (NOT AI generation): upload → S3 →
+  // confirm → the worker digitizes the PDF into editable pages. Reuses the same
+  // 'processing' poll + overlay as generation.
+  const startImport = async (f: File) => {
+    setError(null);
+    setOpen(true);
+    setMode('generating');
+    setProgress({ done: 0, total: 0, stage: 'Uploading your PDF…' });
+    try {
+      const { issue, uploadUrl } = await api.uploadIssue(f.name, f.type || 'application/pdf', f.size);
+      await api.putToS3(uploadUrl, f);
+      setProgress({ done: 0, total: 0, stage: 'Digitizing pages…' });
+      await api.confirmUpload(issue.id, f.name);
+      const id = issue.id;
+      pollRef.current = setInterval(async () => {
+        try {
+          const { issue: cur } = await api.getIssue(id);
+          setProgress({ done: cur.pagesProcessed ?? 0, total: cur.pagesTotal ?? 0, stage: cur.stage ?? '' });
+          if (cur.status === 'ready') {
+            if (pollRef.current) clearInterval(pollRef.current);
+            openEditor(id);
+          } else if (cur.status === 'failed') {
+            if (pollRef.current) clearInterval(pollRef.current);
+            setError(cur.processingError || 'Import failed.');
+            setOpen(false);
+            setMode('menu');
+          }
+        } catch {
+          /* transient — keep polling */
+        }
+      }, 1500);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : 'Import failed');
+      setOpen(false);
+      setMode('menu');
+    }
+  };
+
   const close = () => {
     if (mode === 'generating') return; // don't abandon an in-flight generation
     setOpen(false);
@@ -136,10 +175,15 @@ export default function MagazineV2Home() {
                   <FileUp size={22} className="mt-0.5 text-[#7c3aed]" />
                   <span><span className="block font-medium">From a document</span><span className="text-xs text-muted-foreground">Upload a PDF or doc — the AI reads it and builds the whole issue from its content.</span></span>
                 </button>
+                <button className="flex items-start gap-3 rounded border border-border p-4 text-left hover:border-[#7c3aed] hover:bg-muted" onClick={() => importRef.current?.click()}>
+                  <FileScan size={22} className="mt-0.5 text-[#7c3aed]" />
+                  <span><span className="block font-medium">Import a PDF <span className="ml-1 rounded bg-[#7c3aed]/10 px-1.5 py-0.5 text-[10px] font-medium text-[#7c3aed]">keeps layout</span></span><span className="text-xs text-muted-foreground">Digitize an existing PDF into editable pages — same layout, text & images, pixel-faithful.</span></span>
+                </button>
                 <button className="flex items-start gap-3 rounded border border-border p-4 text-left hover:border-[#7c3aed] hover:bg-muted" onClick={() => void startBlank()}>
                   <FilePlus size={22} className="mt-0.5" />
                   <span><span className="block font-medium">Blank</span><span className="text-xs text-muted-foreground">Start from an empty page and build it yourself.</span></span>
                 </button>
+                <input ref={importRef} type="file" accept="application/pdf,.pdf" className="hidden" onChange={(e) => { const f = e.target.files?.[0]; if (f) void startImport(f); if (importRef.current) importRef.current.value = ''; }} />
               </div>
             )}
 

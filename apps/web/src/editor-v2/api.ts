@@ -112,3 +112,38 @@ export const deleteElement = (id: string, pageId: string, elementId: string, rev
 // ── AI editing agent (staged proposals; applied via the element CRUD above) ──
 export const chatAgent = (id: string, pageId: string, messages: { role: 'user' | 'assistant'; content: string }[], selectedElementId?: string, sourceText?: string) =>
   authFetch(`${BASE}/issues/${id}/pages/${pageId}/agent`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ messages, selectedElementId, sourceText }) }).then(parse<{ reply: string; proposals: AgentProposal[] }>);
+
+// ── PDF import (upload → S3 → confirm → background extraction) ──
+export interface MediaAsset {
+  id: string;
+  url: string;
+  alt: string;
+  kind: 'upload' | 'photo' | 'graphic';
+  pageIndex: number | null;
+  contentType: string;
+  size: number;
+}
+
+/** 1) Create an 'uploading' issue and get a presigned S3 PUT for its source PDF. */
+export const uploadIssue = (filename: string, contentType: string, size: number) =>
+  authFetch(`${BASE}/issues/upload`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ filename, contentType, size }) }).then(
+    parse<{ issue: IssueMeta; uploadUrl: string; key: string }>,
+  );
+
+/** 2) PUT the raw bytes straight to S3 (never through our API). Content-Type MUST
+ *  match what was signed. Not authFetch — this hits S3 directly. */
+export async function putToS3(uploadUrl: string, file: File): Promise<void> {
+  const res = await fetch(uploadUrl, { method: 'PUT', headers: { 'Content-Type': file.type || 'application/pdf' }, body: file });
+  if (!res.ok) throw new Error(`Upload failed (HTTP ${res.status}). Check the storage bucket's CORS policy.`);
+}
+
+/** 3) Confirm the upload landed → server verifies + enqueues extraction (202). */
+export const confirmUpload = (id: string, originalName: string) =>
+  authFetch(`${BASE}/issues/${id}/confirm-upload`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ originalName }) }).then(parse<{ issue: IssueMeta }>);
+
+/** Re-extract a single failed page (owner). */
+export const retryPage = (id: string, pageId: string) =>
+  authFetch(`${BASE}/issues/${id}/pages/${pageId}/retry`, { method: 'POST' }).then(parse<{ ok: boolean }>);
+
+/** The issue's media library (extracted photos/graphics + stock/uploads). */
+export const listMedia = (id: string) => authFetchRetry(`${BASE}/issues/${id}/media`).then(parse<{ assets: MediaAsset[] }>).then((r) => r.assets);
