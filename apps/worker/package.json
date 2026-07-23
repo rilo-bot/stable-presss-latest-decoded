@@ -2,6 +2,7 @@
   "name": "@rilo/worker",
   "private": true,
   "version": "0.0.0",
+  "type": "module",
   "description": "Magazine Builder v2 background worker — PDF extraction + the Mongo poll job queue. Runs as a separate process from the API so CPU-heavy MuPDF rasterization never blocks the API event loop.",
   "scripts": {
     "dev": "tsx watch src/index.ts",
@@ -9,7 +10,9 @@
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
-    "dotenv": "^16.4.0"
+    "dotenv": "^16.4.0",
+    "mupdf": "^1.28.0",
+    "sharp": "^0.35.3"
   },
   "devDependencies": {
     "@types/node": "^25.9.3",
