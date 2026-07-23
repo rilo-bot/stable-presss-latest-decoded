@@ -10,9 +10,14 @@
 
 import { create } from 'zustand';
 import { toast } from 'sonner';
-import type { MagazineElement, MagazinePageV2 } from './model';
+import type { MagazineElement, MagazinePageV2, AgentProposal } from './model';
 import * as api from './api';
 import { ApiError, type IssueMeta, type PageSummary } from './api';
+
+export interface ChatMessage {
+  role: 'user' | 'assistant';
+  content: string;
+}
 
 interface UndoEntry {
   pageId: string;
@@ -35,6 +40,15 @@ interface EditorState {
   undoStack: UndoEntry[];
   redoStack: UndoEntry[];
 
+  // AI editing assistant (per open page)
+  chat: ChatMessage[];
+  chatBusy: boolean;
+  proposals: AgentProposal[];
+  proposalsPageId: string | null;
+  sendChat: (text: string, sourceText?: string) => Promise<void>;
+  applyAllProposals: () => Promise<void>;
+  discardProposals: () => void;
+
   load: (id: string) => Promise<void>;
   openPage: (pageId: string) => Promise<void>;
   select: (id: string | null) => void;
@@ -45,7 +59,7 @@ interface EditorState {
   updateLocal: (elementId: string, patch: Partial<MagazineElement>) => void;
   /** Persist an element change (rev-guarded). `before` = state at edit start, for undo. */
   commit: (elementId: string, patch: Partial<MagazineElement>, before?: MagazineElement) => Promise<void>;
-  addElement: (partial: Partial<MagazineElement>) => Promise<void>;
+  addElement: (partial: Partial<MagazineElement>) => Promise<string | null>;
   deleteElement: (elementId: string) => Promise<void>;
   undo: () => Promise<void>;
   redo: () => Promise<void>;
@@ -73,6 +87,10 @@ export const useEditorStore = create<EditorState>((set, get) => ({
   generating: false,
   undoStack: [],
   redoStack: [],
+  chat: [],
+  chatBusy: false,
+  proposals: [],
+  proposalsPageId: null,
 
   canManage: () => get().issue?.myRole === 'owner',
 
@@ -92,7 +110,8 @@ export const useEditorStore = create<EditorState>((set, get) => ({
     if (!issueId) return;
     try {
       const page = await api.getPage(issueId, pageId);
-      set({ page, currentPageId: pageId, selectedId: null });
+      // Chat + proposals are scoped to the open page — reset on page change.
+      set({ page, currentPageId: pageId, selectedId: null, chat: [], proposals: [], proposalsPageId: null });
     } catch (e) {
       set({ error: e instanceof Error ? e.message : 'Failed to load page' });
     }
@@ -135,15 +154,17 @@ export const useEditorStore = create<EditorState>((set, get) => ({
 
   addElement: async (partial) => {
     const s = get();
-    if (!s.page || !s.issueId) return;
+    if (!s.page || !s.issueId) return null;
     try {
       const { element, rev } = await api.addElement(s.issueId, s.page.id, s.page.rev, partial);
       set((st) => ({
         page: st.page ? { ...st.page, rev, elements: [...st.page.elements, element] } : st.page,
         selectedId: element.id,
       }));
+      return element.id;
     } catch (e) {
       handleWriteError(e, set, get);
+      return null;
     }
   },
 
@@ -281,6 +302,55 @@ export const useEditorStore = create<EditorState>((set, get) => ({
       toast.error(e instanceof Error ? e.message : 'Failed to rename');
     }
   },
+
+  // ── AI editing assistant ──
+  sendChat: async (text, sourceText) => {
+    const s = get();
+    const body = text.trim();
+    if (!body || !s.issueId || !s.currentPageId || s.chatBusy) return;
+    const history: ChatMessage[] = [...s.chat, { role: 'user', content: body }];
+    set({ chat: history, chatBusy: true });
+    try {
+      const { reply, proposals } = await api.chatAgent(s.issueId, s.currentPageId, history, s.selectedId ?? undefined, sourceText);
+      set((st) => ({
+        chat: [...st.chat, { role: 'assistant', content: reply }],
+        proposals,
+        proposalsPageId: s.currentPageId,
+        chatBusy: false,
+      }));
+    } catch (e) {
+      set((st) => ({ chat: [...st.chat, { role: 'assistant', content: 'Sorry — I hit a snag just then. Please try again.' }], chatBusy: false }));
+      toast.error(e instanceof Error ? e.message : 'Assistant failed');
+    }
+  },
+
+  // Apply every staged proposal in order through the rev-guarded CRUD. 'add'
+  // proposals return the server id, remapped so later proposals that referenced
+  // the temp id resolve. Each write bumps the page rev (handled by the reused
+  // store methods), so sequential awaits keep the token current.
+  applyAllProposals: async () => {
+    const s = get();
+    if (!s.page || s.proposalsPageId !== s.currentPageId || s.proposals.length === 0) return;
+    const idMap = new Map<string, string>();
+    for (const p of s.proposals) {
+      try {
+        if (p.kind === 'add' && p.element) {
+          const newId = await get().addElement(p.element);
+          if (p.tempId && newId) idMap.set(p.tempId, newId);
+        } else if (p.kind === 'update' && p.elementId && p.patch) {
+          await get().commit(idMap.get(p.elementId) ?? p.elementId, p.patch);
+        } else if (p.kind === 'delete' && p.elementId) {
+          await get().deleteElement(idMap.get(p.elementId) ?? p.elementId);
+        }
+      } catch {
+        /* keep applying the rest */
+      }
+    }
+    set({ proposals: [], proposalsPageId: null });
+    toast.success('Applied the assistant’s changes.');
+  },
+
+  discardProposals: () => set({ proposals: [], proposalsPageId: null }),
 }));
 
 /** Shared write-error handling: a 409 reconciles to the server's current page. */

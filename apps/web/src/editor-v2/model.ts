@@ -66,6 +66,17 @@ export interface MagazineElement {
   confidence?: number;
 }
 
+/** One staged edit from the AI editing agent (applied via the element CRUD). */
+export interface AgentProposal {
+  id: string;
+  kind: 'update' | 'add' | 'delete';
+  summary: string;
+  elementId?: string; // update/delete — a real id, or a tempId of an earlier 'add'
+  tempId?: string; // add — placeholder id remapped to the server id on apply
+  patch?: Partial<MagazineElement>; // update
+  element?: Partial<MagazineElement>; // add
+}
+
 /** A fully-loaded page (elements included) as returned by GET …/pages/:pageId. */
 export interface MagazinePageV2 {
   id: string;

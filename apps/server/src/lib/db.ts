@@ -126,6 +126,28 @@ function mongoCollection(name: string) {
       }
       return result.matchedCount > 0
     },
+    // Atomically claim ONE matching live doc — the worker queue uses this to
+    // grab the oldest queued job without two workers taking the same one.
+    // `$set`s `set` (and optionally `$inc`s `inc`) on the FIRST doc matching
+    // `filter` ordered by createdAt, returning it AFTER the update, or null if
+    // nothing matched. Atomic because findOneAndUpdate match-and-update is a
+    // single server operation, so it's safe across worker replicas.
+    async claimOne(
+      filter: Record<string, unknown>,
+      set: Record<string, unknown>,
+      inc?: Record<string, number>,
+    ): Promise<Doc | null> {
+      const db = await getMongoDb()
+      const update: Record<string, unknown> = { $set: set }
+      if (inc && Object.keys(inc).length) update.$inc = inc
+      const doc = await db.collection(name).findOneAndUpdate(
+        { ...filter, deletedAt: null },
+        update,
+        { sort: { createdAt: 1 }, returnDocument: 'after', includeResultMetadata: false },
+      )
+      if (!doc) return null
+      return { ...doc, _id: doc._id.toString() } as Doc
+    },
     // Soft delete only — stamp `deletedAt` instead of removing the document, so
     // find()/findById() hide it while the data stays recoverable. There is no
     // hard-delete path anywhere.

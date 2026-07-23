@@ -1,13 +1,18 @@
-// Magazine Builder v2 — full-screen editor shell: toolbar + pages rail +
-// interactive canvas + inspector. Full editor UX (inline text, resizable panes,
-// media picker, AI panel) lands in later phases; this is the clickable core.
+// Magazine Builder v2 — full-screen studio shell.
+//
+// Design/layout mirrors the v1 magazine studio (docked AI assistant on the left,
+// scrolling canvas centre, inspector right, top toolbar) in the Stable brand
+// palette: forest-green surfaces, gold accents, parchment text. Page management
+// is a horizontal tab strip at the top of the canvas column (v2 edits one page at
+// a time). The AI assistant is the proposal-based editing agent (AiPanel).
 
 import { useEffect, useState } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
-import { ArrowLeft, Undo2, Redo2, Plus, Minus, Copy, Trash2, ChevronUp, ChevronDown, Sparkles, Loader2 } from 'lucide-react';
+import { ArrowLeft, Undo2, Redo2, Plus, Minus, Copy, Trash2, ChevronLeft, ChevronRight, Sparkles, Loader2 } from 'lucide-react';
 import { useEditorStore } from './store';
 import { EditorCanvas } from './EditorCanvas';
 import { Inspector } from './Inspector';
+import { AiPanel } from './AiPanel';
 import type { ElementType, MagazineElement } from './model';
 
 function newElement(kind: ElementType, page: { width: number; height: number }, topZ: number): Partial<MagazineElement> {
@@ -31,11 +36,15 @@ function newElement(kind: ElementType, page: { width: number; height: number }, 
   return base;
 }
 
+// Shared button styling on the green surface.
+const ghost = 'flex items-center gap-1 rounded-sm border border-white/15 bg-white/5 px-2 py-1.5 text-[11px] text-white/70 hover:bg-white/10 disabled:opacity-30 disabled:hover:bg-white/5';
+
 export default function MagazineEditorV2() {
   const { id } = useParams<{ id: string }>();
   const navigate = useNavigate();
   const s = useEditorStore();
-  const [aiOpen, setAiOpen] = useState(false);
+  const [asstOpen, setAsstOpen] = useState(true);
+  const [pagesAiOpen, setPagesAiOpen] = useState(false);
   const [aiCount, setAiCount] = useState(2);
   const [aiTopic, setAiTopic] = useState('');
 
@@ -44,110 +53,181 @@ export default function MagazineEditorV2() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [id]);
 
+  // Lock body scroll while the full-screen studio is open.
+  useEffect(() => {
+    const prev = document.body.style.overflow;
+    document.body.style.overflow = 'hidden';
+    return () => { document.body.style.overflow = prev; };
+  }, []);
+
   const topZ = s.page ? s.page.elements.reduce((m, e) => Math.max(m, e.zIndex), 0) : 0;
   const add = (kind: ElementType) => {
     if (s.page) void s.addElement(newElement(kind, s.page, topZ));
   };
 
-  if (s.loading) return <div className="flex h-screen items-center justify-center text-sm text-muted-foreground">Loading…</div>;
-  if (s.error) return <div className="flex h-screen items-center justify-center text-sm text-red-600">{s.error}</div>;
+  if (s.loading) {
+    return (
+      <div className="fixed inset-0 z-[60] flex items-center justify-center bg-[#0b1220] text-white/60">
+        <Loader2 className="mr-2 animate-spin" size={18} /> Loading studio…
+      </div>
+    );
+  }
+  if (s.error) {
+    return (
+      <div className="fixed inset-0 z-[60] flex items-center justify-center bg-[#0b1220] text-red-300">
+        {s.error}
+        <button onClick={() => navigate('/newsroom/magazine-v2')} className="ml-3 underline">Back</button>
+      </div>
+    );
+  }
 
   const currentIndex = s.pages.findIndex((p) => p.id === s.currentPageId);
+  const zoomPct = Math.round((s.zoomWidth / 1275) * 100);
 
   return (
-    <div className="fixed inset-0 z-50 flex flex-col bg-background">
+    <div className="fixed inset-0 z-[60] flex flex-col bg-[#0b1220]">
       {/* Toolbar */}
-      <div className="flex h-12 shrink-0 items-center gap-2 border-b border-border px-3 text-sm">
-        <button className="rounded p-1 hover:bg-muted" onClick={() => navigate('/newsroom')} title="Back">
-          <ArrowLeft size={18} />
+      <div className="flex items-center gap-3 border-b border-white/10 bg-[#0d1626] px-4 py-2.5">
+        <button
+          onClick={() => navigate('/newsroom/magazine-v2')}
+          className="flex h-8 w-8 items-center justify-center rounded-sm text-white/60 hover:bg-white/10 hover:text-white"
+          aria-label="Back to library"
+        >
+          <ArrowLeft size={16} />
         </button>
         <input
-          className="w-56 rounded border border-transparent bg-transparent px-1.5 py-1 font-medium hover:border-border"
+          className="w-[260px] max-w-[36vw] truncate bg-transparent text-sm font-bold text-white outline-none disabled:opacity-100"
           defaultValue={s.issue?.title ?? ''}
           key={s.issue?.id}
           onBlur={(e) => s.canManage() && e.target.value.trim() && void s.rename(e.target.value.trim())}
           disabled={!s.canManage()}
+          aria-label="Magazine title"
         />
-        <div className="mx-2 h-5 w-px bg-border" />
-        <button className="rounded p-1 disabled:opacity-30 hover:bg-muted" disabled={!s.undoStack.length} onClick={() => void s.undo()} title="Undo"><Undo2 size={16} /></button>
-        <button className="rounded p-1 disabled:opacity-30 hover:bg-muted" disabled={!s.redoStack.length} onClick={() => void s.redo()} title="Redo"><Redo2 size={16} /></button>
-        <div className="mx-2 h-5 w-px bg-border" />
-        <span className="text-xs text-muted-foreground">Add:</span>
-        {(['text', 'image', 'shape', 'qr'] as ElementType[]).map((k) => (
-          <button key={k} className="rounded border border-border px-2 py-1 text-xs capitalize hover:bg-muted" onClick={() => add(k)}>{k}</button>
-        ))}
-        <div className="ml-auto flex items-center gap-1">
-          <button className="rounded p-1 hover:bg-muted" onClick={() => s.setZoomWidth(s.zoomWidth - 80)} title="Zoom out"><Minus size={16} /></button>
-          <span className="w-10 text-center text-xs text-muted-foreground">{Math.round((s.zoomWidth / 1275) * 100)}%</span>
-          <button className="rounded p-1 hover:bg-muted" onClick={() => s.setZoomWidth(s.zoomWidth + 80)} title="Zoom in"><Plus size={16} /></button>
+
+        <div className="ml-auto flex items-center gap-1.5">
+          {/* undo / redo */}
+          <div className="flex items-center rounded-sm border border-white/15 bg-white/5">
+            <button onClick={() => void s.undo()} disabled={!s.undoStack.length} className="px-2 py-1.5 text-white/70 hover:bg-white/10 disabled:opacity-30 disabled:hover:bg-transparent" title="Undo"><Undo2 size={14} /></button>
+            <button onClick={() => void s.redo()} disabled={!s.redoStack.length} className="px-2 py-1.5 text-white/70 hover:bg-white/10 disabled:opacity-30 disabled:hover:bg-transparent" title="Redo"><Redo2 size={14} /></button>
+          </div>
+
+          {/* zoom */}
+          <div className="flex items-center rounded-sm border border-white/15 bg-white/5">
+            <button onClick={() => s.setZoomWidth(s.zoomWidth - 80)} className="px-2 py-1.5 text-white/70 hover:bg-white/10" title="Zoom out"><Minus size={14} /></button>
+            <span className="w-12 text-center text-[11px] tabular-nums text-white/70">{zoomPct}%</span>
+            <button onClick={() => s.setZoomWidth(s.zoomWidth + 80)} className="px-2 py-1.5 text-white/70 hover:bg-white/10" title="Zoom in"><Plus size={14} /></button>
+          </div>
+
+          {/* add element */}
+          <div className="mx-0.5 h-5 w-px bg-white/10" />
+          <span className="text-[10px] uppercase tracking-wide text-white/40">Add</span>
+          {(['text', 'image', 'shape', 'qr'] as ElementType[]).map((k) => (
+            <button key={k} className={ghost + ' capitalize'} onClick={() => add(k)}>{k}</button>
+          ))}
+
+          {/* AI assistant toggle */}
+          <button
+            onClick={() => setAsstOpen((o) => !o)}
+            aria-pressed={asstOpen}
+            className={'flex items-center gap-1 rounded-sm border px-2 py-1.5 text-[11px] ' + (asstOpen ? 'text-[#0b1220]' : 'border-white/15 text-white/70 hover:bg-white/10')}
+            style={asstOpen ? { background: 'var(--gold-bright)', borderColor: 'var(--gold-bright)' } : undefined}
+            title="Studio Assistant"
+          >
+            <Sparkles size={13} /> AI
+          </button>
         </div>
       </div>
 
+      {/* Body: assistant · canvas · inspector */}
       <div className="flex min-h-0 flex-1">
-        {/* Pages rail */}
-        <div className="w-44 shrink-0 overflow-y-auto border-r border-border p-2">
-          <div className="mb-2 flex items-center justify-between">
-            <span className="text-xs font-medium text-muted-foreground">Pages</span>
+        {asstOpen && (
+          <div className="w-[340px] flex-shrink-0 overflow-hidden border-r border-white/10">
+            <AiPanel />
+          </div>
+        )}
+
+        {/* Canvas column (page tabs + scroll area) */}
+        <div className="relative flex min-w-0 flex-1 flex-col">
+          {/* Page tabs */}
+          <div className="relative flex items-center gap-1 overflow-x-auto border-b border-white/10 bg-[#0b1220] px-3 py-1.5">
+            {s.pages.map((p, i) => {
+              const active = p.id === s.currentPageId;
+              return (
+                <div key={p.id} className="group flex items-center">
+                  <button
+                    onClick={() => void s.openPage(p.id)}
+                    className={
+                      'flex items-center gap-1 rounded-sm border px-2.5 py-1 text-[11px] ' +
+                      (active ? 'border-white/25 bg-white/10 text-white' : 'border-white/15 text-white/70 hover:bg-white/10')
+                    }
+                  >
+                    {i + 1}
+                    <span className={active ? 'text-white/50' : 'text-white/35'}>({p.elementCount})</span>
+                  </button>
+                  {active && s.canManage() && (
+                    <span className="ml-0.5 flex items-center">
+                      <button className="rounded p-1 text-white/50 hover:bg-white/10 disabled:opacity-25" disabled={i === 0} onClick={() => void s.reorder(i, i - 1)} title="Move left"><ChevronLeft size={12} /></button>
+                      <button className="rounded p-1 text-white/50 hover:bg-white/10 disabled:opacity-25" disabled={i === s.pages.length - 1} onClick={() => void s.reorder(i, i + 1)} title="Move right"><ChevronRight size={12} /></button>
+                      <button className="rounded p-1 text-white/50 hover:bg-white/10" onClick={() => void s.duplicatePage(p.id)} title="Duplicate"><Copy size={12} /></button>
+                      <button className="rounded p-1 text-red-300/70 hover:bg-white/10 disabled:opacity-25" disabled={s.pages.length <= 1} onClick={() => void s.deletePage(p.id)} title="Delete"><Trash2 size={12} /></button>
+                    </span>
+                  )}
+                </div>
+              );
+            })}
             {s.canManage() && (
-              <span className="flex items-center gap-0.5">
-                <button className="rounded p-1 text-[#7c3aed] hover:bg-muted disabled:opacity-40" disabled={s.generating} onClick={() => setAiOpen((v) => !v)} title="Add pages with AI">
-                  {s.generating ? <Loader2 size={14} className="animate-spin" /> : <Sparkles size={14} />}
+              <>
+                <button className={ghost + ' ml-1'} onClick={() => void s.addPage()} title="Add a blank page"><Plus size={13} /></button>
+                <button
+                  className={'flex items-center gap-1 rounded-sm border px-2 py-1.5 text-[11px] ' + (s.generating ? 'border-white/15 text-white/40' : 'text-[#0b1220]')}
+                  style={s.generating ? undefined : { background: 'var(--gold-bright)', borderColor: 'var(--gold-bright)' }}
+                  disabled={s.generating}
+                  onClick={() => setPagesAiOpen((v) => !v)}
+                  title="Add on-theme pages with AI"
+                >
+                  {s.generating ? <Loader2 size={13} className="animate-spin" /> : <Sparkles size={13} />} Pages
                 </button>
-                <button className="rounded p-1 hover:bg-muted" onClick={() => void s.addPage()} title="Add blank page"><Plus size={14} /></button>
-              </span>
+              </>
+            )}
+            <span className="ml-auto pl-2 text-[10px] text-white/40">Page {currentIndex + 1} of {s.pages.length}</span>
+
+            {/* AI-pages popover */}
+            {pagesAiOpen && s.canManage() && !s.generating && (
+              <div className="absolute right-3 top-full z-30 mt-1 w-64 rounded-md border border-white/15 bg-[#0d1626] p-2.5 shadow-xl">
+                <div className="mb-1.5 flex items-center gap-1.5 text-[11px] text-white/80">
+                  <span>Add</span>
+                  <select className="rounded border border-white/20 bg-[#0b1220] px-1 py-0.5 text-white" value={aiCount} onChange={(e) => setAiCount(Number(e.target.value))}>
+                    {[1, 2, 3, 4, 6].map((n) => <option key={n} value={n}>{n}</option>)}
+                  </select>
+                  <span>on-theme page{aiCount === 1 ? '' : 's'}</span>
+                </div>
+                <input
+                  className="mb-2 w-full rounded border border-white/20 bg-[#0b1220] px-1.5 py-1 text-[11px] text-white placeholder:text-white/30"
+                  placeholder="Topic (optional)"
+                  value={aiTopic}
+                  onChange={(e) => setAiTopic(e.target.value)}
+                />
+                <div className="flex justify-end gap-1">
+                  <button className="rounded-sm px-2 py-1 text-[11px] text-white/60 hover:bg-white/10" onClick={() => setPagesAiOpen(false)}>Cancel</button>
+                  <button
+                    className="inline-flex items-center gap-1 rounded-sm bg-emerald-500 px-2 py-1 text-[11px] font-semibold text-white hover:bg-emerald-600"
+                    onClick={() => { void s.generatePages(aiCount, aiTopic.trim()); setPagesAiOpen(false); setAiTopic(''); }}
+                  >
+                    <Sparkles size={12} /> Generate
+                  </button>
+                </div>
+              </div>
             )}
           </div>
-          {s.canManage() && aiOpen && !s.generating && (
-            <div className="mb-2 grid gap-1.5 rounded border border-[#7c3aed]/40 bg-[#7c3aed]/5 p-2">
-              <div className="flex items-center gap-1.5 text-[11px]">
-                <span className="text-muted-foreground">Add</span>
-                <select className="rounded border border-border bg-background px-1 py-0.5" value={aiCount} onChange={(e) => setAiCount(Number(e.target.value))}>
-                  {[1, 2, 3, 4, 6].map((n) => <option key={n} value={n}>{n}</option>)}
-                </select>
-                <span className="text-muted-foreground">on-theme page{aiCount === 1 ? '' : 's'}</span>
-              </div>
-              <input
-                className="rounded border border-border bg-background px-1.5 py-1 text-[11px]"
-                placeholder="Topic (optional)"
-                value={aiTopic}
-                onChange={(e) => setAiTopic(e.target.value)}
-              />
-              <div className="flex justify-end gap-1">
-                <button className="rounded px-2 py-1 text-[11px] hover:bg-muted" onClick={() => setAiOpen(false)}>Cancel</button>
-                <button
-                  className="inline-flex items-center gap-1 rounded bg-[#7c3aed] px-2 py-1 text-[11px] font-medium text-white"
-                  onClick={() => { void s.generatePages(aiCount, aiTopic.trim()); setAiOpen(false); setAiTopic(''); }}
-                >
-                  <Sparkles size={12} /> Generate
-                </button>
-              </div>
-            </div>
-          )}
-          <div className="flex flex-col gap-1">
-            {s.pages.map((p, i) => (
-              <div key={p.id} className={`group flex items-center gap-1 rounded border px-2 py-1.5 text-xs ${p.id === s.currentPageId ? 'border-[#7c3aed] bg-[#7c3aed]/5' : 'border-border hover:bg-muted'}`}>
-                <button className="flex-1 text-left" onClick={() => void s.openPage(p.id)}>Page {i + 1}<span className="ml-1 text-[10px] text-muted-foreground">({p.elementCount})</span></button>
-                {s.canManage() && (
-                  <span className="hidden gap-0.5 group-hover:flex">
-                    <button className="rounded p-0.5 hover:bg-background" disabled={i === 0} onClick={() => void s.reorder(i, i - 1)} title="Up"><ChevronUp size={12} /></button>
-                    <button className="rounded p-0.5 hover:bg-background" disabled={i === s.pages.length - 1} onClick={() => void s.reorder(i, i + 1)} title="Down"><ChevronDown size={12} /></button>
-                    <button className="rounded p-0.5 hover:bg-background" onClick={() => void s.duplicatePage(p.id)} title="Duplicate"><Copy size={12} /></button>
-                    <button className="rounded p-0.5 text-red-600 hover:bg-background disabled:opacity-30" disabled={s.pages.length <= 1} onClick={() => void s.deletePage(p.id)} title="Delete"><Trash2 size={12} /></button>
-                  </span>
-                )}
-              </div>
-            ))}
-          </div>
-          <div className="mt-2 text-[10px] text-muted-foreground">Page {currentIndex + 1} of {s.pages.length}</div>
-        </div>
 
-        {/* Canvas */}
-        <div className="min-w-0 flex-1 overflow-auto bg-muted/40">
-          <EditorCanvas />
+          {/* Canvas */}
+          <div className="min-h-0 flex-1 overflow-auto bg-[#0b1220]">
+            <EditorCanvas />
+          </div>
         </div>
 
         {/* Inspector */}
-        <div className="w-64 shrink-0 overflow-y-auto border-l border-border">
+        <div className="w-[300px] flex-shrink-0 overflow-y-auto border-l border-white/10 bg-[#0d1626]">
           <Inspector />
         </div>
       </div>

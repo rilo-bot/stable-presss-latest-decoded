@@ -28,6 +28,7 @@ import { normalizeElements, normalizeElementPatch } from '../lib/magazineV2/writ
 import { MAX_ELEMENTS_PER_PAGE, type MagazineElement } from '../lib/magazineV2/model.js';
 import { isAgentConfigured } from '../lib/agent/provider.js';
 import { generateMagazineIssue, generateMorePages } from '../lib/magazineV2/generate.js';
+import { runPageAgent } from '../lib/magazineV2/agent.js';
 
 /* eslint-disable @typescript-eslint/no-explicit-any */
 type Doc = { _id: string; [k: string]: any };
@@ -239,8 +240,10 @@ router.post('/issues/generate', rateLimit('mag2-generate', 10, 60_000), async (r
     return;
   }
   const prompt = typeof req.body?.prompt === 'string' ? req.body.prompt.trim() : '';
-  if (!prompt) {
-    res.status(400).json({ error: 'Describe the magazine you want (a brief is required).' });
+  // Optional source document text (already ingested client-side) to build FROM.
+  const sourceText = typeof req.body?.sourceText === 'string' ? req.body.sourceText.slice(0, 60_000) : '';
+  if (!prompt && !sourceText.trim()) {
+    res.status(400).json({ error: 'Describe the magazine you want, or attach a document to build from.' });
     return;
   }
   const pc = Number(req.body?.pageCount);
@@ -264,7 +267,7 @@ router.post('/issues/generate', rateLimit('mag2-generate', 10, 60_000), async (r
     updatedAt: now,
   });
   // Fire-and-forget: generation runs in the background, updating the issue.
-  void generateMagazineIssue(id, prompt, pageCount);
+  void generateMagazineIssue(id, prompt, pageCount, sourceText);
   const created = await loadIssue(id);
   res.status(202).json({ issue: created ? withViewer(created, uid) : { id } });
 });
@@ -628,6 +631,44 @@ router.delete('/issues/:id/pages/:pageId/elements/:elementId', async (req, res) 
     return;
   }
   res.json({ ok: true, rev: rev + 1 });
+});
+
+// AI editing agent for one page — the model calls tools that STAGE proposals
+// (never writes); returns { reply, proposals }. The client applies each proposal
+// through the element CRUD above (rev-guarded), so the same guardrails apply.
+router.post('/issues/:id/pages/:pageId/agent', rateLimit('mag2-agent', 20, 60_000), async (req, res) => {
+  if (!isAgentConfigured()) {
+    res.status(503).json({ error: 'AI is not configured on this server.' });
+    return;
+  }
+  const ctx = await loadEditablePage(req, res);
+  if (!ctx) return;
+  const { page } = ctx;
+  const messages = Array.isArray(req.body?.messages) ? req.body.messages : [];
+  if (messages.length === 0) {
+    res.status(400).json({ error: 'messages[] is required' });
+    return;
+  }
+  const selectedElementId = typeof req.body?.selectedElementId === 'string' ? req.body.selectedElementId : undefined;
+  const sourceText = typeof req.body?.sourceText === 'string' ? req.body.sourceText.slice(0, 60_000) : undefined;
+  try {
+    const turn = await runPageAgent({
+      messages,
+      page: {
+        width: Number(page.width) || PAGE_W,
+        height: Number(page.height) || PAGE_H,
+        elements: Array.isArray(page.elements) ? page.elements : [],
+        index: Number(page.index) || 0,
+      },
+      magazineId: page.magazineId,
+      selectedElementId,
+      sourceText,
+    });
+    res.json(turn);
+  } catch (err) {
+    console.error('[magazineV2] agent error:', err instanceof Error ? err.message : err);
+    res.status(500).json({ error: 'The assistant hit a snag. Please try again.' });
+  }
 });
 
 export default router;

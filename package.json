@@ -7,8 +7,10 @@
   ],
   "scripts": {
     "dev": "npx concurrently \"npm run dev -w apps/web\" \"npm run dev -w apps/server\"",
+    "dev:worker": "npm run dev -w apps/worker",
     "build": "npm run build -w apps/web && npm run build -w apps/server",
-    "start": "node apps/server/dist/index.js"
+    "start": "node apps/server/dist/index.js",
+    "start:worker": "npm run start -w apps/worker"
   },
   "devDependencies": {
     "concurrently": "^9.0.0"

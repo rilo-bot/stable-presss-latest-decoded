@@ -6,7 +6,7 @@
 // ---------------------------------------------------------------------------
 
 import { authFetch, authFetchRetry } from '@/lib/api';
-import type { MagazineElement, MagazinePageV2 } from './model';
+import type { MagazineElement, MagazinePageV2, AgentProposal } from './model';
 
 const BASE = '/api/magazinesV2';
 
@@ -79,8 +79,8 @@ export const listIssues = () => authFetchRetry(`${BASE}/issues`).then(parse<Issu
 export const getIssue = (id: string) => authFetchRetry(`${BASE}/issues/${id}`).then(parse<IssueBundle>);
 export const createBlankIssue = (title?: string) =>
   authFetch(`${BASE}/issues/blank`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ title }) }).then(parse<IssueBundle>);
-export const generateIssue = (prompt: string, pageCount?: number) =>
-  authFetch(`${BASE}/issues/generate`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ prompt, pageCount }) }).then(parse<{ issue: IssueMeta }>);
+export const generateIssue = (prompt: string, pageCount?: number, sourceText?: string) =>
+  authFetch(`${BASE}/issues/generate`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ prompt, pageCount, sourceText }) }).then(parse<{ issue: IssueMeta }>);
 export const renameIssue = (id: string, title: string) =>
   authFetch(`${BASE}/issues/${id}`, { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ title }) }).then(parse<IssueMeta>);
 export const deleteIssue = (id: string) => authFetch(`${BASE}/issues/${id}`, { method: 'DELETE' }).then(parse<{ success: boolean }>);
@@ -108,3 +108,7 @@ export const patchElement = (id: string, pageId: string, elementId: string, rev:
   authFetch(`${BASE}/issues/${id}/pages/${pageId}/elements/${elementId}`, { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ rev, patch }) }).then(parse<{ element: MagazineElement; rev: number }>);
 export const deleteElement = (id: string, pageId: string, elementId: string, rev: number) =>
   authFetch(`${BASE}/issues/${id}/pages/${pageId}/elements/${elementId}`, { method: 'DELETE', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ rev }) }).then(parse<{ ok: boolean; rev: number }>);
+
+// ── AI editing agent (staged proposals; applied via the element CRUD above) ──
+export const chatAgent = (id: string, pageId: string, messages: { role: 'user' | 'assistant'; content: string }[], selectedElementId?: string, sourceText?: string) =>
+  authFetch(`${BASE}/issues/${id}/pages/${pageId}/agent`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ messages, selectedElementId, sourceText }) }).then(parse<{ reply: string; proposals: AgentProposal[] }>);

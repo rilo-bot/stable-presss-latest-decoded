@@ -4,9 +4,10 @@
 
 import { useEffect, useRef, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { Plus, Sparkles, FileUp, FilePlus, X, Loader2 } from 'lucide-react';
+import { Plus, Sparkles, FileUp, FilePlus, X, Loader2, FileText } from 'lucide-react';
 import * as api from './api';
 import type { IssueSummary } from './api';
+import { ingestFile, ATTACH_ACCEPT } from '@/editor/agent/documentUpload';
 
 type Mode = 'menu' | 'ai' | 'generating';
 
@@ -20,7 +21,9 @@ export default function MagazineV2Home() {
   const [pageCount, setPageCount] = useState(8);
   const [progress, setProgress] = useState<{ done: number; total: number; stage: string }>({ done: 0, total: 0, stage: '' });
   const [error, setError] = useState<string | null>(null);
+  const [file, setFile] = useState<File | null>(null); // optional source document to build from
   const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const fileRef = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
     api.listIssues().then(setIssues).catch((e) => setError(e instanceof Error ? e.message : 'Failed to load')).finally(() => setLoading(false));
@@ -39,12 +42,23 @@ export default function MagazineV2Home() {
   };
 
   const startAI = async () => {
-    if (!brief.trim()) return;
+    if (!brief.trim() && !file) return;
     setError(null);
     setMode('generating');
-    setProgress({ done: 0, total: pageCount, stage: 'Designing the issue' });
+    setProgress({ done: 0, total: pageCount, stage: file ? 'Reading your document…' : 'Designing the issue' });
     try {
-      const { issue } = await api.generateIssue(brief.trim(), pageCount);
+      let sourceText: string | undefined;
+      if (file) {
+        try {
+          sourceText = (await ingestFile(file)).fullText;
+        } catch (e) {
+          setError(e instanceof Error ? e.message : 'Could not read that document.');
+          setMode('ai');
+          return;
+        }
+        setProgress({ done: 0, total: pageCount, stage: 'Designing the issue' });
+      }
+      const { issue } = await api.generateIssue(brief.trim(), pageCount, sourceText);
       const id = issue.id;
       pollRef.current = setInterval(async () => {
         try {
@@ -73,6 +87,7 @@ export default function MagazineV2Home() {
     setOpen(false);
     setMode('menu');
     setBrief('');
+    setFile(null);
     setError(null);
   };
 
@@ -117,9 +132,9 @@ export default function MagazineV2Home() {
                   <Sparkles size={22} className="mt-0.5 text-[#7c3aed]" />
                   <span><span className="block font-medium">Build with AI</span><span className="text-xs text-muted-foreground">Describe the magazine you want — the AI designs and writes the whole issue.</span></span>
                 </button>
-                <button className="flex items-start gap-3 rounded border border-border p-4 text-left opacity-60" disabled title="Coming in the import phase">
-                  <FileUp size={22} className="mt-0.5" />
-                  <span><span className="block font-medium">Upload a PDF <span className="ml-1 rounded bg-muted px-1.5 py-0.5 text-[10px]">soon</span></span><span className="text-xs text-muted-foreground">Extract an existing PDF into an editable magazine.</span></span>
+                <button className="flex items-start gap-3 rounded border border-border p-4 text-left hover:border-[#7c3aed] hover:bg-muted" onClick={() => setMode('ai')}>
+                  <FileUp size={22} className="mt-0.5 text-[#7c3aed]" />
+                  <span><span className="block font-medium">From a document</span><span className="text-xs text-muted-foreground">Upload a PDF or doc — the AI reads it and builds the whole issue from its content.</span></span>
                 </button>
                 <button className="flex items-start gap-3 rounded border border-border p-4 text-left hover:border-[#7c3aed] hover:bg-muted" onClick={() => void startBlank()}>
                   <FilePlus size={22} className="mt-0.5" />
@@ -130,15 +145,27 @@ export default function MagazineV2Home() {
 
             {mode === 'ai' && (
               <div className="grid gap-3">
-                <label className="text-sm font-medium">Describe your magazine</label>
+                <label className="text-sm font-medium">Describe your magazine {file && <span className="text-xs font-normal text-muted-foreground">— optional, building from your document</span>}</label>
                 <textarea
                   className="w-full rounded border border-border bg-background p-2.5 text-sm"
-                  rows={5}
+                  rows={4}
                   autoFocus
-                  placeholder="e.g. A spring issue for New Zealand racehorse owners — a bold cover, a feature on a champion mare, a pull-quote, a roundup of upcoming meetings, and a back cover with a QR to the club."
+                  placeholder="e.g. A spring issue for New Zealand racehorse owners… — or attach a document below and the AI builds the issue from it."
                   value={brief}
                   onChange={(e) => setBrief(e.target.value)}
                 />
+                <input ref={fileRef} type="file" accept={ATTACH_ACCEPT} className="hidden" onChange={(e) => setFile(e.target.files?.[0] ?? null)} />
+                {file ? (
+                  <div className="flex items-center gap-2 rounded border border-border bg-muted/40 px-2.5 py-2 text-sm">
+                    <FileText size={16} className="shrink-0 text-[#7c3aed]" />
+                    <span className="flex-1 truncate">{file.name}</span>
+                    <button className="rounded p-1 hover:bg-muted" onClick={() => { setFile(null); if (fileRef.current) fileRef.current.value = ''; }} aria-label="Remove document"><X size={14} /></button>
+                  </div>
+                ) : (
+                  <button type="button" onClick={() => fileRef.current?.click()} className="flex items-center gap-2 rounded border border-dashed border-border px-2.5 py-2 text-sm text-muted-foreground hover:border-[#7c3aed] hover:text-foreground">
+                    <FileUp size={16} /> Attach a document (PDF, text) — build the issue from its content
+                  </button>
+                )}
                 <div className="flex items-center gap-2 text-sm">
                   <span className="text-muted-foreground">Pages:</span>
                   <select className="rounded border border-border bg-background px-2 py-1" value={pageCount} onChange={(e) => setPageCount(Number(e.target.value))}>
@@ -148,7 +175,7 @@ export default function MagazineV2Home() {
                 {error && <p className="text-sm text-red-600">{error}</p>}
                 <div className="flex justify-end gap-2">
                   <button className="rounded px-3 py-2 text-sm hover:bg-muted" onClick={() => setMode('menu')}>Back</button>
-                  <button className="inline-flex items-center gap-2 rounded bg-[#7c3aed] px-4 py-2 text-sm font-medium text-white disabled:opacity-50" disabled={!brief.trim()} onClick={() => void startAI()}>
+                  <button className="inline-flex items-center gap-2 rounded bg-[#7c3aed] px-4 py-2 text-sm font-medium text-white disabled:opacity-50" disabled={!brief.trim() && !file} onClick={() => void startAI()}>
                     <Sparkles size={16} /> Generate
                   </button>
                 </div>

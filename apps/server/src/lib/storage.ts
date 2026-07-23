@@ -20,6 +20,7 @@
 import { S3Client, PutObjectCommand, GetObjectCommand } from '@aws-sdk/client-s3'
 import type { ObjectCannedACL } from '@aws-sdk/client-s3'
 import { getSignedUrl } from '@aws-sdk/s3-request-presigner'
+import type { Readable } from 'node:stream'
 
 const BUCKET = (process.env.S3_BUCKET ?? '').trim()
 const REGION = (process.env.S3_REGION ?? process.env.AWS_REGION ?? '').trim()
@@ -95,6 +96,20 @@ export async function getObject(key: string): Promise<{
 }
 
 /**
+ * Download an object's full bytes into a Buffer. Convenience over getObject()
+ * for callers that need the whole file in memory rather than a stream — e.g.
+ * the extraction worker, which hands the source PDF straight to MuPDF. Reuses
+ * the same private-bucket-safe S3 GET.
+ */
+export async function downloadObject(key: string): Promise<Buffer> {
+  const out = await client().send(new GetObjectCommand({ Bucket: BUCKET, Key: key }))
+  const stream = out.Body as Readable
+  const chunks: Buffer[] = []
+  for await (const chunk of stream) chunks.push(Buffer.from(chunk as Uint8Array))
+  return Buffer.concat(chunks)
+}
+
+/**
  * Issue a short-lived presigned PUT URL the browser can upload to directly.
  * The client must PUT with the SAME Content-Type passed here.
  */
@@ -138,4 +153,4 @@ export async function uploadObject(opts: {
   }
 }
 
-export const storage = { isConfigured, presignPutUrl, presignGetUrl, getObject, publicUrl, uploadObject }
+export const storage = { isConfigured, presignPutUrl, presignGetUrl, getObject, downloadObject, publicUrl, uploadObject }
