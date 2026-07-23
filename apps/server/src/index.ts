@@ -11,13 +11,10 @@ const hasJwtSecret = !!process.env.JWT_SECRET
 const hasSendgrid = !!process.env.SENDGRID_API_KEY && !!process.env.SENDGRID_FROM_EMAIL
 console.log('[server] Environment:')
 console.log('  PROD (deployment tier):', isProd ? '✓ true' : '✗ false (dev/preview)')
-console.log('  MONGODB_URI:', hasMongoUri ? '✓ configured' : '✗ not set (in-memory DB)')
+console.log('  MONGODB_URI:', hasMongoUri ? '✓ configured' : '✗ not set (server will refuse to start)')
 console.log('  JWT_SECRET:', hasJwtSecret ? '✓ configured' : '✗ not set (insecure dev secret)')
 console.log('  SENDGRID:', hasSendgrid ? '✓ configured (emails OTP)' : '✗ not set (dev: OTP via console + UI preview)')
 console.log('  S3 UPLOADS:', storage.isConfigured() ? '✓ configured (presigned PUT)' : '✗ not set (uploads fall back to inline data URLs)')
-if (isProd && !hasMongoUri) {
-  console.warn('[server] ⚠ PROD=true but MONGODB_URI is not set — using in-memory storage')
-}
 if (isProd && !hasSendgrid) {
   console.warn('[server] ⚠ PROD=true but SendGrid is not configured — OTP codes will be exposed in API responses')
 }
@@ -78,7 +75,7 @@ app.use((req, res, next) => {
 
 // Health check
 app.get('/api/health', (_req, res) => {
-  res.json({ status: 'ok', db: db.isProduction() ? 'mongodb' : 'in-memory' })
+  res.json({ status: 'ok', db: 'mongodb' })
 })
 
 // --- Add your API routes below ---
@@ -108,6 +105,7 @@ import tippingRouter from './routes/tipping.js'
 import uploadsRouter from './routes/uploads.js'
 import issuesRouter from './routes/issues.js'
 import magazinesRouter from './routes/magazines.js'
+import magazinesV2Router from './routes/magazinesV2.js'
 import sponsorsRouter from './routes/sponsors.js'
 import breakingNewsRouter from './routes/breakingNews.js'
 import metricsRouter from './routes/metrics.js'
@@ -158,6 +156,13 @@ app.use('/api/issues', express.json({ limit: '30mb' }), issuesGate, issuesRouter
 // Magazine DRAFTS — staff-only, server-persisted so multiple staff can collaborate.
 // Self-gated (attachAccount + staff + per-magazine access checks inside the route).
 app.use('/api/magazines', express.json({ limit: '30mb' }), magazinesRouter)
+// Magazine Builder v2 (free-form element model) — self-gated inside the router
+// (feature flag → staff → per-magazine owner/collaborator → write rate limit).
+// Behind MAGAZINE_V2; invisible (404) until enabled. Large body cap because a
+// page's element payload can carry inline data-URL images in local dev. The
+// global JSON parser already skips the '/api/magazines' prefix, so this mount's
+// own parser is what runs. See docs/MAGAZINE-BUILDER-V2.md.
+app.use('/api/magazinesV2', express.json({ limit: '30mb' }), magazinesV2Router)
 // Public landing-page content: read is public, writes are staff-only.
 app.use('/api/sponsors', staffWriteGate, sponsorsRouter)
 app.use('/api/breakingNews', staffWriteGate, breakingNewsRouter)
@@ -186,7 +191,7 @@ app.use((err: Error, _req: express.Request, res: express.Response, _next: expres
 
 app.listen(PORT, () => {
   console.log(`[server] API server running on http://localhost:${PORT}`)
-  console.log(`[server] DB mode: ${db.isProduction() ? 'MongoDB' : 'In-memory'}`)
+  console.log('[server] DB mode: MongoDB')
 })
 
 export { app, db }

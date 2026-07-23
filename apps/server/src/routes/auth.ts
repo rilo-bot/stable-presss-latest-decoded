@@ -13,6 +13,17 @@ function project<T extends WithMongoId>(doc: T): Omit<T, '_id'> & { id: string }
 const OTP_TTL_MS = (Number(process.env.OTP_TTL_MINUTES) || 10) * 60 * 1000;
 const RESEND_COOLDOWN_MS = 30 * 1000;
 const MAX_ATTEMPTS = 5;
+const IS_PROD = process.env.PROD === 'true';
+
+// Dev sign-in bypass. When DEV_OTP_CODE is set, every OTP request uses this
+// fixed code, no email is sent, and the code is echoed back so you can sign in
+// without an inbox. Deliberately decoupled from PROD — local dev now runs
+// PROD=true (for the real database) yet still needs a friction-free login.
+// ⚠ This is a FULL auth bypass: NEVER set DEV_OTP_CODE in a deployed environment.
+const DEV_OTP_CODE = (process.env.DEV_OTP_CODE ?? '').trim();
+if (DEV_OTP_CODE) {
+  console.warn(`[auth] ⚠ DEV_OTP_CODE is set — sign-in bypass active (fixed code "${DEV_OTP_CODE}", no email). Never use this in production.`);
+}
 
 const router = Router();
 
@@ -65,6 +76,25 @@ router.post('/request-otp', async (req, res) => {
     pendingUser = { email, displayName };
   }
 
+  // Dev bypass (see DEV_OTP_CODE above): fixed code, no email, no cooldown, and
+  // the code returned in the response. Gated solely on DEV_OTP_CODE so it is
+  // impossible to trigger unless an operator explicitly opted in.
+  if (DEV_OTP_CODE) {
+    await clearOtps(email);
+    const now = new Date();
+    await db.collection('otps').insertOne({
+      email,
+      codeHash: hashOtp(DEV_OTP_CODE),
+      purpose: mode,
+      pendingUser,
+      attempts: 0,
+      expiresAt: new Date(now.getTime() + OTP_TTL_MS).toISOString(),
+      createdAt: now.toISOString(),
+    });
+    res.json({ ok: true, devCode: DEV_OTP_CODE });
+    return;
+  }
+
   // Resend cooldown — reject if a code was issued very recently.
   const prior = await latestOtp(email);
   if (prior && Date.now() - new Date(String(prior.createdAt)).getTime() < RESEND_COOLDOWN_MS) {
@@ -72,10 +102,20 @@ router.post('/request-otp', async (req, res) => {
     return;
   }
 
+  // Fail CLOSED in production: never fall back to the fixed dev code / console
+  // delivery when email isn't configured — that would let anyone sign in as any
+  // account with a known code. Refuse instead of silently degrading.
+  if (IS_PROD && !isEmailConfigured()) {
+    console.error('[auth] request-otp refused: PROD=true but email is not configured (SENDGRID_API_KEY / SENDGRID_FROM_EMAIL).');
+    res.status(503).json({ error: 'Sign-in is temporarily unavailable. Please try again later.' });
+    return;
+  }
+
   await clearOtps(email);
 
   // Dev env (no SendGrid configured): skip emailing and use a fixed, predictable
   // code so you can sign in without checking an inbox. Real envs get a random one.
+  // The fixed code can ONLY ever be issued outside production (guarded above).
   const code = isEmailConfigured() ? genOtp() : '123456';
   const now = new Date();
   await db.collection('otps').insertOne({
@@ -96,9 +136,11 @@ router.post('/request-otp', async (req, res) => {
     return;
   }
 
-  // Only leak the code to the client when email isn't actually being sent (dev).
+  // Only expose the code to the client in dev (email not sent). Never in prod —
+  // combined with the guard above, prod always has email configured, so this is
+  // belt-and-suspenders against the code ever appearing in a production response.
   const body: { ok: true; devCode?: string } = { ok: true };
-  if (!isEmailConfigured()) body.devCode = code;
+  if (!isEmailConfigured() && !IS_PROD) body.devCode = code;
   res.json(body);
 });
 

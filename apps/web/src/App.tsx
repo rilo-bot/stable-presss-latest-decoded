@@ -22,6 +22,8 @@ import HorseEditor from '@/pages/HorseEditor';
 import ArticleDetail from '@/pages/ArticleDetail';
 import Newsroom from '@/pages/Newsroom';
 import MagazineStudio from '@/pages/MagazineStudio';
+import MagazineV2Home from '@/editor-v2/MagazineV2Home';
+import MagazineEditorV2 from '@/editor-v2/MagazineEditorV2';
 import PremiumPreview from '@/pages/__PremiumPreview'; // TEMP — remove with its route
 import TippingRing from '@/pages/TippingRing';
 import PodcastHub from '@/pages/PodcastHub';
@@ -246,6 +248,16 @@ export default function App() {
           />
           {/* Full-screen magazine editor — its own deep-linkable route, no nav chrome. */}
           <Route path="/newsroom/magazine/:id" element={<MagazineStudio />} />
+          {/* Magazine Builder v2 (free-form, AI-first) — behind the MAGAZINE_V2 server flag. */}
+          <Route
+            path="/newsroom/magazine-v2"
+            element={
+              <AppLayout>
+                <MagazineV2Home />
+              </AppLayout>
+            }
+          />
+          <Route path="/newsroom/magazine-v2/:id" element={<MagazineEditorV2 />} />
           <Route
             path="/podcast/workflow"
             element={
