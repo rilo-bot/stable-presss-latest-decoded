@@ -96,6 +96,10 @@ export const deletePage = (id: string, pageId: string) =>
   authFetch(`${BASE}/issues/${id}/pages/${pageId}`, { method: 'DELETE' }).then(parse<{ pages: PageSummary[] }>);
 export const reorderPages = (id: string, from: number, to: number) =>
   authFetch(`${BASE}/issues/${id}/pages/reorder`, { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ from, to }) }).then(parse<{ pages: PageSummary[] }>);
+// Add on-theme AI pages (matches the issue's saved palette/fonts). Returns 202;
+// the issue goes 'processing' — poll getIssue until it settles.
+export const generatePages = (id: string, count: number, topic?: string, atIndex?: number) =>
+  authFetch(`${BASE}/issues/${id}/pages/generate`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ count, topic, atIndex }) }).then(parse<{ issue: IssueMeta }>);
 
 // ── Elements (rev-guarded) ──
 export const addElement = (id: string, pageId: string, rev: number, element: Partial<MagazineElement>) =>

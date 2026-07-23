@@ -1,4 +1,9 @@
 @import url('https://fonts.googleapis.com/css2?family=Playfair+Display:wght@400;500;600;700&family=Source+Sans+3:wght@400;500;600;700&display=swap');
+/* Magazine Builder v2 — premium display/body faces the generation templates pick
+ * from (templates.ts DISPLAY_FONTS/BODY_FONTS). Loaded app-wide so the free-form
+ * renderer (editor, public viewer, PDF) draws generated pages in the intended
+ * faces instead of falling back to the system serif/sans. */
+@import url('https://fonts.googleapis.com/css2?family=DM+Serif+Display&family=Inter:wght@400;500;600;700;800&family=Montserrat:wght@400;500;600;700;800&family=Oswald:wght@400;500;600;700&family=Playfair+Display:wght@800&display=swap');
 /**
  * theme.css — pre-written by the design pipeline (server-controlled).
  *

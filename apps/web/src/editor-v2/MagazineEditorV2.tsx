@@ -2,9 +2,9 @@
 // interactive canvas + inspector. Full editor UX (inline text, resizable panes,
 // media picker, AI panel) lands in later phases; this is the clickable core.
 
-import { useEffect } from 'react';
+import { useEffect, useState } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
-import { ArrowLeft, Undo2, Redo2, Plus, Minus, Copy, Trash2, ChevronUp, ChevronDown } from 'lucide-react';
+import { ArrowLeft, Undo2, Redo2, Plus, Minus, Copy, Trash2, ChevronUp, ChevronDown, Sparkles, Loader2 } from 'lucide-react';
 import { useEditorStore } from './store';
 import { EditorCanvas } from './EditorCanvas';
 import { Inspector } from './Inspector';
@@ -35,6 +35,9 @@ export default function MagazineEditorV2() {
   const { id } = useParams<{ id: string }>();
   const navigate = useNavigate();
   const s = useEditorStore();
+  const [aiOpen, setAiOpen] = useState(false);
+  const [aiCount, setAiCount] = useState(2);
+  const [aiTopic, setAiTopic] = useState('');
 
   useEffect(() => {
     if (id) void s.load(id);
@@ -85,8 +88,41 @@ export default function MagazineEditorV2() {
         <div className="w-44 shrink-0 overflow-y-auto border-r border-border p-2">
           <div className="mb-2 flex items-center justify-between">
             <span className="text-xs font-medium text-muted-foreground">Pages</span>
-            {s.canManage() && <button className="rounded p-1 hover:bg-muted" onClick={() => void s.addPage()} title="Add page"><Plus size={14} /></button>}
+            {s.canManage() && (
+              <span className="flex items-center gap-0.5">
+                <button className="rounded p-1 text-[#7c3aed] hover:bg-muted disabled:opacity-40" disabled={s.generating} onClick={() => setAiOpen((v) => !v)} title="Add pages with AI">
+                  {s.generating ? <Loader2 size={14} className="animate-spin" /> : <Sparkles size={14} />}
+                </button>
+                <button className="rounded p-1 hover:bg-muted" onClick={() => void s.addPage()} title="Add blank page"><Plus size={14} /></button>
+              </span>
+            )}
           </div>
+          {s.canManage() && aiOpen && !s.generating && (
+            <div className="mb-2 grid gap-1.5 rounded border border-[#7c3aed]/40 bg-[#7c3aed]/5 p-2">
+              <div className="flex items-center gap-1.5 text-[11px]">
+                <span className="text-muted-foreground">Add</span>
+                <select className="rounded border border-border bg-background px-1 py-0.5" value={aiCount} onChange={(e) => setAiCount(Number(e.target.value))}>
+                  {[1, 2, 3, 4, 6].map((n) => <option key={n} value={n}>{n}</option>)}
+                </select>
+                <span className="text-muted-foreground">on-theme page{aiCount === 1 ? '' : 's'}</span>
+              </div>
+              <input
+                className="rounded border border-border bg-background px-1.5 py-1 text-[11px]"
+                placeholder="Topic (optional)"
+                value={aiTopic}
+                onChange={(e) => setAiTopic(e.target.value)}
+              />
+              <div className="flex justify-end gap-1">
+                <button className="rounded px-2 py-1 text-[11px] hover:bg-muted" onClick={() => setAiOpen(false)}>Cancel</button>
+                <button
+                  className="inline-flex items-center gap-1 rounded bg-[#7c3aed] px-2 py-1 text-[11px] font-medium text-white"
+                  onClick={() => { void s.generatePages(aiCount, aiTopic.trim()); setAiOpen(false); setAiTopic(''); }}
+                >
+                  <Sparkles size={12} /> Generate
+                </button>
+              </div>
+            </div>
+          )}
           <div className="flex flex-col gap-1">
             {s.pages.map((p, i) => (
               <div key={p.id} className={`group flex items-center gap-1 rounded border px-2 py-1.5 text-xs ${p.id === s.currentPageId ? 'border-[#7c3aed] bg-[#7c3aed]/5' : 'border-border hover:bg-muted'}`}>

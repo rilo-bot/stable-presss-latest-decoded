@@ -31,6 +31,7 @@ interface EditorState {
   zoomWidth: number; // rendered page width in px
   loading: boolean;
   error: string | null;
+  generating: boolean; // an "add AI pages" run is in flight (issue is processing)
   undoStack: UndoEntry[];
   redoStack: UndoEntry[];
 
@@ -50,6 +51,7 @@ interface EditorState {
   redo: () => Promise<void>;
 
   addPage: () => Promise<void>;
+  generatePages: (count: number, topic?: string) => Promise<void>;
   duplicatePage: (pageId: string) => Promise<void>;
   deletePage: (pageId: string) => Promise<void>;
   reorder: (from: number, to: number) => Promise<void>;
@@ -68,6 +70,7 @@ export const useEditorStore = create<EditorState>((set, get) => ({
   zoomWidth: 720,
   loading: false,
   error: null,
+  generating: false,
   undoStack: [],
   redoStack: [],
 
@@ -199,6 +202,39 @@ export const useEditorStore = create<EditorState>((set, get) => ({
     } catch (e) {
       toast.error(e instanceof Error ? e.message : 'Failed to add page');
     }
+  },
+
+  generatePages: async (count, topic) => {
+    const { issueId, generating } = get();
+    if (!issueId || generating) return;
+    set({ generating: true });
+    try {
+      await api.generatePages(issueId, count, topic || undefined);
+    } catch (e) {
+      set({ generating: false });
+      toast.error(e instanceof Error ? e.message : 'Failed to start generation');
+      return;
+    }
+    toast.message('Designing new pages…');
+    // Poll until the issue settles out of 'processing', then refresh summaries
+    // (existing pages are untouched; the new ones just appear in the rail).
+    const start = Date.now();
+    const tick = async () => {
+      try {
+        const { issue, pages } = await api.getIssue(issueId);
+        set({ issue, pages });
+        if (issue.status === 'processing' && Date.now() - start < 180_000) {
+          setTimeout(() => void tick(), 1500);
+        } else {
+          set({ generating: false });
+          if (issue.status === 'failed') toast.error(issue.processingError || 'Adding pages failed');
+          else toast.success('Pages added');
+        }
+      } catch {
+        setTimeout(() => void tick(), 2000); // transient — keep polling
+      }
+    };
+    setTimeout(() => void tick(), 1500);
   },
 
   duplicatePage: async (pageId) => {

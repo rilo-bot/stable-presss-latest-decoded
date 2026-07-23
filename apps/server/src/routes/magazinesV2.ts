@@ -27,7 +27,7 @@ import { roleOnMagazine, isOwner, canEditPage, editablePageIds } from '../lib/ma
 import { normalizeElements, normalizeElementPatch } from '../lib/magazineV2/writePipeline.js';
 import { MAX_ELEMENTS_PER_PAGE, type MagazineElement } from '../lib/magazineV2/model.js';
 import { isAgentConfigured } from '../lib/agent/provider.js';
-import { generateMagazineIssue } from '../lib/magazineV2/generate.js';
+import { generateMagazineIssue, generateMorePages } from '../lib/magazineV2/generate.js';
 
 /* eslint-disable @typescript-eslint/no-explicit-any */
 type Doc = { _id: string; [k: string]: any };
@@ -454,6 +454,37 @@ router.patch('/issues/:id/pages/reorder', async (req, res) => {
     return;
   }
   res.json({ pages: out.pages });
+});
+
+// generate & insert on-theme AI pages at `atIndex` (owner only). Flips the issue
+// to 'processing' and designs/composes in the background (matching campaign-hq's
+// "add pages matching theme"); the client polls GET /issues/:id. Structural ops
+// are blocked while processing, so the background reindex can't interleave.
+router.post('/issues/:id/pages/generate', rateLimit('mag2-generate', 10, 60_000), async (req, res) => {
+  const doc = await requireOwnedIssue(req, res);
+  if (!doc) return;
+  if (!isAgentConfigured()) {
+    res.status(503).json({ error: 'AI is not configured on this server.' });
+    return;
+  }
+  const count = Number(req.body?.count);
+  if (!Number.isInteger(count) || count < 1 || count > 12) {
+    res.status(400).json({ error: 'count must be an integer 1–12.' });
+    return;
+  }
+  const pages = await pagesFor(doc._id);
+  if (pages.length + count > MAX_PAGES_PER_ISSUE) {
+    res.status(409).json({ error: `A magazine can have at most ${MAX_PAGES_PER_ISSUE} pages.` });
+    return;
+  }
+  const topic = typeof req.body?.topic === 'string' ? req.body.topic.trim().slice(0, 400) : undefined;
+  const at = Number(req.body?.atIndex);
+  const atIndex = Number.isInteger(at) && at >= 0 && at <= pages.length ? at : pages.length;
+  const prevStatus = String(doc.status);
+  await db.collection(COL.issues).updateOne(doc._id, { status: 'processing', stage: 'Designing pages', updatedAt: new Date().toISOString() });
+  void generateMorePages(doc._id, { count, topic, atIndex, prevStatus });
+  const fresh = await loadIssue(doc._id);
+  res.status(202).json({ issue: fresh ? withViewer(fresh, req.account!.id) : { id: doc._id } });
 });
 
 // ── Page content + elements (owner or assigned collaborator) ────────────────
