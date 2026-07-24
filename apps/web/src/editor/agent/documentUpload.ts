@@ -34,7 +34,7 @@ function kindOf(contentType: string): DocAttachment['kind'] {
 /** Hard ceiling so the composer's "Reading…" chip can never spin forever.
  *  Image-based PDFs are OCR'd page-by-page server-side (several model waves), so
  *  allow generous headroom — the server bounds the real work per page. */
-const INGEST_TIMEOUT_MS = 210_000;
+const INGEST_TIMEOUT_MS = 300_000;
 
 /** Send one file to the ingest endpoint and return the analysed attachment. */
 export async function ingestFile(file: File): Promise<DocAttachment> {
