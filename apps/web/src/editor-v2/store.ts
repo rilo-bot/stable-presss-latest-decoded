@@ -146,7 +146,9 @@ export const useEditorStore = create<EditorState>((set, get) => ({
     try {
       const page = await api.getPage(issueId, pageId);
       // Chat + proposals are scoped to the open page — reset on page change.
-      set({ page, currentPageId: pageId, selectedId: null, chat: [], proposals: [], proposalsPageId: null, previewDoc: null });
+      // previewDoc is NOT page-scoped (an uploaded doc fills any page), so it
+      // survives navigation — clearing it here silently closed the preview.
+      set({ page, currentPageId: pageId, selectedId: null, chat: [], proposals: [], proposalsPageId: null });
     } catch (e) {
       set({ error: e instanceof Error ? e.message : 'Failed to load page' });
     }

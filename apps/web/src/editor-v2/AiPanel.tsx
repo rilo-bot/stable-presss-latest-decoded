@@ -7,7 +7,7 @@
 // rev-guarded element CRUD (store.applyAllProposals).
 
 import { useEffect, useRef, useState } from 'react';
-import { Sparkles, Send, Loader2, Check, X, Plus, Pencil, Trash2, Paperclip, FileText, FilePlus2, ArrowLeftRight, Image as ImageIcon, Mic, Volume2, VolumeX } from 'lucide-react';
+import { Sparkles, Send, Square, Loader2, Check, X, Plus, Pencil, Trash2, Paperclip, FileText, FilePlus2, ArrowLeftRight, Image as ImageIcon, Mic, Volume2, VolumeX } from 'lucide-react';
 import type { UIMessage } from 'ai';
 import { toast } from 'sonner';
 import { MarkdownMessage } from '@/components/MarkdownMessage';
@@ -65,6 +65,9 @@ export function AiPanel() {
     send: (t) => void sendChat(t),
     busy: chatBusy,
     active: true,
+    // Spoken replies are strictly opt-in: silent by default, only when the
+    // read-aloud (🔊) toggle is on — even after speaking via the mic.
+    autoSpeakOnMic: false,
   });
 
   useEffect(() => {
@@ -243,9 +246,11 @@ export function AiPanel() {
           </div>
         )}
         <input ref={fileRef} type="file" accept={ATTACH_ACCEPT} className="hidden" onChange={(e) => { setFile(e.target.files?.[0] ?? null); setDocText(null); setPreviewDoc(null); }} />
-        {voice.recording && (
-          <div className="mb-1.5 flex items-center gap-1.5 text-[10px] italic text-white/50">
-            <span className="h-1.5 w-1.5 animate-pulse rounded-full bg-red-500" /> {voice.caption || 'Listening…'}
+        {/* Speaking / transcribing status bar — matches v1: pulsing dot + live caption. */}
+        {(voice.recording || voice.transcribing) && (
+          <div className="mb-1.5 flex items-center gap-2 rounded-sm border border-white/10 bg-white/[0.03] px-2.5 py-1.5 text-[11px] text-white/60">
+            <span className={'inline-block h-2 w-2 rounded-full ' + (voice.recording ? 'animate-pulse bg-red-500' : 'bg-white/30')} />
+            <span className="line-clamp-2 italic">{voice.caption || (voice.transcribing ? 'Transcribing…' : 'Listening… speak now')}</span>
           </div>
         )}
         <form onSubmit={(e) => { e.preventDefault(); void send(); }} className="flex items-end gap-2">
@@ -258,21 +263,6 @@ export function AiPanel() {
           >
             <Paperclip size={14} />
           </button>
-          {voice.voiceReady && (
-            <button
-              type="button"
-              onClick={() => void voice.toggleMic()}
-              disabled={voice.transcribing}
-              aria-label={voice.recording ? 'Stop and send' : 'Speak your request'}
-              title={voice.recording ? 'Stop & send' : 'Speak your request'}
-              className={
-                'flex h-8 w-8 flex-shrink-0 items-center justify-center rounded-full ' +
-                (voice.recording ? 'animate-pulse bg-red-500 text-white' : 'border border-white/15 text-white/60 hover:bg-white/10 hover:text-white/90')
-              }
-            >
-              {voice.transcribing ? <Loader2 size={14} className="animate-spin" /> : <Mic size={14} />}
-            </button>
-          )}
           <textarea
             value={input}
             rows={1}
@@ -283,9 +273,32 @@ export function AiPanel() {
                 void send();
               }
             }}
-            placeholder={file ? 'e.g. “fill this page from the document”' : 'Ask the studio assistant…  (Shift+Enter for a new line)'}
-            className="flex-1 resize-none overflow-hidden rounded-2xl border border-white/15 bg-white/5 px-3 py-1.5 text-[12px] leading-snug text-white outline-none placeholder:text-white/30 focus:border-white/30"
+            disabled={voice.recording || voice.transcribing}
+            placeholder={
+              voice.recording ? 'Listening…'
+              : voice.transcribing ? 'Transcribing…'
+              : file ? 'e.g. “fill this page from the document”'
+              : 'Ask the studio assistant…  (Shift+Enter for a new line)'
+            }
+            className="flex-1 resize-none overflow-hidden rounded-2xl border border-white/15 bg-white/5 px-3 py-1.5 text-[12px] leading-snug text-white outline-none placeholder:text-white/30 focus:border-white/30 disabled:opacity-60"
           />
+          {/* Mic — v1 order (after the textarea), v1 icon logic: transcribing→spinner,
+              recording→stop (■), idle→mic; hidden while a reply is generating. */}
+          {voice.voiceReady && !chatBusy && (
+            <button
+              type="button"
+              onClick={() => void voice.toggleMic()}
+              disabled={voice.transcribing}
+              aria-label={voice.recording ? 'Stop recording' : 'Speak to the studio assistant'}
+              title={voice.recording ? 'Stop & send' : 'Speak'}
+              className={
+                'flex h-8 w-8 flex-shrink-0 items-center justify-center rounded-full border transition-colors disabled:opacity-50 ' +
+                (voice.recording ? 'animate-pulse border-red-500 bg-red-500/15 text-red-400' : 'border-white/15 text-white/60 hover:bg-white/10')
+              }
+            >
+              {voice.transcribing ? <Loader2 size={13} className="animate-spin" /> : voice.recording ? <Square size={13} /> : <Mic size={13} />}
+            </button>
+          )}
           <button
             type="submit"
             aria-label="Send"

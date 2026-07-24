@@ -73,7 +73,7 @@ export default function MagazineV2Home() {
 
   const startBlank = async () => {
     try {
-      const { issue } = await api.createBlankIssue('Untitled issue');
+      const { issue } = await api.createBlankIssue('Untitled Magazine');
       openEditor(issue.id);
     } catch (e) {
       setError(e instanceof Error ? e.message : 'Failed to create');
@@ -84,7 +84,7 @@ export default function MagazineV2Home() {
     if (!brief.trim() && !file) return;
     setError(null);
     setMode('generating');
-    setProgress({ done: 0, total: pageCount, stage: file ? 'Reading your document…' : 'Designing the issue' });
+    setProgress({ done: 0, total: pageCount, stage: file ? 'Reading your document…' : 'Designing the Magazine' });
     try {
       let sourceText: string | undefined;
       if (file) {
@@ -97,7 +97,7 @@ export default function MagazineV2Home() {
           setMode('ai');
           return;
         }
-        setProgress({ done: 0, total: pageCount, stage: 'Designing the issue' });
+        setProgress({ done: 0, total: pageCount, stage: 'Designing the Magazine' });
       }
       const { issue } = await api.generateIssue(brief.trim(), pageCount, sourceText);
       const id = issue.id;
@@ -249,12 +249,12 @@ export default function MagazineV2Home() {
               <div className="grid gap-3">
                 <button className="flex items-start gap-3 rounded border border-border p-4 text-left hover:border-[#7c3aed] hover:bg-muted" onClick={() => setMode('ai')}>
                   <Sparkles size={22} className="mt-0.5 text-[#7c3aed]" />
-                  <span><span className="block font-medium">Build with AI</span><span className="text-xs text-muted-foreground">Describe the magazine you want — the AI designs and writes the whole issue.</span></span>
+                  <span><span className="block font-medium">Build with AI</span><span className="text-xs text-muted-foreground">Describe the magazine you want — the AI designs and writes the whole Magazine.</span></span>
                 </button>
-                <button className="flex items-start gap-3 rounded border border-border p-4 text-left hover:border-[#7c3aed] hover:bg-muted" onClick={() => setMode('ai')}>
+                {/* <button className="flex items-start gap-3 rounded border border-border p-4 text-left hover:border-[#7c3aed] hover:bg-muted" onClick={() => setMode('ai')}>
                   <FileUp size={22} className="mt-0.5 text-[#7c3aed]" />
                   <span><span className="block font-medium">From a document</span><span className="text-xs text-muted-foreground">Upload a PDF or doc — the AI reads it and builds the whole issue from its content.</span></span>
-                </button>
+                </button> */}
                 <button className="flex items-start gap-3 rounded border border-border p-4 text-left hover:border-[#7c3aed] hover:bg-muted" onClick={() => importRef.current?.click()}>
                   <FileScan size={22} className="mt-0.5 text-[#7c3aed]" />
                   <span><span className="block font-medium">Import a PDF, Word doc or image <span className="ml-1 rounded bg-[#7c3aed]/10 px-1.5 py-0.5 text-[10px] font-medium text-[#7c3aed]">keeps layout</span></span><span className="text-xs text-muted-foreground">Digitize an existing PDF, .docx or JPEG/PNG into editable pages — layout, text & images, pixel-faithful.</span></span>
@@ -312,7 +312,7 @@ export default function MagazineV2Home() {
               return (
                 <div className="flex flex-col items-center gap-3 py-6 text-center">
                   <Loader2 size={28} className="animate-spin text-[#7c3aed]" />
-                  <div className="font-medium">{composing ? 'Composing your pages' : 'Designing your issue'}</div>
+                  <div className="font-medium">{composing ? 'Composing your pages' : 'Designing your Magazine'}</div>
                   <div className="text-sm text-muted-foreground">
                     {composing ? `Composed ${progress.done} of ${progress.total} pages` : PLAN_HINTS[hintIdx]}
                   </div>

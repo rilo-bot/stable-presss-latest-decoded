@@ -39,7 +39,7 @@ router.use((req, res, next) => {
 // file ONCE into a compact digest the agent can place from. Body: raw file bytes;
 // Content-Type header = the file's type. Same proxied pattern as /api/uploads.
 const MB = 1024 * 1024
-const rawDoc = raw({ type: () => true, limit: '26mb' })
+const rawDoc = raw({ type: () => true, limit: '50mb' })
 router.post('/ingest', rawDoc, async (req, res) => {
   if (!isAgentConfigured()) {
     res.status(503).json({ error: 'The studio assistant is resting — OPENROUTER_API_KEY is not configured on the server.' })
