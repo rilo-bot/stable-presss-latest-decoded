@@ -57,7 +57,7 @@ router.post('/ingest', rawDoc, async (req, res) => {
     res.status(400).json({ error: 'The file came through empty — please try again.' })
     return
   }
-  const cap = kind === 'image' ? 15 * MB : 25 * MB
+  const cap = kind === 'image' ? 20 * MB : 50 * MB
   if (body.length > cap) {
     res.status(413).json({ error: `That file is a bit big (max ${Math.round(cap / MB)} MB) — try a smaller one.` })
     return
