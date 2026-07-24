@@ -203,24 +203,33 @@ export default function MagazineV2Home() {
                       </span>
                     )}
                   </div>
-                  <div className="mt-1 text-xs text-muted-foreground">{it.status} · {it.pageCount} page{it.pageCount === 1 ? '' : 's'}</div>
-                </button>
-                <div className="mt-3 flex items-center gap-2 border-t border-border pt-2.5">
-                  <button
-                    onClick={() => void removeIssue(it)}
-                    disabled={busy}
-                    className="inline-flex items-center gap-1 rounded border border-red-300/40 px-2 py-1 text-xs font-medium text-red-600 hover:bg-red-50 disabled:opacity-50 dark:text-red-300/90 dark:hover:bg-red-500/10"
-                    title="Delete this magazine"
-                  >
-                    {busy ? <Loader2 size={12} className="animate-spin" /> : <Trash2 size={12} />}
-                    Delete
-                  </button>
-                  {published && it.publishedIssueId && (
-                    <a href={`/bulletins/${it.publishedIssueId}`} target="_blank" rel="noreferrer" className="ml-auto text-xs text-[#7c3aed] hover:underline">
-                      View on Bulletins
-                    </a>
+                  <div className="mt-1 text-xs text-muted-foreground">
+                    {it.status} · {it.pageCount} page{it.pageCount === 1 ? '' : 's'}{it.ownerName ? ` · ${it.ownerName}` : ''}
+                  </div>
+                  {!it.myRole && (
+                    <span className="mt-1.5 inline-block rounded bg-muted px-1.5 py-0.5 text-[10px] font-medium text-muted-foreground">View only</span>
                   )}
-                </div>
+                </button>
+                {(it.myRole === 'owner' || (published && it.publishedIssueId)) && (
+                  <div className="mt-3 flex items-center gap-2 border-t border-border pt-2.5">
+                    {it.myRole === 'owner' && (
+                      <button
+                        onClick={() => void removeIssue(it)}
+                        disabled={busy}
+                        className="inline-flex items-center gap-1 rounded border border-red-300/40 px-2 py-1 text-xs font-medium text-red-600 hover:bg-red-50 disabled:opacity-50 dark:text-red-300/90 dark:hover:bg-red-500/10"
+                        title="Delete this magazine"
+                      >
+                        {busy ? <Loader2 size={12} className="animate-spin" /> : <Trash2 size={12} />}
+                        Delete
+                      </button>
+                    )}
+                    {published && it.publishedIssueId && (
+                      <a href={`/bulletins/${it.publishedIssueId}`} target="_blank" rel="noreferrer" className="ml-auto text-xs text-[#7c3aed] hover:underline">
+                        View on Bulletins
+                      </a>
+                    )}
+                  </div>
+                )}
               </div>
             );
           })}

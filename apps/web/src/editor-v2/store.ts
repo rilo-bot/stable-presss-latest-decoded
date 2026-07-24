@@ -67,6 +67,8 @@ interface EditorState {
   select: (id: string | null) => void;
   setZoomWidth: (w: number) => void;
   canManage: () => boolean;
+  /** Can edit at least some pages (owner or collaborator). False = view-only. */
+  canEdit: () => boolean;
 
   /** Live, local-only element update (drag/resize feedback — no server call). */
   updateLocal: (elementId: string, patch: Partial<MagazineElement>) => void;
@@ -125,6 +127,7 @@ export const useEditorStore = create<EditorState>((set, get) => ({
   setPreviewDoc: (d) => set({ previewDoc: d }),
 
   canManage: () => get().issue?.myRole === 'owner',
+  canEdit: () => !!get().issue?.myRole,
 
   load: async (id) => {
     set({ loading: true, error: null, issueId: id });

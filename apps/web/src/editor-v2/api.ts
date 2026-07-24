@@ -36,7 +36,8 @@ export interface IssueSummary {
   origin: string;
   coverImage: string;
   pageCount: number;
-  myRole: MagRole | null;
+  myRole: MagRole | null; // null = another admin's magazine (view-only for you)
+  ownerName: string;
   /** Id of the frozen Bulletins snapshot when published (null while unpublished). */
   publishedIssueId: string | null;
   updatedAt: string;

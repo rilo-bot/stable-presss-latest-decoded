@@ -183,13 +183,14 @@ function pageSummary(p: Doc) {
 
 // ── Issue lifecycle ─────────────────────────────────────────────────────────
 
-// list — issues the caller owns or collaborates on
+// list — EVERY magazine is visible to any staff member (shared admin library).
+// Editing stays gated per-magazine by owner/collaborator role; `myRole` (null =
+// view-only) + `ownerName` tell the client who can edit what and who created it.
 router.get('/issues', async (req, res) => {
   const uid = req.account!.id;
   const all = (await db.collection(COL.issues).find()) as Doc[];
-  const mine = all.filter((d) => roleOnMagazine(d, uid));
-  const counts = await Promise.all(mine.map((d) => pagesFor(d._id).then((p) => p.length)));
-  const rows = mine
+  const counts = await Promise.all(all.map((d) => pagesFor(d._id).then((p) => p.length)));
+  const rows = all
     .map((d, i) => ({
       id: d._id,
       title: d.title,
@@ -199,6 +200,7 @@ router.get('/issues', async (req, res) => {
       coverImage: d.coverImage ?? '',
       pageCount: counts[i],
       myRole: roleOnMagazine(d, uid),
+      ownerName: d.ownerName ?? '',
       publishedIssueId: d.publishedIssueId ?? null,
       updatedAt: d.updatedAt,
     }))
@@ -486,11 +488,12 @@ router.post('/issues/:id/media', rateLimit('mag2-write', 300, 60_000), async (re
   res.status(201).json({ asset: { id: String(assetId), url, alt, kind: 'upload', pageIndex: null, contentType: head.contentType, size: head.contentLength } });
 });
 
-// get issue meta + page summaries (NOT full element payloads)
+// get issue meta + page summaries (NOT full element payloads). Any staff may
+// VIEW; withViewer's myRole/myEditablePageIds tell the client its edit rights.
 router.get('/issues/:id', async (req, res) => {
   const uid = req.account!.id;
   const doc = await loadIssue(req.params.id);
-  if (!doc || !roleOnMagazine(doc, uid)) {
+  if (!doc) {
     res.status(404).json({ error: 'Not found' });
     return;
   }
@@ -1063,11 +1066,11 @@ function requireRev(req: any, res: any): number | null {
   return rev;
 }
 
-// get one page's full element payload (owner or collaborator, read)
+// get one page's full element payload. Any staff may VIEW; editing is gated
+// separately (loadEditablePage on the element write routes).
 router.get('/issues/:id/pages/:pageId', async (req, res) => {
-  const uid = req.account!.id;
   const issue = await loadIssue(req.params.id);
-  if (!issue || !roleOnMagazine(issue, uid)) {
+  if (!issue) {
     res.status(404).json({ error: 'Not found' });
     return;
   }
