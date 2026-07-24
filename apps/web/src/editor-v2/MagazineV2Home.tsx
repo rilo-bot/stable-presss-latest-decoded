@@ -4,12 +4,24 @@
 
 import { useEffect, useRef, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { Plus, Sparkles, FileUp, FilePlus, X, Loader2, FileText, FileScan } from 'lucide-react';
+import { Plus, Sparkles, FileUp, FilePlus, X, Loader2, FileText, FileScan, Globe, EyeOff } from 'lucide-react';
+import { toast } from 'sonner';
 import * as api from './api';
 import type { IssueSummary } from './api';
 import { ingestFile, ATTACH_ACCEPT } from '@/editor/agent/documentUpload';
 
 type Mode = 'menu' | 'ai' | 'generating';
+
+// Reassuring, on-theme status lines cycled while the AI plans the issue (the
+// long, silent phase before per-page progress starts). They describe what's
+// actually happening so an empty progress bar never reads as "stuck".
+const PLAN_HINTS = [
+  'Choosing a cohesive colour palette and fonts…',
+  'Planning the page flow — cover, features, photo essay…',
+  'Writing the cover and section headlines…',
+  'Sourcing photography for each page…',
+  'Laying out and polishing every page…',
+];
 
 export default function MagazineV2Home() {
   const navigate = useNavigate();
@@ -20,8 +32,10 @@ export default function MagazineV2Home() {
   const [brief, setBrief] = useState('');
   const [pageCount, setPageCount] = useState(8);
   const [progress, setProgress] = useState<{ done: number; total: number; stage: string }>({ done: 0, total: 0, stage: '' });
+  const [hintIdx, setHintIdx] = useState(0); // rotates PLAN_HINTS during the planning phase
   const [error, setError] = useState<string | null>(null);
   const [file, setFile] = useState<File | null>(null); // optional source document to build from
+  const [pubBusy, setPubBusy] = useState<string | null>(null); // issue id being (un)published
   const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const fileRef = useRef<HTMLInputElement>(null);
   const importRef = useRef<HTMLInputElement>(null); // PDF import (pixel-faithful extraction)
@@ -31,7 +45,30 @@ export default function MagazineV2Home() {
     return () => { if (pollRef.current) clearInterval(pollRef.current); };
   }, []);
 
+  // Cycle the reassuring hints only while planning (no per-page progress yet).
+  useEffect(() => {
+    if (mode !== 'generating' || progress.done > 0) { setHintIdx(0); return; }
+    const t = setInterval(() => setHintIdx((i) => (i + 1) % PLAN_HINTS.length), 2500);
+    return () => clearInterval(t);
+  }, [mode, progress.done]);
+
   const openEditor = (id: string) => navigate(`/newsroom/magazine-v2/${id}`);
+
+  // Publish → freezes the issue into the Bulletins newsstand; unpublish hides it.
+  const togglePublish = async (it: IssueSummary) => {
+    if (pubBusy) return;
+    setPubBusy(it.id);
+    try {
+      const published = !!it.publishedIssueId;
+      const { issue } = published ? await api.unpublishIssue(it.id) : await api.publishIssue(it.id);
+      setIssues((prev) => prev.map((r) => (r.id === it.id ? { ...r, status: issue.status, publishedIssueId: issue.publishedIssueId ?? null } : r)));
+      toast.success(published ? 'Removed from Bulletins.' : 'Published to Bulletins.');
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : 'Publish failed');
+    } finally {
+      setPubBusy(null);
+    }
+  };
 
   const startBlank = async () => {
     try {
@@ -147,12 +184,44 @@ export default function MagazineV2Home() {
         <p className="text-sm text-muted-foreground">No magazines yet. Click <b>Create</b> to build one with AI.</p>
       ) : (
         <div className="grid grid-cols-2 gap-3 sm:grid-cols-3">
-          {issues.map((it) => (
-            <button key={it.id} className="rounded border border-border p-4 text-left hover:border-[#7c3aed] hover:bg-muted" onClick={() => openEditor(it.id)}>
-              <div className="truncate font-medium">{it.title}</div>
-              <div className="mt-1 text-xs text-muted-foreground">{it.status} · {it.pageCount} page{it.pageCount === 1 ? '' : 's'}</div>
-            </button>
-          ))}
+          {issues.map((it) => {
+            const published = !!it.publishedIssueId;
+            const busy = pubBusy === it.id;
+            return (
+              <div key={it.id} className="flex flex-col rounded border border-border p-4 hover:border-[#7c3aed]">
+                <button className="min-w-0 flex-1 text-left" onClick={() => openEditor(it.id)}>
+                  <div className="flex items-center gap-1.5">
+                    <span className="truncate font-medium">{it.title}</span>
+                    {published && (
+                      <span className="inline-flex flex-shrink-0 items-center gap-1 rounded-full bg-emerald-100 px-1.5 py-0.5 text-[10px] font-semibold text-emerald-700">
+                        <Globe size={9} /> Live
+                      </span>
+                    )}
+                  </div>
+                  <div className="mt-1 text-xs text-muted-foreground">{it.status} · {it.pageCount} page{it.pageCount === 1 ? '' : 's'}</div>
+                </button>
+                <div className="mt-3 flex items-center gap-2 border-t border-border pt-2.5">
+                  <button
+                    onClick={() => void togglePublish(it)}
+                    disabled={busy}
+                    className={
+                      'inline-flex items-center gap-1 rounded px-2 py-1 text-xs font-medium disabled:opacity-50 ' +
+                      (published ? 'text-muted-foreground hover:bg-muted' : 'bg-[#123c2b] text-white hover:bg-[#0d2d20]')
+                    }
+                    title={published ? 'Remove this edition from Bulletins' : 'Publish this edition to Bulletins'}
+                  >
+                    {busy ? <Loader2 size={12} className="animate-spin" /> : published ? <EyeOff size={12} /> : <Globe size={12} />}
+                    {published ? 'Unpublish' : 'Publish'}
+                  </button>
+                  {published && it.publishedIssueId && (
+                    <a href={`/bulletins/${it.publishedIssueId}`} target="_blank" rel="noreferrer" className="text-xs text-[#7c3aed] hover:underline">
+                      View
+                    </a>
+                  )}
+                </div>
+              </div>
+            );
+          })}
         </div>
       )}
 
@@ -177,13 +246,13 @@ export default function MagazineV2Home() {
                 </button>
                 <button className="flex items-start gap-3 rounded border border-border p-4 text-left hover:border-[#7c3aed] hover:bg-muted" onClick={() => importRef.current?.click()}>
                   <FileScan size={22} className="mt-0.5 text-[#7c3aed]" />
-                  <span><span className="block font-medium">Import a PDF <span className="ml-1 rounded bg-[#7c3aed]/10 px-1.5 py-0.5 text-[10px] font-medium text-[#7c3aed]">keeps layout</span></span><span className="text-xs text-muted-foreground">Digitize an existing PDF into editable pages — same layout, text & images, pixel-faithful.</span></span>
+                  <span><span className="block font-medium">Import a PDF or Word doc <span className="ml-1 rounded bg-[#7c3aed]/10 px-1.5 py-0.5 text-[10px] font-medium text-[#7c3aed]">keeps layout</span></span><span className="text-xs text-muted-foreground">Digitize an existing PDF or .docx into editable pages — layout, text & images, pixel-faithful.</span></span>
                 </button>
                 <button className="flex items-start gap-3 rounded border border-border p-4 text-left hover:border-[#7c3aed] hover:bg-muted" onClick={() => void startBlank()}>
                   <FilePlus size={22} className="mt-0.5" />
                   <span><span className="block font-medium">Blank</span><span className="text-xs text-muted-foreground">Start from an empty page and build it yourself.</span></span>
                 </button>
-                <input ref={importRef} type="file" accept="application/pdf,.pdf" className="hidden" onChange={(e) => { const f = e.target.files?.[0]; if (f) void startImport(f); if (importRef.current) importRef.current.value = ''; }} />
+                <input ref={importRef} type="file" accept="application/pdf,.pdf,application/vnd.openxmlformats-officedocument.wordprocessingml.document,.docx" className="hidden" onChange={(e) => { const f = e.target.files?.[0]; if (f) void startImport(f); if (importRef.current) importRef.current.value = ''; }} />
               </div>
             )}
 
@@ -226,16 +295,29 @@ export default function MagazineV2Home() {
               </div>
             )}
 
-            {mode === 'generating' && (
-              <div className="flex flex-col items-center gap-3 py-6 text-center">
-                <Loader2 size={28} className="animate-spin text-[#7c3aed]" />
-                <div className="font-medium">{progress.stage || 'Generating…'}</div>
-                <div className="text-sm text-muted-foreground">{progress.done > 0 ? `Composed ${progress.done} of ${progress.total} pages` : 'The AI is designing your issue…'}</div>
-                <div className="h-1.5 w-full max-w-xs overflow-hidden rounded-full bg-muted">
-                  <div className="h-full bg-[#7c3aed] transition-all" style={{ width: `${progress.total ? Math.round((progress.done / progress.total) * 100) : 8}%` }} />
+            {mode === 'generating' && (() => {
+              const composing = progress.done > 0; // per-page progress has started
+              const pct = composing && progress.total ? Math.round((progress.done / progress.total) * 100) : 0;
+              return (
+                <div className="flex flex-col items-center gap-3 py-6 text-center">
+                  <Loader2 size={28} className="animate-spin text-[#7c3aed]" />
+                  <div className="font-medium">{composing ? 'Composing your pages' : 'Designing your issue'}</div>
+                  <div className="text-sm text-muted-foreground">
+                    {composing ? `Composed ${progress.done} of ${progress.total} pages` : PLAN_HINTS[hintIdx]}
+                  </div>
+                  <div className="h-1.5 w-full max-w-xs overflow-hidden rounded-full bg-muted">
+                    {composing ? (
+                      // Real progress once pages start landing.
+                      <div className="h-full bg-[#7c3aed] transition-all" style={{ width: `${pct}%` }} />
+                    ) : (
+                      // Planning phase: a pulsing partial bar reads as "working", not stuck.
+                      <div className="h-full w-1/3 animate-pulse rounded-full bg-[#7c3aed]" />
+                    )}
+                  </div>
+                  <div className="text-xs text-muted-foreground">This usually takes 20–60 seconds — you can leave this open.</div>
                 </div>
-              </div>
-            )}
+              );
+            })()}
           </div>
         </div>
       )}

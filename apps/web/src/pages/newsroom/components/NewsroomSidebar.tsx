@@ -1,4 +1,5 @@
 import { Filter } from 'lucide-react';
+import { useNavigate } from 'react-router-dom';
 import { cn } from '@/lib/utils';
 import type { AuthUser } from '@/stores/authStore';
 import type { Horse } from '@/types/horse';
@@ -36,6 +37,7 @@ export function NewsroomSidebar({
   racingEntries,
   currentUser,
 }: NewsroomSidebarProps) {
+  const navigate = useNavigate();
   return (
     <aside
       className={cn(
@@ -88,7 +90,8 @@ export function NewsroomSidebar({
                 <button
                   key={item.id}
                   onClick={() => {
-                    setActiveNav(item.id);
+                    if (item.href) navigate(item.href);
+                    else setActiveNav(item.id);
                   }}
                   className={cn(
                     'w-full flex items-center gap-2.5 px-3 py-2 text-sm font-medium transition-colors rounded-sm mx-1',

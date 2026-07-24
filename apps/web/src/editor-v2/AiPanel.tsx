@@ -7,15 +7,21 @@
 // rev-guarded element CRUD (store.applyAllProposals).
 
 import { useEffect, useRef, useState } from 'react';
-import { Sparkles, Send, Loader2, Check, X, Plus, Pencil, Trash2, Paperclip, FileText } from 'lucide-react';
+import { Sparkles, Send, Loader2, Check, X, Plus, Pencil, Trash2, Paperclip, FileText, FilePlus2, ArrowLeftRight, Image as ImageIcon, Mic, Volume2, VolumeX } from 'lucide-react';
+import type { UIMessage } from 'ai';
 import { toast } from 'sonner';
 import { MarkdownMessage } from '@/components/MarkdownMessage';
 import { ingestFile, ATTACH_ACCEPT } from '@/editor/agent/documentUpload';
+import { useVoiceChat } from '@/agent/voice/useVoiceChat';
 import { useEditorStore } from './store';
 import type { AgentProposal } from './model';
 
 const kindIcon = (k: AgentProposal['kind']) =>
-  k === 'add' ? <Plus size={11} /> : k === 'delete' ? <Trash2 size={11} /> : <Pencil size={11} />;
+  k === 'add' ? <Plus size={11} />
+  : k === 'delete' || k === 'remove-page' ? <Trash2 size={11} />
+  : k === 'add-page' || k === 'generate-pages' ? <FilePlus2 size={11} />
+  : k === 'reorder-page' ? <ArrowLeftRight size={11} />
+  : <Pencil size={11} />;
 
 function thumbOf(p: AgentProposal): string | undefined {
   const url = (p.element?.image?.url ?? p.patch?.image?.url) as string | undefined;
@@ -37,9 +43,28 @@ export function AiPanel() {
   const [file, setFile] = useState<File | null>(null); // optional source doc to fill this page from
   const [docText, setDocText] = useState<string | null>(null); // cached ingest of `file`
   const [ingesting, setIngesting] = useState(false);
+  const [imgUrl, setImgUrl] = useState<string | null>(null); // object URL for an attached image (docked preview)
+  const isImage = !!file && file.type.startsWith('image/');
+
+  // Build/revoke an object URL so an attached image can be previewed inline.
+  useEffect(() => {
+    if (!file || !file.type.startsWith('image/')) { setImgUrl(null); return; }
+    const url = URL.createObjectURL(file);
+    setImgUrl(url);
+    return () => URL.revokeObjectURL(url);
+  }, [file]);
   const scrollRef = useRef<HTMLDivElement>(null);
   const fileRef = useRef<HTMLInputElement>(null);
   const showTray = proposals.length > 0 && proposalsPageId === currentPageId;
+
+  // Push-to-talk voice + read-aloud, shared with the app's other AI chats.
+  // Adapt the store's {role,content} thread to the UIMessage shape the hook reads.
+  const voice = useVoiceChat({
+    messages: chat.map((m, i) => ({ id: `m${i}`, role: m.role, parts: [{ type: 'text', text: m.content }] })) as unknown as UIMessage[],
+    send: (t) => void sendChat(t),
+    busy: chatBusy,
+    active: true,
+  });
 
   useEffect(() => {
     scrollRef.current?.scrollTo({ top: scrollRef.current.scrollHeight, behavior: 'smooth' });
@@ -79,6 +104,17 @@ export function AiPanel() {
           <div className="text-[12px] font-bold" style={{ color: 'var(--parchment)' }}>Studio Assistant</div>
           <div className="text-[10px]" style={{ color: 'var(--gold-mid)' }}>Edits this page — staged for your approval</div>
         </div>
+        {voice.voiceReady && (
+          <button
+            onClick={() => voice.setVoiceMode((v) => !v)}
+            aria-pressed={voice.voiceMode}
+            title={voice.voiceMode ? 'Reading replies aloud — click to mute' : 'Read replies aloud'}
+            className={'ml-auto flex h-7 w-7 items-center justify-center rounded-full ' + (voice.voiceMode ? 'text-[#0b1220]' : 'text-white/60 hover:bg-white/10')}
+            style={voice.voiceMode ? { background: 'var(--gold-bright)' } : undefined}
+          >
+            {voice.voiceMode ? <Volume2 size={14} /> : <VolumeX size={14} />}
+          </button>
+        )}
       </div>
 
       {/* Conversation */}
@@ -149,15 +185,30 @@ export function AiPanel() {
           </div>
         )}
         {file && (
-          <div className="mb-1.5 flex items-center gap-1.5 rounded-sm border border-emerald-400/30 bg-emerald-400/10 px-2 py-1 text-[10px] text-emerald-200">
-            {ingesting ? <Loader2 size={11} className="animate-spin" /> : <FileText size={11} />}
-            <span className="truncate">{ingesting ? `Reading ${file.name}…` : file.name}</span>
-            {!ingesting && (
-              <button onClick={() => { setFile(null); setDocText(null); if (fileRef.current) fileRef.current.value = ''; }} aria-label="Remove document" className="ml-auto text-emerald-200/60 hover:text-emerald-100"><X size={11} /></button>
-            )}
+          <div className="mb-1.5 overflow-hidden rounded-sm border border-emerald-400/30 bg-emerald-400/10">
+            <div className="flex items-center gap-1.5 px-2 py-1 text-[10px] text-emerald-200">
+              {ingesting ? <Loader2 size={11} className="animate-spin" /> : isImage ? <ImageIcon size={11} /> : <FileText size={11} />}
+              <span className="truncate">{ingesting ? `Reading ${file.name}…` : file.name}</span>
+              {!ingesting && (
+                <button onClick={() => { setFile(null); setDocText(null); if (fileRef.current) fileRef.current.value = ''; }} aria-label="Remove document" className="ml-auto text-emerald-200/60 hover:text-emerald-100"><X size={11} /></button>
+              )}
+            </div>
+            {/* Docked preview: the image itself, or a snippet of the ingested text. */}
+            {isImage && imgUrl ? (
+              <img src={imgUrl} alt={file.name} className="max-h-40 w-full bg-black/20 object-contain" />
+            ) : docText ? (
+              <div className="max-h-28 overflow-y-auto whitespace-pre-wrap border-t border-emerald-400/20 px-2 py-1.5 text-[10px] leading-snug text-white/60">
+                {docText.slice(0, 1200)}{docText.length > 1200 ? '…' : ''}
+              </div>
+            ) : null}
           </div>
         )}
         <input ref={fileRef} type="file" accept={ATTACH_ACCEPT} className="hidden" onChange={(e) => { setFile(e.target.files?.[0] ?? null); setDocText(null); }} />
+        {voice.recording && (
+          <div className="mb-1.5 flex items-center gap-1.5 text-[10px] italic text-white/50">
+            <span className="h-1.5 w-1.5 animate-pulse rounded-full bg-red-500" /> {voice.caption || 'Listening…'}
+          </div>
+        )}
         <form onSubmit={(e) => { e.preventDefault(); void send(); }} className="flex items-end gap-2">
           <button
             type="button"
@@ -168,6 +219,21 @@ export function AiPanel() {
           >
             <Paperclip size={14} />
           </button>
+          {voice.voiceReady && (
+            <button
+              type="button"
+              onClick={() => void voice.toggleMic()}
+              disabled={voice.transcribing}
+              aria-label={voice.recording ? 'Stop and send' : 'Speak your request'}
+              title={voice.recording ? 'Stop & send' : 'Speak your request'}
+              className={
+                'flex h-8 w-8 flex-shrink-0 items-center justify-center rounded-full ' +
+                (voice.recording ? 'animate-pulse bg-red-500 text-white' : 'border border-white/15 text-white/60 hover:bg-white/10 hover:text-white/90')
+              }
+            >
+              {voice.transcribing ? <Loader2 size={14} className="animate-spin" /> : <Mic size={14} />}
+            </button>
+          )}
           <textarea
             value={input}
             rows={1}

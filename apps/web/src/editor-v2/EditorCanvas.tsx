@@ -9,11 +9,12 @@
 // updateLocal (no server call); pointerup commits once (one undo entry).
 // ---------------------------------------------------------------------------
 
-import React, { useEffect, useRef } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import { useEditorStore } from './store';
 import { IssuePageCanvas } from './IssuePageCanvas';
-import { pctRect, screenToPage, clampRect } from './geometry';
-import type { MagazineElement } from './model';
+import { pctRect, clampRect } from './geometry';
+import * as api from './api';
+import type { MagazineElement, MagazinePageV2 } from './model';
 
 type Mode = 'move' | 'n' | 's' | 'e' | 'w' | 'ne' | 'nw' | 'se' | 'sw';
 const HANDLES: { m: Mode; cx: number; cy: number; cur: string }[] = [
@@ -37,7 +38,9 @@ function applyDrag(o: MagazineElement, mode: Mode, dx: number, dy: number) {
   return { x, y, w, h };
 }
 
-export function EditorCanvas() {
+// The interactive editing layer for the ACTIVE page (drag/resize/select). Rendered
+// inside the multi-page stack for whichever page is currently open.
+function ActivePageLayer() {
   const page = useEditorStore((s) => s.page);
   const selectedId = useEditorStore((s) => s.selectedId);
   const zoomWidth = useEditorStore((s) => s.zoomWidth);
@@ -73,9 +76,7 @@ export function EditorCanvas() {
     return () => window.removeEventListener('keydown', onKey);
   }, [selectedId, page, select, commit, deleteElement]);
 
-  if (!page) {
-    return <div className="flex h-full items-center justify-center text-sm text-muted-foreground">No page loaded.</div>;
-  }
+  if (!page) return null;
 
   const startDrag = (e: React.PointerEvent, element: MagazineElement, mode: Mode) => {
     if (!canManage && mode !== 'move') { /* collaborators may still move/edit assigned pages */ }
@@ -111,10 +112,9 @@ export function EditorCanvas() {
   const selected = page.elements.find((x) => x.id === selectedId) ?? null;
 
   return (
-    <div className="flex justify-center py-8">
-      <div style={{ width: zoomWidth }} className="relative shrink-0">
-        {/* Base: the real published renderer */}
-        <IssuePageCanvas page={page} />
+    <div style={{ width: zoomWidth }} className="relative shrink-0">
+      {/* Base: the real published renderer */}
+      <IssuePageCanvas page={page} />
         {/* Interaction overlay (same box via inset-0) */}
         <div
           ref={overlayRef}
@@ -156,7 +156,93 @@ export function EditorCanvas() {
             </div>
           )}
         </div>
-      </div>
+    </div>
+  );
+}
+
+// ── The multi-page vertical scroll stack ──────────────────────────────────────
+// Renders every page top-to-bottom. The OPEN page gets the interactive editing
+// layer; the rest are read-only previews, lazy-loaded when they scroll near the
+// viewport (IntersectionObserver), and clickable to start editing.
+export function EditorCanvas() {
+  const issueId = useEditorStore((s) => s.issueId);
+  const pages = useEditorStore((s) => s.pages);
+  const currentPageId = useEditorStore((s) => s.currentPageId);
+  const openPage = useEditorStore((s) => s.openPage);
+  const zoomWidth = useEditorStore((s) => s.zoomWidth);
+  const [cache, setCache] = useState<Record<string, MagazinePageV2>>({});
+  const rootRef = useRef<HTMLDivElement>(null);
+
+  // Evict the page being edited from the preview cache, so when it later returns
+  // to a preview it re-fetches the freshly-edited content (never a stale copy).
+  useEffect(() => {
+    if (!currentPageId) return;
+    setCache((c) => {
+      if (!c[currentPageId]) return c;
+      const next = { ...c };
+      delete next[currentPageId];
+      return next;
+    });
+  }, [currentPageId]);
+
+  // Lazy-fetch a non-active page's full content when its placeholder nears view.
+  useEffect(() => {
+    const root = rootRef.current;
+    if (!root || !issueId) return;
+    const io = new IntersectionObserver(
+      (entries) => {
+        for (const en of entries) {
+          if (!en.isIntersecting) continue;
+          const pid = (en.target as HTMLElement).dataset.lazy;
+          if (pid && !cache[pid]) {
+            api.getPage(issueId, pid).then((p) => setCache((c) => ({ ...c, [pid]: p }))).catch(() => {});
+          }
+        }
+      },
+      { root, rootMargin: '600px' },
+    );
+    root.querySelectorAll('[data-lazy]').forEach((el) => io.observe(el));
+    return () => io.disconnect();
+  }, [issueId, pages, cache, currentPageId]);
+
+  if (!pages.length) {
+    return <div className="flex h-full items-center justify-center text-sm text-white/40">No pages.</div>;
+  }
+
+  return (
+    <div ref={rootRef} className="flex flex-col items-center gap-8 py-8">
+      {pages.map((sum) => {
+        const active = sum.id === currentPageId;
+        const preview = cache[sum.id];
+        return (
+          <div key={sum.id} className="shrink-0" style={{ width: zoomWidth }}>
+            <div className="mb-1.5 flex items-center justify-between text-[11px] text-white/40">
+              <span>Page {sum.index + 1}</span>
+              {active && <span className="font-semibold" style={{ color: 'var(--gold-bright)' }}>editing</span>}
+            </div>
+            {active ? (
+              <ActivePageLayer />
+            ) : preview ? (
+              <button
+                onClick={() => void openPage(sum.id)}
+                className="block w-full ring-1 ring-white/10 transition hover:ring-2 hover:ring-[#7c3aed]"
+                title="Click to edit this page"
+              >
+                <IssuePageCanvas page={preview} />
+              </button>
+            ) : (
+              <button
+                data-lazy={sum.id}
+                onClick={() => void openPage(sum.id)}
+                className="flex w-full items-center justify-center bg-white/[0.04] text-white/30 ring-1 ring-white/10 hover:ring-[#7c3aed]"
+                style={{ aspectRatio: `${sum.width || 1275} / ${sum.height || 1650}` }}
+              >
+                <span className="text-xs">Page {sum.index + 1} — click to edit</span>
+              </button>
+            )}
+          </div>
+        );
+      })}
     </div>
   );
 }

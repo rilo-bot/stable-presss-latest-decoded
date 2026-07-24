@@ -22,8 +22,12 @@ export const PAGE_H = 1650;
 // ── Source-file upload caps (enforced by the v2 issue-create route, Phase 1) ──
 /** Max source PDF size accepted for import. */
 export const MAX_SOURCE_BYTES = 150 * 1024 * 1024; // 150 MB
-/** Accepted source mime types. DOCX (application/vnd…document) is deferred. */
-export const ALLOWED_SOURCE_MIME = new Set<string>(['application/pdf']);
+/** Accepted source mime types. DOCX is converted to PDF by the worker
+ *  (LibreOffice headless) before extraction — see apps/worker/src/lib/docx.ts. */
+export const ALLOWED_SOURCE_MIME = new Set<string>([
+  'application/pdf',
+  'application/vnd.openxmlformats-officedocument.wordprocessingml.document', // .docx
+]);
 /** Hard ceiling on pages digitised/generated per issue. */
 export const MAX_PAGES_PER_ISSUE = 120;
 

@@ -39,6 +39,7 @@ import {
 } from './templates.js';
 import { validatePageLayout } from './layoutValidate.js';
 import { isStockConfigured, fetchAndStoreStock, type StockOrientation } from './stock.js';
+import { isImageGenConfigured, generateAndStoreImage } from './imagegen.js';
 
 const GEN_PAGE_CONCURRENCY = Math.max(1, Number(process.env.MAGAZINE_V2_GEN_CONCURRENCY ?? 2));
 
@@ -417,8 +418,13 @@ async function curateFills(
     } else if (slot.role === 'image') {
       const brief = draft.images[slot.id];
       let stored: { url: string; assetId: string; alt: string } | null = null;
-      if (ctx && brief && isStockConfigured()) {
-        stored = await fetchAndStoreStock({ query: brief, orientation: slotOrientation(slot.box) }, ctx);
+      if (ctx && brief) {
+        const orientation = slotOrientation(slot.box);
+        // Prefer an AI-generated editorial photo (bespoke to the brief); fall back
+        // to Pexels stock, then to a tinted palette block. All degrade gracefully
+        // when a provider/storage isn't configured (e.g. local dev without S3).
+        if (isImageGenConfigured()) stored = await generateAndStoreImage({ prompt: brief, orientation }, ctx);
+        if (!stored && isStockConfigured()) stored = await fetchAndStoreStock({ query: brief, orientation }, ctx);
       }
       fills.push(stored ? { slotId: slot.id, image: stored } : { slotId: slot.id, shapeFill: palette.secondary });
     }

@@ -6,9 +6,9 @@
 // is a horizontal tab strip at the top of the canvas column (v2 edits one page at
 // a time). The AI assistant is the proposal-based editing agent (AiPanel).
 
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
-import { ArrowLeft, Undo2, Redo2, Plus, Minus, Copy, Trash2, ChevronLeft, ChevronRight, Sparkles, Loader2 } from 'lucide-react';
+import { ArrowLeft, Undo2, Redo2, Plus, Minus, Copy, Trash2, ChevronLeft, ChevronRight, Sparkles, Loader2, Wand2, WandSparkles, RotateCcw } from 'lucide-react';
 import { useEditorStore } from './store';
 import { EditorCanvas } from './EditorCanvas';
 import { Inspector } from './Inspector';
@@ -47,6 +47,31 @@ export default function MagazineEditorV2() {
   const [pagesAiOpen, setPagesAiOpen] = useState(false);
   const [aiCount, setAiCount] = useState(2);
   const [aiTopic, setAiTopic] = useState('');
+
+  // Resizable side panes (persisted). Center canvas always flexes between them.
+  const [panes, setPanes] = useState<{ leftW: number; rightW: number }>(() => {
+    try {
+      const saved = JSON.parse(localStorage.getItem('mag2.v2.paneWidths') || 'null');
+      if (saved && typeof saved.leftW === 'number' && typeof saved.rightW === 'number') return saved;
+    } catch { /* ignore */ }
+    return { leftW: 340, rightW: 300 };
+  });
+  useEffect(() => {
+    try { localStorage.setItem('mag2.v2.paneWidths', JSON.stringify(panes)); } catch { /* ignore */ }
+  }, [panes]);
+  const dragging = useRef<null | 'left' | 'right'>(null);
+  const startDivider = (side: 'left' | 'right') => (e: React.PointerEvent) => {
+    dragging.current = side;
+    (e.currentTarget as HTMLElement).setPointerCapture(e.pointerId);
+  };
+  const onBodyMove = (e: React.PointerEvent) => {
+    if (!dragging.current) return;
+    const MIN = 240, MAX = 560;
+    if (dragging.current === 'left') setPanes((p) => ({ ...p, leftW: Math.max(MIN, Math.min(MAX, e.clientX)) }));
+    else setPanes((p) => ({ ...p, rightW: Math.max(MIN, Math.min(MAX, window.innerWidth - e.clientX)) }));
+  };
+  const endDivider = () => { dragging.current = null; };
+  const divider = 'w-1 flex-shrink-0 cursor-col-resize bg-white/5 hover:bg-[var(--gold-bright)]/60';
 
   useEffect(() => {
     if (id) void s.load(id);
@@ -125,6 +150,26 @@ export default function MagazineEditorV2() {
             <button key={k} className={ghost + ' capitalize'} onClick={() => add(k)}>{k}</button>
           ))}
 
+          {/* AI text pass — Fill (write empty + tighten) / Adjust (tighten) */}
+          <div className="mx-0.5 h-5 w-px bg-white/10" />
+          <button className={ghost} disabled={s.formatBusy || !s.page} onClick={() => void s.runFormat('fill')} title="Fill empty boxes & tighten crowded text (AI)">
+            {s.formatBusy ? <Loader2 size={13} className="animate-spin" /> : <Wand2 size={13} />} Fill
+          </button>
+          <button className={ghost} disabled={s.formatBusy || !s.page} onClick={() => void s.runFormat('adjust')} title="Tighten crowded text so it reads at a comfortable size (AI)">
+            <WandSparkles size={13} /> Adjust
+          </button>
+
+          {/* Reset — start over from a single blank page (owner only) */}
+          {s.canManage() && (
+            <button
+              className={ghost}
+              onClick={() => { if (window.confirm('Reset this magazine to a single blank page? This cannot be undone.')) void s.reset(); }}
+              title="Start over (single blank page)"
+            >
+              <RotateCcw size={13} /> Reset
+            </button>
+          )}
+
           {/* AI assistant toggle */}
           <button
             onClick={() => setAsstOpen((o) => !o)}
@@ -138,12 +183,15 @@ export default function MagazineEditorV2() {
         </div>
       </div>
 
-      {/* Body: assistant · canvas · inspector */}
-      <div className="flex min-h-0 flex-1">
+      {/* Body: assistant · canvas · inspector (resizable side panes) */}
+      <div className="flex min-h-0 flex-1" onPointerMove={onBodyMove} onPointerUp={endDivider}>
         {asstOpen && (
-          <div className="w-[340px] flex-shrink-0 overflow-hidden border-r border-white/10">
-            <AiPanel />
-          </div>
+          <>
+            <div style={{ width: panes.leftW }} className="flex-shrink-0 overflow-hidden border-r border-white/10">
+              <AiPanel />
+            </div>
+            <div className={divider} onPointerDown={startDivider('left')} title="Drag to resize" />
+          </>
         )}
 
         {/* Canvas column (page tabs + scroll area) */}
@@ -227,7 +275,8 @@ export default function MagazineEditorV2() {
         </div>
 
         {/* Inspector */}
-        <div className="w-[300px] flex-shrink-0 overflow-y-auto border-l border-white/10 bg-[#0d1626]">
+        <div className={divider} onPointerDown={startDivider('right')} title="Drag to resize" />
+        <div style={{ width: panes.rightW }} className="flex-shrink-0 overflow-y-auto border-l border-white/10 bg-[#0d1626]">
           <Inspector />
         </div>
       </div>

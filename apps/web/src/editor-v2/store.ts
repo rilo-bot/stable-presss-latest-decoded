@@ -37,6 +37,7 @@ interface EditorState {
   loading: boolean;
   error: string | null;
   generating: boolean; // an "add AI pages" run is in flight (issue is processing)
+  formatBusy: boolean; // a Fill/Adjust text pass is running
   undoStack: UndoEntry[];
   redoStack: UndoEntry[];
 
@@ -65,11 +66,13 @@ interface EditorState {
   redo: () => Promise<void>;
 
   addPage: () => Promise<void>;
-  generatePages: (count: number, topic?: string) => Promise<void>;
+  generatePages: (count: number, topic?: string, atIndex?: number) => Promise<void>;
   duplicatePage: (pageId: string) => Promise<void>;
   deletePage: (pageId: string) => Promise<void>;
   reorder: (from: number, to: number) => Promise<void>;
   rename: (title: string) => Promise<void>;
+  reset: () => Promise<void>;
+  runFormat: (mode: 'fill' | 'adjust') => Promise<void>;
 }
 
 const el = (p: MagazinePageV2 | null, id: string | null) => p?.elements.find((e) => e.id === id) ?? null;
@@ -85,6 +88,7 @@ export const useEditorStore = create<EditorState>((set, get) => ({
   loading: false,
   error: null,
   generating: false,
+  formatBusy: false,
   undoStack: [],
   redoStack: [],
   chat: [],
@@ -225,12 +229,12 @@ export const useEditorStore = create<EditorState>((set, get) => ({
     }
   },
 
-  generatePages: async (count, topic) => {
+  generatePages: async (count, topic, atIndex) => {
     const { issueId, generating } = get();
     if (!issueId || generating) return;
     set({ generating: true });
     try {
-      await api.generatePages(issueId, count, topic || undefined);
+      await api.generatePages(issueId, count, topic || undefined, atIndex);
     } catch (e) {
       set({ generating: false });
       toast.error(e instanceof Error ? e.message : 'Failed to start generation');
@@ -303,6 +307,44 @@ export const useEditorStore = create<EditorState>((set, get) => ({
     }
   },
 
+  reset: async () => {
+    const s = get();
+    if (!s.issueId) return;
+    try {
+      const { issue, pages } = await api.resetIssue(s.issueId);
+      set({ issue, pages, selectedId: null, undoStack: [], redoStack: [], proposals: [], proposalsPageId: null });
+      if (pages[0]) await get().openPage(pages[0].id);
+      toast.success('Reset to a blank page.');
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : 'Failed to reset');
+    }
+  },
+
+  // Fill (write empty + tighten crowded) / Adjust (tighten crowded) — the server
+  // returns text edits; we auto-apply each through the undoable element CRUD.
+  runFormat: async (mode) => {
+    const s = get();
+    if (!s.issueId || !s.currentPageId || !s.page || s.formatBusy) return;
+    set({ formatBusy: true });
+    try {
+      const { edits, note } = await api.formatPage(s.issueId, s.currentPageId, mode);
+      if (edits.length === 0) {
+        toast.message(note || 'Nothing to change on this page.');
+        return;
+      }
+      for (const e of edits) {
+        const before = get().page?.elements.find((x) => x.id === e.elementId);
+        if (!before || before.type !== 'text' || !before.text) continue;
+        await get().commit(e.elementId, { text: { ...before.text, content: e.content } }, before);
+      }
+      toast.success(note || `${mode === 'fill' ? 'Filled' : 'Adjusted'} ${edits.length} text block${edits.length === 1 ? '' : 's'}. Undo with Ctrl+Z.`);
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : 'Text pass failed');
+    } finally {
+      set({ formatBusy: false });
+    }
+  },
+
   // ── AI editing assistant ──
   sendChat: async (text, sourceText) => {
     const s = get();
@@ -330,9 +372,13 @@ export const useEditorStore = create<EditorState>((set, get) => ({
   // store methods), so sequential awaits keep the token current.
   applyAllProposals: async () => {
     const s = get();
-    if (!s.page || s.proposalsPageId !== s.currentPageId || s.proposals.length === 0) return;
+    if (!s.page || s.proposalsPageId !== s.currentPageId || s.proposals.length === 0 || !s.issueId) return;
+    const issueId = s.issueId;
     const idMap = new Map<string, string>();
-    for (const p of s.proposals) {
+    const isPageKind = (k: AgentProposal['kind']) => k === 'add-page' || k === 'remove-page' || k === 'reorder-page' || k === 'generate-pages';
+
+    // 1) Element edits on the current page (rev-guarded CRUD; add → id remap).
+    for (const p of s.proposals.filter((x) => !isPageKind(x.kind))) {
       try {
         if (p.kind === 'add' && p.element) {
           const newId = await get().addElement(p.element);
@@ -346,8 +392,38 @@ export const useEditorStore = create<EditorState>((set, get) => ({
         /* keep applying the rest */
       }
     }
+
+    // 2) Page-structure edits — indices resolved against the LATEST page list each
+    // step (earlier ops shift positions). Blank/reorder/remove refresh summaries;
+    // generate-pages hands off to the polling generation flow.
+    let deferGenerate: { count: number; topic?: string; atIndex?: number } | null = null;
+    for (const p of s.proposals.filter((x) => isPageKind(x.kind))) {
+      try {
+        if (p.kind === 'add-page') {
+          const { pages } = await api.addPage(issueId, p.atIndex);
+          set({ pages });
+        } else if (p.kind === 'reorder-page' && p.from != null && p.to != null) {
+          const { pages } = await api.reorderPages(issueId, p.from, p.to);
+          set({ pages });
+        } else if (p.kind === 'remove-page' && p.targetIndex != null) {
+          const target = get().pages[p.targetIndex];
+          if (target && get().pages.length > 1) {
+            const { pages } = await api.deletePage(issueId, target.id);
+            set({ pages });
+            if (get().currentPageId === target.id && pages[0]) await get().openPage(pages[0].id);
+          }
+        } else if (p.kind === 'generate-pages' && p.count) {
+          // Only one generation run per apply (they can't overlap while processing).
+          deferGenerate = { count: p.count, topic: p.topic, atIndex: p.atIndex };
+        }
+      } catch {
+        /* keep applying the rest */
+      }
+    }
+
     set({ proposals: [], proposalsPageId: null });
     toast.success('Applied the assistant’s changes.');
+    if (deferGenerate) await get().generatePages(deferGenerate.count, deferGenerate.topic, deferGenerate.atIndex);
   },
 
   discardProposals: () => set({ proposals: [], proposalsPageId: null }),

@@ -5,12 +5,16 @@
 // to v2's free-form elements. Every change is an undoable commit (before = the
 // element as it was when editing started); no direct API calls here.
 
+import { useEffect, useState, type ReactNode } from 'react';
 import { useEditorStore } from './store';
 import type { MagazineElement } from './model';
+import * as api from './api';
+import type { MediaAsset } from './api';
 import { Section, Stepper, Segmented, ColorControl } from '@/editor/inspector/controls';
 import {
   MousePointerClick, Type, Image as ImageIcon, QrCode, Square,
   AlignLeft, AlignCenter, AlignRight, ArrowUpToLine, FoldVertical, ArrowDownToLine, Trash2,
+  Sliders, Images, Loader2,
 } from 'lucide-react';
 
 const KIND_META = {
@@ -33,25 +37,50 @@ const FONT_OPTIONS: { label: string; stack: string }[] = [
 
 export function Inspector() {
   const page = useEditorStore((s) => s.page);
-  const pages = useEditorStore((s) => s.pages);
-  const currentPageId = useEditorStore((s) => s.currentPageId);
   const selectedId = useEditorStore((s) => s.selectedId);
-  const commit = useEditorStore((s) => s.commit);
-  const deleteElement = useEditorStore((s) => s.deleteElement);
+  const [tab, setTab] = useState<'element' | 'assets'>('element');
 
   const el = page?.elements.find((e) => e.id === selectedId) ?? null;
 
-  if (!el) {
-    return (
-      <div className="flex h-full flex-col items-center justify-center px-6 text-center">
-        <MousePointerClick size={26} className="mb-3 text-white/25" />
-        <p className="text-sm font-semibold text-white/70">Nothing selected</p>
-        <p className="mt-1 text-xs leading-relaxed text-white/40">
-          Click any headline, paragraph, photo, or shape on the page to edit it here — or ask the Studio Assistant.
-        </p>
+  const tabBtn = (id: 'element' | 'assets', label: string, icon: ReactNode) => (
+    <button
+      onClick={() => setTab(id)}
+      className={
+        'flex flex-1 items-center justify-center gap-1.5 border-b-2 py-2.5 text-xs font-semibold transition-colors ' +
+        (tab === id ? 'border-sky-400 text-white' : 'border-transparent text-white/45 hover:text-white/70')
+      }
+    >
+      {icon} {label}
+    </button>
+  );
+
+  return (
+    <div className="flex h-full flex-col">
+      <div className="flex flex-shrink-0 border-b border-white/10">
+        {tabBtn('element', 'Element', <Sliders size={13} />)}
+        {tabBtn('assets', 'Assets', <Images size={13} />)}
       </div>
-    );
-  }
+      <div className="min-h-0 flex-1">
+        {tab === 'assets' ? <AssetsTab /> : el ? <ElementPanel el={el} /> : (
+          <div className="flex h-full flex-col items-center justify-center px-6 text-center">
+            <MousePointerClick size={26} className="mb-3 text-white/25" />
+            <p className="text-sm font-semibold text-white/70">Nothing selected</p>
+            <p className="mt-1 text-xs leading-relaxed text-white/40">
+              Click any headline, paragraph, photo, or shape on the page to edit it here — or open <b>Assets</b> to place a photo.
+            </p>
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
+// ── The per-element editing panel (unchanged controls, now tabbed) ────────────
+function ElementPanel({ el }: { el: MagazineElement }) {
+  const pages = useEditorStore((s) => s.pages);
+  const currentPageId = useEditorStore((s) => s.currentPageId);
+  const commit = useEditorStore((s) => s.commit);
+  const deleteElement = useEditorStore((s) => s.deleteElement);
 
   // before = current element snapshot, so each inspector change is one undo step.
   const set = (patch: Partial<MagazineElement>) => void commit(el.id, patch, { ...el });
@@ -213,6 +242,92 @@ export function Inspector() {
             <Trash2 size={13} /> Delete element
           </button>
         </div>
+      </div>
+    </div>
+  );
+}
+
+// ── The media library: browse the issue's photos and place them ───────────────
+// Clicking a thumbnail sets the selected image element's source, or (if nothing
+// image-shaped is selected) drops a new image element onto the current page.
+function AssetsTab() {
+  const issueId = useEditorStore((s) => s.issueId);
+  const selectedId = useEditorStore((s) => s.selectedId);
+  const page = useEditorStore((s) => s.page);
+  const commit = useEditorStore((s) => s.commit);
+  const addElement = useEditorStore((s) => s.addElement);
+  const [assets, setAssets] = useState<MediaAsset[]>([]);
+  const [loading, setLoading] = useState(true);
+
+  useEffect(() => {
+    if (!issueId) return;
+    let active = true;
+    setLoading(true);
+    api.listMedia(issueId)
+      .then((a) => { if (active) setAssets(a); })
+      .catch(() => {})
+      .finally(() => { if (active) setLoading(false); });
+    return () => { active = false; };
+    // Re-fetch when the page's rev changes (a stock/AI add creates new media).
+  }, [issueId, page?.rev]);
+
+  const selEl = page?.elements.find((e) => e.id === selectedId) ?? null;
+
+  const place = (a: MediaAsset) => {
+    if (selEl && selEl.type === 'image' && selEl.image) {
+      void commit(selEl.id, { image: { ...selEl.image, url: a.url, assetId: a.id, alt: a.alt } }, { ...selEl });
+    } else if (page) {
+      const w = Math.round(page.width * 0.5);
+      const h = Math.round(w * 0.66);
+      const topZ = page.elements.reduce((m, e) => Math.max(m, e.zIndex), 0);
+      void addElement({
+        type: 'image',
+        x: Math.round(page.width / 2 - w / 2),
+        y: Math.round(page.height / 3),
+        w, h,
+        rotation: 0,
+        zIndex: topZ + 1,
+        locked: false,
+        source: 'manual',
+        image: { url: a.url, assetId: a.id, alt: a.alt, fit: 'cover' },
+      });
+    }
+  };
+
+  if (loading) {
+    return (
+      <div className="flex h-full items-center justify-center text-white/40">
+        <Loader2 size={16} className="mr-2 animate-spin" /> Loading media…
+      </div>
+    );
+  }
+  if (assets.length === 0) {
+    return (
+      <div className="flex h-full flex-col items-center justify-center px-6 text-center">
+        <Images size={26} className="mb-3 text-white/25" />
+        <p className="text-sm font-semibold text-white/70">No media yet</p>
+        <p className="mt-1 text-xs leading-relaxed text-white/40">
+          Photos appear here when you generate a magazine, import a PDF, or ask the Studio Assistant to add a photo.
+        </p>
+      </div>
+    );
+  }
+  return (
+    <div className="h-full overflow-y-auto p-3">
+      <p className="mb-2 text-[11px] text-white/45">
+        {selEl?.type === 'image' ? 'Click a photo to set the selected image.' : 'Click a photo to place it on the page.'}
+      </p>
+      <div className="grid grid-cols-2 gap-2">
+        {assets.map((a) => (
+          <button
+            key={a.id}
+            onClick={() => place(a)}
+            className="relative aspect-[4/3] overflow-hidden rounded border border-white/10 hover:border-sky-400"
+            title={a.alt || a.kind}
+          >
+            <img src={a.url} alt={a.alt} className="h-full w-full object-cover" />
+          </button>
+        ))}
       </div>
     </div>
   );

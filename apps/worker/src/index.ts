@@ -17,12 +17,23 @@
 import './env.js'; // MUST be first: loads MONGODB_URI before db.ts reads it.
 import { startQueueLoop, type JobHandlers } from './queue.js';
 import { processIssue, processPageJob } from './jobs/processIssue.js';
+import { generateMagazineIssue, generateMorePages } from '../../server/src/lib/magazineV2/generate.js';
 
 const handlers: JobHandlers = {
   // Digitize a freshly-uploaded PDF into pages + editable elements.
   processIssue: (payload) => processIssue(payload as { issueId: string }),
   // Re-run extraction for a single page (the retry endpoint).
   processPage: (payload) => processPageJob(payload as { issueId: string; pageId: string; index: number }),
+  // Build a whole issue from a brief / source document (from-scratch AI gen).
+  generateIssue: (payload) => {
+    const p = payload as { issueId: string; prompt: string; pageCount?: number; sourceText?: string };
+    return generateMagazineIssue(p.issueId, p.prompt, p.pageCount, p.sourceText);
+  },
+  // Design + insert N on-theme pages into an existing issue.
+  generatePages: (payload) => {
+    const p = payload as { issueId: string; count: number; topic?: string; atIndex: number; prevStatus: string };
+    return generateMorePages(p.issueId, { count: p.count, topic: p.topic, atIndex: p.atIndex, prevStatus: p.prevStatus });
+  },
   // Harmless heartbeat / liveness + smoke-test handler.
   noop: async () => {
     /* no-op */

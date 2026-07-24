@@ -13,6 +13,8 @@ import { useEditorFonts } from '@/editor/fonts/useEditorFonts';
 import { EditorProvider } from '@/editor/EditorContext';
 import { PAGE_COMPONENTS } from '@/editor/templates/registry';
 import { PAGE_W, PAGE_H } from '@/editor/templates/parts';
+import { IssuePageCanvas } from '@/editor-v2/IssuePageCanvas';
+import type { IssuePageData } from '@/editor-v2/model';
 import type { MagazinePage } from '@/types/magazine';
 import { apiUrl } from '@/lib/api';
 import { useAuthStore } from '@/stores/authStore';
@@ -33,6 +35,18 @@ function ReadonlyPage({ page, maxWidth }: { page: MagazinePage; maxWidth: number
           <Comp />
         </EditorProvider>
       </div>
+    </div>
+  );
+}
+
+// Magazine Builder v2 pages are free-form (absolute-positioned elements in the
+// page's own canonical dims). The v2 canvas is width-responsive via container
+// queries, so we just give the wrapper a width and its height resolves from the
+// page aspect — the same renderer the v2 editor and PDF use, so zero drift.
+function ReadonlyV2Page({ page, maxWidth }: { page: IssuePageData; maxWidth: number }) {
+  return (
+    <div className="bulletin-print-page shadow-[0_10px_40px_rgba(0,0,0,0.18)] ring-1 ring-black/10" style={{ width: maxWidth }}>
+      <IssuePageCanvas page={page} />
     </div>
   );
 }
@@ -207,11 +221,13 @@ export default function BulletinViewer() {
         </div>
       </div>
 
-      {/* Pages */}
+      {/* Pages — v2 uses the free-form canvas; v1 uses the template renderer. */}
       <div ref={containerRef} className="bulletin-print-container mx-auto flex max-w-[820px] flex-col items-center gap-6 px-3 py-8">
-        {issue.pages.map((p) => (
-          <ReadonlyPage key={p.id} page={p} maxWidth={maxWidth} />
-        ))}
+        {issue.builder === 'v2'
+          ? (issue.pages as unknown as IssuePageData[]).map((p) => (
+              <ReadonlyV2Page key={p.index} page={p} maxWidth={maxWidth} />
+            ))
+          : issue.pages.map((p) => <ReadonlyPage key={p.id} page={p} maxWidth={maxWidth} />)}
       </div>
     </div>
   );

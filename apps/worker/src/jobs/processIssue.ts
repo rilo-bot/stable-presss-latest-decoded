@@ -11,8 +11,16 @@ import { storage } from '../../../server/src/lib/storage.js';
 import { COL } from '../../../server/src/lib/magazineV2/collections.js';
 import { PAGE_W, PAGE_H, MAX_PAGES_PER_ISSUE } from '../../../server/src/lib/magazineV2/config.js';
 import { openPdf, countPages } from '../lib/pdf.js';
+import { convertDocxToPdf } from '../lib/docx.js';
 import { mapWithConcurrency } from '../lib/pool.js';
 import { processSinglePage } from './processPage.js';
+
+/** DOCX mime, and a key-suffix fallback — used to convert Word docs to PDF
+ *  before extraction (the pipeline downstream only understands PDF). */
+const DOCX_MIME = 'application/vnd.openxmlformats-officedocument.wordprocessingml.document';
+function isDocx(src: { key?: string; mimeType?: string } | undefined): boolean {
+  return src?.mimeType === DOCX_MIME || !!src?.key?.toLowerCase().endsWith('.docx');
+}
 
 const PAGE_CONCURRENCY = Math.max(1, Number(process.env.MAGAZINE_V2_PAGE_CONCURRENCY ?? 3));
 
@@ -27,10 +35,13 @@ export async function processIssue(payload: { issueId: string }): Promise<void> 
   const now = () => new Date().toISOString();
 
   try {
-    const src = issue.sourceFile as { key?: string } | undefined;
+    const src = issue.sourceFile as { key?: string; mimeType?: string } | undefined;
     if (!src?.key) throw new Error('No source file to process.');
 
-    const buffer = await storage.downloadObject(src.key);
+    let buffer = await storage.downloadObject(src.key);
+    // Word docs: convert to PDF up front (via LibreOffice) so the rest of the
+    // pipeline — openPdf and every per-page extractor — is unchanged.
+    if (isDocx(src)) buffer = await convertDocxToPdf(buffer);
     const doc = openPdf(buffer);
     const totalPages = countPages(doc);
     if (totalPages <= 0) throw new Error('This file has no pages to process.');
@@ -114,12 +125,15 @@ export async function processIssue(payload: { issueId: string }): Promise<void> 
 export async function processPageJob(payload: { issueId: string; pageId: string; index: number }): Promise<void> {
   const { issueId, pageId, index } = payload;
   const issue = (await db.collection(COL.issues).findById(issueId)) as Doc | null;
-  const src = issue?.sourceFile as { key?: string } | undefined;
+  const src = issue?.sourceFile as { key?: string; mimeType?: string } | undefined;
   if (!issue || !src?.key) return;
   const now = () => new Date().toISOString();
 
   try {
-    const buffer = await storage.downloadObject(src.key);
+    let buffer = await storage.downloadObject(src.key);
+    // Same DOCX→PDF conversion as the full run — a retry re-downloads the
+    // original source, which may be a Word doc.
+    if (isDocx(src)) buffer = await convertDocxToPdf(buffer);
     const doc = openPdf(buffer);
     await processSinglePage(doc, index, { issueId, pageId });
   } catch (err) {

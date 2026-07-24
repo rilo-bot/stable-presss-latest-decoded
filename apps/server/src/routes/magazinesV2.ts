@@ -27,10 +27,10 @@ import { roleOnMagazine, isOwner, canEditPage, editablePageIds } from '../lib/ma
 import { normalizeElements, normalizeElementPatch } from '../lib/magazineV2/writePipeline.js';
 import { MAX_ELEMENTS_PER_PAGE, type MagazineElement } from '../lib/magazineV2/model.js';
 import { isAgentConfigured } from '../lib/agent/provider.js';
-import { generateMagazineIssue, generateMorePages } from '../lib/magazineV2/generate.js';
 import { storage } from '../lib/storage.js';
 import { enqueueJob } from '../lib/magazineV2/jobs.js';
 import { runPageAgent } from '../lib/magazineV2/agent.js';
+import { formatPageText, charGuideFor } from '../lib/magazineV2/format.js';
 
 /* eslint-disable @typescript-eslint/no-explicit-any */
 type Doc = { _id: string; [k: string]: any };
@@ -196,6 +196,7 @@ router.get('/issues', async (req, res) => {
       coverImage: d.coverImage ?? '',
       pageCount: counts[i],
       myRole: roleOnMagazine(d, uid),
+      publishedIssueId: d.publishedIssueId ?? null,
       updatedAt: d.updatedAt,
     }))
     .sort((a, b) => String(b.updatedAt).localeCompare(String(a.updatedAt)));
@@ -268,8 +269,9 @@ router.post('/issues/generate', rateLimit('mag2-generate', 10, 60_000), async (r
     createdAt: now,
     updatedAt: now,
   });
-  // Fire-and-forget: generation runs in the background, updating the issue.
-  void generateMagazineIssue(id, prompt, pageCount, sourceText);
+  // Hand off to the worker: generation (per-page LLM + image calls) is slow, so
+  // it runs out-of-process. The client polls the issue status until it settles.
+  await enqueueJob('generateIssue', { issueId: id, prompt, pageCount, sourceText });
   const created = await loadIssue(id);
   res.status(202).json({ issue: created ? withViewer(created, uid) : { id } });
 });
@@ -447,9 +449,178 @@ router.delete('/issues/:id', async (req, res) => {
   }
   await withIssueLock(doc._id, async () => {
     for (const p of await pagesFor(doc._id)) await db.collection(COL.pages).deleteOne(p._id);
+    // Remove the published Bulletin snapshot too, so deleting a draft can't leave
+    // an orphan edition live on the newsstand.
+    if (typeof doc.publishedIssueId === 'string' && doc.publishedIssueId) {
+      await db.collection('issues').deleteOne(doc.publishedIssueId);
+    }
     await db.collection(COL.issues).deleteOne(doc._id);
   });
   res.json({ success: true });
+});
+
+// ── Publish → Bulletins ─────────────────────────────────────────────────────
+// A published v2 issue is a FROZEN snapshot written into the SHARED `issues`
+// collection — the same one that powers the public Bulletins newsstand and the
+// Puppeteer PDF route (apps/server/src/routes/issues.ts). We tag it
+// `builder:'v2'` so the reader (BulletinViewer) renders it with the v2 free-form
+// canvas; v1 issues (no `builder`) keep their template renderer. The snapshot
+// stores each SELECTED page's full element payload by value, so a reader needs
+// no access to the editor draft. Publishing again (republish) refreshes the same
+// snapshot in place and bumps its version (so the PDF cache key changes).
+
+/** Freeze the issue's selected pages into the public snapshot shape. */
+async function buildPublishSnapshot(magazineId: string): Promise<Doc[]> {
+  const pages = (await pagesFor(magazineId)).filter((p) => p.selectedForPublish !== false);
+  return pages.map((p, i) => ({
+    id: p._id,
+    index: i,
+    width: Number(p.width) || PAGE_W,
+    height: Number(p.height) || PAGE_H,
+    background: p.background ?? { type: 'color', value: '#ffffff' },
+    // Elements are already validated + sanitised on every write; the reader also
+    // re-sanitises text on render (defense-in-depth, matching the v1 flow).
+    elements: Array.isArray(p.elements) ? p.elements : [],
+  })) as unknown as Doc[];
+}
+
+/** Best cover URL for the newsstand card: page-0 background image, else its hero. */
+function coverUrlFromPages(pages: any[]): string {
+  const first = pages[0];
+  if (!first) return '';
+  if (first.background?.type === 'image' && first.background.value) return String(first.background.value);
+  const img = (first.elements ?? []).find((e: any) => e.type === 'image' && e.image?.url);
+  return img?.image?.url ? String(img.image.url) : '';
+}
+
+// publish (or republish) — owner only. Freezes selected pages into `issues`.
+router.post('/issues/:id/publish', async (req, res) => {
+  const uid = req.account!.id;
+  const doc = await loadIssue(req.params.id);
+  if (!doc || !roleOnMagazine(doc, uid)) {
+    res.status(404).json({ error: 'Not found' });
+    return;
+  }
+  if (!isOwner(roleOnMagazine(doc, uid))) {
+    res.status(403).json({ error: 'Only the owner can publish this magazine.' });
+    return;
+  }
+  if (isBusy(doc)) {
+    res.status(409).json({ error: 'The magazine is still processing. Try again shortly.' });
+    return;
+  }
+  const pages = await buildPublishSnapshot(doc._id);
+  if (pages.length === 0) {
+    res.status(400).json({ error: 'Select at least one page to publish.' });
+    return;
+  }
+  const cover = (typeof doc.coverImage === 'string' && doc.coverImage) || coverUrlFromPages(pages);
+  const now = new Date().toISOString();
+  const existingId = typeof doc.publishedIssueId === 'string' ? doc.publishedIssueId : '';
+  const existing = existingId ? ((await db.collection('issues').findById(existingId)) as Doc | null) : null;
+
+  let publishedIssueId: string;
+  if (existing) {
+    await db.collection('issues').updateOne(existingId, {
+      title: doc.title,
+      coverImage: cover,
+      coverImageUrl: cover,
+      pages,
+      pageCount: pages.length,
+      scope: 'full',
+      version: (typeof existing.version === 'number' ? existing.version : 1) + 1,
+      publishedAt: now,
+      unpublishedAt: null,
+      updatedAt: now,
+    });
+    publishedIssueId = existingId;
+  } else {
+    publishedIssueId = await db.collection('issues').insertOne({
+      builder: 'v2', // discriminator — BulletinViewer renders these with the v2 canvas
+      magazineIdV2: doc._id, // link back to the draft (for republish/cleanup)
+      magazineId: null, // v1 field kept null so canManageIssue falls back to createdByUserId
+      title: doc.title,
+      edition: '',
+      coverImage: cover,
+      coverImageUrl: cover,
+      pages,
+      pageCount: pages.length,
+      scope: 'full',
+      version: 1,
+      publishedAt: now,
+      unpublishedAt: null,
+      createdByUserId: uid,
+      createdAt: now,
+      updatedAt: now,
+    });
+  }
+
+  await db.collection(COL.issues).updateOne(doc._id, {
+    status: 'published',
+    publishedIssueId,
+    publishedAt: now,
+    updatedAt: now,
+  });
+  const fresh = await loadIssue(doc._id);
+  res.json({ issue: withViewer(fresh ?? doc, uid), publishedIssueId });
+});
+
+// unpublish — owner only. Hides the bulletin (keeps the snapshot so re-publish
+// is a one-click re-show) and returns the draft to an editable 'ready' state.
+router.post('/issues/:id/unpublish', async (req, res) => {
+  const uid = req.account!.id;
+  const doc = await loadIssue(req.params.id);
+  if (!doc || !roleOnMagazine(doc, uid)) {
+    res.status(404).json({ error: 'Not found' });
+    return;
+  }
+  if (!isOwner(roleOnMagazine(doc, uid))) {
+    res.status(403).json({ error: 'Only the owner can unpublish this magazine.' });
+    return;
+  }
+  const now = new Date().toISOString();
+  const publishedIssueId = typeof doc.publishedIssueId === 'string' ? doc.publishedIssueId : '';
+  if (publishedIssueId) {
+    await db.collection('issues').updateOne(publishedIssueId, { unpublishedAt: now, updatedAt: now });
+  }
+  await db.collection(COL.issues).updateOne(doc._id, { status: 'ready', updatedAt: now });
+  const fresh = await loadIssue(doc._id);
+  res.json({ issue: withViewer(fresh ?? doc, uid) });
+});
+
+// reset — owner only. Wipes all pages back to a single blank page and returns
+// the issue to an editable 'draft' state (a "start over"). Blocked while a
+// worker/generation run is in flight so it can't race the page writer.
+router.post('/issues/:id/reset', async (req, res) => {
+  const uid = req.account!.id;
+  const doc = await loadIssue(req.params.id);
+  if (!doc || !roleOnMagazine(doc, uid)) {
+    res.status(404).json({ error: 'Not found' });
+    return;
+  }
+  if (!isOwner(roleOnMagazine(doc, uid))) {
+    res.status(403).json({ error: 'Only the owner can reset this magazine.' });
+    return;
+  }
+  if (isBusy(doc)) {
+    res.status(409).json({ error: 'The magazine is still processing. Try again shortly.' });
+    return;
+  }
+  await withIssueLock(doc._id, async () => {
+    for (const p of await pagesFor(doc._id)) await db.collection(COL.pages).deleteOne(p._id);
+    await blankPage(doc._id);
+    await db.collection(COL.issues).updateOne(doc._id, {
+      status: 'draft',
+      stage: '',
+      processingError: '',
+      pagesProcessed: 0,
+      pagesTotal: 1,
+      coverImage: '',
+      updatedAt: new Date().toISOString(),
+    });
+  });
+  const fresh = await loadIssue(doc._id);
+  res.json({ issue: withViewer(fresh ?? doc, uid), pages: (await pagesFor(doc._id)).map(pageSummary) });
 });
 
 // ── Page structure (owner only, serialised per issue) ───────────────────────
@@ -609,7 +780,7 @@ router.post('/issues/:id/pages/generate', rateLimit('mag2-generate', 10, 60_000)
   const atIndex = Number.isInteger(at) && at >= 0 && at <= pages.length ? at : pages.length;
   const prevStatus = String(doc.status);
   await db.collection(COL.issues).updateOne(doc._id, { status: 'processing', stage: 'Designing pages', updatedAt: new Date().toISOString() });
-  void generateMorePages(doc._id, { count, topic, atIndex, prevStatus });
+  await enqueueJob('generatePages', { issueId: doc._id, count, topic, atIndex, prevStatus });
   const fresh = await loadIssue(doc._id);
   res.status(202).json({ issue: fresh ? withViewer(fresh, req.account!.id) : { id: doc._id } });
 });
@@ -787,11 +958,46 @@ router.post('/issues/:id/pages/:pageId/agent', rateLimit('mag2-agent', 20, 60_00
       magazineId: page.magazineId,
       selectedElementId,
       sourceText,
+      pageCount: (await pagesFor(page.magazineId)).length,
     });
     res.json(turn);
   } catch (err) {
     console.error('[magazineV2] agent error:', err instanceof Error ? err.message : err);
     res.status(500).json({ error: 'The assistant hit a snag. Please try again.' });
+  }
+});
+
+// Per-page Fill / Adjust — a single-shot text pass. The server computes which
+// text boxes qualify (empty and/or "crowded" = autoFit shrank below 85% of the
+// designed size), asks the model to rewrite ONLY those, and returns { edits }.
+// It never writes the DB; the client applies each edit through the element CRUD
+// (undoable). Text only — geometry/images/QR untouched.
+router.post('/issues/:id/pages/:pageId/format', rateLimit('mag2-agent', 20, 60_000), async (req, res) => {
+  if (!isAgentConfigured()) {
+    res.status(503).json({ error: 'AI is not configured on this server.' });
+    return;
+  }
+  const ctx = await loadEditablePage(req, res);
+  if (!ctx) return;
+  const { issue, page } = ctx;
+  const mode: 'fill' | 'adjust' = req.body?.mode === 'fill' ? 'fill' : 'adjust';
+  const els: MagazineElement[] = Array.isArray(page.elements) ? page.elements : [];
+  const isCrowded = (e: MagazineElement) =>
+    e.type === 'text' && !!e.text && typeof e.text.maxFontSize === 'number' && e.text.fontSize <= e.text.maxFontSize * 0.85;
+  const isEmpty = (e: MagazineElement) => e.type === 'text' && !!e.text && e.text.content.replace(/<[^>]+>/g, '').trim() === '';
+  const candidates = els
+    .filter((e) => e.type === 'text' && !!e.text && (mode === 'fill' ? isEmpty(e) || isCrowded(e) : isCrowded(e)))
+    .map((e) => ({ id: e.id, role: e.text!.role, content: e.text!.content, maxChars: charGuideFor(e.text!.role) }));
+  if (candidates.length === 0) {
+    res.json({ edits: [], note: mode === 'fill' ? 'No empty or crowded text to fill.' : 'No crowded text to adjust.' });
+    return;
+  }
+  try {
+    const out = await formatPageText({ mode, title: String(issue.title ?? ''), candidates });
+    res.json(out);
+  } catch (err) {
+    console.error('[magazineV2] format error:', err instanceof Error ? err.message : err);
+    res.status(500).json({ error: 'The text pass hit a snag. Please try again.' });
   }
 });
 

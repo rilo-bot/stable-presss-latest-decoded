@@ -142,7 +142,7 @@ router.get('/:id/pdf', async (req, res) => {
     res.setHeader('Content-Length', pdf.length);
     res.send(pdf);
   } catch (err) {
-    console.error('[issues] PDF render failed:', err instanceof Error ? err.message : err);
+    console.error('[issues] PDF render failed:', err instanceof Error ? (err.stack ?? err.message) : err);
     res.status(500).json({ error: 'Could not generate the PDF.' });
   }
 });

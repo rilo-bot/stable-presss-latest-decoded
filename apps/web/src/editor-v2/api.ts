@@ -37,6 +37,8 @@ export interface IssueSummary {
   coverImage: string;
   pageCount: number;
   myRole: MagRole | null;
+  /** Id of the frozen Bulletins snapshot when published (null while unpublished). */
+  publishedIssueId: string | null;
   updatedAt: string;
 }
 
@@ -62,6 +64,8 @@ export interface IssueMeta {
   ownerName?: string;
   myRole: MagRole | null;
   myEditablePageIds: string[] | 'all';
+  /** Id of the frozen Bulletins snapshot when published (null/absent otherwise). */
+  publishedIssueId?: string | null;
   // present while generating (status 'processing')
   pagesProcessed?: number;
   pagesTotal?: number;
@@ -84,6 +88,15 @@ export const generateIssue = (prompt: string, pageCount?: number, sourceText?: s
 export const renameIssue = (id: string, title: string) =>
   authFetch(`${BASE}/issues/${id}`, { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ title }) }).then(parse<IssueMeta>);
 export const deleteIssue = (id: string) => authFetch(`${BASE}/issues/${id}`, { method: 'DELETE' }).then(parse<{ success: boolean }>);
+// Publish freezes the selected pages into the shared Bulletins collection (shown
+// on the public newsstand as a magazine); unpublish hides that edition again.
+export const publishIssue = (id: string) =>
+  authFetch(`${BASE}/issues/${id}/publish`, { method: 'POST' }).then(parse<{ issue: IssueMeta; publishedIssueId: string }>);
+export const unpublishIssue = (id: string) =>
+  authFetch(`${BASE}/issues/${id}/unpublish`, { method: 'POST' }).then(parse<{ issue: IssueMeta }>);
+// Reset wipes the issue back to a single blank page (a "start over").
+export const resetIssue = (id: string) =>
+  authFetch(`${BASE}/issues/${id}/reset`, { method: 'POST' }).then(parse<IssueBundle>);
 
 // ── Pages ──
 export const getPage = (id: string, pageId: string) =>
@@ -108,6 +121,12 @@ export const patchElement = (id: string, pageId: string, elementId: string, rev:
   authFetch(`${BASE}/issues/${id}/pages/${pageId}/elements/${elementId}`, { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ rev, patch }) }).then(parse<{ element: MagazineElement; rev: number }>);
 export const deleteElement = (id: string, pageId: string, elementId: string, rev: number) =>
   authFetch(`${BASE}/issues/${id}/pages/${pageId}/elements/${elementId}`, { method: 'DELETE', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ rev }) }).then(parse<{ ok: boolean; rev: number }>);
+
+// Per-page Fill/Adjust — returns text edits the client auto-applies (undoable).
+export const formatPage = (id: string, pageId: string, mode: 'fill' | 'adjust') =>
+  authFetch(`${BASE}/issues/${id}/pages/${pageId}/format`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ mode }) }).then(
+    parse<{ edits: { elementId: string; content: string }[]; note: string }>,
+  );
 
 // ── AI editing agent (staged proposals; applied via the element CRUD above) ──
 export const chatAgent = (id: string, pageId: string, messages: { role: 'user' | 'assistant'; content: string }[], selectedElementId?: string, sourceText?: string) =>
