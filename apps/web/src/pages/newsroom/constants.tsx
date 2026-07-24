@@ -151,9 +151,10 @@ export const SIDE_NAV: SideNavItem[] = [
     section: 'Content',
     badge: 'New',
   },
+
   {
     id: 'magazine-v2',
-    label: 'Magazine Builder v2',
+    label: 'Magazine Builder',
     icon: <Layers size={15} />,
     section: 'Content',
     href: '/newsroom/magazine-v2',

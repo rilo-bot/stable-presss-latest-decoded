@@ -599,8 +599,12 @@ async function composeOnePage(
 // unclean page) degrades to the fixed-template path, so output stays bug-free.
 
 function aiLayoutEnabled(): boolean {
-  const v = process.env.MAGAZINE_V2_AI_LAYOUT;
-  return v === '1' || v === 'true';
+  // Default ON: the AI-authored layout path IS the v2 builder. Only an explicit
+  // opt-OUT falls back to the fixed-template generator — so a missing flag in a
+  // fresh environment can never silently ship the old templates (the bug that hid
+  // the whole AI builder in prod). Set MAGAZINE_V2_AI_LAYOUT=0 to force the legacy path.
+  const v = (process.env.MAGAZINE_V2_AI_LAYOUT ?? '').trim().toLowerCase();
+  return v !== '0' && v !== 'false' && v !== 'off' && v !== 'no';
 }
 
 /** Map a DSL leaf role to the element model's text role (for draftPage's copy

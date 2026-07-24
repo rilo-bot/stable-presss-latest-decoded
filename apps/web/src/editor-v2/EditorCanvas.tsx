@@ -9,8 +9,9 @@
 // updateLocal (no server call); pointerup commits once (one undo entry).
 // ---------------------------------------------------------------------------
 
-import React, { useEffect, useRef, useState } from 'react';
+import React, { useEffect, useRef, useState, type CSSProperties } from 'react';
 import { Wand2, WandSparkles, Loader2 } from 'lucide-react';
+import { sanitizeRichText } from '@/editor/lib/sanitize';
 import { useEditorStore } from './store';
 import { IssuePageCanvas } from './IssuePageCanvas';
 import { pctRect, clampRect } from './geometry';
@@ -39,6 +40,118 @@ function applyDrag(o: MagazineElement, mode: Mode, dx: number, dy: number) {
   return { x, y, w, h };
 }
 
+// In-place text editing: an uncontrolled contentEditable positioned exactly over
+// the element (the base canvas hides that element meanwhile, via hideElementId,
+// so they never double up). Font size maps px = canonical size × zoom scale, so
+// it's pixel-aligned with the read-only render. Live keystrokes stay local
+// (updateLocal, debounced); blur commits once through the rev-guarded API (one
+// undo entry) and the server refits the font to the box. Mirrors v1's EditableText.
+function TextEditingOverlay({
+  element,
+  page,
+  scale,
+  onExit,
+}: {
+  element: MagazineElement;
+  page: MagazinePageV2;
+  scale: number;
+  onExit: () => void;
+}) {
+  const commit = useEditorStore((s) => s.commit);
+  const updateLocal = useEditorStore((s) => s.updateLocal);
+  const ref = useRef<HTMLDivElement>(null);
+  const before = useRef<MagazineElement>({ ...element });
+  const debounce = useRef<number | undefined>(undefined);
+  const t = element.text!;
+  const vAlign = t.vAlign ?? 'top';
+
+  // Seed the DOM once, focus, drop the caret at the end. Never write innerHTML
+  // again while focused (that would reset the caret) — the node is uncontrolled.
+  useEffect(() => {
+    const el = ref.current;
+    if (!el) return;
+    el.innerHTML = sanitizeRichText(t.content);
+    el.focus();
+    const r = document.createRange();
+    r.selectNodeContents(el);
+    r.collapse(false);
+    const sel = window.getSelection();
+    sel?.removeAllRanges();
+    sel?.addRange(r);
+    return () => window.clearTimeout(debounce.current);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  const flush = (persist: boolean) => {
+    const el = ref.current;
+    if (!el) return;
+    const cur = useEditorStore.getState().page?.elements.find((x) => x.id === element.id);
+    if (!cur || cur.type !== 'text' || !cur.text) return;
+    const html = el.innerHTML;
+    const patch = { text: { ...cur.text, content: html } };
+    if (!persist) return updateLocal(element.id, patch);
+    if (sanitizeRichText(cur.text.content) !== html) void commit(element.id, patch, before.current);
+  };
+
+  const box: CSSProperties = {
+    position: 'absolute',
+    ...pctRect(element, page),
+    zIndex: 10001,
+    display: 'flex',
+    flexDirection: 'column',
+    justifyContent: vAlign === 'center' ? 'center' : vAlign === 'bottom' ? 'flex-end' : 'flex-start',
+    overflow: 'visible',
+  };
+  const textStyle: CSSProperties = {
+    width: '100%',
+    outline: 'none',
+    cursor: 'text',
+    fontFamily: t.fontFamily,
+    fontWeight: t.fontWeight,
+    color: t.color,
+    textAlign: t.align,
+    lineHeight: t.lineHeight,
+    fontSize: Math.max(1, t.fontSize * scale),
+    whiteSpace: 'pre-wrap',
+    overflowWrap: 'break-word',
+  };
+
+  return (
+    // Swallow pointerdown so the overlay's "click empties selection" handler and a
+    // drag never start from inside the text being edited.
+    <div style={box} onPointerDown={(e) => e.stopPropagation()}>
+      <div
+        ref={ref}
+        contentEditable
+        suppressContentEditableWarning
+        spellCheck={false}
+        onInput={() => {
+          window.clearTimeout(debounce.current);
+          debounce.current = window.setTimeout(() => flush(false), 150);
+        }}
+        onBlur={() => {
+          window.clearTimeout(debounce.current);
+          flush(true);
+          onExit();
+        }}
+        onKeyDown={(e) => {
+          // Escape ends editing; keep every keystroke inside the field so the
+          // page-level shortcuts (Delete = remove element, arrows = nudge) don't fire.
+          if (e.key === 'Escape') { e.preventDefault(); (e.currentTarget as HTMLElement).blur(); }
+          e.stopPropagation();
+        }}
+        onPaste={(e) => {
+          e.preventDefault();
+          const txt = e.clipboardData.getData('text/plain');
+          document.execCommand('insertText', false, txt);
+        }}
+        style={textStyle}
+        className="rounded-[2px] ring-2 ring-[#7c3aed]/70"
+      />
+    </div>
+  );
+}
+
 // The interactive editing layer for the ACTIVE page (drag/resize/select). Rendered
 // inside the multi-page stack for whichever page is currently open.
 function ActivePageLayer() {
@@ -46,22 +159,33 @@ function ActivePageLayer() {
   const selectedId = useEditorStore((s) => s.selectedId);
   const zoomWidth = useEditorStore((s) => s.zoomWidth);
   const canManage = useEditorStore((s) => s.canManage());
+  const canEdit = useEditorStore((s) => s.canEdit());
   const select = useEditorStore((s) => s.select);
   const updateLocal = useEditorStore((s) => s.updateLocal);
   const commit = useEditorStore((s) => s.commit);
   const deleteElement = useEditorStore((s) => s.deleteElement);
+  const [editingId, setEditingId] = useState<string | null>(null);
 
   const overlayRef = useRef<HTMLDivElement>(null);
   const drag = useRef<{ mode: Mode; sx: number; sy: number; orig: MagazineElement; before: MagazineElement } | null>(null);
 
-  // Keyboard: arrows nudge, Delete removes, Escape deselects.
+  // Switching pages ends any in-place edit (selection changes blur the editor,
+  // which commits + exits on its own).
+  useEffect(() => { setEditingId(null); }, [page?.id]);
+
+  // Keyboard: arrows nudge, Delete removes, Escape deselects, Enter/F2 edits text.
   useEffect(() => {
     if (!selectedId) return;
     const onKey = (e: KeyboardEvent) => {
-      const tag = (e.target as HTMLElement)?.tagName;
-      if (tag === 'INPUT' || tag === 'TEXTAREA') return;
+      const tgt = e.target as HTMLElement;
+      // Never hijack typing in a field OR the in-place text editor (a contentEditable).
+      if (tgt?.tagName === 'INPUT' || tgt?.tagName === 'TEXTAREA' || tgt?.isContentEditable) return;
       const cur = useEditorStore.getState().page?.elements.find((x) => x.id === selectedId);
       if (!cur) return;
+      if ((e.key === 'Enter' || e.key === 'F2') && cur.type === 'text' && cur.text && canEdit) {
+        e.preventDefault();
+        return setEditingId(cur.id);
+      }
       const step = e.shiftKey ? 10 : 1;
       if (e.key === 'Escape') return select(null);
       if (e.key === 'Delete' || e.key === 'Backspace') { e.preventDefault(); return void deleteElement(selectedId); }
@@ -75,9 +199,10 @@ function ActivePageLayer() {
     };
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
-  }, [selectedId, page, select, commit, deleteElement]);
+  }, [selectedId, page, select, commit, deleteElement, canEdit]);
 
   if (!page) return null;
+  const scale = zoomWidth / (page.width > 0 ? page.width : zoomWidth);
 
   const startDrag = (e: React.PointerEvent, element: MagazineElement, mode: Mode) => {
     if (!canManage && mode !== 'move') { /* collaborators may still move/edit assigned pages */ }
@@ -112,10 +237,16 @@ function ActivePageLayer() {
 
   const selected = page.elements.find((x) => x.id === selectedId) ?? null;
 
+  const startEditing = (element: MagazineElement) => {
+    if (!canEdit || element.type !== 'text' || !element.text) return;
+    select(element.id);
+    setEditingId(element.id);
+  };
+
   return (
     <div style={{ width: zoomWidth }} className="relative shrink-0">
-      {/* Base: the real published renderer */}
-      <IssuePageCanvas page={page} />
+      {/* Base: the real published renderer (hide the element being edited in place) */}
+      <IssuePageCanvas page={page} hideElementId={editingId ?? undefined} />
         {/* Interaction overlay (same box via inset-0) */}
         <div
           ref={overlayRef}
@@ -124,16 +255,22 @@ function ActivePageLayer() {
           onPointerUp={endDrag}
           onPointerDown={() => select(null)}
         >
-          {page.elements.map((element) => (
-            <div
-              key={element.id}
-              className="absolute cursor-move"
-              style={{ ...pctRect(element, page), zIndex: element.zIndex }}
-              onPointerDown={(e) => startDrag(e, element, 'move')}
-            />
-          ))}
+          {page.elements.map((element) =>
+            editingId === element.id && element.type === 'text' && element.text ? (
+              <TextEditingOverlay key={element.id} element={element} page={page} scale={scale} onExit={() => setEditingId(null)} />
+            ) : (
+              <div
+                key={element.id}
+                className="absolute cursor-move"
+                style={{ ...pctRect(element, page), zIndex: element.zIndex }}
+                onPointerDown={(e) => startDrag(e, element, 'move')}
+                onDoubleClick={(e) => { if (element.type === 'text') { e.stopPropagation(); startEditing(element); } }}
+                title={element.type === 'text' ? 'Double-click to edit text' : undefined}
+              />
+            ),
+          )}
 
-          {selected && (
+          {selected && !editingId && (
             <div className="absolute" style={{ ...pctRect(selected, page), zIndex: 10000 }}>
               <div className="pointer-events-none absolute inset-0 ring-2 ring-[#7c3aed]" />
               {HANDLES.map((h) => (
