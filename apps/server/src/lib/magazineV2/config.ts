@@ -31,6 +31,25 @@ export const ALLOWED_SOURCE_MIME = new Set<string>([
 /** Hard ceiling on pages digitised/generated per issue. */
 export const MAX_PAGES_PER_ISSUE = 120;
 
+// ── Media-image upload caps (cover images, inspector uploads) ────────────────
+/** Max size for a directly-uploaded image (cover / media library). */
+export const MAX_IMAGE_BYTES = 15 * 1024 * 1024; // 15 MB
+/** Accepted image mime types for direct uploads. */
+export const ALLOWED_IMAGE_MIME = new Set<string>(['image/png', 'image/jpeg', 'image/webp', 'image/gif']);
+/** Map an accepted image mime to a file extension. */
+export function imageExtFor(mime: string): string {
+  switch (mime) {
+    case 'image/png':
+      return 'png';
+    case 'image/webp':
+      return 'webp';
+    case 'image/gif':
+      return 'gif';
+    default:
+      return 'jpg';
+  }
+}
+
 // ── AI attachment caps (enforced server-side by v2 agent routes — closes M5) ──
 export const MAX_AI_ATTACHMENTS = 5;
 export const MAX_AI_ATTACHMENT_CHARS = 12_000_000; // ~12 MB data-URL per file

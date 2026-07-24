@@ -16,13 +16,15 @@
 // scoped; non-GET writes rate-limited (H5). All behind the MAGAZINE_V2 flag.
 // ---------------------------------------------------------------------------
 
+import crypto from 'crypto';
 import { Router } from 'express';
 import { db } from '../lib/db.js';
 import { attachAccount } from '../lib/auth.js';
 import { isStaff } from '../lib/rbac.js';
-import { MAGAZINE_V2_ENABLED, PAGE_W, PAGE_H, MAX_PAGES_PER_ISSUE, MAX_SOURCE_BYTES, ALLOWED_SOURCE_MIME } from '../lib/magazineV2/config.js';
+import { MAGAZINE_V2_ENABLED, PAGE_W, PAGE_H, MAX_PAGES_PER_ISSUE, MAX_SOURCE_BYTES, ALLOWED_SOURCE_MIME, MAX_IMAGE_BYTES, ALLOWED_IMAGE_MIME, imageExtFor } from '../lib/magazineV2/config.js';
 import { COL } from '../lib/magazineV2/collections.js';
 import { rateLimit } from '../lib/magazineV2/rateLimit.js';
+import { safePublicImageUrl } from '../lib/magazineV2/url.js';
 import { roleOnMagazine, isOwner, canEditPage, editablePageIds } from '../lib/magazineV2/access.js';
 import { normalizeElements, normalizeElementPatch } from '../lib/magazineV2/writePipeline.js';
 import { MAX_ELEMENTS_PER_PAGE, type MagazineElement } from '../lib/magazineV2/model.js';
@@ -398,6 +400,78 @@ router.get('/issues/:id/media', async (req, res) => {
   });
 });
 
+// presign a direct-to-S3 PUT for an image the caller wants to add to the library
+// (cover image, inspector upload). Any magazine member may add media.
+router.post('/issues/:id/media/upload-url', rateLimit('mag2-write', 300, 60_000), async (req, res) => {
+  const uid = req.account!.id;
+  const doc = await loadIssue(String(req.params.id));
+  if (!doc || !roleOnMagazine(doc, uid)) {
+    res.status(404).json({ error: 'Not found' });
+    return;
+  }
+  if (!storage.isConfigured()) {
+    res.status(503).json({ error: 'File storage is not configured on this server.' });
+    return;
+  }
+  const contentType = typeof req.body?.contentType === 'string' ? req.body.contentType.trim() : '';
+  const size = Number(req.body?.size);
+  if (!ALLOWED_IMAGE_MIME.has(contentType)) {
+    res.status(415).json({ error: 'Only PNG, JPEG, WebP, or GIF images can be uploaded.' });
+    return;
+  }
+  if (!Number.isFinite(size) || size <= 0 || size > MAX_IMAGE_BYTES) {
+    res.status(413).json({ error: `The image must be under ${Math.round(MAX_IMAGE_BYTES / 1024 / 1024)} MB.` });
+    return;
+  }
+  const key = `magazinesV2/${doc._id}/media/${crypto.randomUUID()}.${imageExtFor(contentType)}`;
+  const uploadUrl = await storage.presignPutUrl({ key, contentType, expiresIn: 300 });
+  res.json({ uploadUrl, key, contentType });
+});
+
+// confirm an uploaded image landed → verify real size/type from S3 → insert a
+// MediaAsset (never trusts the client's declared size/type).
+router.post('/issues/:id/media', rateLimit('mag2-write', 300, 60_000), async (req, res) => {
+  const uid = req.account!.id;
+  const doc = await loadIssue(String(req.params.id));
+  if (!doc || !roleOnMagazine(doc, uid)) {
+    res.status(404).json({ error: 'Not found' });
+    return;
+  }
+  const key = typeof req.body?.key === 'string' ? req.body.key : '';
+  if (!key.startsWith(`magazinesV2/${doc._id}/media/`)) {
+    res.status(400).json({ error: 'Invalid upload key.' });
+    return;
+  }
+  let head: { contentLength: number; contentType: string };
+  try {
+    head = await storage.headObject(key);
+  } catch {
+    res.status(400).json({ error: 'Upload not found — please try again.' });
+    return;
+  }
+  if (!ALLOWED_IMAGE_MIME.has(head.contentType) || head.contentLength <= 0 || head.contentLength > MAX_IMAGE_BYTES) {
+    res.status(413).json({ error: 'That upload is not an accepted image within the size limit.' });
+    return;
+  }
+  const alt = typeof req.body?.alt === 'string' ? req.body.alt.slice(0, 300) : '';
+  const url = storage.publicUrl(key);
+  const now = new Date().toISOString();
+  const assetId = await db.collection(COL.media).insertOne({
+    magazineId: doc._id,
+    pageIndex: null,
+    key,
+    url,
+    contentType: head.contentType,
+    size: head.contentLength,
+    alt,
+    kind: 'upload',
+    source: 'upload',
+    createdAt: now,
+    updatedAt: now,
+  });
+  res.status(201).json({ asset: { id: String(assetId), url, alt, kind: 'upload', pageIndex: null, contentType: head.contentType, size: head.contentLength } });
+});
+
 // get issue meta + page summaries (NOT full element payloads)
 router.get('/issues/:id', async (req, res) => {
   const uid = req.account!.id;
@@ -409,7 +483,13 @@ router.get('/issues/:id', async (req, res) => {
   res.json({ issue: withViewer(doc, uid), pages: (await pagesFor(doc._id)).map(pageSummary) });
 });
 
-// rename — owner only (slug is immutable)
+// settings — owner only (slug is immutable). Accepts `title` and/or a cover:
+//   { title }                      → rename
+//   { coverImage: '<url>' | '' }   → set an explicit cover URL, or '' to auto-derive
+//   { coverPageId: '<pageId>' }    → use that page's image as the cover
+// The cover is stored on the draft and frozen into the public snapshot at publish
+// time; it's rendered server-side by the PDF export, so the URL is validated
+// against a public-host allowlist (no loopback / private / metadata hosts).
 router.patch('/issues/:id', async (req, res) => {
   const uid = req.account!.id;
   const doc = await loadIssue(req.params.id);
@@ -421,12 +501,51 @@ router.patch('/issues/:id', async (req, res) => {
     res.status(403).json({ error: 'Only the owner can change settings.' });
     return;
   }
-  const title = typeof req.body?.title === 'string' ? req.body.title.trim() : '';
-  if (!title) {
-    res.status(400).json({ error: 'title is required' });
+  const body = req.body ?? {};
+  const update: Record<string, unknown> = {};
+
+  if ('title' in body) {
+    const title = typeof body.title === 'string' ? body.title.trim() : '';
+    if (!title) {
+      res.status(400).json({ error: 'title is required' });
+      return;
+    }
+    update.title = title;
+  }
+
+  if ('coverPageId' in body) {
+    const pageId = typeof body.coverPageId === 'string' ? body.coverPageId : '';
+    const page = pageId ? await pageById(pageId) : null;
+    if (!page || page.magazineId !== doc._id) {
+      res.status(404).json({ error: 'Page not found in this magazine.' });
+      return;
+    }
+    const cover = coverUrlOfPage(page);
+    if (!cover) {
+      res.status(400).json({ error: 'That page has no image to use as a cover.' });
+      return;
+    }
+    update.coverImage = safePublicImageUrl(cover);
+  } else if ('coverImage' in body) {
+    const raw = typeof body.coverImage === 'string' ? body.coverImage.trim() : '';
+    if (raw === '') {
+      update.coverImage = ''; // clear → publish auto-derives from page 0
+    } else {
+      const safe = safePublicImageUrl(raw);
+      if (!safe) {
+        res.status(400).json({ error: 'That image URL is not allowed.' });
+        return;
+      }
+      update.coverImage = safe;
+    }
+  }
+
+  if (Object.keys(update).length === 0) {
+    res.status(400).json({ error: 'Nothing to update.' });
     return;
   }
-  await db.collection(COL.issues).updateOne(doc._id, { title, updatedAt: new Date().toISOString() });
+  update.updatedAt = new Date().toISOString();
+  await db.collection(COL.issues).updateOne(doc._id, update);
   const fresh = await loadIssue(doc._id);
   if (!fresh) {
     res.status(404).json({ error: 'Not found' });
@@ -484,13 +603,17 @@ async function buildPublishSnapshot(magazineId: string): Promise<Doc[]> {
   })) as unknown as Doc[];
 }
 
+/** A page's own best cover URL: its background image, else its first image element. */
+function coverUrlOfPage(page: any): string {
+  if (!page) return '';
+  if (page.background?.type === 'image' && page.background.value) return String(page.background.value);
+  const img = (page.elements ?? []).find((e: any) => e.type === 'image' && e.image?.url);
+  return img?.image?.url ? String(img.image.url) : '';
+}
+
 /** Best cover URL for the newsstand card: page-0 background image, else its hero. */
 function coverUrlFromPages(pages: any[]): string {
-  const first = pages[0];
-  if (!first) return '';
-  if (first.background?.type === 'image' && first.background.value) return String(first.background.value);
-  const img = (first.elements ?? []).find((e: any) => e.type === 'image' && e.image?.url);
-  return img?.image?.url ? String(img.image.url) : '';
+  return coverUrlOfPage(pages[0]);
 }
 
 // publish (or republish) — owner only. Freezes selected pages into `issues`.
@@ -508,6 +631,15 @@ router.post('/issues/:id/publish', async (req, res) => {
   if (isBusy(doc)) {
     res.status(409).json({ error: 'The magazine is still processing. Try again shortly.' });
     return;
+  }
+  // Optional page selection (v1-parity): mark exactly these pages selectedForPublish
+  // (others deselected) before freezing the snapshot. Omit to publish the current
+  // selection as-is (all pages, for a fresh issue).
+  if (Array.isArray(req.body?.selectedPageIds)) {
+    const sel = new Set((req.body.selectedPageIds as unknown[]).filter((x): x is string => typeof x === 'string'));
+    for (const p of await pagesFor(doc._id)) {
+      await db.collection(COL.pages).updateOne(p._id, { selectedForPublish: sel.has(p._id) });
+    }
   }
   const pages = await buildPublishSnapshot(doc._id);
   if (pages.length === 0) {

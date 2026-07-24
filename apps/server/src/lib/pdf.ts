@@ -75,6 +75,17 @@ async function getBrowser(): Promise<Browser> {
         // most container hosts (Render, Docker). --disable-dev-shm-usage avoids
         // crashes from the small default /dev/shm in containers.
         args: ['--no-sandbox', '--disable-setuid-sandbox', '--disable-dev-shm-usage'],
+        // Talk to Chromium over a file-descriptor pipe instead of a WebSocket.
+        // The default WS transport waits for Chromium to print its ws:// endpoint
+        // to stdout, which stalls (and hits "Timed out ... waiting for the WS
+        // endpoint URL to appear in stdout") when the host is momentarily saturated
+        // and Chromium is slow to emit that line. The pipe transport has no such
+        // startup handshake, so it launches reliably under load.
+        pipe: true,
+        // Give a loaded machine (dev box running Vite HMR + a full browser, or a
+        // busy container) more than Puppeteer's default 30s to bring Chromium up
+        // before failing the render.
+        timeout: 60_000,
       })
       .then((b) => {
         currentBrowser = b

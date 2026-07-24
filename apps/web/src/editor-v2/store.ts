@@ -38,6 +38,7 @@ interface EditorState {
   error: string | null;
   generating: boolean; // an "add AI pages" run is in flight (issue is processing)
   formatBusy: boolean; // a Fill/Adjust text pass is running
+  publishing: boolean; // a publish/unpublish call is in flight
   undoStack: UndoEntry[];
   redoStack: UndoEntry[];
 
@@ -71,6 +72,12 @@ interface EditorState {
   deletePage: (pageId: string) => Promise<void>;
   reorder: (from: number, to: number) => Promise<void>;
   rename: (title: string) => Promise<void>;
+  setCover: (cover: { coverImage?: string; coverPageId?: string }) => Promise<boolean>;
+  /** Publish (or republish) → returns the public Bulletins issue id, or null on failure. */
+  publish: (selectedPageIds?: string[]) => Promise<string | null>;
+  unpublish: () => Promise<void>;
+  /** Delete the whole magazine (draft + pages + any published edition). */
+  remove: () => Promise<boolean>;
   reset: () => Promise<void>;
   runFormat: (mode: 'fill' | 'adjust') => Promise<void>;
 }
@@ -89,6 +96,7 @@ export const useEditorStore = create<EditorState>((set, get) => ({
   error: null,
   generating: false,
   formatBusy: false,
+  publishing: false,
   undoStack: [],
   redoStack: [],
   chat: [],
@@ -304,6 +312,66 @@ export const useEditorStore = create<EditorState>((set, get) => ({
       set({ issue });
     } catch (e) {
       toast.error(e instanceof Error ? e.message : 'Failed to rename');
+    }
+  },
+
+  setCover: async (cover) => {
+    const s = get();
+    if (!s.issueId) return false;
+    try {
+      const issue = await api.setCover(s.issueId, cover);
+      set({ issue });
+      toast.success(cover.coverImage === '' ? 'Cover reset to automatic.' : 'Cover updated.');
+      return true;
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : 'Failed to set cover');
+      return false;
+    }
+  },
+
+  publish: async (selectedPageIds) => {
+    const s = get();
+    if (!s.issueId || s.publishing) return null;
+    set({ publishing: true });
+    try {
+      const { publishedIssueId } = await api.publishIssue(s.issueId, selectedPageIds);
+      // Refresh issue + page summaries (selectedForPublish changed server-side).
+      const { issue, pages } = await api.getIssue(s.issueId);
+      set({ issue, pages });
+      return publishedIssueId; // caller shows the toast + navigates to Bulletins
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : 'Publish failed');
+      return null;
+    } finally {
+      set({ publishing: false });
+    }
+  },
+
+  unpublish: async () => {
+    const s = get();
+    if (!s.issueId || !s.issue?.publishedIssueId || s.publishing) return;
+    set({ publishing: true });
+    try {
+      const { issue } = await api.unpublishIssue(s.issueId);
+      set({ issue });
+      toast.success('Removed from Bulletins.');
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : 'Unpublish failed');
+    } finally {
+      set({ publishing: false });
+    }
+  },
+
+  remove: async () => {
+    const s = get();
+    if (!s.issueId) return false;
+    try {
+      await api.deleteIssue(s.issueId);
+      toast.success('Magazine deleted.');
+      return true;
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : 'Delete failed');
+      return false;
     }
   },
 

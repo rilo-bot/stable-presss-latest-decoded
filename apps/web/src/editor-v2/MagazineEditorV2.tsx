@@ -8,11 +8,14 @@
 
 import { useEffect, useRef, useState } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
-import { ArrowLeft, Undo2, Redo2, Plus, Minus, Copy, Trash2, ChevronLeft, ChevronRight, Sparkles, Loader2, Wand2, WandSparkles, RotateCcw } from 'lucide-react';
+import { toast } from 'sonner';
+import { ArrowLeft, Undo2, Redo2, Plus, Minus, Copy, Trash2, ChevronLeft, ChevronRight, ChevronDown, Sparkles, Loader2, Wand2, WandSparkles, RotateCcw, ImageIcon, Globe, ExternalLink, Send } from 'lucide-react';
 import { useEditorStore } from './store';
 import { EditorCanvas } from './EditorCanvas';
 import { Inspector } from './Inspector';
 import { AiPanel } from './AiPanel';
+import { CoverPicker } from './CoverPicker';
+import { PublishDialog } from './PublishDialog';
 import type { ElementType, MagazineElement } from './model';
 
 function newElement(kind: ElementType, page: { width: number; height: number }, topZ: number): Partial<MagazineElement> {
@@ -47,6 +50,22 @@ export default function MagazineEditorV2() {
   const [pagesAiOpen, setPagesAiOpen] = useState(false);
   const [aiCount, setAiCount] = useState(2);
   const [aiTopic, setAiTopic] = useState('');
+  const [coverOpen, setCoverOpen] = useState(false);
+  const [publishOpen, setPublishOpen] = useState(false);
+  const [pubMenuOpen, setPubMenuOpen] = useState(false);
+
+  // Post-publish: match the v1 flow — toast with a "View" action that opens the
+  // frozen edition on the public Bulletins page.
+  const onPublished = (publishedIssueId: string, scope: 'full' | 'selected') => {
+    toast.success(`Published ${scope === 'full' ? 'full edition' : 'selected pages'} to Bulletins.`, {
+      action: { label: 'View', onClick: () => navigate(`/bulletins/${publishedIssueId}`) },
+    });
+  };
+  const publishFull = async () => {
+    setPubMenuOpen(false);
+    const id = await s.publish(s.pages.map((p) => p.id));
+    if (id) onPublished(id, 'full');
+  };
 
   // Resizable side panes (persisted). Center canvas always flexes between them.
   const [panes, setPanes] = useState<{ leftW: number; rightW: number }>(() => {
@@ -159,6 +178,13 @@ export default function MagazineEditorV2() {
             <WandSparkles size={13} /> Adjust
           </button>
 
+          {/* Cover — choose the Bulletins newsstand cover image (owner only) */}
+          {s.canManage() && (
+            <button className={ghost} onClick={() => setCoverOpen(true)} title="Set the cover image shown on Bulletins">
+              <ImageIcon size={13} /> Cover
+            </button>
+          )}
+
           {/* Reset — start over from a single blank page (owner only) */}
           {s.canManage() && (
             <button
@@ -168,6 +194,65 @@ export default function MagazineEditorV2() {
             >
               <RotateCcw size={13} /> Reset
             </button>
+          )}
+
+          {/* Publish → Bulletins (owner only) — v1-parity dropdown flow */}
+          {s.canManage() && s.issue && (
+            <>
+              <div className="mx-0.5 h-5 w-px bg-white/10" />
+              {s.issue.publishedIssueId && (
+                <span className="inline-flex items-center gap-1 rounded-full bg-emerald-500/15 px-2 py-0.5 text-[10px] font-semibold text-emerald-300">
+                  <Globe size={9} /> Live
+                </span>
+              )}
+              <div className="relative">
+                <button
+                  onClick={() => setPubMenuOpen((o) => !o)}
+                  disabled={s.publishing || s.generating}
+                  className="flex items-center gap-1.5 rounded-sm bg-emerald-500 px-3 py-1.5 text-[11px] font-semibold text-white hover:bg-emerald-600 disabled:opacity-50"
+                >
+                  {s.publishing ? <Loader2 size={13} className="animate-spin" /> : <Send size={13} />}
+                  {s.publishing ? 'Publishing…' : s.issue.publishedIssueId ? 'Republish' : 'Publish'} <ChevronDown size={12} />
+                </button>
+                {pubMenuOpen && (
+                  <div className="absolute right-0 top-full z-50 mt-1 w-56 overflow-hidden rounded-sm border border-white/15 bg-[#0d1626] shadow-xl">
+                    <button onClick={() => void publishFull()} className="block w-full px-3 py-2.5 text-left text-xs text-white hover:bg-white/10">
+                      <span className="font-semibold">Publish full edition</span>
+                      <span className="block text-[10px] text-white/40">All {s.pages.length} page{s.pages.length === 1 ? '' : 's'}</span>
+                    </button>
+                    <button
+                      onClick={() => { setPubMenuOpen(false); setPublishOpen(true); }}
+                      className="block w-full border-t border-white/10 px-3 py-2.5 text-left text-xs text-white hover:bg-white/10"
+                    >
+                      <span className="font-semibold">Publish selected pages…</span>
+                      <span className="block text-[10px] text-white/40">Choose pages</span>
+                    </button>
+                  </div>
+                )}
+              </div>
+              {s.issue.publishedIssueId && (
+                <a
+                  href={`/bulletins/${s.issue.publishedIssueId}`}
+                  target="_blank"
+                  rel="noreferrer"
+                  className="flex items-center gap-1 rounded-sm border border-white/15 bg-white/5 px-2 py-1.5 text-[11px] text-white/70 hover:bg-white/10"
+                  title="View on Bulletins"
+                >
+                  <ExternalLink size={12} /> View
+                </a>
+              )}
+              <button
+                onClick={async () => {
+                  if (!window.confirm('Delete this magazine? This removes the draft, all pages, and any published Bulletins edition. This cannot be undone.')) return;
+                  if (await s.remove()) navigate('/newsroom/magazine-v2');
+                }}
+                disabled={s.publishing}
+                className="flex items-center gap-1 rounded-sm border border-red-400/30 px-2 py-1.5 text-[11px] text-red-300/80 hover:bg-red-500/10 disabled:opacity-40"
+                title="Delete this magazine"
+              >
+                <Trash2 size={12} /> Delete
+              </button>
+            </>
           )}
 
           {/* AI assistant toggle */}
@@ -280,6 +365,9 @@ export default function MagazineEditorV2() {
           <Inspector />
         </div>
       </div>
+
+      <CoverPicker open={coverOpen} onClose={() => setCoverOpen(false)} />
+      <PublishDialog open={publishOpen} onClose={() => setPublishOpen(false)} onPublished={(id) => onPublished(id, 'selected')} />
     </div>
   );
 }

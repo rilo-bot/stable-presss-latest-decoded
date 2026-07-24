@@ -87,11 +87,21 @@ export const generateIssue = (prompt: string, pageCount?: number, sourceText?: s
   authFetch(`${BASE}/issues/generate`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ prompt, pageCount, sourceText }) }).then(parse<{ issue: IssueMeta }>);
 export const renameIssue = (id: string, title: string) =>
   authFetch(`${BASE}/issues/${id}`, { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ title }) }).then(parse<IssueMeta>);
+// Set the cover: an explicit image URL, '' to auto-derive from page 0, or a page
+// id whose image becomes the cover. Owner only.
+export const setCover = (id: string, cover: { coverImage?: string; coverPageId?: string }) =>
+  authFetch(`${BASE}/issues/${id}`, { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(cover) }).then(parse<IssueMeta>);
 export const deleteIssue = (id: string) => authFetch(`${BASE}/issues/${id}`, { method: 'DELETE' }).then(parse<{ success: boolean }>);
 // Publish freezes the selected pages into the shared Bulletins collection (shown
 // on the public newsstand as a magazine); unpublish hides that edition again.
-export const publishIssue = (id: string) =>
-  authFetch(`${BASE}/issues/${id}/publish`, { method: 'POST' }).then(parse<{ issue: IssueMeta; publishedIssueId: string }>);
+// selectedPageIds (optional) freezes exactly those pages (others deselected) —
+// the "select pages then publish" flow; omit to publish the current selection.
+export const publishIssue = (id: string, selectedPageIds?: string[]) =>
+  authFetch(`${BASE}/issues/${id}/publish`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(selectedPageIds ? { selectedPageIds } : {}),
+  }).then(parse<{ issue: IssueMeta; publishedIssueId: string }>);
 export const unpublishIssue = (id: string) =>
   authFetch(`${BASE}/issues/${id}/unpublish`, { method: 'POST' }).then(parse<{ issue: IssueMeta }>);
 // Reset wipes the issue back to a single blank page (a "start over").
@@ -166,3 +176,19 @@ export const retryPage = (id: string, pageId: string) =>
 
 /** The issue's media library (extracted photos/graphics + stock/uploads). */
 export const listMedia = (id: string) => authFetchRetry(`${BASE}/issues/${id}/media`).then(parse<{ assets: MediaAsset[] }>).then((r) => r.assets);
+
+/** Upload an image from the device into the issue's media library (presign → PUT
+ *  → confirm). Returns the stored MediaAsset. */
+export async function uploadMediaImage(id: string, file: File, alt?: string): Promise<MediaAsset> {
+  const { uploadUrl, key } = await authFetch(`${BASE}/issues/${id}/media/upload-url`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ filename: file.name, contentType: file.type, size: file.size }),
+  }).then(parse<{ uploadUrl: string; key: string; contentType: string }>);
+  await putToS3(uploadUrl, file);
+  return authFetch(`${BASE}/issues/${id}/media`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ key, alt: alt ?? '' }),
+  }).then(parse<{ asset: MediaAsset }>).then((r) => r.asset);
+}

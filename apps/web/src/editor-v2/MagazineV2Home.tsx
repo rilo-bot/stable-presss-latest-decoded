@@ -4,7 +4,7 @@
 
 import { useEffect, useRef, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { Plus, Sparkles, FileUp, FilePlus, X, Loader2, FileText, FileScan, Globe, EyeOff } from 'lucide-react';
+import { Plus, Sparkles, FileUp, FilePlus, X, Loader2, FileText, FileScan, Globe, Trash2 } from 'lucide-react';
 import { toast } from 'sonner';
 import * as api from './api';
 import type { IssueSummary } from './api';
@@ -54,17 +54,17 @@ export default function MagazineV2Home() {
 
   const openEditor = (id: string) => navigate(`/newsroom/magazine-v2/${id}`);
 
-  // Publish → freezes the issue into the Bulletins newsstand; unpublish hides it.
-  const togglePublish = async (it: IssueSummary) => {
+  // Publishing is done from inside the editor now; the card only deletes.
+  const removeIssue = async (it: IssueSummary) => {
     if (pubBusy) return;
+    if (!window.confirm(`Delete "${it.title}"? This removes the draft, all pages, and any published Bulletins edition. This cannot be undone.`)) return;
     setPubBusy(it.id);
     try {
-      const published = !!it.publishedIssueId;
-      const { issue } = published ? await api.unpublishIssue(it.id) : await api.publishIssue(it.id);
-      setIssues((prev) => prev.map((r) => (r.id === it.id ? { ...r, status: issue.status, publishedIssueId: issue.publishedIssueId ?? null } : r)));
-      toast.success(published ? 'Removed from Bulletins.' : 'Published to Bulletins.');
+      await api.deleteIssue(it.id);
+      setIssues((prev) => prev.filter((r) => r.id !== it.id));
+      toast.success('Magazine deleted.');
     } catch (e) {
-      toast.error(e instanceof Error ? e.message : 'Publish failed');
+      toast.error(e instanceof Error ? e.message : 'Delete failed');
     } finally {
       setPubBusy(null);
     }
@@ -202,20 +202,17 @@ export default function MagazineV2Home() {
                 </button>
                 <div className="mt-3 flex items-center gap-2 border-t border-border pt-2.5">
                   <button
-                    onClick={() => void togglePublish(it)}
+                    onClick={() => void removeIssue(it)}
                     disabled={busy}
-                    className={
-                      'inline-flex items-center gap-1 rounded px-2 py-1 text-xs font-medium disabled:opacity-50 ' +
-                      (published ? 'text-muted-foreground hover:bg-muted' : 'bg-[#123c2b] text-white hover:bg-[#0d2d20]')
-                    }
-                    title={published ? 'Remove this edition from Bulletins' : 'Publish this edition to Bulletins'}
+                    className="inline-flex items-center gap-1 rounded border border-red-300/40 px-2 py-1 text-xs font-medium text-red-600 hover:bg-red-50 disabled:opacity-50 dark:text-red-300/90 dark:hover:bg-red-500/10"
+                    title="Delete this magazine"
                   >
-                    {busy ? <Loader2 size={12} className="animate-spin" /> : published ? <EyeOff size={12} /> : <Globe size={12} />}
-                    {published ? 'Unpublish' : 'Publish'}
+                    {busy ? <Loader2 size={12} className="animate-spin" /> : <Trash2 size={12} />}
+                    Delete
                   </button>
                   {published && it.publishedIssueId && (
-                    <a href={`/bulletins/${it.publishedIssueId}`} target="_blank" rel="noreferrer" className="text-xs text-[#7c3aed] hover:underline">
-                      View
+                    <a href={`/bulletins/${it.publishedIssueId}`} target="_blank" rel="noreferrer" className="ml-auto text-xs text-[#7c3aed] hover:underline">
+                      View on Bulletins
                     </a>
                   )}
                 </div>
