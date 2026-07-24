@@ -131,6 +131,7 @@ export default function MagazineEditorV2() {
 
   const currentIndex = s.pages.findIndex((p) => p.id === s.currentPageId);
   const zoomPct = Math.round((s.zoomWidth / 1275) * 100);
+  const canEdit = s.canEdit(); // owner or collaborator; false = another admin's magazine (view-only)
 
   return (
     <div className="fixed inset-0 z-[60] flex flex-col bg-[#0b1220]">
@@ -151,10 +152,16 @@ export default function MagazineEditorV2() {
           disabled={!s.canManage()}
           aria-label="Magazine title"
         />
-        {!s.canManage() && s.issue && (
-          <span className="rounded-full border border-sky-400/30 bg-sky-400/10 px-2 py-0.5 text-[10px] text-sky-200">
-            Shared with you · editing your assigned pages
-          </span>
+        {s.issue && !s.canManage() && (
+          canEdit ? (
+            <span className="rounded-full border border-sky-400/30 bg-sky-400/10 px-2 py-0.5 text-[10px] text-sky-200">
+              Shared with you · editing your assigned pages
+            </span>
+          ) : (
+            <span className="rounded-full border border-white/20 bg-white/5 px-2 py-0.5 text-[10px] text-white/60">
+              View only{s.issue.ownerName ? ` · by ${s.issue.ownerName}` : ''}
+            </span>
+          )
         )}
         {isPublished && (
           <span className="flex items-center gap-1 rounded-full border border-emerald-400/30 bg-emerald-400/10 px-2 py-0.5 text-[10px] text-emerald-200">
@@ -176,21 +183,26 @@ export default function MagazineEditorV2() {
             <button onClick={() => s.setZoomWidth(s.zoomWidth + 80)} className="px-2 py-1.5 text-white/70 hover:bg-white/10" title="Zoom in"><Plus size={14} /></button>
           </div>
 
-          {/* add element */}
-          <div className="mx-0.5 h-5 w-px bg-white/10" />
-          <span className="text-[10px] uppercase tracking-wide text-white/40">Add</span>
-          {(['text', 'image', 'shape', 'qr'] as ElementType[]).map((k) => (
-            <button key={k} className={ghost + ' capitalize'} onClick={() => add(k)}>{k}</button>
-          ))}
+          {/* Editing tools — hidden for view-only admins (another admin's magazine) */}
+          {canEdit && (
+            <>
+              {/* add element */}
+              <div className="mx-0.5 h-5 w-px bg-white/10" />
+              <span className="text-[10px] uppercase tracking-wide text-white/40">Add</span>
+              {(['text', 'image', 'shape', 'qr'] as ElementType[]).map((k) => (
+                <button key={k} className={ghost + ' capitalize'} onClick={() => add(k)}>{k}</button>
+              ))}
 
-          {/* AI text pass — Fill (write empty + tighten) / Adjust (tighten) */}
-          <div className="mx-0.5 h-5 w-px bg-white/10" />
-          <button className={ghost} disabled={s.formatBusy || !s.page} onClick={() => void s.runFormat('fill')} title="Fill empty boxes & tighten crowded text (AI)">
-            {s.formatBusy ? <Loader2 size={13} className="animate-spin" /> : <Wand2 size={13} />} Fill
-          </button>
-          <button className={ghost} disabled={s.formatBusy || !s.page} onClick={() => void s.runFormat('adjust')} title="Tighten crowded text so it reads at a comfortable size (AI)">
-            <WandSparkles size={13} /> Adjust
-          </button>
+              {/* AI text pass — Fill (write empty + tighten) / Adjust (tighten) */}
+              <div className="mx-0.5 h-5 w-px bg-white/10" />
+              <button className={ghost} disabled={s.formatBusy || !s.page} onClick={() => void s.runFormat('fill')} title="Fill empty boxes & tighten crowded text (AI)">
+                {s.formatBusy ? <Loader2 size={13} className="animate-spin" /> : <Wand2 size={13} />} Fill
+              </button>
+              <button className={ghost} disabled={s.formatBusy || !s.page} onClick={() => void s.runFormat('adjust')} title="Tighten crowded text so it reads at a comfortable size (AI)">
+                <WandSparkles size={13} /> Adjust
+              </button>
+            </>
+          )}
 
           {/* Cover — choose the Bulletins newsstand cover image (owner only) */}
           {s.canManage() && (
@@ -286,22 +298,24 @@ export default function MagazineEditorV2() {
             </>
           )}
 
-          {/* AI assistant toggle */}
-          <button
-            onClick={() => setAsstOpen((o) => !o)}
-            aria-pressed={asstOpen}
-            className={'flex items-center gap-1 rounded-sm border px-2 py-1.5 text-[11px] ' + (asstOpen ? 'text-[#0b1220]' : 'border-white/15 text-white/70 hover:bg-white/10')}
-            style={asstOpen ? { background: 'var(--gold-bright)', borderColor: 'var(--gold-bright)' } : undefined}
-            title="Studio Assistant"
-          >
-            <Sparkles size={13} /> AI
-          </button>
+          {/* AI assistant toggle (editors only) */}
+          {canEdit && (
+            <button
+              onClick={() => setAsstOpen((o) => !o)}
+              aria-pressed={asstOpen}
+              className={'flex items-center gap-1 rounded-sm border px-2 py-1.5 text-[11px] ' + (asstOpen ? 'text-[#0b1220]' : 'border-white/15 text-white/70 hover:bg-white/10')}
+              style={asstOpen ? { background: 'var(--gold-bright)', borderColor: 'var(--gold-bright)' } : undefined}
+              title="Studio Assistant"
+            >
+              <Sparkles size={13} /> AI
+            </button>
+          )}
         </div>
       </div>
 
       {/* Body: assistant · canvas · inspector (resizable side panes) */}
       <div className="flex min-h-0 flex-1" onPointerMove={onBodyMove} onPointerUp={endDivider}>
-        {asstOpen && (
+        {asstOpen && canEdit && (
           <>
             <div style={{ width: panes.leftW }} className="flex-shrink-0 overflow-hidden border-r border-white/10">
               <AiPanel />
