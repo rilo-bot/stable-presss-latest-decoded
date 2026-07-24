@@ -111,7 +111,7 @@ export async function generateAndStoreImage(
     const generated = await generateImage(opts.prompt, opts.orientation);
     if (!generated) return null;
     const ext = generated.contentType.includes('png') ? 'png' : 'jpg';
-    const key = `magazinesV2/${ctx.magazineId}/${crypto.randomUUID()}-gen-p${ctx.pageIndex}.${ext}`;
+    const key = `public/magazinesV2/${ctx.magazineId}/${crypto.randomUUID()}-gen-p${ctx.pageIndex}.${ext}`;
     await storage.uploadObject({ key, contentType: generated.contentType, body: generated.bytes });
     const url = storage.publicUrl(key);
     const now = new Date().toISOString();

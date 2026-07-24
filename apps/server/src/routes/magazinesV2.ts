@@ -436,7 +436,8 @@ router.post('/issues/:id/media/upload-url', rateLimit('mag2-write', 300, 60_000)
     res.status(413).json({ error: `The image must be under ${Math.round(MAX_IMAGE_BYTES / 1024 / 1024)} MB.` });
     return;
   }
-  const key = `magazinesV2/${doc._id}/media/${crypto.randomUUID()}.${imageExtFor(contentType)}`;
+  // Under `public/` so the bucket's public-read rule serves it directly.
+  const key = `public/magazinesV2/${doc._id}/media/${crypto.randomUUID()}.${imageExtFor(contentType)}`;
   const uploadUrl = await storage.presignPutUrl({ key, contentType, expiresIn: 300 });
   res.json({ uploadUrl, key, contentType });
 });
@@ -451,7 +452,7 @@ router.post('/issues/:id/media', rateLimit('mag2-write', 300, 60_000), async (re
     return;
   }
   const key = typeof req.body?.key === 'string' ? req.body.key : '';
-  if (!key.startsWith(`magazinesV2/${doc._id}/media/`)) {
+  if (!key.startsWith(`public/magazinesV2/${doc._id}/media/`)) {
     res.status(400).json({ error: 'Invalid upload key.' });
     return;
   }
