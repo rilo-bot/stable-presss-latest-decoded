@@ -101,10 +101,12 @@ const FULLTEXT_CHARS = 80_000 // verbatim text kept for the bulk compose/fill pa
 const MODEL_ABORT_MS = 90_000 // generateObject ceiling (single-image vision path)
 const PDF_PARSE_MS = 30_000 // text-extraction ceiling
 const PAGE_OCR_MS = 75_000 // per-page OCR ceiling (image-based PDF path)
-// OCR pages this many at a time. Kept modest: firing many large scanned pages at
-// the vision provider at once gets them queued/throttled so none returns before
-// PAGE_OCR_MS and the whole wave times out. Fewer-but-completing beats more-but-aborted.
-const VISION_CONCURRENCY = 3
+// OCR pages this many at a time. Kept LOW on purpose: firing several large scanned
+// pages at the vision provider at once makes them queue/throttle, so each call's
+// wall-clock blows past PAGE_OCR_MS and the whole wave aborts (observed: a page
+// timing out at 75s under concurrency 3). Two-at-a-time gives each call the
+// headroom to actually return — fewer-but-completing beats more-but-aborted.
+const VISION_CONCURRENCY = 2
 const MAX_VISION_PAGES = 24 // cap OCR work (matches the 24-page bulletin template)
 const VISION_MAX_BYTES = 50 * 1024 * 1024 // cap the image/scanned-PDF fallback (matches the /ingest 50mb body limit)
 
@@ -209,10 +211,10 @@ async function splitPdfPages(bytes: Buffer, maxPages: number): Promise<{ pages: 
 
 /** Image-based / scanned PDF: split into pages and OCR them in parallel, then
  *  stitch the verbatim text back together so the bulk fill has real content. */
-async function ocrPdfByPage(name: string, bytes: Buffer): Promise<IngestResult> {
+async function ocrPdfByPage(name: string, bytes: Buffer, maxPages: number = MAX_VISION_PAGES): Promise<IngestResult> {
   let split: { pages: Buffer[]; total: number }
   try {
-    split = await splitPdfPages(bytes, MAX_VISION_PAGES)
+    split = await splitPdfPages(bytes, Math.max(1, Math.min(MAX_VISION_PAGES, maxPages)))
   } catch (e) {
     // Couldn't split (corrupt/odd PDF) — last resort: one bounded vision call on
     // the whole file. Better a thin digest than a hard failure.
@@ -263,6 +265,10 @@ export async function ingestDocument(opts: {
   bytes: Buffer
   contentType: string
   name: string
+  /** OCR at most this many pages of a scanned/image PDF (the rest are skipped
+   *  with a coverage note). Callers building a short PREVIEW pass a small number
+   *  so the read returns in seconds instead of minutes. Defaults to the full cap. */
+  maxOcrPages?: number
 }): Promise<IngestResult> {
   const kind = ingestKind(opts.contentType)
   if (!kind) throw new Error(`Unsupported file type: ${opts.contentType}`)
@@ -313,7 +319,7 @@ export async function ingestDocument(opts: {
           'Please upload a text-based PDF or a smaller version.',
       )
     }
-    return await ocrPdfByPage(opts.name, opts.bytes)
+    return await ocrPdfByPage(opts.name, opts.bytes, opts.maxOcrPages ?? MAX_VISION_PAGES)
   }
 
   // image → vision

@@ -94,6 +94,8 @@ export function validatePageLayout(
       lineHeight: el.text.lineHeight,
       fontFamily: el.text.fontFamily,
       fontWeight: el.text.fontWeight,
+      letterSpacing: el.text.letterSpacing,
+      textTransform: el.text.textTransform,
     });
     if (h > el.h * 1.25) {
       issues.push({ kind: 'overflow', detail: `text ${el.id} overflows its box` });

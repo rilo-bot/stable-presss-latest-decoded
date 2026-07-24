@@ -62,8 +62,12 @@ router.post('/ingest', rawDoc, async (req, res) => {
     res.status(413).json({ error: `That file is a bit big (max ${Math.round(cap / MB)} MB) — try a smaller one.` })
     return
   }
+  // Optional cap on scanned-PDF OCR pages — callers building a short preview pass
+  // a small number so the read finishes in seconds rather than OCR'ing every page.
+  const mp = Number(req.query.maxPages)
+  const maxOcrPages = Number.isInteger(mp) && mp > 0 ? mp : undefined
   try {
-    const { digest, fullText } = await ingestDocument({ bytes: body, contentType, name })
+    const { digest, fullText } = await ingestDocument({ bytes: body, contentType, name, maxOcrPages })
     res.json({ digest, fullText })
   } catch (err) {
     console.error('[agent-editor] ingest error:', err)

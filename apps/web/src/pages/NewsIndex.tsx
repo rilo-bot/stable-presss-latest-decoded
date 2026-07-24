@@ -1,6 +1,5 @@
 import { useMemo, useState, useEffect } from 'react';
 import { Link, useSearchParams } from 'react-router-dom';
-import { motion } from 'framer-motion';
 import { useArticleStore } from '@/stores/articleStore';
 import { ArticleSkeletonCard } from '@/components/SkeletonCard';
 import { EmptyState } from '@/components/EmptyState';
@@ -9,7 +8,6 @@ import {
   ChevronRight,
   Search,
   PenLine,
-  Clock,
   ArrowRight,
   Mail,
 } from 'lucide-react';
@@ -17,7 +15,6 @@ import { Button } from '@/components/ui/button';
 import {
   CATEGORIES,
   SECTIONS,
-  EDITORIAL_FEATURES,
   isLive,
 } from './news-index/constants';
 import { ArticleGrid } from './news-index/ArticleGrid';
@@ -91,18 +88,6 @@ export default function NewsIndex() {
     }
     return base;
   }, [liveArticles, activeCategory, activeSection, search]);
-
-  // Editorial features filtered by section/category for the showcase
-  const showcaseFeatures = useMemo(() => {
-    if (activeCategory) {
-      return EDITORIAL_FEATURES.filter((f) => f.category === activeCategory);
-    }
-    if (activeSection) {
-      const catKeys = CATEGORIES.filter((c) => c.section === activeSection).map((c) => c.key);
-      return EDITORIAL_FEATURES.filter((f) => catKeys.includes(f.category));
-    }
-    return EDITORIAL_FEATURES;
-  }, [activeCategory, activeSection]);
 
   const currentCategoryDef = activeCategory
     ? CATEGORIES.find((c) => c.key === activeCategory)
@@ -297,71 +282,6 @@ export default function NewsIndex() {
         {/* When no user-published articles, show editorial showcase + CTA */}
         {liveArticles.length === 0 && !search ? (
           <div className="space-y-12">
-            {/* Showcase grid — static editorial items */}
-            <section>
-              <div className="flex items-center gap-4 mb-7">
-                <div
-                  className="flex-shrink-0 w-1 h-5 rounded-full"
-                  style={{ background: 'hsl(var(--brand-accent))' }}
-                />
-                <h2 className="font-[family-name:var(--font-display)] text-xl font-bold text-foreground">
-                  {currentCategoryDef?.label ?? currentSectionDef?.label ?? 'Featured Editorial'}
-                </h2>
-                <div className="flex-1 h-px bg-border/50" />
-                <span className="text-[10px] uppercase tracking-[0.1em] text-muted-foreground italic">
-                  Editorial showcase
-                </span>
-              </div>
-              <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
-                {(showcaseFeatures.length > 0 ? showcaseFeatures : EDITORIAL_FEATURES).map((item, idx) => (
-                  <motion.div
-                    key={item.id}
-                    initial={{ opacity: 0, y: 8 }}
-                    animate={{ opacity: 1, y: 0 }}
-                    transition={{ delay: idx * 0.04, duration: 0.2, ease: 'easeOut' }}
-                  >
-                    <Link
-                      to="/news"
-                      className="group block border border-border/60 rounded-sm overflow-hidden bg-card hover:border-primary/30 transition-colors"
-                      aria-label={`Read: ${item.title}`}
-                    >
-                      <div className="relative h-44 overflow-hidden">
-                        <img
-                          src={item.imageUrl}
-                          alt={item.title}
-                          crossOrigin="anonymous"
-                          className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-500"
-                        />
-                        <div className="absolute inset-0 bg-gradient-to-t from-foreground/70 via-transparent to-transparent" />
-                        <span
-                          className="absolute top-3 left-3 text-[8px] uppercase tracking-[0.18em] font-bold px-2 py-0.5"
-                          style={{
-                            background: 'hsl(var(--brand-accent))',
-                            color: 'hsl(var(--brand-accent-foreground))',
-                          }}
-                        >
-                          {item.section}
-                        </span>
-                      </div>
-                      <div className="p-4">
-                        <h3 className="font-[family-name:var(--font-display)] text-sm font-bold text-foreground leading-snug line-clamp-2 mb-2 group-hover:opacity-[0.85] transition-opacity">
-                          {item.title}
-                        </h3>
-                        <div className="flex items-center gap-3 text-[10px] text-muted-foreground">
-                          <span>{item.author}</span>
-                          <span>·</span>
-                          <span className="flex items-center gap-1">
-                            <Clock size={9} />
-                            {item.time}
-                          </span>
-                        </div>
-                      </div>
-                    </Link>
-                  </motion.div>
-                ))}
-              </div>
-            </section>
-
             {/* CTA prompt */}
             <div className="border border-dashed border-primary/30 rounded-sm p-8 text-center bg-primary/5">
               <div className="w-12 h-12 rounded-full bg-primary/15 flex items-center justify-center mx-auto mb-4">

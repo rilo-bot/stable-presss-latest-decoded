@@ -16,6 +16,7 @@ import type { MediaItem } from '@/types/mediaItem';
 import type { RacingEntry } from '@/types/racingEntry';
 import type { RoleConfig } from '../constants';
 import { StatusBadge } from '../components/StatusBadge';
+import { MAGAZINE_TEMPLATES } from '@/editor/templates/galleryTemplates';
 
 interface OverviewViewProps {
   isContributor: boolean;
@@ -121,7 +122,7 @@ export function OverviewView({
             New
           </span>
           <span className="text-[13px] text-muted-foreground hidden sm:inline">
-            — 9 templates ready to use
+            — {MAGAZINE_TEMPLATES.length} {MAGAZINE_TEMPLATES.length === 1 ? 'template' : 'templates'} ready to use
           </span>
         </div>
         <Button

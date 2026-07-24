@@ -14,6 +14,7 @@
 
 import type { CSSProperties } from 'react';
 import { sanitizeRichText } from '@/editor/lib/sanitize';
+import { resolveIcon } from '@/editor/templates/iconRegistry';
 import type { IssuePageData, MagazineElement } from './model';
 import { pctRect, fontSizeCqw } from './geometry';
 import { QrBlock } from './QrBlock';
@@ -65,7 +66,9 @@ function TextElement({ el, page }: { el: MagazineElement; page: IssuePageData })
 
 function ShapeElement({ el, page }: { el: MagazineElement; page: IssuePageData }) {
   if (!el.shape) return null;
-  return <div style={{ ...elementBoxStyle(el, page), background: el.shape.fill }} />;
+  // opacity < 1 → a translucent scrim: the photo beneath shows through while the
+  // overlaid text stays legible (instead of a solid block hiding the picture).
+  return <div style={{ ...elementBoxStyle(el, page), background: el.shape.fill, opacity: el.shape.opacity ?? 1 }} />;
 }
 
 function QrElement({ el, page }: { el: MagazineElement; page: IssuePageData }) {
@@ -73,6 +76,33 @@ function QrElement({ el, page }: { el: MagazineElement; page: IssuePageData }) {
   return (
     <div style={elementBoxStyle(el, page)}>
       <QrBlock qr={el.qr} linkInNewTab />
+    </div>
+  );
+}
+
+function IconElement({ el, page }: { el: MagazineElement; page: IssuePageData }) {
+  if (!el.icon) return null;
+  const wrap: CSSProperties = {
+    ...elementBoxStyle(el, page),
+    display: 'flex',
+    alignItems: 'center',
+    justifyContent: 'center',
+    color: el.icon.color || '#111111',
+  };
+  // An uploaded custom glyph renders as an image; otherwise resolve the curated
+  // registry name to its Lucide component (same registry the v1 editor uses), so
+  // AI-authored icon leaves (feature rows, contact/CTA badges) actually draw.
+  if (el.icon.src) {
+    return (
+      <div style={wrap}>
+        <img src={el.icon.src} alt="" className="h-full w-full" style={{ objectFit: 'contain' }} />
+      </div>
+    );
+  }
+  const Glyph = resolveIcon(el.icon.name);
+  return (
+    <div style={wrap}>
+      <Glyph style={{ width: '100%', height: '100%' }} strokeWidth={1.6} absoluteStrokeWidth />
     </div>
   );
 }
@@ -128,6 +158,8 @@ export function IssuePageCanvas({ page }: { page: IssuePageData }) {
           <ShapeElement key={el.id} el={el} page={page} />
         ) : el.type === 'qr' ? (
           <QrElement key={el.id} el={el} page={page} />
+        ) : el.type === 'icon' ? (
+          <IconElement key={el.id} el={el} page={page} />
         ) : null,
       )}
     </div>

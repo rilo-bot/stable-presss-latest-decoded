@@ -189,16 +189,25 @@ function pageSummary(p: Doc) {
 router.get('/issues', async (req, res) => {
   const uid = req.account!.id;
   const all = (await db.collection(COL.issues).find()) as Doc[];
-  const counts = await Promise.all(all.map((d) => pagesFor(d._id).then((p) => p.length)));
+  // Page counts in ONE aggregation. Previously this was an N+1 that called
+  // pagesFor() per issue — each loading every page's FULL elements array from
+  // Mongo just to read .length (O(issues × pages × element-bytes) transferred to
+  // build a list). aggregate() doesn't auto-filter soft-deletes, so match
+  // deletedAt: null explicitly to mirror find()'s behaviour.
+  const countRows = (await db.collection(COL.pages).aggregate([
+    { $match: { deletedAt: null } },
+    { $group: { _id: '$magazineId', count: { $sum: 1 } } },
+  ])) as Doc[];
+  const countByMag = new Map<string, number>(countRows.map((r) => [String(r._id), Number(r.count) || 0]));
   const rows = all
-    .map((d, i) => ({
+    .map((d) => ({
       id: d._id,
       title: d.title,
       slug: d.slug,
       status: d.status,
       origin: d.origin,
       coverImage: d.coverImage ?? '',
-      pageCount: counts[i],
+      pageCount: countByMag.get(d._id) ?? 0,
       myRole: roleOnMagazine(d, uid),
       ownerName: d.ownerName ?? '',
       publishedIssueId: d.publishedIssueId ?? null,

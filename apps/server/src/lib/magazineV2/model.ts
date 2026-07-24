@@ -16,9 +16,10 @@
 // ---------------------------------------------------------------------------
 
 import crypto from 'crypto';
-import { safeUrl } from './url.js';
+import { safeUrl, safePublicImageUrl } from './url.js';
+import { isKnownIcon, FALLBACK_ICON_NAME } from './icons.js';
 
-export const ELEMENT_TYPES = ['text', 'image', 'shape', 'qr'] as const;
+export const ELEMENT_TYPES = ['text', 'image', 'shape', 'qr', 'icon'] as const;
 export type ElementType = (typeof ELEMENT_TYPES)[number];
 
 /** What role a text block plays — set by AI classification, editable by hand. */
@@ -41,7 +42,8 @@ export type ElementSource = (typeof ELEMENT_SOURCES)[number];
 
 export type ElementAutoFit = 'shrink' | 'clip';
 export type ElementImageFit = 'cover' | 'contain';
-export type ElementTextAlign = 'left' | 'center' | 'right';
+export type ElementTextAlign = 'left' | 'center' | 'right' | 'justify';
+export type ElementTextTransform = 'none' | 'uppercase' | 'lowercase' | 'capitalize';
 export type ElementVAlign = 'top' | 'center' | 'bottom';
 
 export interface ElementTextData {
@@ -50,12 +52,14 @@ export interface ElementTextData {
   fontFamily: string;
   fontSize: number; // px at the page's canonical dims — the CURRENT (fit) size
   maxFontSize?: number; // design's intended ceiling; refit shrinks from here
-  fontWeight: 400 | 500 | 600 | 700 | 800;
+  fontWeight: 400 | 500 | 600 | 700 | 800 | 900;
   color: string; // #rrggbb
   align: ElementTextAlign;
   lineHeight: number;
   autoFit: ElementAutoFit;
   vAlign?: ElementVAlign;
+  letterSpacing?: number; // px at canonical dims (default 0)
+  textTransform?: ElementTextTransform; // default 'none'
 }
 
 export interface ElementImageData {
@@ -68,12 +72,24 @@ export interface ElementImageData {
 
 export interface ElementShapeData {
   fill: string; // #rrggbb — a flat rectangle (rules / dividers / panels)
+  /** 0–1. <1 makes the shape a translucent overlay — a SCRIM over a photo so
+   *  text stays legible without hiding the picture. Absent/1 = solid. */
+  opacity?: number;
 }
 
 export interface ElementQrData {
   url: string; // '' until set
   fg: string; // #rrggbb
   bg: string; // #rrggbb
+}
+
+export interface ElementIconData {
+  /** Curated registry glyph name (see ./icons). '' / unknown → renderer fallback. */
+  name?: string;
+  /** Uploaded custom icon URL (SVG/PNG). When set, OVERRIDES `name`. */
+  src?: string;
+  /** Optional hex tint — applies to registry glyphs only (uploaded art renders as-is). */
+  color?: string;
 }
 
 /** One positioned block on a magazine page. */
@@ -91,6 +107,7 @@ export interface MagazineElement {
   image?: ElementImageData;
   shape?: ElementShapeData;
   qr?: ElementQrData;
+  icon?: ElementIconData;
   source: ElementSource;
   confidence?: number; // 0–1, AI extraction confidence
 }
@@ -127,10 +144,11 @@ function genId(): string {
 function coerceText(o: Record<string, unknown>): ElementTextData {
   const t = (o.text && typeof o.text === 'object' ? o.text : {}) as Record<string, unknown>;
   const role = typeof t.role === 'string' && TEXT_ROLE_SET.has(t.role) ? (t.role as TextRole) : 'other';
-  const weight = [400, 500, 600, 700, 800].includes(t.fontWeight as number)
+  const weight = [400, 500, 600, 700, 800, 900].includes(t.fontWeight as number)
     ? (t.fontWeight as ElementTextData['fontWeight'])
     : 400;
-  const align: ElementTextAlign = t.align === 'center' || t.align === 'right' ? t.align : 'left';
+  const align: ElementTextAlign =
+    t.align === 'center' || t.align === 'right' || t.align === 'justify' ? t.align : 'left';
   const autoFit: ElementAutoFit = t.autoFit === 'clip' ? 'clip' : 'shrink';
   const out: ElementTextData = {
     content: str(t.content, MAX_TEXT_HTML),
@@ -147,6 +165,12 @@ function coerceText(o: Record<string, unknown>): ElementTextData {
     out.maxFontSize = clampNum(t.maxFontSize, 6, 400, out.fontSize);
   }
   if (t.vAlign === 'center' || t.vAlign === 'bottom') out.vAlign = t.vAlign;
+  if (typeof t.letterSpacing === 'number' && Number.isFinite(t.letterSpacing)) {
+    out.letterSpacing = clampNum(t.letterSpacing, -20, 100, 0);
+  }
+  if (t.textTransform === 'uppercase' || t.textTransform === 'lowercase' || t.textTransform === 'capitalize') {
+    out.textTransform = t.textTransform;
+  }
   return out;
 }
 
@@ -155,7 +179,11 @@ function coerceImage(o: Record<string, unknown>): ElementImageData {
   const fit: ElementImageFit = im.fit === 'contain' ? 'contain' : 'cover';
   const out: ElementImageData = {
     assetId: str(im.assetId, 64),
-    url: safeUrl(im.url),
+    // Image element URLs are rendered SERVER-SIDE by the Puppeteer PDF export, so
+    // they must never point at an internal host — validate through the public-host
+    // allowlist (blocks loopback / RFC-1918 / link-local / cloud-metadata), not the
+    // host-agnostic safeUrl. (Closes the review's element-image SSRF gap.)
+    url: safePublicImageUrl(im.url),
     alt: str(im.alt, MAX_ALT),
     fit,
   };
@@ -171,16 +199,36 @@ function coerceImage(o: Record<string, unknown>): ElementImageData {
 
 function coerceShape(o: Record<string, unknown>): ElementShapeData {
   const s = (o.shape && typeof o.shape === 'object' ? o.shape : {}) as Record<string, unknown>;
-  return { fill: hex(s.fill, '#000000') };
+  const out: ElementShapeData = { fill: hex(s.fill, '#000000') };
+  if (typeof s.opacity === 'number' && Number.isFinite(s.opacity) && s.opacity < 1) {
+    out.opacity = Math.max(0, s.opacity);
+  }
+  return out;
 }
 
 function coerceQr(o: Record<string, unknown>): ElementQrData {
   const q = (o.qr && typeof o.qr === 'object' ? o.qr : {}) as Record<string, unknown>;
   return {
+    // QR destinations are ENCODED into the code, not fetched server-side, so the
+    // broader safeUrl (http(s)/mailto/tel/relative) is correct here.
     url: safeUrl(typeof q.url === 'string' ? q.url.slice(0, MAX_QR_URL) : ''),
     fg: hex(q.fg, '#000000'),
     bg: hex(q.bg, '#ffffff'),
   };
+}
+
+function coerceIcon(o: Record<string, unknown>): ElementIconData {
+  const ic = (o.icon && typeof o.icon === 'object' ? o.icon : {}) as Record<string, unknown>;
+  const out: ElementIconData = {};
+  if (isKnownIcon(ic.name)) out.name = ic.name as string;
+  // Uploaded custom icon is rendered server-side (PDF) → public-host allowlist.
+  const src = safePublicImageUrl(ic.src);
+  if (src) out.src = src;
+  if (typeof ic.color === 'string' && HEX_RE.test(ic.color)) out.color = ic.color;
+  // Guarantee a renderable icon: fall back to the default glyph when neither a
+  // known name nor an uploaded source is present.
+  if (!out.name && !out.src) out.name = FALLBACK_ICON_NAME;
+  return out;
 }
 
 /**
@@ -218,6 +266,7 @@ export function validateElements(
     if (type === 'image') el.image = coerceImage(o);
     if (type === 'shape') el.shape = coerceShape(o);
     if (type === 'qr') el.qr = coerceQr(o);
+    if (type === 'icon') el.icon = coerceIcon(o);
     out.push(el);
   }
   return out;

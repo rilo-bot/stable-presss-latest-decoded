@@ -100,70 +100,11 @@ export const SECTIONS = [
   },
 ] as const;
 
-/* ── Static featured editorial (shown when no articles yet) ── */
-
-export const EDITORIAL_FEATURES = [
-  {
-    id: 'ef1',
-    section: 'Analysis',
-    title: 'The Flemington Straight: Why the 1000m Bias Has Shifted',
-    author: 'Sarah Ellison',
-    time: '10 min read',
-    category: 'form-guide',
-    imageUrl:
-      'https://images.pexels.com/photos/27305774/pexels-photo-27305774.jpeg?auto=compress&cs=tinysrgb&h=650&w=940',
-  },
-  {
-    id: 'ef2',
-    section: 'Interview',
-    title: 'Trainer Evelyn Cross: Twelve Group Ones and Counting',
-    author: 'Catherine Darragh',
-    time: '8 min read',
-    category: 'trainer-profiles',
-    imageUrl:
-      'https://images.pexels.com/photos/7882582/pexels-photo-7882582.jpeg?auto=compress&cs=tinysrgb&h=650&w=940',
-  },
-  {
-    id: 'ef3',
-    section: 'Bloodstock',
-    title: 'Northern Hemisphere Stallions and Their Australian Influence',
-    author: 'James Whitfield',
-    time: '12 min read',
-    category: 'bloodstock',
-    imageUrl:
-      'https://images.pexels.com/photos/11341144/pexels-photo-11341144.jpeg?auto=compress&cs=tinysrgb&h=650&w=940',
-  },
-  {
-    id: 'ef4',
-    section: 'Race Report',
-    title: 'Sovereign Streak Wins Flemington Feature in Dominant Fashion',
-    author: 'Tom McAllister',
-    time: '6 min read',
-    category: 'race-reports',
-    imageUrl:
-      'https://images.pexels.com/photos/12995066/pexels-photo-12995066.jpeg?auto=compress&cs=tinysrgb&h=650&w=940',
-  },
-  {
-    id: 'ef5',
-    section: 'Jockey Desk',
-    title: 'The Art of the Hold-up Ride: Luke Dittman on Patience and Precision',
-    author: 'Rebecca Frame',
-    time: '9 min read',
-    category: 'jockey-desk',
-    imageUrl:
-      'https://images.pexels.com/photos/7882582/pexels-photo-7882582.jpeg?auto=compress&cs=tinysrgb&h=650&w=940',
-  },
-  {
-    id: 'ef6',
-    section: 'Morning Edition',
-    title: "Saturday's Stable Reports: Randwick Scratching and Market Movers",
-    author: 'Editorial Desk',
-    time: '4 min read',
-    category: 'morning-edition',
-    imageUrl:
-      'https://images.pexels.com/photos/18913040/pexels-photo-18913040.jpeg?auto=compress&cs=tinysrgb&h=350',
-  },
-];
+/* Removed: EDITORIAL_FEATURES — a hardcoded array of six fabricated articles
+   (fake bylines, headlines, and reading times) that rendered on /news whenever
+   the CMS had zero live articles. The empty state now shows only the honest
+   "No dispatches have been filed" CTA in NewsIndex. Real articles come from
+   useArticleStore; nothing should stand in for them. */
 
 /* ── Helpers ─────────────────────────────────────────── */
 

@@ -11,6 +11,7 @@
 
 import { MongoClient, ObjectId } from 'mongodb'
 import type { Db } from 'mongodb'
+import { ensureIndexes } from './ensureIndexes.js'
 // Using `any` for the index signature (not `unknown`) is deliberate. Routes
 // freely read `doc.createdAt`, `doc.title`, `doc.dueDate`, etc. and feed
 // them into `new Date()`, string ops, comparisons — strict `tsc` rejects
@@ -59,6 +60,10 @@ async function getMongoDb(): Promise<Db> {
         mongoDb = c.db()
         mongoConnected = true
         console.log('[db] MongoDB connected:', MONGODB_URI.replace(/:([^@]+)@/, ':***@'))
+        // Fire-and-forget: create baseline indexes once per process. Idempotent
+        // and non-blocking, so it never stalls or fails the connection. ensureIndexes
+        // swallows its own errors (logs them), so the void promise can't reject.
+        void ensureIndexes(mongoDb)
         return mongoDb
       })
       .catch((err) => {
@@ -79,6 +84,15 @@ function mongoCollection(name: string) {
       const finalQuery = { ...(query ?? {}), deletedAt: null }
       const docs = await db.collection(name).find(finalQuery).toArray()
       return docs.map((d) => ({ ...d, _id: d._id.toString() })) as Doc[]
+    },
+    // Run an aggregation pipeline. Unlike find(), this does NOT auto-inject the
+    // `deletedAt: null` soft-delete filter — add a `$match` stage yourself when it
+    // matters. Used for cheap server-side rollups (e.g. per-magazine page counts)
+    // instead of loading full documents into the API just to count them.
+    async aggregate(pipeline: Record<string, unknown>[]): Promise<Doc[]> {
+      const db = await getMongoDb()
+      const docs = await db.collection(name).aggregate(pipeline).toArray()
+      return docs.map((d) => ({ ...d, _id: d._id == null ? d._id : String(d._id) })) as Doc[]
     },
     async findById(id: string): Promise<Doc | null> {
       const db = await getMongoDb()

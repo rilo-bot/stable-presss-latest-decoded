@@ -3,18 +3,19 @@
 //
 // Pure and server-safe (no DOM) so the generator can bake a non-overflowing font
 // size into every generated text element and keep it legible over any scrim /
-// panel / photo, and the client can reuse the same maths. Measurement is a
-// deterministic per-font heuristic (character-advance estimate) — accurate enough
-// to stop text overflowing or leaving dead space; the editor refines it with real
-// DOM measurement on edit. The estimate only ever SHRINKS from maxFontSize, so it
-// is safe (never overflows).
+// panel / photo, and the client can reuse the same maths. Width comes from
+// MEASURED per-font glyph advances (fontMetrics.ts) — real numbers read from the
+// actual fonts, NOT a pattern-match on the font's name. The estimate only ever
+// SHRINKS from maxFontSize and leans conservative (ignores kerning), so it is
+// safe (never overflows); the editor refines it with real DOM measurement on edit.
 //
-// Ported verbatim from the campaign-hq reference (packages/blocks/src/layoutFit.ts)
-// so generated pages fit + read identically; `refitText` (the server write-path
-// hook) is kept here and adapted to the opts-based `fitFontSize`.
+// Originally ported from the campaign-hq reference (packages/blocks/src/layoutFit.ts);
+// the name-classifying `advanceRatio` heuristic has since been replaced by the
+// measured metrics table. `refitText` (the server write-path hook) is kept here.
 // ---------------------------------------------------------------------------
 
 import type { MagazineElement } from './model.js';
+import { measureRunWidthPx } from './fontMetrics.js';
 
 const TAG_RE = /<[^>]+>/g;
 
@@ -30,47 +31,55 @@ function toPlain(html: string): string {
     .replace(/&quot;/g, '"');
 }
 
-/** Average glyph advance as a fraction of font-size, chosen by font family +
- *  weight. Heavier weights and sans faces run wider; serifs a touch narrower.
- *  Deliberately errs slightly WIDE so the fit result never overflows. */
-function advanceRatio(fontFamily: string, fontWeight: number): number {
-  const f = fontFamily.toLowerCase();
-  let base: number;
-  if (/oswald|condensed|bebas|impact/.test(f)) base = 0.46;
-  else if (/playfair|dm serif|bodoni|didot/.test(f)) base = 0.5;
-  else if (/georgia|times|garamond|serif/.test(f)) base = 0.49;
-  else base = 0.53; // sans-serif default (Inter/Arial/Helvetica/Montserrat)
-  if (fontWeight >= 700) base += 0.035;
-  else if (fontWeight >= 600) base += 0.02;
-  return base;
+/** Apply a CSS text-transform to plain text for measurement (uppercase widens
+ *  real glyphs — we measure the transformed glyphs directly rather than guess). */
+function applyTransform(plain: string, textTransform: string): string {
+  if (textTransform === 'uppercase') return plain.toUpperCase();
+  if (textTransform === 'lowercase') return plain.toLowerCase();
+  return plain;
 }
 
 /** Estimate how many wrapped lines `text` takes at `fontSize` in `boxWidthPx`,
- *  honouring explicit newlines. Character-based greedy wrap (approximate). */
-function estimateLines(text: string, fontSize: number, boxWidthPx: number, fontFamily: string, fontWeight: number): number {
-  const charW = fontSize * advanceRatio(fontFamily, fontWeight);
-  const charsPerLine = Math.max(1, Math.floor(boxWidthPx / charW));
+ *  honouring explicit newlines. Greedy word-wrap measured in PIXELS from the
+ *  font's real glyph advances (fontMetrics), so a proportional face wraps where
+ *  it actually would — no fixed chars-per-line assumption. `letterSpacing` and
+ *  `textTransform` feed straight into the measurement (uppercase measures the
+ *  uppercased glyphs; negative letter-spacing is clamped to stay conservative). */
+function estimateLines(
+  text: string,
+  fontSize: number,
+  boxWidthPx: number,
+  fontFamily: string,
+  fontWeight: number,
+  letterSpacing = 0,
+  textTransform: string = 'none',
+): number {
+  const plain = applyTransform(toPlain(text), textTransform);
+  const measure = (s: string): number => measureRunWidthPx(s, fontFamily, fontWeight, fontSize, letterSpacing);
+  const spaceW = measure(' ');
+  const box = Math.max(1, boxWidthPx);
   let lines = 0;
-  for (const rawLine of toPlain(text).split('\n')) {
+  for (const rawLine of plain.split('\n')) {
+    // Whitespace tokenisation (not a classification heuristic).
     const words = rawLine.trim().split(/\s+/).filter(Boolean);
     if (words.length === 0) {
       lines += 1; // a blank line still occupies a row
       continue;
     }
-    let col = 0;
+    let colW = 0; // measured width (px) of the current line so far
     let lineCount = 1;
     for (const word of words) {
-      const wlen = word.length;
-      if (col === 0) {
-        col = wlen;
-        // A single word longer than the line wraps internally (break-word).
-        if (wlen > charsPerLine) lineCount += Math.floor(wlen / charsPerLine);
-      } else if (col + 1 + wlen <= charsPerLine) {
-        col += 1 + wlen;
+      const wW = measure(word);
+      if (colW === 0) {
+        colW = wW;
+        // A single word wider than the box wraps internally (break-word).
+        if (wW > box) lineCount += Math.floor(wW / box);
+      } else if (colW + spaceW + wW <= box) {
+        colW += spaceW + wW;
       } else {
         lineCount += 1;
-        col = wlen;
-        if (wlen > charsPerLine) lineCount += Math.floor(wlen / charsPerLine);
+        colW = wW;
+        if (wW > box) lineCount += Math.floor(wW / box);
       }
     }
     lines += lineCount;
@@ -86,8 +95,18 @@ export function estimateTextHeight(opts: {
   lineHeight: number;
   fontFamily: string;
   fontWeight: number;
+  letterSpacing?: number;
+  textTransform?: string;
 }): number {
-  const lines = estimateLines(opts.text, opts.fontSize, opts.boxWidthPx, opts.fontFamily, opts.fontWeight);
+  const lines = estimateLines(
+    opts.text,
+    opts.fontSize,
+    opts.boxWidthPx,
+    opts.fontFamily,
+    opts.fontWeight,
+    opts.letterSpacing ?? 0,
+    opts.textTransform ?? 'none',
+  );
   return lines * opts.fontSize * opts.lineHeight;
 }
 
@@ -106,13 +125,27 @@ export function fitFontSize(opts: {
   fontFamily: string;
   fontWeight: number;
   maxLines?: number;
+  letterSpacing?: number;
+  textTransform?: string;
 }): number {
   const { text, boxW, boxH, lineHeight, fontFamily, fontWeight } = opts;
+  const letterSpacing = opts.letterSpacing ?? 0;
+  const textTransform = opts.textTransform ?? 'none';
   const max = Math.max(6, opts.maxFontSize);
   const min = Math.max(6, Math.min(opts.minFontSize, max));
   if (!toPlain(text).trim()) return max;
+  // The longest single WORD, for the width guard below.
+  const words = applyTransform(toPlain(text), textTransform).split(/\s+/).filter(Boolean);
+  const widestWordPx = (size: number): number => {
+    let w = 0;
+    for (const word of words) w = Math.max(w, measureRunWidthPx(word, fontFamily, fontWeight, size, letterSpacing));
+    return w;
+  };
   const fits = (size: number): boolean => {
-    const lines = estimateLines(text, size, boxW, fontFamily, fontWeight);
+    // A single word wider than the box breaks mid-word (e.g. "THOROUG|HBRED") —
+    // that always reads as broken, so shrink until the longest word fits.
+    if (words.length && boxW > 0 && widestWordPx(size) > boxW + 0.5) return false;
+    const lines = estimateLines(text, size, boxW, fontFamily, fontWeight, letterSpacing, textTransform);
     if (opts.maxLines && lines > opts.maxLines) return false;
     return lines * size * lineHeight <= boxH;
   };
@@ -189,6 +222,8 @@ export function refitText(elements: MagazineElement[]): MagazineElement[] {
       lineHeight: t.lineHeight,
       fontFamily: t.fontFamily,
       fontWeight: t.fontWeight,
+      letterSpacing: t.letterSpacing,
+      textTransform: t.textTransform,
     });
     return { ...el, text: { ...t, fontSize } };
   });

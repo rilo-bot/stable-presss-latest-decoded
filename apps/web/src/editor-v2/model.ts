@@ -7,7 +7,7 @@
 // exists (Phase 3+). If you change the server model, change this too.
 // ---------------------------------------------------------------------------
 
-export type ElementType = 'text' | 'image' | 'shape' | 'qr';
+export type ElementType = 'text' | 'image' | 'shape' | 'qr' | 'icon';
 
 export type TextRole = 'headline' | 'subhead' | 'byline' | 'body' | 'caption' | 'pullquote' | 'other';
 export type ElementSource = 'extracted' | 'manual' | 'ai-agent';
@@ -40,12 +40,20 @@ export interface ElementImageData {
 
 export interface ElementShapeData {
   fill: string; // #rrggbb
+  /** 0–1; <1 = translucent scrim (photo shows through, text stays legible). */
+  opacity?: number;
 }
 
 export interface ElementQrData {
   url: string;
   fg: string; // #rrggbb
   bg: string; // #rrggbb
+}
+
+export interface ElementIconData {
+  name?: string; // curated Lucide registry glyph name (see editor/templates/iconRegistry)
+  src?: string; // uploaded custom icon URL — overrides `name`
+  color?: string; // #rrggbb tint (registry glyphs only)
 }
 
 export interface MagazineElement {
@@ -62,6 +70,7 @@ export interface MagazineElement {
   image?: ElementImageData;
   shape?: ElementShapeData;
   qr?: ElementQrData;
+  icon?: ElementIconData;
   source: ElementSource;
   confidence?: number;
 }

@@ -36,13 +36,18 @@ function kindOf(contentType: string): DocAttachment['kind'] {
  *  allow generous headroom — the server bounds the real work per page. */
 const INGEST_TIMEOUT_MS = 300_000;
 
-/** Send one file to the ingest endpoint and return the analysed attachment. */
-export async function ingestFile(file: File): Promise<DocAttachment> {
+/** Send one file to the ingest endpoint and return the analysed attachment.
+ *  `maxPages` caps how many pages of a SCANNED PDF are OCR'd up front — the
+ *  generation preview only needs a few, so it passes a small number to avoid a
+ *  multi-minute read. Omitted (assistant attach) → the server reads up to its cap. */
+export async function ingestFile(file: File, opts?: { maxPages?: number }): Promise<DocAttachment> {
   const contentType = contentTypeFor(file);
   const token = useAuthStore.getState().token;
+  const query = new URLSearchParams({ filename: file.name });
+  if (opts?.maxPages) query.set('maxPages', String(opts.maxPages));
   let res: Response;
   try {
-    res = await fetch(apiUrl(`/api/agent/editor/ingest?filename=${encodeURIComponent(file.name)}`), {
+    res = await fetch(apiUrl(`/api/agent/editor/ingest?${query.toString()}`), {
       method: 'POST',
       headers: {
         'Content-Type': contentType,

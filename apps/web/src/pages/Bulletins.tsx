@@ -154,10 +154,11 @@ export default function Bulletins() {
                 </p>
               </div>
 
-              {/* Edition stats */}
+              {/* Edition stats — "Vol. 47" (a fabricated volume number) removed.
+                  "Fortnightly" is the real publishing cadence; "This Issue" is a
+                  live count. Re-add a volume only when it's tracked as real data. */}
               <div className="flex flex-wrap gap-6 lg:justify-end">
                 {[
-                  { label: 'Print Edition', value: 'Vol. 47' },
                   { label: 'Fortnightly', value: 'Bi-Weekly' },
                   {
                     label: 'This Issue',

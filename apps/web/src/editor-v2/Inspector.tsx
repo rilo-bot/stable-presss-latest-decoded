@@ -12,7 +12,7 @@ import * as api from './api';
 import type { MediaAsset } from './api';
 import { Section, Stepper, Segmented, ColorControl } from '@/editor/inspector/controls';
 import {
-  MousePointerClick, Type, Image as ImageIcon, QrCode, Square,
+  MousePointerClick, Type, Image as ImageIcon, QrCode, Square, Shapes,
   AlignLeft, AlignCenter, AlignRight, ArrowUpToLine, FoldVertical, ArrowDownToLine, Trash2,
   Sliders, Images, Loader2,
 } from 'lucide-react';
@@ -22,6 +22,7 @@ const KIND_META = {
   image: { label: 'Image', icon: ImageIcon },
   shape: { label: 'Shape', icon: Square },
   qr: { label: 'QR Code', icon: QrCode },
+  icon: { label: 'Icon', icon: Shapes },
 } as const;
 
 // The curated font stacks the studio uses (mirrors the generator's font lists).

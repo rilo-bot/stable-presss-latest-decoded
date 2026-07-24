@@ -12,10 +12,14 @@ export function safeUrl(input: unknown): string {
   if (typeof input !== 'string') return '';
   const value = input.trim();
   if (!value) return '';
-  // Reject protocol-relative '//host' (resolves off-origin) — only allow a true
-  // same-origin absolute path ('/…', but not '//…') or an in-page anchor.
-  if (value.startsWith('//')) return '';
-  if (value.startsWith('/') || value.startsWith('#')) return value;
+  // Reject protocol-relative '//host' (resolves off-origin). Browsers normalize
+  // backslashes to forward slashes under special schemes, so '/\host' (and
+  // '\\host', '\/host') resolve off-origin exactly like '//host' — collapse the
+  // leading run to forward slashes BEFORE the check so those variants can't
+  // smuggle an off-origin URL past as a "same-origin path".
+  const lead = value.replace(/\\/g, '/');
+  if (lead.startsWith('//')) return '';
+  if (lead.startsWith('/') || value.startsWith('#')) return value; // same-origin path / in-page anchor
   try {
     const url = new URL(value);
     return SAFE_URL_PROTOCOLS.has(url.protocol) ? value : '';
@@ -57,7 +61,19 @@ export function isBlockedImageHost(hostname: string): boolean {
 export function safePublicImageUrl(input: unknown): string {
   const value = safeUrl(input); // protocol allowlist + relative-path handling
   if (!value) return '';
-  if (value.startsWith('/') || value.startsWith('#')) return value; // same-origin
+  if (value.startsWith('#')) return value; // in-page anchor — never fetched
+  // A leading-slash value is only same-origin if it STAYS same-origin once
+  // resolved. Resolve it against a sentinel origin and confirm the host didn't
+  // change — defence-in-depth against any backslash/encoded off-origin that a
+  // future safeUrl regression might let through.
+  if (value.replace(/\\/g, '/').startsWith('/')) {
+    try {
+      const probe = new URL(value, 'https://sp-internal.invalid');
+      return probe.hostname === 'sp-internal.invalid' ? value : '';
+    } catch {
+      return '';
+    }
+  }
   try {
     const url = new URL(value);
     if (url.protocol !== 'http:' && url.protocol !== 'https:') return '';
