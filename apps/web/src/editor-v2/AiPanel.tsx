@@ -11,7 +11,7 @@ import { Sparkles, Send, Loader2, Check, X, Plus, Pencil, Trash2, Paperclip, Fil
 import type { UIMessage } from 'ai';
 import { toast } from 'sonner';
 import { MarkdownMessage } from '@/components/MarkdownMessage';
-import { ingestFile, ATTACH_ACCEPT } from '@/editor/agent/documentUpload';
+import { ingestFile, attachmentSourceText, ATTACH_ACCEPT } from '@/editor/agent/documentUpload';
 import { useVoiceChat } from '@/agent/voice/useVoiceChat';
 import { useEditorStore } from './store';
 import type { AgentProposal } from './model';
@@ -38,6 +38,7 @@ export function AiPanel() {
   const sendChat = useEditorStore((s) => s.sendChat);
   const applyAll = useEditorStore((s) => s.applyAllProposals);
   const discard = useEditorStore((s) => s.discardProposals);
+  const setPreviewDoc = useEditorStore((s) => s.setPreviewDoc);
 
   const [input, setInput] = useState('');
   const [file, setFile] = useState<File | null>(null); // optional source doc to fill this page from
@@ -70,6 +71,37 @@ export function AiPanel() {
     scrollRef.current?.scrollTo({ top: scrollRef.current.scrollHeight, behavior: 'smooth' });
   }, [chat, chatBusy, proposals.length]);
 
+  // Open the attachment in the right pane (docks over the Inspector). Images show
+  // immediately; docs are ingested for their text first.
+  const openPreview = async () => {
+    if (!file || ingesting) return;
+    if (isImage) {
+      setPreviewDoc({ name: file.name, isImage: true, imageUrl: imgUrl ?? undefined });
+      return;
+    }
+    let text = docText;
+    if (!text) {
+      setIngesting(true);
+      try {
+        text = (await ingestFile(file)).fullText;
+        setDocText(text);
+      } catch (e) {
+        toast.error(e instanceof Error ? e.message : 'Could not read that document.');
+        setIngesting(false);
+        return;
+      }
+      setIngesting(false);
+    }
+    setPreviewDoc({ name: file.name, isImage: false, text: text ?? '' });
+  };
+
+  const removeFile = () => {
+    setFile(null);
+    setDocText(null);
+    setPreviewDoc(null);
+    if (fileRef.current) fileRef.current.value = '';
+  };
+
   const send = async () => {
     const t = input.trim();
     if (!t || chatBusy || ingesting) return;
@@ -79,8 +111,10 @@ export function AiPanel() {
       setIngesting(true);
       try {
         const att = await ingestFile(file);
-        src = att.fullText;
-        setDocText(att.fullText);
+        // fullText for PDF/DOCX/text; flattened digest for images (vision-only)
+        // so an attached photo/screenshot actually reaches the agent.
+        src = attachmentSourceText(att);
+        setDocText(src);
       } catch (e) {
         setIngesting(false);
         toast.error(e instanceof Error ? e.message : 'Could not read that document.');
@@ -185,25 +219,30 @@ export function AiPanel() {
           </div>
         )}
         {file && (
-          <div className="mb-1.5 overflow-hidden rounded-sm border border-emerald-400/30 bg-emerald-400/10">
-            <div className="flex items-center gap-1.5 px-2 py-1 text-[10px] text-emerald-200">
-              {ingesting ? <Loader2 size={11} className="animate-spin" /> : isImage ? <ImageIcon size={11} /> : <FileText size={11} />}
-              <span className="truncate">{ingesting ? `Reading ${file.name}…` : file.name}</span>
-              {!ingesting && (
-                <button onClick={() => { setFile(null); setDocText(null); if (fileRef.current) fileRef.current.value = ''; }} aria-label="Remove document" className="ml-auto text-emerald-200/60 hover:text-emerald-100"><X size={11} /></button>
+          <div className="mb-1.5 flex items-center gap-1.5 rounded-sm border border-emerald-400/30 bg-emerald-400/10 px-2 py-1.5 text-[10px] text-emerald-200">
+            <button
+              type="button"
+              onClick={() => void openPreview()}
+              disabled={ingesting}
+              title="Open preview in the side panel"
+              className="flex min-w-0 flex-1 items-center gap-1.5 text-left hover:text-emerald-100 disabled:opacity-70"
+            >
+              {ingesting ? (
+                <Loader2 size={11} className="flex-shrink-0 animate-spin" />
+              ) : isImage && imgUrl ? (
+                <img src={imgUrl} alt="" className="h-6 w-6 flex-shrink-0 rounded object-cover" />
+              ) : isImage ? (
+                <ImageIcon size={11} className="flex-shrink-0" />
+              ) : (
+                <FileText size={11} className="flex-shrink-0" />
               )}
-            </div>
-            {/* Docked preview: the image itself, or a snippet of the ingested text. */}
-            {isImage && imgUrl ? (
-              <img src={imgUrl} alt={file.name} className="max-h-40 w-full bg-black/20 object-contain" />
-            ) : docText ? (
-              <div className="max-h-28 overflow-y-auto whitespace-pre-wrap border-t border-emerald-400/20 px-2 py-1.5 text-[10px] leading-snug text-white/60">
-                {docText.slice(0, 1200)}{docText.length > 1200 ? '…' : ''}
-              </div>
-            ) : null}
+              <span className="truncate">{ingesting ? `Reading ${file.name}…` : file.name}</span>
+              {!ingesting && <span className="ml-1 flex-shrink-0 text-emerald-200/60">Preview →</span>}
+            </button>
+            <button type="button" onClick={removeFile} aria-label="Remove document" className="flex-shrink-0 text-emerald-200/60 hover:text-emerald-100"><X size={11} /></button>
           </div>
         )}
-        <input ref={fileRef} type="file" accept={ATTACH_ACCEPT} className="hidden" onChange={(e) => { setFile(e.target.files?.[0] ?? null); setDocText(null); }} />
+        <input ref={fileRef} type="file" accept={ATTACH_ACCEPT} className="hidden" onChange={(e) => { setFile(e.target.files?.[0] ?? null); setDocText(null); setPreviewDoc(null); }} />
         {voice.recording && (
           <div className="mb-1.5 flex items-center gap-1.5 text-[10px] italic text-white/50">
             <span className="h-1.5 w-1.5 animate-pulse rounded-full bg-red-500" /> {voice.caption || 'Listening…'}

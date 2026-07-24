@@ -66,6 +66,8 @@ export interface IssueMeta {
   myEditablePageIds: string[] | 'all';
   /** Id of the frozen Bulletins snapshot when published (null/absent otherwise). */
   publishedIssueId?: string | null;
+  /** Staff shared into this magazine (owner manages via the Share dialog). */
+  collaborators?: V2Collaborator[];
   // present while generating (status 'processing')
   pagesProcessed?: number;
   pagesTotal?: number;
@@ -88,15 +90,42 @@ export const generateIssue = (prompt: string, pageCount?: number, sourceText?: s
 export const renameIssue = (id: string, title: string) =>
   authFetch(`${BASE}/issues/${id}`, { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ title }) }).then(parse<IssueMeta>);
 export const deleteIssue = (id: string) => authFetch(`${BASE}/issues/${id}`, { method: 'DELETE' }).then(parse<{ success: boolean }>);
-// Publish freezes the selected pages into the shared Bulletins collection (shown
-// on the public newsstand as a magazine); unpublish hides that edition again.
-export const publishIssue = (id: string) =>
-  authFetch(`${BASE}/issues/${id}/publish`, { method: 'POST' }).then(parse<{ issue: IssueMeta; publishedIssueId: string }>);
+// Publish freezes pages into the shared Bulletins collection (shown on the
+// public newsstand as a magazine); unpublish hides that edition again.
+// scope 'full' = every page; 'selected' = only pages with selectedForPublish.
+export const publishIssue = (id: string, scope: 'full' | 'selected' = 'full') =>
+  authFetch(`${BASE}/issues/${id}/publish`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ scope }) }).then(
+    parse<{ issue: IssueMeta; publishedIssueId: string }>,
+  );
 export const unpublishIssue = (id: string) =>
   authFetch(`${BASE}/issues/${id}/unpublish`, { method: 'POST' }).then(parse<{ issue: IssueMeta }>);
 // Reset wipes the issue back to a single blank page (a "start over").
 export const resetIssue = (id: string) =>
   authFetch(`${BASE}/issues/${id}/reset`, { method: 'POST' }).then(parse<IssueBundle>);
+
+// ── Publish-selection + collaborators (Share) ──
+export const setPageSelected = (id: string, pageId: string, selected: boolean) =>
+  authFetch(`${BASE}/issues/${id}/pages/${pageId}/select`, { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ selected }) }).then(
+    parse<{ pages: PageSummary[] }>,
+  );
+
+export interface V2Collaborator {
+  userId: string;
+  email: string;
+  displayName: string;
+  role: 'editor' | 'contributor';
+  pageIds: string[] | 'all';
+}
+export interface StaffEntry { userId: string; displayName: string; email: string }
+
+/** Staff picker candidates — reuses the v1 magazines directory (same app, staff-gated). */
+export const staffDirectory = () => authFetchRetry('/api/magazines/staff-directory').then(parse<StaffEntry[]>);
+export const addCollaborator = (id: string, body: { email: string; pageIds: string[] | 'all' }) =>
+  authFetch(`${BASE}/issues/${id}/collaborators`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) }).then(
+    parse<{ issue: IssueMeta }>,
+  );
+export const removeCollaborator = (id: string, userId: string) =>
+  authFetch(`${BASE}/issues/${id}/collaborators/${userId}`, { method: 'DELETE' }).then(parse<{ issue: IssueMeta }>);
 
 // ── Pages ──
 export const getPage = (id: string, pageId: string) =>

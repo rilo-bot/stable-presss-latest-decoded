@@ -8,11 +8,14 @@
 
 import { useEffect, useRef, useState } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
-import { ArrowLeft, Undo2, Redo2, Plus, Minus, Copy, Trash2, ChevronLeft, ChevronRight, Sparkles, Loader2, Wand2, WandSparkles, RotateCcw } from 'lucide-react';
+import { ArrowLeft, Undo2, Redo2, Plus, Minus, Copy, Trash2, ChevronLeft, ChevronRight, Sparkles, Loader2, Wand2, WandSparkles, RotateCcw, Send, ChevronDown, Users, Globe, EyeOff } from 'lucide-react';
 import { useEditorStore } from './store';
 import { EditorCanvas } from './EditorCanvas';
 import { Inspector } from './Inspector';
 import { AiPanel } from './AiPanel';
+import { AttachmentPreviewPane } from './AttachmentPreviewPane';
+import { PublishDialog } from './PublishDialog';
+import { ShareDialog } from './ShareDialog';
 import type { ElementType, MagazineElement } from './model';
 
 function newElement(kind: ElementType, page: { width: number; height: number }, topZ: number): Partial<MagazineElement> {
@@ -47,6 +50,18 @@ export default function MagazineEditorV2() {
   const [pagesAiOpen, setPagesAiOpen] = useState(false);
   const [aiCount, setAiCount] = useState(2);
   const [aiTopic, setAiTopic] = useState('');
+  const [publishMenuOpen, setPublishMenuOpen] = useState(false);
+  const [publishDialogOpen, setPublishDialogOpen] = useState(false);
+  const [shareOpen, setShareOpen] = useState(false);
+  const [publishing, setPublishing] = useState(false);
+  const isPublished = !!s.issue?.publishedIssueId && s.issue?.status === 'published';
+
+  const publishFull = async () => {
+    setPublishMenuOpen(false);
+    setPublishing(true);
+    await s.publish('full');
+    setPublishing(false);
+  };
 
   // Resizable side panes (persisted). Center canvas always flexes between them.
   const [panes, setPanes] = useState<{ leftW: number; rightW: number }>(() => {
@@ -128,6 +143,16 @@ export default function MagazineEditorV2() {
           disabled={!s.canManage()}
           aria-label="Magazine title"
         />
+        {!s.canManage() && s.issue && (
+          <span className="rounded-full border border-sky-400/30 bg-sky-400/10 px-2 py-0.5 text-[10px] text-sky-200">
+            Shared with you · editing your assigned pages
+          </span>
+        )}
+        {isPublished && (
+          <span className="flex items-center gap-1 rounded-full border border-emerald-400/30 bg-emerald-400/10 px-2 py-0.5 text-[10px] text-emerald-200">
+            <Globe size={10} /> Live in Bulletins
+          </span>
+        )}
 
         <div className="ml-auto flex items-center gap-1.5">
           {/* undo / redo */}
@@ -168,6 +193,55 @@ export default function MagazineEditorV2() {
             >
               <RotateCcw size={13} /> Reset
             </button>
+          )}
+
+          {/* Share (collaborators) — owner only */}
+          {s.canManage() && (
+            <button className={ghost} onClick={() => setShareOpen(true)} title="Invite staff to edit this magazine">
+              <Users size={13} /> Share
+            </button>
+          )}
+
+          {/* Publish — owner only: full edition / selected pages / unpublish */}
+          {s.canManage() && (
+            <div className="relative">
+              <button
+                onClick={() => setPublishMenuOpen((v) => !v)}
+                disabled={publishing}
+                className="flex items-center gap-1 rounded-sm bg-emerald-500 px-2.5 py-1.5 text-[11px] font-semibold text-white hover:bg-emerald-600 disabled:opacity-50"
+                title="Publish this magazine to Bulletins"
+              >
+                {publishing ? <Loader2 size={13} className="animate-spin" /> : <Send size={13} />}
+                {publishing ? 'Publishing…' : isPublished ? 'Republish' : 'Publish'} <ChevronDown size={12} />
+              </button>
+              {publishMenuOpen && !publishing && (
+                <div className="absolute right-0 top-full z-40 mt-1 w-60 rounded-md border border-white/15 bg-[#0d1626] p-1 shadow-xl">
+                  <button
+                    onClick={() => void publishFull()}
+                    className="block w-full rounded-sm px-2.5 py-2 text-left text-[11px] text-white/85 hover:bg-white/10"
+                  >
+                    <span className="font-semibold">Publish full edition</span>
+                    <span className="block text-white/40">Every page goes public in Bulletins</span>
+                  </button>
+                  <button
+                    onClick={() => { setPublishMenuOpen(false); setPublishDialogOpen(true); }}
+                    className="block w-full rounded-sm px-2.5 py-2 text-left text-[11px] text-white/85 hover:bg-white/10"
+                  >
+                    <span className="font-semibold">Publish selected pages…</span>
+                    <span className="block text-white/40">Choose exactly which pages go public</span>
+                  </button>
+                  {isPublished && (
+                    <button
+                      onClick={() => { setPublishMenuOpen(false); void s.unpublish(); }}
+                      className="block w-full rounded-sm px-2.5 py-2 text-left text-[11px] text-red-300 hover:bg-white/10"
+                    >
+                      <span className="flex items-center gap-1 font-semibold"><EyeOff size={11} /> Unpublish</span>
+                      <span className="block text-white/40">Remove this edition from Bulletins</span>
+                    </button>
+                  )}
+                </div>
+              )}
+            </div>
           )}
 
           {/* AI assistant toggle */}
@@ -277,9 +351,13 @@ export default function MagazineEditorV2() {
         {/* Inspector */}
         <div className={divider} onPointerDown={startDivider('right')} title="Drag to resize" />
         <div style={{ width: panes.rightW }} className="flex-shrink-0 overflow-y-auto border-l border-white/10 bg-[#0d1626]">
-          <Inspector />
+          {s.previewDoc ? <AttachmentPreviewPane /> : <Inspector />}
         </div>
       </div>
+
+      {/* Dialogs */}
+      {publishDialogOpen && <PublishDialog onClose={() => setPublishDialogOpen(false)} />}
+      {shareOpen && <ShareDialog onClose={() => setShareOpen(false)} />}
     </div>
   );
 }
