@@ -85,7 +85,9 @@ export async function processSinglePage(
 
 async function uploadBackground(png: Buffer, issueId: string, index: number): Promise<string> {
   const jpeg = await toStoredJpeg(png, { quality: 82 });
-  const key = `magazinesV2/${issueId}/pages/${index}/background.jpg`;
+  // Images live under `public/` so the bucket's public-read rule serves them
+  // directly (S3_PUBLIC_BASE_URL). Source docs stay OUTSIDE `public/` (private).
+  const key = `public/magazinesV2/${issueId}/pages/${index}/background.jpg`;
   await storage.uploadObject({ key, contentType: 'image/jpeg', body: jpeg });
   return storage.publicUrl(key);
 }
@@ -178,7 +180,7 @@ async function buildRawElements(raster: PageRaster, issueId: string, index: numb
       // Alpha-bearing images stay PNG — flattening to JPEG turns transparent
       // pixels black (the black-box bug). Opaque ones go to JPEG.
       const stored = await toStoredImage(composed, { hasAlpha: img.hasAlpha, quality: 85, maxWidth: 2000 });
-      const key = `magazinesV2/${issueId}/${crypto.randomUUID()}-p${index}-${n}.${stored.ext}`;
+      const key = `public/magazinesV2/${issueId}/${crypto.randomUUID()}-p${index}-${n}.${stored.ext}`;
       await storage.uploadObject({ key, contentType: stored.contentType, body: stored.buffer });
       const url = storage.publicUrl(key);
       const assetId = await insertMedia({ issueId, index, key, url, contentType: stored.contentType, size: stored.buffer.length, alt: '', kind: 'photo' });
@@ -238,7 +240,7 @@ async function buildRawElements(raster: PageRaster, issueId: string, index: numb
     try {
       const cropped = await cropRegion(raster.backgroundPng, boxPx);
       const jpeg = await toStoredJpeg(cropped, { quality: 90 });
-      const key = `magazinesV2/${issueId}/${crypto.randomUUID()}-p${index}-graphic${gi}.jpg`;
+      const key = `public/magazinesV2/${issueId}/${crypto.randomUUID()}-p${index}-graphic${gi}.jpg`;
       await storage.uploadObject({ key, contentType: 'image/jpeg', body: jpeg });
       const url = storage.publicUrl(key);
       const label = GRAPHIC_LABEL[g.kind];

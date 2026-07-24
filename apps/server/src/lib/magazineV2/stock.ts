@@ -83,7 +83,7 @@ export async function fetchAndStoreStock(
     const found = await searchPhoto(opts.query, opts.orientation);
     if (!found) return null;
     const ext = found.contentType.includes('png') ? 'png' : 'jpg';
-    const key = `magazinesV2/${ctx.magazineId}/${crypto.randomUUID()}-gen-p${ctx.pageIndex}.${ext}`;
+    const key = `public/magazinesV2/${ctx.magazineId}/${crypto.randomUUID()}-gen-p${ctx.pageIndex}.${ext}`;
     await storage.uploadObject({ key, contentType: found.contentType, body: found.bytes });
     const url = storage.publicUrl(key);
     const now = new Date().toISOString();
