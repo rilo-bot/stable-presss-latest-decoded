@@ -39,6 +39,7 @@ interface PexelsPhoto {
 async function searchPhoto(
   query: string,
   orientation?: StockOrientation,
+  attempt = 0,
 ): Promise<{ bytes: Buffer; contentType: string; alt: string; attribution: { author: string; url: string } } | null> {
   if (!PEXELS_API_KEY) return null;
   const q = query.trim().slice(0, 200);
@@ -50,9 +51,12 @@ async function searchPhoto(
     signal: AbortSignal.timeout(12_000),
   });
   // One retry on rate-limit; then give up (the caller degrades to a colour block).
+  // Bounded so sustained 429s (exactly what happens at scale) can't recurse
+  // forever and hang the whole single-threaded job.
   if (searchRes.status === 429) {
+    if (attempt >= 1) return null;
     await new Promise((r) => setTimeout(r, 1500));
-    return searchPhoto(query, orientation);
+    return searchPhoto(query, orientation, attempt + 1);
   }
   if (!searchRes.ok) return null;
   const data = (await searchRes.json()) as { photos?: PexelsPhoto[] };

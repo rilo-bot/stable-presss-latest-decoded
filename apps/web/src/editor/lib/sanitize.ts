@@ -51,14 +51,33 @@ function installHook() {
   });
 }
 
+// Sanitizing is a full HTML parse + tree walk. The read-only page renderer calls
+// this for EVERY text element on EVERY render — e.g. once per drag frame (~60/s)
+// for every box on the page — so it dominated the editor's interactive cost. The
+// output is a pure function of the input string (the tag/attr/style allowlist and
+// the hook are module constants), so memoize behind a bounded cache: unchanged
+// copy re-renders become a map lookup instead of a re-parse.
+const _cache = new Map<string, string>();
+const _CACHE_MAX = 1000;
+
 /** Sanitize inline rich text down to the safe formatting allowlist. */
 export function sanitizeRichText(html: string): string {
+  const key = html ?? '';
+  const hit = _cache.get(key);
+  if (hit !== undefined) return hit;
   installHook();
-  return DOMPurify.sanitize(html ?? '', {
+  const clean = DOMPurify.sanitize(key, {
     ALLOWED_TAGS,
     ALLOWED_ATTR,
     ALLOW_DATA_ATTR: false,
   });
+  // Bound memory: evict the oldest entry (Map preserves insertion order).
+  if (_cache.size >= _CACHE_MAX) {
+    const oldest = _cache.keys().next().value;
+    if (oldest !== undefined) _cache.delete(oldest);
+  }
+  _cache.set(key, clean);
+  return clean;
 }
 
 /** Strip ALL tags — used when we want plain text from a pasted fragment. */

@@ -295,23 +295,31 @@ export const useEditorStore = create<EditorState>((set, get) => ({
     toast.message('Designing new pages…');
     // Poll until the issue settles out of 'processing', then refresh summaries
     // (existing pages are untouched; the new ones just appear in the rail).
+    // Uses the shared, cancellable genPoll handle and guards every set() on the
+    // captured issueId — otherwise navigating to a different magazine mid-run
+    // would overwrite THAT magazine's state with this one's for up to 180s.
+    stopGenPoll();
     const start = Date.now();
     const tick = async () => {
+      if (get().issueId !== issueId) { set({ generating: false }); return; } // navigated away
       try {
         const { issue, pages } = await api.getIssue(issueId);
+        if (get().issueId !== issueId) { set({ generating: false }); return; } // re-check after await
         set({ issue, pages });
         if (issue.status === 'processing' && Date.now() - start < 180_000) {
-          setTimeout(() => void tick(), 1500);
+          genPoll = setTimeout(() => void tick(), 1500);
         } else {
+          genPoll = null;
           set({ generating: false });
           if (issue.status === 'failed') toast.error(issue.processingError || 'Adding pages failed');
           else toast.success('Pages added');
         }
       } catch {
-        setTimeout(() => void tick(), 2000); // transient — keep polling
+        if (get().issueId !== issueId) { set({ generating: false }); return; } // stop if we've moved on
+        genPoll = setTimeout(() => void tick(), 2000); // transient — keep polling
       }
     };
-    setTimeout(() => void tick(), 1500);
+    genPoll = setTimeout(() => void tick(), 1500);
   },
 
   duplicatePage: async (pageId) => {

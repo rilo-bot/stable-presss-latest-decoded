@@ -118,9 +118,16 @@ function buildElement(leaf: SolvedLeaf, fill: LeafFill | undefined, theme: { pal
 
   if (role === 'icon') {
     const icon: Record<string, unknown> = {};
-    if (fill?.iconName) icon.name = fill.iconName;
+    // The glyph name is authored by the art-director ON THE LEAF (node.iconName);
+    // a curated content fill can still override it. Unknown/absent → the model's
+    // fallback glyph (coerceIcon), so an icon leaf always renders something.
+    if (node.iconName) icon.name = node.iconName;
+    else if (fill?.iconName) icon.name = fill.iconName;
     if (fill?.iconSrc) icon.src = fill.iconSrc;
-    icon.color = fill?.iconColor && HEX_RE.test(fill.iconColor) ? fill.iconColor : paletteColor(palette, node.colorRef, palette.text);
+    // Icons read best in the accent colour on a light page (as in premium refs);
+    // an explicit colorRef wins, and contrast is repaired against what's behind.
+    const desired = fill?.iconColor && HEX_RE.test(fill.iconColor) ? fill.iconColor : paletteColor(palette, node.colorRef ?? 'accent', palette.accent);
+    icon.color = readableColor(desired, behind, palette.accent, palette.text);
     return { ...base, type: 'icon', icon };
   }
 

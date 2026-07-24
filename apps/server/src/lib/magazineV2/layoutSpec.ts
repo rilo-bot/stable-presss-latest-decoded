@@ -18,6 +18,7 @@
 // ---------------------------------------------------------------------------
 
 import type { TextRole } from './model.js';
+import { isKnownIcon } from './icons.js';
 
 // ── Design tokens — the bounded vocabulary the AI is allowed to speak ─────────
 
@@ -87,6 +88,8 @@ export interface LeafNode {
   weightHint?: FontWeight; // text leaves — design's intended weight
   align?: TextAlignToken; // text leaves
   fit?: ImageFit; // image leaves
+  /** Curated registry glyph name for an `icon` leaf (validated against ./icons). */
+  iconName?: string;
   /** Advisory aspect ratio (w/h) for an image leaf. The solver may ignore it to
    *  keep the partition intact — images conform to their solved box via fit. */
   aspect?: number;
@@ -165,6 +168,7 @@ function coerceLeaf(o: Record<string, unknown>): LeafNode {
   if (align) leaf.align = align;
   const fit = oneOf(o.fit, IMAGE_FITS, undefined);
   if (fit) leaf.fit = fit;
+  if (isKnownIcon(o.iconName)) leaf.iconName = o.iconName as string;
   if (typeof o.aspect === 'number' && Number.isFinite(o.aspect) && o.aspect > 0) {
     leaf.aspect = Math.min(10, Math.max(0.1, o.aspect));
   }

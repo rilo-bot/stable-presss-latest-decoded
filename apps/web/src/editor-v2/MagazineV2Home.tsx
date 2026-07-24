@@ -81,12 +81,23 @@ export default function MagazineV2Home() {
       if (file) {
         setStartMsg('Reading your document…');
         try {
-          sourceText = attachmentSourceText(await ingestFile(file));
+          // A generated issue is a SHORT preview, so we only need the first few
+          // pages read up front. For a scanned PDF this is decisive: OCR'ing all
+          // pages takes minutes, so we cap it here and note the coverage — the rest
+          // can be pulled in later via "Add more pages".
+          sourceText = attachmentSourceText(await ingestFile(file, { maxPages: 6 }));
         } catch (e) {
-          setError(e instanceof Error ? e.message : 'Could not read that document.');
-          setStarting(false);
-          setStartMsg('');
-          return;
+          // A scanned PDF can be slow or patchy to OCR. Don't dead-end the user:
+          // if they also gave a description, build from that and note the document
+          // was skipped; only hard-fail when there's nothing else to build from.
+          if (brief.trim()) {
+            toast.message("Couldn't read that document in time — building from your description instead.");
+          } else {
+            setError(e instanceof Error ? e.message : 'Could not read that document. Add a short description and try again.');
+            setStarting(false);
+            setStartMsg('');
+            return;
+          }
         }
       }
       setStartMsg('Opening the studio…');
