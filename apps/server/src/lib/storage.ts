@@ -17,9 +17,10 @@
 // lets it target Cloudflare R2 / MinIO / Backblaze / Spaces unchanged.
 // ---------------------------------------------------------------------------
 
-import { S3Client, PutObjectCommand, GetObjectCommand } from '@aws-sdk/client-s3'
+import { S3Client, PutObjectCommand, GetObjectCommand, HeadObjectCommand } from '@aws-sdk/client-s3'
 import type { ObjectCannedACL } from '@aws-sdk/client-s3'
 import { getSignedUrl } from '@aws-sdk/s3-request-presigner'
+import type { Readable } from 'node:stream'
 
 const BUCKET = (process.env.S3_BUCKET ?? '').trim()
 const REGION = (process.env.S3_REGION ?? process.env.AWS_REGION ?? '').trim()
@@ -95,6 +96,31 @@ export async function getObject(key: string): Promise<{
 }
 
 /**
+ * Verify an object exists and read its size/type WITHOUT downloading it. Used by
+ * confirm-upload to validate a presigned-PUT upload actually landed and to read
+ * the real size/content-type from S3 rather than trusting the client. Throws if
+ * the object is missing.
+ */
+export async function headObject(key: string): Promise<{ contentLength: number; contentType: string }> {
+  const out = await client().send(new HeadObjectCommand({ Bucket: BUCKET, Key: key }))
+  return { contentLength: out.ContentLength ?? 0, contentType: out.ContentType ?? 'application/octet-stream' }
+}
+
+/**
+ * Download an object's full bytes into a Buffer. Convenience over getObject()
+ * for callers that need the whole file in memory rather than a stream — e.g.
+ * the extraction worker, which hands the source PDF straight to MuPDF. Reuses
+ * the same private-bucket-safe S3 GET.
+ */
+export async function downloadObject(key: string): Promise<Buffer> {
+  const out = await client().send(new GetObjectCommand({ Bucket: BUCKET, Key: key }))
+  const stream = out.Body as Readable
+  const chunks: Buffer[] = []
+  for await (const chunk of stream) chunks.push(Buffer.from(chunk as Uint8Array))
+  return Buffer.concat(chunks)
+}
+
+/**
  * Issue a short-lived presigned PUT URL the browser can upload to directly.
  * The client must PUT with the SAME Content-Type passed here.
  */
@@ -138,4 +164,4 @@ export async function uploadObject(opts: {
   }
 }
 
-export const storage = { isConfigured, presignPutUrl, presignGetUrl, getObject, publicUrl, uploadObject }
+export const storage = { isConfigured, presignPutUrl, presignGetUrl, getObject, headObject, downloadObject, publicUrl, uploadObject }

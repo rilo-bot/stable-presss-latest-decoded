@@ -233,6 +233,10 @@ export interface StaffOption {
 export interface PublishedIssue {
   id: string;
   magazineId: string;
+  /** Which builder produced this edition. Absent/`v1` = template pages (default
+   *  renderer); `v2` = free-form Magazine Builder v2 pages (rendered by the v2
+   *  canvas). `pages` carries the v2 page shape when `builder === 'v2'`. */
+  builder?: 'v1' | 'v2';
   title: string;
   edition: string;
   /** Cover image key/URL, preserved for re-publish fidelity. */
@@ -252,6 +256,7 @@ export interface PublishedIssue {
 export interface IssueSummary {
   id: string;
   magazineId: string;
+  builder?: 'v1' | 'v2';
   title: string;
   edition: string;
   coverImageUrl: string;

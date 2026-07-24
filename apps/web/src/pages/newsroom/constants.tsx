@@ -133,6 +133,8 @@ export interface SideNavItem {
   requiresPermission?: Parameters<typeof can>[1];
   editorOnly?: boolean;
   badge?: string;
+  /** When set, the item navigates to this route instead of switching in-page tabs. */
+  href?: string;
 }
 
 export const SIDE_NAV: SideNavItem[] = [
@@ -148,6 +150,14 @@ export const SIDE_NAV: SideNavItem[] = [
     icon: <BookOpen size={15} />,
     section: 'Content',
     badge: 'New',
+  },
+  {
+    id: 'magazine-v2',
+    label: 'Magazine Builder v2',
+    icon: <Layers size={15} />,
+    section: 'Content',
+    href: '/newsroom/magazine-v2',
+    badge: 'v2',
   },
   {
     id: 'editor-hub',

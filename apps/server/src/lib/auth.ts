@@ -9,12 +9,21 @@ import type { Request, Response, NextFunction } from 'express'
 import { db } from './db.js'
 import { withIdentityDefaults, type AccountUser } from './identity.js'
 
-const JWT_SECRET = (process.env.JWT_SECRET ?? '').trim() || 'dev-only-insecure-secret'
-const TOKEN_TTL = '7d'
+const IS_PROD = process.env.PROD === 'true'
+const RAW_JWT_SECRET = (process.env.JWT_SECRET ?? '').trim()
 
-if (!process.env.JWT_SECRET) {
+// Fail CLOSED in production: a missing secret would otherwise fall back to a
+// public constant, letting anyone forge an admin token. process.exit (not throw)
+// so the crash-guard in index.ts can't keep a broken, insecure process alive.
+if (!RAW_JWT_SECRET && IS_PROD) {
+  console.error('[auth] FATAL: JWT_SECRET is required when PROD=true. Refusing to start with an insecure secret.')
+  process.exit(1)
+}
+if (!RAW_JWT_SECRET) {
   console.warn('[auth] JWT_SECRET not set — using an insecure dev secret. Set JWT_SECRET in production.')
 }
+const JWT_SECRET = RAW_JWT_SECRET || 'dev-only-insecure-secret'
+const TOKEN_TTL = '7d'
 
 export interface TokenClaims {
   sub: string // user id

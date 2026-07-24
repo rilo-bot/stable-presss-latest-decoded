@@ -49,7 +49,7 @@ router.post('/ingest', rawDoc, async (req, res) => {
   const name = String(req.query.filename ?? 'document')
   const kind = ingestKind(contentType)
   if (!kind) {
-    res.status(415).json({ error: `I can read PDFs, images and text files — "${contentType || 'that type'}" isn't supported yet.` })
+    res.status(415).json({ error: `I can read PDFs, Word docs, images and text files — "${contentType || 'that type'}" isn't supported yet.` })
     return
   }
   const body = req.body as Buffer

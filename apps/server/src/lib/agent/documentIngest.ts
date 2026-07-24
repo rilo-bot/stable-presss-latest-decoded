@@ -20,6 +20,7 @@
 import { generateObject, generateText } from 'ai'
 import { z } from 'zod'
 import { PDFDocument } from 'pdf-lib'
+import mammoth from 'mammoth'
 import { getAgentModel } from './provider.js'
 
 // pdf-parse ships a debug block in its index.js that reads a sample file on
@@ -28,12 +29,15 @@ import { getAgentModel } from './provider.js'
 const pdfParse: (data: Buffer) => Promise<{ text?: string; numpages?: number }> =
   require('pdf-parse/lib/pdf-parse.js')
 
-export type IngestKind = 'pdf' | 'image' | 'text'
+export type IngestKind = 'pdf' | 'image' | 'text' | 'docx'
+
+const DOCX_MIME = 'application/vnd.openxmlformats-officedocument.wordprocessingml.document'
 
 /** Map a MIME type to the ingest path, or null if unsupported (Phase 1). */
 export function ingestKind(contentType: string): IngestKind | null {
   const ct = (contentType || '').toLowerCase()
   if (ct === 'application/pdf') return 'pdf'
+  if (ct === DOCX_MIME) return 'docx'
   if (ct.startsWith('image/')) return 'image'
   if (ct.startsWith('text/') || ct === 'application/json') return 'text'
   return null
@@ -264,6 +268,22 @@ export async function ingestDocument(opts: {
     const text = opts.bytes.toString('utf8')
     if (!text.trim()) throw new Error('That text file looks empty.')
     // Fast path: no model call — just keep the verbatim text + a cheap preview.
+    return { digest: cheapDigest(opts.name, text), fullText: text.slice(0, FULLTEXT_CHARS) }
+  }
+
+  if (kind === 'docx') {
+    // Word docs are a zip of XML — mammoth pulls the raw text in-process (pure JS,
+    // no LibreOffice / model call), same fast path as a plain text file.
+    let text = ''
+    try {
+      const out = await mammoth.extractRawText({ buffer: opts.bytes })
+      text = (out.value ?? '').trim()
+    } catch (e) {
+      console.warn('[ingest] DOCX text extraction failed:', e instanceof Error ? e.message : e)
+      throw new Error("I couldn't read that Word document — it may be corrupted. Try re-saving it or exporting to PDF.")
+    }
+    if (text.length < 2) throw new Error('That Word document looks empty.')
+    console.log(`[ingest] DOCX "${opts.name}": ${text.length} chars extracted`)
     return { digest: cheapDigest(opts.name, text), fullText: text.slice(0, FULLTEXT_CHARS) }
   }
 

@@ -19,6 +19,17 @@ import puppeteer, { type Browser } from 'puppeteer'
 // Reuse ONE browser across requests — launching Chromium costs ~300ms+ and a
 // lot of memory, so a per-request launch would be both slow and wasteful.
 let browserPromise: Promise<Browser> | null = null
+let currentBrowser: Browser | null = null
+
+/** Drop the shared browser so the next render launches a fresh Chromium. Called
+ *  when the instance disconnects/crashes or a render fails against it — the fix
+ *  for the "download works only after a server restart" class of failure. */
+function resetBrowser(): void {
+  const b = currentBrowser
+  browserPromise = null
+  currentBrowser = null
+  if (b) void b.close().catch(() => {})
+}
 
 // ---------------------------------------------------------------------------
 // Rendered-PDF cache. Rendering navigates a headless browser and downloads every
@@ -64,6 +75,30 @@ async function getBrowser(): Promise<Browser> {
         // most container hosts (Render, Docker). --disable-dev-shm-usage avoids
         // crashes from the small default /dev/shm in containers.
         args: ['--no-sandbox', '--disable-setuid-sandbox', '--disable-dev-shm-usage'],
+        // Talk to Chromium over a file-descriptor pipe instead of a WebSocket.
+        // The default WS transport waits for Chromium to print its ws:// endpoint
+        // to stdout, which stalls (and hits "Timed out ... waiting for the WS
+        // endpoint URL to appear in stdout") when the host is momentarily saturated
+        // and Chromium is slow to emit that line. The pipe transport has no such
+        // startup handshake, so it launches reliably under load.
+        pipe: true,
+        // Give a loaded machine (dev box running Vite HMR + a full browser, or a
+        // busy container) more than Puppeteer's default 30s to bring Chromium up
+        // before failing the render.
+        timeout: 60_000,
+      })
+      .then((b) => {
+        currentBrowser = b
+        // A crashed/killed Chromium fires 'disconnected'; drop the singleton so
+        // the very next render relaunches instead of reusing a dead browser
+        // (the long-uptime failure that made downloads work only after a restart).
+        b.on('disconnected', () => {
+          if (currentBrowser === b) {
+            browserPromise = null
+            currentBrowser = null
+          }
+        })
+        return b
       })
       .catch((err) => {
         browserPromise = null // allow a fresh launch attempt next time
@@ -73,7 +108,7 @@ async function getBrowser(): Promise<Browser> {
   const browser = await browserPromise
   // If a previous render crashed the browser, relaunch it.
   if (!browser.connected) {
-    browserPromise = null
+    resetBrowser()
     return getBrowser()
   }
   return browser
@@ -101,6 +136,19 @@ export async function renderBulletinPdf(
     if (hit) return hit
   }
 
+  try {
+    return await renderOnce(url, cacheKey, token)
+  } catch (err) {
+    // Classic long-uptime failure: the shared Chromium died in a way `.connected`
+    // didn't catch, so every render against it throws. Reset and try ONCE more
+    // with a fresh browser before surfacing the error.
+    console.warn('[pdf] render failed, relaunching Chromium and retrying once:', err instanceof Error ? err.message : err)
+    resetBrowser()
+    return await renderOnce(url, cacheKey, token)
+  }
+}
+
+async function renderOnce(url: string, cacheKey: string, token?: string): Promise<Buffer> {
   const browser = await getBrowser()
   const page = await browser.newPage()
   try {
