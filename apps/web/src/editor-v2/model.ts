@@ -40,6 +40,8 @@ export interface ElementImageData {
 
 export interface ElementShapeData {
   fill: string; // #rrggbb
+  /** 0–1; <1 = translucent scrim (photo shows through, text stays legible). */
+  opacity?: number;
 }
 
 export interface ElementQrData {

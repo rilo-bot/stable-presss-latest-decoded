@@ -81,6 +81,17 @@ const SYSTEM = (
     'turn to complete a request. After staging, reply with ONE short sentence describing what you PREPARED',
     'for review — say it is staged / ready to apply; do NOT claim it is already applied or updated.',
     '',
+    'Tone & approach: be warm, polite, encouraging and BRIEF — a helpful design partner, not a form to fill',
+    'in. Be DECISIVE and FAST: make the smart call and do it. DEFAULT TO ACTING, never interrogating — if a',
+    'request is doable with a sensible assumption, MAKE the change and note the assumption in one short line',
+    '(e.g. "Made the headline bigger — say the word if you want it bolder too."). Ask AT MOST ONE question,',
+    'and only when the request is genuinely impossible to act on (e.g. there is no element it could apply to);',
+    'even then, propose a concrete option to confirm rather than an open-ended question. Never send a list of',
+    'questions. Keep every reply to a sentence or two.',
+    '',
+    'This magazine is about New Zealand horse racing — any copy you write and any photos you source should',
+    'stay on that theme (thoroughbred racing/breeding, NZ tracks, paddocks, stables) unless the user says otherwise.',
+    '',
     `The page is ${page.width}x${page.height}px (top-left origin). Keep every element fully inside it.`,
     pageMeta ? `This is page ${pageMeta.number} of ${pageMeta.total} (0-based index ${pageMeta.number - 1}).` : '',
     'Rules:',
@@ -393,18 +404,33 @@ export async function runPageAgent(opts: {
     seq: 0,
   };
 
-  const result = await generateText({
-    model: getAgentModel(),
-    system: SYSTEM(dims, opts.page.elements, opts.selectedElementId, opts.sourceText, {
-      number: (Number(opts.page.index) || 0) + 1,
-      total: opts.pageCount ?? (Number(opts.page.index) || 0) + 1,
-    }),
-    messages,
-    tools: buildTools(ctx, dims),
-    stopWhen: stepCountIs(16),
-    abortSignal: AbortSignal.timeout(90_000),
-  });
+  // Honour the "never throws" contract: a model/parse/timeout failure must not
+  // 500 the route. Return whatever tools already staged + a warm, honest note.
+  let text = '';
+  try {
+    const result = await generateText({
+      model: getAgentModel(),
+      system: SYSTEM(dims, opts.page.elements, opts.selectedElementId, opts.sourceText, {
+        number: (Number(opts.page.index) || 0) + 1,
+        total: opts.pageCount ?? (Number(opts.page.index) || 0) + 1,
+      }),
+      messages,
+      tools: buildTools(ctx, dims),
+      stopWhen: stepCountIs(16),
+      abortSignal: AbortSignal.timeout(90_000),
+    });
+    text = result.text.trim();
+  } catch (err) {
+    console.warn('[magazineV2] agent turn failed:', err instanceof Error ? err.message : err);
+    const n = ctx.proposals.length;
+    return {
+      reply: n
+        ? `I’ve staged ${n} change${n === 1 ? '' : 's'} for you to review — I ran into a hiccup finishing the rest, so tell me if you’d like me to keep going.`
+        : 'Sorry, that one tripped me up. Mind rephrasing it, or point me at the element you want changed and I’ll take care of it.',
+      proposals: ctx.proposals,
+    };
+  }
 
-  const reply = result.text.trim() || (ctx.proposals.length ? 'Staged the changes for your review.' : "I couldn't make that change — could you rephrase?");
+  const reply = text || (ctx.proposals.length ? 'Staged the changes for your review.' : "Happy to help — tell me what you'd like to change on this page and I'll take care of it.");
   return { reply, proposals: ctx.proposals };
 }

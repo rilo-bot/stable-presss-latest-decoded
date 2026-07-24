@@ -184,9 +184,11 @@ export function LandingFooter({ hasUser, isStaff, sponsors }: LandingFooterProps
           )}
 
           <div className="flex flex-col sm:flex-row items-center justify-between gap-3">
+            {/* Placeholder ABN "00 000 000 000" removed — add the real ABN here
+                once registered rather than showing a fabricated identifier. */}
             <p className="text-[10px] text-muted-foreground">
               © {new Date().getFullYear()} Stable Press Pty Ltd. All rights
-              reserved. ABN 00 000 000 000.
+              reserved.
             </p>
             <p
               className="text-[10px] italic font-[family-name:var(--font-display)]"

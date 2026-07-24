@@ -45,6 +45,7 @@ interface EditorState {
   loading: boolean;
   error: string | null;
   generating: boolean; // an "add AI pages" run is in flight (issue is processing)
+  justGenerated: boolean; // a from-scratch generation just finished this session (offer "add more pages")
   formatBusy: boolean; // a Fill/Adjust text pass is running
   publishing: boolean; // a publish/unpublish call is in flight
   undoStack: UndoEntry[];
@@ -100,9 +101,22 @@ interface EditorState {
   unpublish: () => Promise<void>;
   /** Re-fetch issue meta (collaborators, publish state) without reloading pages. */
   refreshIssue: () => Promise<void>;
+  /** While an issue is still generating (status 'processing'), poll and reveal
+   *  its pages as they land — no blocking screen. */
+  watchGeneration: () => void;
+  /** Stop the generation poll (on unmount / navigating away). */
+  stopWatching: () => void;
+  /** Dismiss the post-generation "add more pages" nudge. */
+  clearJustGenerated: () => void;
 }
 
 const el = (p: MagazinePageV2 | null, id: string | null) => p?.elements.find((e) => e.id === id) ?? null;
+
+// Poll handle for watching a still-generating issue reveal its pages live (so
+// "Build with AI" drops the user straight into the studio instead of a blocking
+// loading screen). Module-scoped so it survives store updates but stays single.
+let genPoll: ReturnType<typeof setTimeout> | null = null;
+function stopGenPoll() { if (genPoll) { clearTimeout(genPoll); genPoll = null; } }
 
 export const useEditorStore = create<EditorState>((set, get) => ({
   issueId: null,
@@ -115,6 +129,7 @@ export const useEditorStore = create<EditorState>((set, get) => ({
   loading: false,
   error: null,
   generating: false,
+  justGenerated: false,
   formatBusy: false,
   publishing: false,
   undoStack: [],
@@ -130,11 +145,15 @@ export const useEditorStore = create<EditorState>((set, get) => ({
   canEdit: () => !!get().issue?.myRole,
 
   load: async (id) => {
-    set({ loading: true, error: null, issueId: id });
+    stopGenPoll();
+    set({ loading: true, error: null, issueId: id, generating: false, justGenerated: false, currentPageId: null, page: null });
     try {
       const { issue, pages } = await api.getIssue(id);
       set({ issue, pages, loading: false, undoStack: [], redoStack: [], selectedId: null });
       if (pages[0]) await get().openPage(pages[0].id);
+      // Still generating (from "Build with AI" / import)? Poll and reveal pages
+      // as they arrive instead of making the user wait on a loading screen.
+      if (issue.status === 'processing') get().watchGeneration();
     } catch (e) {
       set({ loading: false, error: e instanceof Error ? e.message : 'Failed to load' });
     }
@@ -467,6 +486,38 @@ export const useEditorStore = create<EditorState>((set, get) => ({
       /* keep current state */
     }
   },
+
+  watchGeneration: () => {
+    const watchId = get().issueId;
+    if (!watchId) return;
+    stopGenPoll();
+    set({ generating: true });
+    const start = Date.now();
+    const tick = async () => {
+      if (get().issueId !== watchId) { set({ generating: false }); return; } // navigated away
+      try {
+        const { issue, pages } = await api.getIssue(watchId);
+        set({ issue, pages });
+        // Reveal the first page the moment it exists so the user sees the build.
+        if (!get().currentPageId && pages[0]) await get().openPage(pages[0].id);
+        if (issue.status === 'processing' && Date.now() - start < 300_000) {
+          genPoll = setTimeout(() => void tick(), 1500);
+        } else {
+          genPoll = null;
+          // Completed OK → offer "add more pages" (the preview is intentionally short).
+          set({ generating: false, justGenerated: issue.status !== 'failed' && issue.origin !== 'upload' });
+          if (issue.status === 'failed') toast.error(issue.processingError || 'Generation failed');
+        }
+      } catch {
+        genPoll = setTimeout(() => void tick(), 2500); // transient — keep polling
+      }
+    };
+    genPoll = setTimeout(() => void tick(), 1200);
+  },
+
+  stopWatching: () => { stopGenPoll(); },
+
+  clearJustGenerated: () => set({ justGenerated: false }),
 
   // ── AI editing assistant ──
   sendChat: async (text, sourceText) => {

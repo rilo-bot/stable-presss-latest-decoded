@@ -98,6 +98,7 @@ export default function MagazineEditorV2() {
 
   useEffect(() => {
     if (id) void s.load(id);
+    return () => s.stopWatching();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [id]);
 
@@ -133,6 +134,11 @@ export default function MagazineEditorV2() {
   const zoomPct = Math.round((s.zoomWidth / 1275) * 100);
   const canEdit = s.canEdit(); // owner or collaborator; false = another admin's magazine (view-only)
 
+  // Still being built by "Build with AI" / import — pages stream in live below.
+  const building = s.generating || s.issue?.status === 'processing';
+  const buildTotal = s.issue?.pagesTotal ?? 0;
+  const buildDone = Math.min(s.issue?.pagesProcessed ?? s.pages.length, buildTotal || Infinity);
+
   return (
     <div className="fixed inset-0 z-[60] flex flex-col bg-[#0b1220]">
       {/* Toolbar */}
@@ -147,7 +153,11 @@ export default function MagazineEditorV2() {
         <input
           className="w-[260px] max-w-[36vw] truncate bg-transparent text-sm font-bold text-white outline-none disabled:opacity-100"
           defaultValue={s.issue?.title ?? ''}
-          key={s.issue?.id}
+          // Uncontrolled input: `defaultValue` only takes on mount, so fold the
+          // title into the key. When generation finishes and the poll swaps the
+          // placeholder "Generating…" for the real title, the key changes and the
+          // input remounts with it (otherwise it stays stuck on the mount value).
+          key={`${s.issue?.id ?? ''}:${s.issue?.title ?? ''}`}
           onBlur={(e) => s.canManage() && e.target.value.trim() && void s.rename(e.target.value.trim())}
           disabled={!s.canManage()}
           aria-label="Magazine title"
@@ -313,6 +323,30 @@ export default function MagazineEditorV2() {
         </div>
       </div>
 
+      {/* Live-build banner — pages stream in below as the AI composes them. */}
+      {building && (
+        <div className="flex items-center gap-2 border-b border-[var(--gold-bright)]/25 bg-[var(--gold-bright)]/10 px-4 py-1.5 text-[11px] text-[var(--gold-bright)]">
+          <Loader2 size={12} className="animate-spin" />
+          <span className="font-medium">{s.issue?.stage || 'Building your magazine'}{buildTotal ? ` — ${buildDone} of ${buildTotal} pages` : '…'}</span>
+          <span className="text-white/45">pages appear as they’re ready — you can start editing the finished ones</span>
+        </div>
+      )}
+
+      {/* Post-generation nudge — the first pass is a short preview; offer more. */}
+      {!building && s.justGenerated && s.canManage() && (
+        <div className="flex items-center gap-2 border-b border-[var(--gold-bright)]/25 bg-[var(--gold-bright)]/10 px-4 py-1.5 text-[11px] text-[var(--gold-bright)]">
+          <Sparkles size={12} />
+          <span className="font-medium">Here’s your preview — {s.pages.length} page{s.pages.length === 1 ? '' : 's'}. Want a fuller issue?</span>
+          <button
+            onClick={() => { setPagesAiOpen(true); s.clearJustGenerated(); }}
+            className="rounded-sm bg-[var(--gold-bright)] px-2 py-0.5 text-[10px] font-semibold text-[#0b1220] hover:opacity-90"
+          >
+            Add more pages
+          </button>
+          <button onClick={() => s.clearJustGenerated()} className="ml-auto text-white/45 hover:text-white/80">Maybe later</button>
+        </div>
+      )}
+
       {/* Body: assistant · canvas · inspector (resizable side panes) */}
       <div className="flex min-h-0 flex-1" onPointerMove={onBodyMove} onPointerUp={endDivider}>
         {asstOpen && canEdit && (
@@ -400,7 +434,14 @@ export default function MagazineEditorV2() {
 
           {/* Canvas */}
           <div className="min-h-0 flex-1 overflow-auto bg-[#0b1220]">
-            <EditorCanvas />
+            {s.page ? (
+              <EditorCanvas />
+            ) : (
+              <div className="flex h-full flex-col items-center justify-center gap-3 text-white/50">
+                <Loader2 size={22} className="animate-spin" style={{ color: 'var(--gold-bright)' }} />
+                <div className="text-sm">{building ? 'Designing your first page…' : 'No page yet'}</div>
+              </div>
+            )}
           </div>
         </div>
 

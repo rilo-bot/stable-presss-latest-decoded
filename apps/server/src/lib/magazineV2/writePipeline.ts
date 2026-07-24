@@ -34,7 +34,7 @@ export function mergeElement(
   partial: Record<string, unknown>,
 ): Record<string, unknown> {
   const merged: Record<string, unknown> = { ...stored, ...partial };
-  for (const sub of ['text', 'image', 'shape', 'qr'] as const) {
+  for (const sub of ['text', 'image', 'shape', 'qr', 'icon'] as const) {
     const p = partial[sub];
     if (p && typeof p === 'object') {
       merged[sub] = { ...(stored[sub] as object | undefined), ...(p as object) };

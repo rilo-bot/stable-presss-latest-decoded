@@ -19,7 +19,7 @@
 // buildPage; until then image slots degrade to tinted palette blocks.
 // ---------------------------------------------------------------------------
 
-import { generateObject } from 'ai';
+import { generateObject, generateText } from 'ai';
 import { z } from 'zod';
 import { getAgentModel } from '../agent/provider.js';
 import { db } from '../db.js';
@@ -32,6 +32,8 @@ import {
   composePage,
   SAFE_TEMPLATE,
   type PageTemplate,
+  type PageTemplateSlot,
+  type SlotRole,
   type PageTemplateKind,
   type GenPalette,
   type GenFonts,
@@ -40,6 +42,14 @@ import {
 import { validatePageLayout } from './layoutValidate.js';
 import { isStockConfigured, fetchAndStoreStock, type StockOrientation } from './stock.js';
 import { isImageGenConfigured, generateAndStoreImage } from './imagegen.js';
+// ── AI-authored layout path (behind MAGAZINE_V2_AI_LAYOUT) ────────────────────
+import type { TextRole } from './model.js';
+import { normalizeLayoutSpec, type LayoutSpec } from './layoutSpec.js';
+import { seedSpecFor, SEED_EXEMPLARS } from './seedSpecs.js';
+import { solveLayout } from './solveLayout.js';
+import { composeFromSolved, type ResolvedContent, type LeafFill } from './composeFromSolved.js';
+import { makeMeasureLeaf } from './measureLeaf.js';
+import { TEXT_ROLES as DSL_TEXT_ROLES } from './roleScale.js';
 
 const GEN_PAGE_CONCURRENCY = Math.max(1, Number(process.env.MAGAZINE_V2_GEN_CONCURRENCY ?? 2));
 
@@ -58,6 +68,23 @@ const BODY_FONTS = [
   "Georgia, 'Times New Roman', serif",
   'Arial, Helvetica, sans-serif',
 ];
+
+// The publication's subject. Stable Press is a New Zealand horse-racing title, so
+// every generation is grounded here by default — copy, section ideas, names,
+// terminology and (especially) photo briefs stay in the NZ thoroughbred world.
+// A brief may steer the angle, but the domain only changes if the brief CLEARLY
+// asks for a different subject. Injected into the planner, copywriter and
+// art-director prompts.
+const DOMAIN_CONTEXT = [
+  'ABOUT THIS PUBLICATION — READ FIRST: this is a New Zealand horse-racing magazine.',
+  'Its world is thoroughbred racing and breeding in NZ: owners, breeders, trainers,',
+  'jockeys, studs, racedays, NZ racecourses and the racing calendar, bloodstock and the',
+  'wider industry. Ground EVERYTHING here by default — the title, section ideas, copy,',
+  'names, statistics, terminology, and especially PHOTO briefs (horses, racing action,',
+  'paddocks, stables, winners’ circles, NZ rural and racecourse settings; never text in',
+  'photos, no identifiable real individuals). Only depart from NZ horse racing if the',
+  'brief clearly asks for a different subject.',
+].join('\n');
 
 const DEFAULT_PALETTE: GenPalette = {
   primary: '#1b3a6b',
@@ -186,11 +213,15 @@ export async function planIssue(brief: string, options?: { pageCount?: number; t
     'design a complete issue: a strong title, a one-line subtitle, a tight colour',
     'palette, a font pairing, and an ordered list of pages.',
     '',
+    DOMAIN_CONTEXT,
+    '',
     'Rules:',
-    "- The FIRST page must be a 'cover' and the LAST a 'back-cover'.",
-    "- Put a 'contents' page early (page 2), then sequence a varied, magazine-like",
-    '  flow: features, articles, a photo essay, a pull-quote page, a by-the-numbers',
-    '  (stat-infographic) page. Vary the kinds — do not repeat the same one twice in a row.',
+    "- The FIRST page must be a 'cover' and the LAST a 'back-cover'. Never repeat a kind twice in a row.",
+    '- Match the page list length to the PAGE COUNT instruction below. For a SHORT PREVIEW, pick only',
+    "  the strongest few — a 'cover', one or two features (feature-full-bleed / two-column-article /",
+    "  photo-grid), and a 'back-cover'; SKIP the contents page. For a FULL issue, add a 'contents' page",
+    '  (page 2) and a richer, varied flow (features, an article, a photo essay, a pull-quote, a',
+    '  by-the-numbers stat-infographic).',
     '- Palette: five #rrggbb colours forming a cohesive, sophisticated EDITORIAL scheme',
     '  (think premium print magazine, not clip-art). `bg` light/near-white, `text` a deep',
     '  near-black for legibility; `primary` a rich brand colour, `secondary` a supporting',
@@ -208,7 +239,9 @@ export async function planIssue(brief: string, options?: { pageCount?: number; t
   const user = [
     brief.trim() ? `Brief: ${brief.trim().slice(0, 4000)}` : 'Brief: (none — use the source document below)',
     source ? `\nSOURCE DOCUMENT (build the issue from this):\n"""\n${source.slice(0, 14000)}\n"""` : '',
-    options?.pageCount ? `Target page count: about ${options.pageCount}.` : 'Choose a sensible page count (6–12).',
+    options?.pageCount
+      ? `Target page count: about ${options.pageCount}.`
+      : 'PAGE COUNT: unless the brief explicitly names a number of pages, design a SHORT PREVIEW of 4–5 pages only (cover, 2–3 content pages, back-cover) so the reader sees the direction fast — they can ask for more afterwards. If the brief names a count, use that.',
     `Display fonts to choose from: ${DISPLAY_FONTS.join(' | ')}`,
     `Body fonts to choose from: ${BODY_FONTS.join(' | ')}`,
   ].join('\n');
@@ -332,6 +365,8 @@ export async function draftPage(opts: {
     `Issue: "${plan.title}" — ${plan.subtitle}`,
     `This page (${opts.pageNumber} of ${opts.totalPages}) is a "${page.kind}". Intent: ${page.intent}`,
     `Section: ${page.sectionTitle || '(none)'}.`,
+    '',
+    DOMAIN_CONTEXT,
     '',
     'Fill each slot below:',
     '- text slots: write crisp, specific, publication-quality copy WITHIN the char limit.',
@@ -469,9 +504,9 @@ async function buildPage(
   return { background: composed.background, elements };
 }
 
-/** Agents 2+3 + curator + deterministic compose for one planned page. `ctx` is
- *  present only on persisting runs (enables real photo sourcing). */
-async function composeOnePage(
+/** Agents 2+3 + curator + deterministic compose for one planned page, on the
+ *  FIXED-TEMPLATE path. `ctx` is present only on persisting runs (real photos). */
+async function composeOnePageTemplate(
   plan: GenPlan,
   page: GenPlanPage,
   pageNumber: number,
@@ -483,6 +518,238 @@ async function composeOnePage(
   let draft = await draftPage({ plan, page, template, pageNumber, totalPages, sourceText });
   if (page.kind === 'cover') draft = polishCoverDraft(draft, plan, template);
   return buildPage(template, draft, { palette: plan.palette, fonts: plan.fonts }, ctx);
+}
+
+/** Compose one page. Dispatches to the AI-authored-layout path when the flag is
+ *  set, otherwise the fixed-template path. The AI path itself falls back to the
+ *  template path if it can't produce a clean page — so this never regresses. */
+async function composeOnePage(
+  plan: GenPlan,
+  page: GenPlanPage,
+  pageNumber: number,
+  totalPages: number,
+  ctx?: { magazineId: string; pageIndex: number },
+  sourceText?: string,
+): Promise<ComposedPage> {
+  if (aiLayoutEnabled()) {
+    return composeOnePageAI(plan, page, pageNumber, totalPages, ctx, sourceText);
+  }
+  return composeOnePageTemplate(plan, page, pageNumber, totalPages, ctx, sourceText);
+}
+
+// ── AI-authored layout path ───────────────────────────────────────────────────
+// The Art-Director agent emits a relative frame-tree (LayoutSpec); the solver
+// turns it into boxes and the composer into elements. Copy + photos are still
+// produced by the SAME tested draftPage/curateFills — we just present the spec's
+// leaves to them as a synthesized "pseudo-template". Any failure (bad spec,
+// unclean page) degrades to the fixed-template path, so output stays bug-free.
+
+function aiLayoutEnabled(): boolean {
+  const v = process.env.MAGAZINE_V2_AI_LAYOUT;
+  return v === '1' || v === 'true';
+}
+
+/** Map a DSL leaf role to the element model's text role (for draftPage's copy
+ *  guidance). Non-obvious roles collapse to their nearest editorial equivalent. */
+const LEAF_TO_TEXT_ROLE: Record<string, TextRole> = {
+  headline: 'headline', figure: 'headline', pullquote: 'pullquote', subhead: 'subhead',
+  kicker: 'subhead', byline: 'byline', body: 'body', entry: 'body', label: 'caption', caption: 'caption',
+};
+
+/**
+ * Synthesize a pseudo-PageTemplate from a spec's leaves so the existing
+ * copywriter (draftPage) and asset curator (curateFills) can fill it. Boxes come
+ * from a first (weight-only) solve, purely so curateFills picks the right photo
+ * orientation; the real geometry is solved again with content measurement later.
+ * Each distinct leaf contentRef becomes one slot (text/image/qr); decorative
+ * shape/icon leaves carry no drafted content and are skipped.
+ */
+function buildPseudoTemplate(spec: LayoutSpec): PageTemplate {
+  const dims = { width: PAGE_W, height: PAGE_H };
+  const pre = solveLayout(spec, dims);
+  const seen = new Set<string>();
+  const slots: PageTemplateSlot[] = [];
+  for (const leaf of pre.leaves) {
+    const ref = leaf.node.contentRef;
+    if (!ref || seen.has(ref)) continue;
+    const role = leaf.node.role;
+    let sRole: SlotRole;
+    let textRole: TextRole | undefined;
+    if (DSL_TEXT_ROLES.has(role)) {
+      sRole = 'text';
+      textRole = LEAF_TO_TEXT_ROLE[role] ?? 'body';
+    } else if (role === 'image') {
+      sRole = 'image';
+    } else if (role === 'qr') {
+      sRole = 'qr';
+    } else {
+      continue; // shape / icon → no drafted content
+    }
+    seen.add(ref);
+    slots.push({
+      id: ref,
+      role: sRole,
+      textRole,
+      required: false,
+      z: leaf.z,
+      box: { x: leaf.box.x / PAGE_W, y: leaf.box.y / PAGE_H, w: leaf.box.w / PAGE_W, h: leaf.box.h / PAGE_H },
+    });
+  }
+  return { id: 'ai-pseudo', kind: 'two-column-article', description: 'AI-authored layout (pseudo-template for drafting/curation).', slots };
+}
+
+/** Turn curated slot fills into the leaf-keyed content the composer reads. */
+function fillsToContent(fills: SlotFill[]): ResolvedContent {
+  const content: ResolvedContent = {};
+  for (const f of fills) {
+    const e: LeafFill = {};
+    if (f.text) e.text = f.text;
+    if (f.image) e.image = f.image;
+    if (f.qrUrl) e.qrUrl = f.qrUrl;
+    if (f.shapeFill) e.shapeFill = f.shapeFill;
+    content[f.slotId] = e;
+  }
+  return content;
+}
+
+/**
+ * Deterministic tail of the AI path (no LLM): curate assets for the pseudo
+ * template, resolve content, solve WITH content-aware sizing, compose, and QA.
+ * Returns a clean page, or null if it fails layout validation (caller falls back).
+ */
+async function composeSpecToPage(
+  spec: LayoutSpec,
+  pseudo: PageTemplate,
+  draft: PageDraft,
+  theme: { palette: GenPalette; fonts: GenFonts },
+  ctx?: { magazineId: string; pageIndex: number },
+): Promise<ComposedPage | null> {
+  const dims = { width: PAGE_W, height: PAGE_H };
+  const fills = await curateFills(pseudo, draft, theme.palette, ctx);
+  const content = fillsToContent(fills);
+  const solved = solveLayout(spec, dims, { measureLeaf: makeMeasureLeaf(content, theme.fonts) });
+  const composed = composeFromSolved(solved, content, theme);
+  const elements = normalizeElements(composed.elements, dims);
+  if (!validatePageLayout(elements, dims).ok) return null;
+  return { background: composed.background, elements };
+}
+
+/** Extract the first complete JSON object from model text (tolerates prose /
+ *  ``` fences — the braces sit inside them). Returns null if unparseable. */
+function parseJsonObject(text: string): unknown | null {
+  if (!text) return null;
+  const start = text.indexOf('{');
+  const end = text.lastIndexOf('}');
+  if (start < 0 || end <= start) return null;
+  try {
+    return JSON.parse(text.slice(start, end + 1));
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * The Art-Director agent: emit a page LayoutSpec (frame-tree) for this page.
+ *
+ * Uses free-form JSON (generateText) rather than a strict schema, because Azure's
+ * strict structured-output mode rejects this tree's shape (nested unions), which
+ * made EVERY page silently fall back to a fixed seed — the "same layout every
+ * time" bug. The model has full freedom; `normalizeLayoutSpec` (the trust
+ * boundary) clamps/validates/drops anything invalid, and the seed is only used
+ * if the model returns nothing usable. Never throws.
+ * `source` reports whether the model authored it ('agent') or we used the seed.
+ */
+async function artDirectPage(plan: GenPlan, page: GenPlanPage): Promise<{ spec: LayoutSpec; source: 'agent' | 'seed' }> {
+  const formats = SEED_EXEMPLARS.map((e) => JSON.stringify(e.spec)).join('\n\n');
+  const system = [
+    'You are the Art Director of a premium print magazine. Design ONE page as a relative',
+    'LAYOUT TREE in JSON — never pixels, never x/y/width/height. Output ONLY the JSON object,',
+    'no prose and no markdown fences.',
+    '',
+    'JSON shape: { "page": { "background": { "ref": <color> }, "margin": <space> }, "root": <node> }',
+    'A <node> is exactly one of:',
+    '  • leaf:  { "kind":"leaf", "role":<role>, "contentRef":<short string>, "colorRef"?:<color>, "fontRef"?:<font>, "weightHint"?:400-900, "align"?:<align>, "fit"?:"cover"|"contain" }',
+    '  • row/col: { "kind":"row"|"col", "gap"?:<space>, "pad"?:<space>, "align"?:<flex>, "justify"?:<flex>, "children":[ { "weight"?:number, "sizing"?:"fr"|"content", "node":<node> } ] }',
+    '  • stack (overlay layers on one rectangle): { "kind":"stack", "layers":[ <node>, … ] }',
+    'Tokens — color: bg|text|primary|secondary|accent · space: none|xs|sm|md|lg|xl · font: display|body ·',
+    'align/justify (flex): start|center|end|between · role: headline|subhead|kicker|byline|body|caption|',
+    'pullquote|figure|label|entry|image|shape|qr. Use `sizing:"content"` for headings/kickers/bylines and',
+    '`weight` (fr) to share remaining space. Depth ≤4, ≤14 leaves. Give every text/image/qr leaf a short',
+    'contentRef (e.g. "headline","body","hero","photo1") — copy & photos are produced for those keys.',
+    'For text over a photo, use a stack: image first, then a shape (colorRef:"text") as a scrim, then a',
+    'padded col of text on top.',
+    '',
+    'BE INVENTIVE AND VARY IT: design a DISTINCT, modern composition tailored to THIS page’s intent — a',
+    'fresh structure each time (full-bleed hero, asymmetric split, multi-column, banded, grid…). Do NOT',
+    'copy the examples below; they only illustrate the JSON FORMAT, not the design to produce. Bold',
+    'hierarchy, one clear focal point.',
+    '',
+    'FILL THE PAGE — this is critical:',
+    '• The root must cover the whole page; never leave a large empty region. Use fr `weight`s that add up to',
+    '  a full, balanced page — a hero image should take a big share, body/columns the rest.',
+    '• A photo-led page = a `stack` whose FIRST layer is a full-page image (contentRef "hero"), then a',
+    '  shape scrim, then the text — so the image bleeds to the edges (no empty band around it).',
+    '• NEVER add an empty decorative panel. A `shape` is ONLY a scrim over a photo or a thin rule/bar — never',
+    '  a large blank block. Every text/image leaf must have a contentRef so it gets real content.',
+    '• A COVER: make the magazine TITLE the dominant element across (near) the FULL width — never a narrow',
+    '  column — and keep titles/headlines SHORT so words never break awkwardly.',
+    '',
+    'This is a New Zealand horse-racing magazine — favour photo-led, premium editorial layouts suited to',
+    'racing and equine imagery.',
+    '',
+    `Palette: ${JSON.stringify(plan.palette)}. Fonts: display="${plan.fonts.display}", body="${plan.fonts.body}".`,
+    '',
+    'Format examples (structure only — invent your own design):',
+    formats,
+  ].join('\n');
+
+  try {
+    const { text } = await generateText({
+      model: getAgentModel(),
+      system,
+      prompt: `Design a distinct, modern layout tree for a "${page.kind}" page. Intent: ${page.intent}${page.sectionTitle ? ` (section: ${page.sectionTitle})` : ''}. Return ONLY the JSON.`,
+      temperature: 0.9,
+      maxRetries: 1,
+      abortSignal: AbortSignal.timeout(60_000),
+    });
+    const spec = normalizeLayoutSpec(parseJsonObject(text));
+    if (spec) return { spec, source: 'agent' };
+    console.warn(`[magazineV2] art-director spec for "${page.kind}" was unusable — using seed.`);
+    return { spec: seedSpecFor(page.kind), source: 'seed' };
+  } catch (err) {
+    console.warn(`[magazineV2] art-director failed for "${page.kind}" (${err instanceof Error ? err.message : err}) — using seed.`);
+    return { spec: seedSpecFor(page.kind), source: 'seed' };
+  }
+}
+
+/** AI-authored-layout compose for one page, with the fixed-template path as the
+ *  SAFE fallback if the AI page can't be produced cleanly. */
+async function composeOnePageAI(
+  plan: GenPlan,
+  page: GenPlanPage,
+  pageNumber: number,
+  totalPages: number,
+  ctx?: { magazineId: string; pageIndex: number },
+  sourceText?: string,
+): Promise<ComposedPage> {
+  const theme = { palette: plan.palette, fonts: plan.fonts };
+  try {
+    const { spec, source } = await artDirectPage(plan, page);
+    const pseudo = buildPseudoTemplate(spec);
+    if (pseudo.slots.length > 0) {
+      let draft = await draftPage({ plan, page, template: pseudo, pageNumber, totalPages, sourceText });
+      if (page.kind === 'cover') draft = polishCoverDraft(draft, plan, pseudo);
+      const aiPage = await composeSpecToPage(spec, pseudo, draft, theme, ctx);
+      if (aiPage) {
+        console.log(`[magazineV2] page ${pageNumber}/${totalPages} "${page.kind}" → AI layout (spec: ${source}, ${pseudo.slots.length} slots, ${aiPage.elements.length} elements)`);
+        return aiPage;
+      }
+      console.warn(`[magazineV2] page ${pageNumber} "${page.kind}" AI layout failed QA — using template path.`);
+    }
+  } catch (err) {
+    console.warn('[magazineV2] AI-layout page errored, using template path:', err instanceof Error ? err.message : err);
+  }
+  return composeOnePageTemplate(plan, page, pageNumber, totalPages, ctx, sourceText);
 }
 
 // ── Public entry points ───────────────────────────────────────────────────────

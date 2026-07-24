@@ -2,7 +2,7 @@ import { useState, useMemo, useEffect } from 'react';
 import { useNavigate, Link } from 'react-router-dom';
 import { useHorseStore } from '@/stores/horseStore';
 import { usePartyStore } from '@/stores/partyStore';
-import { useFollowStore, followerCount } from '@/stores/followStore';
+import { useFollowStore } from '@/stores/followStore';
 import { connectionResolver } from '@/lib/horseConnections';
 import { HorseCard } from '@/components/HorseCard';
 import { HorseSkeletonCard } from '@/components/SkeletonCard';
@@ -135,7 +135,7 @@ export default function HorseProfiles() {
                   <div className="flex items-center justify-between mt-1">
                     <span className="text-[10px] text-muted-foreground flex items-center gap-1">
                       <Heart size={9} style={{ color: 'hsl(var(--brand-accent))' }} fill="hsl(var(--brand-accent))" />
-                      {followerCount(h.id, true).toLocaleString('en-AU')}
+                      Following
                     </span>
                     <ChevronRight size={12} className="text-muted-foreground group-hover:text-primary transition-colors" />
                   </div>

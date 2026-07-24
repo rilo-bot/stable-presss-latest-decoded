@@ -1,18 +1,18 @@
 import { motion } from 'framer-motion';
 import { Heart } from 'lucide-react';
 import { toast } from 'sonner';
-import { useFollowStore, followerCount } from '@/stores/followStore';
+import { useFollowStore } from '@/stores/followStore';
 
 const serif: React.CSSProperties = { fontFamily: "'IM Fell English', 'Palatino Linotype', Georgia, serif" };
 
 /**
- * Gamified "Follow This Horse" CTA — gold pill with a live follower count and a
- * heart pop. Persists via followStore. Reusable for future entity pages.
+ * "Follow This Horse" CTA — gold pill with a heart pop that adds the horse to
+ * the viewer's personal stable (localStorage). No follower count is shown: there
+ * is no follow backend, so a public tally would be fabricated. See followStore.
  */
 export function FollowButton({ horseId, label = 'Follow This Horse' }: { horseId: string; label?: string }) {
   const following = useFollowStore((s) => s.followedHorseIds.includes(horseId));
   const toggle = useFollowStore((s) => s.toggleFollow);
-  const count = followerCount(horseId, following);
 
   const onClick = () => {
     toggle(horseId);
@@ -52,13 +52,6 @@ export function FollowButton({ horseId, label = 'Follow This Horse' }: { horseId
         color: following ? 'var(--gold-bright)' : 'var(--forest-deep)',
       }}>
         {following ? 'Following' : label}
-      </span>
-      <span style={{
-        fontSize: '0.6rem', fontWeight: 700, padding: '1px 7px', borderRadius: 10,
-        background: following ? 'var(--gold-mid)' : 'rgba(0,0,0,0.18)',
-        color: following ? 'var(--forest-deep)' : 'var(--forest-deep)',
-      }}>
-        {count.toLocaleString('en-AU')}
       </span>
     </button>
   );

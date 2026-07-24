@@ -120,11 +120,13 @@ export default function Newsletter() {
               </div>
             </div>
 
-            {/* Stats strip */}
+            {/* Stats strip — only real, computed values. Subscriber/issue totals
+                are intentionally omitted: there is no source for them yet, and a
+                hardcoded number would be fabricated. Wire them to real counts
+                (subscriber count from the members backend, issues from the issue
+                store) before re-adding. */}
             <div className="flex flex-wrap gap-6 lg:justify-end">
               {[
-                { label: 'Subscribers', value: '12,840' },
-                { label: 'Issues Published', value: '47' },
                 { label: 'This Edition', value: `${totalItems} ${totalItems === 1 ? 'story' : 'stories'}` },
               ].map((s) => (
                 <div key={s.label} className="text-center">

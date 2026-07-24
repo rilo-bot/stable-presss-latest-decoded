@@ -65,7 +65,9 @@ function TextElement({ el, page }: { el: MagazineElement; page: IssuePageData })
 
 function ShapeElement({ el, page }: { el: MagazineElement; page: IssuePageData }) {
   if (!el.shape) return null;
-  return <div style={{ ...elementBoxStyle(el, page), background: el.shape.fill }} />;
+  // opacity < 1 → a translucent scrim: the photo beneath shows through while the
+  // overlaid text stays legible (instead of a solid block hiding the picture).
+  return <div style={{ ...elementBoxStyle(el, page), background: el.shape.fill, opacity: el.shape.opacity ?? 1 }} />;
 }
 
 function QrElement({ el, page }: { el: MagazineElement; page: IssuePageData }) {
