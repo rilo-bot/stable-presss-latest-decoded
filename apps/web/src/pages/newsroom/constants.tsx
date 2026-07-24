@@ -144,13 +144,13 @@ export const SIDE_NAV: SideNavItem[] = [
   { id: 'all-stories', label: 'All Stories', icon: <FileText size={15} />, section: 'Content' },
   // { id: 'drafts', label: 'Drafts', icon: <FileText size={15} />, section: 'Content' },
   // { id: 'review', label: 'In Review', icon: <Eye size={15} />, section: 'Content' },
-  {
-    id: 'bulletin-templates',
-    label: 'Magazine Studio',
-    icon: <BookOpen size={15} />,
-    section: 'Content',
-    badge: 'New',
-  },
+  // {
+  //   id: 'bulletin-templates',
+  //   label: 'Magazine Studio',
+  //   icon: <BookOpen size={15} />,
+  //   section: 'Content',
+  //   badge: 'New',
+  // },
 
   {
     id: 'magazine-v2',
