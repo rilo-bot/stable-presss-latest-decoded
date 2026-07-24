@@ -100,8 +100,11 @@ const OCR_SYSTEM =
 const FULLTEXT_CHARS = 80_000 // verbatim text kept for the bulk compose/fill pass
 const MODEL_ABORT_MS = 90_000 // generateObject ceiling (single-image vision path)
 const PDF_PARSE_MS = 30_000 // text-extraction ceiling
-const PAGE_OCR_MS = 45_000 // per-page OCR ceiling (image-based PDF path)
-const VISION_CONCURRENCY = 8 // OCR pages this many at a time
+const PAGE_OCR_MS = 75_000 // per-page OCR ceiling (image-based PDF path)
+// OCR pages this many at a time. Kept modest: firing many large scanned pages at
+// the vision provider at once gets them queued/throttled so none returns before
+// PAGE_OCR_MS and the whole wave times out. Fewer-but-completing beats more-but-aborted.
+const VISION_CONCURRENCY = 3
 const MAX_VISION_PAGES = 24 // cap OCR work (matches the 24-page bulletin template)
 const VISION_MAX_BYTES = 50 * 1024 * 1024 // cap the image/scanned-PDF fallback (matches the /ingest 50mb body limit)
 
