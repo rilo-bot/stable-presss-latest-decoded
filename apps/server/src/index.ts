@@ -186,6 +186,18 @@ app.use('/api/agent', jsonAgent, agentRouter)
 // ── Error handler ──
 app.use((err: Error, _req: express.Request, res: express.Response, _next: express.NextFunction) => {
   console.error('[server] Error:', err.message)
+  // body-parser throws PayloadTooLargeError (status 413, type 'entity.too.large')
+  // when an upload exceeds a mount's limit. Surface that as a clear, user-facing
+  // 413 instead of masking it as a generic 500 — otherwise the client just sees
+  // an opaque "Internal server error" for a file that's simply too big.
+  const status = (err as { status?: number; statusCode?: number }).status
+    ?? (err as { statusCode?: number }).statusCode
+  if (status === 413) {
+    res.status(413).json({
+      error: 'That file is too large — the upload limit is 50 MB. Please upload a smaller or compressed file.',
+    })
+    return
+  }
   res.status(500).json({ error: 'Internal server error' })
 })
 

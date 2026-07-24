@@ -103,7 +103,7 @@ const PDF_PARSE_MS = 30_000 // text-extraction ceiling
 const PAGE_OCR_MS = 45_000 // per-page OCR ceiling (image-based PDF path)
 const VISION_CONCURRENCY = 8 // OCR pages this many at a time
 const MAX_VISION_PAGES = 24 // cap OCR work (matches the 24-page bulletin template)
-const VISION_MAX_BYTES = 20 * 1024 * 1024 // cap the image/scanned-PDF fallback
+const VISION_MAX_BYTES = 50 * 1024 * 1024 // cap the image/scanned-PDF fallback (matches the /ingest 50mb body limit)
 
 function withTimeout<T>(p: Promise<T>, ms: number, label: string): Promise<T> {
   return Promise.race([

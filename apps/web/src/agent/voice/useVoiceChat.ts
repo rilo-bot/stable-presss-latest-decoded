@@ -35,7 +35,7 @@ export interface VoiceChat {
   toggleMic: () => Promise<void>;
 }
 
-export function useVoiceChat({ messages, send, busy, active }: {
+export function useVoiceChat({ messages, send, busy, active, autoSpeakOnMic = true }: {
   /** Live message list from useChat. */
   messages: UIMessage[];
   /** Send a user message (the caller's own send/clear-input fn). */
@@ -44,6 +44,12 @@ export function useVoiceChat({ messages, send, busy, active }: {
   busy: boolean;
   /** Whether the chat surface is open/visible — speech stops when it isn't. */
   active: boolean;
+  /**
+   * When true (default), speaking a request via the mic reads the reply back
+   * aloud even if read-aloud mode is off. Set false for surfaces where spoken
+   * replies must be strictly opt-in (only when the read-aloud toggle is on).
+   */
+  autoSpeakOnMic?: boolean;
 }): VoiceChat {
   const [voiceReady, setVoiceReady] = useState(false);
   const [voiceMode, setVoiceMode] = useState(false);
@@ -75,7 +81,7 @@ export function useVoiceChat({ messages, send, busy, active }: {
         const clip = await rec.stop();
         const text = await transcribe(clip);
         if (text) {
-          speakNextRef.current = true; // they spoke → speak the reply back, even if voice mode is off
+          if (autoSpeakOnMic) speakNextRef.current = true; // speak the reply back, even if voice mode is off
           send(text);
         }
       } catch {
