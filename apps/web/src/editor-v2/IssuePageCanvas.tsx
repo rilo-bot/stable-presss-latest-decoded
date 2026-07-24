@@ -126,8 +126,11 @@ function ImageElement({ el, page }: { el: MagazineElement; page: IssuePageData }
   );
 }
 
-/** Render one page read-only, faithfully scaled to whatever width it's given. */
-export function IssuePageCanvas({ page }: { page: IssuePageData }) {
+/** Render one page read-only, faithfully scaled to whatever width it's given.
+ *  `hideElementId` omits a single element — used by the editor while that element
+ *  is being edited in place (an overlay draws it instead), so the two never
+ *  double up. Public viewer / PDF never pass it, so their output is unchanged. */
+export function IssuePageCanvas({ page, hideElementId }: { page: IssuePageData; hideElementId?: string }) {
   const sorted = [...page.elements].sort((a, b) => a.zIndex - b.zIndex);
   // Aspect box via padding-bottom (a % of WIDTH), NOT `aspect-ratio`: a ratio box
   // nested under a `container-type: inline-size` flex item collapses to 0 height
@@ -150,6 +153,7 @@ export function IssuePageCanvas({ page }: { page: IssuePageData }) {
         <div className="absolute inset-0" style={{ background: page.background.value || '#ffffff' }} />
       )}
       {sorted.map((el) =>
+        el.id === hideElementId ? null :
         el.type === 'image' ? (
           <ImageElement key={el.id} el={el} page={page} />
         ) : el.type === 'text' ? (
