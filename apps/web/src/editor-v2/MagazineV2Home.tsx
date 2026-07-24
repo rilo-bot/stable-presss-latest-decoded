@@ -8,7 +8,7 @@ import { Plus, Sparkles, FileUp, FilePlus, X, Loader2, FileText, FileScan, Globe
 import { toast } from 'sonner';
 import * as api from './api';
 import type { IssueSummary } from './api';
-import { ingestFile, ATTACH_ACCEPT } from '@/editor/agent/documentUpload';
+import { ingestFile, attachmentSourceText, ATTACH_ACCEPT } from '@/editor/agent/documentUpload';
 
 type Mode = 'menu' | 'ai' | 'generating';
 
@@ -54,10 +54,11 @@ export default function MagazineV2Home() {
 
   const openEditor = (id: string) => navigate(`/newsroom/magazine-v2/${id}`);
 
-  // Publishing is done from inside the editor now; the card only deletes.
+  // Publishing is done from inside the editor now; the card only deletes
+  // (and its published Bulletins edition, server-side).
   const removeIssue = async (it: IssueSummary) => {
     if (pubBusy) return;
-    if (!window.confirm(`Delete "${it.title}"? This removes the draft, all pages, and any published Bulletins edition. This cannot be undone.`)) return;
+    if (!window.confirm(`Delete “${it.title}”?${it.publishedIssueId ? ' Its published edition will also be removed from Bulletins.' : ''} This cannot be undone.`)) return;
     setPubBusy(it.id);
     try {
       await api.deleteIssue(it.id);
@@ -88,7 +89,9 @@ export default function MagazineV2Home() {
       let sourceText: string | undefined;
       if (file) {
         try {
-          sourceText = (await ingestFile(file)).fullText;
+          // Use fullText for PDF/DOCX/text, or the flattened digest for images
+          // (vision-only) — so an attached photo/scan actually feeds generation.
+          sourceText = attachmentSourceText(await ingestFile(file));
         } catch (e) {
           setError(e instanceof Error ? e.message : 'Could not read that document.');
           setMode('ai');
@@ -127,11 +130,13 @@ export default function MagazineV2Home() {
     setError(null);
     setOpen(true);
     setMode('generating');
-    setProgress({ done: 0, total: 0, stage: 'Uploading your PDF…' });
+    const isImg = /^image\//.test(f.type) || /\.(jpe?g|png)$/i.test(f.name);
+    const label = isImg ? 'image' : f.type.includes('word') || /\.docx$/i.test(f.name) ? 'document' : 'PDF';
+    setProgress({ done: 0, total: 0, stage: `Uploading your ${label}…` });
     try {
       const { issue, uploadUrl } = await api.uploadIssue(f.name, f.type || 'application/pdf', f.size);
       await api.putToS3(uploadUrl, f);
-      setProgress({ done: 0, total: 0, stage: 'Digitizing pages…' });
+      setProgress({ done: 0, total: 0, stage: isImg ? 'Building your page…' : 'Digitizing pages…' });
       await api.confirmUpload(issue.id, f.name);
       const id = issue.id;
       pollRef.current = setInterval(async () => {
@@ -243,13 +248,13 @@ export default function MagazineV2Home() {
                 </button>
                 <button className="flex items-start gap-3 rounded border border-border p-4 text-left hover:border-[#7c3aed] hover:bg-muted" onClick={() => importRef.current?.click()}>
                   <FileScan size={22} className="mt-0.5 text-[#7c3aed]" />
-                  <span><span className="block font-medium">Import a PDF or Word doc <span className="ml-1 rounded bg-[#7c3aed]/10 px-1.5 py-0.5 text-[10px] font-medium text-[#7c3aed]">keeps layout</span></span><span className="text-xs text-muted-foreground">Digitize an existing PDF or .docx into editable pages — layout, text & images, pixel-faithful.</span></span>
+                  <span><span className="block font-medium">Import a PDF, Word doc or image <span className="ml-1 rounded bg-[#7c3aed]/10 px-1.5 py-0.5 text-[10px] font-medium text-[#7c3aed]">keeps layout</span></span><span className="text-xs text-muted-foreground">Digitize an existing PDF, .docx or JPEG/PNG into editable pages — layout, text & images, pixel-faithful.</span></span>
                 </button>
                 <button className="flex items-start gap-3 rounded border border-border p-4 text-left hover:border-[#7c3aed] hover:bg-muted" onClick={() => void startBlank()}>
                   <FilePlus size={22} className="mt-0.5" />
                   <span><span className="block font-medium">Blank</span><span className="text-xs text-muted-foreground">Start from an empty page and build it yourself.</span></span>
                 </button>
-                <input ref={importRef} type="file" accept="application/pdf,.pdf,application/vnd.openxmlformats-officedocument.wordprocessingml.document,.docx" className="hidden" onChange={(e) => { const f = e.target.files?.[0]; if (f) void startImport(f); if (importRef.current) importRef.current.value = ''; }} />
+                <input ref={importRef} type="file" accept="application/pdf,.pdf,application/vnd.openxmlformats-officedocument.wordprocessingml.document,.docx,image/jpeg,image/png,.jpg,.jpeg,.png" className="hidden" onChange={(e) => { const f = e.target.files?.[0]; if (f) void startImport(f); if (importRef.current) importRef.current.value = ''; }} />
               </div>
             )}
 

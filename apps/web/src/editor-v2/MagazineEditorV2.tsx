@@ -9,13 +9,15 @@
 import { useEffect, useRef, useState } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import { toast } from 'sonner';
-import { ArrowLeft, Undo2, Redo2, Plus, Minus, Copy, Trash2, ChevronLeft, ChevronRight, ChevronDown, Sparkles, Loader2, Wand2, WandSparkles, RotateCcw, ImageIcon, Globe, ExternalLink, Send } from 'lucide-react';
+import { ArrowLeft, Undo2, Redo2, Plus, Minus, Copy, Trash2, ChevronLeft, ChevronRight, ChevronDown, Sparkles, Loader2, Wand2, WandSparkles, RotateCcw, ImageIcon, Globe, ExternalLink, Send, Users, EyeOff } from 'lucide-react';
 import { useEditorStore } from './store';
 import { EditorCanvas } from './EditorCanvas';
 import { Inspector } from './Inspector';
 import { AiPanel } from './AiPanel';
 import { CoverPicker } from './CoverPicker';
+import { AttachmentPreviewPane } from './AttachmentPreviewPane';
 import { PublishDialog } from './PublishDialog';
+import { ShareDialog } from './ShareDialog';
 import type { ElementType, MagazineElement } from './model';
 
 function newElement(kind: ElementType, page: { width: number; height: number }, topZ: number): Partial<MagazineElement> {
@@ -51,8 +53,10 @@ export default function MagazineEditorV2() {
   const [aiCount, setAiCount] = useState(2);
   const [aiTopic, setAiTopic] = useState('');
   const [coverOpen, setCoverOpen] = useState(false);
-  const [publishOpen, setPublishOpen] = useState(false);
-  const [pubMenuOpen, setPubMenuOpen] = useState(false);
+  const [publishMenuOpen, setPublishMenuOpen] = useState(false);
+  const [publishDialogOpen, setPublishDialogOpen] = useState(false);
+  const [shareOpen, setShareOpen] = useState(false);
+  const isPublished = !!s.issue?.publishedIssueId && s.issue?.status === 'published';
 
   // Post-publish: match the v1 flow — toast with a "View" action that opens the
   // frozen edition on the public Bulletins page.
@@ -62,8 +66,8 @@ export default function MagazineEditorV2() {
     });
   };
   const publishFull = async () => {
-    setPubMenuOpen(false);
-    const id = await s.publish(s.pages.map((p) => p.id));
+    setPublishMenuOpen(false);
+    const id = await s.publish('full');
     if (id) onPublished(id, 'full');
   };
 
@@ -147,6 +151,16 @@ export default function MagazineEditorV2() {
           disabled={!s.canManage()}
           aria-label="Magazine title"
         />
+        {!s.canManage() && s.issue && (
+          <span className="rounded-full border border-sky-400/30 bg-sky-400/10 px-2 py-0.5 text-[10px] text-sky-200">
+            Shared with you · editing your assigned pages
+          </span>
+        )}
+        {isPublished && (
+          <span className="flex items-center gap-1 rounded-full border border-emerald-400/30 bg-emerald-400/10 px-2 py-0.5 text-[10px] text-emerald-200">
+            <Globe size={10} /> Live in Bulletins
+          </span>
+        )}
 
         <div className="ml-auto flex items-center gap-1.5">
           {/* undo / redo */}
@@ -196,41 +210,58 @@ export default function MagazineEditorV2() {
             </button>
           )}
 
-          {/* Publish → Bulletins (owner only) — v1-parity dropdown flow */}
+          {/* Share (collaborators) — owner only */}
+          {s.canManage() && (
+            <button className={ghost} onClick={() => setShareOpen(true)} title="Invite staff to edit this magazine">
+              <Users size={13} /> Share
+            </button>
+          )}
+
+          {/* Publish → Bulletins (owner only) — full edition / selected pages / unpublish */}
           {s.canManage() && s.issue && (
             <>
               <div className="mx-0.5 h-5 w-px bg-white/10" />
-              {s.issue.publishedIssueId && (
+              {isPublished && (
                 <span className="inline-flex items-center gap-1 rounded-full bg-emerald-500/15 px-2 py-0.5 text-[10px] font-semibold text-emerald-300">
                   <Globe size={9} /> Live
                 </span>
               )}
               <div className="relative">
                 <button
-                  onClick={() => setPubMenuOpen((o) => !o)}
+                  onClick={() => setPublishMenuOpen((o) => !o)}
                   disabled={s.publishing || s.generating}
                   className="flex items-center gap-1.5 rounded-sm bg-emerald-500 px-3 py-1.5 text-[11px] font-semibold text-white hover:bg-emerald-600 disabled:opacity-50"
+                  title="Publish this magazine to Bulletins"
                 >
                   {s.publishing ? <Loader2 size={13} className="animate-spin" /> : <Send size={13} />}
-                  {s.publishing ? 'Publishing…' : s.issue.publishedIssueId ? 'Republish' : 'Publish'} <ChevronDown size={12} />
+                  {s.publishing ? 'Publishing…' : isPublished ? 'Republish' : 'Publish'} <ChevronDown size={12} />
                 </button>
-                {pubMenuOpen && (
-                  <div className="absolute right-0 top-full z-50 mt-1 w-56 overflow-hidden rounded-sm border border-white/15 bg-[#0d1626] shadow-xl">
+                {publishMenuOpen && !s.publishing && (
+                  <div className="absolute right-0 top-full z-50 mt-1 w-60 overflow-hidden rounded-md border border-white/15 bg-[#0d1626] shadow-xl">
                     <button onClick={() => void publishFull()} className="block w-full px-3 py-2.5 text-left text-xs text-white hover:bg-white/10">
                       <span className="font-semibold">Publish full edition</span>
-                      <span className="block text-[10px] text-white/40">All {s.pages.length} page{s.pages.length === 1 ? '' : 's'}</span>
+                      <span className="block text-[10px] text-white/40">All {s.pages.length} page{s.pages.length === 1 ? '' : 's'} go public in Bulletins</span>
                     </button>
                     <button
-                      onClick={() => { setPubMenuOpen(false); setPublishOpen(true); }}
+                      onClick={() => { setPublishMenuOpen(false); setPublishDialogOpen(true); }}
                       className="block w-full border-t border-white/10 px-3 py-2.5 text-left text-xs text-white hover:bg-white/10"
                     >
                       <span className="font-semibold">Publish selected pages…</span>
-                      <span className="block text-[10px] text-white/40">Choose pages</span>
+                      <span className="block text-[10px] text-white/40">Choose exactly which pages go public</span>
                     </button>
+                    {isPublished && (
+                      <button
+                        onClick={() => { setPublishMenuOpen(false); void s.unpublish(); }}
+                        className="block w-full border-t border-white/10 px-3 py-2.5 text-left text-xs text-red-300 hover:bg-white/10"
+                      >
+                        <span className="flex items-center gap-1 font-semibold"><EyeOff size={11} /> Unpublish</span>
+                        <span className="block text-[10px] text-white/40">Remove this edition from Bulletins</span>
+                      </button>
+                    )}
                   </div>
                 )}
               </div>
-              {s.issue.publishedIssueId && (
+              {isPublished && s.issue.publishedIssueId && (
                 <a
                   href={`/bulletins/${s.issue.publishedIssueId}`}
                   target="_blank"
@@ -362,12 +393,14 @@ export default function MagazineEditorV2() {
         {/* Inspector */}
         <div className={divider} onPointerDown={startDivider('right')} title="Drag to resize" />
         <div style={{ width: panes.rightW }} className="flex-shrink-0 overflow-y-auto border-l border-white/10 bg-[#0d1626]">
-          <Inspector />
+          {s.previewDoc ? <AttachmentPreviewPane /> : <Inspector />}
         </div>
       </div>
 
+      {/* Dialogs */}
       <CoverPicker open={coverOpen} onClose={() => setCoverOpen(false)} />
-      <PublishDialog open={publishOpen} onClose={() => setPublishOpen(false)} onPublished={(id) => onPublished(id, 'selected')} />
+      {publishDialogOpen && <PublishDialog onClose={() => setPublishDialogOpen(false)} onPublished={(id) => onPublished(id, 'selected')} />}
+      {shareOpen && <ShareDialog onClose={() => setShareOpen(false)} />}
     </div>
   );
 }

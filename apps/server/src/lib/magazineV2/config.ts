@@ -23,11 +23,30 @@ export const PAGE_H = 1650;
 /** Max source PDF size accepted for import. */
 export const MAX_SOURCE_BYTES = 150 * 1024 * 1024; // 150 MB
 /** Accepted source mime types. DOCX is converted to PDF by the worker
- *  (LibreOffice headless) before extraction — see apps/worker/src/lib/docx.ts. */
+ *  (LibreOffice headless) before extraction — see apps/worker/src/lib/docx.ts.
+ *  A JPEG/PNG imports as a single pixel-faithful page (no MuPDF pass). */
 export const ALLOWED_SOURCE_MIME = new Set<string>([
   'application/pdf',
   'application/vnd.openxmlformats-officedocument.wordprocessingml.document', // .docx
+  'image/jpeg',
+  'image/png',
 ]);
+
+/** Map an accepted source mime to the S3 key extension we store it under, so the
+ *  worker can tell PDF / DOCX / image apart from the key alone (a robust fallback
+ *  to the S3 content-type). Anything unexpected falls back to 'pdf'. */
+export function sourceExtForMime(mime: string): 'pdf' | 'docx' | 'jpg' | 'png' {
+  switch (mime) {
+    case 'application/vnd.openxmlformats-officedocument.wordprocessingml.document':
+      return 'docx';
+    case 'image/jpeg':
+      return 'jpg';
+    case 'image/png':
+      return 'png';
+    default:
+      return 'pdf';
+  }
+}
 /** Hard ceiling on pages digitised/generated per issue. */
 export const MAX_PAGES_PER_ISSUE = 120;
 

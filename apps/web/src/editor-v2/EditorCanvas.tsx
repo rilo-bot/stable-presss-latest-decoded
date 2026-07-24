@@ -10,6 +10,7 @@
 // ---------------------------------------------------------------------------
 
 import React, { useEffect, useRef, useState } from 'react';
+import { Wand2, WandSparkles, Loader2 } from 'lucide-react';
 import { useEditorStore } from './store';
 import { IssuePageCanvas } from './IssuePageCanvas';
 import { pctRect, clampRect } from './geometry';
@@ -170,6 +171,10 @@ export function EditorCanvas() {
   const currentPageId = useEditorStore((s) => s.currentPageId);
   const openPage = useEditorStore((s) => s.openPage);
   const zoomWidth = useEditorStore((s) => s.zoomWidth);
+  const runFormat = useEditorStore((s) => s.runFormat);
+  const formatBusy = useEditorStore((s) => s.formatBusy);
+  const setPageSelected = useEditorStore((s) => s.setPageSelected);
+  const canManage = useEditorStore((s) => s.canManage());
   const [cache, setCache] = useState<Record<string, MagazinePageV2>>({});
   const rootRef = useRef<HTMLDivElement>(null);
 
@@ -216,9 +221,39 @@ export function EditorCanvas() {
         const preview = cache[sum.id];
         return (
           <div key={sum.id} className="shrink-0" style={{ width: zoomWidth }}>
-            <div className="mb-1.5 flex items-center justify-between text-[11px] text-white/40">
+            {/* Per-page header: number · publish checkbox · Fill / Adjust (every page) */}
+            <div className="mb-1.5 flex items-center gap-2 text-[11px] text-white/40">
               <span>Page {sum.index + 1}</span>
-              {active && <span className="font-semibold" style={{ color: 'var(--gold-bright)' }}>editing</span>}
+              {canManage && (
+                <label className="flex cursor-pointer items-center gap-1 text-white/45 hover:text-white/70" title="Include this page when publishing selected pages">
+                  <input
+                    type="checkbox"
+                    checked={sum.selectedForPublish}
+                    onChange={(e) => void setPageSelected(sum.id, e.target.checked)}
+                    className="h-3 w-3 accent-emerald-500"
+                  />
+                  publish
+                </label>
+              )}
+              <span className="ml-auto flex items-center gap-1">
+                <button
+                  className="flex items-center gap-1 rounded-sm border border-white/15 px-1.5 py-0.5 text-white/60 hover:bg-white/10 hover:text-white disabled:opacity-30"
+                  disabled={formatBusy}
+                  onClick={() => void runFormat('fill', sum.id)}
+                  title="Fill empty boxes & tighten crowded text on this page (AI)"
+                >
+                  {formatBusy && active ? <Loader2 size={11} className="animate-spin" /> : <Wand2 size={11} />} Fill
+                </button>
+                <button
+                  className="flex items-center gap-1 rounded-sm border border-white/15 px-1.5 py-0.5 text-white/60 hover:bg-white/10 hover:text-white disabled:opacity-30"
+                  disabled={formatBusy}
+                  onClick={() => void runFormat('adjust', sum.id)}
+                  title="Tighten crowded text on this page (AI)"
+                >
+                  <WandSparkles size={11} /> Adjust
+                </button>
+                {active && <span className="ml-1 font-semibold" style={{ color: 'var(--gold-bright)' }}>editing</span>}
+              </span>
             </div>
             {active ? (
               <ActivePageLayer />

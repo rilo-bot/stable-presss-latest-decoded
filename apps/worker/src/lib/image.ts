@@ -34,6 +34,30 @@ export async function toStoredImage(
   return { buffer: await img.jpeg({ quality: opts.quality ?? 85 }).toBuffer(), contentType: 'image/jpeg', ext: 'jpg' };
 }
 
+/** Prepare a directly-uploaded JPEG/PNG for import as a single magazine page.
+ *  Preserves transparency (PNG stays PNG — the black-box rule), caps the long
+ *  edge for storage, and returns the FINAL stored pixel dimensions so the page's
+ *  canonical coordinate space matches the raster exactly (pixel-faithful). */
+export async function toStoredImportImage(
+  input: Buffer,
+  opts: { maxWidth?: number; quality?: number } = {},
+): Promise<{ buffer: Buffer; contentType: string; ext: 'png' | 'jpg'; width: number; height: number }> {
+  const meta = await sharp(input).metadata();
+  const hasAlpha = !!meta.hasAlpha;
+  let img = sharp(input).rotate(); // honour EXIF orientation before we read dims
+  const maxWidth = opts.maxWidth ?? 2000;
+  if (maxWidth) img = img.resize({ width: maxWidth, withoutEnlargement: true });
+  const out = hasAlpha
+    ? { buffer: await img.png().toBuffer(), contentType: 'image/png', ext: 'png' as const }
+    : { buffer: await img.jpeg({ quality: opts.quality ?? 88 }).toBuffer(), contentType: 'image/jpeg', ext: 'jpg' as const };
+  const outMeta = await sharp(out.buffer).metadata();
+  return {
+    ...out,
+    width: outMeta.width ?? meta.width ?? 1275,
+    height: outMeta.height ?? meta.height ?? 1650,
+  };
+}
+
 /** Downsized copy for the vision model call — keeps prompts fast/cheap
  *  regardless of the page's real render resolution. */
 export async function toVisionJpeg(png: Buffer): Promise<{ buffer: Buffer; width: number; height: number }> {

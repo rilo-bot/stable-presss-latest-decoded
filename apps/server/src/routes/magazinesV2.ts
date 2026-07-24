@@ -21,11 +21,12 @@ import { Router } from 'express';
 import { db } from '../lib/db.js';
 import { attachAccount } from '../lib/auth.js';
 import { isStaff } from '../lib/rbac.js';
-import { MAGAZINE_V2_ENABLED, PAGE_W, PAGE_H, MAX_PAGES_PER_ISSUE, MAX_SOURCE_BYTES, ALLOWED_SOURCE_MIME, MAX_IMAGE_BYTES, ALLOWED_IMAGE_MIME, imageExtFor } from '../lib/magazineV2/config.js';
+import { MAGAZINE_V2_ENABLED, PAGE_W, PAGE_H, MAX_PAGES_PER_ISSUE, MAX_SOURCE_BYTES, ALLOWED_SOURCE_MIME, sourceExtForMime, MAX_IMAGE_BYTES, ALLOWED_IMAGE_MIME, imageExtFor } from '../lib/magazineV2/config.js';
 import { COL } from '../lib/magazineV2/collections.js';
 import { rateLimit } from '../lib/magazineV2/rateLimit.js';
 import { safePublicImageUrl } from '../lib/magazineV2/url.js';
-import { roleOnMagazine, isOwner, canEditPage, editablePageIds } from '../lib/magazineV2/access.js';
+import { roleOnMagazine, isOwner, canEditPage, editablePageIds, collaboratorsOf, type V2Collaborator } from '../lib/magazineV2/access.js';
+import { withIdentityDefaults, STAFF_ROLES } from '../lib/identity.js';
 import { normalizeElements, normalizeElementPatch } from '../lib/magazineV2/writePipeline.js';
 import { MAX_ELEMENTS_PER_PAGE, type MagazineElement } from '../lib/magazineV2/model.js';
 import { isAgentConfigured } from '../lib/agent/provider.js';
@@ -295,7 +296,7 @@ router.post('/issues/upload', async (req, res) => {
   const contentType = typeof req.body?.contentType === 'string' ? req.body.contentType.trim() : '';
   const size = Number(req.body?.size);
   if (!ALLOWED_SOURCE_MIME.has(contentType)) {
-    res.status(415).json({ error: 'Only PDF files can be imported.' });
+    res.status(415).json({ error: 'Only PDF, Word (.docx), JPEG or PNG files can be imported.' });
     return;
   }
   if (!Number.isFinite(size) || size <= 0 || size > MAX_SOURCE_BYTES) {
@@ -320,7 +321,14 @@ router.post('/issues/upload', async (req, res) => {
     createdAt: now,
     updatedAt: now,
   });
-  const key = `magazinesV2/${id}/source.pdf`;
+  // Key extension follows the mime so the worker can tell PDF/DOCX/image apart.
+  // Persist the key up front so confirm-upload reads it back (never reconstructs
+  // a hardcoded 'source.pdf', which broke DOCX/image imports).
+  const key = `magazinesV2/${id}/source.${sourceExtForMime(contentType)}`;
+  await db.collection(COL.issues).updateOne(id, {
+    sourceFile: { key, url: '', originalName: filename.slice(0, 200), mimeType: contentType, size: 0, pageCount: 0 },
+    updatedAt: now,
+  });
   const uploadUrl = await storage.presignPutUrl({ key, contentType, expiresIn: 300 });
   const created = await loadIssue(id);
   res.status(201).json({ issue: created ? withViewer(created, uid) : { id }, uploadUrl, key });
@@ -338,7 +346,9 @@ router.post('/issues/:id/confirm-upload', async (req, res) => {
     res.status(403).json({ error: 'Only the owner can do this.' });
     return;
   }
-  const key = `magazinesV2/${doc._id}/source.pdf`;
+  // The key (with its correct extension) was persisted at /issues/upload — use
+  // it rather than reconstructing 'source.pdf' (which mis-keyed DOCX/images).
+  const key = (doc.sourceFile as { key?: string } | undefined)?.key || `magazinesV2/${doc._id}/source.pdf`;
   let head: { contentLength: number; contentType: string };
   try {
     head = await storage.headObject(key); // never trust the client — read real size/type from S3
@@ -346,10 +356,13 @@ router.post('/issues/:id/confirm-upload', async (req, res) => {
     res.status(400).json({ error: 'Upload not found — please try uploading again.' });
     return;
   }
-  const originalName = typeof req.body?.originalName === 'string' ? req.body.originalName.slice(0, 200) : '';
+  const originalName =
+    typeof req.body?.originalName === 'string'
+      ? req.body.originalName.slice(0, 200)
+      : (doc.sourceFile as { originalName?: string } | undefined)?.originalName || '';
   const now = new Date().toISOString();
   await db.collection(COL.issues).updateOne(doc._id, {
-    sourceFile: { key, url: storage.publicUrl(key), originalName, mimeType: head.contentType || 'application/pdf', size: head.contentLength, pageCount: 0 },
+    sourceFile: { key, url: storage.publicUrl(key), originalName, mimeType: head.contentType || (doc.sourceFile as { mimeType?: string } | undefined)?.mimeType || 'application/pdf', size: head.contentLength, pageCount: 0 },
     status: 'processing',
     stage: 'Preparing to digitize',
     updatedAt: now,
@@ -588,9 +601,11 @@ router.delete('/issues/:id', async (req, res) => {
 // no access to the editor draft. Publishing again (republish) refreshes the same
 // snapshot in place and bumps its version (so the PDF cache key changes).
 
-/** Freeze the issue's selected pages into the public snapshot shape. */
-async function buildPublishSnapshot(magazineId: string): Promise<Doc[]> {
-  const pages = (await pagesFor(magazineId)).filter((p) => p.selectedForPublish !== false);
+/** Freeze the issue's pages into the public snapshot shape. `scope:'full'`
+ *  publishes every page; `'selected'` honours each page's selectedForPublish. */
+async function buildPublishSnapshot(magazineId: string, scope: 'full' | 'selected'): Promise<Doc[]> {
+  const all = await pagesFor(magazineId);
+  const pages = scope === 'full' ? all : all.filter((p) => p.selectedForPublish !== false);
   return pages.map((p, i) => ({
     id: p._id,
     index: i,
@@ -633,15 +648,17 @@ router.post('/issues/:id/publish', async (req, res) => {
     return;
   }
   // Optional page selection (v1-parity): mark exactly these pages selectedForPublish
-  // (others deselected) before freezing the snapshot. Omit to publish the current
-  // selection as-is (all pages, for a fresh issue).
-  if (Array.isArray(req.body?.selectedPageIds)) {
+  // (others deselected) before freezing the snapshot. When provided, the snapshot is
+  // scoped to the selection; otherwise fall back to the explicit `scope` (default 'full').
+  const hasSelection = Array.isArray(req.body?.selectedPageIds);
+  if (hasSelection) {
     const sel = new Set((req.body.selectedPageIds as unknown[]).filter((x): x is string => typeof x === 'string'));
     for (const p of await pagesFor(doc._id)) {
       await db.collection(COL.pages).updateOne(p._id, { selectedForPublish: sel.has(p._id) });
     }
   }
-  const pages = await buildPublishSnapshot(doc._id);
+  const scope: 'full' | 'selected' = hasSelection || req.body?.scope === 'selected' ? 'selected' : 'full';
+  const pages = await buildPublishSnapshot(doc._id, scope);
   if (pages.length === 0) {
     res.status(400).json({ error: 'Select at least one page to publish.' });
     return;
@@ -659,7 +676,7 @@ router.post('/issues/:id/publish', async (req, res) => {
       coverImageUrl: cover,
       pages,
       pageCount: pages.length,
-      scope: 'full',
+      scope,
       version: (typeof existing.version === 'number' ? existing.version : 1) + 1,
       publishedAt: now,
       unpublishedAt: null,
@@ -677,7 +694,7 @@ router.post('/issues/:id/publish', async (req, res) => {
       coverImageUrl: cover,
       pages,
       pageCount: pages.length,
-      scope: 'full',
+      scope,
       version: 1,
       publishedAt: now,
       unpublishedAt: null,
@@ -716,6 +733,102 @@ router.post('/issues/:id/unpublish', async (req, res) => {
     await db.collection('issues').updateOne(publishedIssueId, { unpublishedAt: now, updatedAt: now });
   }
   await db.collection(COL.issues).updateOne(doc._id, { status: 'ready', updatedAt: now });
+  const fresh = await loadIssue(doc._id);
+  res.json({ issue: withViewer(fresh ?? doc, uid) });
+});
+
+// toggle a page's selectedForPublish flag — owner only (drives "publish selected
+// pages": the publish snapshot with scope 'selected' honours these flags).
+router.patch('/issues/:id/pages/:pageId/select', async (req, res) => {
+  const uid = req.account!.id;
+  const doc = await loadIssue(req.params.id);
+  if (!doc || !roleOnMagazine(doc, uid)) {
+    res.status(404).json({ error: 'Not found' });
+    return;
+  }
+  if (!isOwner(roleOnMagazine(doc, uid))) {
+    res.status(403).json({ error: 'Only the owner can choose which pages publish.' });
+    return;
+  }
+  const page = await pageById(req.params.pageId);
+  if (!page || page.magazineId !== doc._id) {
+    res.status(404).json({ error: 'Page not found' });
+    return;
+  }
+  const selected = req.body?.selected !== false;
+  await db.collection(COL.pages).updateOne(page._id, { selectedForPublish: selected, updatedAt: new Date().toISOString() });
+  res.json({ pages: (await pagesFor(doc._id)).map(pageSummary) });
+});
+
+// ── Collaborators (Share) — owner only, mirrors the v1 magazines API ─────────
+// Manage/edit capability is derived from the collaborator's STAFF role; the
+// sharer only chooses WHICH pages they may edit ('all' or specific page ids).
+
+const MAG_EDITOR_ROLES = ['administrator', 'publisher', 'editor'];
+const magRoleForStaff = (roles: string[]): 'editor' | 'contributor' =>
+  roles.some((r) => MAG_EDITOR_ROLES.includes(r)) ? 'editor' : 'contributor';
+
+// add / update a collaborator (by email) — staff accounts only
+router.post('/issues/:id/collaborators', async (req, res) => {
+  const uid = req.account!.id;
+  const doc = await loadIssue(req.params.id);
+  if (!doc || !roleOnMagazine(doc, uid)) {
+    res.status(404).json({ error: 'Not found' });
+    return;
+  }
+  if (!isOwner(roleOnMagazine(doc, uid))) {
+    res.status(403).json({ error: 'Only the owner can manage collaborators.' });
+    return;
+  }
+  const email = typeof req.body?.email === 'string' ? req.body.email.trim().toLowerCase() : '';
+  if (!email || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
+    res.status(400).json({ error: 'A valid email is required.' });
+    return;
+  }
+  const existing = (await db.collection('users').find({ email }))[0];
+  if (!existing) {
+    res.status(404).json({ error: 'No account with that email. Ask them to sign up first.' });
+    return;
+  }
+  const acct = withIdentityDefaults({ id: existing._id, ...existing });
+  if (!acct.roles.some((r) => (STAFF_ROLES as readonly string[]).includes(r))) {
+    res.status(400).json({ error: 'That person is not a staff member, so they cannot be added.' });
+    return;
+  }
+  if (acct.id === doc.ownerId) {
+    res.status(409).json({ error: 'That person is the owner of this magazine.' });
+    return;
+  }
+  const rawPageIds = req.body?.pageIds;
+  const pageIds: string[] | 'all' =
+    rawPageIds === 'all' || rawPageIds == null ? 'all' : Array.isArray(rawPageIds) ? rawPageIds.map(String) : 'all';
+  const next: V2Collaborator = {
+    userId: acct.id,
+    email: acct.email,
+    displayName: acct.displayName,
+    role: magRoleForStaff(acct.roles),
+    pageIds,
+  };
+  const others = collaboratorsOf(doc).filter((c) => c.userId !== acct.id);
+  await db.collection(COL.issues).updateOne(doc._id, { collaborators: [...others, next], updatedAt: new Date().toISOString() });
+  const fresh = await loadIssue(doc._id);
+  res.status(201).json({ issue: withViewer(fresh ?? doc, uid) });
+});
+
+// remove a collaborator — owner only
+router.delete('/issues/:id/collaborators/:userId', async (req, res) => {
+  const uid = req.account!.id;
+  const doc = await loadIssue(req.params.id);
+  if (!doc || !roleOnMagazine(doc, uid)) {
+    res.status(404).json({ error: 'Not found' });
+    return;
+  }
+  if (!isOwner(roleOnMagazine(doc, uid))) {
+    res.status(403).json({ error: 'Only the owner can manage collaborators.' });
+    return;
+  }
+  const next = collaboratorsOf(doc).filter((c) => c.userId !== req.params.userId);
+  await db.collection(COL.issues).updateOne(doc._id, { collaborators: next, updatedAt: new Date().toISOString() });
   const fresh = await loadIssue(doc._id);
   res.json({ issue: withViewer(fresh ?? doc, uid) });
 });

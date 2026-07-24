@@ -19,6 +19,14 @@ export interface ChatMessage {
   content: string;
 }
 
+/** A chat attachment surfaced in the right pane (docks over the Inspector). */
+export interface PreviewDoc {
+  name: string;
+  isImage: boolean;
+  imageUrl?: string; // object URL for image attachments
+  text?: string; // extracted text for PDF/text attachments
+}
+
 interface UndoEntry {
   pageId: string;
   elementId: string;
@@ -47,6 +55,9 @@ interface EditorState {
   chatBusy: boolean;
   proposals: AgentProposal[];
   proposalsPageId: string | null;
+  /** When set, the right pane shows this attachment instead of the Inspector. */
+  previewDoc: PreviewDoc | null;
+  setPreviewDoc: (d: PreviewDoc | null) => void;
   sendChat: (text: string, sourceText?: string) => Promise<void>;
   applyAllProposals: () => Promise<void>;
   discardProposals: () => void;
@@ -73,13 +84,20 @@ interface EditorState {
   reorder: (from: number, to: number) => Promise<void>;
   rename: (title: string) => Promise<void>;
   setCover: (cover: { coverImage?: string; coverPageId?: string }) => Promise<boolean>;
-  /** Publish (or republish) → returns the public Bulletins issue id, or null on failure. */
-  publish: (selectedPageIds?: string[]) => Promise<string | null>;
-  unpublish: () => Promise<void>;
   /** Delete the whole magazine (draft + pages + any published edition). */
   remove: () => Promise<boolean>;
   reset: () => Promise<void>;
-  runFormat: (mode: 'fill' | 'adjust') => Promise<void>;
+  /** Fill/Adjust a page's text. Defaults to the open page; passing another
+   *  pageId opens that page first, then runs the pass on it. */
+  runFormat: (mode: 'fill' | 'adjust', pageId?: string) => Promise<void>;
+  /** Toggle whether a page is included in "publish selected pages". */
+  setPageSelected: (pageId: string, selected: boolean) => Promise<void>;
+  /** Publish (or republish) to Bulletins ('full' = all pages, 'selected' =
+   *  flagged pages) → returns the public Bulletins issue id, or null on failure. */
+  publish: (scope: 'full' | 'selected') => Promise<string | null>;
+  unpublish: () => Promise<void>;
+  /** Re-fetch issue meta (collaborators, publish state) without reloading pages. */
+  refreshIssue: () => Promise<void>;
 }
 
 const el = (p: MagazinePageV2 | null, id: string | null) => p?.elements.find((e) => e.id === id) ?? null;
@@ -103,6 +121,8 @@ export const useEditorStore = create<EditorState>((set, get) => ({
   chatBusy: false,
   proposals: [],
   proposalsPageId: null,
+  previewDoc: null,
+  setPreviewDoc: (d) => set({ previewDoc: d }),
 
   canManage: () => get().issue?.myRole === 'owner',
 
@@ -123,7 +143,7 @@ export const useEditorStore = create<EditorState>((set, get) => ({
     try {
       const page = await api.getPage(issueId, pageId);
       // Chat + proposals are scoped to the open page — reset on page change.
-      set({ page, currentPageId: pageId, selectedId: null, chat: [], proposals: [], proposalsPageId: null });
+      set({ page, currentPageId: pageId, selectedId: null, chat: [], proposals: [], proposalsPageId: null, previewDoc: null });
     } catch (e) {
       set({ error: e instanceof Error ? e.message : 'Failed to load page' });
     }
@@ -329,39 +349,6 @@ export const useEditorStore = create<EditorState>((set, get) => ({
     }
   },
 
-  publish: async (selectedPageIds) => {
-    const s = get();
-    if (!s.issueId || s.publishing) return null;
-    set({ publishing: true });
-    try {
-      const { publishedIssueId } = await api.publishIssue(s.issueId, selectedPageIds);
-      // Refresh issue + page summaries (selectedForPublish changed server-side).
-      const { issue, pages } = await api.getIssue(s.issueId);
-      set({ issue, pages });
-      return publishedIssueId; // caller shows the toast + navigates to Bulletins
-    } catch (e) {
-      toast.error(e instanceof Error ? e.message : 'Publish failed');
-      return null;
-    } finally {
-      set({ publishing: false });
-    }
-  },
-
-  unpublish: async () => {
-    const s = get();
-    if (!s.issueId || !s.issue?.publishedIssueId || s.publishing) return;
-    set({ publishing: true });
-    try {
-      const { issue } = await api.unpublishIssue(s.issueId);
-      set({ issue });
-      toast.success('Removed from Bulletins.');
-    } catch (e) {
-      toast.error(e instanceof Error ? e.message : 'Unpublish failed');
-    } finally {
-      set({ publishing: false });
-    }
-  },
-
   remove: async () => {
     const s = get();
     if (!s.issueId) return false;
@@ -390,7 +377,9 @@ export const useEditorStore = create<EditorState>((set, get) => ({
 
   // Fill (write empty + tighten crowded) / Adjust (tighten crowded) — the server
   // returns text edits; we auto-apply each through the undoable element CRUD.
-  runFormat: async (mode) => {
+  // A different pageId first opens that page (per-page buttons in the stack).
+  runFormat: async (mode, pageId) => {
+    if (pageId && pageId !== get().currentPageId) await get().openPage(pageId);
     const s = get();
     if (!s.issueId || !s.currentPageId || !s.page || s.formatBusy) return;
     set({ formatBusy: true });
@@ -410,6 +399,67 @@ export const useEditorStore = create<EditorState>((set, get) => ({
       toast.error(e instanceof Error ? e.message : 'Text pass failed');
     } finally {
       set({ formatBusy: false });
+    }
+  },
+
+  // Toggle a page's inclusion in "publish selected pages".
+  setPageSelected: async (pageId, selected) => {
+    const s = get();
+    if (!s.issueId) return;
+    // Optimistic — the checkbox answers instantly; reconcile with the server list.
+    set({ pages: s.pages.map((p) => (p.id === pageId ? { ...p, selectedForPublish: selected } : p)) });
+    try {
+      const { pages } = await api.setPageSelected(s.issueId, pageId, selected);
+      set({ pages });
+    } catch (e) {
+      set({ pages: s.pages }); // roll back
+      toast.error(e instanceof Error ? e.message : 'Could not update the page selection');
+    }
+  },
+
+  // Publish/republish to Bulletins. Returns the frozen edition's public id (or
+  // null on failure); the caller shows the success toast + "View" navigation.
+  publish: async (scope) => {
+    const s = get();
+    if (!s.issueId || s.publishing) return null;
+    set({ publishing: true });
+    try {
+      const { issue, publishedIssueId } = await api.publishIssue(s.issueId, scope);
+      // Refresh page summaries too (selectedForPublish may have changed server-side).
+      const { pages } = await api.getIssue(s.issueId);
+      set({ issue, pages });
+      return publishedIssueId;
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : 'Publish failed');
+      return null;
+    } finally {
+      set({ publishing: false });
+    }
+  },
+
+  unpublish: async () => {
+    const s = get();
+    if (!s.issueId || !s.issue?.publishedIssueId || s.publishing) return;
+    set({ publishing: true });
+    try {
+      const { issue } = await api.unpublishIssue(s.issueId);
+      set({ issue });
+      toast.success('Removed from Bulletins.');
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : 'Unpublish failed');
+    } finally {
+      set({ publishing: false });
+    }
+  },
+
+  refreshIssue: async () => {
+    const s = get();
+    if (!s.issueId) return;
+    try {
+      const { issue, pages } = await api.getIssue(s.issueId);
+      set({ issue, pages });
+    } catch {
+      /* keep current state */
     }
   },
 
