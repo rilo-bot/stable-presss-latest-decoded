@@ -21,9 +21,31 @@ export function isAgentConfigured(): boolean {
 }
 
 let provider: OpenRouterProvider | null = null
+let ocrModel: LanguageModel | null = null
 
 /** The configured chat model. Call only when isAgentConfigured() is true. */
 export function getAgentModel(): LanguageModel {
   if (!provider) provider = createOpenRouter({ apiKey: API_KEY })
   return provider(AGENT_MODEL)
+}
+
+/**
+ * Model variant for reading PDFs (document ingest OCR). It enables OpenRouter's
+ * `file-parser` plugin with the `mistral-ocr` engine so IMAGE-BASED / scanned PDFs
+ * are genuinely OCR'd. The plain model falls back to text-layer extraction, which
+ * returns nothing for a phone scan (no text layer) — the cause of the "couldn't
+ * read any text" 422. Scoped to the ingest path so ordinary chat/tool calls are
+ * unaffected (and never pay the OCR-engine cost).
+ *
+ * The plugin is passed via `extraBody` (forwarded verbatim into the request body)
+ * because the provider's typed `plugins` union doesn't include `file-parser`.
+ */
+export function getOcrModel(): LanguageModel {
+  if (!provider) provider = createOpenRouter({ apiKey: API_KEY })
+  if (!ocrModel) {
+    ocrModel = provider(AGENT_MODEL, {
+      extraBody: { plugins: [{ id: 'file-parser', pdf: { engine: 'mistral-ocr' } }] },
+    })
+  }
+  return ocrModel
 }

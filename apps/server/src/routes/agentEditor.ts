@@ -82,6 +82,13 @@ router.post('/ingest', rawDoc, async (req, res) => {
       })
       return
     }
+    // A transient upstream/provider failure (e.g. every OCR page call errored) is
+    // retryable and NOT the file's fault — pass its "try again" message through as
+    // a 502 rather than a 422 that wrongly blames the document.
+    if ((err as { retryable?: boolean } | null)?.retryable) {
+      res.status(502).json({ error: msg || 'That failed just now — please try again in a moment.' })
+      return
+    }
     // ingestDocument throws friendly, user-facing messages for known cases; pass
     // those straight through (422) rather than masking them with the generic line.
     // ("couldn't read that" covers the Word-document and image messages.)
