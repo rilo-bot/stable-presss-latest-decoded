@@ -18,10 +18,11 @@
 // ---------------------------------------------------------------------------
 
 import { generateObject, generateText } from 'ai'
+import type { LanguageModel } from 'ai'
 import { z } from 'zod'
 import { PDFDocument } from 'pdf-lib'
 import mammoth from 'mammoth'
-import { getAgentModel } from './provider.js'
+import { getAgentModel, getOcrModel } from './provider.js'
 
 // pdf-parse ships a debug block in its index.js that reads a sample file on
 // import; importing the lib entry point directly avoids it. Server is CommonJS.
@@ -117,6 +118,13 @@ function withTimeout<T>(p: Promise<T>, ms: number, label: string): Promise<T> {
   ])
 }
 
+/** Tag a failure as a transient upstream/provider problem (retryable) rather than
+ *  a problem with the file. The route surfaces this as a "try again" 502 instead
+ *  of a 422 that wrongly blames the document. */
+function upstreamError(message: string): Error {
+  return Object.assign(new Error(message), { retryable: true })
+}
+
 /** Run an async fn over items with a bounded concurrency. fn must not throw
  *  (catch internally) — a rejection would abort the whole batch. */
 async function mapLimit<T, R>(items: T[], limit: number, fn: (item: T, idx: number) => Promise<R>): Promise<R[]> {
@@ -148,9 +156,14 @@ function cheapDigest(name: string, text: string): DocDigest {
 }
 
 /** Build a digest by sending the raw file to the model (vision / native file part). */
-async function digestFromFile(name: string, bytes: Buffer, contentType: string): Promise<DocDigest> {
+async function digestFromFile(
+  name: string,
+  bytes: Buffer,
+  contentType: string,
+  model: LanguageModel = getAgentModel(),
+): Promise<DocDigest> {
   const { object } = await generateObject({
-    model: getAgentModel(),
+    model,
     schema: DocDigestSchema,
     system: SYSTEM,
     maxRetries: 1,
@@ -215,29 +228,38 @@ async function describeImageFallback(name: string, bytes: Buffer, contentType: s
   }
 }
 
-/** OCR a single one-page PDF via the vision model. Never throws — returns '' on
- *  timeout/failure so one bad page can't sink the whole document. */
-async function ocrPdfPage(pageBytes: Buffer, pageNo: number): Promise<string> {
+/** Outcome of OCR'ing one page. `ok:true` means the call SUCCEEDED — `text` may
+ *  still be '' for a genuinely blank page. `ok:false` means the call FAILED
+ *  (timeout / throttle / provider error), which must NOT be read as "blank page".
+ *  Keeping the two apart is what stops an infrastructure blip from being reported
+ *  to the user as an unreadable scan. */
+type OcrPageResult = { ok: true; text: string } | { ok: false; error: string }
+
+/** OCR a single one-page PDF via the OCR model (mistral-ocr engine). Never throws
+ *  — one bad page can't sink the whole document; the caller inspects `ok` to tell
+ *  an empty page apart from a failed call. `filename` is set so OpenRouter/the
+ *  provider reliably recognises the part as a PDF. */
+async function ocrPdfPage(model: LanguageModel, pageBytes: Buffer, pageNo: number): Promise<OcrPageResult> {
   try {
     const { text } = await generateText({
-      model: getAgentModel(),
+      model,
       system: OCR_SYSTEM,
-      maxRetries: 0,
+      maxRetries: 1,
       abortSignal: AbortSignal.timeout(PAGE_OCR_MS),
       messages: [
         {
           role: 'user',
           content: [
             { type: 'text', text: `Transcribe every piece of text on this single page (page ${pageNo}).` },
-            { type: 'file', data: pageBytes, mediaType: 'application/pdf' },
+            { type: 'file', data: pageBytes, mediaType: 'application/pdf', filename: `page-${pageNo}.pdf` },
           ],
         },
       ],
     })
-    return (text || '').trim()
+    return { ok: true, text: (text || '').trim() }
   } catch (e) {
     console.warn(`[ingest] OCR failed for page ${pageNo}:`, e instanceof Error ? e.message : e)
-    return ''
+    return { ok: false, error: e instanceof Error ? e.message : String(e) }
   }
 }
 
@@ -266,7 +288,7 @@ async function ocrPdfByPage(name: string, bytes: Buffer, maxPages: number = MAX_
     // Couldn't split (corrupt/odd PDF) — last resort: one bounded vision call on
     // the whole file. Better a thin digest than a hard failure.
     console.warn('[ingest] PDF split failed, falling back to whole-file vision:', e instanceof Error ? e.message : e)
-    const digest = await digestFromFile(name, bytes, 'application/pdf')
+    const digest = await digestFromFile(name, bytes, 'application/pdf', getOcrModel())
     const text = [digest.summary, ...digest.sections.map((s) => `${s.heading}\n${s.body}`), ...digest.facts]
       .filter(Boolean)
       .join('\n\n')
@@ -276,16 +298,33 @@ async function ocrPdfByPage(name: string, bytes: Buffer, maxPages: number = MAX_
   const { pages, total } = split
   if (pages.length === 0) throw new Error('That PDF has no pages I can read.')
 
-  const pageTexts = await mapLimit(pages, VISION_CONCURRENCY, (buf, i) => ocrPdfPage(buf, i + 1))
-  const readCount = pageTexts.filter((t) => t.trim().length > 0).length
+  const model = getOcrModel()
+  const pageResults = await mapLimit(pages, VISION_CONCURRENCY, (buf, i) => ocrPdfPage(model, buf, i + 1))
+  const texts = pageResults.map((r) => (r.ok ? r.text : ''))
+  const readCount = texts.filter((t) => t.trim().length > 0).length
+  const errorCount = pageResults.filter((r) => !r.ok).length
+
   if (readCount === 0) {
+    // Only blame the scan when EVERY page's OCR call actually succeeded and came
+    // back empty. If any page ERRORED (timeout/throttle/provider), we can't
+    // conclude the document is a blank scan — surface a retryable error so the
+    // user is told to try again rather than to "use a clearer scan".
+    if (errorCount > 0) {
+      const firstError = pageResults.find((r) => !r.ok) as Extract<OcrPageResult, { ok: false }> | undefined
+      console.warn(
+        `[ingest] PDF "${name}": OCR errored on ${errorCount}/${pages.length} pages, 0 read; first error: ${firstError?.error ?? 'unknown'}`,
+      )
+      throw upstreamError(
+        'Reading that PDF failed just now (the reader hit a temporary error) — please try again in a moment.',
+      )
+    }
     throw new Error(
       "I couldn't read any text from this PDF — it looks like a photo/scan with no legible text. " +
         'Try a clearer scan or a text-based PDF.',
     )
   }
 
-  const combined = pageTexts
+  const combined = texts
     .map((t, i) => (t.trim() ? `--- Page ${i + 1} ---\n${t.trim()}` : ''))
     .filter(Boolean)
     .join('\n\n')
