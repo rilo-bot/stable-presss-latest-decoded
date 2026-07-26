@@ -168,6 +168,53 @@ async function digestFromFile(name: string, bytes: Buffer, contentType: string):
   return object
 }
 
+/** True for AbortSignal.timeout / provider-abort failures, which deserve the
+ *  route's 504 "took too long" message rather than the generic 500. */
+function isTimeoutish(e: unknown): boolean {
+  if (!(e instanceof Error)) return false
+  // Name checks cover AbortSignal.timeout; the message test stays narrow so a
+  // provider error that merely mentions "aborted" still gets the fallback read.
+  return e.name === 'TimeoutError' || e.name === 'AbortError' || /timed?\s*out/i.test(e.message)
+}
+
+const IMAGE_DESCRIBE_SYSTEM =
+  'You are a careful visual analyst working for a magazine editor. Describe the supplied image faithfully and ' +
+  'concretely so an editor can write about it: what it shows, all legible text/labels/numbers EXACTLY as written, ' +
+  'and — for charts or graphs — the axes, series, units and the key figures/trends. Do NOT invent or embellish ' +
+  'anything not visible. Plain text only, reasonably concise.'
+
+/** Forgiving image fallback: a plain-text vision description (no strict schema).
+ *  Charts/graphs often defeat the structured digest call — its required
+ *  sections/facts shape doesn't map onto a graphic — so when that call fails we
+ *  ask for a simple description instead and wrap it into a digest ourselves. */
+async function describeImageFallback(name: string, bytes: Buffer, contentType: string): Promise<DocDigest> {
+  const { text } = await generateText({
+    model: getAgentModel(),
+    system: IMAGE_DESCRIBE_SYSTEM,
+    maxRetries: 1,
+    abortSignal: AbortSignal.timeout(MODEL_ABORT_MS),
+    messages: [
+      {
+        role: 'user',
+        content: [
+          { type: 'text', text: `Describe this uploaded image named "${name}" for a magazine editor.` },
+          { type: 'file', data: bytes, mediaType: contentType },
+        ],
+      },
+    ],
+  })
+  const clean = (text || '').trim()
+  if (!clean) {
+    throw new Error("I couldn't read that image — try a clearer or smaller image, or paste its key details instead.")
+  }
+  return {
+    title: name,
+    summary: clean.slice(0, 300),
+    sections: [{ heading: 'Image', body: clean.slice(0, 4000) }],
+    facts: [],
+  }
+}
+
 /** OCR a single one-page PDF via the vision model. Never throws — returns '' on
  *  timeout/failure so one bad page can't sink the whole document. */
 async function ocrPdfPage(pageBytes: Buffer, pageNo: number): Promise<string> {
@@ -322,6 +369,26 @@ export async function ingestDocument(opts: {
     return await ocrPdfByPage(opts.name, opts.bytes, opts.maxOcrPages ?? MAX_VISION_PAGES)
   }
 
-  // image → vision
-  return { digest: await digestFromFile(opts.name, opts.bytes, opts.contentType), fullText: '' }
+  // image → vision. The structured digest call is strict (schema'd generateObject),
+  // which charts/graphs regularly defeat; never let that dead-end the upload.
+  try {
+    return { digest: await digestFromFile(opts.name, opts.bytes, opts.contentType), fullText: '' }
+  } catch (e) {
+    if (isTimeoutish(e)) {
+      throw new Error('Reading that image timed out — try a smaller or simpler image.')
+    }
+    console.warn('[ingest] image digest failed, falling back to plain description:', e instanceof Error ? e.message : e)
+    try {
+      return { digest: await describeImageFallback(opts.name, opts.bytes, opts.contentType), fullText: '' }
+    } catch (e2) {
+      if (isTimeoutish(e2)) {
+        throw new Error('Reading that image timed out — try a smaller or simpler image.')
+      }
+      // Both reads failed — most likely a provider/transient problem rather than
+      // the image itself (the details are in the warn above), so suggest a retry
+      // rather than blaming the file. Still 422-mappable ("couldn't read that").
+      console.warn('[ingest] image fallback failed:', e2 instanceof Error ? e2.message : e2)
+      throw new Error("I couldn't read that image just now — please try again in a moment, or paste its key details instead.")
+    }
+  }
 }

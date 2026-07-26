@@ -59,7 +59,7 @@ interface EditorState {
   /** When set, the right pane shows this attachment instead of the Inspector. */
   previewDoc: PreviewDoc | null;
   setPreviewDoc: (d: PreviewDoc | null) => void;
-  sendChat: (text: string, sourceText?: string) => Promise<void>;
+  sendChat: (text: string, sourceText?: string, attachedImages?: api.AttachedImage[]) => Promise<void>;
   applyAllProposals: () => Promise<void>;
   discardProposals: () => void;
 
@@ -528,14 +528,14 @@ export const useEditorStore = create<EditorState>((set, get) => ({
   clearJustGenerated: () => set({ justGenerated: false }),
 
   // ── AI editing assistant ──
-  sendChat: async (text, sourceText) => {
+  sendChat: async (text, sourceText, attachedImages) => {
     const s = get();
     const body = text.trim();
     if (!body || !s.issueId || !s.currentPageId || s.chatBusy) return;
     const history: ChatMessage[] = [...s.chat, { role: 'user', content: body }];
     set({ chat: history, chatBusy: true });
     try {
-      const { reply, proposals } = await api.chatAgent(s.issueId, s.currentPageId, history, s.selectedId ?? undefined, sourceText);
+      const { reply, proposals } = await api.chatAgent(s.issueId, s.currentPageId, history, s.selectedId ?? undefined, sourceText, attachedImages);
       set((st) => ({
         chat: [...st.chat, { role: 'assistant', content: reply }],
         proposals,

@@ -14,7 +14,23 @@ import { MarkdownMessage } from '@/components/MarkdownMessage';
 import { ingestFile, attachmentSourceText, ATTACH_ACCEPT } from '@/editor/agent/documentUpload';
 import { useVoiceChat } from '@/agent/voice/useVoiceChat';
 import { useEditorStore } from './store';
+import { uploadMediaImage, type AttachedImage } from './api';
 import type { AgentProposal } from './model';
+
+/** One file staged in the composer. Images carry an object URL for preview, and
+ *  once sent, the media-library URL the agent can place them by. */
+interface PanelAttachment {
+  id: string;
+  file: File;
+  isImage: boolean;
+  imgUrl?: string; // object URL (images only) — revoked on remove/unmount
+  text?: string; // cached ingest text (fullText for docs, vision digest for images)
+  mediaUrl?: string; // cached media-library URL (images only, set on first send)
+}
+
+const MAX_PANEL_ATTACHMENTS = 5;
+let attSeq = 0;
+const attId = () => `att_${Date.now().toString(36)}_${(++attSeq).toString(36)}`;
 
 const kindIcon = (k: AgentProposal['kind']) =>
   k === 'add' ? <Plus size={11} />
@@ -40,20 +56,16 @@ export function AiPanel() {
   const discard = useEditorStore((s) => s.discardProposals);
   const setPreviewDoc = useEditorStore((s) => s.setPreviewDoc);
 
-  const [input, setInput] = useState('');
-  const [file, setFile] = useState<File | null>(null); // optional source doc to fill this page from
-  const [docText, setDocText] = useState<string | null>(null); // cached ingest of `file`
-  const [ingesting, setIngesting] = useState(false);
-  const [imgUrl, setImgUrl] = useState<string | null>(null); // object URL for an attached image (docked preview)
-  const isImage = !!file && file.type.startsWith('image/');
+  const issueId = useEditorStore((s) => s.issueId);
 
-  // Build/revoke an object URL so an attached image can be previewed inline.
-  useEffect(() => {
-    if (!file || !file.type.startsWith('image/')) { setImgUrl(null); return; }
-    const url = URL.createObjectURL(file);
-    setImgUrl(url);
-    return () => URL.revokeObjectURL(url);
-  }, [file]);
+  const [input, setInput] = useState('');
+  const [atts, setAtts] = useState<PanelAttachment[]>([]); // source docs/images to work from
+  const [ingesting, setIngesting] = useState(false);
+
+  // Revoke every attachment's object URL on unmount (removal revokes eagerly).
+  const attsRef = useRef<PanelAttachment[]>([]);
+  attsRef.current = atts;
+  useEffect(() => () => { for (const a of attsRef.current) if (a.imgUrl) URL.revokeObjectURL(a.imgUrl); }, []);
   const scrollRef = useRef<HTMLDivElement>(null);
   const fileRef = useRef<HTMLInputElement>(null);
   const showTray = proposals.length > 0 && proposalsPageId === currentPageId;
@@ -74,20 +86,34 @@ export function AiPanel() {
     scrollRef.current?.scrollTo({ top: scrollRef.current.scrollHeight, behavior: 'smooth' });
   }, [chat, chatBusy, proposals.length]);
 
-  // Open the attachment in the right pane (docks over the Inspector). Images show
+  // Stage newly picked/dropped files (multi-attach: an article + its graphs can
+  // ride the same turn). Images get an object URL for the inline preview.
+  const addFiles = (list: FileList | null) => {
+    if (!list || list.length === 0) return;
+    const room = Math.max(0, MAX_PANEL_ATTACHMENTS - atts.length);
+    if (list.length > room) toast.message(`Up to ${MAX_PANEL_ATTACHMENTS} attachments — the rest were skipped.`);
+    const staged = Array.from(list).slice(0, room).map((f): PanelAttachment => {
+      const isImage = f.type.startsWith('image/');
+      return { id: attId(), file: f, isImage, imgUrl: isImage ? URL.createObjectURL(f) : undefined };
+    });
+    if (staged.length > 0) setAtts((prev) => [...prev, ...staged]);
+    if (fileRef.current) fileRef.current.value = '';
+  };
+
+  // Open one attachment in the right pane (docks over the Inspector). Images show
   // immediately; docs are ingested for their text first.
-  const openPreview = async () => {
-    if (!file || ingesting) return;
-    if (isImage) {
-      setPreviewDoc({ name: file.name, isImage: true, imageUrl: imgUrl ?? undefined });
+  const openPreview = async (att: PanelAttachment) => {
+    if (ingesting) return;
+    if (att.isImage) {
+      setPreviewDoc({ name: att.file.name, isImage: true, imageUrl: att.imgUrl });
       return;
     }
-    let text = docText;
+    let text = att.text;
     if (!text) {
       setIngesting(true);
       try {
-        text = (await ingestFile(file)).fullText;
-        setDocText(text);
+        text = (await ingestFile(att.file)).fullText;
+        setAtts((prev) => prev.map((a) => (a.id === att.id ? { ...a, text } : a)));
       } catch (e) {
         toast.error(e instanceof Error ? e.message : 'Could not read that document.');
         setIngesting(false);
@@ -95,38 +121,79 @@ export function AiPanel() {
       }
       setIngesting(false);
     }
-    setPreviewDoc({ name: file.name, isImage: false, text: text ?? '' });
+    setPreviewDoc({ name: att.file.name, isImage: false, text: text ?? '' });
   };
 
-  const removeFile = () => {
-    setFile(null);
-    setDocText(null);
-    setPreviewDoc(null);
+  const removeAtt = (id: string) => {
+    const gone = atts.find((a) => a.id === id);
+    if (gone?.imgUrl) URL.revokeObjectURL(gone.imgUrl);
+    const next = atts.filter((a) => a.id !== id);
+    setAtts(next);
+    // Close the preview pane if it was showing the removed attachment (its
+    // object URL is revoked above), or when nothing is left to preview.
+    const pd = useEditorStore.getState().previewDoc;
+    if (next.length === 0 || (gone && pd && pd.name === gone.file.name)) setPreviewDoc(null);
     if (fileRef.current) fileRef.current.value = '';
   };
 
   const send = async () => {
     const t = input.trim();
     if (!t || chatBusy || ingesting) return;
-    // If a document is attached, read it once (cache) and pass its text with the turn.
-    let src = docText ?? undefined;
-    if (file && !docText) {
+    let src: string | undefined;
+    let images: AttachedImage[] | undefined;
+    if (atts.length > 0) {
       setIngesting(true);
-      try {
-        const att = await ingestFile(file);
-        // fullText for PDF/DOCX/text; flattened digest for images (vision-only)
-        // so an attached photo/screenshot actually reaches the agent.
-        src = attachmentSourceText(att);
-        setDocText(src);
-      } catch (e) {
-        setIngesting(false);
-        toast.error(e instanceof Error ? e.message : 'Could not read that document.');
-        return;
+      const parts: string[] = [];
+      const imgs: AttachedImage[] = [];
+      const worked = atts.map((a) => ({ ...a })); // cache results without mutating state mid-flight
+      // Persist the caches by id (never replace the list wholesale) so an
+      // attachment removed or added while requests were in flight stays that way.
+      const mergeWorked = () => setAtts((prev) => prev.map((p) => worked.find((w) => w.id === p.id) ?? p));
+      for (const a of worked) {
+        if (a.isImage) {
+          // 1) Persist the image to the issue's media library so the agent can
+          //    actually PLACE it on the page (set_element_image / add_media_image
+          //    only accept library or on-page urls).
+          if (!a.mediaUrl && issueId) {
+            try {
+              a.mediaUrl = (await uploadMediaImage(issueId, a.file, a.file.name)).url;
+            } catch {
+              toast.message(`Couldn't store “${a.file.name}” for placement — I'll describe it to the assistant instead.`);
+            }
+          }
+          if (a.mediaUrl) imgs.push({ url: a.mediaUrl, name: a.file.name });
+          // 2) Read what it shows (vision digest) so copy can reference it.
+          //    Optional for images — a failed read must not sink the turn.
+          if (!a.text) {
+            try {
+              a.text = attachmentSourceText(await ingestFile(a.file));
+            } catch {
+              /* the image is still placeable via its media url */
+            }
+          }
+          if (a.text) parts.push(`[Attached image “${a.file.name}” — what it shows]\n${a.text}`);
+        } else {
+          // Documents ARE the content — an unreadable one still stops the turn.
+          if (!a.text) {
+            try {
+              a.text = attachmentSourceText(await ingestFile(a.file));
+            } catch (e) {
+              setIngesting(false);
+              mergeWorked();
+              toast.error(e instanceof Error ? e.message : `Could not read “${a.file.name}”.`);
+              return;
+            }
+          }
+          parts.push(worked.length > 1 ? `[Attached document “${a.file.name}”]\n${a.text}` : a.text);
+        }
       }
+      mergeWorked();
       setIngesting(false);
+      src = parts.filter(Boolean).join('\n\n') || undefined;
+      images = imgs.length > 0 ? imgs : undefined;
     }
     setInput('');
-    void sendChat(t, src);
+    void sendChat(t, src, images);
   };
 
   return (
@@ -221,31 +288,31 @@ export function AiPanel() {
             <span className="h-1.5 w-1.5 rounded-full" style={{ background: 'var(--gold-bright)' }} /> focused on the selected element
           </div>
         )}
-        {file && (
-          <div className="mb-1.5 flex items-center gap-1.5 rounded-sm border border-emerald-400/30 bg-emerald-400/10 px-2 py-1.5 text-[10px] text-emerald-200">
+        {atts.map((att) => (
+          <div key={att.id} className="mb-1.5 flex items-center gap-1.5 rounded-sm border border-emerald-400/30 bg-emerald-400/10 px-2 py-1.5 text-[10px] text-emerald-200">
             <button
               type="button"
-              onClick={() => void openPreview()}
+              onClick={() => void openPreview(att)}
               disabled={ingesting}
               title="Open preview in the side panel"
               className="flex min-w-0 flex-1 items-center gap-1.5 text-left hover:text-emerald-100 disabled:opacity-70"
             >
               {ingesting ? (
                 <Loader2 size={11} className="flex-shrink-0 animate-spin" />
-              ) : isImage && imgUrl ? (
-                <img src={imgUrl} alt="" className="h-6 w-6 flex-shrink-0 rounded object-cover" />
-              ) : isImage ? (
+              ) : att.isImage && att.imgUrl ? (
+                <img src={att.imgUrl} alt="" className="h-6 w-6 flex-shrink-0 rounded object-cover" />
+              ) : att.isImage ? (
                 <ImageIcon size={11} className="flex-shrink-0" />
               ) : (
                 <FileText size={11} className="flex-shrink-0" />
               )}
-              <span className="truncate">{ingesting ? `Reading ${file.name}…` : file.name}</span>
+              <span className="truncate">{ingesting ? `Reading ${att.file.name}…` : att.file.name}</span>
               {!ingesting && <span className="ml-1 flex-shrink-0 text-emerald-200/60">Preview →</span>}
             </button>
-            <button type="button" onClick={removeFile} aria-label="Remove document" className="flex-shrink-0 text-emerald-200/60 hover:text-emerald-100"><X size={11} /></button>
+            <button type="button" onClick={() => removeAtt(att.id)} disabled={ingesting} aria-label="Remove attachment" className="flex-shrink-0 text-emerald-200/60 hover:text-emerald-100 disabled:opacity-50"><X size={11} /></button>
           </div>
-        )}
-        <input ref={fileRef} type="file" accept={ATTACH_ACCEPT} className="hidden" onChange={(e) => { setFile(e.target.files?.[0] ?? null); setDocText(null); setPreviewDoc(null); }} />
+        ))}
+        <input ref={fileRef} type="file" accept={ATTACH_ACCEPT} multiple className="hidden" onChange={(e) => addFiles(e.target.files)} />
         {/* Speaking / transcribing status bar — matches v1: pulsing dot + live caption. */}
         {(voice.recording || voice.transcribing) && (
           <div className="mb-1.5 flex items-center gap-2 rounded-sm border border-white/10 bg-white/[0.03] px-2.5 py-1.5 text-[11px] text-white/60">
@@ -257,8 +324,8 @@ export function AiPanel() {
           <button
             type="button"
             onClick={() => fileRef.current?.click()}
-            aria-label="Attach a document"
-            title="Attach a document to fill this page from"
+            aria-label="Attach documents or images"
+            title="Attach documents/images — docs fill the page, images can be placed on it"
             className="flex h-8 w-8 flex-shrink-0 items-center justify-center rounded-full border border-white/15 text-white/60 hover:bg-white/10 hover:text-white/90"
           >
             <Paperclip size={14} />
@@ -277,7 +344,7 @@ export function AiPanel() {
             placeholder={
               voice.recording ? 'Listening…'
               : voice.transcribing ? 'Transcribing…'
-              : file ? 'e.g. “fill this page from the document”'
+              : atts.length > 0 ? 'e.g. “fill this page from the document and place the graphs”'
               : 'Ask the studio assistant…  (Shift+Enter for a new line)'
             }
             className="flex-1 resize-none overflow-hidden rounded-2xl border border-white/15 bg-white/5 px-3 py-1.5 text-[12px] leading-snug text-white outline-none placeholder:text-white/30 focus:border-white/30 disabled:opacity-60"

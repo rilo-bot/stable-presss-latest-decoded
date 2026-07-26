@@ -72,15 +72,20 @@ router.post('/ingest', rawDoc, async (req, res) => {
   } catch (err) {
     console.error('[agent-editor] ingest error:', err)
     const msg = err instanceof Error ? err.message : ''
-    if (err instanceof Error && (err.name === 'TimeoutError' || /timed out/i.test(msg))) {
+    if (err instanceof Error && (err.name === 'TimeoutError' || err.name === 'AbortError' || /timed?\s*out/i.test(msg))) {
+      // ingestDocument crafts user-facing timeout messages (e.g. the image one);
+      // pass those through instead of always answering with the PDF advice.
       res.status(504).json({
-        error: 'Reading that document took too long — it may be very long or image-heavy. Try a shorter or text-based PDF.',
+        error: msg.startsWith('Reading that image timed out')
+          ? msg
+          : 'Reading that document took too long — it may be very long or image-heavy. Try a smaller or text-based file.',
       })
       return
     }
     // ingestDocument throws friendly, user-facing messages for known cases; pass
     // those straight through (422) rather than masking them with the generic line.
-    const friendly = /image-based|couldn't read any|no pages|looks empty|Unsupported file type/i.test(msg)
+    // ("couldn't read that" covers the Word-document and image messages.)
+    const friendly = /image-based|couldn't read any|couldn't read that|no pages|looks empty|Unsupported file type/i.test(msg)
     res.status(friendly ? 422 : 500).json({
       error: friendly
         ? msg
