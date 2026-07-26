@@ -163,8 +163,21 @@ export const formatPage = (id: string, pageId: string, mode: 'fill' | 'adjust') 
   );
 
 // ── AI editing agent (staged proposals; applied via the element CRUD above) ──
-export const chatAgent = (id: string, pageId: string, messages: { role: 'user' | 'assistant'; content: string }[], selectedElementId?: string, sourceText?: string) =>
-  authFetch(`${BASE}/issues/${id}/pages/${pageId}/agent`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ messages, selectedElementId, sourceText }) }).then(parse<{ reply: string; proposals: AgentProposal[] }>);
+/** An image the user attached to the chat, already stored in the issue's media
+ *  library — the agent can place it by this exact URL. */
+export interface AttachedImage {
+  url: string;
+  name: string;
+}
+export const chatAgent = (
+  id: string,
+  pageId: string,
+  messages: { role: 'user' | 'assistant'; content: string }[],
+  selectedElementId?: string,
+  sourceText?: string,
+  attachedImages?: AttachedImage[],
+) =>
+  authFetch(`${BASE}/issues/${id}/pages/${pageId}/agent`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ messages, selectedElementId, sourceText, attachedImages }) }).then(parse<{ reply: string; proposals: AgentProposal[] }>);
 
 // ── PDF import (upload → S3 → confirm → background extraction) ──
 export interface MediaAsset {

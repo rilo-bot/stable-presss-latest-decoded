@@ -1204,6 +1204,16 @@ router.post('/issues/:id/pages/:pageId/agent', rateLimit('mag2-agent', 20, 60_00
   }
   const selectedElementId = typeof req.body?.selectedElementId === 'string' ? req.body.selectedElementId : undefined;
   const sourceText = typeof req.body?.sourceText === 'string' ? req.body.sourceText.slice(0, 60_000) : undefined;
+  // Images the user attached this turn (already persisted to the media library by
+  // the client). Prompt context only — the placement tools re-validate every url
+  // against the media library, so a bogus url here can never reach a page.
+  const attachedImages = (Array.isArray(req.body?.attachedImages) ? req.body.attachedImages : [])
+    .filter((a: unknown): a is { url: string; name?: string } => !!a && typeof (a as { url?: unknown }).url === 'string')
+    .slice(0, 6)
+    .map((a: { url: string; name?: string }) => ({
+      url: a.url.slice(0, 2000),
+      name: typeof a.name === 'string' ? a.name.slice(0, 200) : 'image',
+    }));
   try {
     const turn = await runPageAgent({
       messages,
@@ -1216,6 +1226,7 @@ router.post('/issues/:id/pages/:pageId/agent', rateLimit('mag2-agent', 20, 60_00
       magazineId: page.magazineId,
       selectedElementId,
       sourceText,
+      attachedImages: attachedImages.length > 0 ? attachedImages : undefined,
       pageCount: (await pagesFor(page.magazineId)).length,
     });
     res.json(turn);

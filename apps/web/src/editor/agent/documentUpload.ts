@@ -4,6 +4,7 @@
 // /api/uploads/direct) — sources are analysed, not stored.
 
 import { apiUrl } from '@/lib/api';
+import { compressImageToBlob } from '@/lib/upload';
 import { useAuthStore } from '@/stores/authStore';
 import { uid } from './applyEdits';
 import type { DocAttachment, DocDigest } from './types';
@@ -41,7 +42,20 @@ const INGEST_TIMEOUT_MS = 300_000;
  *  generation preview only needs a few, so it passes a small number to avoid a
  *  multi-minute read. Omitted (assistant attach) → the server reads up to its cap. */
 export async function ingestFile(file: File, opts?: { maxPages?: number }): Promise<DocAttachment> {
-  const contentType = contentTypeFor(file);
+  let contentType = contentTypeFor(file);
+  // Downscale images before sending (same 1568px sweet spot as chat attachments):
+  // a full-resolution camera/export JPG can exceed what the vision provider
+  // accepts even though it passes the route's byte cap, and the digest doesn't
+  // need more pixels. Fall back to the raw file if re-encoding fails (odd format).
+  let body: Blob = file;
+  if (contentType.startsWith('image/')) {
+    try {
+      body = await compressImageToBlob(file, { maxDim: 1568, quality: 0.8 });
+      contentType = 'image/jpeg';
+    } catch {
+      body = file;
+    }
+  }
   const token = useAuthStore.getState().token;
   const query = new URLSearchParams({ filename: file.name });
   if (opts?.maxPages) query.set('maxPages', String(opts.maxPages));
@@ -53,7 +67,7 @@ export async function ingestFile(file: File, opts?: { maxPages?: number }): Prom
         'Content-Type': contentType,
         ...(token ? { Authorization: `Bearer ${token}` } : {}),
       },
-      body: file,
+      body,
       signal: AbortSignal.timeout(INGEST_TIMEOUT_MS),
     });
   } catch (e) {
