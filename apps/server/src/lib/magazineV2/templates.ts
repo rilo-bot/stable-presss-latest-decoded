@@ -343,7 +343,11 @@ export function composePage(
 
     if (slot.role === 'text') {
       const content = fill?.text ?? '';
-      if (!content && !slot.required) continue; // skip empty optional text
+      // Skip ANY empty text slot — required included. An empty required slot used
+      // to emit an invisible, zero-content text element that just occupied a dead
+      // box; required copy is now guaranteed upstream by backfillDraft, so a still-
+      // empty slot here (e.g. an unfillable figure) should simply be dropped.
+      if (!content) continue;
       const s = slot.style ?? {};
       const maxFont = s.fontSize ?? 28;
       const minFont = s.minFontSize ?? Math.max(12, Math.round(maxFont * 0.55));

@@ -439,7 +439,7 @@ export async function draftPage(opts: {
         source ? `\nSOURCE DOCUMENT (use the parts relevant to this page):\n"""\n${source.slice(0, 6000)}\n"""` : '',
       ].join('\n'),
       temperature: 0.75,
-      maxRetries: 1,
+      maxRetries: 2,
       abortSignal: AbortSignal.timeout(60_000),
     });
     for (const t of object.texts ?? []) if (t?.slotId && t.text) draft.texts[t.slotId] = String(t.text);
@@ -461,6 +461,70 @@ export function polishCoverDraft(draft: PageDraft, plan: GenPlan, template: Page
   return draft;
 }
 
+/** Deterministically shorten copy to fit a slot, collapsing whitespace. */
+function clampCopy(s: string, max: number): string {
+  const t = s.replace(/\s+/g, ' ').trim();
+  if (t.length <= max) return t;
+  return t.slice(0, max - 1).replace(/\s+\S*$/, '').trim() + '…';
+}
+
+/** A never-blank fallback headline for a page, from its section/intent. */
+function deriveHeadline(page: GenPlanPage, plan: GenPlan): string {
+  const base = (page.sectionTitle?.trim() || page.intent?.trim() || plan.title).trim();
+  const firstClause = (base.split(/[.!?—:]/)[0] ?? base).trim() || base;
+  return clampCopy(firstClause, 70);
+}
+
+/** A never-blank fallback body paragraph for a page, from its intent. */
+function deriveBody(page: GenPlanPage, plan: GenPlan): string {
+  const base = (page.intent?.trim() || plan.subtitle || plan.title).trim();
+  return clampCopy(base, 400);
+}
+
+/**
+ * Guarantee a page's backbone copy so a thin or failed draft can NEVER leave a
+ * page blank/half-empty. Fills — only when the copywriter left them empty — the
+ * headline (every page) and at least one body slot (the page's prose backbone),
+ * plus the cover's title/subtitle, deriving text from the plan + this page's own
+ * intent (no extra model call). Secondary devices (kicker/deck/caption) are left
+ * to the copywriter and pruned if empty, so pages never over-fill with filler.
+ * Supersedes polishCoverDraft (kept for compatibility) and runs on BOTH the AI
+ * and fixed-template paths.
+ */
+function backfillDraft(draft: PageDraft, plan: GenPlan, page: GenPlanPage, template: PageTemplate): PageDraft {
+  const textSlots = template.slots.filter((s) => s.role === 'text');
+  const hasCopy = (id: string) => !!draft.texts[id]?.trim();
+  const roleOf = (s: PageTemplateSlot) => s.textRole ?? 'body';
+
+  // Headline — always guaranteed.
+  const headlineSlot = textSlots.find((s) => roleOf(s) === 'headline');
+  if (headlineSlot && !hasCopy(headlineSlot.id)) {
+    draft.texts[headlineSlot.id] = page.kind === 'cover' ? plan.title : deriveHeadline(page, plan);
+  }
+  // Cover subtitle — the plan's subtitle.
+  if (page.kind === 'cover' && plan.subtitle) {
+    const subSlot = textSlots.find((s) => roleOf(s) === 'subhead' && s.id !== headlineSlot?.id);
+    if (subSlot && !hasCopy(subSlot.id)) draft.texts[subSlot.id] = plan.subtitle;
+  }
+  // Body — guarantee at least one prose slot carries content (the backbone).
+  const bodySlots = textSlots.filter((s) => roleOf(s) === 'body');
+  if (bodySlots.length > 0 && !bodySlots.some((s) => hasCopy(s.id))) {
+    draft.texts[bodySlots[0]!.id] = deriveBody(page, plan);
+  }
+  return draft;
+}
+
+/** Too few real content elements for an interior page → treat as a failed page so
+ *  the caller uses the (content-backfilled) template path rather than shipping a
+ *  near-empty page. Cover / back-cover / pull-quote are legitimately spare. */
+function isTooSparse(composed: ComposedPage, kind: PageTemplateKind): boolean {
+  if (kind === 'cover' || kind === 'back-cover' || kind === 'pull-quote') return false;
+  const meaningful = composed.elements.filter(
+    (e) => (e.type === 'text' && !!e.text?.content?.trim()) || (e.type === 'image' && !!e.image?.url),
+  ).length;
+  return meaningful < 2;
+}
+
 // ── Deterministic compose + layout-QA (no LLM) ────────────────────────────────
 
 /** The best stock orientation for an image slot, from its box aspect ratio. */
@@ -477,6 +541,27 @@ function slotOrientation(box: { w: number; h: number }): StockOrientation {
 // pathological template can't fan out without limit.
 const IMAGE_SLOT_CONCURRENCY = 4;
 
+/** A pool of the user's OWN uploaded photos (from the magazine's media library)
+ *  that generation places BEFORE falling back to AI/stock. `claim()` is synchronous
+ *  (no await) so concurrent page/slot composers can never take the same photo. */
+interface UserPhoto {
+  url: string;
+  assetId: string;
+  alt: string;
+}
+function makeUserPhotoPool(photos: UserPhoto[]) {
+  const remaining = [...photos];
+  return {
+    get size() {
+      return remaining.length;
+    },
+    claim(): UserPhoto | null {
+      return remaining.shift() ?? null;
+    },
+  };
+}
+type UserPhotoPool = ReturnType<typeof makeUserPhotoPool>;
+
 /**
  * The Asset Curator: turn a page's draft into SlotFills. For image slots, source
  * a real Pexels photo from the art-director's brief (stored as a MediaAsset) when
@@ -489,6 +574,7 @@ async function curateFills(
   draft: PageDraft,
   palette: GenPalette,
   ctx?: { magazineId: string; pageIndex: number },
+  pool?: UserPhotoPool,
 ): Promise<SlotFill[]> {
   const maybeFills = await mapWithConcurrency(
     template.slots,
@@ -505,11 +591,16 @@ async function curateFills(
       if (slot.role === 'image') {
         const brief = draft.images[slot.id];
         let stored: { url: string; assetId: string; alt: string } | null = null;
-        if (ctx && brief) {
+        // 1) Prefer the user's OWN uploaded photo. claim() is synchronous (there is
+        //    no await before it), so concurrent slot/page composers never take the
+        //    same one — each user photo is placed at most once.
+        const mine = pool?.claim();
+        if (mine) stored = { url: mine.url, assetId: mine.assetId, alt: mine.alt };
+        // 2) Top up with an AI-generated editorial photo (bespoke to the brief), then
+        //    Pexels stock, then a tinted palette block. All degrade gracefully when a
+        //    provider/storage isn't configured (e.g. local dev without S3).
+        if (!stored && ctx && brief) {
           const orientation = slotOrientation(slot.box);
-          // Prefer an AI-generated editorial photo (bespoke to the brief); fall back
-          // to Pexels stock, then to a tinted palette block. All degrade gracefully
-          // when a provider/storage isn't configured (e.g. local dev without S3).
           if (isImageGenConfigured()) stored = await generateAndStoreImage({ prompt: brief, orientation }, ctx);
           if (!stored && isStockConfigured()) stored = await fetchAndStoreStock({ query: brief, orientation }, ctx);
         }
@@ -523,7 +614,7 @@ async function curateFills(
 }
 
 // Remap the page's copy + any image onto the SAFE_TEMPLATE slots. Pure reshuffle.
-function buildSafeFills(template: PageTemplate, draft: PageDraft, fills: SlotFill[]): SlotFill[] {
+function buildSafeFills(template: PageTemplate, draft: PageDraft, fills: SlotFill[], palette: GenPalette): SlotFill[] {
   const roleOf = (slotId: string) => template.slots.find((s) => s.id === slotId)?.textRole;
   const headlineId = Object.keys(draft.texts).find((id) => roleOf(id) === 'headline');
   const headline = (headlineId && draft.texts[headlineId]) || 'Untitled';
@@ -534,7 +625,9 @@ function buildSafeFills(template: PageTemplate, draft: PageDraft, fills: SlotFil
     .slice(0, 900);
   const image = fills.find((f) => f.image)?.image;
   const out: SlotFill[] = [{ slotId: 'headline', text: headline }];
-  if (image) out.push({ slotId: 'photo', image });
+  // Always give the photo band SOMETHING: a real image, else a tinted placeholder
+  // block — never leave it bare white (the SAFE-template blank the user was seeing).
+  out.push(image ? { slotId: 'photo', image } : { slotId: 'photo', shapeFill: palette.secondary });
   if (body) out.push({ slotId: 'body', text: body });
   return out;
 }
@@ -545,14 +638,15 @@ async function buildPage(
   draft: PageDraft,
   theme: { palette: GenPalette; fonts: GenFonts },
   ctx?: { magazineId: string; pageIndex: number },
+  pool?: UserPhotoPool,
 ): Promise<ComposedPage> {
   const dims = { width: PAGE_W, height: PAGE_H };
-  const fills = await curateFills(template, draft, theme.palette, ctx);
+  const fills = await curateFills(template, draft, theme.palette, ctx, pool);
   let composed = composePage(template, fills, theme);
   let elements = normalizeElements(composed.elements, dims);
 
   if (!validatePageLayout(elements, dims).ok) {
-    composed = composePage(SAFE_TEMPLATE, buildSafeFills(template, draft, fills), theme);
+    composed = composePage(SAFE_TEMPLATE, buildSafeFills(template, draft, fills, theme.palette), theme);
     elements = normalizeElements(composed.elements, dims);
   }
   return { background: composed.background, elements };
@@ -567,11 +661,12 @@ async function composeOnePageTemplate(
   totalPages: number,
   ctx?: { magazineId: string; pageIndex: number },
   sourceText?: string,
+  pool?: UserPhotoPool,
 ): Promise<ComposedPage> {
   const template = defaultTemplateForKind(page.kind);
   let draft = await draftPage({ plan, page, template, pageNumber, totalPages, sourceText });
-  if (page.kind === 'cover') draft = polishCoverDraft(draft, plan, template);
-  return buildPage(template, draft, { palette: plan.palette, fonts: plan.fonts }, ctx);
+  draft = backfillDraft(draft, plan, page, template);
+  return buildPage(template, draft, { palette: plan.palette, fonts: plan.fonts }, ctx, pool);
 }
 
 /** Compose one page. Dispatches to the AI-authored-layout path when the flag is
@@ -584,11 +679,12 @@ async function composeOnePage(
   totalPages: number,
   ctx?: { magazineId: string; pageIndex: number },
   sourceText?: string,
+  pool?: UserPhotoPool,
 ): Promise<ComposedPage> {
   if (aiLayoutEnabled()) {
-    return composeOnePageAI(plan, page, pageNumber, totalPages, ctx, sourceText);
+    return composeOnePageAI(plan, page, pageNumber, totalPages, ctx, sourceText, pool);
   }
-  return composeOnePageTemplate(plan, page, pageNumber, totalPages, ctx, sourceText);
+  return composeOnePageTemplate(plan, page, pageNumber, totalPages, ctx, sourceText, pool);
 }
 
 // ── AI-authored layout path ───────────────────────────────────────────────────
@@ -673,7 +769,8 @@ function fillsToContent(fills: SlotFill[]): ResolvedContent {
 /**
  * Deterministic tail of the AI path (no LLM): curate assets for the pseudo
  * template, resolve content, solve WITH content-aware sizing, compose, and QA.
- * Returns a clean page, or null if it fails layout validation (caller falls back).
+ * Returns the clean page, or `page: null` plus the `why` that the caller logs
+ * before falling back to the fixed-template path.
  */
 async function composeSpecToPage(
   spec: LayoutSpec,
@@ -681,9 +778,10 @@ async function composeSpecToPage(
   draft: PageDraft,
   theme: { palette: GenPalette; fonts: GenFonts },
   ctx?: { magazineId: string; pageIndex: number },
-): Promise<ComposedPage | null> {
+  pool?: UserPhotoPool,
+): Promise<{ page: ComposedPage | null; why?: string }> {
   const dims = { width: PAGE_W, height: PAGE_H };
-  const fills = await curateFills(pseudo, draft, theme.palette, ctx);
+  const fills = await curateFills(pseudo, draft, theme.palette, ctx, pool);
   const content = fillsToContent(fills);
   // Drop leaves that resolved to no real content — empty copy, or a photo that
   // failed to load — then RE-SOLVE the pruned tree. The solver re-partitions the
@@ -692,12 +790,19 @@ async function composeSpecToPage(
   // pixel authority. If nothing real remains, bail so the caller uses the
   // fixed-template path.
   const pruned = pruneLayoutSpec(spec, content);
-  if (!pruned) return null;
+  if (!pruned) {
+    return { page: null, why: 'no leaf resolved to real content' };
+  }
   const solved = solveLayout(pruned, dims, { measureLeaf: makeMeasureLeaf(content, theme.fonts) });
   const composed = composeFromSolved(solved, content, theme);
   const elements = normalizeElements(composed.elements, dims);
-  if (!validatePageLayout(elements, dims).ok) return null;
-  return { background: composed.background, elements };
+  const report = validatePageLayout(elements, dims);
+  if (!report.ok) {
+    // Surface WHAT failed. These issues used to be computed and discarded, which
+    // made every fallback an unexplained "failed QA" line in the logs.
+    return { page: null, why: report.issues.map((i) => `${i.kind}: ${i.detail}`).join('; ') };
+  }
+  return { page: { background: composed.background, elements } };
 }
 
 /** Extract the first complete JSON object from model text (tolerates prose /
@@ -736,6 +841,9 @@ async function artDirectPage(plan: GenPlan, page: GenPlanPage, pageNumber: numbe
     '  • leaf:  { "kind":"leaf", "role":<role>, "contentRef":<short string>, "colorRef"?:<color>, "fontRef"?:<font>, "weightHint"?:400-900, "align"?:<align>, "fit"?:"cover"|"contain", "iconName"?:<glyph — role "icon" only> }',
     '  • row/col: { "kind":"row"|"col", "gap"?:<space>, "pad"?:<space>, "align"?:<flex>, "justify"?:<flex>, "children":[ { "weight"?:number, "sizing"?:"fr"|"content", "node":<node> } ] }',
     '  • stack (overlay layers on one rectangle): { "kind":"stack", "layers":[ <node>, … ] }',
+    '    A stack is ONLY for backing + content: image/shape layers UNDER exactly ONE text-carrying layer.',
+    '    Never overlay two text layers — they share the same box and print on top of each other. To put text',
+    '    lines one ABOVE another, use a `col`.',
     'Tokens — color: bg|text|primary|secondary|accent · space: none|xs|sm|md|lg|xl · font: display|body ·',
     'align/justify (flex): start|center|end|between · role: headline|subhead|kicker|byline|body|caption|',
     'pullquote|figure|label|entry|image|shape|qr|icon. Use `sizing:"content"` for headings/kickers/bylines/',
@@ -756,8 +864,9 @@ async function artDirectPage(plan: GenPlan, page: GenPlanPage, pageNumber: numbe
     'EDITORIAL TOOLKIT — build RICH pages like a premium magazine. A bare headline + photo is NOT enough:',
     'layer SEVERAL of these devices on every interior page (pick the ones that fit THIS page; stay ≤14 leaves):',
     '• KICKER: a short tracked section tag in the ACCENT colour above the headline (role "kicker").',
-    '• HEADLINE: bold display font. For a two-tone masthead, stack TWO short headline leaves and give the',
-    '  second one colorRef "accent" (e.g. "The World of" / "STAMPS"). Keep each line SHORT (words must not break).',
+    '• HEADLINE: bold display font. For a two-tone masthead, put TWO short headline leaves in a `col` (NOT a',
+    '  `stack` — layers would print on top of each other) and give the second one colorRef "accent" (e.g.',
+    '  "The World of" / "STAMPS"). Keep each line SHORT (words must not break).',
     '• DECK: one supporting sentence under the headline (role "subhead", contentRef "deck").',
     '• BODY: the BACKBONE of a feature/article — 2–3 real paragraphs (role "body"). Give it a LARGE fr share',
     '  (weight 5–7) so prose DOMINATES the mid-page; for an article use a row of two body columns',
@@ -851,6 +960,7 @@ async function composeOnePageAI(
   totalPages: number,
   ctx?: { magazineId: string; pageIndex: number },
   sourceText?: string,
+  pool?: UserPhotoPool,
 ): Promise<ComposedPage> {
   const theme = { palette: plan.palette, fonts: plan.fonts };
   try {
@@ -858,18 +968,19 @@ async function composeOnePageAI(
     const pseudo = buildPseudoTemplate(spec);
     if (pseudo.slots.length > 0) {
       let draft = await draftPage({ plan, page, template: pseudo, pageNumber, totalPages, sourceText });
-      if (page.kind === 'cover') draft = polishCoverDraft(draft, plan, pseudo);
-      const aiPage = await composeSpecToPage(spec, pseudo, draft, theme, ctx);
-      if (aiPage) {
+      draft = backfillDraft(draft, plan, page, pseudo);
+      const { page: aiPage, why } = await composeSpecToPage(spec, pseudo, draft, theme, ctx, pool);
+      if (aiPage && !isTooSparse(aiPage, page.kind)) {
         console.log(`[magazineV2] page ${pageNumber}/${totalPages} "${page.kind}" → AI layout (spec: ${source}, ${pseudo.slots.length} slots, ${aiPage.elements.length} elements)`);
         return aiPage;
       }
-      console.warn(`[magazineV2] page ${pageNumber} "${page.kind}" AI layout failed QA — using template path.`);
+      const reason = aiPage ? 'too sparse' : `failed QA (${why})`;
+      console.warn(`[magazineV2] page ${pageNumber} "${page.kind}" AI layout ${reason} — using template path.`);
     }
   } catch (err) {
     console.warn('[magazineV2] AI-layout page errored, using template path:', err instanceof Error ? err.message : err);
   }
-  return composeOnePageTemplate(plan, page, pageNumber, totalPages, ctx, sourceText);
+  return composeOnePageTemplate(plan, page, pageNumber, totalPages, ctx, sourceText, pool);
 }
 
 // ── Public entry points ───────────────────────────────────────────────────────
@@ -933,10 +1044,26 @@ export async function generateMagazineIssue(issueId: string, brief: string, page
       updatedAt: new Date().toISOString(),
     });
 
+    // The user's OWN uploaded photos (from the media library) — generation places
+    // these FIRST, topping up with AI/stock only once they run out. Loaded AFTER
+    // planning so any images still uploading when the job was enqueued have landed.
+    const media = (await db.collection(COL.media).find({ magazineId: issueId })) as {
+      _id: string;
+      url?: string;
+      alt?: string;
+      kind?: string;
+      source?: string;
+    }[];
+    const userPhotos: UserPhoto[] = media
+      .filter((m) => m.source === 'upload' && m.kind !== 'doc' && typeof m.url === 'string' && !!m.url)
+      .map((m) => ({ url: m.url as string, assetId: String(m._id), alt: m.alt ?? '' }));
+    const photoPool = userPhotos.length > 0 ? makeUserPhotoPool(userPhotos) : undefined;
+    if (photoPool) console.log(`[magazineV2] issue "${plan.title}": placing ${photoPool.size} uploaded photo(s) first`);
+
     let done = 0;
     let coverImage = '';
     await mapWithConcurrency(plan.pages, GEN_PAGE_CONCURRENCY, async (page, i) => {
-      const composed = await composeOnePage(plan, page, i + 1, plan.pages.length, { magazineId: issueId, pageIndex: i }, sourceText);
+      const composed = await composeOnePage(plan, page, i + 1, plan.pages.length, { magazineId: issueId, pageIndex: i }, sourceText, photoPool);
       await insertComposedPage(issueId, i, composed);
       if (i === 0) coverImage = coverUrlOf(composed);
       done += 1;

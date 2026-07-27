@@ -6,7 +6,7 @@
 
 import { useEffect, useRef, useState, type DragEvent } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { Sparkles, Paperclip, X, Loader2, FileText, FileScan, FilePlus, Globe, Trash2, ArrowUp } from 'lucide-react';
+import { Sparkles, Paperclip, X, Loader2, FileText, FileScan, FilePlus, Globe, Trash2, ArrowUp, Pencil, Eye, LayoutTemplate } from 'lucide-react';
 import { toast } from 'sonner';
 import * as api from './api';
 import type { IssueSummary } from './api';
@@ -66,6 +66,22 @@ export default function MagazineV2Home() {
     el.style.height = `${Math.min(el.scrollHeight, 260)}px`;
   };
 
+  // Start a new magazine from this one's LAYOUT (copy stripped). Any staff member
+  // can reuse any magazine's design — the source is never modified.
+  const reuseTemplate = async (it: IssueSummary) => {
+    if (pubBusy) return;
+    setPubBusy(it.id);
+    try {
+      const { issue } = await api.reuseIssueTemplate(it.id);
+      toast.success('Template copied — the text and photos are yours to fill in.');
+      openEditor(issue.id);
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : 'Could not reuse that template');
+    } finally {
+      setPubBusy(null);
+    }
+  };
+
   const removeIssue = async (it: IssueSummary) => {
     if (pubBusy) return;
     if (!window.confirm(`Delete “${it.title}”?${it.publishedIssueId ? ' Its published edition will also be removed from Bulletins.' : ''} This cannot be undone.`)) return;
@@ -99,6 +115,7 @@ export default function MagazineV2Home() {
     setStarting(true);
     try {
       let sourceText: string | undefined;
+      const docFiles: { file: File; text: string }[] = []; // non-image attachments to persist to the Uploads library
       if (files.length > 0) {
         setStartMsg(files.length === 1 ? 'Reading your document…' : 'Reading your attachments…');
         // A generated issue is a SHORT preview, so we only need the first few
@@ -108,15 +125,20 @@ export default function MagazineV2Home() {
         const parts: string[] = [];
         const skipped: string[] = [];
         for (const f of files) {
+          const isImage = f.type.startsWith('image/');
+          let text = '';
           try {
-            const text = attachmentSourceText(await ingestFile(f, { maxPages: 6 }));
+            text = attachmentSourceText(await ingestFile(f, { maxPages: 6 }));
             if (text) {
-              const label = f.type.startsWith('image/') ? 'Attached image' : 'Attached document';
+              const label = isImage ? 'Attached image' : 'Attached document';
               parts.push(files.length > 1 ? `[${label} “${f.name}” — content]\n${text}` : text);
             }
           } catch {
             skipped.push(f.name);
           }
+          // Persist every document (even one we couldn't read client-side) so it's
+          // browsable in the Uploads library; images are stored separately below.
+          if (!isImage) docFiles.push({ file: f, text });
         }
         // Don't dead-end the user on a patchy read: build from whatever else they
         // gave and note what was skipped; only hard-fail when nothing is readable.
@@ -148,6 +170,20 @@ export default function MagazineV2Home() {
               await api.uploadMediaImage(issue.id, f, f.name);
             } catch {
               toast.message(`Couldn't add “${f.name}” to the magazine's media library.`);
+            }
+          }),
+        );
+      }
+      // Persist attached DOCUMENTS into the issue's Uploads library so they're
+      // browsable & previewable there (generation already consumed their text above).
+      if (docFiles.length > 0 && issue?.id) {
+        setStartMsg('Saving your documents…');
+        await Promise.all(
+          docFiles.map(async ({ file, text }) => {
+            try {
+              await api.uploadMediaDoc(issue.id, file, { sourceText: text });
+            } catch {
+              toast.message(`Couldn't save “${file.name}” to the magazine's uploads.`);
             }
           }),
         );
@@ -329,26 +365,46 @@ export default function MagazineV2Home() {
                         <span className="mt-1.5 inline-block rounded bg-muted px-1.5 py-0.5 text-[10px] font-medium text-muted-foreground">View only</span>
                       )}
                     </button>
-                    {(it.myRole === 'owner' || (published && it.publishedIssueId)) && (
-                      <div className="mt-3 flex items-center gap-2 border-t border-border pt-2.5">
-                        {it.myRole === 'owner' && (
-                          <button
-                            onClick={() => void removeIssue(it)}
-                            disabled={busy}
-                            className="inline-flex items-center gap-1 rounded border border-red-300/40 px-2 py-1 text-xs font-medium text-red-600 hover:bg-red-50 disabled:opacity-50 dark:text-red-300/90 dark:hover:bg-red-500/10"
-                            title="Delete this magazine"
-                          >
-                            {busy ? <Loader2 size={12} className="animate-spin" /> : <Trash2 size={12} />}
-                            Delete
-                          </button>
-                        )}
-                        {published && it.publishedIssueId && (
-                          <a href={`/bulletins/${it.publishedIssueId}`} target="_blank" rel="noreferrer" className="ml-auto text-xs text-[#7c3aed] hover:underline">
-                            View on Bulletins
-                          </a>
-                        )}
-                      </div>
-                    )}
+                    <div className="mt-3 flex flex-wrap items-center gap-2 border-t border-border pt-2.5">
+                      {/* Open the studio. Without a role this is read-only, so it's
+                          labelled honestly rather than promising an edit. */}
+                      <button
+                        onClick={() => openEditor(it.id)}
+                        className="inline-flex items-center gap-1 rounded border border-border px-2 py-1 text-xs font-medium hover:border-[#7c3aed] hover:text-[#7c3aed]"
+                        title={it.myRole ? 'Open this magazine in the studio' : 'Open read-only (you do not have edit access)'}
+                      >
+                        {it.myRole ? <Pencil size={12} /> : <Eye size={12} />}
+                        {it.myRole ? 'Edit' : 'View'}
+                      </button>
+                      {/* Reuse the DESIGN as a new magazine of your own — allowed on
+                          any card, including view-only ones, because it only ever
+                          creates a new document and never touches this one. */}
+                      <button
+                        onClick={() => void reuseTemplate(it)}
+                        disabled={busy}
+                        className="inline-flex items-center gap-1 rounded border border-border px-2 py-1 text-xs font-medium hover:border-[#7c3aed] hover:text-[#7c3aed] disabled:opacity-50"
+                        title="Start a new magazine with this layout — the text and photos are cleared"
+                      >
+                        {busy ? <Loader2 size={12} className="animate-spin" /> : <LayoutTemplate size={12} />}
+                        Reuse template
+                      </button>
+                      {it.myRole === 'owner' && (
+                        <button
+                          onClick={() => void removeIssue(it)}
+                          disabled={busy}
+                          className="inline-flex items-center gap-1 rounded border border-red-300/40 px-2 py-1 text-xs font-medium text-red-600 hover:bg-red-50 disabled:opacity-50 dark:text-red-300/90 dark:hover:bg-red-500/10"
+                          title="Delete this magazine"
+                        >
+                          {busy ? <Loader2 size={12} className="animate-spin" /> : <Trash2 size={12} />}
+                          Delete
+                        </button>
+                      )}
+                      {published && it.publishedIssueId && (
+                        <a href={`/bulletins/${it.publishedIssueId}`} target="_blank" rel="noreferrer" className="ml-auto text-xs text-[#7c3aed] hover:underline">
+                          View on Bulletins
+                        </a>
+                      )}
+                    </div>
                   </div>
                 );
               })}

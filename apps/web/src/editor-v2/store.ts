@@ -14,9 +14,17 @@ import type { MagazineElement, MagazinePageV2, AgentProposal } from './model';
 import * as api from './api';
 import { ApiError, type IssueMeta, type PageSummary } from './api';
 
+/** A file the user attached to a chat turn, shown as a chip inside their sent
+ *  message bubble (so the attachment reads as "sent", not stuck in the input). */
+export interface ChatAttachmentRef {
+  name: string;
+  isImage: boolean;
+  url?: string; // media-library URL for images (thumbnail); undefined for docs
+}
 export interface ChatMessage {
   role: 'user' | 'assistant';
   content: string;
+  attachments?: ChatAttachmentRef[];
 }
 
 /** A chat attachment surfaced in the right pane (docks over the Inspector). */
@@ -25,6 +33,10 @@ export interface PreviewDoc {
   isImage: boolean;
   imageUrl?: string; // object URL for image attachments
   text?: string; // extracted text for PDF/text attachments
+  /** The document's own URL, when it can be rendered in-browser (PDFs — served
+   *  inline by GET /file/*). Lets the pane show the REAL file, with `text` (what
+   *  generation actually consumes) behind a toggle. */
+  docUrl?: string;
 }
 
 interface UndoEntry {
@@ -59,7 +71,7 @@ interface EditorState {
   /** When set, the right pane shows this attachment instead of the Inspector. */
   previewDoc: PreviewDoc | null;
   setPreviewDoc: (d: PreviewDoc | null) => void;
-  sendChat: (text: string, sourceText?: string, attachedImages?: api.AttachedImage[]) => Promise<void>;
+  sendChat: (text: string, sourceText?: string, attachedImages?: api.AttachedImage[], attachments?: ChatAttachmentRef[]) => Promise<void>;
   applyAllProposals: () => Promise<void>;
   discardProposals: () => void;
 
@@ -528,14 +540,16 @@ export const useEditorStore = create<EditorState>((set, get) => ({
   clearJustGenerated: () => set({ justGenerated: false }),
 
   // ── AI editing assistant ──
-  sendChat: async (text, sourceText, attachedImages) => {
+  sendChat: async (text, sourceText, attachedImages, attachments) => {
     const s = get();
     const body = text.trim();
     if (!body || !s.issueId || !s.currentPageId || s.chatBusy) return;
-    const history: ChatMessage[] = [...s.chat, { role: 'user', content: body }];
+    const history: ChatMessage[] = [...s.chat, { role: 'user', content: body, attachments }];
     set({ chat: history, chatBusy: true });
     try {
-      const { reply, proposals } = await api.chatAgent(s.issueId, s.currentPageId, history, s.selectedId ?? undefined, sourceText, attachedImages);
+      // The server only needs role+content; attachment refs are client display-only.
+      const apiHistory = history.map((m) => ({ role: m.role, content: m.content }));
+      const { reply, proposals } = await api.chatAgent(s.issueId, s.currentPageId, apiHistory, s.selectedId ?? undefined, sourceText, attachedImages);
       set((st) => ({
         chat: [...st.chat, { role: 'assistant', content: reply }],
         proposals,

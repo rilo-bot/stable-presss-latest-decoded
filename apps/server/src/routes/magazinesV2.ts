@@ -247,6 +247,103 @@ router.post('/issues/blank', async (req, res) => {
   res.status(201).json({ issue: withViewer(created, uid), pages: (await pagesFor(id)).map(pageSummary) });
 });
 
+/**
+ * Strip one element down to its DESIGN so it can seed a reusable template.
+ *
+ * Kept: geometry, z-order, rotation, and every styling choice (font, size, weight,
+ * colour, alignment, fit, focal point) — that IS the template. Cleared: anything
+ * authored — copy, photos, QR targets — so no content from the source issue leaks
+ * into the new magazine.
+ *
+ * Decorative elements (shape, icon) survive INTACT: rules, panels, scrims and
+ * glyphs carry no editorial content and are part of the design language. An empty
+ * text/image/qr element still renders nothing on the public viewer, so a shell can
+ * never publish placeholder junk; the EDITOR marks the empty slots so they can be
+ * found and filled (see EditorCanvas).
+ */
+function templatizeElement(e: MagazineElement): MagazineElement {
+  const out: MagazineElement = { ...e, id: undefined as unknown as string };
+  if (out.text) out.text = { ...out.text, content: '' };
+  if (out.image) out.image = { ...out.image, url: '', assetId: '', alt: '' };
+  if (out.qr) out.qr = { ...out.qr, url: '' };
+  return out;
+}
+
+/**
+ * Reuse an existing magazine's LAYOUT as a brand-new magazine of your own.
+ *
+ * Every magazine is visible to any staff member (see GET /issues), so any staff
+ * member may reuse any layout — the copy is owned by the caller and the source is
+ * never touched or modified. Content is stripped by templatizeElement, so this
+ * shares design only, not editorial work.
+ */
+router.post('/issues/:id/reuse', rateLimit('mag2-write', 300, 60_000), async (req, res) => {
+  const uid = req.account!.id;
+  const src = await loadIssue(String(req.params.id));
+  if (!src) {
+    res.status(404).json({ error: 'Magazine not found' });
+    return;
+  }
+  if (isBusy(src)) {
+    res.status(409).json({ error: 'That magazine is still being built — try again once it finishes.' });
+    return;
+  }
+  const srcPages = await pagesFor(src._id);
+  if (srcPages.length === 0) {
+    res.status(409).json({ error: 'That magazine has no pages to reuse.' });
+    return;
+  }
+  const requested = typeof req.body?.title === 'string' ? req.body.title.trim() : '';
+  const title = (requested || `${String(src.title ?? 'Untitled')} (template)`).slice(0, 200);
+  const now = new Date().toISOString();
+  const id = await db.collection(COL.issues).insertOne({
+    title,
+    slug: await uniqueSlug(title),
+    status: 'draft',
+    origin: 'scratch',
+    coverImage: '', // the source cover is a photo — content, so not carried over
+    pagesProcessed: srcPages.length,
+    pagesTotal: srcPages.length,
+    ownerId: uid,
+    ownerName: req.account!.displayName,
+    collaborators: [],
+    publishedIssueIds: [],
+    // Provenance: which layout this shell came from (handy for debugging, and it
+    // keeps the relationship discoverable without coupling the two documents).
+    reusedFromId: src._id,
+    schemaVersion: 2,
+    createdAt: now,
+    updatedAt: now,
+  });
+  for (const p of srcPages) {
+    const dims = pageDims(p);
+    // normalizeElements assigns fresh ids and RE-VALIDATES every box, exactly as
+    // the page-duplicate path does — a stripped element still goes through the
+    // same write guardrails as any other.
+    const elements = normalizeElements((Array.isArray(p.elements) ? p.elements : []).map(templatizeElement), dims);
+    await db.collection(COL.pages).insertOne({
+      magazineId: id,
+      index: p.index,
+      width: dims.width,
+      height: dims.height,
+      // A background PHOTO is content; keep only a colour field.
+      background: p.background?.type === 'color' ? p.background : { type: 'color', value: '#ffffff' },
+      elements,
+      status: 'reviewed',
+      selectedForPublish: p.selectedForPublish !== false,
+      rev: 0,
+      createdAt: now,
+      updatedAt: now,
+    });
+  }
+  const created = await loadIssue(id);
+  if (!created) {
+    res.status(500).json({ error: 'Failed to create the magazine' });
+    return;
+  }
+  res.status(201).json({ issue: withViewer(created, uid), pages: (await pagesFor(id)).map(pageSummary) });
+});
+
 // Build with AI — create a 'processing' issue and generate pages in the
 // background (LLM art-director → curated templates). Client polls GET /issues/:id
 // until status flips to 'ready'/'failed'. Tighter rate limit (AI is expensive).
@@ -418,9 +515,161 @@ router.get('/issues/:id/media', async (req, res) => {
     res.status(404).json({ error: 'Not found' });
     return;
   }
-  const assets = (await db.collection(COL.media).find({ magazineId: doc._id })) as Doc[];
+  // Images only — uploaded DOCUMENTS (kind:'doc') live in the same collection but
+  // surface through GET /uploads, not the image picker.
+  const assets = ((await db.collection(COL.media).find({ magazineId: doc._id })) as Doc[]).filter((a) => a.kind !== 'doc');
   res.json({
     assets: assets.map((a) => ({ id: a._id, url: a.url, alt: a.alt, kind: a.kind, pageIndex: a.pageIndex, contentType: a.contentType, size: a.size })),
+  });
+});
+
+// ── Document uploads (the magazine's browsable "Uploads" — PDFs/Word/text) ─────
+// Stored in the same media collection as kind:'doc', carrying the extracted
+// digest/text so a page can later be filled from an upload without re-reading it.
+const ALLOWED_DOC_MIME = new Set<string>([
+  'application/pdf',
+  'application/vnd.openxmlformats-officedocument.wordprocessingml.document', // .docx
+  'text/plain',
+  'text/csv',
+  'text/markdown',
+  'application/json',
+]);
+const MAX_DOC_BYTES = MAX_SOURCE_BYTES; // reuse the 150 MB source-file cap
+function docExtFor(mime: string): string {
+  switch (mime) {
+    case 'application/pdf': return 'pdf';
+    case 'application/vnd.openxmlformats-officedocument.wordprocessingml.document': return 'docx';
+    case 'text/csv': return 'csv';
+    case 'text/markdown': return 'md';
+    case 'application/json': return 'json';
+    default: return 'txt';
+  }
+}
+
+// list the magazine's uploaded documents (kind:'doc'), newest first.
+router.get('/issues/:id/uploads', async (req, res) => {
+  const uid = req.account!.id;
+  const doc = await loadIssue(req.params.id);
+  if (!doc || !roleOnMagazine(doc, uid)) {
+    res.status(404).json({ error: 'Not found' });
+    return;
+  }
+  const docs = ((await db.collection(COL.media).find({ magazineId: doc._id })) as Doc[]).filter((a) => a.kind === 'doc');
+  docs.sort((a, b) => String(b.createdAt ?? '').localeCompare(String(a.createdAt ?? '')));
+  res.json({
+    uploads: docs.map((a) => ({
+      id: a._id,
+      url: a.url,
+      originalName: a.originalName ?? a.alt ?? 'document',
+      contentType: a.contentType,
+      size: a.size,
+      hasText: !!(a.sourceText && String(a.sourceText).trim()),
+      createdAt: a.createdAt,
+    })),
+  });
+});
+
+// presign a direct-to-S3 PUT for a DOCUMENT the user is attaching (pdf/docx/text).
+router.post('/issues/:id/uploads/upload-url', rateLimit('mag2-write', 300, 60_000), async (req, res) => {
+  const uid = req.account!.id;
+  const doc = await loadIssue(String(req.params.id));
+  if (!doc || !roleOnMagazine(doc, uid)) {
+    res.status(404).json({ error: 'Not found' });
+    return;
+  }
+  if (!storage.isConfigured()) {
+    res.status(503).json({ error: 'File storage is not configured on this server.' });
+    return;
+  }
+  const contentType = typeof req.body?.contentType === 'string' ? req.body.contentType.trim() : '';
+  const size = Number(req.body?.size);
+  if (!ALLOWED_DOC_MIME.has(contentType)) {
+    res.status(415).json({ error: 'Only PDF, Word, or text documents can be uploaded here.' });
+    return;
+  }
+  if (!Number.isFinite(size) || size <= 0 || size > MAX_DOC_BYTES) {
+    res.status(413).json({ error: `The document must be under ${Math.round(MAX_DOC_BYTES / 1024 / 1024)} MB.` });
+    return;
+  }
+  const key = `public/magazinesV2/${doc._id}/media/${crypto.randomUUID()}.${docExtFor(contentType)}`;
+  const uploadUrl = await storage.presignPutUrl({ key, contentType, expiresIn: 300 });
+  res.json({ uploadUrl, key, contentType });
+});
+
+// confirm an uploaded document landed → verify from S3 → insert a kind:'doc'
+// MediaAsset carrying its extracted digest/text (never trusts client size/type).
+router.post('/issues/:id/uploads', rateLimit('mag2-write', 300, 60_000), async (req, res) => {
+  const uid = req.account!.id;
+  const doc = await loadIssue(String(req.params.id));
+  if (!doc || !roleOnMagazine(doc, uid)) {
+    res.status(404).json({ error: 'Not found' });
+    return;
+  }
+  const key = typeof req.body?.key === 'string' ? req.body.key : '';
+  if (!key.startsWith(`public/magazinesV2/${doc._id}/media/`)) {
+    res.status(400).json({ error: 'Invalid upload key.' });
+    return;
+  }
+  let head: { contentLength: number; contentType: string };
+  try {
+    head = await storage.headObject(key);
+  } catch {
+    res.status(400).json({ error: 'Upload not found — please try again.' });
+    return;
+  }
+  if (!ALLOWED_DOC_MIME.has(head.contentType) || head.contentLength <= 0 || head.contentLength > MAX_DOC_BYTES) {
+    res.status(413).json({ error: 'That upload is not an accepted document within the size limit.' });
+    return;
+  }
+  const originalName = typeof req.body?.originalName === 'string' ? req.body.originalName.slice(0, 200) : 'document';
+  const digest = typeof req.body?.digest === 'string' ? req.body.digest.slice(0, 4000) : '';
+  const sourceText = typeof req.body?.sourceText === 'string' ? req.body.sourceText.slice(0, 80_000) : '';
+  const url = storage.publicUrl(key);
+  const now = new Date().toISOString();
+  const assetId = await db.collection(COL.media).insertOne({
+    magazineId: doc._id,
+    pageIndex: null,
+    key,
+    url,
+    contentType: head.contentType,
+    size: head.contentLength,
+    alt: originalName,
+    originalName,
+    digest,
+    sourceText,
+    kind: 'doc',
+    source: 'upload',
+    createdAt: now,
+    updatedAt: now,
+  });
+  res.status(201).json({ upload: { id: String(assetId), url, originalName, contentType: head.contentType, size: head.contentLength, hasText: !!sourceText.trim(), createdAt: now } });
+});
+
+// fetch one uploaded document's stored text (for preview / fill-from-this).
+router.get('/issues/:id/uploads/:uploadId', async (req, res) => {
+  const uid = req.account!.id;
+  const doc = await loadIssue(req.params.id);
+  if (!doc || !roleOnMagazine(doc, uid)) {
+    res.status(404).json({ error: 'Not found' });
+    return;
+  }
+  let asset: Doc | null = null;
+  try {
+    asset = (await db.collection(COL.media).findById(String(req.params.uploadId))) as Doc | null;
+  } catch {
+    asset = null;
+  }
+  if (!asset || String(asset.magazineId) !== String(doc._id) || asset.kind !== 'doc') {
+    res.status(404).json({ error: 'Not found' });
+    return;
+  }
+  res.json({
+    id: asset._id,
+    originalName: asset.originalName ?? asset.alt ?? 'document',
+    url: asset.url,
+    contentType: asset.contentType,
+    sourceText: asset.sourceText ?? '',
+    digest: asset.digest ?? '',
   });
 });
 

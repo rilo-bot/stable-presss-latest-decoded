@@ -88,6 +88,11 @@ export const createBlankIssue = (title?: string) =>
   authFetch(`${BASE}/issues/blank`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ title }) }).then(parse<IssueBundle>);
 export const generateIssue = (prompt: string, pageCount?: number, sourceText?: string) =>
   authFetch(`${BASE}/issues/generate`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ prompt, pageCount, sourceText }) }).then(parse<{ issue: IssueMeta }>);
+/** Start a NEW magazine from an existing one's LAYOUT — same pages, boxes, fonts
+ *  and decoration, with all copy/photos stripped. The source is never modified,
+ *  so any staff member can reuse any magazine's design. */
+export const reuseIssueTemplate = (id: string, title?: string) =>
+  authFetch(`${BASE}/issues/${id}/reuse`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ title }) }).then(parse<IssueBundle>);
 export const renameIssue = (id: string, title: string) =>
   authFetch(`${BASE}/issues/${id}`, { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ title }) }).then(parse<IssueMeta>);
 // Set the cover: an explicit image URL, '' to auto-derive from page 0, or a page
@@ -229,3 +234,46 @@ export async function uploadMediaImage(id: string, file: File, alt?: string): Pr
     body: JSON.stringify({ key, alt: alt ?? '' }),
   }).then(parse<{ asset: MediaAsset }>).then((r) => r.asset);
 }
+
+// ── Document uploads (the magazine's browsable "Uploads": PDFs/Word/text) ──
+/** A document uploaded to the magazine's Uploads library. */
+export interface MagazineUpload {
+  id: string;
+  url: string;
+  originalName: string;
+  contentType: string;
+  size: number;
+  hasText: boolean;
+  createdAt?: string;
+}
+
+/** The magazine's uploaded documents (PDF/Word/text), newest first. */
+export const listUploads = (id: string) =>
+  authFetchRetry(`${BASE}/issues/${id}/uploads`).then(parse<{ uploads: MagazineUpload[] }>).then((r) => r.uploads);
+
+/** Store an attached DOCUMENT in the magazine's Uploads library (presign → PUT →
+ *  confirm), passing its already-extracted text so pages can be filled from it
+ *  later without re-reading. Returns the stored upload. */
+export async function uploadMediaDoc(
+  id: string,
+  file: File,
+  extra?: { digest?: string; sourceText?: string },
+): Promise<MagazineUpload> {
+  const { uploadUrl, key } = await authFetch(`${BASE}/issues/${id}/uploads/upload-url`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ filename: file.name, contentType: file.type, size: file.size }),
+  }).then(parse<{ uploadUrl: string; key: string; contentType: string }>);
+  await putToS3(uploadUrl, file);
+  return authFetch(`${BASE}/issues/${id}/uploads`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ key, originalName: file.name, digest: extra?.digest ?? '', sourceText: extra?.sourceText ?? '' }),
+  }).then(parse<{ upload: MagazineUpload }>).then((r) => r.upload);
+}
+
+/** Fetch one uploaded document's stored text (for preview / fill-from-this). */
+export const getUploadText = (id: string, uploadId: string) =>
+  authFetchRetry(`${BASE}/issues/${id}/uploads/${uploadId}`).then(
+    parse<{ id: string; originalName: string; url: string; contentType: string; sourceText: string; digest: string }>,
+  );

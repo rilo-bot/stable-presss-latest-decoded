@@ -175,6 +175,54 @@ function coerceLeaf(o: Record<string, unknown>): LeafNode {
   return leaf;
 }
 
+/** A stack layer that is legitimately BEHIND content: a full-bleed photo, a scrim,
+ *  or a card/panel field. Everything else is a content layer. Mirrors the
+ *  image/shape backing distinction drawn by pruneSpec + composeFromSolved. */
+function isBackingLayer(node: LayoutNode): boolean {
+  return node.kind === 'leaf' && (node.role === 'image' || node.role === 'shape');
+}
+
+/**
+ * Repair a stack that overlays TWO OR MORE content layers on the same rectangle.
+ *
+ * A stack is the one sanctioned overlap, but only ever as backing + ONE content
+ * layer (photo → scrim → the text). Two content layers share an identical box, so
+ * they print on top of each other — unreadable, and layout QA (correctly) rejects
+ * the page as a text-on-text collision, which sent every such page to the fixed
+ * template. The intent behind the shape is always sequential content (e.g. a
+ * two-tone masthead: "The World of" / "RACING"), so the fix is to flow the content
+ * layers down a `col` instead of overlaying them:
+ *   • no backing        → the stack BECOMES that col (no depth change)
+ *   • backing present   → stack of [ …backing, col(content) ] (one level deeper)
+ * Children are content-sized so each line takes only the height its copy needs.
+ * `depth` is the stack's own depth; when a wrapper col would breach MAX_TREE_DEPTH
+ * we keep the first content layer and drop the rest — an invisible overlapped
+ * layer is worth less than a valid page.
+ */
+function repairStackLayers(layers: LayoutNode[], depth: number): LayoutNode {
+  const content = layers.filter((l) => !isBackingLayer(l));
+  if (content.length <= 1) return { kind: 'stack', layers };
+
+  const backing = layers.filter(isBackingLayer);
+  // `justify: 'center'` is load-bearing, not cosmetic: a start-packed container
+  // whose children are ALL content-sized trips pruneSpec's FR-GUARANTEE, which
+  // promotes the last child to `fr` and balloons that line to the whole leftover
+  // strip. Centring anchors the whitespace instead, so the flowed lines stay tight
+  // together (a two-tone masthead reads as one unit) and sit centred in the rect
+  // the stack used to fill.
+  const asCol = (nodes: LayoutNode[]): ContainerNode => ({
+    kind: 'col',
+    gap: 'sm',
+    justify: 'center',
+    children: nodes.map((node) => ({ weight: 1, sizing: 'content' as const, node })),
+  });
+
+  if (backing.length === 0) return asCol(content);
+  // Layers sit at depth + 1; wrapping them in a col pushes them to depth + 2.
+  if (depth + 2 > MAX_TREE_DEPTH) return { kind: 'stack', layers: [...backing, content[0]!] };
+  return { kind: 'stack', layers: [...backing, asCol(content)] };
+}
+
 interface Budget {
   leaves: number;
 }
@@ -230,7 +278,7 @@ function coerceNode(raw: unknown, depth: number, budget: Budget): LayoutNode | n
       if (node) layers.push(node);
     }
     if (layers.length === 0) return null;
-    return { kind: 'stack', layers };
+    return repairStackLayers(layers, depth);
   }
 
   return null; // unknown kind — drop
