@@ -30,6 +30,32 @@ const HANDLES: { m: Mode; cx: number; cy: number; cur: string }[] = [
   { m: 'w', cx: 0, cy: 0.5, cur: 'ew-resize' },
 ];
 
+/**
+ * An element that carries no content yet, so the read-only renderer draws nothing
+ * for it (an image with no url renders null; empty copy renders an empty box).
+ *
+ * These are invisible on the base layer BY DESIGN — a published page must never
+ * show an empty placeholder. But an unfilled slot you can't see is one you can't
+ * fill, which is exactly the state a "Reuse template" shell starts in, so the
+ * EDITOR marks them here on its own overlay. The overlay is editor-only, so the
+ * public viewer and the PDF export are untouched by construction.
+ */
+function isEmptySlot(el: MagazineElement): boolean {
+  if (el.type === 'text') return !el.text?.content?.replace(/<[^>]*>/g, '').trim();
+  if (el.type === 'image') return !el.image?.url;
+  if (el.type === 'qr') return !el.qr?.url;
+  return false; // shapes/icons are decoration — they render fine with no content
+}
+
+/** What belongs in an empty slot — its text role ("headline"), else its type. */
+function slotLabel(el: MagazineElement): string {
+  if (el.type === 'text') {
+    const role = el.text?.role;
+    return role && role !== 'other' ? role : 'text';
+  }
+  return el.type === 'image' ? 'photo' : el.type;
+}
+
 function applyDrag(o: MagazineElement, mode: Mode, dx: number, dy: number) {
   let { x, y, w, h } = o;
   if (mode === 'move') return { x: x + dx, y: y + dy, w, h };
@@ -261,12 +287,18 @@ function ActivePageLayer() {
             ) : (
               <div
                 key={element.id}
-                className="absolute cursor-move"
+                className={`absolute cursor-move ${isEmptySlot(element) ? 'border border-dashed border-[#7c3aed]/50 bg-[#7c3aed]/[0.06]' : ''}`}
                 style={{ ...pctRect(element, page), zIndex: element.zIndex }}
                 onPointerDown={(e) => startDrag(e, element, 'move')}
                 onDoubleClick={(e) => { if (element.type === 'text') { e.stopPropagation(); startEditing(element); } }}
-                title={element.type === 'text' ? 'Double-click to edit text' : undefined}
-              />
+                title={isEmptySlot(element) ? `Empty ${slotLabel(element)} — ${element.type === 'text' ? 'double-click to write' : 'use the Inspector to fill it'}` : element.type === 'text' ? 'Double-click to edit text' : undefined}
+              >
+                {isEmptySlot(element) && (
+                  <span className="pointer-events-none absolute inset-0 flex items-center justify-center overflow-hidden px-1 text-center text-[9px] font-semibold uppercase tracking-wide text-[#7c3aed]/70">
+                    {slotLabel(element)}
+                  </span>
+                )}
+              </div>
             ),
           )}
 

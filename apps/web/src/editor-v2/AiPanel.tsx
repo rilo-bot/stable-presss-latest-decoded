@@ -14,19 +14,26 @@ import { MarkdownMessage } from '@/components/MarkdownMessage';
 import { ingestFile, attachmentSourceText, ATTACH_ACCEPT } from '@/editor/agent/documentUpload';
 import { useVoiceChat } from '@/agent/voice/useVoiceChat';
 import { useEditorStore } from './store';
-import { uploadMediaImage, type AttachedImage } from './api';
+import { uploadMediaImage, uploadMediaDoc, listUploads, listMedia, getUploadText, type AttachedImage, type MagazineUpload, type MediaAsset } from './api';
 import type { AgentProposal } from './model';
 
-/** One file staged in the composer. Images carry an object URL for preview, and
- *  once sent, the media-library URL the agent can place them by. */
+/** One file staged in the composer. Images and PDFs carry an object URL so the
+ *  right pane can render the REAL file, and once sent, the media-library URL the
+ *  agent can place them by. */
 interface PanelAttachment {
   id: string;
   file: File;
   isImage: boolean;
-  imgUrl?: string; // object URL (images only) — revoked on remove/unmount
+  /** Object URL for anything the browser renders itself (images + PDFs) — revoked
+   *  on remove/unmount. Only read for a thumbnail when `isImage`. */
+  imgUrl?: string;
   text?: string; // cached ingest text (fullText for docs, vision digest for images)
   mediaUrl?: string; // cached media-library URL (images only, set on first send)
 }
+
+/** PDFs are the one document type the browser renders natively, so they get a
+ *  real in-pane preview instead of only their extracted text. */
+const isPdfType = (contentType?: string) => (contentType ?? '').toLowerCase() === 'application/pdf';
 
 const MAX_PANEL_ATTACHMENTS = 5;
 let attSeq = 0;
@@ -62,6 +69,61 @@ export function AiPanel() {
   const [atts, setAtts] = useState<PanelAttachment[]>([]); // source docs/images to work from
   const [ingesting, setIngesting] = useState(false);
 
+  // ── Uploads tab: the magazine's stored docs + images ──
+  const [tab, setTab] = useState<'chat' | 'uploads'>('chat');
+  const [uploads, setUploads] = useState<MagazineUpload[]>([]);
+  const [uploadImages, setUploadImages] = useState<MediaAsset[]>([]);
+  const [uploadsLoading, setUploadsLoading] = useState(false);
+  const uploadCount = uploads.length + uploadImages.length;
+
+  // Load stored uploads on mount (for the tab count) and whenever the tab is
+  // reopened (to pick up anything just sent). Best-effort — failures show empty.
+  useEffect(() => {
+    if (!issueId) return;
+    let alive = true;
+    setUploadsLoading(true);
+    Promise.all([
+      listUploads(issueId).catch(() => [] as MagazineUpload[]),
+      listMedia(issueId).catch(() => [] as MediaAsset[]),
+    ])
+      .then(([docs, media]) => {
+        if (!alive) return;
+        setUploads(docs);
+        setUploadImages(media); // listMedia already excludes docs server-side
+      })
+      .finally(() => { if (alive) setUploadsLoading(false); });
+    return () => { alive = false; };
+  }, [issueId, tab]);
+
+  const previewUpload = async (u: MagazineUpload) => {
+    if (!issueId) return;
+    try {
+      const full = await getUploadText(issueId, u.id);
+      setPreviewDoc({
+        name: u.originalName,
+        isImage: false,
+        text: full.sourceText || '(No extractable text was stored for this document.)',
+        // Render the stored PDF itself; the extracted text stays one click away.
+        docUrl: isPdfType(u.contentType) ? u.url : undefined,
+      });
+    } catch {
+      toast.error('Could not open that upload.');
+    }
+  };
+  const previewImage = (m: MediaAsset) => setPreviewDoc({ name: m.alt || 'Image', isImage: true, imageUrl: m.url });
+  const fillFromUpload = async (u: MagazineUpload) => {
+    if (!issueId || chatBusy) return;
+    try {
+      const full = await getUploadText(issueId, u.id);
+      const text = (full.sourceText || '').trim();
+      if (!text) { toast.error('That upload has no readable text to fill from.'); return; }
+      setTab('chat');
+      void sendChat(`Fill this page from “${u.originalName}”.`, text);
+    } catch {
+      toast.error('Could not read that upload.');
+    }
+  };
+
   // Revoke every attachment's object URL on unmount (removal revokes eagerly).
   const attsRef = useRef<PanelAttachment[]>([]);
   attsRef.current = atts;
@@ -94,7 +156,9 @@ export function AiPanel() {
     if (list.length > room) toast.message(`Up to ${MAX_PANEL_ATTACHMENTS} attachments — the rest were skipped.`);
     const staged = Array.from(list).slice(0, room).map((f): PanelAttachment => {
       const isImage = f.type.startsWith('image/');
-      return { id: attId(), file: f, isImage, imgUrl: isImage ? URL.createObjectURL(f) : undefined };
+      // Images AND PDFs get an object URL — both render in the preview pane.
+      const renderable = isImage || isPdfType(f.type);
+      return { id: attId(), file: f, isImage, imgUrl: renderable ? URL.createObjectURL(f) : undefined };
     });
     if (staged.length > 0) setAtts((prev) => [...prev, ...staged]);
     if (fileRef.current) fileRef.current.value = '';
@@ -121,7 +185,7 @@ export function AiPanel() {
       }
       setIngesting(false);
     }
-    setPreviewDoc({ name: att.file.name, isImage: false, text: text ?? '' });
+    setPreviewDoc({ name: att.file.name, isImage: false, text: text ?? '', docUrl: att.imgUrl });
   };
 
   const removeAtt = (id: string) => {
@@ -138,9 +202,12 @@ export function AiPanel() {
 
   const send = async () => {
     const t = input.trim();
-    if (!t || chatBusy || ingesting) return;
+    // Allow a file-only send (attachment with no prompt) — a default instruction
+    // is supplied below so the turn still has something to act on.
+    if ((!t && atts.length === 0) || chatBusy || ingesting) return;
     let src: string | undefined;
     let images: AttachedImage[] | undefined;
+    let attachRefs: { name: string; isImage: boolean; url?: string }[] | undefined;
     if (atts.length > 0) {
       setIngesting(true);
       const parts: string[] = [];
@@ -184,6 +251,16 @@ export function AiPanel() {
               return;
             }
           }
+          // Persist the document to the magazine's Uploads library (best-effort) so
+          // it appears in the Uploads tab and can fill pages later. `mediaUrl`
+          // doubles as the "already stored" guard so a re-send doesn't duplicate it.
+          if (!a.mediaUrl && issueId) {
+            try {
+              a.mediaUrl = (await uploadMediaDoc(issueId, a.file, { sourceText: a.text })).url;
+            } catch {
+              /* storage is optional — the doc still fills THIS turn via its text */
+            }
+          }
           parts.push(worked.length > 1 ? `[Attached document “${a.file.name}”]\n${a.text}` : a.text);
         }
       }
@@ -191,9 +268,20 @@ export function AiPanel() {
       setIngesting(false);
       src = parts.filter(Boolean).join('\n\n') || undefined;
       images = imgs.length > 0 ? imgs : undefined;
+      // Display metadata shown as chips inside the sent user bubble (images use
+      // their persisted media URL for the thumbnail, not the revoked object URL).
+      attachRefs = worked.map((a) => ({ name: a.file.name, isImage: a.isImage, url: a.isImage ? a.mediaUrl : undefined }));
     }
+    // A default instruction when the user sends attachments with no prompt.
+    const bodyText =
+      t || (atts.every((a) => a.isImage) ? 'Use the attached image(s) on this page.' : 'Fill this page from the attached document.');
+    // Clear the composer — text, attachments (revoking their object URLs), and the
+    // side preview — so the files LEAVE the input and ride along as a sent message.
     setInput('');
-    void sendChat(t, src, images);
+    for (const a of atts) if (a.imgUrl) URL.revokeObjectURL(a.imgUrl);
+    setAtts([]);
+    setPreviewDoc(null);
+    void sendChat(bodyText, src, images, attachRefs);
   };
 
   return (
@@ -221,6 +309,53 @@ export function AiPanel() {
         )}
       </div>
 
+      {/* Tabs */}
+      <div className="flex border-b border-white/10 text-[11px] font-semibold">
+        {(['chat', 'uploads'] as const).map((tk) => (
+          <button
+            key={tk}
+            type="button"
+            onClick={() => setTab(tk)}
+            className={'flex-1 px-3 py-2 transition-colors ' + (tab === tk ? 'text-white' : 'text-white/45 hover:text-white/70')}
+            style={tab === tk ? { boxShadow: 'inset 0 -2px 0 var(--gold-bright)' } : undefined}
+          >
+            {tk === 'chat' ? 'Chat' : `Uploads${uploadCount > 0 ? ` (${uploadCount})` : ''}`}
+          </button>
+        ))}
+      </div>
+
+      {tab === 'uploads' ? (
+        <div className="flex-1 space-y-1.5 overflow-y-auto px-3 py-3">
+          {uploadsLoading && (
+            <div className="flex items-center gap-1.5 text-[12px] text-white/40"><Loader2 size={12} className="animate-spin" /> loading uploads…</div>
+          )}
+          {!uploadsLoading && uploadCount === 0 && (
+            <p className="text-[12px] leading-relaxed text-white/55">
+              No uploads yet. In <strong className="text-white/85">Chat</strong>, attach a document or image (📎) — it’s saved here and can fill a page later.
+            </p>
+          )}
+          {uploads.map((u) => (
+            <div key={u.id} className="flex items-center gap-2 rounded-md border border-white/10 bg-white/[0.03] px-2.5 py-2 text-[11px]">
+              <FileText size={14} className="flex-shrink-0 text-white/50" />
+              <button type="button" onClick={() => void previewUpload(u)} title="Preview" className="min-w-0 flex-1 truncate text-left text-white/85 hover:text-white">
+                {u.originalName}
+              </button>
+              {u.hasText && (
+                <button type="button" onClick={() => void fillFromUpload(u)} disabled={chatBusy} className="flex-shrink-0 rounded-sm border border-white/15 px-1.5 py-0.5 text-[10px] text-white/70 hover:bg-white/10 disabled:opacity-40">
+                  Fill page
+                </button>
+              )}
+            </div>
+          ))}
+          {uploadImages.map((m) => (
+            <button key={m.id} type="button" onClick={() => previewImage(m)} title="Preview" className="flex w-full items-center gap-2 rounded-md border border-white/10 bg-white/[0.03] px-2.5 py-2 text-left text-[11px] hover:bg-white/[0.06]">
+              <img src={m.url} alt="" className="h-7 w-10 flex-shrink-0 rounded-sm object-cover" />
+              <span className="min-w-0 flex-1 truncate text-white/85">{m.alt || 'Image'}</span>
+            </button>
+          ))}
+        </div>
+      ) : (
+        <>
       {/* Conversation */}
       <div ref={scrollRef} className="flex-1 space-y-3 overflow-y-auto px-3 py-3">
         {chat.length === 0 && (
@@ -240,7 +375,29 @@ export function AiPanel() {
                   : 'max-w-[92%] rounded-lg rounded-bl-sm bg-white/5 px-2.5 py-1.5 text-[12px]'
               }
             >
-              {m.role === 'user' ? m.content : <MarkdownMessage text={m.content} />}
+              {m.role === 'user' ? (
+                <>
+                  {m.attachments && m.attachments.length > 0 && (
+                    <div className="mb-1 flex flex-wrap gap-1">
+                      {m.attachments.map((a, j) => (
+                        <span key={j} className="flex max-w-full items-center gap-1 rounded bg-black/20 px-1.5 py-0.5 text-[10px] text-white/90">
+                          {a.isImage && a.url ? (
+                            <img src={a.url} alt="" className="h-4 w-4 flex-shrink-0 rounded object-cover" />
+                          ) : a.isImage ? (
+                            <ImageIcon size={10} className="flex-shrink-0" />
+                          ) : (
+                            <FileText size={10} className="flex-shrink-0" />
+                          )}
+                          <span className="truncate">{a.name}</span>
+                        </span>
+                      ))}
+                    </div>
+                  )}
+                  {m.content}
+                </>
+              ) : (
+                <MarkdownMessage text={m.content} />
+              )}
             </div>
           </div>
         ))}
@@ -369,7 +526,7 @@ export function AiPanel() {
           <button
             type="submit"
             aria-label="Send"
-            disabled={!input.trim() || chatBusy || ingesting}
+            disabled={(!input.trim() && atts.length === 0) || chatBusy || ingesting}
             className="flex h-8 w-8 flex-shrink-0 items-center justify-center rounded-full text-[#0b1220] disabled:opacity-40"
             style={{ background: 'var(--gold-bright)' }}
           >
@@ -377,6 +534,8 @@ export function AiPanel() {
           </button>
         </form>
       </div>
+        </>
+      )}
     </div>
   );
 }

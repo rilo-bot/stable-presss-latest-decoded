@@ -36,7 +36,7 @@ export const LAYOUT_ARCHETYPES: LayoutArchetype[] = [
     kinds: ['cover'],
     recipe:
       'A centred column on a generous field: a small emblem/icon, a tracked KICKER (accent), a DOMINANT two-tone ' +
-      'masthead headline (stack two short headline leaves, the second in accent) across nearly the full width, a ' +
+      'masthead headline (a COL of two short headline leaves, the second in accent) across nearly the full width, a ' +
       'one-line tagline (subhead), a centred hero image with a small caption under it, then a footer row of three ' +
       '"in this issue" items (each a bold figure page-number + a label) and a small qr+label in a corner.',
   },
