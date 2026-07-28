@@ -20,6 +20,15 @@ const mupdf = mupdfDefault;
  *  exactly with no separate scale factor needed downstream. */
 export const RENDER_DPI = 150;
 
+/** Hard ceiling on the longest edge (px) of any page raster. A PDF can declare
+ *  an enormous MediaBox (e.g. 14400×14400 pt) in a few KB; at full DPI that
+ *  would ask MuPDF's WASM heap for a multi-GB pixmap and ABORT — an uncatchable
+ *  crash that kills the whole worker process (and every job in flight), which
+ *  no try/catch can save. We clamp the effective scale so the raster can never
+ *  exceed this, downscaling only pathologically large pages (normal A4/A3/tabloid
+ *  at 150 DPI are well under it). Override with MAGAZINE_V2_MAX_RASTER_EDGE_PX. */
+const MAX_RASTER_EDGE_PX = Math.max(2000, Number(process.env.MAGAZINE_V2_MAX_RASTER_EDGE_PX) || 6000);
+
 export interface RoughTextBlock {
   x: number;
   y: number;
@@ -121,7 +130,11 @@ function reconstructLine(glyphs: Glyph[], size: number): string {
   const gaps: number[] = [];
   for (let i = 1; i < glyphs.length; i++) gaps.push(Math.max(0, glyphs[i]!.x0 - glyphs[i - 1]!.x1));
   const med = median(gaps);
-  const maxGap = Math.max(...gaps);
+  // Loop rather than Math.max(...gaps): a single MuPDF line can carry >100k
+  // glyphs (machine-generated PDFs), and the spread would blow V8's argument
+  // limit with a RangeError, failing an otherwise-fine page.
+  let maxGap = 0;
+  for (const g of gaps) if (g > maxGap) maxGap = g;
   const wordGap = Math.max(med * 1.8, 0.16 * size);
   const hasWordBreaks = maxGap > wordGap;
   const threshold = hasWordBreaks ? wordGap : Infinity;
@@ -366,11 +379,17 @@ function centerInside(r: Rect, box: Rect): boolean {
 export function rasterizePage(doc: ReturnType<typeof openPdf>, index: number): PageRaster {
   const page = doc.loadPage(index);
   const bounds = page.getBounds(); // [x0, y0, x1, y1] in PDF points
-  const scale = RENDER_DPI / 72;
+  const wPt = bounds[2]! - bounds[0]!;
+  const hPt = bounds[3]! - bounds[1]!;
+  // Clamp the effective scale so the longest raster edge can never exceed
+  // MAX_RASTER_EDGE_PX — a pathological/adversarial MediaBox would otherwise
+  // allocate a multi-GB pixmap below and abort the WASM heap (see the constant).
+  const maxPtEdge = Math.max(1, wPt, hPt);
+  const scale = Math.min(RENDER_DPI / 72, MAX_RASTER_EDGE_PX / maxPtEdge);
   const originX = bounds[0]!;
   const originY = bounds[1]!;
-  const pxWidth = Math.round((bounds[2]! - bounds[0]!) * scale);
-  const pxHeight = Math.round((bounds[3]! - bounds[1]!) * scale);
+  const pxWidth = Math.round(wPt * scale);
+  const pxHeight = Math.round(hPt * scale);
 
   const matrix = mupdf.Matrix.scale(scale, scale);
   const pixmap = page.toPixmap(matrix, mupdf.ColorSpace.DeviceRGB, false);
