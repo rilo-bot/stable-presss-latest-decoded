@@ -21,8 +21,8 @@ import { ShareDialog } from './ShareDialog';
 import type { ElementType, MagazineElement } from './model';
 
 function newElement(kind: ElementType, page: { width: number; height: number }, topZ: number): Partial<MagazineElement> {
-  const w = kind === 'qr' ? 200 : kind === 'shape' ? 320 : 440;
-  const h = kind === 'qr' ? 200 : kind === 'text' ? 90 : 240;
+  const w = kind === 'qr' ? 200 : kind === 'icon' ? 120 : kind === 'shape' ? 320 : 440;
+  const h = kind === 'qr' ? 200 : kind === 'icon' ? 120 : kind === 'text' ? 90 : 240;
   const base: Partial<MagazineElement> = {
     type: kind,
     x: Math.round(page.width / 2 - w / 2),
@@ -38,6 +38,9 @@ function newElement(kind: ElementType, page: { width: number; height: number }, 
   if (kind === 'shape') base.shape = { fill: '#0a2342' };
   if (kind === 'image') base.image = { assetId: '', url: '', alt: '', fit: 'cover' };
   if (kind === 'qr') base.qr = { url: '', fg: '#000000', bg: '#ffffff' };
+  // Start with a recognisable glyph (not the neutral fallback) so a freshly-added
+  // icon reads as an icon straight away; the inspector's picker swaps it.
+  if (kind === 'icon') base.icon = { name: 'Star', color: '#0a2342' };
   return base;
 }
 
@@ -199,8 +202,8 @@ export default function MagazineEditorV2() {
               {/* add element */}
               <div className="mx-0.5 h-5 w-px bg-white/10" />
               <span className="text-[10px] uppercase tracking-wide text-white/40">Add</span>
-              {(['text', 'image', 'shape', 'qr'] as ElementType[]).map((k) => (
-                <button key={k} className={ghost + ' capitalize'} onClick={() => add(k)}>{k}</button>
+              {(['text', 'image', 'shape', 'qr', 'icon'] as ElementType[]).map((k) => (
+                <button key={k} className={ghost + ' capitalize'} onClick={() => add(k)}>{k === 'qr' ? 'QR' : k}</button>
               ))}
 
               {/* AI text pass — Fill (write empty + tighten) / Adjust (tighten) */}

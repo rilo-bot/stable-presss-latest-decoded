@@ -47,6 +47,32 @@ function paletteColor(palette: GenPalette, ref: ColorRef | undefined, fallback: 
   return typeof v === 'string' && HEX_RE.test(v) ? v : fallback;
 }
 
+/** Shift a hex colour toward black (amt<0) or white (amt>0), amt in [-1,1]. */
+function shade(hexColor: string, amt: number): string {
+  const m = /^#([0-9a-fA-F]{6})$/.exec(hexColor);
+  if (!m) return hexColor;
+  const n = parseInt(m[1]!, 16);
+  const adj = (c: number) => Math.max(0, Math.min(255, Math.round(amt < 0 ? c * (1 + amt) : c + (255 - c) * amt)));
+  const r = adj((n >> 16) & 0xff);
+  const g = adj((n >> 8) & 0xff);
+  const b = adj(n & 0xff);
+  return `#${((r << 16) | (g << 8) | b).toString(16).padStart(6, '0')}`;
+}
+
+/**
+ * The page's background PAINT — a subtle diagonal gradient of a bold background
+ * colour (for depth / a modern editorial feel), or the flat colour for the
+ * default near-white page (clean white should never be washed). Returned as a CSS
+ * `background` value; the renderer applies it via the shorthand, so it works in the
+ * editor, the public viewer and the PDF with no renderer change. Contrast math
+ * still uses the flat base hex (a gradient stays close to it), so legibility of
+ * overlaid text is unaffected.
+ */
+function backgroundPaint(palette: GenPalette, ref: ColorRef | undefined, base: string): string {
+  if (!ref || ref === 'bg' || base.toLowerCase() === palette.bg.toLowerCase()) return base;
+  return `linear-gradient(135deg, ${shade(base, 0.12)} 0%, ${base} 45%, ${shade(base, -0.22)} 100%)`;
+}
+
 function rectsOverlap(a: Rect, b: Rect): boolean {
   return a.x < b.x + b.w && b.x < a.x + a.w && a.y < b.y + b.h && b.y < a.y + a.h;
 }
@@ -186,7 +212,8 @@ export function composeFromSolved(
     const el = buildElement(leaf, content[ref], theme, bgBehind(leaf, solved.leaves, theme.palette, pageBg, scrims), scrims.has(leaf));
     if (el) elements.push(el);
   }
-  return { background: { type: 'color', value: pageBg }, elements };
+  // Contrast used the flat `pageBg` hex above; the visible page gets the gradient paint.
+  return { background: { type: 'color', value: backgroundPaint(theme.palette, solved.background.ref, pageBg) }, elements };
 }
 
 export { TEXT_ROLES, ROLE_SCALE };

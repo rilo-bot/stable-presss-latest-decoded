@@ -13,4 +13,7 @@ export const COL = {
   published: 'publishedIssuesV2',
   /** Worker job queue (extraction / generation). */
   jobs: 'magazineJobs',
+  /** Persistent per-magazine assistant chat thread (page-tagged, paginated) —
+   *  so the conversation survives reloads instead of living only in memory. */
+  chat: 'magazineChatV2',
 } as const;

@@ -345,8 +345,9 @@ export function composePage(
       const content = fill?.text ?? '';
       // Skip ANY empty text slot — required included. An empty required slot used
       // to emit an invisible, zero-content text element that just occupied a dead
-      // box; required copy is now guaranteed upstream by backfillDraft, so a still-
-      // empty slot here (e.g. an unfillable figure) should simply be dropped.
+      // box; real copy is now produced upstream by the copywriter self-heal
+      // (draftGaps + DRAFT_ATTEMPTS), with the headline guaranteed by ensureHeadline,
+      // so a still-empty slot here (e.g. an unfillable figure) should simply be dropped.
       if (!content) continue;
       const s = slot.style ?? {};
       const maxFont = s.fontSize ?? 28;

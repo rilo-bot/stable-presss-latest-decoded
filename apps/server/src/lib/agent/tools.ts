@@ -26,6 +26,13 @@ const clamp = (n: number | undefined, def: number, max: number) =>
 const matches = (hay: unknown, needle: string) =>
   String(hay ?? '').toLowerCase().includes(needle.toLowerCase())
 
+// Match docs whose `horse_id` equals `horseId` regardless of how it is stored
+// (string / number / ObjectId). Mirrors the historical `String(x) === id`
+// compare — but server-side, so Mongo filters instead of the API loading the
+// whole collection and filtering every row in JS. $toString on a missing field
+// yields null (never equals a real id), so absent horse_id is excluded, as before.
+const horseIdMatch = (horseId: string) => ({ $expr: { $eq: [{ $toString: '$horse_id' }, horseId] } })
+
 /** Compact horse projection — keeps token use sane. */
 function horseCard(h: Doc) {
   return {
@@ -191,34 +198,68 @@ export function buildTools(account?: AccountUser, authHeader?: string): ToolSet 
         "A horse's full dossier the reader is allowed to see: profile, connections (owners/trainers/etc.), race entries, sales, media, and any reports visible to this reader (private reports only show for staff). Returns notFound if the horse is not visible to them.",
       inputSchema: z.object({ horseId: z.string() }),
       execute: async ({ horseId }) => {
-        const horse = (await visibleHorses(account)).find((h) => idOf(h) === horseId)
-        if (!horse) {
-          return {
-            notFound: true,
-            note: 'That horse is not in this reader\'s view (it may be unverified or private). Suggest searching the public register, or — if it is their own horse — claiming the matching racing role from the Dashboard.',
-          }
+        // Fetch just THIS horse + just ITS links, rather than loading every horse
+        // and every link into the API and filtering in JS. Visibility reuses the
+        // exact scope rule via authorisedHorseIds() fed a single-horse dataset, so
+        // there is no second, drift-prone copy of the permission logic.
+        const horse = await db.collection('horses').findById(horseId)
+        const notFound = {
+          notFound: true,
+          note: 'That horse is not in this reader\'s view (it may be unverified or private). Suggest searching the public register, or — if it is their own horse — claiming the matching racing role from the Dashboard.',
         }
-        const parties = await visibleParties(account)
-        const partyName = (pid: string) => parties.find((p) => idOf(p) === pid)?.name
-        const links = (await db.collection('horsePartyLinks').find()).filter(
-          (l) => String(l.horse_id) === horseId,
-        )
-        const reports = (await db.collection('reports').find()).filter(
-          (r) => String(r.horse_id) === horseId && (staff || (r.visibility ?? 'public') === 'public'),
-        )
-        const byHorse = (coll: string) =>
-          db.collection(coll).find().then((rows) => rows.filter((r) => String(r.horse_id) === horseId))
+        if (!horse) return notFound
+        const links = await db.collection('horsePartyLinks').find(horseIdMatch(horseId))
+        const authorised = account ? new Set(authorisedHorseIds(account, { horses: [horse], links })) : new Set<string>()
+        const visible =
+          staff ||
+          horse.verificationStatus !== 'unverified' ||
+          (account ? horse.createdByUserId === account.id : false) ||
+          authorised.has(idOf(horse))
+        if (!visible) return notFound
+
+        // Resolve names for ONLY the parties this horse links to, applying the same
+        // visibility rule routes/parties.ts GET uses (unverified parties stay hidden
+        // unless the reader is staff / their owner / a manager).
+        const own = new Set<string>(account ? manageablePartyIds(account) : [])
+        const isPartyVisible = (p: Doc) =>
+          p.verificationStatus !== 'unverified' ||
+          (account ? p.createdByUserId === account.id : false) ||
+          own.has(idOf(p))
+        const partyIds = [...new Set(links.map((l) => String(l.party_id)))]
+        const partyDocs = (
+          await Promise.all(partyIds.map((pid) => db.collection('parties').findById(pid)))
+        ).filter((p): p is NonNullable<typeof p> => p !== null)
+        const partyName = (pid: string) => {
+          const p = partyDocs.find((x) => idOf(x) === pid)
+          return p && isPartyVisible(p) ? p.name : undefined
+        }
+
+        // Child collections: match horse_id + cap in Mongo. aggregate() does NOT
+        // auto-filter soft-deletes, so match deletedAt:null explicitly (find() would).
+        const capped = (coll: string, extraMatch: Record<string, unknown> = {}) =>
+          db.collection(coll).aggregate([
+            { $match: { deletedAt: null, ...extraMatch, ...horseIdMatch(horseId) } },
+            { $limit: 25 },
+          ])
+        // Non-staff only see public reports (unset visibility defaults to public).
+        const reportMatch = staff ? {} : { $or: [{ visibility: 'public' }, { visibility: null }] }
+        const [racingEntries, sales, media, reports] = await Promise.all([
+          capped('racingEntries'),
+          capped('sales'),
+          capped('mediaItems'),
+          capped('reports', reportMatch),
+        ])
         return {
           horse: horseCard(horse),
-          connections: links.map((l) => ({
+          connections: links.slice(0, 50).map((l) => ({
             party: partyName(String(l.party_id)) ?? 'a party',
             relationship: l.relationship_type,
             current: !l.end_date,
           })),
-          racingEntries: (await byHorse('racingEntries')).slice(0, 25),
-          sales: (await byHorse('sales')).slice(0, 25),
-          media: (await byHorse('mediaItems')).slice(0, 25).map((m) => ({ title: m.title, type: m.type, url: m.url })),
-          reports: reports.slice(0, 25).map((r) => ({ title: r.title, type: r.doc_type, visibility: r.visibility ?? 'public' })),
+          racingEntries,
+          sales,
+          media: media.map((m) => ({ title: m.title, type: m.type, url: m.url })),
+          reports: reports.map((r) => ({ title: r.title, type: r.doc_type, visibility: r.visibility ?? 'public' })),
         }
       },
     }),

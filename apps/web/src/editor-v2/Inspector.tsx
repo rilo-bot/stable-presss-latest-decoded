@@ -5,16 +5,18 @@
 // to v2's free-form elements. Every change is an undoable commit (before = the
 // element as it was when editing started); no direct API calls here.
 
-import { useEffect, useState, type ReactNode } from 'react';
+import { useEffect, useRef, useState, type ReactNode } from 'react';
+import { toast } from 'sonner';
 import { useEditorStore } from './store';
 import type { MagazineElement } from './model';
 import * as api from './api';
 import type { MediaAsset } from './api';
 import { Section, Stepper, Segmented, ColorControl } from '@/editor/inspector/controls';
+import { ICON_NAMES, resolveIcon } from '@/editor/templates/iconRegistry';
 import {
   MousePointerClick, Type, Image as ImageIcon, QrCode, Square, Shapes,
   AlignLeft, AlignCenter, AlignRight, ArrowUpToLine, FoldVertical, ArrowDownToLine, Trash2,
-  Sliders, Images, Loader2,
+  Sliders, Images, Loader2, Upload, Copy, BringToFront, SendToBack,
 } from 'lucide-react';
 
 const KIND_META = {
@@ -35,6 +37,14 @@ const FONT_OPTIONS: { label: string; stack: string }[] = [
   { label: 'Inter', stack: 'Inter, Arial, sans-serif' },
   { label: 'Arial', stack: 'Arial, Helvetica, sans-serif' },
 ];
+
+/** Match an element's stored CSS stack to an option by its PRIMARY family name,
+ *  so 'Georgia, serif' or a quoted/extracted stack still shows its font as active.
+ *  Exact-string matching left the dropdown blank for most elements (defaults, AI-
+ *  and PDF-extracted text carry differently-spelled stacks), which read as "the
+ *  font control does nothing". */
+const primaryFamily = (stack: string) => (stack.split(',')[0] ?? '').trim().replace(/^['"]+|['"]+$/g, '').toLowerCase();
+const matchFontOption = (stack: string) => FONT_OPTIONS.find((f) => primaryFamily(f.stack) === primaryFamily(stack));
 
 export function Inspector() {
   const page = useEditorStore((s) => s.page);
@@ -80,11 +90,38 @@ export function Inspector() {
 function ElementPanel({ el }: { el: MagazineElement }) {
   const pages = useEditorStore((s) => s.pages);
   const currentPageId = useEditorStore((s) => s.currentPageId);
+  const issueId = useEditorStore((s) => s.issueId);
+  const page = useEditorStore((s) => s.page);
   const commit = useEditorStore((s) => s.commit);
   const deleteElement = useEditorStore((s) => s.deleteElement);
+  const duplicateElement = useEditorStore((s) => s.duplicateElement);
+  const fileRef = useRef<HTMLInputElement>(null);
+  const [uploading, setUploading] = useState(false);
 
   // before = current element snapshot, so each inspector change is one undo step.
   const set = (patch: Partial<MagazineElement>) => void commit(el.id, patch, { ...el });
+
+  // Layer order: raise above the current top / drop below the current bottom.
+  // zIndex is clamped 0–9999 server-side, so cap the ends accordingly.
+  const others = (page?.elements ?? []).filter((e) => e.id !== el.id);
+  const bringToFront = () => set({ zIndex: Math.min(9999, others.reduce((m, e) => Math.max(m, e.zIndex), 0) + 1) });
+  const sendToBack = () => set({ zIndex: Math.max(0, others.reduce((m, e) => Math.min(m, e.zIndex), el.zIndex) - 1) });
+
+  // Upload a picture from the user's computer and point the selected image element
+  // at it — the manual "replace this photo" path (the Assets tab handles picking an
+  // existing library photo; a URL can still be pasted below). One commit → one undo.
+  const replaceImageFromFile = async (file: File) => {
+    if (!issueId || !el.image) return;
+    setUploading(true);
+    try {
+      const asset = await api.uploadMediaImage(issueId, file, el.image.alt || file.name);
+      set({ image: { ...el.image, url: asset.url, assetId: asset.id, alt: asset.alt } });
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : 'Upload failed');
+    } finally {
+      setUploading(false);
+    }
+  };
   const meta = KIND_META[el.type];
   const Icon = meta.icon;
   const pageNo = pages.findIndex((p) => p.id === currentPageId) + 1;
@@ -117,12 +154,12 @@ function ElementPanel({ el }: { el: MagazineElement }) {
 
             <Section title="Font">
               <select
-                value={FONT_OPTIONS.find((f) => f.stack === el.text!.fontFamily)?.stack ?? ''}
+                value={matchFontOption(el.text!.fontFamily)?.stack ?? ''}
                 onChange={(e) => set({ text: { ...el.text!, fontFamily: e.target.value } })}
                 className="w-full rounded-sm border border-white/15 bg-white/5 px-2.5 py-2 text-sm text-white outline-none hover:bg-white/10"
                 style={{ fontFamily: el.text.fontFamily }}
               >
-                {!FONT_OPTIONS.some((f) => f.stack === el.text!.fontFamily) && <option value="">{el.text.fontFamily}</option>}
+                {!matchFontOption(el.text!.fontFamily) && <option value="">{primaryFamily(el.text.fontFamily) || 'Custom'}</option>}
                 {FONT_OPTIONS.map((f) => (
                   <option key={f.stack} value={f.stack} style={{ fontFamily: f.stack }}>{f.label}</option>
                 ))}
@@ -181,6 +218,31 @@ function ElementPanel({ el }: { el: MagazineElement }) {
 
         {el.type === 'image' && el.image && (
           <>
+            <Section title="Replace image">
+              {el.image.url && (
+                <div className="mb-2 overflow-hidden rounded-sm border border-white/10 bg-black/20">
+                  <img src={el.image.url} alt={el.image.alt} className="max-h-28 w-full object-contain" />
+                </div>
+              )}
+              <input
+                ref={fileRef}
+                type="file"
+                accept="image/*"
+                className="hidden"
+                onChange={(e) => { const f = e.target.files?.[0]; if (f) void replaceImageFromFile(f); e.target.value = ''; }}
+              />
+              <button
+                onClick={() => fileRef.current?.click()}
+                disabled={uploading}
+                className="flex w-full items-center justify-center gap-2 rounded-sm border border-white/15 bg-white/5 px-3 py-2 text-xs font-semibold text-white hover:bg-white/10 disabled:opacity-50"
+              >
+                {uploading ? <Loader2 size={13} className="animate-spin" /> : <Upload size={13} />}
+                {uploading ? 'Uploading…' : el.image.url ? 'Upload a replacement' : 'Upload from computer'}
+              </button>
+              <p className="mt-1.5 text-[10px] leading-relaxed text-white/40">
+                Or pick an existing photo in the <b>Assets</b> tab, or paste a URL below.
+              </p>
+            </Section>
             <Section title="Image URL">
               <input
                 key={`iu${el.id}`}
@@ -225,6 +287,36 @@ function ElementPanel({ el }: { el: MagazineElement }) {
           </>
         )}
 
+        {el.type === 'icon' && el.icon && (
+          <>
+            <Section title="Icon">
+              <div className="grid max-h-56 grid-cols-6 gap-1 overflow-y-auto rounded-sm border border-white/10 bg-white/5 p-1.5">
+                {ICON_NAMES.map((name) => {
+                  const Glyph = resolveIcon(name);
+                  const active = el.icon!.name === name;
+                  return (
+                    <button
+                      key={name}
+                      title={name}
+                      onClick={() => set({ icon: { ...el.icon!, name, src: undefined } })}
+                      className={
+                        'flex aspect-square items-center justify-center rounded-sm border p-1 ' +
+                        (active ? 'border-sky-400 bg-sky-500/20 text-white' : 'border-transparent text-white/60 hover:bg-white/10 hover:text-white')
+                      }
+                    >
+                      <Glyph size={16} />
+                    </button>
+                  );
+                })}
+              </div>
+              {el.icon.src && <p className="mt-1.5 text-[10px] text-white/40">A custom uploaded icon is in use; pick a glyph above to replace it.</p>}
+            </Section>
+            <Section title="Colour">
+              <ColorControl value={el.icon.color ?? '#111111'} onChange={(c) => set({ icon: { ...el.icon!, color: c } })} />
+            </Section>
+          </>
+        )}
+
         {/* Position & size — shared across kinds */}
         <Section title="Position & size">
           <div className="grid grid-cols-2 gap-2">
@@ -235,7 +327,28 @@ function ElementPanel({ el }: { el: MagazineElement }) {
           </div>
         </Section>
 
-        <div className="px-3.5 py-3">
+        <Section title="Rotation">
+          <Stepper value={Math.round(el.rotation)} min={-180} max={180} step={1} suffix="°" onChange={(v) => set({ rotation: v })} />
+        </Section>
+
+        <Section title="Arrange">
+          <div className="grid grid-cols-2 gap-2">
+            <button onClick={bringToFront} className="flex items-center justify-center gap-1.5 rounded-sm border border-white/15 bg-white/5 px-2 py-1.5 text-[11px] text-white/80 hover:bg-white/10">
+              <BringToFront size={13} /> To front
+            </button>
+            <button onClick={sendToBack} className="flex items-center justify-center gap-1.5 rounded-sm border border-white/15 bg-white/5 px-2 py-1.5 text-[11px] text-white/80 hover:bg-white/10">
+              <SendToBack size={13} /> To back
+            </button>
+          </div>
+        </Section>
+
+        <div className="flex flex-col gap-2 px-3.5 py-3">
+          <button
+            onClick={() => void duplicateElement(el.id)}
+            className="flex w-full items-center justify-center gap-2 rounded-sm border border-white/15 bg-white/5 px-3 py-2 text-xs font-semibold text-white/80 hover:bg-white/10"
+          >
+            <Copy size={13} /> Duplicate element
+          </button>
           <button
             onClick={() => void deleteElement(el.id)}
             className="flex w-full items-center justify-center gap-2 rounded-sm border border-rose-400/30 bg-rose-500/10 px-3 py-2 text-xs font-semibold text-rose-300 hover:bg-rose-500/20"

@@ -31,6 +31,9 @@ const INDEX_SPECS: IndexSpec[] = [
   { collection: COL.jobs, keys: { status: 1, deletedAt: 1, createdAt: 1 } },
   // Per-magazine media library: find({ magazineId }).
   { collection: COL.media, keys: { magazineId: 1, deletedAt: 1 } },
+  // Per-magazine chat thread: match { magazineId } + range/sort on createdAt for
+  // the paginated GET /issues/:id/chat (grows unbounded, so it must not scan).
+  { collection: COL.chat, keys: { magazineId: 1, deletedAt: 1, createdAt: -1 } },
   // Issue library list: served newest-first by updatedAt.
   { collection: COL.issues, keys: { deletedAt: 1, updatedAt: -1 } },
   // User lookup by email (collaborator-add and auth paths).

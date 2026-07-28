@@ -1,4 +1,4 @@
-import mupdfDefault, { type Font } from 'mupdf';
+import mupdfDefault, { type Font, type Image, type Page, type Pixmap, type StructuredText } from 'mupdf';
 
 // Rasterization + native text/image extraction, via MuPDF's WASM build (no
 // native compilation — chosen specifically to avoid the native-canvas /
@@ -28,6 +28,18 @@ export const RENDER_DPI = 150;
  *  exceed this, downscaling only pathologically large pages (normal A4/A3/tabloid
  *  at 150 DPI are well under it). Override with MAGAZINE_V2_MAX_RASTER_EDGE_PX. */
 const MAX_RASTER_EDGE_PX = Math.max(2000, Number(process.env.MAGAZINE_V2_MAX_RASTER_EDGE_PX) || 6000);
+
+/** Hard ceiling on the pixel count of any SINGLE embedded image we decode to a
+ *  pixmap. image.toPixmap() (this WASM build has no decode-time downscale) would
+ *  otherwise allocate width×height×components bytes for whatever the PDF declares
+ *  — an adversarial 20000×20000 embedded image is a multi-GB pixmap that aborts
+ *  the WASM heap (same uncatchable-crash class as MAX_RASTER_EDGE_PX). Past this
+ *  we DON'T extract the image as its own element; it stays baked into the page's
+ *  background raster (already rendered at a bounded edge), so nothing is lost — we
+ *  just don't promote a pathological image to an editable layer. Normal print
+ *  photos (a few to ~20 MP) sit far below the default. Override with
+ *  MAGAZINE_V2_MAX_IMAGE_DECODE_MP. */
+const MAX_IMAGE_DECODE_MP = Math.max(8, Number(process.env.MAGAZINE_V2_MAX_IMAGE_DECODE_MP) || 40);
 
 export interface RoughTextBlock {
   x: number;
@@ -220,6 +232,16 @@ function analyzePixmap(pm: ReturnType<InstanceType<typeof mupdf.Image>['toPixmap
   return { hasAlpha, isColor: colorants >= 3, isEffectLayer: invisible || scrim || flat };
 }
 
+/** An embedded image's native pixel count (width × height), or 0 if MuPDF can't
+ *  report its dimensions — used to bound the decode before toPixmap() allocates. */
+function safeImagePixels(image: Image): number {
+  try {
+    return Math.max(0, image.getWidth()) * Math.max(0, image.getHeight());
+  } catch {
+    return 0;
+  }
+}
+
 // A PDF's own font name (e.g. "ABCDEF+Calibri", "TimesNewRomanPS-BoldMT") is
 // real typography info we already have in hand via font.getName() — mapping
 // it to the closest standard web-safe stack gets visibly closer to "the
@@ -284,6 +306,10 @@ function resolveFontFamily(font: Font): string {
 export function openPdf(buffer: Buffer) {
   const doc = mupdf.Document.openDocument(buffer, 'application/pdf');
   if (doc.needsPassword()) {
+    // Free the just-allocated Document before throwing: it never reaches the
+    // caller, so the caller's `finally { doc?.destroy() }` can't free it —
+    // without this it leaks one fz_document per encrypted upload.
+    doc.destroy();
     throw new Error("This PDF is password-protected and can't be processed.");
   }
   return doc;
@@ -377,7 +403,22 @@ function centerInside(r: Rect, box: Rect): boolean {
  * extraction step needed.
  */
 export function rasterizePage(doc: ReturnType<typeof openPdf>, index: number): PageRaster {
+  // MuPDF objects live in the WASM heap and are NOT reclaimed by V8's GC — every
+  // Page/Pixmap/StructuredText/Image created here must be explicitly destroy()'d
+  // or it accumulates across every page of every issue until the heap aborts (an
+  // uncatchable crash that kills the worker and every job in flight). The Page is
+  // freed in finally below; the pixmap/stext/per-image objects are freed inside
+  // extractPage. Splitting the body out keeps that guarantee without indenting
+  // the whole (heavily-commented) extractor under a try.
   const page = doc.loadPage(index);
+  try {
+    return extractPage(page, index);
+  } finally {
+    page.destroy();
+  }
+}
+
+function extractPage(page: Page, index: number): PageRaster {
   const bounds = page.getBounds(); // [x0, y0, x1, y1] in PDF points
   const wPt = bounds[2]! - bounds[0]!;
   const hPt = bounds[3]! - bounds[1]!;
@@ -393,7 +434,15 @@ export function rasterizePage(doc: ReturnType<typeof openPdf>, index: number): P
 
   const matrix = mupdf.Matrix.scale(scale, scale);
   const pixmap = page.toPixmap(matrix, mupdf.ColorSpace.DeviceRGB, false);
-  const backgroundPng = Buffer.from(pixmap.asPNG());
+  // Copy the raster into a Node Buffer, then free the WASM pixmap — in finally so
+  // an asPNG()/Buffer.from failure (encode error, or a Node OOM copying a ~100MB
+  // raster) can't leak the pixmap.
+  let backgroundPng: Buffer;
+  try {
+    backgroundPng = Buffer.from(pixmap.asPNG());
+  } finally {
+    pixmap.destroy();
+  }
 
   const toPx = (x: number, y: number): [number, number] => [(x - originX) * scale, (y - originY) * scale];
 
@@ -455,6 +504,9 @@ export function rasterizePage(doc: ReturnType<typeof openPdf>, index: number): P
   // — omitting it means every rule/divider on the page silently never fires
   // it either, same failure shape as images without preserve-images.
   const stext = page.toStructuredText('preserve-whitespace,preserve-images,vectors');
+  // stext owns the Image objects handed to onImageBlock; keep it alive for the
+  // whole walk, then free it in finally so a throwing callback can't leak it.
+  try {
   stext.walk({
     beginTextBlock() {
       // A new MuPDF block never continues the previous one's accumulated
@@ -536,6 +588,13 @@ export function rasterizePage(doc: ReturnType<typeof openPdf>, index: number): P
       flushTextBlock();
     },
     onImageBlock(bbox: number[], _transform, image) {
+      // `image` is owned by the StructuredText (freed when stext is destroyed) —
+      // do NOT destroy it here. Only the pixmap/mask objects WE create below get
+      // freed, in finally, so at most ONE image's pixmaps are alive at a time
+      // (the accumulation across a page's images is what pushed the heap to OOM).
+      let imgPixmap: Pixmap | null = null;
+      let mask: Image | null = null;
+      let maskPixmap: Pixmap | null = null;
       try {
         const [x, y] = toPx(bbox[0]!, bbox[1]!);
         const w = (bbox[2]! - bbox[0]!) * scale;
@@ -547,7 +606,15 @@ export function rasterizePage(doc: ReturnType<typeof openPdf>, index: number): P
         // element would blanket (and hide) everything beneath it; it's
         // already in the background raster.
         if (w >= pxWidth * FULL_PAGE_FRACTION && h >= pxHeight * FULL_PAGE_FRACTION) return;
-        const imgPixmap = image.toPixmap();
+        // Bound the decode: a pathologically large embedded image would allocate
+        // a multi-GB pixmap and abort the WASM heap. Past the budget, leave it in
+        // the background raster rather than promote it to its own element.
+        const nativePx = safeImagePixels(image);
+        if (nativePx > MAX_IMAGE_DECODE_MP * 1_000_000) {
+          console.warn(`[worker] page ${index}: skipping a ~${Math.round(nativePx / 1_000_000)}MP embedded image (> ${MAX_IMAGE_DECODE_MP}MP decode budget) — it stays baked into the background raster.`);
+          return;
+        }
+        imgPixmap = image.toPixmap();
         const stats = analyzePixmap(imgPixmap);
         // Scrims/glows/flat panels aren't content — leave them baked in the
         // background instead of painting a black/white box over the page.
@@ -560,8 +627,11 @@ export function rasterizePage(doc: ReturnType<typeof openPdf>, index: number): P
         let maskPng: Buffer | undefined;
         if (!stats.hasAlpha) {
           try {
-            const mask = image.getMask();
-            if (mask) maskPng = Buffer.from(mask.toPixmap().asPNG());
+            mask = image.getMask();
+            if (mask) {
+              maskPixmap = mask.toPixmap();
+              maskPng = Buffer.from(maskPixmap.asPNG());
+            }
           } catch {
             // No mask (or an undecodable one) — the base image still stands alone.
           }
@@ -578,6 +648,10 @@ export function rasterizePage(doc: ReturnType<typeof openPdf>, index: number): P
         });
       } catch {
         // A single malformed embedded image shouldn't fail the whole page.
+      } finally {
+        maskPixmap?.destroy();
+        mask?.destroy();
+        imgPixmap?.destroy();
       }
     },
     onVector(bbox: number[], _flags, color) {
@@ -604,6 +678,9 @@ export function rasterizePage(doc: ReturnType<typeof openPdf>, index: number): P
       }
     },
   });
+  } finally {
+    stext.destroy();
+  }
 
   // Resolve vector output: QR clusters first, then rules — dropping any rule
   // that falls inside a detected QR so its module fragments don't also render

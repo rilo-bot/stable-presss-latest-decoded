@@ -17,13 +17,13 @@
 // ---------------------------------------------------------------------------
 
 import crypto from 'crypto';
-import { Router } from 'express';
+import { Router, type RequestHandler } from 'express';
 import { db } from '../lib/db.js';
 import { attachAccount } from '../lib/auth.js';
 import { isStaff } from '../lib/rbac.js';
 import { MAGAZINE_V2_ENABLED, PAGE_W, PAGE_H, MAX_PAGES_PER_ISSUE, MAX_SOURCE_BYTES, ALLOWED_SOURCE_MIME, sourceExtForMime, MAX_IMAGE_BYTES, ALLOWED_IMAGE_MIME, imageExtFor } from '../lib/magazineV2/config.js';
 import { COL } from '../lib/magazineV2/collections.js';
-import { rateLimit } from '../lib/magazineV2/rateLimit.js';
+import { rateLimit } from '../lib/rateLimit.js';
 import { safePublicImageUrl } from '../lib/magazineV2/url.js';
 import { roleOnMagazine, isOwner, canEditPage, editablePageIds, collaboratorsOf, type V2Collaborator } from '../lib/magazineV2/access.js';
 import { withIdentityDefaults, STAFF_ROLES } from '../lib/identity.js';
@@ -45,6 +45,24 @@ function project(doc: Doc) {
 }
 
 const router = Router();
+
+// ── Async error safety ────────────────────────────────────────────────────────
+// Express 4 IGNORES a rejected promise returned by an async handler, so an
+// `await db…` that throws never reaches the error middleware (index.ts) — the
+// request just hangs until the client times out (audit H3). Patch this router's
+// verb methods ONCE so every handler registered below has its rejections
+// forwarded to next(err); the route definitions stay plain `async (req,res)=>{…}`.
+// Wrapping sync middleware (e.g. rateLimit) is harmless: a non-promise return
+// resolves with nothing to catch.
+const forwardAsyncErrors =
+  (h: RequestHandler): RequestHandler =>
+  (req, res, next) =>
+    Promise.resolve(h(req, res, next)).catch(next);
+for (const verb of ['get', 'post', 'put', 'patch', 'delete'] as const) {
+  const original = router[verb].bind(router) as (path: string, ...handlers: RequestHandler[]) => Router;
+  (router as unknown as Record<string, unknown>)[verb] = (path: string, ...handlers: RequestHandler[]) =>
+    original(path, ...handlers.map(forwardAsyncErrors));
+}
 
 // ── Gates: feature flag → signed-in staff → write rate limit ──────────────────
 router.use((_req, res, next) => {
@@ -132,8 +150,12 @@ function slugify(title: string): string {
 }
 async function uniqueSlug(title: string): Promise<string> {
   const base = slugify(title);
-  const existing = (await db.collection(COL.issues).find()) as Doc[];
-  const taken = new Set(existing.map((d) => String(d.slug)));
+  // Only load slugs that could collide with `base` (exactly `base` or `base-N`)
+  // instead of every issue in the library — a prefix-anchored regex a slug index
+  // can serve, rather than a full-collection scan on every issue create.
+  const escaped = base.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  const rows = (await db.collection(COL.issues).find({ slug: { $regex: `^${escaped}(-[0-9]+)?$` } })) as Doc[];
+  const taken = new Set(rows.map((d) => String(d.slug)));
   if (!taken.has(base)) return base;
   for (let n = 2; n < 9999; n++) {
     const s = `${base}-${n}`;
@@ -1478,11 +1500,76 @@ router.post('/issues/:id/pages/:pageId/agent', rateLimit('mag2-agent', 20, 60_00
       attachedImages: attachedImages.length > 0 ? attachedImages : undefined,
       pageCount: (await pagesFor(page.magazineId)).length,
     });
+    // Persist this turn to the magazine's chat thread (page-tagged) so the
+    // conversation survives reloads. Best-effort: a persistence hiccup must not
+    // fail a reply the user already received.
+    try {
+      const lastUser = [...messages].reverse().find((m: { role?: string; content?: unknown }) => m?.role === 'user');
+      const t0 = Date.now();
+      if (lastUser && typeof lastUser.content === 'string' && lastUser.content.trim()) {
+        await db.collection(COL.chat).insertOne({
+          magazineId: page.magazineId,
+          pageId: page._id,
+          pageIndex: Number(page.index) || 0,
+          role: 'user',
+          content: lastUser.content.slice(0, 8000),
+          ...(attachedImages.length > 0
+            ? { attachments: attachedImages.map((a: { url: string; name: string }) => ({ name: a.name, isImage: true, url: a.url })) }
+            : {}),
+          createdAt: new Date(t0).toISOString(),
+        });
+      }
+      await db.collection(COL.chat).insertOne({
+        magazineId: page.magazineId,
+        pageId: page._id,
+        pageIndex: Number(page.index) || 0,
+        role: 'assistant',
+        content: String(turn.reply ?? '').slice(0, 20000),
+        createdAt: new Date(t0 + 1).toISOString(), // +1ms so it sorts AFTER the user turn
+      });
+    } catch (persistErr) {
+      console.warn('[magazineV2] chat persist failed (reply still delivered):', persistErr instanceof Error ? persistErr.message : persistErr);
+    }
     res.json(turn);
   } catch (err) {
     console.error('[magazineV2] agent error:', err instanceof Error ? err.message : err);
     res.status(500).json({ error: 'The assistant hit a snag. Please try again.' });
   }
+});
+
+// The persistent per-magazine chat thread (page-tagged), returned oldest→newest.
+// `before` (an ISO cursor) fetches the batch OLDER than it, so the client lazily
+// loads earlier history upward. GETs aren't rate-limited (see router.use above).
+router.get('/issues/:id/chat', async (req, res) => {
+  const uid = req.account!.id;
+  const issue = await loadIssue(req.params.id);
+  if (!issue || !roleOnMagazine(issue, uid)) {
+    res.status(404).json({ error: 'Not found' });
+    return;
+  }
+  const limit = Math.min(100, Math.max(1, Number(req.query.limit) || 50));
+  const match: Record<string, unknown> = { magazineId: issue._id, deletedAt: null };
+  if (typeof req.query.before === 'string' && req.query.before) match.createdAt = { $lt: req.query.before };
+  // Newest `limit` (+1 to detect more), then hand back oldest→newest for display.
+  const rows = (await db.collection(COL.chat).aggregate([
+    { $match: match },
+    { $sort: { createdAt: -1 } },
+    { $limit: limit + 1 },
+  ])) as Doc[];
+  const hasMore = rows.length > limit;
+  const batch = rows.slice(0, limit).reverse();
+  res.json({
+    messages: batch.map((m) => ({
+      id: String(m._id),
+      role: m.role === 'assistant' ? 'assistant' : 'user',
+      content: String(m.content ?? ''),
+      pageIndex: typeof m.pageIndex === 'number' ? m.pageIndex : null,
+      attachments: Array.isArray(m.attachments) ? m.attachments : undefined,
+      createdAt: String(m.createdAt ?? ''),
+    })),
+    hasMore,
+    oldestCreatedAt: batch[0]?.createdAt ?? null,
+  });
 });
 
 // Per-page Fill / Adjust — a single-shot text pass. The server computes which

@@ -13,10 +13,15 @@ import { attachAccountOptional } from '../lib/auth.js'
 import { getAgentModel, isAgentConfigured } from '../lib/agent/provider.js'
 import { buildSystemPrompt, type PageContext } from '../lib/agent/prompt.js'
 import { buildTools } from '../lib/agent/tools.js'
+import { rateLimit } from '../lib/rateLimit.js'
 
 const router = Router()
 
-router.post('/chat', attachAccountOptional, async (req, res) => {
+// The assistant runs the model + up to 6 tool steps server-side per call, so it
+// is expensive. Cap it per caller (keyed by account, else IP) to stop a runaway
+// client or an abusive loop from hammering the model. attachAccountOptional runs
+// first so signed-in users are keyed by account, not a shared proxy IP.
+router.post('/chat', attachAccountOptional, rateLimit('agent-chat', 20, 60_000), async (req, res) => {
   if (!isAgentConfigured()) {
     res
       .status(503)
