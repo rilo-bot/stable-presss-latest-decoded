@@ -1,15 +1,15 @@
 // ---------------------------------------------------------------------------
-// Custom roles — admin-defined, checkbox-configured roles.
+// Roles API — full CRUD over the dynamic `roles` collection, plus assignment.
 //
-// An admin creates a role, ticks the modules it can open and the actions it may
-// perform, and assigns it to team members. Roles layer ON TOP of the six
-// built-in staff roles: a member keeps whatever their staff role grants and the
-// custom role adds to it. Nothing here can take a permission away.
+// Every role in the platform lives here, including the seven seeded ones. A
+// superadmin may edit any of them; the only hard limits are:
 //
-// SCOPE: custom roles currently drive NAVIGATION and UI affordances. The API
-// gates still enforce the built-in matrix (see lib/effectiveAccess.ts for why
-// the two are kept apart). Assigning a custom role to someone with no staff role
-// therefore does nothing yet — the UI says so at the point of assignment.
+//   isImmutable (superadmin)  — cannot be edited or deleted, ever
+//   isSystem    (the seeded 6) — cannot be DELETED, but may be freely edited
+//
+// Lockout guards below stop an admin removing their own ability to get back in.
+//
+// Gated on `roles.manage`. See docs/DYNAMIC-RBAC-PLAN.md.
 // ---------------------------------------------------------------------------
 
 import { Router } from 'express'
@@ -17,15 +17,20 @@ import { db } from '../lib/db.js'
 import { attachAccount } from '../lib/auth.js'
 import { withIdentityDefaults } from '../lib/identity.js'
 import { canManageRoles } from '../lib/rbac.js'
-import type { CustomRole } from '../lib/effectiveAccess.js'
 import {
-  BUILTIN_ROLE_LABELS,
-  BUILTIN_ROLE_PERMISSIONS,
+  SUPERADMIN_SLUG,
+  bustRoleCache,
+  getRoles,
+  projectRole,
+  type RoleDoc,
+} from '../lib/roleRegistry.js'
+import {
   MODULE_CATALOGUE,
   PERMISSION_CATALOGUE,
-  builtinModulesFor,
+  WORKFLOW_STAGE_CATALOGUE,
   isModuleId,
   isPermissionAction,
+  isWorkflowStage,
   type PermissionAction,
 } from '../lib/permissionCatalogue.js'
 
@@ -40,83 +45,90 @@ router.use((req, res, next) => {
   next()
 })
 
-type RoleDoc = Record<string, any> & { _id: string }
+const slugify = (s: string) =>
+  s.toLowerCase().trim().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '').slice(0, 48)
 
-function projectRole(doc: RoleDoc): CustomRole {
-  return {
-    id: String(doc._id),
-    key: String(doc.key ?? ''),
-    label: String(doc.label ?? ''),
-    description: doc.description ? String(doc.description) : undefined,
-    color: doc.color ? String(doc.color) : undefined,
-    permissions: Array.isArray(doc.permissions) ? doc.permissions.filter(isPermissionAction) : [],
-    modules: Array.isArray(doc.modules) ? doc.modules.filter(isModuleId) : [],
-    createdBy: doc.createdBy ? String(doc.createdBy) : undefined,
-    createdAt: String(doc.createdAt ?? ''),
-    updatedAt: String(doc.updatedAt ?? ''),
-  }
+interface RoleBody {
+  label: string
+  description?: string
+  color?: string
+  icon?: string
+  permissions: PermissionAction[]
+  modules: string[]
+  workflowStages: string[]
 }
 
-const slugify = (s: string) =>
-  s
-    .toLowerCase()
-    .trim()
-    .replace(/[^a-z0-9]+/g, '-')
-    .replace(/^-+|-+$/g, '')
-    .slice(0, 48)
-
 /** Validate + normalize the writable body of a role. */
-function readRoleBody(body: unknown): { label: string; description?: string; color?: string; permissions: PermissionAction[]; modules: string[] } | { error: string } {
+function readRoleBody(body: unknown): RoleBody | { error: string } {
   const b = (body ?? {}) as Record<string, unknown>
   const label = typeof b.label === 'string' ? b.label.trim() : ''
   if (!label) return { error: 'A role name is required.' }
   if (label.length > 60) return { error: 'Role name must be 60 characters or fewer.' }
 
-  // Unknown ids are dropped rather than rejected: the catalogue can gain and
-  // lose entries between deploys, and a stale checkbox shouldn't 400 the save.
-  const permissions = Array.isArray(b.permissions) ? b.permissions.filter(isPermissionAction) : []
-  const modules = Array.isArray(b.modules) ? b.modules.filter(isModuleId) : []
-
+  // Unknown ids are dropped rather than rejected: the catalogue gains and loses
+  // entries between deploys, and a stale checkbox shouldn't 400 the whole save.
   return {
     label,
-    description: typeof b.description === 'string' && b.description.trim() ? b.description.trim().slice(0, 240) : undefined,
-    color: typeof b.color === 'string' && /^#[0-9a-fA-F]{6}$/.test(b.color) ? b.color : undefined,
-    permissions,
-    modules,
+    description:
+      typeof b.description === 'string' && b.description.trim()
+        ? b.description.trim().slice(0, 240)
+        : undefined,
+    color: typeof b.color === 'string' && /^(#[0-9a-fA-F]{6}|hsl\([^)]{1,60}\))$/.test(b.color) ? b.color : undefined,
+    icon: typeof b.icon === 'string' && /^[A-Za-z]{1,32}$/.test(b.icon) ? b.icon : undefined,
+    permissions: Array.isArray(b.permissions) ? b.permissions.filter(isPermissionAction) : [],
+    modules: Array.isArray(b.modules) ? b.modules.filter(isModuleId) : [],
+    workflowStages: Array.isArray(b.workflowStages) ? b.workflowStages.filter(isWorkflowStage) : [],
   }
 }
 
-// ── The catalogue the admin UI renders checkboxes from ───────────────────────
+/** How many users hold each role slug. */
+async function assigneeCounts(): Promise<Map<string, number>> {
+  const users = await db.collection('users').find()
+  const counts = new Map<string, number>()
+  for (const u of users) {
+    for (const slug of Array.isArray(u.staffRoles) ? u.staffRoles : []) {
+      counts.set(String(slug), (counts.get(String(slug)) ?? 0) + 1)
+    }
+  }
+  return counts
+}
+
+/**
+ * Would this change strip the acting user's own ability to manage roles?
+ * A superadmin is exempt — they can never lock themselves out.
+ */
+function wouldSelfLockOut(
+  actorStaffRoles: string[],
+  actorIsSuperAdmin: boolean,
+  slug: string,
+  nextPermissions: PermissionAction[],
+): boolean {
+  if (actorIsSuperAdmin) return false
+  if (!actorStaffRoles.includes(slug)) return false
+  return !nextPermissions.includes('roles.manage')
+}
+
+// ── Catalogue the admin UI renders checkboxes from ───────────────────────────
 router.get('/catalogue', (_req, res) => {
   res.json({
     permissions: PERMISSION_CATALOGUE,
     modules: MODULE_CATALOGUE,
-    builtinRoles: (Object.keys(BUILTIN_ROLE_LABELS) as Array<keyof typeof BUILTIN_ROLE_LABELS>).map(
-      (key) => ({
-        key,
-        label: BUILTIN_ROLE_LABELS[key],
-        permissions: BUILTIN_ROLE_PERMISSIONS[key],
-        modules: builtinModulesFor(key),
-      }),
-    ),
+    workflowStages: WORKFLOW_STAGE_CATALOGUE,
   })
 })
 
-// ── List custom roles, with how many people hold each ────────────────────────
+// ── List every role ──────────────────────────────────────────────────────────
 router.get('/', async (_req, res) => {
-  const docs = (await db.collection('customRoles').find()) as RoleDoc[]
-  const users = await db.collection('users').find()
-  const counts = new Map<string, number>()
-  for (const u of users) {
-    for (const id of Array.isArray(u.customRoleIds) ? u.customRoleIds : []) {
-      counts.set(String(id), (counts.get(String(id)) ?? 0) + 1)
-    }
-  }
-  const roles = docs
-    .map(projectRole)
-    .map((r) => ({ ...r, assigneeCount: counts.get(r.id) ?? 0 }))
-    .sort((a, b) => a.label.localeCompare(b.label))
-  res.json({ roles })
+  const [roles, counts] = await Promise.all([getRoles(), assigneeCounts()])
+  const out = [...roles.values()]
+    .map((r) => ({ ...r, assigneeCount: counts.get(r.slug) ?? 0 }))
+    .sort((a, b) => {
+      // Superadmin first, then the rest of the system roles, then custom.
+      if (a.isImmutable !== b.isImmutable) return a.isImmutable ? -1 : 1
+      if (a.isSystem !== b.isSystem) return a.isSystem ? -1 : 1
+      return a.label.localeCompare(b.label)
+    })
+  res.json({ roles: out })
 })
 
 // ── Create ───────────────────────────────────────────────────────────────────
@@ -126,38 +138,50 @@ router.post('/', async (req, res) => {
     res.status(400).json({ error: parsed.error })
     return
   }
-  const key = slugify(parsed.label)
-  if (!key) {
+  const slug = slugify(parsed.label)
+  if (!slug) {
     res.status(400).json({ error: 'Role name must contain at least one letter or number.' })
     return
   }
-  const existing = (await db.collection('customRoles').find({ key })) as RoleDoc[]
-  if (existing.length > 0) {
+  if (slug === SUPERADMIN_SLUG) {
+    res.status(409).json({ error: 'That name is reserved.' })
+    return
+  }
+  if ((await getRoles()).has(slug)) {
     res.status(409).json({ error: 'A role with that name already exists.' })
     return
   }
 
   const now = new Date().toISOString()
-  const id = await db.collection('customRoles').insertOne({
-    key,
+  const id = await db.collection('roles').insertOne({
+    slug,
     label: parsed.label,
     description: parsed.description,
     color: parsed.color,
+    icon: parsed.icon ?? 'Shield',
+    isSystem: false,
+    isImmutable: false,
     permissions: parsed.permissions,
     modules: parsed.modules,
+    workflowStages: parsed.workflowStages,
     createdBy: req.account!.id,
     createdAt: now,
     updatedAt: now,
   })
-  const created = (await db.collection('customRoles').findById(id)) as RoleDoc | null
+  bustRoleCache()
+  const created = await db.collection('roles').findById(id)
   res.status(201).json({ role: { ...projectRole(created!), assigneeCount: 0 } })
 })
 
-// ── Update (label + description + colour + both checkbox sets) ───────────────
-router.put('/:id', async (req, res) => {
-  const current = (await db.collection('customRoles').findById(req.params.id)) as RoleDoc | null
+// ── Update ───────────────────────────────────────────────────────────────────
+router.put('/:slug', async (req, res) => {
+  const current = (await getRoles()).get(req.params.slug)
   if (!current) {
     res.status(404).json({ error: 'Role not found.' })
+    return
+  }
+  if (current.isImmutable) {
+    res.status(403).json({ error: `The ${current.label} role cannot be edited.` })
     return
   }
   const parsed = readRoleBody(req.body)
@@ -165,47 +189,74 @@ router.put('/:id', async (req, res) => {
     res.status(400).json({ error: parsed.error })
     return
   }
-  const key = slugify(parsed.label)
-  const clash = ((await db.collection('customRoles').find({ key })) as RoleDoc[]).filter(
-    (r) => String(r._id) !== String(current._id),
-  )
-  if (clash.length > 0) {
-    res.status(409).json({ error: 'A role with that name already exists.' })
+  if (
+    wouldSelfLockOut(
+      req.account!.staffRoles,
+      req.account!.isSuperAdmin,
+      current.slug,
+      parsed.permissions,
+    )
+  ) {
+    res.status(409).json({
+      error:
+        'That would remove your own ability to manage roles. Grant "Manage roles" to another role you hold first.',
+    })
     return
   }
 
-  await db.collection('customRoles').updateOne(req.params.id, {
-    key,
+  // The slug is the key stored on every user doc, so renaming a role changes
+  // its LABEL only. Re-slugging would orphan every assignment.
+  await db.collection('roles').updateOne(current.id, {
     label: parsed.label,
     description: parsed.description,
     color: parsed.color,
+    icon: parsed.icon ?? current.icon ?? 'Shield',
     permissions: parsed.permissions,
     modules: parsed.modules,
+    workflowStages: parsed.workflowStages,
     updatedAt: new Date().toISOString(),
   })
-  const fresh = (await db.collection('customRoles').findById(req.params.id)) as RoleDoc | null
+  bustRoleCache()
+  const fresh = await db.collection('roles').findById(current.id)
   res.json({ role: projectRole(fresh!) })
 })
 
-// ── Delete — also unassigns it from everyone holding it ──────────────────────
-router.delete('/:id', async (req, res) => {
-  const current = await db.collection('customRoles').findById(req.params.id)
+// ── Delete ───────────────────────────────────────────────────────────────────
+router.delete('/:slug', async (req, res) => {
+  const current = (await getRoles()).get(req.params.slug)
   if (!current) {
     res.status(404).json({ error: 'Role not found.' })
     return
   }
-  // Drop the reference first: a role that is deleted but still listed on user
-  // docs would resolve to nothing and quietly shrink someone's navigation.
-  const unassigned = await db.collection('users').pullFromAll('customRoleIds', req.params.id)
-  await db.collection('customRoles').deleteOne(req.params.id)
+  if (current.isSystem) {
+    res.status(403).json({
+      error: `${current.label} is a built-in role and cannot be deleted. You can edit its permissions instead.`,
+    })
+    return
+  }
+  if (!req.account!.isSuperAdmin && req.account!.staffRoles.includes(current.slug)) {
+    res.status(409).json({ error: 'You cannot delete a role you currently hold.' })
+    return
+  }
+
+  // Drop every reference first — a deleted role still listed on user docs would
+  // resolve to nothing and silently shrink someone's access.
+  const unassigned = await db.collection('users').pullFromAll('staffRoles', current.slug)
+  await db.collection('roles').deleteOne(current.id)
+  bustRoleCache()
   res.json({ ok: true, unassigned })
 })
 
-// ── Assign / unassign to a team member ───────────────────────────────────────
-router.post('/:id/assign', async (req, res) => {
-  const role = await db.collection('customRoles').findById(req.params.id)
+// ── Assign / unassign ────────────────────────────────────────────────────────
+router.post('/:slug/assign', async (req, res) => {
+  const role = (await getRoles()).get(req.params.slug)
   if (!role) {
     res.status(404).json({ error: 'Role not found.' })
+    return
+  }
+  // Only an existing superadmin may mint another one.
+  if (role.slug === SUPERADMIN_SLUG && !req.account!.isSuperAdmin) {
+    res.status(403).json({ error: 'Only a superadmin can grant the superadmin role.' })
     return
   }
   const userId = typeof req.body?.userId === 'string' ? req.body.userId : ''
@@ -215,24 +266,44 @@ router.post('/:id/assign', async (req, res) => {
     return
   }
   const acct = withIdentityDefaults({ id: target._id, ...target })
-  if (acct.customRoleIds.includes(req.params.id)) {
+  if (acct.staffRoles.includes(role.slug)) {
     res.status(409).json({ error: 'That member already holds this role.' })
     return
   }
   // $addToSet, not read-modify-write — two admins assigning at once must not
   // clobber each other.
-  await db.collection('users').addToSet(userId, 'customRoleIds', req.params.id)
+  await db.collection('users').addToSet(userId, 'staffRoles', role.slug)
   res.status(201).json({ ok: true })
 })
 
-router.delete('/:id/assign/:userId', async (req, res) => {
+router.delete('/:slug/assign/:userId', async (req, res) => {
+  const role = (await getRoles()).get(req.params.slug)
+  if (!role) {
+    res.status(404).json({ error: 'Role not found.' })
+    return
+  }
   const target = await db.collection('users').findById(req.params.userId)
   if (!target) {
     res.status(404).json({ error: 'Team member not found.' })
     return
   }
-  await db.collection('users').pullFrom(req.params.userId, 'customRoleIds', req.params.id)
+
+  // Never strip the last superadmin — that is unrecoverable without shell access
+  // to re-run the SETUP_SECRET seed.
+  if (role.slug === SUPERADMIN_SLUG) {
+    const users = await db.collection('users').find()
+    const holders = users.filter(
+      (u) => Array.isArray(u.staffRoles) && u.staffRoles.includes(SUPERADMIN_SLUG),
+    )
+    if (holders.length <= 1) {
+      res.status(403).json({ error: 'Cannot remove the last superadmin.' })
+      return
+    }
+  }
+
+  await db.collection('users').pullFrom(req.params.userId, 'staffRoles', role.slug)
   res.json({ ok: true })
 })
 
+export type { RoleDoc }
 export default router

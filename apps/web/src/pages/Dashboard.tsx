@@ -6,6 +6,7 @@ import { useClaimStore } from '@/stores/claimStore';
 import { useHorseStore } from '@/stores/horseStore';
 import { useHorsePartyLinkStore } from '@/stores/horsePartyLinkStore';
 import { authorisedHorseIds, previewHorseIds, hasProvisionalParty, primaryPartyId, isStaff } from '@/rbac/can';
+import { can } from '@/lib/permissions';
 import { PARTY_ROLES, PARTY_ROLE_LABELS } from '@/types/party';
 import type { PartyRole } from '@/types/party';
 import type { Horse } from '@/types/horse';
@@ -73,7 +74,8 @@ export default function Dashboard() {
 
   if (!currentUser) return null;
   const staff = isStaff(currentUser);
-  const admin = currentUser.roles.includes('administrator');
+  // Was roles.includes('administrator') — roles[] no longer carries staff slugs.
+  const admin = can('platform.admin');
   const claims = currentUser.partyClaims ?? [];
   // Provisional = a self-registered party they can edit NOW (hidden from public
   // until verified). Awaiting-existing = a claim on a pre-existing party that

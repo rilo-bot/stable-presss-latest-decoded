@@ -1,7 +1,6 @@
 import { Star } from 'lucide-react';
 import { cn } from '@/lib/utils';
-import { can, canOpenModule } from '@/lib/permissions';
-import type { UserRole } from '@/stores/authStore';
+import { can, canOpenModule, isSuperAdmin } from '@/lib/permissions';
 import type { KanbanStatus } from '@/components/KanbanColumn';
 import type { Article } from '@/types/article';
 import type { ArticleUpdate } from '@/stores/articleStore';
@@ -19,7 +18,6 @@ import { EditorMediaLibrary } from './EditorMediaLibrary';
 import { HorseRecordsTab } from '../production-systems/HorseRecordsTab';
 
 interface EditorHubViewProps {
-  userRole: UserRole | null;
   editorTab: EditorTab;
   setEditorTab: (tab: EditorTab) => void;
   // Shared data + handlers
@@ -52,17 +50,17 @@ interface EditorHubViewProps {
 }
 
 export function EditorHubView(props: EditorHubViewProps) {
-  const { userRole, editorTab, setEditorTab } = props;
+  const { editorTab, setEditorTab } = props;
   // Each tab is both a module (an admin can untick it on a custom role) and an
   // action — a tab needs both to show.
   const availableTabs = EDITOR_TABS.filter(
-    (t) => canOpenModule(t.id) && can(userRole, t.permission),
+    (t) => canOpenModule(t.id) && can(t.permission),
   );
   const activeTab = availableTabs.find((t) => t.id === editorTab)?.id ?? availableTabs[0]?.id;
 
   return (
     <div className="space-y-5">
-      {userRole === 'administrator' && (
+      {isSuperAdmin() && (
         <div
           className="flex items-center gap-2.5 px-3 py-2 rounded-sm border text-[13px] font-medium"
           style={{ borderColor: 'hsl(var(--primary) / 0.25)', background: 'hsl(var(--primary) / 0.06)', color: 'hsl(var(--primary))' }}

@@ -14,7 +14,11 @@ import { summariseCapabilities } from './capabilities.js'
 export interface StoryContext {
   /** The signed-in member's display name — applied automatically as the byline. */
   displayName?: string
-  /** Derived staff role (e.g. 'contributor', 'editor', 'administrator'), if any. */
+  /**
+   * A role LABEL for display in the prompt (e.g. 'Editor'), if the client sends
+   * one. Purely descriptive — the assistant's actual capabilities come from
+   * summariseCapabilities(account), never from this string.
+   */
   role?: string
 }
 

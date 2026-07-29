@@ -12,7 +12,7 @@
 import { tool, type ToolSet } from 'ai'
 import { z } from 'zod'
 import { db } from '../db.js'
-import { isStaff } from '../rbac.js'
+import { canAccessNewsroom } from '../rbac.js'
 import { authorisedHorseIds, manageablePartyIds, horsesLinkedToParty } from '../scope.js'
 import type { AccountUser } from '../identity.js'
 import { FEATURE_GUIDES, GUIDE_TOPICS } from './guides.js'
@@ -58,7 +58,7 @@ function horseCard(h: Doc) {
  */
 async function visibleHorses(account?: AccountUser): Promise<Doc[]> {
   const horses = await db.collection('horses').find()
-  if (isStaff(account)) return horses
+  if (canAccessNewsroom(account)) return horses
   let allowed = new Set<string>()
   if (account) {
     const links = await db.collection('horsePartyLinks').find()
@@ -75,7 +75,7 @@ async function visibleHorses(account?: AccountUser): Promise<Doc[]> {
 /** Parties this account may see, mirroring routes/parties.ts GET exactly. */
 async function visibleParties(account?: AccountUser): Promise<Doc[]> {
   const parties = await db.collection('parties').find()
-  if (isStaff(account)) return parties
+  if (canAccessNewsroom(account)) return parties
   const own = new Set<string>(account ? manageablePartyIds(account) : [])
   return parties.filter(
     (p) =>
@@ -97,7 +97,7 @@ const SELF_PORT = process.env.PORT ? parseInt(process.env.PORT, 10) : 3001
 const SELF_BASE = `http://127.0.0.1:${SELF_PORT}`
 
 export function buildTools(account?: AccountUser, authHeader?: string): ToolSet {
-  const staff = isStaff(account)
+  const staff = canAccessNewsroom(account)
 
   // Call one of our own endpoints AS the current user. The route's gate decides
   // if it is allowed — the agent never bypasses a permission check.
@@ -143,7 +143,7 @@ export function buildTools(account?: AccountUser, authHeader?: string): ToolSet 
           signedIn: true,
           name: account.displayName || account.email,
           roles: account.roles,
-          isStaff: staff,
+          canAccessNewsroom: staff,
           subscriptionTier: account.subscriptionTier,
           racingClaims: account.partyClaims.map((c) => ({
             party: partyName(c.partyId),

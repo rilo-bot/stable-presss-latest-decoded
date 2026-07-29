@@ -14,11 +14,19 @@ import { can as staffCan } from '@/lib/permissions';
 import type { PermissionAction } from '@/lib/permissions';
 import { horsesLinkedToParty, type ScopeData } from './scope';
 import { canViewContent, type SubscriptionTier } from './entitlement';
-import { isStaffRole, type OrgRole } from './roles';
+import type { OrgRole } from './roles';
 
-/** True if the user holds any staff/editorial role. */
+/**
+ * True if the user can reach newsroom tooling.
+ *
+ * Was "holds any staff role", tested against a hardcoded slug list. Roles are
+ * database rows now, so this is the `newsroom.access` permission — which means
+ * it only ever answers for the SIGNED-IN user (permissions are resolved onto
+ * the active session). The `user` argument is kept so the ~15 call sites read
+ * naturally and still short-circuit when signed out.
+ */
 export function isStaff(user: AuthUser | null | undefined): boolean {
-  return !!user && user.roles.some(isStaffRole);
+  return !!user && staffCan('newsroom.access');
 }
 
 /** Party record ids the user can act through (verified claims only). */
@@ -61,12 +69,16 @@ export function hasPendingClaim(user: AuthUser | null | undefined): boolean {
   return (user?.partyClaims ?? []).some((c) => c.status === 'pending');
 }
 
-/** Staff/editorial permission — delegates to the matrix via the derived staff role. */
+/**
+ * Staff/editorial permission. The `user` argument is vestigial — permissions
+ * are resolved server-side onto the active session, so this always answers for
+ * the signed-in user. It is kept only to short-circuit when signed out.
+ */
 export function canStaff(
   user: AuthUser | null | undefined,
   action: PermissionAction,
 ): boolean {
-  return staffCan(user?.role, action);
+  return !!user && staffCan(action);
 }
 
 /** The org role the user holds within a given organisation, if any. */

@@ -1,13 +1,16 @@
 import { create } from 'zustand';
 import { authFetch } from '@/lib/api';
 import { useAuthStore } from '@/stores/authStore';
-import type { StaffRole } from '@/rbac/roles';
 
-/** One grantable action, as described by the server catalogue. */
+/**
+ * One grantable action, as described by the server catalogue.
+ * `resource` is the grid row it belongs to; `short` is its checkbox caption.
+ */
 export interface PermissionMeta {
   id: string;
   label: string;
-  group: string;
+  resource: string;
+  short: string;
   description: string;
 }
 
@@ -19,21 +22,27 @@ export interface ModuleMeta {
   requiresPermission?: string;
 }
 
-export interface BuiltinRoleMeta {
-  key: StaffRole;
+/** One Kanban column a role can be given visibility of. */
+export interface WorkflowStageMeta {
+  id: string;
   label: string;
-  permissions: string[];
-  modules: string[];
 }
 
-export interface CustomRole {
+/** A role as stored in the database. Every role in the platform is one of these. */
+export interface Role {
   id: string;
-  key: string;
+  slug: string;
   label: string;
   description?: string;
   color?: string;
+  icon?: string;
+  /** Seeded role — cannot be deleted (but may be edited). */
+  isSystem: boolean;
+  /** Superadmin — cannot be edited or deleted. */
+  isImmutable: boolean;
   permissions: string[];
   modules: string[];
+  workflowStages: string[];
   createdAt: string;
   updatedAt: string;
   assigneeCount?: number;
@@ -43,28 +52,36 @@ export interface RoleDraft {
   label: string;
   description?: string;
   color?: string;
+  icon?: string;
   permissions: string[];
   modules: string[];
+  workflowStages: string[];
 }
 
 interface Result {
   ok: boolean;
   error?: string;
-  id?: string;
+  slug?: string;
+}
+
+interface Catalogue {
+  permissions: PermissionMeta[];
+  modules: ModuleMeta[];
+  workflowStages: WorkflowStageMeta[];
 }
 
 interface RoleState {
-  catalogue: { permissions: PermissionMeta[]; modules: ModuleMeta[]; builtinRoles: BuiltinRoleMeta[] } | null;
-  roles: CustomRole[];
+  catalogue: Catalogue | null;
+  roles: Role[];
   loading: boolean;
   loaded: boolean;
   fetchCatalogue: () => Promise<void>;
   fetchRoles: () => Promise<void>;
   createRole: (draft: RoleDraft) => Promise<Result>;
-  updateRole: (id: string, draft: RoleDraft) => Promise<Result>;
-  deleteRole: (id: string) => Promise<Result>;
-  assignRole: (roleId: string, userId: string) => Promise<Result>;
-  unassignRole: (roleId: string, userId: string) => Promise<Result>;
+  updateRole: (slug: string, draft: RoleDraft) => Promise<Result>;
+  deleteRole: (slug: string) => Promise<Result>;
+  assignRole: (slug: string, userId: string) => Promise<Result>;
+  unassignRole: (slug: string, userId: string) => Promise<Result>;
 }
 
 async function readError(res: Response, fallback: string): Promise<string> {
@@ -73,8 +90,8 @@ async function readError(res: Response, fallback: string): Promise<string> {
 }
 
 /**
- * Role edits change what the CURRENT admin can see too (they may hold the role
- * they just edited), so re-resolve the session after any mutation.
+ * Any role mutation can change what the ACTING admin sees (they may hold the
+ * role they just edited), so re-resolve the session afterwards.
  */
 async function refreshSession() {
   await useAuthStore.getState().verifySession();
@@ -118,15 +135,15 @@ export const useRoleStore = create<RoleState>((set, get) => ({
       if (!res.ok) return { ok: false, error: await readError(res, 'Could not create the role.') };
       const data = await res.json().catch(() => null);
       await get().fetchRoles();
-      return { ok: true, id: data?.role?.id };
+      return { ok: true, slug: data?.role?.slug };
     } catch {
       return { ok: false, error: 'Network error. Please try again.' };
     }
   },
 
-  updateRole: async (id, draft) => {
+  updateRole: async (slug, draft) => {
     try {
-      const res = await authFetch(`/api/roles/${id}`, {
+      const res = await authFetch(`/api/roles/${slug}`, {
         method: 'PUT',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(draft),
@@ -140,9 +157,9 @@ export const useRoleStore = create<RoleState>((set, get) => ({
     }
   },
 
-  deleteRole: async (id) => {
+  deleteRole: async (slug) => {
     try {
-      const res = await authFetch(`/api/roles/${id}`, { method: 'DELETE' });
+      const res = await authFetch(`/api/roles/${slug}`, { method: 'DELETE' });
       if (!res.ok) return { ok: false, error: await readError(res, 'Could not delete the role.') };
       await get().fetchRoles();
       await refreshSession();
@@ -152,9 +169,9 @@ export const useRoleStore = create<RoleState>((set, get) => ({
     }
   },
 
-  assignRole: async (roleId, userId) => {
+  assignRole: async (slug, userId) => {
     try {
-      const res = await authFetch(`/api/roles/${roleId}/assign`, {
+      const res = await authFetch(`/api/roles/${slug}/assign`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ userId }),
@@ -168,9 +185,9 @@ export const useRoleStore = create<RoleState>((set, get) => ({
     }
   },
 
-  unassignRole: async (roleId, userId) => {
+  unassignRole: async (slug, userId) => {
     try {
-      const res = await authFetch(`/api/roles/${roleId}/assign/${userId}`, { method: 'DELETE' });
+      const res = await authFetch(`/api/roles/${slug}/assign/${userId}`, { method: 'DELETE' });
       if (!res.ok) return { ok: false, error: await readError(res, 'Could not remove the role.') };
       await get().fetchRoles();
       await refreshSession();

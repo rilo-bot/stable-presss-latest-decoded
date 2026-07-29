@@ -15,7 +15,8 @@
 // ---------------------------------------------------------------------------
 
 import { db } from '../db.js'
-import { isStaff, isAdmin, contentCan } from '../rbac.js'
+import { canAccessNewsroom, isPlatformAdmin, contentCan } from '../rbac.js'
+import { accountCan, accountCanAny } from '../effectiveAccess.js'
 import { manageablePartyIds, authorisedHorseIds } from '../scope.js'
 import type { AccountUser } from '../identity.js'
 
@@ -43,8 +44,8 @@ export interface CapabilityReport {
   identity: {
     name?: string
     roles: string[]
-    isStaff: boolean
-    isAdmin: boolean
+    canAccessNewsroom: boolean
+    isPlatformAdmin: boolean
     subscriptionTier?: string
   }
   /** Concrete counts that make guidance specific. */
@@ -53,17 +54,20 @@ export interface CapabilityReport {
   capabilities: Capability[]
 }
 
-const isPublisher = (a: AccountUser) => a.roles.includes('publisher') || a.roles.includes('administrator')
+// Capability-based, not role-based: these used to test for hardcoded slugs
+// ('publisher', 'editor', 'legal_reviewer', 'administrator'), which no longer
+// exist as a fixed set. They now follow whatever a superadmin configures.
+const isPublisher = (a: AccountUser) => accountCan(a, 'content.publish')
 const isReviewer = (a: AccountUser) =>
-  a.roles.includes('editor') || a.roles.includes('legal_reviewer') || a.roles.includes('administrator')
+  accountCanAny(a, ['content.editorial_review', 'content.legal_review'])
 
 /** The capability list for a signed-in account. Pure: needs only the account + counts. */
 function buildCapabilities(
   account: AccountUser,
   counts: { manageableHorses: number; manageableParties: number },
 ): Capability[] {
-  const staff = isStaff(account)
-  const admin = isAdmin(account)
+  const staff = canAccessNewsroom(account)
+  const admin = isPlatformAdmin(account)
   const hasParty = counts.manageableParties > 0
   const premium = account.subscriptionTier === 'premium'
   const orgManage = account.orgMemberships.some(
@@ -215,7 +219,7 @@ export async function getCapabilities(account?: AccountUser): Promise<Capability
   if (!account) {
     return {
       signedIn: false,
-      identity: { roles: ['guest'], isStaff: false, isAdmin: false },
+      identity: { roles: ['guest'], canAccessNewsroom: false, isPlatformAdmin: false },
       stable: { manageableHorses: 0, manageableParties: 0, pendingClaims: 0 },
       organisations: [],
       capabilities: [
@@ -232,7 +236,7 @@ export async function getCapabilities(account?: AccountUser): Promise<Capability
     db.collection('horses').find(),
     db.collection('horsePartyLinks').find(),
   ])
-  const manageableHorses = isStaff(account)
+  const manageableHorses = canAccessNewsroom(account)
     ? horses.length
     : authorisedHorseIds(account, { horses, links }).length
   const pendingClaims = account.partyClaims.filter((c) => c.status === 'pending').length
@@ -242,8 +246,8 @@ export async function getCapabilities(account?: AccountUser): Promise<Capability
     identity: {
       name: account.displayName || account.email,
       roles: account.roles,
-      isStaff: isStaff(account),
-      isAdmin: isAdmin(account),
+      canAccessNewsroom: canAccessNewsroom(account),
+      isPlatformAdmin: isPlatformAdmin(account),
       subscriptionTier: account.subscriptionTier,
     },
     stable: { manageableHorses, manageableParties: partyIds.length, pendingClaims },
@@ -268,8 +272,8 @@ export function summariseCapabilities(account?: AccountUser): string {
     ].join('\n')
   }
 
-  const staff = isStaff(account)
-  const admin = isAdmin(account)
+  const staff = canAccessNewsroom(account)
+  const admin = isPlatformAdmin(account)
   const partyIds = manageablePartyIds(account)
   const can: string[] = ['follow horses', 'place tips', 'register a horse (joins their stable, hidden until staff verify)']
   const gated: string[] = []

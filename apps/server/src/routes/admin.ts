@@ -1,16 +1,22 @@
 import { Router } from 'express';
 import { db } from '../lib/db.js';
 import { withIdentityDefaults, newReaderFields } from '../lib/identity.js';
+import { SUPERADMIN_SLUG } from '../lib/roleRegistry.js';
+import { seedRoles } from '../lib/seedRoles.js';
 
 const router = Router();
 
 /**
- * Bootstrap an administrator. Guarded by SETUP_SECRET (disabled if unset).
- * Idempotent: promotes an existing user or creates a new admin account.
+ * Bootstrap the SUPERADMIN. Guarded by SETUP_SECRET (disabled if unset).
+ * Idempotent: promotes an existing user or creates a new account.
  *
- * Multiple admins are supported — this just ensures `administrator` is present in
- * the target user's roles[]. Adding further admins from the portal is the Phase E
- * staff-grant flow (admin-authenticated, not secret-gated). See RBAC.md §4.4.
+ * This is the only way the first superadmin can exist — every other role grant
+ * requires an already-authenticated account holding `roles.manage`. Superadmin
+ * short-circuits `accountCan` before any registry lookup, so an account seeded
+ * here keeps full access even if the `roles` collection is empty or corrupt.
+ *
+ * Multiple superadmins are supported: this just ensures the slug is present in
+ * the target user's staffRoles[].
  *
  *   POST /api/admin/seed  { secret, email, displayName? }
  */
@@ -35,13 +41,16 @@ router.post('/seed', async (req, res) => {
       ? req.body.displayName.trim()
       : email.split('@')[0];
 
+  // Make sure the superadmin role row exists before anyone is given the slug,
+  // so the Roles screen can render it immediately after seeding.
+  await seedRoles();
+
   const existing = (await db.collection('users').find({ email }))[0];
   if (existing) {
     const acct = withIdentityDefaults({ id: existing._id, ...existing });
-    const roles = acct.roles.includes('administrator')
-      ? acct.roles
-      : [...acct.roles, 'administrator'];
-    await db.collection('users').updateOne(existing._id, { roles });
+    if (!acct.staffRoles.includes(SUPERADMIN_SLUG)) {
+      await db.collection('users').addToSet(String(existing._id), 'staffRoles', SUPERADMIN_SLUG);
+    }
     const fresh = await db.collection('users').findById(existing._id);
     res.json({ user: withIdentityDefaults({ id: fresh!._id, ...fresh }), created: false });
     return;
@@ -52,7 +61,7 @@ router.post('/seed', async (req, res) => {
     displayName,
     createdAt: new Date().toISOString(),
     ...newReaderFields(),
-    roles: ['reader', 'administrator'],
+    staffRoles: [SUPERADMIN_SLUG],
   });
   const doc = await db.collection('users').findById(id);
   res.status(201).json({ user: withIdentityDefaults({ id: doc!._id, ...doc }), created: true });

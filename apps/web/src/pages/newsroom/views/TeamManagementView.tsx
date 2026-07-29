@@ -2,11 +2,9 @@ import { useEffect, useState } from 'react';
 import { Plus, Shield, Clock, Users, Lock, X } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { EmptyState } from '@/components/EmptyState';
-import { STAFF_ROLES } from '@/rbac/roles';
-import type { StaffRole } from '@/rbac/roles';
 import type { StaffUser, PendingGrant } from '@/stores/staffStore';
 import { useRoleStore } from '@/stores/roleStore';
-import { STAFF_ROLE_LABELS } from '../constants';
+import { roleColor, roleIcon } from '@/lib/roleDisplay';
 import { toast } from 'sonner';
 
 interface TeamManagementViewProps {
@@ -16,11 +14,13 @@ interface TeamManagementViewProps {
   teamLoading: boolean;
   teamEmail: string;
   setTeamEmail: (v: string) => void;
-  teamRole: StaffRole;
-  setTeamRole: (v: StaffRole) => void;
+  /** The role SLUG selected in the invite dropdown. */
+  teamRole: string;
+  setTeamRole: (v: string) => void;
   teamBusy: boolean;
   onGrantStaff: () => void;
-  onRevokeStaff: (userId: string, role: StaffRole) => void;
+  onRevokeStaff: (userId: string, slug: string) => void;
+  onCancelInvite: (inviteId: string) => void;
 }
 
 export function TeamManagementView({
@@ -35,8 +35,9 @@ export function TeamManagementView({
   teamBusy,
   onGrantStaff,
   onRevokeStaff,
+  onCancelInvite,
 }: TeamManagementViewProps) {
-  const customRoles = useRoleStore((s) => s.roles);
+  const roles = useRoleStore((s) => s.roles);
   const fetchRoles = useRoleStore((s) => s.fetchRoles);
   const assignRole = useRoleStore((s) => s.assignRole);
   const unassignRole = useRoleStore((s) => s.unassignRole);
@@ -46,18 +47,26 @@ export function TeamManagementView({
     if (canManageTeam) void fetchRoles();
   }, [canManageTeam, fetchRoles]);
 
-  const onAssign = async (userId: string, roleId: string) => {
-    if (!roleId) return;
+  // Default the invite dropdown to the first role once they load.
+  useEffect(() => {
+    if (!teamRole && roles.length > 0) setTeamRole(roles[0].slug);
+  }, [roles, teamRole, setTeamRole]);
+
+  const bySlug = (slug: string) => roles.find((r) => r.slug === slug);
+  const labelFor = (slug: string) => bySlug(slug)?.label ?? slug;
+
+  const onAssign = async (userId: string, slug: string) => {
+    if (!slug) return;
     setRoleBusy(userId);
-    const r = await assignRole(roleId, userId);
+    const r = await assignRole(slug, userId);
     setRoleBusy(null);
     if (r.ok) toast.success('Role assigned.');
     else toast.error(r.error ?? 'Could not assign the role.');
   };
 
-  const onUnassign = async (userId: string, roleId: string) => {
+  const onUnassign = async (userId: string, slug: string) => {
     setRoleBusy(userId);
-    const r = await unassignRole(roleId, userId);
+    const r = await unassignRole(slug, userId);
     setRoleBusy(null);
     if (r.ok) toast.success('Role removed.');
     else toast.error(r.error ?? 'Could not remove the role.');
@@ -67,11 +76,12 @@ export function TeamManagementView({
     return (
       <EmptyState
         icon={Lock}
-        heading="Administrator access required"
-        description="Only administrators can invite team members and manage their staff roles."
+        heading="Permission required"
+        description="You need the “Manage roles” permission to invite team members and change what they can do."
       />
     );
   }
+
   return (
     <div className="space-y-5">
       {/* Header */}
@@ -88,10 +98,10 @@ export function TeamManagementView({
         </div>
       </div>
 
-      {/* Grant / invite */}
+      {/* Invite */}
       <div className="border border-dashed border-border/60 rounded-sm p-4 space-y-3 bg-card">
         <p className="text-[12px] uppercase tracking-[0.12em] font-bold text-muted-foreground">
-          Invite or grant a staff role (by email)
+          Invite someone (by email)
         </p>
         <div className="flex flex-col sm:flex-row gap-2">
           <input
@@ -102,28 +112,31 @@ export function TeamManagementView({
             className="flex-1 px-3 py-2 text-sm border border-input rounded-sm bg-background focus:outline-none focus:ring-1 focus:ring-ring"
             aria-label="Team member email"
           />
+          {/* Every role in the database — including any a superadmin created. */}
           <select
             value={teamRole}
-            onChange={(e) => setTeamRole(e.target.value as StaffRole)}
+            onChange={(e) => setTeamRole(e.target.value)}
             className="px-2 py-2 text-sm border border-input rounded-sm bg-background"
-            aria-label="Staff role"
+            aria-label="Role"
           >
-            {STAFF_ROLES.map((r) => (
-              <option key={r} value={r}>{STAFF_ROLE_LABELS[r]}</option>
+            {roles.length === 0 && <option value="">No roles defined</option>}
+            {roles.map((r) => (
+              <option key={r.slug} value={r.slug}>{r.label}</option>
             ))}
           </select>
           <Button
             size="sm"
             className="bg-primary text-primary-foreground hover:bg-primary/90 gap-1.5 text-sm"
             onClick={onGrantStaff}
-            disabled={teamBusy || !teamEmail.trim()}
+            disabled={teamBusy || !teamEmail.trim() || !teamRole}
           >
-            <Plus size={13} /> {teamBusy ? 'Granting…' : 'Grant'}
+            <Plus size={13} /> {teamBusy ? 'Inviting…' : 'Invite'}
           </Button>
         </div>
         <p className="text-[13px] text-muted-foreground/70 flex items-center gap-1.5">
-          <Shield size={12} /> Granting <span className="font-medium">Administrator</span> lets that
-          person manage the team too. If the email has no account yet, the grant applies automatically on their first sign-in.
+          <Shield size={12} /> If the email has no account yet, the role applies automatically on
+          their first sign-in. Define roles in{' '}
+          <span className="font-medium">Roles &amp; Permissions</span>.
         </p>
       </div>
 
@@ -134,42 +147,49 @@ export function TeamManagementView({
             <Clock size={13} /> Pending invites ({teamPending.length})
           </p>
           <ul className="space-y-2">
-            {teamPending.map((p, i) => (
+            {teamPending.map((p) => (
               <li
-                key={`${p.email}-${p.role}-${i}`}
+                key={p.id}
                 className="flex items-center gap-3 p-3 border border-border/60 rounded-sm bg-card text-sm"
               >
                 <span className="flex-1 text-foreground truncate">{p.email}</span>
                 <span className="text-[12px] uppercase tracking-wide font-bold text-muted-foreground">
-                  {STAFF_ROLE_LABELS[p.role] ?? p.role}
+                  {labelFor(p.role)}
                 </span>
                 <span className="text-[12px] text-muted-foreground/60 italic">applies on sign-in</span>
+                <button
+                  onClick={() => onCancelInvite(p.id)}
+                  className="text-muted-foreground hover:text-destructive transition-colors"
+                  aria-label={`Cancel the invite for ${p.email}`}
+                >
+                  <X size={13} />
+                </button>
               </li>
             ))}
           </ul>
         </div>
       )}
 
-      {/* Staff roster */}
+      {/* Roster */}
       {teamLoading && teamStaff.length === 0 ? (
         <p className="text-sm text-muted-foreground py-8 text-center">Loading team…</p>
       ) : teamStaff.length === 0 ? (
         <EmptyState
           icon={Users}
           heading="No team members yet."
-          description="Invite contributors, editors, legal reviewers and publishers using the form above."
+          description="Invite someone using the form above and give them a role."
         />
       ) : (
         <div className="border border-border/60 rounded-sm overflow-hidden bg-card">
           <div className="px-4 py-2.5 border-b border-border/40 bg-muted/30">
             <p className="text-[12px] uppercase tracking-[0.12em] font-bold text-muted-foreground">
-              Current staff ({teamStaff.length})
+              Current team ({teamStaff.length})
             </p>
           </div>
           <ul className="divide-y divide-border/40">
             {teamStaff.map((u) => {
-              const held = customRoles.filter((r) => (u.customRoleIds ?? []).includes(r.id));
-              const available = customRoles.filter((r) => !(u.customRoleIds ?? []).includes(r.id));
+              const held = u.staffRoles ?? [];
+              const available = roles.filter((r) => !held.includes(r.slug));
               return (
                 <li key={u.userId} className="px-4 py-3 space-y-2">
                   <div className="flex items-center gap-3">
@@ -177,65 +197,46 @@ export function TeamManagementView({
                       <span className="block text-sm font-medium text-foreground truncate">{u.displayName}</span>
                       <span className="block text-sm text-muted-foreground truncate">{u.email}</span>
                     </div>
-                    <div className="flex flex-wrap gap-1.5 justify-end">
-                      {u.staffRoles.map((r) => (
-                        <span
-                          key={r}
-                          className="inline-flex items-center gap-1 text-[12px] uppercase tracking-wide font-bold px-2 py-0.5 rounded-full bg-primary/8 text-primary"
-                        >
-                          {STAFF_ROLE_LABELS[r] ?? r}
-                          <button
-                            onClick={() => onRevokeStaff(u.userId, r)}
-                            className="hover:text-destructive transition-colors"
-                            aria-label={`Revoke ${r}`}
-                          >
-                            <X size={11} />
-                          </button>
-                        </span>
-                      ))}
-                    </div>
                   </div>
 
-                  {/* Custom roles — the admin-defined layer on top of the staff role */}
-                  {customRoles.length > 0 && (
-                    <div className="flex items-center gap-1.5 flex-wrap pl-0.5">
-                      {held.map((r) => (
+                  <div className="flex items-center gap-1.5 flex-wrap">
+                    {held.map((slug) => {
+                      const r = bySlug(slug);
+                      const color = roleColor(r);
+                      return (
                         <span
-                          key={r.id}
-                          className="inline-flex items-center gap-1 text-[12px] font-semibold px-2 py-0.5 rounded-full border"
-                          style={{
-                            borderColor: `${r.color ?? '#475569'}55`,
-                            background: `${r.color ?? '#475569'}14`,
-                            color: r.color ?? 'hsl(var(--muted-foreground))',
-                          }}
+                          key={slug}
+                          className="inline-flex items-center gap-1.5 text-[12px] font-semibold px-2 py-0.5 rounded-full border"
+                          style={{ borderColor: `${color}55`, background: `${color}14`, color }}
                         >
-                          {r.label}
+                          {roleIcon(r?.icon, 11)}
+                          {r?.label ?? slug}
                           <button
-                            onClick={() => onUnassign(u.userId, r.id)}
+                            onClick={() => onUnassign(u.userId, slug)}
                             disabled={roleBusy === u.userId}
                             className="hover:text-destructive transition-colors"
-                            aria-label={`Remove ${r.label} from ${u.displayName}`}
+                            aria-label={`Remove ${r?.label ?? slug} from ${u.displayName}`}
                           >
                             <X size={11} />
                           </button>
                         </span>
-                      ))}
-                      {available.length > 0 && (
-                        <select
-                          value=""
-                          disabled={roleBusy === u.userId}
-                          onChange={(e) => void onAssign(u.userId, e.target.value)}
-                          className="text-[12px] px-2 py-0.5 rounded-full border border-dashed border-input bg-background text-muted-foreground hover:border-primary/50 cursor-pointer"
-                          aria-label={`Assign a custom role to ${u.displayName}`}
-                        >
-                          <option value="">+ Add role…</option>
-                          {available.map((r) => (
-                            <option key={r.id} value={r.id}>{r.label}</option>
-                          ))}
-                        </select>
-                      )}
-                    </div>
-                  )}
+                      );
+                    })}
+                    {available.length > 0 && (
+                      <select
+                        value=""
+                        disabled={roleBusy === u.userId}
+                        onChange={(e) => void onAssign(u.userId, e.target.value)}
+                        className="text-[12px] px-2 py-0.5 rounded-full border border-dashed border-input bg-background text-muted-foreground hover:border-primary/50 cursor-pointer"
+                        aria-label={`Assign a role to ${u.displayName}`}
+                      >
+                        <option value="">+ Add role…</option>
+                        {available.map((r) => (
+                          <option key={r.slug} value={r.slug}>{r.label}</option>
+                        ))}
+                      </select>
+                    )}
+                  </div>
                 </li>
               );
             })}

@@ -1,15 +1,14 @@
 import { Bell, Plus, Sparkles } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { can } from '@/lib/permissions';
-import type { UserRole } from '@/stores/authStore';
-import type { RoleConfig, SideNavItem } from '../constants';
+import type { SideNavItem } from '../constants';
 
 interface NewsroomTopBarProps {
   visibleNav: SideNavItem[];
   activeNav: string;
   pendingReview: number;
-  currentRoleConfig: RoleConfig;
-  userRole: UserRole | null;
+  roleLabel: string;
+  accentColor: string;
   setActiveNav: (nav: string) => void;
   onOpenHorseForm: () => void;
   onOpenPartyForm: () => void;
@@ -23,8 +22,8 @@ export function NewsroomTopBar({
   visibleNav,
   activeNav,
   pendingReview,
-  currentRoleConfig,
-  userRole,
+  roleLabel,
+  accentColor,
   setActiveNav,
   onOpenHorseForm,
   onOpenPartyForm,
@@ -65,10 +64,9 @@ export function NewsroomTopBar({
 
         <div
           className="hidden md:flex items-center gap-1.5 px-2.5 py-1 rounded-full text-[12px] font-bold uppercase tracking-wider"
-          style={{ background: `${currentRoleConfig.color}18`, color: currentRoleConfig.color }}
+          style={{ background: `${accentColor}18`, color: accentColor }}
         >
-          {currentRoleConfig.icon}
-          {currentRoleConfig.label}
+          {roleLabel}
         </div>
 
         {/* Quick action buttons per active tab */}
@@ -132,7 +130,7 @@ export function NewsroomTopBar({
           </Button>
         )}
 
-        {activeNav !== 'horses' && activeNav !== 'parties' && activeNav !== 'media-production-system' && activeNav !== 'racing-production-system' && activeNav !== 'bulletin-templates' && can(userRole, 'content.draft.create') && (
+        {activeNav !== 'horses' && activeNav !== 'parties' && activeNav !== 'media-production-system' && activeNav !== 'racing-production-system' && activeNav !== 'bulletin-templates' && can('content.draft.create') && (
           <>
             <Button
               size="sm"

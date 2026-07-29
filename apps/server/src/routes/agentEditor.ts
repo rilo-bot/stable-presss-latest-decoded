@@ -12,7 +12,7 @@ import { Router, raw } from 'express'
 import { streamText, generateObject, convertToModelMessages, stepCountIs, type UIMessage } from 'ai'
 import { z } from 'zod'
 import { attachAccount } from '../lib/auth.js'
-import { isStaff } from '../lib/rbac.js'
+import { canAccessNewsroom } from '../lib/rbac.js'
 import { getAgentModel, isAgentConfigured } from '../lib/agent/provider.js'
 import { buildEditorSystemPrompt, type EditorContext } from '../lib/agent/editorPrompt.js'
 import { buildEditorTools } from '../lib/agent/editorTools.js'
@@ -28,7 +28,7 @@ const router = Router()
 // which gates the editor itself the same way.)
 router.use(attachAccount)
 router.use((req, res, next) => {
-  if (!isStaff(req.account)) {
+  if (!canAccessNewsroom(req.account)) {
     res.status(403).json({ error: 'Staff access required.' })
     return
   }

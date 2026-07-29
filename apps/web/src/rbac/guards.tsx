@@ -7,8 +7,7 @@
 import type { ReactNode } from 'react';
 import { Navigate, Outlet } from 'react-router-dom';
 import { useAuthStore } from '@/stores/authStore';
-import type { Role } from '@/rbac/roles';
-import { isStaffRole } from '@/rbac/roles';
+import type { PermissionAction } from '@/lib/permissions';
 import type { SubscriptionTier } from '@/rbac/entitlement';
 import { tierAtLeast } from '@/rbac/entitlement';
 
@@ -29,24 +28,36 @@ export function RequireAuth({ children }: GuardProps) {
   return render(children);
 }
 
-/** Must hold a staff/editorial role. Anonymous → /login; non-staff → redirect. */
-export function RequireStaff({ children, redirect = '/' }: GuardProps) {
+/**
+ * Must hold a specific permission. Anonymous → /login; otherwise → redirect.
+ *
+ * Replaces the old `RequireRole roles={[...]}`, which matched hardcoded slugs
+ * and so could never be satisfied by a role a superadmin defined at runtime.
+ */
+export function RequirePermission({
+  permission,
+  children,
+  redirect = '/',
+}: GuardProps & { permission: PermissionAction }) {
   const user = useAuthStore((s) => s.currentUser);
+  const allowed = useAuthStore(
+    (s) => s.currentUser?.access?.permissions.includes(permission) ?? false,
+  );
   if (!user) return <Navigate to="/login" replace />;
-  if (!user.roles.some(isStaffRole)) return <Navigate to={redirect} replace />;
+  if (!allowed) return <Navigate to={redirect} replace />;
   return render(children);
 }
 
-/** Must hold at least one of the given global roles. */
-export function RequireRole({
-  roles,
-  children,
-  redirect = '/',
-}: GuardProps & { roles: Role[] }) {
-  const user = useAuthStore((s) => s.currentUser);
-  if (!user) return <Navigate to="/login" replace />;
-  if (!roles.some((r) => user.roles.includes(r))) return <Navigate to={redirect} replace />;
-  return render(children);
+/**
+ * Must be able to reach newsroom tooling. Was "holds any staff role"; now the
+ * `newsroom.access` permission, which a superadmin controls per role.
+ */
+export function RequireStaff({ children, redirect = '/' }: GuardProps) {
+  return (
+    <RequirePermission permission="newsroom.access" redirect={redirect}>
+      {children}
+    </RequirePermission>
+  );
 }
 
 /** Must meet a minimum subscription tier (entitlement gate for premium pages). */

@@ -27,7 +27,6 @@ export default function PodcastWorkflow() {
 
   const currentUser = useAuthStore((s) => s.currentUser);
   const navigate = useNavigate();
-  const role = currentUser?.role;
 
   const episodes = usePodcastStore((s) => s.episodes);
 
@@ -36,12 +35,12 @@ export default function PodcastWorkflow() {
   const [filterStatus, setFilterStatus] = useState<EpisodeStatus | 'all'>('all');
 
   const hasPodcastAccess =
-    can(role, 'podcast.manage') ||
-    can(role, 'podcast.episode.create') ||
-    can(role, 'podcast.episode.approve') ||
-    can(role, 'podcast.episode.edit_any');
+    can('podcast.manage') ||
+    can('podcast.episode.create') ||
+    can('podcast.episode.approve') ||
+    can('podcast.episode.edit_any');
 
-  const canCreate = can(role, 'podcast.episode.create');
+  const canCreate = can('podcast.episode.create');
 
   const filteredEpisodes = useMemo(() => {
     const base =
@@ -73,7 +72,8 @@ export default function PodcastWorkflow() {
             Restricted Access
           </h2>
           <p className="text-sm text-muted-foreground max-w-sm mb-6">
-            Podcast workflow management is available to Podcast Producers, Editors, and Administrators.
+            Podcast workflow management needs a role with podcast permissions. Ask an administrator
+            to grant you one.
           </p>
           <Button variant="outline" onClick={() => navigate('/newsroom')}>
             Return to Newsroom

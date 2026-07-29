@@ -1,6 +1,6 @@
 import { Router } from 'express';
 import { db } from '../lib/db.js';
-import { isStaff } from '../lib/rbac.js';
+import { canAccessNewsroom } from '../lib/rbac.js';
 import { manageablePartyIds } from '../lib/scope.js';
 
 type WithMongoId = { _id: string; [key: string]: unknown };
@@ -14,7 +14,7 @@ const router = Router();
 router.get('/', async (req, res) => {
   const items = await db.collection('parties').find();
   const account = req.account;
-  if (isStaff(account)) {
+  if (canAccessNewsroom(account)) {
     res.json(items.map(project));
     return;
   }
@@ -55,7 +55,7 @@ router.post('/', async (req, res) => {
     ...body,
     createdByUserId: account?.id,
     // Members create provisional (hidden) parties; staff create verified register entries.
-    verificationStatus: isStaff(account) ? 'verified' : 'unverified',
+    verificationStatus: canAccessNewsroom(account) ? 'verified' : 'unverified',
     createdAt: now,
     updatedAt: now,
   };
@@ -92,7 +92,7 @@ router.put('/:id', async (req, res) => {
   delete (updateData as { createdByUserId?: unknown }).createdByUserId; // never client-settable
   // Members editing their own provisional profile can't self-promote to public;
   // only staff verification (the claim flow) flips verificationStatus.
-  if (!isStaff(req.account)) delete (updateData as { verificationStatus?: unknown }).verificationStatus;
+  if (!canAccessNewsroom(req.account)) delete (updateData as { verificationStatus?: unknown }).verificationStatus;
 
   const found = await db.collection('parties').updateOne(req.params.id, updateData);
   if (!found) {

@@ -20,7 +20,8 @@ export function createStoryTransport() {
           const parsed = JSON.parse(body);
           parsed.storyContext = {
             displayName: currentUser?.displayName,
-            role: currentUser?.role,
+            // A display label for the prompt; capabilities come from the server.
+            role: currentUser?.access?.roles?.[0]?.label,
           };
           body = JSON.stringify(parsed);
         } catch {

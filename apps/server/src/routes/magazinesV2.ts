@@ -20,13 +20,14 @@ import crypto from 'crypto';
 import { Router, type RequestHandler } from 'express';
 import { db } from '../lib/db.js';
 import { attachAccount } from '../lib/auth.js';
-import { isStaff } from '../lib/rbac.js';
+import { canAccessNewsroom } from '../lib/rbac.js';
 import { MAGAZINE_V2_ENABLED, PAGE_W, PAGE_H, MAX_PAGES_PER_ISSUE, MAX_SOURCE_BYTES, ALLOWED_SOURCE_MIME, sourceExtForMime, MAX_IMAGE_BYTES, ALLOWED_IMAGE_MIME, imageExtFor } from '../lib/magazineV2/config.js';
 import { COL } from '../lib/magazineV2/collections.js';
 import { rateLimit } from '../lib/rateLimit.js';
 import { safePublicImageUrl } from '../lib/magazineV2/url.js';
 import { roleOnMagazine, isOwner, canEditPage, editablePageIds, collaboratorsOf, type V2Collaborator } from '../lib/magazineV2/access.js';
-import { withIdentityDefaults, STAFF_ROLES } from '../lib/identity.js';
+import { withIdentityDefaults, type IdentityUser } from '../lib/identity.js';
+import { identityCan } from '../lib/effectiveAccess.js';
 import { normalizeElements, normalizeElementPatch } from '../lib/magazineV2/writePipeline.js';
 import { MAX_ELEMENTS_PER_PAGE, type MagazineElement } from '../lib/magazineV2/model.js';
 import { isAgentConfigured } from '../lib/agent/provider.js';
@@ -74,7 +75,7 @@ router.use((_req, res, next) => {
 });
 router.use(attachAccount);
 router.use((req, res, next) => {
-  if (!isStaff(req.account)) {
+  if (!canAccessNewsroom(req.account)) {
     res.status(403).json({ error: 'Staff access required.' });
     return;
   }
@@ -1048,9 +1049,11 @@ router.patch('/issues/:id/pages/:pageId/select', async (req, res) => {
 // Manage/edit capability is derived from the collaborator's STAFF role; the
 // sharer only chooses WHICH pages they may edit ('all' or specific page ids).
 
-const MAG_EDITOR_ROLES = ['administrator', 'publisher', 'editor'];
-const magRoleForStaff = (roles: string[]): 'editor' | 'contributor' =>
-  roles.some((r) => MAG_EDITOR_ROLES.includes(r)) ? 'editor' : 'contributor';
+// Per-magazine collaborator badge (MagRole), not a staff role — grants nothing
+// on its own. Derived from a permission because `user.roles[]` no longer carries
+// staff slugs; see the twin in routes/magazines.ts.
+const magRoleForStaff = async (identity: IdentityUser): Promise<'editor' | 'contributor'> =>
+  (await identityCan(identity, 'content.draft.edit_any')) ? 'editor' : 'contributor';
 
 // add / update a collaborator (by email) — staff accounts only
 router.post('/issues/:id/collaborators', async (req, res) => {
@@ -1075,7 +1078,7 @@ router.post('/issues/:id/collaborators', async (req, res) => {
     return;
   }
   const acct = withIdentityDefaults({ id: existing._id, ...existing });
-  if (!acct.roles.some((r) => (STAFF_ROLES as readonly string[]).includes(r))) {
+  if (!(await identityCan(acct, 'newsroom.access'))) {
     res.status(400).json({ error: 'That person is not a staff member, so they cannot be added.' });
     return;
   }
@@ -1090,7 +1093,7 @@ router.post('/issues/:id/collaborators', async (req, res) => {
     userId: acct.id,
     email: acct.email,
     displayName: acct.displayName,
-    role: magRoleForStaff(acct.roles),
+    role: await magRoleForStaff(acct),
     pageIds,
   };
   const others = collaboratorsOf(doc).filter((c) => c.userId !== acct.id);

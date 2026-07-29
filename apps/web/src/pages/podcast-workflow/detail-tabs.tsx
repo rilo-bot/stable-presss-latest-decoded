@@ -2,7 +2,6 @@ import { Users, CheckCircle, X, Plus, Trash, ArrowRight, Clock, Calendar } from 
 import { toast } from 'sonner';
 
 import { can } from '@/lib/permissions';
-import type { UserRole } from '@/stores/authStore';
 import type { DistributionChannel, PodcastEpisode, EpisodeGuest } from '@/types/podcast';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -21,7 +20,6 @@ type DetailTab = 'overview' | 'guests' | 'distribution' | 'review';
 
 export function OverviewTab({
   liveEpisode,
-  role,
   isOwn,
   descEdit,
   setDescEdit,
@@ -32,7 +30,6 @@ export function OverviewTab({
   handleDelete,
 }: {
   liveEpisode: PodcastEpisode;
-  role: UserRole | undefined;
   isOwn: boolean;
   descEdit: string;
   setDescEdit: React.Dispatch<React.SetStateAction<string>>;
@@ -43,7 +40,7 @@ export function OverviewTab({
   handleDelete: () => void;
 }) {
   const canEdit =
-    (can(role, 'podcast.episode.edit_own') || can(role, 'podcast.episode.edit_any')) && isOwn;
+    (can('podcast.episode.edit_own') || can('podcast.episode.edit_any')) && isOwn;
   return (
     <>
       {canEdit ? (
@@ -81,7 +78,7 @@ export function OverviewTab({
         <p className="text-[10px] uppercase tracking-[0.08em] text-muted-foreground mb-2">
           Description
         </p>
-        {(can(role, 'podcast.episode.edit_own') || can(role, 'podcast.episode.edit_any')) && isOwn ? (
+        {(can('podcast.episode.edit_own') || can('podcast.episode.edit_any')) && isOwn ? (
           <div className="space-y-2">
             <Textarea
               value={descEdit}
@@ -142,7 +139,6 @@ export function OverviewTab({
 export function GuestsTab({
   liveEpisode,
   liveGuests,
-  role,
   isOwn,
   guestForm,
   setGuestForm,
@@ -153,7 +149,6 @@ export function GuestsTab({
 }: {
   liveEpisode: PodcastEpisode;
   liveGuests: EpisodeGuest[];
-  role: UserRole | undefined;
   isOwn: boolean;
   guestForm: { name: string; title: string; bio: string };
   setGuestForm: React.Dispatch<React.SetStateAction<{ name: string; title: string; bio: string }>>;
@@ -195,7 +190,7 @@ export function GuestsTab({
                   )}
                 </div>
               </div>
-              {can(role, 'podcast.guests.manage') && isOwn && (
+              {can('podcast.guests.manage') && isOwn && (
                 <button
                   aria-label={`Remove ${guest.name}`}
                   onClick={() => {
@@ -212,7 +207,7 @@ export function GuestsTab({
         </div>
       )}
 
-      {can(role, 'podcast.guests.manage') && isOwn && (
+      {can('podcast.guests.manage') && isOwn && (
         <div className="border border-border rounded-sm p-4 bg-card space-y-3">
           <p className="text-[10px] uppercase tracking-[0.08em] text-muted-foreground">
             Add Guest
@@ -280,13 +275,11 @@ export function GuestsTab({
 export function DistributionTab({
   liveEpisode,
   liveChannels,
-  role,
   isOwn,
   handleToggleChannel,
 }: {
   liveEpisode: PodcastEpisode;
   liveChannels: DistributionChannel[];
-  role: UserRole | undefined;
   isOwn: boolean;
   handleToggleChannel: (ch: DistributionChannel) => void;
 }) {
@@ -306,7 +299,7 @@ export function DistributionTab({
           // (edit_any, or your own via edit_own). Gate on isOwn so the toggle
           // isn't enabled into a silent 403 for other producers' episodes.
           const canToggle =
-            can(role, 'podcast.distribution.manage') && isOwn && liveEpisode.status !== 'published';
+            can('podcast.distribution.manage') && isOwn && liveEpisode.status !== 'published';
           return (
             <button
               key={ch.id}
@@ -359,7 +352,6 @@ export function DistributionTab({
 
 export function ReviewTab({
   liveEpisode,
-  role,
   reviewNote,
   setReviewNote,
   handleSaveNote,
@@ -368,7 +360,6 @@ export function ReviewTab({
   setTab,
 }: {
   liveEpisode: PodcastEpisode;
-  role: UserRole | undefined;
   reviewNote: string;
   setReviewNote: React.Dispatch<React.SetStateAction<string>>;
   handleSaveNote: () => void;
@@ -385,7 +376,7 @@ export function ReviewTab({
         </p>
       </div>
 
-      {can(role, 'podcast.episode.approve') ? (
+      {can('podcast.episode.approve') ? (
         <div className="space-y-3">
           <Textarea
             value={reviewNote}
@@ -405,7 +396,7 @@ export function ReviewTab({
         </div>
       )}
 
-      {liveEpisode.status === 'in_review' && can(role, 'podcast.episode.approve') && (
+      {liveEpisode.status === 'in_review' && can('podcast.episode.approve') && (
         <div className="flex gap-2 pt-2">
           <Button
             className="flex-1 bg-primary text-primary-foreground"

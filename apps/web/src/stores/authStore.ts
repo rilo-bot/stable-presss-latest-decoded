@@ -1,16 +1,8 @@
 import { create } from 'zustand';
 import { persist } from 'zustand/middleware';
 import { apiUrl } from '@/lib/api';
-import type { Role, StaffRole, PartyRole, OrgRole } from '@/rbac/roles';
-import { primaryStaffRole } from '@/rbac/roles';
+import type { Role, PartyRole, OrgRole } from '@/rbac/roles';
 import type { SubscriptionTier } from '@/rbac/entitlement';
-
-/**
- * Back-compat alias: the six editorial roles. Existing UI (Newsroom, KanbanColumn,
- * permission matrix) types against this. A reader/party with no staff role has
- * `role: undefined`.
- */
-export type UserRole = StaffRole;
 
 /** A self-claimed racing identity, pending until verified. See RBAC.md §7. */
 export interface PartyClaim {
@@ -37,19 +29,32 @@ export interface OrgMembership {
   orgRole: OrgRole;
 }
 
+/** One role the user holds, as defined in the database. */
+export interface AssignedRole {
+  slug: string;
+  label: string;
+  color?: string;
+  /** A lucide icon NAME — resolved to a component by lib/roleIcons.ts. */
+  icon?: string;
+}
+
 /**
- * What the signed-in user may actually do, resolved SERVER-side across every
- * role they hold (built-in staff roles unioned together, plus any admin-defined
- * custom roles). `can()` reads this rather than re-deriving a single role from
- * the matrix — see lib/permissions.ts.
+ * What the signed-in user may actually do, resolved SERVER-side as the union
+ * across every role they hold. This is the ONLY source of permission truth on
+ * the client — there is no local role matrix any more, because roles are rows
+ * in a database that a superadmin edits at runtime.
  */
 export interface ResolvedAccess {
   /** Granted action ids, e.g. 'content.publish'. */
   permissions: string[];
   /** Navigation surfaces the user may open, e.g. 'analytics'. */
   modules: string[];
-  staffRoles: StaffRole[];
-  customRoles: Array<{ id: string; label: string; color?: string }>;
+  /** Kanban columns the user may see (was the static `allowedStatuses`). */
+  workflowStages: string[];
+  /** Unrestricted access. Rendered as a badge; enforcement is server-side. */
+  isSuperAdmin: boolean;
+  /** The roles themselves, for display (label, colour, icon). */
+  roles: AssignedRole[];
 }
 
 export interface AuthUser {
@@ -63,16 +68,10 @@ export interface AuthUser {
   subscriptionTier: SubscriptionTier;
   partyClaims: PartyClaim[];
   orgMemberships: OrgMembership[];
-  /** Admin-defined custom roles assigned to this account. */
-  customRoleIds: string[];
-  /** Server-resolved effective access. Absent only on legacy/partial payloads. */
+  /** DYNAMIC axis — role slugs into the server's `roles` collection. */
+  staffRoles: string[];
+  /** Server-resolved effective access. Absent only on a partial payload. */
   access?: ResolvedAccess;
-  /**
-   * Derived: highest staff role, or undefined for non-staff. Kept for cosmetic
-   * UI (the sidebar's role badge, colours). NOT a permission source any more —
-   * it silently collapsed multi-role users to one role.
-   */
-  role?: UserRole;
 }
 
 /**
@@ -91,8 +90,9 @@ function hydrateUser(raw: any, previous?: AuthUser | null): AuthUser {
     ? {
         permissions: Array.isArray(rawAccess.permissions) ? rawAccess.permissions : [],
         modules: Array.isArray(rawAccess.modules) ? rawAccess.modules : [],
-        staffRoles: Array.isArray(rawAccess.staffRoles) ? rawAccess.staffRoles : [],
-        customRoles: Array.isArray(rawAccess.customRoles) ? rawAccess.customRoles : [],
+        workflowStages: Array.isArray(rawAccess.workflowStages) ? rawAccess.workflowStages : [],
+        isSuperAdmin: rawAccess.isSuperAdmin === true,
+        roles: Array.isArray(rawAccess.roles) ? rawAccess.roles : [],
       }
     : previous?.access;
 
@@ -105,9 +105,8 @@ function hydrateUser(raw: any, previous?: AuthUser | null): AuthUser {
     subscriptionTier: (raw?.subscriptionTier as SubscriptionTier) ?? 'free',
     partyClaims: Array.isArray(raw?.partyClaims) ? raw.partyClaims : [],
     orgMemberships: Array.isArray(raw?.orgMemberships) ? raw.orgMemberships : [],
-    customRoleIds: Array.isArray(raw?.customRoleIds) ? raw.customRoleIds : [],
+    staffRoles: Array.isArray(raw?.staffRoles) ? raw.staffRoles : [],
     access,
-    role: primaryStaffRole(roles),
   };
 }
 

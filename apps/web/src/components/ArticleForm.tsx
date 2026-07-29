@@ -25,7 +25,6 @@ import type { Article } from '@/types/article';
 import { TIER_ORDER, TIER_LABELS } from '@/rbac/entitlement';
 import type { SubscriptionTier } from '@/rbac/entitlement';
 import type { KanbanStatus } from '@/components/KanbanColumn';
-import type { UserRole } from '@/stores/authStore';
 import { can } from '@/lib/permissions';
 import { X, Check, Lock, Newspaper, BarChart2, Mic, RotateCcw } from 'lucide-react';
 import { toast } from 'sonner';
@@ -49,7 +48,6 @@ interface ArticleFormProps {
   onClose: () => void;
   editArticle?: Article | null;
   defaultStatus?: KanbanStatus;
-  userRole?: UserRole | null;
 }
 
 // Full list — shown for editors/admins/publishers
@@ -111,7 +109,6 @@ export function ArticleForm({
   onClose,
   editArticle,
   defaultStatus = 'draft',
-  userRole = null,
 }: ArticleFormProps) {
   const addArticle = useArticleStore((s) => s.addArticle);
   const updateArticle = useArticleStore((s) => s.updateArticle);
@@ -132,7 +129,7 @@ export function ArticleForm({
   const [saving, setSaving] = useState(false);
   const [draftRestored, setDraftRestored] = useState(false);
 
-  const isContributor = userRole === 'contributor';
+  const isContributor = !can('content.draft.edit_any');
   const statusOptions = isContributor ? CONTRIBUTOR_STATUS_OPTIONS : ALL_STATUS_OPTIONS;
 
   // Contributors always get their display name auto-filled as byline

@@ -1,27 +1,27 @@
 /**
  * Stable Press — Role Permission System
  *
- * `can(role, action)` is the gate every UI affordance goes through.
+ * `can(action)` is the gate every UI affordance goes through.
  *
- * HOW IT RESOLVES (changed — read this before editing):
- * The answer now comes from `currentUser.access.permissions`, the effective set
- * the SERVER resolves by unioning every role the user holds — all their built-in
- * staff roles plus any admin-defined custom roles. The local `PERMISSIONS`
- * matrix below is only a fallback for sessions that predate that payload.
+ * THERE IS NO LOCAL ROLE MATRIX. Roles are rows in a database that a superadmin
+ * edits at runtime, so the client cannot know what a role grants — it can only
+ * be told. Every answer comes from `currentUser.access`, which the server
+ * resolves as the union across every role the user holds.
  *
- * The `role` argument is therefore advisory and kept purely so the ~40 existing
- * call sites don't have to change. It is NOT what decides the answer. Two
- * reasons that matters:
- *   1. It used to be the single highest-ranked role, so a user holding
- *      podcast_producer + editor silently lost every producer-only permission.
- *   2. Custom roles have no representation in a single `UserRole` value at all.
+ * Consequences worth knowing:
+ *   - `can()` takes only an action. It used to take a role as well, which was
+ *     the single highest-ranked one — so a user holding podcast_producer +
+ *     editor silently lost every producer-only permission.
+ *   - No access payload means NO permissions. Fails closed by construction.
+ *   - This is a UI-affordance gate, never a security boundary. The server
+ *     enforces the same permissions independently on every route.
  *
- * Reactivity: callers derive `role` from `currentUser`, so they are already
- * subscribed to the store and re-render — and re-evaluate `can()` — whenever the
- * session refreshes. New code should prefer the `useCan` hook below.
+ * Reactivity: call sites read `currentUser` from the store and so re-render
+ * when the session refreshes. `useCan` subscribes explicitly and is preferred
+ * in new code.
  */
 
-import { useAuthStore, type UserRole } from '@/stores/authStore';
+import { useAuthStore } from '@/stores/authStore';
 
 // ── Action catalogue ────────────────────────────────────────────────────────
 
@@ -55,6 +55,11 @@ export type PermissionAction =
   | 'workflow.view_all_columns'     // See every Kanban column
   | 'workflow.view_own_columns'     // See only role-scoped columns
 
+  // Platform access — replace the old hardcoded role-family tests.
+  | 'newsroom.access'               // Reach newsroom tooling (was: holds any staff role)
+  | 'platform.admin'                // Platform-wide override (was: is administrator)
+  | 'roles.manage'                  // Create roles, set permissions, assign them
+
   // Team & admin
   | 'team.view'                     // View team member list
   | 'team.manage'                   // Invite / remove team members
@@ -76,254 +81,72 @@ export type PermissionAction =
   | 'podcast.distribution.manage'   // Toggle distribution channels per episode
   | 'podcast.episode.delete';       // Delete a draft or unpublished episode
 
-// ── Permission matrix ───────────────────────────────────────────────────────
+// The local role→permission matrix that used to live here is GONE. Roles are
+// rows in the database now, so the only correct answer comes from the server-
+// resolved set on the session (see authStore.ResolvedAccess).
 
-const PERMISSIONS: Record<UserRole, PermissionAction[]> = {
-  contributor: [
-    'content.draft.create',
-    'content.draft.edit_own',
-    'content.submit',
-    'media.upload_own',
-    'compensation.view_own',
-    'workflow.view_own_columns',
-  ],
-
-  editor: [
-    // Article workflow
-    'content.draft.create',
-    'content.draft.edit_own',
-    'content.draft.edit_any',
-    'content.submit',
-    'content.editorial_review',
-    'content.send_revision',
-    'content.legal_review',
-    'content.compliance',
-    'content.approve',
-    'content.publisher_review',
-    'content.schedule',
-    'content.publish',
-    'content.newsletter',
-    'content.bulletin',
-    // Media
-    'media.upload_own',
-    'media.manage_all',
-    // Compensation & access
-    'compensation.view_all',
-    'workflow.view_all_columns',
-    'team.view',
-    'analytics.view',
-    'settings.view',
-    // Podcast — editors can approve & oversee
-    'podcast.episode.edit_any',
-    'podcast.episode.approve',
-    'podcast.episode.publish',
-    'podcast.distribution.manage',
-  ],
-
-  legal_reviewer: [
-    'content.draft.edit_any',
-    'content.legal_review',
-    'content.compliance',
-    'content.approve',
-    'media.upload_own',
-    'workflow.view_own_columns',
-    'analytics.view',
-  ],
-
-  podcast_producer: [
-    // Podcast — full production workflow
-    'podcast.manage',
-    'podcast.episode.create',
-    'podcast.episode.edit_own',
-    'podcast.audio.upload',
-    'podcast.guests.manage',
-    'podcast.episode.schedule',
-    'podcast.episode.submit_review',
-    'podcast.distribution.manage',
-    'podcast.episode.delete',
-    // Media for audio & cover art
-    'media.upload_own',
-    'media.manage_all',
-    // Visibility
-    'workflow.view_own_columns',
-    'analytics.view',
-  ],
-
-  publisher: [
-    'content.draft.edit_any',
-    'content.approve',
-    'content.publisher_review',
-    'content.schedule',
-    'content.publish',
-    'content.newsletter',
-    'content.bulletin',
-    'media.manage_all',
-    'compensation.view_all',
-    'compensation.manage',
-    'workflow.view_all_columns',
-    'team.view',
-    'analytics.view',
-    'settings.view',
-    'settings.manage',
-    // Podcast — publish authority
-    'podcast.episode.approve',
-    'podcast.episode.publish',
-    'podcast.distribution.manage',
-  ],
-
-  administrator: [
-    // Article workflow — all
-    'content.draft.create',
-    'content.draft.edit_own',
-    'content.draft.edit_any',
-    'content.submit',
-    'content.editorial_review',
-    'content.send_revision',
-    'content.legal_review',
-    'content.compliance',
-    'content.approve',
-    'content.publisher_review',
-    'content.schedule',
-    'content.publish',
-    'content.newsletter',
-    'content.bulletin',
-    // Media — all
-    'media.upload_own',
-    'media.manage_all',
-    // Compensation — all
-    'compensation.view_own',
-    'compensation.view_all',
-    'compensation.manage',
-    // Team & settings — all
-    'workflow.view_all_columns',
-    'team.view',
-    'team.manage',
-    'analytics.view',
-    'settings.view',
-    'settings.manage',
-    // Podcast — all
-    'podcast.manage',
-    'podcast.episode.create',
-    'podcast.episode.edit_own',
-    'podcast.episode.edit_any',
-    'podcast.audio.upload',
-    'podcast.guests.manage',
-    'podcast.episode.schedule',
-    'podcast.episode.submit_review',
-    'podcast.episode.approve',
-    'podcast.episode.publish',
-    'podcast.distribution.manage',
-    'podcast.episode.delete',
-  ],
-};
 
 // ── Public API ──────────────────────────────────────────────────────────────
 
-/** The server-resolved permission set for the signed-in user, if present. */
-function effectivePermissions(): Set<string> | null {
-  const access = useAuthStore.getState().currentUser?.access;
-  return access ? new Set(access.permissions) : null;
-}
-
 /**
- * Check if the signed-in user has a specific permission.
+ * Does the signed-in user hold this permission?
  *
- * `role` is advisory — see the file header. The real answer comes from the
- * server-resolved effective set; the matrix is only consulted for sessions
- * established before that payload existed.
+ * Answered ENTIRELY from `currentUser.access`, the set the server resolved by
+ * unioning every role the user holds. There is no client-side fallback: a role
+ * is a database row, so guessing locally could only ever be wrong. No access
+ * payload means no permissions — fail closed.
  */
-export function can(
-  role: UserRole | null | undefined,
-  action: PermissionAction
-): boolean {
-  const effective = effectivePermissions();
-  if (effective) return effective.has(action);
-  if (!role) return false;
-  return PERMISSIONS[role]?.includes(action) ?? false;
+export function can(action: PermissionAction): boolean {
+  const access = useAuthStore.getState().currentUser?.access;
+  return access ? access.permissions.includes(action) : false;
 }
 
-/** Reactive form of `can()` for new code — subscribes to the auth store. */
+/** Reactive form of `can()` — subscribes, so the UI updates when a role changes. */
 export function useCan(action: PermissionAction): boolean {
-  return useAuthStore((s) => {
-    const access = s.currentUser?.access;
-    if (access) return access.permissions.includes(action);
-    const role = s.currentUser?.role;
-    return role ? (PERMISSIONS[role]?.includes(action) ?? false) : false;
-  });
+  return useAuthStore((s) => s.currentUser?.access?.permissions.includes(action) ?? false);
 }
 
 /**
- * May the user open this navigation surface? Modules are the coarse axis an
- * admin ticks per custom role; actions are the fine one. A module with no
- * server-resolved list falls back to "visible", matching pre-RBAC behaviour.
+ * May the user open this navigation surface? Modules are the coarse axis a
+ * superadmin ticks per role; actions are the fine one. Fails closed.
  */
 export function canOpenModule(moduleId: string): boolean {
   const access = useAuthStore.getState().currentUser?.access;
-  if (!access) return true;
-  return access.modules.includes(moduleId);
+  return access ? access.modules.includes(moduleId) : false;
 }
 
-/**
- * Check multiple permissions — returns true if ALL are satisfied.
- */
-export function canAll(
-  role: UserRole | null | undefined,
-  actions: PermissionAction[]
-): boolean {
-  return actions.every((a) => can(role, a));
+/** Kanban columns this user may see — the third axis, was `allowedStatuses`. */
+export function visibleWorkflowStages(): string[] {
+  return useAuthStore.getState().currentUser?.access?.workflowStages ?? [];
 }
 
-/**
- * Check multiple permissions — returns true if ANY is satisfied.
- */
-export function canAny(
-  role: UserRole | null | undefined,
-  actions: PermissionAction[]
-): boolean {
-  return actions.some((a) => can(role, a));
+/** Unrestricted access. For badges only — enforcement is always server-side. */
+export function isSuperAdmin(): boolean {
+  return useAuthStore.getState().currentUser?.access?.isSuperAdmin === true;
 }
 
-/**
- * Human-readable permission summary for a role.
- */
-export function getRolePermissionSummary(role: UserRole): {
-  canCreate: boolean;
-  canEditAny: boolean;
-  canPublish: boolean;
-  canManageTeam: boolean;
-  canViewCompensation: boolean;
-  canManageMedia: boolean;
-  canManagePodcast: boolean;
-  canProducePodcast: boolean;
-  canApprovePodcast: boolean;
-} {
-  return {
-    canCreate: can(role, 'content.draft.create'),
-    canEditAny: can(role, 'content.draft.edit_any'),
-    canPublish: can(role, 'content.publish'),
-    canManageTeam: can(role, 'team.manage'),
-    canViewCompensation: canAny(role, ['compensation.view_own', 'compensation.view_all']),
-    canManageMedia: can(role, 'media.manage_all'),
-    canManagePodcast: can(role, 'podcast.manage'),
-    canProducePodcast: can(role, 'podcast.episode.create'),
-    canApprovePodcast: can(role, 'podcast.episode.approve'),
-  };
+/** True if ALL the given permissions are held. */
+export function canAll(actions: PermissionAction[]): boolean {
+  return actions.every(can);
 }
 
-// ── Contributor-specific helpers ────────────────────────────────────────────
+/** True if ANY of the given permissions are held. */
+export function canAny(actions: PermissionAction[]): boolean {
+  return actions.some(can);
+}
+
+// ── Ownership-scoped helpers ────────────────────────────────────────────────
 
 /**
- * Returns true if the current user can edit a specific article.
- * Contributors can only edit their own; editors/admins/publishers can edit any.
+ * Can the user edit this specific article? `edit_any` wins outright; otherwise
+ * `edit_own` requires the byline to match.
  */
 export function canEditArticle(
-  role: UserRole | null | undefined,
   articleAuthor: string,
   currentUserDisplayName: string | null | undefined
 ): boolean {
-  if (!role) return false;
-  if (can(role, 'content.draft.edit_any')) return true;
-  if (can(role, 'content.draft.edit_own')) {
+  if (can('content.draft.edit_any')) return true;
+  if (can('content.draft.edit_own')) {
     return articleAuthor === currentUserDisplayName;
   }
   return false;
@@ -334,13 +157,11 @@ export function canEditArticle(
  * Podcast producers can edit their own; editors/admins can edit any.
  */
 export function canEditEpisode(
-  role: UserRole | null | undefined,
   episodeProducer: string | undefined,
   currentUserDisplayName: string | null | undefined
 ): boolean {
-  if (!role) return false;
-  if (can(role, 'podcast.episode.edit_any')) return true;
-  if (can(role, 'podcast.episode.edit_own')) {
+  if (can('podcast.episode.edit_any')) return true;
+  if (can('podcast.episode.edit_own')) {
     return episodeProducer === currentUserDisplayName;
   }
   return false;
@@ -360,11 +181,7 @@ export type EpisodeStatus =
   | 'in_review'
   | 'published';
 
-export function allowedNextStatuses(
-  role: UserRole | null | undefined,
-  currentStatus: EpisodeStatus
-): EpisodeStatus[] {
-  if (!role) return [];
+export function allowedNextStatuses(currentStatus: EpisodeStatus): EpisodeStatus[] {
 
   const transitions: Record<EpisodeStatus, { status: EpisodeStatus; permission: PermissionAction }[]> = {
     draft: [
@@ -390,6 +207,6 @@ export function allowedNextStatuses(
   };
 
   return transitions[currentStatus]
-    .filter((t) => can(role, t.permission))
+    .filter((t) => can(t.permission))
     .map((t) => t.status);
 }

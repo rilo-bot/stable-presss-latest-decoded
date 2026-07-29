@@ -14,7 +14,17 @@
 // See RBAC.md §4.4.
 // ---------------------------------------------------------------------------
 
-import type { StaffRole } from './identity.js'
+/**
+ * The roles a fresh install is seeded with, besides `superadmin`. Nothing
+ * authorizes against this type — it exists so the seed data below stays
+ * exhaustively typed. A superadmin may edit these or add their own at runtime.
+ *
+ * Deliberately NOT seeded: legal_reviewer, podcast_producer and publisher.
+ * Every permission they used to hold still exists in the catalogue below, so a
+ * superadmin can build any of them from the Roles & Permissions console — they
+ * just aren't there out of the box.
+ */
+export type SeedRoleSlug = 'contributor' | 'editor' | 'administrator'
 
 // ── Actions ─────────────────────────────────────────────────────────────────
 
@@ -44,6 +54,10 @@ export type PermissionAction =
   // Workflow board
   | 'workflow.view_all_columns'
   | 'workflow.view_own_columns'
+  // Platform access
+  | 'newsroom.access'
+  | 'platform.admin'
+  | 'roles.manage'
   // Team & admin
   | 'team.view'
   | 'team.manage'
@@ -67,63 +81,91 @@ export type PermissionAction =
 
 export interface PermissionMeta {
   id: PermissionAction
+  /** Full sentence-case name. Used in tooltips and audit copy. */
   label: string
-  group: string
+  /**
+   * The RESOURCE this action operates on — one row in the admin permission
+   * grid. Rows are rendered in first-seen order, so the order of this array is
+   * the order of the screen.
+   */
+  resource: string
+  /**
+   * The action alone, with the resource stripped out ("Create", not "Create
+   * drafts"). This is the checkbox caption; the row already says what it acts
+   * on, so repeating it just makes the grid unreadable.
+   */
+  short: string
   description: string
 }
 
-/** Every grantable action, grouped the way the admin checkbox UI renders them. */
+/**
+ * Every grantable action, ordered as the admin grid renders it: one row per
+ * resource, one checkbox per action within it.
+ */
 export const PERMISSION_CATALOGUE: PermissionMeta[] = [
-  // Content
-  { id: 'content.draft.create', label: 'Create drafts', group: 'Content', description: 'Start a new story draft.' },
-  { id: 'content.draft.edit_own', label: 'Edit own drafts', group: 'Content', description: 'Edit stories they authored.' },
-  { id: 'content.draft.edit_any', label: 'Edit any story', group: 'Content', description: 'Edit stories written by anyone.' },
-  { id: 'content.submit', label: 'Submit for review', group: 'Content', description: 'Push a draft into the editorial queue.' },
-  { id: 'content.editorial_review', label: 'Editorial review', group: 'Content', description: 'Move stories in and out of editorial review.' },
-  { id: 'content.send_revision', label: 'Send back for revision', group: 'Content', description: 'Return a story to its author.' },
-  { id: 'content.legal_review', label: 'Legal review', group: 'Content', description: 'Move stories through legal review.' },
-  { id: 'content.compliance', label: 'Compliance', group: 'Content', description: 'Move stories into the compliance stage.' },
-  { id: 'content.approve', label: 'Approve content', group: 'Content', description: 'Approve a story for publication.' },
-  { id: 'content.publisher_review', label: 'Publisher review', group: 'Content', description: 'Run the publisher review stage.' },
-  { id: 'content.schedule', label: 'Schedule publication', group: 'Content', description: 'Set a future publish date.' },
-  { id: 'content.publish', label: 'Publish', group: 'Content', description: 'Push a story live.' },
-  { id: 'content.newsletter', label: 'Send to newsletter', group: 'Content', description: 'Distribute a story via newsletter.' },
-  { id: 'content.bulletin', label: 'Add to bulletin', group: 'Content', description: 'Include a story in a bulletin issue.' },
+  // Platform access — these three replace the old hardcoded role-family tests.
+  // `newsroom.access` is what `isStaff()` used to mean; `platform.admin` is what
+  // `isAdmin()` used to mean. First row because they gate everything below.
+  { id: 'newsroom.access', label: 'Access the newsroom', resource: 'Platform Access', short: 'Newsroom', description: 'Sign in to newsroom tooling and see unverified/private records.' },
+  { id: 'platform.admin', label: 'Platform administration', resource: 'Platform Access', short: 'Administration', description: 'Verify claims, manage every organisation, override ownership.' },
+  { id: 'roles.manage', label: 'Manage roles', resource: 'Platform Access', short: 'Manage roles', description: 'Create roles, set their permissions, and assign them.' },
+
+  // Stories
+  { id: 'content.draft.create', label: 'Create drafts', resource: 'Stories', short: 'Create', description: 'Start a new story draft.' },
+  { id: 'content.draft.edit_own', label: 'Edit own drafts', resource: 'Stories', short: 'Edit own', description: 'Edit stories they authored.' },
+  { id: 'content.draft.edit_any', label: 'Edit any story', resource: 'Stories', short: 'Edit any', description: 'Edit stories written by anyone.' },
+  { id: 'content.submit', label: 'Submit for review', resource: 'Stories', short: 'Submit', description: 'Push a draft into the editorial queue.' },
+
+  // Editorial
+  { id: 'content.editorial_review', label: 'Editorial review', resource: 'Editorial', short: 'Review', description: 'Move stories in and out of editorial review.' },
+  { id: 'content.send_revision', label: 'Send back for revision', resource: 'Editorial', short: 'Send back', description: 'Return a story to its author.' },
+  { id: 'content.approve', label: 'Approve content', resource: 'Editorial', short: 'Approve', description: 'Approve a story for publication.' },
+
+  // Legal
+  { id: 'content.legal_review', label: 'Legal review', resource: 'Legal & Compliance', short: 'Legal review', description: 'Move stories through legal review.' },
+  { id: 'content.compliance', label: 'Compliance', resource: 'Legal & Compliance', short: 'Compliance', description: 'Move stories into the compliance stage.' },
+
+  // Publishing
+  { id: 'content.publisher_review', label: 'Publisher review', resource: 'Publishing', short: 'Review', description: 'Run the publisher review stage.' },
+  { id: 'content.schedule', label: 'Schedule publication', resource: 'Publishing', short: 'Schedule', description: 'Set a future publish date.' },
+  { id: 'content.publish', label: 'Publish', resource: 'Publishing', short: 'Publish', description: 'Push a story live.' },
+  { id: 'content.newsletter', label: 'Send to newsletter', resource: 'Publishing', short: 'Newsletter', description: 'Distribute a story via newsletter.' },
+  { id: 'content.bulletin', label: 'Add to bulletin', resource: 'Publishing', short: 'Bulletin', description: 'Include a story in a bulletin issue.' },
 
   // Media
-  { id: 'media.upload_own', label: 'Upload own media', group: 'Media', description: 'Upload and manage personal media assets.' },
-  { id: 'media.manage_all', label: 'Manage all media', group: 'Media', description: 'Manage the full shared media library.' },
+  { id: 'media.upload_own', label: 'Upload own media', resource: 'Media', short: 'Upload own', description: 'Upload and manage personal media assets.' },
+  { id: 'media.manage_all', label: 'Manage all media', resource: 'Media', short: 'Manage all', description: 'Manage the full shared media library.' },
 
-  // Compensation
-  { id: 'compensation.view_own', label: 'View own payouts', group: 'Compensation', description: 'See their own payout history.' },
-  { id: 'compensation.view_all', label: 'View all payouts', group: 'Compensation', description: "See every contributor's payouts." },
-  { id: 'compensation.manage', label: 'Manage payouts', group: 'Compensation', description: 'Edit and approve payouts.' },
-
-  // Workflow
-  { id: 'workflow.view_all_columns', label: 'See all board columns', group: 'Workflow', description: 'View every Kanban column.' },
-  { id: 'workflow.view_own_columns', label: 'See own board columns', group: 'Workflow', description: 'View only role-scoped columns.' },
-
-  // Team & admin
-  { id: 'team.view', label: 'View team', group: 'Team & Admin', description: 'See the staff roster.' },
-  { id: 'team.manage', label: 'Manage team & roles', group: 'Team & Admin', description: 'Invite staff, create roles, assign permissions.' },
-  { id: 'settings.view', label: 'View settings', group: 'Team & Admin', description: 'Open newsroom settings.' },
-  { id: 'settings.manage', label: 'Edit settings', group: 'Team & Admin', description: 'Change newsroom settings.' },
-  { id: 'analytics.view', label: 'View analytics', group: 'Team & Admin', description: 'Open the analytics dashboard.' },
+  // Workflow board
+  { id: 'workflow.view_all_columns', label: 'See all board columns', resource: 'Workflow Board', short: 'All columns', description: 'View every Kanban column.' },
+  { id: 'workflow.view_own_columns', label: 'See own board columns', resource: 'Workflow Board', short: 'Own columns', description: 'View only role-scoped columns.' },
 
   // Podcast
-  { id: 'podcast.manage', label: 'Manage podcast', group: 'Podcast', description: 'Broad podcast management.' },
-  { id: 'podcast.episode.create', label: 'Create episodes', group: 'Podcast', description: 'Start a new episode draft.' },
-  { id: 'podcast.episode.edit_own', label: 'Edit own episodes', group: 'Podcast', description: 'Edit episodes they produced.' },
-  { id: 'podcast.episode.edit_any', label: 'Edit any episode', group: 'Podcast', description: 'Edit episodes produced by anyone.' },
-  { id: 'podcast.audio.upload', label: 'Upload audio', group: 'Podcast', description: 'Attach audio files to an episode.' },
-  { id: 'podcast.guests.manage', label: 'Manage guests', group: 'Podcast', description: 'Add and remove episode guests.' },
-  { id: 'podcast.episode.schedule', label: 'Schedule episodes', group: 'Podcast', description: 'Set an episode publish date.' },
-  { id: 'podcast.episode.submit_review', label: 'Submit episode for review', group: 'Podcast', description: 'Send an episode for approval.' },
-  { id: 'podcast.episode.approve', label: 'Approve episodes', group: 'Podcast', description: 'Approve or return an episode.' },
-  { id: 'podcast.episode.publish', label: 'Publish episodes', group: 'Podcast', description: 'Push an episode live.' },
-  { id: 'podcast.distribution.manage', label: 'Manage distribution', group: 'Podcast', description: 'Toggle per-episode distribution channels.' },
-  { id: 'podcast.episode.delete', label: 'Delete episodes', group: 'Podcast', description: 'Delete a draft or unpublished episode.' },
-  { id: 'podcast.read_all', label: 'See unpublished episodes', group: 'Podcast', description: 'View drafts, not just published episodes.' },
+  { id: 'podcast.manage', label: 'Manage podcast', resource: 'Podcast', short: 'Manage', description: 'Broad podcast management.' },
+  { id: 'podcast.episode.create', label: 'Create episodes', resource: 'Podcast', short: 'Create', description: 'Start a new episode draft.' },
+  { id: 'podcast.episode.edit_own', label: 'Edit own episodes', resource: 'Podcast', short: 'Edit own', description: 'Edit episodes they produced.' },
+  { id: 'podcast.episode.edit_any', label: 'Edit any episode', resource: 'Podcast', short: 'Edit any', description: 'Edit episodes produced by anyone.' },
+  { id: 'podcast.audio.upload', label: 'Upload audio', resource: 'Podcast', short: 'Upload audio', description: 'Attach audio files to an episode.' },
+  { id: 'podcast.guests.manage', label: 'Manage guests', resource: 'Podcast', short: 'Guests', description: 'Add and remove episode guests.' },
+  { id: 'podcast.episode.schedule', label: 'Schedule episodes', resource: 'Podcast', short: 'Schedule', description: 'Set an episode publish date.' },
+  { id: 'podcast.episode.submit_review', label: 'Submit episode for review', resource: 'Podcast', short: 'Submit', description: 'Send an episode for approval.' },
+  { id: 'podcast.episode.approve', label: 'Approve episodes', resource: 'Podcast', short: 'Approve', description: 'Approve or return an episode.' },
+  { id: 'podcast.episode.publish', label: 'Publish episodes', resource: 'Podcast', short: 'Publish', description: 'Push an episode live.' },
+  { id: 'podcast.distribution.manage', label: 'Manage distribution', resource: 'Podcast', short: 'Distribution', description: 'Toggle per-episode distribution channels.' },
+  { id: 'podcast.episode.delete', label: 'Delete episodes', resource: 'Podcast', short: 'Delete', description: 'Delete a draft or unpublished episode.' },
+  { id: 'podcast.read_all', label: 'See unpublished episodes', resource: 'Podcast', short: 'See drafts', description: 'View drafts, not just published episodes.' },
+
+  // Compensation
+  { id: 'compensation.view_own', label: 'View own payouts', resource: 'Compensation', short: 'View own', description: 'See their own payout history.' },
+  { id: 'compensation.view_all', label: 'View all payouts', resource: 'Compensation', short: 'View all', description: "See every contributor's payouts." },
+  { id: 'compensation.manage', label: 'Manage payouts', resource: 'Compensation', short: 'Manage', description: 'Edit and approve payouts.' },
+
+  // Team & settings
+  { id: 'team.view', label: 'View team', resource: 'Team & Settings', short: 'View team', description: 'See the staff roster.' },
+  { id: 'team.manage', label: 'Manage team & roles', resource: 'Team & Settings', short: 'Manage team', description: 'Invite staff, create roles, assign permissions.' },
+  { id: 'settings.view', label: 'View settings', resource: 'Team & Settings', short: 'View settings', description: 'Open newsroom settings.' },
+  { id: 'settings.manage', label: 'Edit settings', resource: 'Team & Settings', short: 'Edit settings', description: 'Change newsroom settings.' },
+  { id: 'analytics.view', label: 'View analytics', resource: 'Team & Settings', short: 'Analytics', description: 'Open the analytics dashboard.' },
 ]
 
 const ACTION_IDS = new Set<string>(PERMISSION_CATALOGUE.map((p) => p.id))
@@ -181,14 +223,50 @@ export function isModuleId(v: unknown): v is string {
   return typeof v === 'string' && MODULE_IDS.has(v)
 }
 
+// ── Workflow stages (the third checkbox axis) ───────────────────────────────
+//
+// Which Kanban columns a role sees. This was `RoleConfig.allowedStatuses`, a
+// static per-role array in apps/web/src/pages/newsroom/constants.tsx — real
+// per-role config with nowhere to live once roles are DB-defined.
+// Mirrors WORKFLOW_STAGES in apps/web/src/components/KanbanColumn.tsx.
+
+export interface WorkflowStageMeta {
+  id: string
+  label: string
+}
+
+export const WORKFLOW_STAGE_CATALOGUE: WorkflowStageMeta[] = [
+  { id: 'draft', label: 'Draft' },
+  { id: 'submitted', label: 'Submitted' },
+  { id: 'editorial_review', label: 'Editor Review' },
+  { id: 'revision', label: 'Revision Required' },
+  { id: 'legal_review', label: 'Legal Review' },
+  { id: 'compliance', label: 'Compliance Check' },
+  { id: 'approved', label: 'Approved' },
+  { id: 'publisher_review', label: 'Publisher Review' },
+  { id: 'scheduled', label: 'Schedule Publish' },
+  { id: 'published', label: 'Published' },
+  { id: 'newsletter', label: 'Newsletter + Podcast' },
+  { id: 'bulletin', label: 'Bulletin Inclusion' },
+]
+
+const STAGE_IDS = new Set<string>(WORKFLOW_STAGE_CATALOGUE.map((s) => s.id))
+
+export function isWorkflowStage(v: unknown): v is string {
+  return typeof v === 'string' && STAGE_IDS.has(v)
+}
+
+export const ALL_WORKFLOW_STAGES: string[] = WORKFLOW_STAGE_CATALOGUE.map((s) => s.id)
+
 // ── Built-in role matrix ────────────────────────────────────────────────────
 //
 // The merge of what web lib/permissions.ts and server lib/permissions.ts each
 // held. `podcast.read_all` came only from the server copy; everything else came
 // from the web copy, which was the fuller of the two.
 
-export const BUILTIN_ROLE_PERMISSIONS: Record<StaffRole, PermissionAction[]> = {
+export const BUILTIN_ROLE_PERMISSIONS: Record<SeedRoleSlug, PermissionAction[]> = {
   contributor: [
+    'newsroom.access',
     'content.draft.create',
     'content.draft.edit_own',
     'content.submit',
@@ -198,6 +276,7 @@ export const BUILTIN_ROLE_PERMISSIONS: Record<StaffRole, PermissionAction[]> = {
   ],
 
   editor: [
+    'newsroom.access',
     'content.draft.create',
     'content.draft.edit_own',
     'content.draft.edit_any',
@@ -226,66 +305,14 @@ export const BUILTIN_ROLE_PERMISSIONS: Record<StaffRole, PermissionAction[]> = {
     'podcast.read_all',
   ],
 
-  legal_reviewer: [
-    'content.draft.edit_any',
-    'content.legal_review',
-    'content.compliance',
-    'content.approve',
-    'media.upload_own',
-    'workflow.view_own_columns',
-    'analytics.view',
-  ],
-
-  podcast_producer: [
-    'podcast.manage',
-    'podcast.episode.create',
-    'podcast.episode.edit_own',
-    'podcast.audio.upload',
-    'podcast.guests.manage',
-    'podcast.episode.schedule',
-    'podcast.episode.submit_review',
-    'podcast.distribution.manage',
-    'podcast.episode.delete',
-    'podcast.read_all',
-    'media.upload_own',
-    'media.manage_all',
-    'workflow.view_own_columns',
-    'analytics.view',
-  ],
-
-  publisher: [
-    'content.draft.edit_any',
-    'content.approve',
-    'content.publisher_review',
-    'content.schedule',
-    'content.publish',
-    'content.newsletter',
-    'content.bulletin',
-    'media.manage_all',
-    'compensation.view_all',
-    'compensation.manage',
-    'workflow.view_all_columns',
-    'team.view',
-    'analytics.view',
-    'settings.view',
-    'settings.manage',
-    'podcast.episode.approve',
-    'podcast.episode.publish',
-    'podcast.distribution.manage',
-    'podcast.read_all',
-  ],
-
   // Administrator holds everything, always. Derived rather than listed so a new
   // action can never be accidentally withheld from admins.
   administrator: PERMISSION_CATALOGUE.map((p) => p.id),
 }
 
-export const BUILTIN_ROLE_LABELS: Record<StaffRole, string> = {
+export const BUILTIN_ROLE_LABELS: Record<SeedRoleSlug, string> = {
   contributor: 'Contributor',
   editor: 'Editor',
-  legal_reviewer: 'Legal Reviewer',
-  podcast_producer: 'Podcast Producer',
-  publisher: 'Publisher',
   administrator: 'Administrator',
 }
 
@@ -294,7 +321,7 @@ export const BUILTIN_ROLE_LABELS: Record<StaffRole, string> = {
  * so this exactly reproduces today's sidebar filtering. Custom roles do NOT go
  * through here; they carry an explicit, admin-ticked module list.
  */
-export function builtinModulesFor(role: StaffRole): string[] {
+export function builtinModulesFor(role: SeedRoleSlug): string[] {
   const held = new Set<string>(BUILTIN_ROLE_PERMISSIONS[role])
   return MODULE_CATALOGUE.filter((m) => !m.requiresPermission || held.has(m.requiresPermission)).map(
     (m) => m.id,

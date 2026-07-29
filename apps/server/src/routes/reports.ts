@@ -1,6 +1,6 @@
 import { Router } from 'express';
 import { db } from '../lib/db.js';
-import { isStaff } from '../lib/rbac.js';
+import { canAccessNewsroom } from '../lib/rbac.js';
 
 type WithMongoId = { _id: string; [key: string]: unknown };
 function project<T extends WithMongoId>(doc: T): Omit<T, '_id'> & { id: string } {
@@ -15,7 +15,7 @@ const router = Router();
 // for linked horses is layered in Phase C/D.  TODO(phase C/D): scope by horse link.
 router.get('/', async (req, res) => {
   const items = await db.collection('reports').find();
-  const visible = isStaff(req.account)
+  const visible = canAccessNewsroom(req.account)
     ? items
     : items.filter((r) => (r.visibility ?? 'public') === 'public');
   res.json(visible.map(project));

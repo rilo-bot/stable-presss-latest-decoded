@@ -86,6 +86,7 @@ import authRouter from './routes/auth.js'
 import adminRouter from './routes/admin.js'
 import staffRouter from './routes/staff.js'
 import rolesRouter from './routes/roles.js'
+import { seedRoles } from './lib/seedRoles.js'
 import subscriptionRouter from './routes/subscription.js'
 import partyClaimsRouter from './routes/partyClaims.js'
 import organisationsRouter from './routes/organisations.js'
@@ -206,6 +207,14 @@ app.use((err: Error, _req: express.Request, res: express.Response, _next: expres
 app.listen(PORT, () => {
   console.log(`[server] API server running on http://localhost:${PORT}`)
   console.log('[server] DB mode: MongoDB')
+  // Insert-only seed of the `roles` collection (superadmin, administrator,
+  // editor, contributor).
+  // Idempotent and never overwrites an edited role, so it is safe on every boot.
+  // Deliberately not called from db.ts — that would import-cycle through
+  // ensureIndexes. Failures are logged, never fatal.
+  void seedRoles().catch((err) => {
+    console.error('[rbac] role seed failed (server still running):', err instanceof Error ? err.message : err)
+  })
 })
 
 export { app, db }

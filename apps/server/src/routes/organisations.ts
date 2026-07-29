@@ -2,7 +2,7 @@ import { Router } from 'express';
 import { db } from '../lib/db.js';
 import { attachAccount } from '../lib/auth.js';
 import { withIdentityDefaults, PARTY_ROLES, type OrgRole } from '../lib/identity.js';
-import { isAdmin, orgRoleIn, canManageOrg, isOrgOwner } from '../lib/rbac.js';
+import { isPlatformAdmin, orgRoleIn, canManageOrg, isOrgOwner } from '../lib/rbac.js';
 
 type WithMongoId = { _id: string; [key: string]: unknown };
 function project<T extends WithMongoId>(doc: T): Omit<T, '_id'> & { id: string } {
@@ -65,7 +65,7 @@ router.get('/mine', async (req, res) => {
 router.get('/:id', async (req, res) => {
   const account = req.account!;
   const orgId = req.params.id;
-  if (!isAdmin(account) && !orgRoleIn(account, orgId)) {
+  if (!isPlatformAdmin(account) && !orgRoleIn(account, orgId)) {
     res.status(403).json({ error: 'You are not a member of this organisation.' });
     return;
   }

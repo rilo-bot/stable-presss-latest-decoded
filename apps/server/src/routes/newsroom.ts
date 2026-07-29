@@ -14,7 +14,8 @@ import { Router } from 'express'
 import { generateText } from 'ai'
 import { db } from '../lib/db.js'
 import { attachAccount } from '../lib/auth.js'
-import { isStaff, isAdmin } from '../lib/rbac.js'
+import { canAccessNewsroom, isPlatformAdmin } from '../lib/rbac.js'
+import { accountCan } from '../lib/effectiveAccess.js'
 import { getCapabilities } from '../lib/agent/capabilities.js'
 import { getAgentModel, isAgentConfigured } from '../lib/agent/provider.js'
 import type { AccountUser, PartyClaim } from '../lib/identity.js'
@@ -23,9 +24,13 @@ const router = Router()
 router.use(attachAccount)
 
 const LIVE_STATUSES = ['published', 'newsletter', 'bulletin']
-const isReviewer = (a: AccountUser) =>
-  a.roles.includes('editor') || a.roles.includes('legal_reviewer') || a.roles.includes('administrator')
-const isPublisher = (a: AccountUser) => a.roles.includes('publisher') || a.roles.includes('administrator')
+
+// "Needs your attention" is driven by what the caller can ACT on. These used to
+// hardcode role slugs, which meant a superadmin-created role could never surface
+// a queue no matter what it was granted.
+const canReview = (a: AccountUser) => accountCan(a, 'content.editorial_review')
+const canClearLegal = (a: AccountUser) => accountCan(a, 'content.legal_review')
+const canPublish = (a: AccountUser) => accountCan(a, 'content.publish')
 
 export interface NeedItem {
   id: string
@@ -65,7 +70,7 @@ async function buildNewsroomSummary(account: AccountUser) {
   // Pending racing-role claims this account may verify (admins see all; org
   // verification is layered separately — non-admins get 0 here for now).
   let pendingClaims = 0
-  if (isAdmin(account)) {
+  if (isPlatformAdmin(account)) {
     const users = await db.collection('users').find()
     for (const u of users) {
       const claims: PartyClaim[] = Array.isArray(u.partyClaims) ? u.partyClaims : []
@@ -75,15 +80,15 @@ async function buildNewsroomSummary(account: AccountUser) {
 
   // ── "Needs your attention" — only what THIS role acts on, only when non-zero ──
   const needs: NeedItem[] = []
-  if (isReviewer(account)) {
+  if (canReview(account)) {
     const c = countStatus('submitted', 'editorial_review')
     if (c) needs.push({ id: 'review-stories', label: 'Stories awaiting your review', count: c, where: 'review' })
   }
-  if (account.roles.includes('legal_reviewer') || isAdmin(account)) {
+  if (canClearLegal(account)) {
     const c = countStatus('legal_review', 'compliance')
     if (c) needs.push({ id: 'legal-review', label: 'Stories awaiting legal / compliance', count: c, where: 'review' })
   }
-  if (isPublisher(account)) {
+  if (canPublish(account)) {
     const c = countStatus('approved', 'publisher_review', 'scheduled')
     if (c) needs.push({ id: 'publish-stories', label: 'Stories ready to publish or schedule', count: c, where: 'workflow' })
   }
@@ -97,7 +102,14 @@ async function buildNewsroomSummary(account: AccountUser) {
   if (issuesInProgress) needs.push({ id: 'finish-bulletins', label: 'Bulletins in progress', count: issuesInProgress, where: 'bulletin-templates' })
 
   return {
-    generatedFor: { name: account.displayName || account.email, roles: account.roles, isAdmin: isAdmin(account) },
+    generatedFor: {
+      name: account.displayName || account.email,
+      // The AI brief describes the reader's editorial job, so it wants their
+      // ROLE LABELS — `roles` is now the static axis ('reader' + party roles)
+      // and would have made every brief say "roles: reader".
+      roles: account.roleDocs.map((r) => r.label),
+      isPlatformAdmin: isPlatformAdmin(account),
+    },
     stories: {
       total: articles.length,
       mine: mine.length,
@@ -120,7 +132,7 @@ async function buildNewsroomSummary(account: AccountUser) {
 
 router.get('/summary', async (req, res) => {
   const account = req.account!
-  if (!isStaff(account)) {
+  if (!canAccessNewsroom(account)) {
     res.status(403).json({ error: 'Staff access required.' })
     return
   }
@@ -133,7 +145,7 @@ router.get('/summary', async (req, res) => {
 
 router.post('/brief', async (req, res) => {
   const account = req.account!
-  if (!isStaff(account)) {
+  if (!canAccessNewsroom(account)) {
     res.status(403).json({ error: 'Staff access required.' })
     return
   }

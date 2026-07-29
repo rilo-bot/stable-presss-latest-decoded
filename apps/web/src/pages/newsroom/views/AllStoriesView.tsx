@@ -4,34 +4,33 @@ import { Button } from '@/components/ui/button';
 import { EmptyState } from '@/components/EmptyState';
 import { cn } from '@/lib/utils';
 import { canEditArticle } from '@/lib/permissions';
-import type { UserRole } from '@/stores/authStore';
 import type { KanbanStatus } from '@/components/KanbanColumn';
 import type { Article } from '@/types/article';
-import type { RoleConfig } from '../constants';
+
 import { StatusBadge } from '../components/StatusBadge';
 
 interface AllStoriesViewProps {
   isContributor: boolean;
-  currentRoleConfig: RoleConfig;
+  roleLabel: string;
+  accentColor: string;
   searchQuery: string;
   setSearchQuery: (v: string) => void;
   filteredArticles: Article[];
   onNewInColumn: (status: KanbanStatus) => void;
   onOpenStudio: () => void;
-  userRole: UserRole | null;
   currentUserDisplayName: string | undefined;
   onEdit: (article: Article) => void;
 }
 
 export function AllStoriesView({
   isContributor,
-  currentRoleConfig,
+  roleLabel,
+  accentColor,
   searchQuery,
   setSearchQuery,
   filteredArticles,
   onNewInColumn,
   onOpenStudio,
-  userRole,
   currentUserDisplayName,
   onEdit,
 }: AllStoriesViewProps) {
@@ -41,9 +40,9 @@ export function AllStoriesView({
       {isContributor && (
         <div
           className="flex items-start gap-2.5 px-4 py-3 rounded-sm border text-sm"
-          style={{ borderColor: `${currentRoleConfig.color}40`, background: `${currentRoleConfig.color}08` }}
+          style={{ borderColor: `${accentColor}40`, background: `${accentColor}08` }}
         >
-          <AlertCircle size={14} style={{ color: currentRoleConfig.color }} className="flex-shrink-0 mt-0.5" />
+          <AlertCircle size={14} style={{ color: accentColor }} className="flex-shrink-0 mt-0.5" />
           <span className="text-foreground/70">
             Showing your stories only. Submit a story to move it into the editorial queue.
           </span>
@@ -89,7 +88,7 @@ export function AllStoriesView({
             </thead>
             <tbody>
               {filteredArticles.map((article, idx) => {
-                const editable = canEditArticle(userRole, article.author, currentUserDisplayName);
+                const editable = canEditArticle(article.author, currentUserDisplayName);
                 return (
                   <tr key={article.id} className={cn('border-b border-border/30 transition-colors', idx % 2 === 0 ? 'bg-card' : 'bg-background')}>
                     <td className="px-4 py-3 max-w-[240px]">

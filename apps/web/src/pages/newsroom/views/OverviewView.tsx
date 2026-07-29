@@ -7,14 +7,13 @@ import { NewsroomDashboard } from '@/components/newsroom/NewsroomDashboard';
 import { Button } from '@/components/ui/button';
 import { EmptyState } from '@/components/EmptyState';
 import { cn } from '@/lib/utils';
-import { can, canEditArticle } from '@/lib/permissions';
+import { can, canEditArticle, visibleWorkflowStages } from '@/lib/permissions';
 import { WORKFLOW_STAGES } from '@/components/KanbanColumn';
 import type { KanbanStatus } from '@/components/KanbanColumn';
-import type { UserRole } from '@/stores/authStore';
 import type { Article } from '@/types/article';
 import type { MediaItem } from '@/types/mediaItem';
 import type { RacingEntry } from '@/types/racingEntry';
-import type { RoleConfig } from '../constants';
+
 import { StatusBadge } from '../components/StatusBadge';
 import { MAGAZINE_TEMPLATES } from '@/editor/templates/galleryTemplates';
 
@@ -22,8 +21,8 @@ interface OverviewViewProps {
   isContributor: boolean;
   myStories: number;
   totalStories: number;
-  currentRoleConfig: RoleConfig;
-  userRole: UserRole | null;
+  roleLabel: string;
+  accentColor: string;
   pendingReview: number;
   setActiveNav: (nav: string) => void;
   setActiveColumn: (status: KanbanStatus) => void;
@@ -43,8 +42,8 @@ export function OverviewView({
   isContributor,
   myStories,
   totalStories,
-  currentRoleConfig,
-  userRole,
+  roleLabel,
+  accentColor,
   pendingReview,
   setActiveNav,
   setActiveColumn,
@@ -69,16 +68,16 @@ export function OverviewView({
       {isContributor && (
         <div
           className="flex items-start gap-2.5 px-4 py-3 rounded-sm border text-sm"
-          style={{ borderColor: `${currentRoleConfig.color}40`, background: `${currentRoleConfig.color}08` }}
+          style={{ borderColor: `${accentColor}40`, background: `${accentColor}08` }}
         >
-          <AlertCircle size={14} style={{ color: currentRoleConfig.color }} className="flex-shrink-0 mt-0.5" />
+          <AlertCircle size={14} style={{ color: accentColor }} className="flex-shrink-0 mt-0.5" />
           <span className="text-foreground/70">
             You are viewing your own stories only. Editors and administrators can see the full newsroom.
           </span>
         </div>
       )}
 
-      {can(userRole, 'content.editorial_review') && (
+      {can('content.editorial_review') && (
         <div
           className="flex flex-wrap items-center justify-between gap-3 px-4 py-3 rounded-sm border"
           style={{ borderColor: 'hsl(var(--primary) / 0.25)', background: 'hsl(var(--primary) / 0.05)' }}
@@ -138,7 +137,7 @@ export function OverviewView({
       </div>
 
       {/* Media Records shortcut */}
-      {can(userRole, 'content.draft.create') && (
+      {can('content.draft.create') && (
         <div
           className="flex flex-wrap items-center justify-between gap-3 px-4 py-3 rounded-sm border"
           style={{ borderColor: 'hsl(var(--chart-3) / 0.3)', background: 'hsl(var(--chart-3) / 0.05)' }}
@@ -172,7 +171,7 @@ export function OverviewView({
       )}
 
       {/* Racing Data shortcut */}
-      {can(userRole, 'content.draft.create') && (
+      {can('content.draft.create') && (
         <div
           className="flex flex-wrap items-center justify-between gap-3 px-4 py-3 rounded-sm border"
           style={{ borderColor: 'hsl(var(--chart-1) / 0.3)', background: 'hsl(var(--chart-1) / 0.05)' }}
@@ -272,7 +271,7 @@ export function OverviewView({
         </div>
         <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-2">
           {WORKFLOW_STAGES.filter((s) =>
-            isContributor ? currentRoleConfig.allowedStatuses.includes(s.status) : true
+            isContributor ? visibleWorkflowStages().includes(s.status) : true
           ).map((stage) => (
             <button
               key={stage.status}
@@ -322,7 +321,7 @@ export function OverviewView({
               </thead>
               <tbody>
                 {filteredArticles.slice(0, 10).map((article, idx) => {
-                  const editable = canEditArticle(userRole, article.author, currentUserDisplayName);
+                  const editable = canEditArticle(article.author, currentUserDisplayName);
                   return (
                     <tr
                       key={article.id}

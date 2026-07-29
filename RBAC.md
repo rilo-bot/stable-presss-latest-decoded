@@ -76,45 +76,55 @@ data, not what you are in racing terms. They live in `orgMemberships`, never the
 A member's effective access is always: **their org role × the org's scope** (the horses
 that org is linked to).
 
-### 4.4 Staff / editorial roles — *admin-granted ONLY*
-`contributor` · `editor` · `podcast_producer` · `legal_reviewer` · `publisher` · `administrator`
+### 4.4 Staff / editorial roles — *fully dynamic, admin-granted ONLY*
 
-- Never self-serve. The **first admin is seeded** via a setup step (`/api/admin/seed`,
-  guarded by `SETUP_SECRET`). After that, only an admin grants the rest.
-- **Multiple admins are supported** — `administrator` is just another entry in `roles[]`,
-  so any number of users can hold it.
-- **Admins can add other admins.** The staff-grant flow (portal) lets an existing admin
-  grant ANY staff role **including `administrator`** to another user. Granting/revoking
-  `administrator` is itself an admin-only action.
-- Governed by the action matrix in `apps/server/src/lib/permissionCatalogue.ts` (the single
-  source of truth — the web app fetches it via `GET /api/roles/catalogue`); the
-  `team.manage` permission gates inviting/granting staff (admin-only).
+**There is no hardcoded staff-role list.** Staff roles are rows in the `roles` collection,
+referenced from `user.staffRoles[]` by slug and resolved through
+`apps/server/src/lib/roleRegistry.ts`. Anything a superadmin creates in the console is a
+first-class role, indistinguishable from a seeded one.
 
-### 4.5 Custom roles — *admin-defined, checkbox-configured*
+A fresh install is seeded with four:
 
-An admin can define extra roles at runtime from **Newsroom → Roles & Permissions**, ticking
-two independent checkbox sets:
+| Slug | Notes |
+|------|-------|
+| `superadmin` | All access, short-circuited in code. `isImmutable` — cannot be edited or deleted. |
+| `administrator` | Every permission in the catalogue, but editable and deletable. |
+| `editor` | Full editorial control across all workflow stages. |
+| `contributor` | Draft and submit only. |
+
+`legal_reviewer`, `podcast_producer` and `publisher` were part of the pre-dynamic union and
+are deliberately **not** seeded. Every permission they held still exists in the catalogue, so
+a superadmin can rebuild any of them from the console.
+
+- Never self-serve. The **first superadmin is seeded** via `/api/admin/seed`, guarded by
+  `SETUP_SECRET`. After that, only someone holding `roles.manage` grants the rest.
+- Any number of users may hold any role; `staffRoles[]` is an array.
+- Only a superadmin may grant `superadmin`, and the last one cannot be unassigned.
+
+### 4.5 Defining a role — *three checkbox axes*
+
+From **Newsroom → Roles & Permissions**, a superadmin ticks three independent sets:
 
 | Axis | What it controls | Stored as |
 |------|------------------|-----------|
-| **Modules** | Which navigation surfaces the role can open (sidebar entries, Editor Hub tabs) | `customRoles.modules[]` |
-| **Permissions** | Which actions from the catalogue the role may perform | `customRoles.permissions[]` |
+| **Modules** | Which navigation surfaces the role can open (sidebar entries, Editor Hub tabs) | `roles.modules[]` |
+| **Workflow columns** | Which Kanban stages are visible on the board | `roles.workflowStages[]` |
+| **Permissions** | Which actions from the catalogue the role may perform | `roles.permissions[]` |
 
-- Custom roles **layer on top** of the six built-ins — they are additive only and can never
-  remove a permission a staff role already grants.
-- Assignment lives on the user: `user.customRoleIds[]`, set from the Team Members screen.
-- Effective access = **union** of the built-in matrix across *every* staff role the user holds,
-  plus every custom role assigned to them. Resolved server-side in
-  `apps/server/src/lib/effectiveAccess.ts` and returned as `user.access` on `/api/auth/me`.
-- `administrator` always resolves to every module and every permission — a custom role cannot
-  lock an admin out of the roles screen.
+The catalogue backing all three lives in `apps/server/src/lib/permissionCatalogue.ts` — the
+single source of truth — and the web app fetches it via `GET /api/roles/catalogue`, so adding
+an action makes a new checkbox appear without a frontend change.
 
-> **Current enforcement depth.** Custom roles drive **navigation and UI affordances**. The API
-> gates still enforce the built-in matrix only (`accountCan`, built-ins unioned). So a custom
-> role can reveal surfaces to someone who already holds a staff role, but it cannot widen what
-> the API accepts, and assigning one to a user with no staff role has no effect yet. Promoting
-> custom roles to a server-side boundary means moving the gates in `rbac.ts` off `isStaff` onto
-> action checks — see §10.
+- Effective access = **union** across every role the user holds. Roles are additive; nothing
+  subtracts. Resolved server-side in `apps/server/src/lib/effectiveAccess.ts` and returned as
+  `user.access` on `/api/auth/me`.
+- `superadmin` short-circuits in `accountCan()` **before** any registry read, so an empty or
+  corrupt `roles` collection cannot lock the platform out.
+- Roles are cached in-process for 60s and busted explicitly on every mutation.
+
+> **Current enforcement depth.** The three axes drive **navigation and UI affordances**; the
+> API gates enforce the permission axis via `accountCan`. Modules and workflow stages are not
+> re-checked server-side — see §10.
 
 ---
 
