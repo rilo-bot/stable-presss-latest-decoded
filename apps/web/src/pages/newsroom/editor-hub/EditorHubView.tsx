@@ -1,6 +1,6 @@
 import { Star } from 'lucide-react';
 import { cn } from '@/lib/utils';
-import { can } from '@/lib/permissions';
+import { can, canOpenModule } from '@/lib/permissions';
 import type { UserRole } from '@/stores/authStore';
 import type { KanbanStatus } from '@/components/KanbanColumn';
 import type { Article } from '@/types/article';
@@ -53,7 +53,11 @@ interface EditorHubViewProps {
 
 export function EditorHubView(props: EditorHubViewProps) {
   const { userRole, editorTab, setEditorTab } = props;
-  const availableTabs = EDITOR_TABS.filter((t) => can(userRole, t.permission));
+  // Each tab is both a module (an admin can untick it on a custom role) and an
+  // action — a tab needs both to show.
+  const availableTabs = EDITOR_TABS.filter(
+    (t) => canOpenModule(t.id) && can(userRole, t.permission),
+  );
   const activeTab = availableTabs.find((t) => t.id === editorTab)?.id ?? availableTabs[0]?.id;
 
   return (

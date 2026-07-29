@@ -86,6 +86,12 @@ export interface AccountUser {
   subscriptionTier: SubscriptionTier
   partyClaims: PartyClaim[]
   orgMemberships: OrgMembership[]
+  /**
+   * Admin-defined custom roles assigned to this account (ids into `customRoles`).
+   * Layered ON TOP of `roles[]` — they add navigation surfaces and UI
+   * affordances, they never replace a staff role. See lib/effectiveAccess.ts.
+   */
+  customRoleIds: string[]
   /** Derived: highest-privilege staff role if any, else 'reader'. Back-compat for token + UI. */
   role: Role
 }
@@ -141,6 +147,9 @@ export function withIdentityDefaults(raw: Record<string, any>): AccountUser {
     subscriptionTier: tier,
     partyClaims: Array.isArray(raw.partyClaims) ? raw.partyClaims : [],
     orgMemberships: Array.isArray(raw.orgMemberships) ? raw.orgMemberships : [],
+    customRoleIds: Array.isArray(raw.customRoleIds)
+      ? raw.customRoleIds.filter((r: unknown): r is string => typeof r === 'string')
+      : [],
     role: primaryRole(roles),
   }
 }
@@ -148,7 +157,13 @@ export function withIdentityDefaults(raw: Record<string, any>): AccountUser {
 /** Persisted fields for a brand-new reader account (default state of every signup). */
 export function newReaderFields(): Pick<
   AccountUser,
-  'roles' | 'subscriptionTier' | 'partyClaims' | 'orgMemberships'
+  'roles' | 'subscriptionTier' | 'partyClaims' | 'orgMemberships' | 'customRoleIds'
 > {
-  return { roles: ['reader'], subscriptionTier: 'free', partyClaims: [], orgMemberships: [] }
+  return {
+    roles: ['reader'],
+    subscriptionTier: 'free',
+    partyClaims: [],
+    orgMemberships: [],
+    customRoleIds: [],
+  }
 }

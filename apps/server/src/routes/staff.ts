@@ -27,6 +27,7 @@ router.get('/', async (_req, res) => {
       displayName: u.displayName,
       email: u.email,
       staffRoles: u.roles.filter((r) => (STAFF_ROLES as string[]).includes(r)),
+      customRoleIds: u.customRoleIds,
     }));
   const pending = (await db.collection('pendingStaffGrants').find()).map((g) => ({
     email: g.email,
@@ -75,6 +76,14 @@ router.post('/', async (req, res) => {
 // ── Revoke a staff role (with last-administrator safety) ──────────────────────
 router.delete('/:userId/roles/:role', async (req, res) => {
   const { userId, role } = req.params;
+  // Only STAFF roles are revocable here. Without this check the endpoint would
+  // happily strip 'reader' or a VERIFIED party role (trainer, jockey…) out of
+  // roles[] while partyClaims still said verified — desyncing the two with no
+  // path back, since only claim verification re-adds a party role.
+  if (!(STAFF_ROLES as string[]).includes(role)) {
+    res.status(400).json({ error: 'Only staff roles can be revoked here.' });
+    return;
+  }
   const target = await db.collection('users').findById(userId);
   if (!target) {
     res.status(404).json({ error: 'User not found.' });

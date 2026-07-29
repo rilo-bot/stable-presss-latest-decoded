@@ -2,12 +2,25 @@ import { Router } from 'express';
 import { db } from '../lib/db.js';
 import { genOtp, hashOtp, signToken, attachAccount } from '../lib/auth.js';
 import { sendOtpEmail, isEmailConfigured } from '../lib/email.js';
-import { withIdentityDefaults, newReaderFields } from '../lib/identity.js';
+import { withIdentityDefaults, newReaderFields, type AccountUser } from '../lib/identity.js';
+import { resolveAccess, type CustomRole, type ResolvedAccess } from '../lib/effectiveAccess.js';
 
 type WithMongoId = { _id: string; [key: string]: unknown };
 function project<T extends WithMongoId>(doc: T): Omit<T, '_id'> & { id: string } {
   const { _id, ...rest } = doc;
   return { id: _id, ...rest } as Omit<T, '_id'> & { id: string };
+}
+
+/**
+ * Resolve the account's effective permissions + visible modules for the client.
+ * Only reads the customRoles collection when the account actually holds one, so
+ * the common case (no custom roles) costs nothing.
+ */
+async function accessFor(account: AccountUser): Promise<ResolvedAccess> {
+  if (account.customRoleIds.length === 0) return resolveAccess(account, []);
+  const docs = await db.collection('customRoles').find();
+  const roles = docs.map((d) => ({ ...d, id: String(d._id) })) as unknown as CustomRole[];
+  return resolveAccess(account, roles);
 }
 
 const OTP_TTL_MS = (Number(process.env.OTP_TTL_MINUTES) || 10) * 60 * 1000;
@@ -225,12 +238,14 @@ router.post('/verify-otp', async (req, res) => {
   // Normalize (fills identity defaults for legacy docs too) before issuing the token.
   const account = withIdentityDefaults(project(finalDoc));
   const token = signToken({ sub: account.id, email: account.email, role: String(account.role) });
-  res.json({ token, user: account });
+  res.json({ token, user: { ...account, access: await accessFor(account) } });
 });
 
 // ── Session check — validate a persisted token, return the live account ───────
+// `access` is resolved server-side on every call, so a role edit takes effect on
+// the next session check rather than on the next login.
 router.get('/me', attachAccount, async (req, res) => {
-  res.json({ user: req.account });
+  res.json({ user: { ...req.account!, access: await accessFor(req.account!) } });
 });
 
 export default router;

@@ -1,8 +1,8 @@
 import { Router } from 'express';
 import type { Request } from 'express';
 import { db } from '../lib/db.js';
-import { requireAuth, optionalAuth } from '../lib/auth.js';
-import { canPodcast } from '../lib/permissions.js';
+import { attachAccount, attachAccountOptional } from '../lib/auth.js';
+import { accountCan } from '../lib/effectiveAccess.js';
 
 type WithMongoId = { _id: string; [key: string]: unknown };
 function project<T extends WithMongoId>(doc: T): Omit<T, '_id'> & { id: string } {
@@ -31,24 +31,25 @@ interface PodcastEpisode {
   producedBy?: string;
 }
 
-/** Look up the acting user's display name (token only carries id/email/role). */
-async function actingDisplayName(req: Request): Promise<string | null> {
-  if (!req.user?.sub) return null;
-  const user = await db.collection('users').findById(req.user.sub);
-  return user ? String(user.displayName ?? '') : null;
+/**
+ * The acting user's display name. `req.account` is the LIVE user record loaded
+ * by attachAccount, so this no longer needs its own lookup.
+ */
+function actingDisplayName(req: Request): string | null {
+  return req.account ? String(req.account.displayName ?? '') : null;
 }
 
 // ── List — drafts/unpublished are visible only to podcast roles ──────────────
-router.get('/', optionalAuth, async (req, res) => {
+router.get('/', attachAccountOptional, async (req, res) => {
   const items = await db.collection('podcastEpisodes').find();
-  const seesAll = canPodcast(req.user?.role, 'podcast.read_all');
+  const seesAll = accountCan(req.account, 'podcast.read_all');
   const visible = seesAll ? items : items.filter((e) => e.status === 'published');
   res.json(visible.map(project));
 });
 
 // ── Create — producers/admins only ───────────────────────────────────────────
-router.post('/', requireAuth, async (req, res) => {
-  if (!canPodcast(req.user!.role, 'podcast.episode.create')) {
+router.post('/', attachAccount, async (req, res) => {
+  if (!accountCan(req.account, 'podcast.episode.create')) {
     res.status(403).json({ error: 'You do not have permission to create episodes.' });
     return;
   }
@@ -75,9 +76,9 @@ router.post('/', requireAuth, async (req, res) => {
 });
 
 // ── Update — edit_any, or edit_own when you produced it; approve gates publish ─
-router.put('/:id', requireAuth, async (req, res) => {
+router.put('/:id', attachAccount, async (req, res) => {
   const body = req.body as Partial<PodcastEpisode>;
-  const role = req.user!.role;
+  const account = req.account;
   const id = String(req.params.id);
 
   const existing = await db.collection('podcastEpisodes').findById(id);
@@ -86,7 +87,7 @@ router.put('/:id', requireAuth, async (req, res) => {
     return;
   }
 
-  const displayName = await actingDisplayName(req);
+  const displayName = actingDisplayName(req);
   const isOwn = !!existing.producedBy && existing.producedBy === displayName;
 
   // Publishing / un-publishing requires approval authority.
@@ -96,11 +97,11 @@ router.put('/:id', requireAuth, async (req, res) => {
 
   let allowed: boolean;
   if (isApprovalMove) {
-    allowed = canPodcast(role, 'podcast.episode.approve');
+    allowed = accountCan(account, 'podcast.episode.approve');
   } else {
     allowed =
-      canPodcast(role, 'podcast.episode.edit_any') ||
-      (canPodcast(role, 'podcast.episode.edit_own') && isOwn);
+      accountCan(account, 'podcast.episode.edit_any') ||
+      (accountCan(account, 'podcast.episode.edit_own') && isOwn);
   }
   if (!allowed) {
     res.status(403).json({ error: 'You do not have permission to modify this episode.' });
@@ -124,8 +125,8 @@ router.put('/:id', requireAuth, async (req, res) => {
 });
 
 // ── Delete — delete permission, not published, and own (or edit_any) ──────────
-router.delete('/:id', requireAuth, async (req, res) => {
-  const role = req.user!.role;
+router.delete('/:id', attachAccount, async (req, res) => {
+  const account = req.account;
   const id = String(req.params.id);
   const existing = await db.collection('podcastEpisodes').findById(id);
   if (!existing) {
@@ -133,12 +134,12 @@ router.delete('/:id', requireAuth, async (req, res) => {
     return;
   }
 
-  const displayName = await actingDisplayName(req);
+  const displayName = actingDisplayName(req);
   const isOwn = !!existing.producedBy && existing.producedBy === displayName;
   const allowed =
-    canPodcast(role, 'podcast.episode.delete') &&
+    accountCan(account, 'podcast.episode.delete') &&
     existing.status !== 'published' &&
-    (isOwn || canPodcast(role, 'podcast.episode.edit_any'));
+    (isOwn || accountCan(account, 'podcast.episode.edit_any'));
   if (!allowed) {
     res.status(403).json({ error: 'You do not have permission to delete this episode.' });
     return;

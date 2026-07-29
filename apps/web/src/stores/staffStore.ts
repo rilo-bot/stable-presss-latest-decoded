@@ -7,6 +7,8 @@ export interface StaffUser {
   displayName: string;
   email: string;
   staffRoles: StaffRole[];
+  /** Admin-defined custom roles assigned on top of the staff roles. */
+  customRoleIds: string[];
 }
 
 export interface PendingGrant {

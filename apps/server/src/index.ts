@@ -85,6 +85,7 @@ import { authedWriteGate, staffWriteGate, articlesWriteGate, horseScopedWriteGat
 import authRouter from './routes/auth.js'
 import adminRouter from './routes/admin.js'
 import staffRouter from './routes/staff.js'
+import rolesRouter from './routes/roles.js'
 import subscriptionRouter from './routes/subscription.js'
 import partyClaimsRouter from './routes/partyClaims.js'
 import organisationsRouter from './routes/organisations.js'
@@ -129,6 +130,7 @@ import newsroomRouter from './routes/newsroom.js'
 app.use('/api/auth', authRouter)
 app.use('/api/admin', adminRouter)               // secret-gated first-admin seed
 app.use('/api/staff', staffRouter)               // admin-only staff grant/revoke
+app.use('/api/roles', rolesRouter)               // admin-only custom roles + permission catalogue
 app.use('/api/subscription', subscriptionRouter) // self-service tier (manual, no billing yet)
 app.use('/api/partyClaims', partyClaimsRouter)   // self-gated (attachAccount inside)
 app.use('/api/organisations', organisationsRouter) // self-gated (attachAccount inside)

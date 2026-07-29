@@ -38,6 +38,7 @@ import { WorkflowBoardView } from './newsroom/views/WorkflowBoardView';
 import { PipelineMapView } from './newsroom/views/PipelineMapView';
 import { AllStoriesView } from './newsroom/views/AllStoriesView';
 import { TeamManagementView } from './newsroom/views/TeamManagementView';
+import { RolesPermissionsView } from './newsroom/views/RolesPermissionsView';
 import { MyAssetsView } from './newsroom/views/MyAssetsView';
 import { CompensationView } from './newsroom/views/CompensationView';
 import { AnalyticsView } from './newsroom/views/AnalyticsView';
@@ -219,12 +220,18 @@ export default function Newsroom() {
     currentRoleConfig.allowedStatuses.includes(col.status)
   );
 
-  const visibleNav = useMemo(() =>
-    SIDE_NAV.filter((item) => {
-      if (!item.requiresPermission) return true;
-      return can(userRole, item.requiresPermission);
-    }),
-    [userRole]
+  // Navigation is driven by the server-resolved MODULE list when one is present
+  // — that's the axis an admin ticks per custom role. Sessions without it (or a
+  // module the server doesn't know about) fall back to the action check.
+  const accessModules = currentUser?.access?.modules;
+  const visibleNav = useMemo(
+    () =>
+      SIDE_NAV.filter((item) => {
+        if (accessModules) return accessModules.includes(item.id);
+        if (!item.requiresPermission) return true;
+        return can(userRole, item.requiresPermission);
+      }),
+    [userRole, accessModules],
   );
 
   const handleAdvance = (articleId: string, toStatus: KanbanStatus) => {
@@ -573,6 +580,7 @@ export default function Newsroom() {
               onRevokeStaff={onRevokeStaff}
             />
           )}
+          {activeNav === 'roles' && <RolesPermissionsView canManageRoles={canManageTeam} />}
           {activeNav === 'bulletin-templates' && (
             <MagazineStudio
               magazines={magazines}

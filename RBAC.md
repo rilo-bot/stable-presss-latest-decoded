@@ -86,8 +86,35 @@ that org is linked to).
 - **Admins can add other admins.** The staff-grant flow (portal) lets an existing admin
   grant ANY staff role **including `administrator`** to another user. Granting/revoking
   `administrator` is itself an admin-only action.
-- Governed by the existing action matrix (see `apps/web/src/lib/permissions.ts`); the
+- Governed by the action matrix in `apps/server/src/lib/permissionCatalogue.ts` (the single
+  source of truth — the web app fetches it via `GET /api/roles/catalogue`); the
   `team.manage` permission gates inviting/granting staff (admin-only).
+
+### 4.5 Custom roles — *admin-defined, checkbox-configured*
+
+An admin can define extra roles at runtime from **Newsroom → Roles & Permissions**, ticking
+two independent checkbox sets:
+
+| Axis | What it controls | Stored as |
+|------|------------------|-----------|
+| **Modules** | Which navigation surfaces the role can open (sidebar entries, Editor Hub tabs) | `customRoles.modules[]` |
+| **Permissions** | Which actions from the catalogue the role may perform | `customRoles.permissions[]` |
+
+- Custom roles **layer on top** of the six built-ins — they are additive only and can never
+  remove a permission a staff role already grants.
+- Assignment lives on the user: `user.customRoleIds[]`, set from the Team Members screen.
+- Effective access = **union** of the built-in matrix across *every* staff role the user holds,
+  plus every custom role assigned to them. Resolved server-side in
+  `apps/server/src/lib/effectiveAccess.ts` and returned as `user.access` on `/api/auth/me`.
+- `administrator` always resolves to every module and every permission — a custom role cannot
+  lock an admin out of the roles screen.
+
+> **Current enforcement depth.** Custom roles drive **navigation and UI affordances**. The API
+> gates still enforce the built-in matrix only (`accountCan`, built-ins unioned). So a custom
+> role can reveal surfaces to someone who already holds a staff role, but it cannot widen what
+> the API accepts, and assigning one to a user with no staff role has no effect yet. Promoting
+> custom roles to a server-side boundary means moving the gates in `rbac.ts` off `isStaff` onto
+> action checks — see §10.
 
 ---
 
@@ -186,3 +213,9 @@ scope machinery) **+** a membership collection (users↔org) **+** *managed part
 - **Billing/payments** — tier is set manually; `/api/subscription` is the seam.
 - **Real evidence storage** — reuse media pipeline now; swap for object storage later.
 - **Finer org roles** — `org_manager` stays single-level until a later milestone.
+- **Custom roles as a server boundary** — §4.5 roles are UI-scoped today. The seam is
+  `resolveAccess()` vs `builtinPermissions()` in `lib/effectiveAccess.ts`: the gates in
+  `rbac.ts` call the built-in-only path, and switching them to action checks against the
+  resolved set is what makes custom roles enforceable.
+- **Org-scoped custom roles** — §4.5 roles are global/editorial. Letting an org owner define
+  roles for their own members is a separate system.

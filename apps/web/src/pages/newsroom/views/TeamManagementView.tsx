@@ -1,10 +1,13 @@
+import { useEffect, useState } from 'react';
 import { Plus, Shield, Clock, Users, Lock, X } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { EmptyState } from '@/components/EmptyState';
 import { STAFF_ROLES } from '@/rbac/roles';
 import type { StaffRole } from '@/rbac/roles';
 import type { StaffUser, PendingGrant } from '@/stores/staffStore';
+import { useRoleStore } from '@/stores/roleStore';
 import { STAFF_ROLE_LABELS } from '../constants';
+import { toast } from 'sonner';
 
 interface TeamManagementViewProps {
   canManageTeam: boolean;
@@ -33,6 +36,33 @@ export function TeamManagementView({
   onGrantStaff,
   onRevokeStaff,
 }: TeamManagementViewProps) {
+  const customRoles = useRoleStore((s) => s.roles);
+  const fetchRoles = useRoleStore((s) => s.fetchRoles);
+  const assignRole = useRoleStore((s) => s.assignRole);
+  const unassignRole = useRoleStore((s) => s.unassignRole);
+  const [roleBusy, setRoleBusy] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (canManageTeam) void fetchRoles();
+  }, [canManageTeam, fetchRoles]);
+
+  const onAssign = async (userId: string, roleId: string) => {
+    if (!roleId) return;
+    setRoleBusy(userId);
+    const r = await assignRole(roleId, userId);
+    setRoleBusy(null);
+    if (r.ok) toast.success('Role assigned.');
+    else toast.error(r.error ?? 'Could not assign the role.');
+  };
+
+  const onUnassign = async (userId: string, roleId: string) => {
+    setRoleBusy(userId);
+    const r = await unassignRole(roleId, userId);
+    setRoleBusy(null);
+    if (r.ok) toast.success('Role removed.');
+    else toast.error(r.error ?? 'Could not remove the role.');
+  };
+
   if (!canManageTeam) {
     return (
       <EmptyState
@@ -137,31 +167,78 @@ export function TeamManagementView({
             </p>
           </div>
           <ul className="divide-y divide-border/40">
-            {teamStaff.map((u) => (
-              <li key={u.userId} className="flex items-center gap-3 px-4 py-3">
-                <div className="flex-1 min-w-0">
-                  <span className="block text-sm font-medium text-foreground truncate">{u.displayName}</span>
-                  <span className="block text-sm text-muted-foreground truncate">{u.email}</span>
-                </div>
-                <div className="flex flex-wrap gap-1.5 justify-end">
-                  {u.staffRoles.map((r) => (
-                    <span
-                      key={r}
-                      className="inline-flex items-center gap-1 text-[12px] uppercase tracking-wide font-bold px-2 py-0.5 rounded-full bg-primary/8 text-primary"
-                    >
-                      {STAFF_ROLE_LABELS[r] ?? r}
-                      <button
-                        onClick={() => onRevokeStaff(u.userId, r)}
-                        className="hover:text-destructive transition-colors"
-                        aria-label={`Revoke ${r}`}
-                      >
-                        <X size={11} />
-                      </button>
-                    </span>
-                  ))}
-                </div>
-              </li>
-            ))}
+            {teamStaff.map((u) => {
+              const held = customRoles.filter((r) => (u.customRoleIds ?? []).includes(r.id));
+              const available = customRoles.filter((r) => !(u.customRoleIds ?? []).includes(r.id));
+              return (
+                <li key={u.userId} className="px-4 py-3 space-y-2">
+                  <div className="flex items-center gap-3">
+                    <div className="flex-1 min-w-0">
+                      <span className="block text-sm font-medium text-foreground truncate">{u.displayName}</span>
+                      <span className="block text-sm text-muted-foreground truncate">{u.email}</span>
+                    </div>
+                    <div className="flex flex-wrap gap-1.5 justify-end">
+                      {u.staffRoles.map((r) => (
+                        <span
+                          key={r}
+                          className="inline-flex items-center gap-1 text-[12px] uppercase tracking-wide font-bold px-2 py-0.5 rounded-full bg-primary/8 text-primary"
+                        >
+                          {STAFF_ROLE_LABELS[r] ?? r}
+                          <button
+                            onClick={() => onRevokeStaff(u.userId, r)}
+                            className="hover:text-destructive transition-colors"
+                            aria-label={`Revoke ${r}`}
+                          >
+                            <X size={11} />
+                          </button>
+                        </span>
+                      ))}
+                    </div>
+                  </div>
+
+                  {/* Custom roles — the admin-defined layer on top of the staff role */}
+                  {customRoles.length > 0 && (
+                    <div className="flex items-center gap-1.5 flex-wrap pl-0.5">
+                      {held.map((r) => (
+                        <span
+                          key={r.id}
+                          className="inline-flex items-center gap-1 text-[12px] font-semibold px-2 py-0.5 rounded-full border"
+                          style={{
+                            borderColor: `${r.color ?? '#475569'}55`,
+                            background: `${r.color ?? '#475569'}14`,
+                            color: r.color ?? 'hsl(var(--muted-foreground))',
+                          }}
+                        >
+                          {r.label}
+                          <button
+                            onClick={() => onUnassign(u.userId, r.id)}
+                            disabled={roleBusy === u.userId}
+                            className="hover:text-destructive transition-colors"
+                            aria-label={`Remove ${r.label} from ${u.displayName}`}
+                          >
+                            <X size={11} />
+                          </button>
+                        </span>
+                      ))}
+                      {available.length > 0 && (
+                        <select
+                          value=""
+                          disabled={roleBusy === u.userId}
+                          onChange={(e) => void onAssign(u.userId, e.target.value)}
+                          className="text-[12px] px-2 py-0.5 rounded-full border border-dashed border-input bg-background text-muted-foreground hover:border-primary/50 cursor-pointer"
+                          aria-label={`Assign a custom role to ${u.displayName}`}
+                        >
+                          <option value="">+ Add role…</option>
+                          {available.map((r) => (
+                            <option key={r.id} value={r.id}>{r.label}</option>
+                          ))}
+                        </select>
+                      )}
+                    </div>
+                  )}
+                </li>
+              );
+            })}
           </ul>
         </div>
       )}

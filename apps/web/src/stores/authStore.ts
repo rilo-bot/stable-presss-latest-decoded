@@ -37,6 +37,21 @@ export interface OrgMembership {
   orgRole: OrgRole;
 }
 
+/**
+ * What the signed-in user may actually do, resolved SERVER-side across every
+ * role they hold (built-in staff roles unioned together, plus any admin-defined
+ * custom roles). `can()` reads this rather than re-deriving a single role from
+ * the matrix — see lib/permissions.ts.
+ */
+export interface ResolvedAccess {
+  /** Granted action ids, e.g. 'content.publish'. */
+  permissions: string[];
+  /** Navigation surfaces the user may open, e.g. 'analytics'. */
+  modules: string[];
+  staffRoles: StaffRole[];
+  customRoles: Array<{ id: string; label: string; color?: string }>;
+}
+
 export interface AuthUser {
   id: string;
   email: string;
@@ -48,14 +63,39 @@ export interface AuthUser {
   subscriptionTier: SubscriptionTier;
   partyClaims: PartyClaim[];
   orgMemberships: OrgMembership[];
-  /** Derived: highest staff role, or undefined for non-staff. Back-compat for can()/UI. */
+  /** Admin-defined custom roles assigned to this account. */
+  customRoleIds: string[];
+  /** Server-resolved effective access. Absent only on legacy/partial payloads. */
+  access?: ResolvedAccess;
+  /**
+   * Derived: highest staff role, or undefined for non-staff. Kept for cosmetic
+   * UI (the sidebar's role badge, colours). NOT a permission source any more —
+   * it silently collapsed multi-role users to one role.
+   */
   role?: UserRole;
 }
 
-/** Normalize a raw user payload from the API into a complete AuthUser. */
-function hydrateUser(raw: any): AuthUser {
+/**
+ * Normalize a raw user payload from the API into a complete AuthUser.
+ *
+ * `previous` carries forward `access` when an endpoint returns a user object
+ * without it (e.g. /api/subscription, which only touches the entitlement axis).
+ * Without this a tier change would blank the whole navigation until the next
+ * session check.
+ */
+function hydrateUser(raw: any, previous?: AuthUser | null): AuthUser {
   const roles: Role[] =
     Array.isArray(raw?.roles) && raw.roles.length > 0 ? raw.roles : ['reader'];
+  const rawAccess = raw?.access;
+  const access: ResolvedAccess | undefined = rawAccess
+    ? {
+        permissions: Array.isArray(rawAccess.permissions) ? rawAccess.permissions : [],
+        modules: Array.isArray(rawAccess.modules) ? rawAccess.modules : [],
+        staffRoles: Array.isArray(rawAccess.staffRoles) ? rawAccess.staffRoles : [],
+        customRoles: Array.isArray(rawAccess.customRoles) ? rawAccess.customRoles : [],
+      }
+    : previous?.access;
+
   return {
     id: String(raw?.id ?? ''),
     email: String(raw?.email ?? ''),
@@ -65,6 +105,8 @@ function hydrateUser(raw: any): AuthUser {
     subscriptionTier: (raw?.subscriptionTier as SubscriptionTier) ?? 'free',
     partyClaims: Array.isArray(raw?.partyClaims) ? raw.partyClaims : [],
     orgMemberships: Array.isArray(raw?.orgMemberships) ? raw.orgMemberships : [],
+    customRoleIds: Array.isArray(raw?.customRoleIds) ? raw.customRoleIds : [],
+    access,
     role: primaryStaffRole(roles),
   };
 }
@@ -172,7 +214,7 @@ export const useAuthStore = create<AuthState>()(
             return;
           }
           const data = await res.json();
-          if (data?.user) set({ currentUser: hydrateUser(data.user) });
+          if (data?.user) set({ currentUser: hydrateUser(data.user, get().currentUser) });
         } catch {
           /* offline — keep the persisted session optimistically */
         }
@@ -191,7 +233,7 @@ export const useAuthStore = create<AuthState>()(
           });
           const data = await res.json().catch(() => null);
           if (!res.ok) return { ok: false, error: data?.error ?? 'Could not update your plan.' };
-          if (data?.user) set({ currentUser: hydrateUser(data.user) });
+          if (data?.user) set({ currentUser: hydrateUser(data.user, get().currentUser) });
           return { ok: true };
         } catch {
           return { ok: false, error: 'Network error. Please try again.' };
@@ -202,9 +244,10 @@ export const useAuthStore = create<AuthState>()(
     }),
     {
       name: 'stablepress-auth',
-      // v3: multi-role identity (roles[] + subscriptionTier + claims + memberships).
-      // Reset persisted session so the new shape is re-fetched fresh from the server.
-      version: 3,
+      // v4: adds server-resolved `access` (effective permissions + modules) and
+      // customRoleIds. A v3 session has no access payload, so permission checks
+      // would fall back to the legacy single-role matrix — reset instead.
+      version: 4,
       migrate: () => ({ currentUser: null, token: null }),
       partialize: (s) => ({ currentUser: s.currentUser, token: s.token }),
     }

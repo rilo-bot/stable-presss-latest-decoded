@@ -1,11 +1,27 @@
 /**
  * Stable Press — Role Permission System
  *
- * Single source of truth for what each role is allowed to do.
- * Import `can(role, action)` anywhere in the UI to gate features.
+ * `can(role, action)` is the gate every UI affordance goes through.
+ *
+ * HOW IT RESOLVES (changed — read this before editing):
+ * The answer now comes from `currentUser.access.permissions`, the effective set
+ * the SERVER resolves by unioning every role the user holds — all their built-in
+ * staff roles plus any admin-defined custom roles. The local `PERMISSIONS`
+ * matrix below is only a fallback for sessions that predate that payload.
+ *
+ * The `role` argument is therefore advisory and kept purely so the ~40 existing
+ * call sites don't have to change. It is NOT what decides the answer. Two
+ * reasons that matters:
+ *   1. It used to be the single highest-ranked role, so a user holding
+ *      podcast_producer + editor silently lost every producer-only permission.
+ *   2. Custom roles have no representation in a single `UserRole` value at all.
+ *
+ * Reactivity: callers derive `role` from `currentUser`, so they are already
+ * subscribed to the store and re-render — and re-evaluate `can()` — whenever the
+ * session refreshes. New code should prefer the `useCan` hook below.
  */
 
-import type { UserRole } from '@/stores/authStore';
+import { useAuthStore, type UserRole } from '@/stores/authStore';
 
 // ── Action catalogue ────────────────────────────────────────────────────────
 
@@ -203,16 +219,48 @@ const PERMISSIONS: Record<UserRole, PermissionAction[]> = {
 
 // ── Public API ──────────────────────────────────────────────────────────────
 
+/** The server-resolved permission set for the signed-in user, if present. */
+function effectivePermissions(): Set<string> | null {
+  const access = useAuthStore.getState().currentUser?.access;
+  return access ? new Set(access.permissions) : null;
+}
+
 /**
- * Check if a role has a specific permission.
- * Safely handles null/undefined role by returning false.
+ * Check if the signed-in user has a specific permission.
+ *
+ * `role` is advisory — see the file header. The real answer comes from the
+ * server-resolved effective set; the matrix is only consulted for sessions
+ * established before that payload existed.
  */
 export function can(
   role: UserRole | null | undefined,
   action: PermissionAction
 ): boolean {
+  const effective = effectivePermissions();
+  if (effective) return effective.has(action);
   if (!role) return false;
   return PERMISSIONS[role]?.includes(action) ?? false;
+}
+
+/** Reactive form of `can()` for new code — subscribes to the auth store. */
+export function useCan(action: PermissionAction): boolean {
+  return useAuthStore((s) => {
+    const access = s.currentUser?.access;
+    if (access) return access.permissions.includes(action);
+    const role = s.currentUser?.role;
+    return role ? (PERMISSIONS[role]?.includes(action) ?? false) : false;
+  });
+}
+
+/**
+ * May the user open this navigation surface? Modules are the coarse axis an
+ * admin ticks per custom role; actions are the fine one. A module with no
+ * server-resolved list falls back to "visible", matching pre-RBAC behaviour.
+ */
+export function canOpenModule(moduleId: string): boolean {
+  const access = useAuthStore.getState().currentUser?.access;
+  if (!access) return true;
+  return access.modules.includes(moduleId);
 }
 
 /**

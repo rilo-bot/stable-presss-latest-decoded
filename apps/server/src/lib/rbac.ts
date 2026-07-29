@@ -13,23 +13,17 @@
 import type { Request, Response, NextFunction } from 'express'
 import { db } from './db.js'
 import { attachAccount, attachAccountOptional } from './auth.js'
-import { STAFF_ROLES, type AccountUser, type OrgRole, type StaffRole } from './identity.js'
+import { STAFF_ROLES, type AccountUser, type OrgRole } from './identity.js'
 import { authorisedHorseIds, manageablePartyIds } from './scope.js'
+import { accountCan } from './effectiveAccess.js'
+import type { PermissionAction } from './permissionCatalogue.js'
+
+export { accountCan }
 
 type ContentAction =
   | 'content.draft.create'
   | 'content.draft.edit_own'
   | 'content.draft.edit_any'
-
-// Mirror of the content slice of apps/web/src/lib/permissions.ts.
-const CONTENT_PERMS: Record<StaffRole, ContentAction[]> = {
-  contributor: ['content.draft.create', 'content.draft.edit_own'],
-  editor: ['content.draft.create', 'content.draft.edit_own', 'content.draft.edit_any'],
-  legal_reviewer: ['content.draft.edit_any'],
-  podcast_producer: [],
-  publisher: ['content.draft.edit_any'],
-  administrator: ['content.draft.create', 'content.draft.edit_own', 'content.draft.edit_any'],
-}
 
 export function isStaff(account: AccountUser | undefined): boolean {
   return !!account && account.roles.some((r) => (STAFF_ROLES as string[]).includes(r))
@@ -59,10 +53,12 @@ export function isOrgOwner(account: AccountUser | undefined, orgId: string): boo
 }
 
 export function contentCan(account: AccountUser | undefined, action: ContentAction): boolean {
-  if (!account) return false
-  return account.roles.some(
-    (r) => (STAFF_ROLES as string[]).includes(r) && CONTENT_PERMS[r as StaffRole]?.includes(action),
-  )
+  return accountCan(account, action)
+}
+
+/** May create/edit custom roles and assign them (the `team.manage` action). */
+export function canManageRoles(account: AccountUser | undefined): boolean {
+  return accountCan(account, 'team.manage' as PermissionAction)
 }
 
 const forbid = (res: Response, msg: string) => res.status(403).json({ error: msg })

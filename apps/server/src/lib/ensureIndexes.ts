@@ -38,6 +38,8 @@ const INDEX_SPECS: IndexSpec[] = [
   { collection: COL.issues, keys: { deletedAt: 1, updatedAt: -1 } },
   // User lookup by email (collaborator-add and auth paths).
   { collection: 'users', keys: { email: 1, deletedAt: 1 } },
+  // Custom role lookup by slug (uniqueness check on create/rename).
+  { collection: 'customRoles', keys: { key: 1, deletedAt: 1 } },
 ]
 
 /**

@@ -175,6 +175,7 @@ export const SIDE_NAV: SideNavItem[] = [
   { id: 'media-production-system', label: 'Media Records ', icon: <File size={15} />, section: 'Stables', requiresPermission: 'content.draft.create' },
   { id: 'racing-production-system', label: 'Racing Data ', icon: <Flag size={15} />, section: 'Stables', requiresPermission: 'content.draft.create' },
   { id: 'team', label: 'Team Members', icon: <Users size={15} />, section: 'Management', requiresPermission: 'team.manage' },
+  { id: 'roles', label: 'Roles & Permissions', icon: <Shield size={15} />, section: 'Management', requiresPermission: 'team.manage' },
   { id: 'analytics', label: 'Analytics', icon: <BarChart2 size={15} />, section: 'Management', requiresPermission: 'analytics.view' },
   { id: 'settings', label: 'Settings', icon: <Settings size={15} />, section: 'Management', requiresPermission: 'settings.view' },
 ];
