@@ -26,6 +26,8 @@ import { COL } from '../lib/magazineV2/collections.js';
 import { rateLimit } from '../lib/rateLimit.js';
 import { safePublicImageUrl } from '../lib/magazineV2/url.js';
 import { roleOnMagazine, isOwner, canEditPage, editablePageIds, collaboratorsOf, type V2Collaborator } from '../lib/magazineV2/access.js';
+import { notifyShared } from '../lib/notifyShare.js';
+import { magazinePath } from '../lib/invites.js';
 import { withIdentityDefaults, type IdentityUser } from '../lib/identity.js';
 import { identityCan } from '../lib/effectiveAccess.js';
 import { normalizeElements, normalizeElementPatch } from '../lib/magazineV2/writePipeline.js';
@@ -1097,9 +1099,25 @@ router.post('/issues/:id/collaborators', async (req, res) => {
     pageIds,
   };
   const others = collaboratorsOf(doc).filter((c) => c.userId !== acct.id);
+  const alreadyShared = collaboratorsOf(doc).some((c) => c.userId === acct.id);
   await db.collection(COL.issues).updateOne(doc._id, { collaborators: [...others, next], updatedAt: new Date().toISOString() });
+
+  // Email a deep link to the magazine. Only on the FIRST share — re-saving
+  // someone's page assignment shouldn't spam them. The share itself is already
+  // committed, so a delivery failure is reported, never fatal.
+  let emailed = false;
+  if (!alreadyShared) {
+    emailed = await notifyShared({
+      to: acct.email,
+      sharedBy: req.account!.displayName || req.account!.email,
+      title: String(doc.title ?? 'Untitled magazine'),
+      path: magazinePath(String(doc._id), 'v2'),
+      pageIds,
+    });
+  }
+
   const fresh = await loadIssue(doc._id);
-  res.status(201).json({ issue: withViewer(fresh ?? doc, uid) });
+  res.status(201).json({ issue: withViewer(fresh ?? doc, uid), emailed });
 });
 
 // remove a collaborator — owner only

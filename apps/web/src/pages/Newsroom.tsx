@@ -199,10 +199,32 @@ export default function Newsroom() {
   const onGrantStaff = async () => {
     if (!teamEmail.trim() || !teamRole) return;
     setTeamBusy(true);
-    const r = await inviteStaff(teamEmail.trim(), teamRole);
+    const email = teamEmail.trim();
+    const r = await inviteStaff(email, teamRole);
     setTeamBusy(false);
-    if (r.ok) { toast.success('Invite sent.'); setTeamEmail(''); }
-    else toast.error(r.error ?? 'Could not send the invite.');
+
+    if (!r.ok) {
+      // A saved-but-unsent invite is not a plain failure — the row exists and
+      // can be resent, so say that rather than inviting a duplicate attempt.
+      if (r.applied) toast.warning(r.error ?? 'Invite saved, but the email failed.');
+      else toast.error(r.error ?? 'Could not send the invite.');
+      return;
+    }
+
+    setTeamEmail('');
+    if (!r.emailed) {
+      toast.warning(
+        r.applied === 'immediate'
+          ? 'Role granted, but no email was sent (email is not configured).'
+          : 'Invite saved, but no email was sent (email is not configured).',
+      );
+    } else {
+      toast.success(
+        r.applied === 'immediate'
+          ? `${email} already had an account — the role is active now.`
+          : `Invitation emailed to ${email}.`,
+      );
+    }
   };
 
   const onCancelInvite = async (inviteId: string) => {

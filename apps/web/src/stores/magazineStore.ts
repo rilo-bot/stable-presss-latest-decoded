@@ -87,9 +87,15 @@ function reconcilePages(pages: MagazinePage[]): MagazinePage[] {
   });
 }
 
-/** Split the server doc into the Magazine + the caller's access slice. */
+/**
+ * Split the server doc into the Magazine + the caller's access slice.
+ *
+ * `emailed` is stripped alongside the access fields: the share endpoint returns
+ * it as transport metadata, and leaving it in would smuggle a non-magazine key
+ * into the stored Magazine object.
+ */
 function ingest(doc: Record<string, unknown>): { magazine: Magazine; access: MagazineAccess } {
-  const { myRole, myEditablePageIds, ...rest } = doc as Record<string, unknown>;
+  const { myRole, myEditablePageIds, emailed: _emailed, ...rest } = doc as Record<string, unknown>;
   const mag = rest as unknown as Magazine;
   return {
     magazine: {
@@ -445,12 +451,20 @@ export const useMagazineStore = create<MagazineState>()((set, get) => {
           const e = (await res.json().catch(() => ({}))) as { error?: string };
           throw new Error(e.error || `HTTP ${res.status}`);
         }
-        const { magazine, access } = ingest(await res.json());
+        const payload = (await res.json()) as Record<string, unknown>;
+        const { magazine, access } = ingest(payload);
         set((s) => ({
           magazines: [...s.magazines.filter((m) => m.id !== magId), magazine],
           access: { ...s.access, [magId]: access },
         }));
         void get().fetchMagazines();
+        // The share succeeded either way; say so plainly when no email went out
+        // so nobody sits waiting for a link that was never sent.
+        if (payload.emailed === false) {
+          toast.warning(`${body.email} was added, but we couldn't email them a link.`);
+        } else {
+          toast.success(`${body.email} was added and emailed a link to this magazine.`);
+        }
         return true;
       } catch (err) {
         toast.error(err instanceof Error ? err.message : 'Could not add collaborator.');

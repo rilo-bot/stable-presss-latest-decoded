@@ -419,8 +419,8 @@ export default function MagazineEditorV2() {
               <div className="absolute right-3 top-full z-30 mt-1 w-64 rounded-md border border-white/15 bg-[#0d1626] p-2.5 shadow-xl">
                 <div className="mb-1.5 flex items-center gap-1.5 text-[11px] text-white/80">
                   <span>Add</span>
-                  <select className="rounded border border-white/20 bg-[#0b1220] px-1 py-0.5 text-white" value={aiCount} onChange={(e) => setAiCount(Number(e.target.value))}>
-                    {[1, 2, 3, 4, 6].map((n) => <option key={n} value={n}>{n}</option>)}
+                  <select className="rounded border border-white/20 bg-[#0b1220] px-1 py-0.5 text-white" style={{ colorScheme: 'dark' }} value={aiCount} onChange={(e) => setAiCount(Number(e.target.value))}>
+                    {[1, 2, 3, 4, 6].map((n) => <option key={n} value={n} style={{ backgroundColor: '#0d1626', color: '#fff' }}>{n}</option>)}
                   </select>
                   <span>on-theme page{aiCount === 1 ? '' : 's'}</span>
                 </div>

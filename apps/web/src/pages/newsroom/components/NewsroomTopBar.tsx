@@ -1,6 +1,8 @@
-import { Plus, Sparkles } from 'lucide-react';
+import { useState } from 'react';
+import { Plus } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { can } from '@/lib/permissions';
+import { FileStoryChoice } from './FileStoryChoice';
 
 interface NewsroomTopBarProps {
   activeNav: string;
@@ -15,6 +17,9 @@ export function NewsroomTopBar({
   onNewInColumn,
   onOpenStudio,
 }: NewsroomTopBarProps) {
+  // One "File a Story" button; the AI-vs-manual split is a choice inside it.
+  const [choiceOpen, setChoiceOpen] = useState(false);
+
   return (
     <div className="flex items-center justify-end px-4 md:px-6 py-3.5 border-b border-border/40 bg-card">
       <div className="flex items-center gap-3">
@@ -34,29 +39,24 @@ export function NewsroomTopBar({
         )}
 
         {activeNav !== 'horses' && activeNav !== 'parties' && activeNav !== 'media-production-system' && activeNav !== 'racing-production-system' && activeNav !== 'bulletin-templates' && can('content.draft.create') && (
-          <>
-            <Button
-              size="sm"
-              variant="outline"
-              className="gap-1.5 text-sm"
-              onClick={onOpenStudio}
-            >
-              <Sparkles size={13} />
-              <span className="hidden sm:inline">Story Studio AI</span>
-              <span className="sm:hidden">AI</span>
-            </Button>
-            <Button
-              size="sm"
-              className="bg-primary text-primary-foreground hover:bg-primary/90 gap-1.5 text-sm"
-              onClick={() => onNewInColumn('draft')}
-            >
-              <Plus size={13} />
-              <span className="hidden sm:inline">File a Story</span>
-              <span className="sm:hidden">New</span>
-            </Button>
-          </>
+          <Button
+            size="sm"
+            className="bg-primary text-primary-foreground hover:bg-primary/90 gap-1.5 text-sm"
+            onClick={() => setChoiceOpen(true)}
+          >
+            <Plus size={13} />
+            <span className="hidden sm:inline">File a Story</span>
+            <span className="sm:hidden">New</span>
+          </Button>
         )}
       </div>
+
+      <FileStoryChoice
+        open={choiceOpen}
+        onClose={() => setChoiceOpen(false)}
+        onAI={() => { setChoiceOpen(false); onOpenStudio(); }}
+        onManual={() => { setChoiceOpen(false); onNewInColumn('draft'); }}
+      />
     </div>
   );
 }

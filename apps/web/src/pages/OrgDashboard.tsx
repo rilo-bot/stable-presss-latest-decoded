@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from 'react';
-import { useParams } from 'react-router-dom';
+import { Link, useParams } from 'react-router-dom';
 import { useAuthStore } from '@/stores/authStore';
 import { useOrgStore } from '@/stores/orgStore';
 import { useClaimStore } from '@/stores/claimStore';
@@ -11,8 +11,9 @@ import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { toast } from 'sonner';
+import { SectionHeading } from '@/components/SectionHeading';
 import {
-  Building2, Users, UserPlus, Trash2, Check, X, ShieldCheck, Loader2, PlusCircle, Star, MapPin,
+  Building2, Users, UserPlus, Trash2, Check, X, ShieldCheck, Loader2, PlusCircle, Star, MapPin, ChevronLeft,
 } from 'lucide-react';
 
 const ORG_ROLE_LABELS: Record<OrgRole, string> = {
@@ -139,6 +140,14 @@ export default function OrgDashboard() {
     <div className="max-w-5xl mx-auto px-4 md:px-8 py-10 space-y-8">
       {/* Header */}
       <div>
+        {/* Back to the hub — /dashboard is the one landing screen every other
+            surface hangs off, so every org page needs a way home. */}
+        <Link
+          to="/dashboard"
+          className="inline-flex items-center gap-1 text-[12px] uppercase tracking-[0.1em] font-semibold text-muted-foreground hover:text-primary transition-colors mb-3"
+        >
+          <ChevronLeft size={13} /> Dashboard
+        </Link>
         <div className="flex items-center gap-3">
           <Building2 size={22} className="text-primary" />
           <h1 className="font-[family-name:var(--font-display)] text-2xl font-bold text-foreground">
@@ -164,9 +173,9 @@ export default function OrgDashboard() {
       <div className="grid md:grid-cols-2 gap-8">
         {/* Members */}
         <section>
-          <h2 className="flex items-center gap-2 text-sm font-bold uppercase tracking-[0.1em] text-foreground mb-3">
-            <Users size={15} /> Members ({detail.members.length})
-          </h2>
+          <SectionHeading icon={<Users size={15} />}>
+            Members ({detail.members.length})
+          </SectionHeading>
           <ul className="space-y-2 mb-4">
             {detail.members.map((m) => (
               <li
@@ -229,9 +238,9 @@ export default function OrgDashboard() {
 
         {/* Managed parties */}
         <section>
-          <h2 className="flex items-center gap-2 text-sm font-bold uppercase tracking-[0.1em] text-foreground mb-3">
-            <Star size={15} /> Managed Parties ({detail.managedParties.length})
-          </h2>
+          <SectionHeading icon={<Star size={15} />}>
+            Managed Parties ({detail.managedParties.length})
+          </SectionHeading>
           <ul className="space-y-2 mb-4">
             {detail.managedParties.length === 0 && (
               <li className="text-xs text-muted-foreground italic py-2">No managed parties yet.</li>
@@ -281,9 +290,9 @@ export default function OrgDashboard() {
       {/* Pending verifications (owner/manager) */}
       {canManage && (
         <section>
-          <h2 className="flex items-center gap-2 text-sm font-bold uppercase tracking-[0.1em] text-foreground mb-3">
-            <ShieldCheck size={15} /> Pending Verifications ({orgPending.length})
-          </h2>
+          <SectionHeading icon={<ShieldCheck size={15} />}>
+            Pending Verifications ({orgPending.length})
+          </SectionHeading>
           {orgPending.length === 0 ? (
             <p className="text-xs text-muted-foreground italic">
               No one has claimed your managed parties yet.
@@ -318,9 +327,9 @@ export default function OrgDashboard() {
 
       {/* Org horses */}
       <section>
-        <h2 className="flex items-center gap-2 text-sm font-bold uppercase tracking-[0.1em] text-foreground mb-3">
+        <SectionHeading>
           Horses in scope ({scopedHorses.length})
-        </h2>
+        </SectionHeading>
         {scopedHorses.length === 0 ? (
           <p className="text-xs text-muted-foreground italic">
             No horses are linked to this organisation or its parties yet.

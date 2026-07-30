@@ -1,11 +1,201 @@
-import { useEffect, useState } from 'react';
-import { Plus, Shield, Clock, Users, Lock, X } from 'lucide-react';
+import { useEffect, useMemo, useState } from 'react';
+import { Plus, Shield, Clock, Users, Lock, X, Send, AlertTriangle, MailWarning } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { EmptyState } from '@/components/EmptyState';
 import type { StaffUser, PendingGrant } from '@/stores/staffStore';
+import { useStaffStore } from '@/stores/staffStore';
 import { useRoleStore } from '@/stores/roleStore';
 import { roleColor, roleIcon } from '@/lib/roleDisplay';
 import { toast } from 'sonner';
+
+/** "in 12 days" / "expired" — invites carry a hard deadline, so say so. */
+function expiryLabel(iso: string | undefined, expired: boolean): string {
+  if (expired) return 'link expired';
+  if (!iso) return 'no expiry';
+  const days = Math.ceil((new Date(iso).getTime() - Date.now()) / 86_400_000);
+  if (days <= 0) return 'expires today';
+  return `expires in ${days} day${days !== 1 ? 's' : ''}`;
+}
+
+/**
+ * One roster, both states. Someone you invited yesterday IS part of the team as
+ * far as the person managing it is concerned — keeping invites in a separate
+ * block above meant the list headed "Current team (3)" was quietly wrong, and
+ * with no members at all the page claimed "No team members yet" while three
+ * invitations sat right above it.
+ */
+type Row =
+  | { kind: 'member'; key: string; user: StaffUser }
+  | { kind: 'invited'; key: string; invite: PendingGrant };
+
+/** Initials for the avatar disc. Falls back to the email's first letter. */
+function initials(nameOrEmail: string): string {
+  const parts = nameOrEmail.trim().split(/[\s@._-]+/).filter(Boolean);
+  if (parts.length === 0) return '?';
+  return (parts[0][0] + (parts[1]?.[0] ?? '')).toUpperCase();
+}
+
+type RoleRecord = ReturnType<typeof useRoleStore.getState>['roles'][number];
+
+/** Shared avatar disc, so a member and an invitee line up on the same grid. */
+function Avatar({ label, muted }: { label: string; muted?: boolean }) {
+  return (
+    <span
+      className={
+        'flex-shrink-0 w-8 h-8 rounded-full grid place-items-center text-[11px] font-bold ' +
+        (muted
+          ? 'bg-muted text-muted-foreground border border-dashed border-border'
+          : 'bg-primary/10 text-primary')
+      }
+    >
+      {initials(label)}
+    </span>
+  );
+}
+
+/** A read-only role pill. Invitations show one; the role isn't assigned yet. */
+function RolePill({ role, slug }: { role: RoleRecord | undefined; slug: string }) {
+  const color = roleColor(role);
+  return (
+    <span
+      className="inline-flex items-center gap-1.5 text-[12px] font-semibold px-2 py-0.5 rounded-full border"
+      style={{ borderColor: `${color}55`, background: `${color}14`, color }}
+    >
+      {roleIcon(role?.icon, 11)}
+      {role?.label ?? slug}
+    </span>
+  );
+}
+
+function MemberRow({
+  user, roles, bySlug, busy, onAssign, onUnassign,
+}: {
+  user: StaffUser;
+  roles: RoleRecord[];
+  bySlug: (slug: string) => RoleRecord | undefined;
+  busy: boolean;
+  onAssign: (userId: string, slug: string) => void;
+  onUnassign: (userId: string, slug: string) => void;
+}) {
+  const held = user.staffRoles ?? [];
+  const available = roles.filter((r) => !held.includes(r.slug));
+
+  return (
+    <li className="px-4 py-3 flex items-start gap-3">
+      <Avatar label={user.displayName || user.email} />
+      <div className="flex-1 min-w-0 space-y-2">
+        <div className="min-w-0">
+          <span className="block text-sm font-medium text-foreground truncate">
+            {user.displayName || user.email}
+          </span>
+          <span className="block text-[13px] text-muted-foreground truncate">{user.email}</span>
+        </div>
+
+        <div className="flex items-center gap-1.5 flex-wrap">
+          {held.map((slug) => {
+            const r = bySlug(slug);
+            const color = roleColor(r);
+            return (
+              <span
+                key={slug}
+                className="inline-flex items-center gap-1.5 text-[12px] font-semibold px-2 py-0.5 rounded-full border"
+                style={{ borderColor: `${color}55`, background: `${color}14`, color }}
+              >
+                {roleIcon(r?.icon, 11)}
+                {r?.label ?? slug}
+                <button
+                  onClick={() => onUnassign(user.userId, slug)}
+                  disabled={busy}
+                  className="hover:text-destructive transition-colors"
+                  aria-label={`Remove ${r?.label ?? slug} from ${user.displayName || user.email}`}
+                >
+                  <X size={11} />
+                </button>
+              </span>
+            );
+          })}
+          {held.length === 0 && (
+            <span className="text-[12px] text-muted-foreground/70 italic">No roles — no access.</span>
+          )}
+          {available.length > 0 && (
+            <select
+              value=""
+              disabled={busy}
+              onChange={(e) => onAssign(user.userId, e.target.value)}
+              className="text-[12px] px-2 py-0.5 rounded-full border border-dashed border-input bg-background text-muted-foreground hover:border-primary/50 cursor-pointer"
+              aria-label={`Assign a role to ${user.displayName || user.email}`}
+            >
+              <option value="">+ Add role…</option>
+              {available.map((r) => (
+                <option key={r.slug} value={r.slug}>{r.label}</option>
+              ))}
+            </select>
+          )}
+        </div>
+      </div>
+    </li>
+  );
+}
+
+function InvitedRow({
+  invite, role, busy, onResend, onCancel,
+}: {
+  invite: PendingGrant;
+  role: RoleRecord | undefined;
+  busy: boolean;
+  onResend: (id: string) => void;
+  onCancel: (id: string) => void;
+}) {
+  return (
+    <li className="px-4 py-3 flex items-start gap-3 bg-muted/15">
+      <Avatar label={invite.email} muted />
+      <div className="flex-1 min-w-0 space-y-2">
+        <div className="min-w-0">
+          <span className="flex items-center gap-2 min-w-0">
+            <span className="text-sm font-medium text-foreground truncate">{invite.email}</span>
+            <span
+              className={
+                'inline-flex items-center gap-1 text-[10px] uppercase tracking-wide font-bold px-1.5 py-0.5 rounded-full flex-shrink-0 ' +
+                (invite.expired
+                  ? 'bg-destructive/10 text-destructive'
+                  : 'bg-muted text-muted-foreground')
+              }
+            >
+              {invite.expired ? <AlertTriangle size={9} /> : <Clock size={9} />}
+              {invite.expired ? 'Expired' : 'Invited'}
+            </span>
+          </span>
+          <span className="block text-[13px] text-muted-foreground truncate">
+            {expiryLabel(invite.expiresAt, invite.expired)}
+            {invite.invitedByName ? ` · invited by ${invite.invitedByName}` : ''}
+          </span>
+        </div>
+
+        <div className="flex items-center gap-2 flex-wrap">
+          {/* Read-only: the role applies when they accept, so there is nothing
+              to add or remove yet. Cancelling the invite is how you undo it. */}
+          <RolePill role={role} slug={invite.role} />
+          <span className="text-[12px] text-muted-foreground/60 italic">applies on sign-in</span>
+
+          {/* Resend mints a NEW token — the previous link stops working. */}
+          <button
+            onClick={() => onResend(invite.id)}
+            disabled={busy}
+            className="text-[12px] font-semibold text-primary hover:underline flex items-center gap-1 disabled:opacity-50"
+          >
+            <Send size={11} /> {busy ? 'Sending…' : 'Resend'}
+          </button>
+          <button
+            onClick={() => onCancel(invite.id)}
+            className="text-[12px] font-semibold text-muted-foreground hover:text-destructive transition-colors"
+          >
+            Cancel
+          </button>
+        </div>
+      </div>
+    </li>
+  );
+}
 
 interface TeamManagementViewProps {
   canManageTeam: boolean;
@@ -39,7 +229,19 @@ export function TeamManagementView({
   const fetchRoles = useRoleStore((s) => s.fetchRoles);
   const assignRole = useRoleStore((s) => s.assignRole);
   const unassignRole = useRoleStore((s) => s.unassignRole);
+  const resendInvite = useStaffStore((s) => s.resendInvite);
+  const fetchStaff = useStaffStore((s) => s.fetchStaff);
+  const emailConfigured = useStaffStore((s) => s.emailConfigured);
   const [roleBusy, setRoleBusy] = useState<string | null>(null);
+  const [inviteBusy, setInviteBusy] = useState<string | null>(null);
+
+  const onResend = async (id: string) => {
+    setInviteBusy(id);
+    const r = await resendInvite(id);
+    setInviteBusy(null);
+    if (r.ok) toast.success(r.emailed ? 'Invitation sent again.' : 'Invite refreshed (email not configured).');
+    else toast.error(r.error ?? 'Could not resend the invite.');
+  };
 
   useEffect(() => {
     if (canManageTeam) void fetchRoles();
@@ -51,12 +253,29 @@ export function TeamManagementView({
   }, [roles, teamRole, setTeamRole]);
 
   const bySlug = (slug: string) => roles.find((r) => r.slug === slug);
-  const labelFor = (slug: string) => bySlug(slug)?.label ?? slug;
 
+  // Members first (they can be acted on), then invitations. Within each group,
+  // alphabetical — so the list doesn't reshuffle as invites are sent.
+  const rows = useMemo<Row[]>(
+    () => [
+      ...[...teamStaff]
+        .sort((a, b) => (a.displayName || a.email).localeCompare(b.displayName || b.email))
+        .map((user): Row => ({ kind: 'member', key: `u:${user.userId}`, user })),
+      ...[...teamPending]
+        .sort((a, b) => a.email.localeCompare(b.email))
+        .map((invite): Row => ({ kind: 'invited', key: `i:${invite.id}`, invite })),
+    ],
+    [teamStaff, teamPending],
+  );
+
+  // roleStore refreshes the ROLES and the acting user's session, but the roster
+  // lives in staffStore — without re-fetching it the chips never changed, so
+  // assigning a role toasted success and visibly did nothing until a reload.
   const onAssign = async (userId: string, slug: string) => {
     if (!slug) return;
     setRoleBusy(userId);
     const r = await assignRole(slug, userId);
+    if (r.ok) await fetchStaff();
     setRoleBusy(null);
     if (r.ok) toast.success('Role assigned.');
     else toast.error(r.error ?? 'Could not assign the role.');
@@ -65,6 +284,7 @@ export function TeamManagementView({
   const onUnassign = async (userId: string, slug: string) => {
     setRoleBusy(userId);
     const r = await unassignRole(slug, userId);
+    if (r.ok) await fetchStaff();
     setRoleBusy(null);
     if (r.ok) toast.success('Role removed.');
     else toast.error(r.error ?? 'Could not remove the role.');
@@ -84,9 +304,15 @@ export function TeamManagementView({
     <div className="space-y-5">
       {/* Header */}
       <p className="text-sm text-muted-foreground">
-        {teamStaff.length === 0
-          ? 'No team members on record yet.'
-          : `${teamStaff.length} team member${teamStaff.length !== 1 ? 's' : ''}`}
+        {rows.length === 0
+          ? 'No one on the team yet.'
+          : [
+              `${teamStaff.length} member${teamStaff.length !== 1 ? 's' : ''}`,
+              teamPending.length > 0 &&
+                `${teamPending.length} invitation${teamPending.length !== 1 ? 's' : ''} pending`,
+            ]
+              .filter(Boolean)
+              .join(' · ')}
       </p>
 
       {/* Invite */}
@@ -124,113 +350,65 @@ export function TeamManagementView({
             <Plus size={13} /> {teamBusy ? 'Inviting…' : 'Invite'}
           </Button>
         </div>
-        <p className="text-[13px] text-muted-foreground/70 flex items-center gap-1.5">
-          <Shield size={12} /> If the email has no account yet, the role applies automatically on
-          their first sign-in. Define roles in{' '}
-          <span className="font-medium">Roles &amp; Permissions</span>.
+        <p className="text-[13px] text-muted-foreground/70 flex items-start gap-1.5">
+          <Shield size={12} className="flex-shrink-0 mt-0.5" />
+          <span>
+            They get an email with a link to join. If they already have an account the role applies
+            straight away. Define roles in <span className="font-medium">Roles &amp; Permissions</span>.
+          </span>
         </p>
+
+        {!emailConfigured && (
+          <p className="text-[13px] flex items-start gap-1.5 text-[hsl(var(--chart-4))]">
+            <MailWarning size={12} className="flex-shrink-0 mt-0.5" />
+            <span>
+              No email provider is configured on the server, so invitations are saved but{' '}
+              <strong>no email is sent</strong>. Set <code>RESEND_API_KEY</code> and{' '}
+              <code>RESEND_FROM_EMAIL</code> to turn delivery on.
+            </span>
+          </p>
+        )}
       </div>
 
-      {/* Pending invites */}
-      {teamPending.length > 0 && (
-        <div>
-          <p className="flex items-center gap-2 text-[12px] uppercase tracking-[0.12em] font-bold text-muted-foreground mb-2">
-            <Clock size={13} /> Pending invites ({teamPending.length})
-          </p>
-          <ul className="space-y-2">
-            {teamPending.map((p) => (
-              <li
-                key={p.id}
-                className="flex items-center gap-3 p-3 border border-border/60 rounded-sm bg-card text-sm"
-              >
-                <span className="flex-1 text-foreground truncate">{p.email}</span>
-                <span className="text-[12px] uppercase tracking-wide font-bold text-muted-foreground">
-                  {labelFor(p.role)}
-                </span>
-                <span className="text-[12px] text-muted-foreground/60 italic">applies on sign-in</span>
-                <button
-                  onClick={() => onCancelInvite(p.id)}
-                  className="text-muted-foreground hover:text-destructive transition-colors"
-                  aria-label={`Cancel the invite for ${p.email}`}
-                >
-                  <X size={13} />
-                </button>
-              </li>
-            ))}
-          </ul>
-        </div>
-      )}
-
-      {/* Roster */}
-      {teamLoading && teamStaff.length === 0 ? (
+      {/* Roster — members and invitations in one list */}
+      {teamLoading && rows.length === 0 ? (
         <p className="text-sm text-muted-foreground py-8 text-center">Loading team…</p>
-      ) : teamStaff.length === 0 ? (
+      ) : rows.length === 0 ? (
         <EmptyState
           icon={Users}
-          heading="No team members yet."
+          heading="No one on the team yet."
           description="Invite someone using the form above and give them a role."
         />
       ) : (
         <div className="border border-border/60 rounded-sm overflow-hidden bg-card">
           <div className="px-4 py-2.5 border-b border-border/40 bg-muted/30">
             <p className="text-[12px] uppercase tracking-[0.12em] font-bold text-muted-foreground">
-              Current team ({teamStaff.length})
+              Team ({rows.length})
             </p>
           </div>
           <ul className="divide-y divide-border/40">
-            {teamStaff.map((u) => {
-              const held = u.staffRoles ?? [];
-              const available = roles.filter((r) => !held.includes(r.slug));
-              return (
-                <li key={u.userId} className="px-4 py-3 space-y-2">
-                  <div className="flex items-center gap-3">
-                    <div className="flex-1 min-w-0">
-                      <span className="block text-sm font-medium text-foreground truncate">{u.displayName}</span>
-                      <span className="block text-sm text-muted-foreground truncate">{u.email}</span>
-                    </div>
-                  </div>
-
-                  <div className="flex items-center gap-1.5 flex-wrap">
-                    {held.map((slug) => {
-                      const r = bySlug(slug);
-                      const color = roleColor(r);
-                      return (
-                        <span
-                          key={slug}
-                          className="inline-flex items-center gap-1.5 text-[12px] font-semibold px-2 py-0.5 rounded-full border"
-                          style={{ borderColor: `${color}55`, background: `${color}14`, color }}
-                        >
-                          {roleIcon(r?.icon, 11)}
-                          {r?.label ?? slug}
-                          <button
-                            onClick={() => onUnassign(u.userId, slug)}
-                            disabled={roleBusy === u.userId}
-                            className="hover:text-destructive transition-colors"
-                            aria-label={`Remove ${r?.label ?? slug} from ${u.displayName}`}
-                          >
-                            <X size={11} />
-                          </button>
-                        </span>
-                      );
-                    })}
-                    {available.length > 0 && (
-                      <select
-                        value=""
-                        disabled={roleBusy === u.userId}
-                        onChange={(e) => void onAssign(u.userId, e.target.value)}
-                        className="text-[12px] px-2 py-0.5 rounded-full border border-dashed border-input bg-background text-muted-foreground hover:border-primary/50 cursor-pointer"
-                        aria-label={`Assign a role to ${u.displayName}`}
-                      >
-                        <option value="">+ Add role…</option>
-                        {available.map((r) => (
-                          <option key={r.slug} value={r.slug}>{r.label}</option>
-                        ))}
-                      </select>
-                    )}
-                  </div>
-                </li>
-              );
-            })}
+            {rows.map((row) =>
+              row.kind === 'member' ? (
+                <MemberRow
+                  key={row.key}
+                  user={row.user}
+                  roles={roles}
+                  bySlug={bySlug}
+                  busy={roleBusy === row.user.userId}
+                  onAssign={onAssign}
+                  onUnassign={onUnassign}
+                />
+              ) : (
+                <InvitedRow
+                  key={row.key}
+                  invite={row.invite}
+                  role={bySlug(row.invite.role)}
+                  busy={inviteBusy === row.invite.id}
+                  onResend={onResend}
+                  onCancel={onCancelInvite}
+                />
+              ),
+            )}
           </ul>
         </div>
       )}

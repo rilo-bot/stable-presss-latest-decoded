@@ -16,6 +16,7 @@ import { useHorsePartyLinkStore } from '@/stores/horsePartyLinkStore';
 import Landing from '@/pages/Landing';
 import Login from '@/pages/Login';
 import Signup from '@/pages/Signup';
+import InviteAccept from '@/pages/InviteAccept';
 import HorseProfiles from '@/pages/HorseProfiles';
 import HorseDetail from '@/pages/HorseDetail';
 import HorseEditor from '@/pages/HorseEditor';
@@ -232,6 +233,9 @@ export default function App() {
         {/* Auth routes — full-screen, no nav */}
         <Route path="/login" element={<Login />} />
         <Route path="/signup" element={<Signup />} />
+        {/* Team invite link. Public by necessity — the recipient has no account
+            yet. The token only carries context; joining still needs the OTP. */}
+        <Route path="/invite/:token" element={<InviteAccept />} />
         {/* TEMP preview route for visual QA — remove */}
         <Route path="/__preview/premium" element={<PremiumPreview />} />
 

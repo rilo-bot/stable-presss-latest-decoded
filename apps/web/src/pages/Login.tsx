@@ -1,5 +1,6 @@
 import { useState, useRef, useEffect } from 'react';
-import { Link, useNavigate } from 'react-router-dom';
+import { Link, useLocation, useNavigate } from 'react-router-dom';
+import { nextFromSearch } from '@/lib/safeRedirect';
 import { useAuthStore } from '@/stores/authStore';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -22,6 +23,7 @@ export default function Login() {
   const requestLoginOtp = useAuthStore((s) => s.requestLoginOtp);
   const verifyOtp = useAuthStore((s) => s.verifyOtp);
   const navigate = useNavigate();
+  const location = useLocation();
 
   const digitRefs = useRef<(HTMLInputElement | null)[]>([]);
 
@@ -103,7 +105,9 @@ export default function Login() {
     const result = await verifyOtp(email.trim(), code);
     setLoading(false);
     if (result.ok) {
-      navigate('/dashboard');
+      // Honour ?next= so an emailed deep link (a shared magazine, an invite)
+      // survives the sign-in detour instead of landing on the dashboard.
+      navigate(nextFromSearch(location.search, '/dashboard'), { replace: true });
     } else {
       toast.error(result.error ?? 'Verification failed. Please try again.');
       setOtpError(result.error ?? '');
