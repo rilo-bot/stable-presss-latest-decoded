@@ -1,10 +1,19 @@
 import { useEffect, useMemo, useState } from 'react';
 import { Plus, Shield, Clock, Users, Lock, X, Send, AlertTriangle, MailWarning } from 'lucide-react';
 import { Button } from '@/components/ui/button';
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from '@/components/ui/dialog';
 import { EmptyState } from '@/components/EmptyState';
 import type { StaffUser, PendingGrant } from '@/stores/staffStore';
 import { useStaffStore } from '@/stores/staffStore';
 import { useRoleStore } from '@/stores/roleStore';
+import { useAuthStore } from '@/stores/authStore';
 import { roleColor, roleIcon } from '@/lib/roleDisplay';
 import { toast } from 'sonner';
 
@@ -67,71 +76,105 @@ function RolePill({ role, slug }: { role: RoleRecord | undefined; slug: string }
   );
 }
 
+/**
+ * The one role that decides what a member can do.
+ *
+ * Assignment replaces rather than stacks, so `staffRoles` holds a single slug in
+ * anything created since. Older rows can still carry two; superadmin wins there
+ * because it short-circuits every permission check anyway — showing anything
+ * else as the headline role would misdescribe their access.
+ */
+function primaryRole(held: string[]): string | undefined {
+  return held.find((s) => s === 'superadmin') ?? held[0];
+}
+
 function MemberRow({
-  user, roles, bySlug, busy, onAssign, onUnassign,
+  user, roles, bySlug, busy, isSelf, onAssign, onResend, onRemove,
 }: {
   user: StaffUser;
   roles: RoleRecord[];
   bySlug: (slug: string) => RoleRecord | undefined;
   busy: boolean;
+  /** You can't remove yourself — the server refuses, so don't offer it. */
+  isSelf: boolean;
   onAssign: (userId: string, slug: string) => void;
-  onUnassign: (userId: string, slug: string) => void;
+  onResend: (user: StaffUser) => void;
+  onRemove: (user: StaffUser) => void;
 }) {
   const held = user.staffRoles ?? [];
-  const available = roles.filter((r) => !held.includes(r.slug));
+  const current = primaryRole(held);
+  const role = current ? bySlug(current) : undefined;
+  const color = roleColor(role);
+  // Legacy rows only — nothing can create these now. Named explicitly so the
+  // admin knows a second role is in play and that picking one clears it.
+  const extras = held.filter((s) => s !== current);
+  const name = user.displayName || user.email;
 
   return (
     <li className="px-4 py-3 flex items-start gap-3">
-      <Avatar label={user.displayName || user.email} />
+      <Avatar label={name} />
       <div className="flex-1 min-w-0 space-y-2">
         <div className="min-w-0">
-          <span className="block text-sm font-medium text-foreground truncate">
-            {user.displayName || user.email}
-          </span>
+          <span className="block text-sm font-medium text-foreground truncate">{name}</span>
           <span className="block text-[13px] text-muted-foreground truncate">{user.email}</span>
         </div>
 
-        <div className="flex items-center gap-1.5 flex-wrap">
-          {held.map((slug) => {
-            const r = bySlug(slug);
-            const color = roleColor(r);
-            return (
-              <span
-                key={slug}
-                className="inline-flex items-center gap-1.5 text-[12px] font-semibold px-2 py-0.5 rounded-full border"
-                style={{ borderColor: `${color}55`, background: `${color}14`, color }}
-              >
-                {roleIcon(r?.icon, 11)}
-                {r?.label ?? slug}
-                <button
-                  onClick={() => onUnassign(user.userId, slug)}
-                  disabled={busy}
-                  className="hover:text-destructive transition-colors"
-                  aria-label={`Remove ${r?.label ?? slug} from ${user.displayName || user.email}`}
-                >
-                  <X size={11} />
-                </button>
-              </span>
-            );
-          })}
-          {held.length === 0 && (
-            <span className="text-[12px] text-muted-foreground/70 italic">No roles — no access.</span>
-          )}
-          {available.length > 0 && (
+        <div className="flex items-center gap-x-3 gap-y-1.5 flex-wrap">
+          {/* The pill IS the picker — one control, so there is no way to end up
+              wondering whether "add" and "remove" combined into something. */}
+          <span
+            className="relative inline-flex items-center gap-1.5 text-[12px] font-semibold pl-2 pr-1 py-0.5 rounded-full border"
+            style={
+              current
+                ? { borderColor: `${color}55`, background: `${color}14`, color }
+                : undefined
+            }
+          >
+            {current ? roleIcon(role?.icon, 11) : null}
             <select
-              value=""
+              value={current ?? ''}
               disabled={busy}
               onChange={(e) => onAssign(user.userId, e.target.value)}
-              className="text-[12px] px-2 py-0.5 rounded-full border border-dashed border-input bg-background text-muted-foreground hover:border-primary/50 cursor-pointer"
-              aria-label={`Assign a role to ${user.displayName || user.email}`}
+              className="bg-transparent border-0 text-[12px] font-semibold pr-0.5 cursor-pointer focus:outline-none disabled:cursor-wait"
+              style={{ color: current ? color : undefined }}
+              aria-label={`Role for ${name}`}
             >
-              <option value="">+ Add role…</option>
-              {available.map((r) => (
-                <option key={r.slug} value={r.slug}>{r.label}</option>
+              {!current && <option value="">No role — no access</option>}
+              {roles.map((r) => (
+                <option key={r.slug} value={r.slug} className="text-foreground bg-background">
+                  {r.label}
+                </option>
               ))}
             </select>
+          </span>
+
+          <button
+            onClick={() => onResend(user)}
+            disabled={busy || !current}
+            className="text-[12px] font-semibold text-primary hover:underline flex items-center gap-1 disabled:opacity-40 disabled:no-underline"
+          >
+            <Send size={11} /> Resend email
+          </button>
+          {!isSelf && (
+            <button
+              onClick={() => onRemove(user)}
+              disabled={busy}
+              className="text-[12px] font-semibold text-muted-foreground hover:text-destructive transition-colors flex items-center gap-1 disabled:opacity-40"
+            >
+              <X size={11} /> Remove
+            </button>
           )}
         </div>
+
+        {extras.length > 0 && (
+          <p className="text-[12px] text-muted-foreground/70 flex items-start gap-1.5">
+            <AlertTriangle size={11} className="flex-shrink-0 mt-0.5" />
+            <span>
+              Also holds {extras.map((s) => bySlug(s)?.label ?? s).join(', ')} from before roles
+              became single — choosing a role above clears it.
+            </span>
+          </p>
+        )}
       </div>
     </li>
   );
@@ -228,12 +271,18 @@ export function TeamManagementView({
   const roles = useRoleStore((s) => s.roles);
   const fetchRoles = useRoleStore((s) => s.fetchRoles);
   const assignRole = useRoleStore((s) => s.assignRole);
-  const unassignRole = useRoleStore((s) => s.unassignRole);
   const resendInvite = useStaffStore((s) => s.resendInvite);
+  const resendAccess = useStaffStore((s) => s.resendAccess);
+  const removeMember = useStaffStore((s) => s.removeMember);
   const fetchStaff = useStaffStore((s) => s.fetchStaff);
   const emailConfigured = useStaffStore((s) => s.emailConfigured);
+  const myId = useAuthStore((s) => s.currentUser?.id);
   const [roleBusy, setRoleBusy] = useState<string | null>(null);
   const [inviteBusy, setInviteBusy] = useState<string | null>(null);
+  // Revoking every role is destructive and one click away from a role change —
+  // confirm by name rather than trusting the aim.
+  const [confirmRemove, setConfirmRemove] = useState<StaffUser | null>(null);
+  const [removing, setRemoving] = useState(false);
 
   const onResend = async (id: string) => {
     setInviteBusy(id);
@@ -241,6 +290,28 @@ export function TeamManagementView({
     setInviteBusy(null);
     if (r.ok) toast.success(r.emailed ? 'Invitation sent again.' : 'Invite refreshed (email not configured).');
     else toast.error(r.error ?? 'Could not resend the invite.');
+  };
+
+  const onResendAccess = async (user: StaffUser) => {
+    setRoleBusy(user.userId);
+    const r = await resendAccess(user.userId);
+    setRoleBusy(null);
+    if (!r.ok) toast.error(r.error ?? 'Could not send the email.');
+    else if (r.emailed) toast.success(`Access email sent to ${user.email}.`);
+    else toast.warning('No email provider is configured, so nothing was sent.');
+  };
+
+  const onConfirmRemove = async () => {
+    if (!confirmRemove) return;
+    setRemoving(true);
+    const r = await removeMember(confirmRemove.userId);
+    setRemoving(false);
+    if (r.ok) {
+      toast.success(`${confirmRemove.displayName || confirmRemove.email} was removed from the team.`);
+      setConfirmRemove(null);
+    } else {
+      toast.error(r.error ?? 'Could not remove them.');
+    }
   };
 
   useEffect(() => {
@@ -277,17 +348,8 @@ export function TeamManagementView({
     const r = await assignRole(slug, userId);
     if (r.ok) await fetchStaff();
     setRoleBusy(null);
-    if (r.ok) toast.success('Role assigned.');
-    else toast.error(r.error ?? 'Could not assign the role.');
-  };
-
-  const onUnassign = async (userId: string, slug: string) => {
-    setRoleBusy(userId);
-    const r = await unassignRole(slug, userId);
-    if (r.ok) await fetchStaff();
-    setRoleBusy(null);
-    if (r.ok) toast.success('Role removed.');
-    else toast.error(r.error ?? 'Could not remove the role.');
+    if (r.ok) toast.success(`Role changed to ${bySlug(slug)?.label ?? slug}.`);
+    else toast.error(r.error ?? 'Could not change the role.');
   };
 
   if (!canManageTeam) {
@@ -354,7 +416,9 @@ export function TeamManagementView({
           <Shield size={12} className="flex-shrink-0 mt-0.5" />
           <span>
             They get an email with a link to join. If they already have an account the role applies
-            straight away. Define roles in <span className="font-medium">Roles &amp; Permissions</span>.
+            straight away, <span className="font-medium">replacing</span> any role they hold — one
+            role per person. Define roles in{' '}
+            <span className="font-medium">Roles &amp; Permissions</span>.
           </span>
         </p>
 
@@ -395,8 +459,10 @@ export function TeamManagementView({
                   roles={roles}
                   bySlug={bySlug}
                   busy={roleBusy === row.user.userId}
+                  isSelf={row.user.userId === myId}
                   onAssign={onAssign}
-                  onUnassign={onUnassign}
+                  onResend={onResendAccess}
+                  onRemove={setConfirmRemove}
                 />
               ) : (
                 <InvitedRow
@@ -412,6 +478,35 @@ export function TeamManagementView({
           </ul>
         </div>
       )}
+
+      {/* Remove-from-team confirmation */}
+      <Dialog open={!!confirmRemove} onOpenChange={(open) => !open && setConfirmRemove(null)}>
+        <DialogContent className="max-w-md rounded-sm">
+          <DialogHeader>
+            <DialogTitle>
+              Remove {confirmRemove?.displayName || confirmRemove?.email}?
+            </DialogTitle>
+            <DialogDescription>
+              They lose every newsroom permission immediately. Their account, bylines and
+              published work stay exactly as they are — they just become a reader again, and
+              you can invite them back at any time.
+            </DialogDescription>
+          </DialogHeader>
+          <DialogFooter>
+            <Button variant="ghost" size="sm" onClick={() => setConfirmRemove(null)} disabled={removing}>
+              Cancel
+            </Button>
+            <Button
+              size="sm"
+              className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
+              onClick={onConfirmRemove}
+              disabled={removing}
+            >
+              {removing ? 'Removing…' : 'Remove from team'}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }

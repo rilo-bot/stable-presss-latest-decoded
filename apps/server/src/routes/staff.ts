@@ -16,7 +16,7 @@ import { db } from '../lib/db.js'
 import { attachAccount } from '../lib/auth.js'
 import { withIdentityDefaults } from '../lib/identity.js'
 import { canManageTeam } from '../lib/rbac.js'
-import { SUPERADMIN_SLUG, getRoles } from '../lib/roleRegistry.js'
+import { SUPERADMIN_SLUG, getRoles, superadminHolderCount } from '../lib/roleRegistry.js'
 import { isEmailConfigured, sendInviteEmail, sendRoleGrantedEmail } from '../lib/email.js'
 import {
   COLLECTION as INVITES,
@@ -106,7 +106,13 @@ router.post('/', async (req, res) => {
       res.status(409).json({ error: 'That person already holds this role.' })
       return
     }
-    await db.collection('users').addToSet(String(existing._id), 'staffRoles', role.slug)
+    // One role per person — see routes/roles.ts. Inviting an existing member to
+    // a different role MOVES them to it rather than stacking a second one.
+    if (acct.staffRoles.includes(SUPERADMIN_SLUG) && (await superadminHolderCount()) <= 1) {
+      res.status(403).json({ error: 'Cannot change the last superadmin to another role.' })
+      return
+    }
+    await db.collection('users').updateOne(String(existing._id), { staffRoles: [role.slug] })
 
     // The grant is the point; the email is a courtesy. A delivery failure must
     // not roll it back or read as failure — report it and let the UI say so.
@@ -181,6 +187,84 @@ router.post('/', async (req, res) => {
   }
 
   res.status(201).json({ ok: true, applied: 'pending', emailed: delivered, inviteId })
+})
+
+// ── Re-send a MEMBER's access email ──────────────────────────────────────────
+// They already have the role — this is the "I never got the email" button, not
+// an invitation. There is no token to rotate, so nothing here is security
+// sensitive; the cooldown just stops the button being leaned on.
+const lastMemberNotify = new Map<string, number>()
+
+router.post('/member/:userId/resend', async (req, res) => {
+  const userId = String(req.params.userId)
+  const target = await db.collection('users').findById(userId)
+  if (!target) {
+    res.status(404).json({ error: 'Team member not found.' })
+    return
+  }
+  const acct = withIdentityDefaults({ id: target._id, ...target })
+  const slug = acct.staffRoles[0]
+  const role = slug ? (await getRoles()).get(slug) : undefined
+  if (!role) {
+    res.status(409).json({ error: 'That person holds no role, so there is nothing to send.' })
+    return
+  }
+
+  const last = lastMemberNotify.get(userId) ?? 0
+  if (Date.now() - last < INVITE_RESEND_COOLDOWN_MS) {
+    res.status(429).json({ error: 'That was just sent. Please wait a moment.' })
+    return
+  }
+
+  try {
+    const { delivered } = await sendRoleGrantedEmail({
+      to: acct.email,
+      roleLabel: role.label,
+      invitedBy: actorName(req),
+      newsroomUrl: `${WEB_PUBLIC_URL}/production-system`,
+    })
+    // Only start the cooldown once something actually went out, so a failed
+    // send doesn't lock the admin out of retrying for a minute.
+    if (delivered) lastMemberNotify.set(userId, Date.now())
+    res.json({ ok: true, emailed: delivered })
+  } catch (err) {
+    console.error('[staff] member resend failed:', err instanceof Error ? err.message : err)
+    res.status(502).json({ error: 'Could not send the email. Please try again.' })
+  }
+})
+
+// ── Remove a member from the team ────────────────────────────────────────────
+// Revokes every staff role in one action. The account itself survives — they
+// drop back to being a plain reader rather than being deleted, because their
+// bylines, stories and uploads all still reference them.
+router.delete('/member/:userId', async (req, res) => {
+  const userId = String(req.params.userId)
+  const target = await db.collection('users').findById(userId)
+  if (!target) {
+    res.status(404).json({ error: 'Team member not found.' })
+    return
+  }
+  if (userId === req.account!.id) {
+    res.status(403).json({ error: 'You cannot remove yourself from the team.' })
+    return
+  }
+  const acct = withIdentityDefaults({ id: target._id, ...target })
+  if (acct.staffRoles.includes(SUPERADMIN_SLUG) && (await superadminHolderCount()) <= 1) {
+    res.status(403).json({ error: 'Cannot remove the last superadmin.' })
+    return
+  }
+  if (acct.staffRoles.includes(SUPERADMIN_SLUG) && !req.account!.isSuperAdmin) {
+    res.status(403).json({ error: 'Only a superadmin can remove another superadmin.' })
+    return
+  }
+
+  await db.collection('users').updateOne(userId, { staffRoles: [] })
+  // Any invite still sitting for that address would silently re-grant on their
+  // next sign-in, undoing the removal.
+  const orphaned = await db.collection(INVITES).find({ email: acct.email })
+  await Promise.all(orphaned.map((g) => db.collection(INVITES).deleteOne(g._id)))
+
+  res.json({ ok: true })
 })
 
 // ── Resend an invite ─────────────────────────────────────────────────────────

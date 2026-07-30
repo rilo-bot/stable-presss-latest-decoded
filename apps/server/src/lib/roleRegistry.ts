@@ -28,6 +28,20 @@ import {
 /** The immutable, all-access role. Never resolved through the DB. */
 export const SUPERADMIN_SLUG = 'superadmin'
 
+/**
+ * How many accounts currently hold superadmin.
+ *
+ * Consulted before ANY change that would take it away from someone — removing
+ * the role, moving them to a different one, or removing them from the team
+ * outright. Reaching zero is unrecoverable without shell access to re-run the
+ * SETUP_SECRET seed, so every one of those paths has to ask.
+ */
+export async function superadminHolderCount(): Promise<number> {
+  const users = await db.collection('users').find()
+  return users.filter((u) => Array.isArray(u.staffRoles) && u.staffRoles.includes(SUPERADMIN_SLUG))
+    .length
+}
+
 export interface RoleDoc {
   id: string
   slug: string
