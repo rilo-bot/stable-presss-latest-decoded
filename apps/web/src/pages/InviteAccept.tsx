@@ -120,7 +120,7 @@ export default function InviteAccept() {
     // Land them wherever the invite pointed (a shared magazine, say) rather
     // than the newsroom home. Re-validated client-side even though the server
     // already sanitized it — this drives a navigation.
-    navigate(safeRedirect(invite.redirectTo, '/newsroom'), { replace: true });
+    navigate(safeRedirect(invite.redirectTo, '/production-system'), { replace: true });
   };
 
   // ── Invalid / expired ──────────────────────────────────────────────────────

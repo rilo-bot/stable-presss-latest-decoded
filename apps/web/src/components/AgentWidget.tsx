@@ -66,7 +66,7 @@ function describePage(pathname: string): PageContext {
     studio: 'party',
   };
   const root = seg[0] ?? '';
-  // The Magazine Builder (v2) lives under /newsroom/magazine-v2[/:id].
+  // The Magazine Builder (v2) lives under /production-system/magazine-v2[/:id].
   if (root === 'newsroom' && seg[1] === 'magazine-v2') {
     const ctx: PageContext = { path: pathname, title: 'Magazine Builder' };
     if (seg[2]) ctx.entity = { type: 'magazine', id: seg[2] };
@@ -129,7 +129,7 @@ function navPathFor(to: string, id?: string): string | null {
     case 'tipping': return '/tipping';
     case 'podcast': return '/podcast';
     case 'dashboard': return '/dashboard';
-    case 'newsroom': return '/newsroom';
+    case 'newsroom': return '/production-system';
     case 'site-content': return '/site-content';
     case 'claims': return '/claims';
     case 'staff': return '/staff';
@@ -141,7 +141,7 @@ function navPathFor(to: string, id?: string): string | null {
     case 'bulletin': return id ? `/bulletins/${id}` : '/bulletins';
     case 'organisation': return id ? `/orgs/${id}` : '/dashboard';
     // Staff Magazine Builder (v2): home, or straight into a magazine's editor.
-    case 'magazine-v2': return id ? `/newsroom/magazine-v2/${id}` : '/newsroom/magazine-v2';
+    case 'magazine-v2': return id ? `/production-system/magazine-v2/${id}` : '/production-system/magazine-v2';
     default: return null;
   }
 }

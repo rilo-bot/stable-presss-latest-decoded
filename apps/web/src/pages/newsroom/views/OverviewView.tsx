@@ -24,7 +24,7 @@ interface OverviewViewProps {
   roleLabel: string;
   accentColor: string;
   pendingReview: number;
-  setActiveNav: (nav: string) => void;
+  onNavigate: (nav: string) => void;
   setActiveColumn: (status: KanbanStatus) => void;
   mediaItems: MediaItem[];
   racingEntries: RacingEntry[];
@@ -45,7 +45,7 @@ export function OverviewView({
   roleLabel,
   accentColor,
   pendingReview,
-  setActiveNav,
+  onNavigate,
   setActiveColumn,
   mediaItems,
   racingEntries,
@@ -63,7 +63,7 @@ export function OverviewView({
   return (
     <div className="space-y-8">
       {/* AI-powered Production System dashboard: live summary, needs-your-attention, quick actions. */}
-      <NewsroomDashboard onNavigate={(where) => (where === 'claims' ? navigate('/claims') : setActiveNav(where))} />
+      <NewsroomDashboard onNavigate={(where) => (where === 'claims' ? navigate('/claims') : onNavigate(where))} />
 
       {isContributor && (
         <div
@@ -98,7 +98,7 @@ export function OverviewView({
             size="sm"
             variant="outline"
             className="text-sm gap-1.5 border-primary/30 text-primary hover:bg-primary/10"
-            onClick={() => setActiveNav('editor-hub')}
+            onClick={() => onNavigate('editor-hub')}
           >
             Open Editor Hub
             <ChevronRight size={11} />
@@ -129,7 +129,7 @@ export function OverviewView({
           variant="outline"
           className="text-sm gap-1.5"
           style={{ borderColor: 'hsl(var(--brand-accent) / 0.4)', color: 'hsl(var(--brand-accent))' }}
-          onClick={() => setActiveNav('bulletin-templates')}
+          onClick={() => onNavigate('bulletin-templates')}
         >
           Open Studio
           <ArrowRight size={11} />
@@ -162,7 +162,7 @@ export function OverviewView({
             variant="outline"
             className="text-sm gap-1.5"
             style={{ borderColor: 'hsl(var(--chart-3) / 0.4)', color: 'hsl(var(--chart-3))' }}
-            onClick={() => setActiveNav('media-production-system')}
+            onClick={() => onNavigate('media-production-system')}
           >
             Manage Media
             <ArrowRight size={11} />
@@ -196,7 +196,7 @@ export function OverviewView({
             variant="outline"
             className="text-sm gap-1.5"
             style={{ borderColor: 'hsl(var(--chart-1) / 0.4)', color: 'hsl(var(--chart-1))' }}
-            onClick={() => setActiveNav('racing-production-system')}
+            onClick={() => onNavigate('racing-production-system')}
           >
             Manage Racing
             <ArrowRight size={11} />
@@ -275,7 +275,7 @@ export function OverviewView({
           ).map((stage) => (
             <button
               key={stage.status}
-              onClick={() => { setActiveNav('workflow'); setActiveColumn(stage.status); }}
+              onClick={() => { onNavigate('workflow'); setActiveColumn(stage.status); }}
               className="flex flex-col items-center gap-1.5 p-3 rounded-sm border border-border/60 bg-card hover:border-primary/30 transition-colors text-center"
             >
               <span style={{ color: stage.accent }}>{stage.icon}</span>

@@ -111,11 +111,16 @@ export function sanitizeRedirect(value: unknown): string | undefined {
   return v
 }
 
-/** Path to a magazine in the web app — the deep link a share email points at. */
+/**
+ * Path to a magazine in the web app — the deep link a share email points at.
+ *
+ * Was `/newsroom/...`; the web app still redirects that prefix here, so links
+ * in already-sent emails keep working.
+ */
 export function magazinePath(magazineId: string, version: 'v1' | 'v2' = 'v2'): string {
   return version === 'v2'
-    ? `/newsroom/magazine-v2/${magazineId}`
-    : `/newsroom/magazine/${magazineId}`
+    ? `/production-system/magazine-v2/${magazineId}`
+    : `/production-system/magazine/${magazineId}`
 }
 
 /** Turn a relative path into the absolute URL an email can link to. */

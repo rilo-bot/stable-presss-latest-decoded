@@ -116,7 +116,7 @@ router.post('/', async (req, res) => {
         to: email,
         roleLabel: role.label,
         invitedBy: actorName(req),
-        newsroomUrl: `${WEB_PUBLIC_URL}/newsroom`,
+        newsroomUrl: `${WEB_PUBLIC_URL}/production-system`,
       }))
     } catch (err) {
       console.error('[staff] role-granted email failed:', err instanceof Error ? err.message : err)

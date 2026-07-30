@@ -57,7 +57,7 @@ export default function MagazineV2Home() {
     api.listIssues().then(setIssues).catch((e) => setError(e instanceof Error ? e.message : 'Failed to load')).finally(() => setLoading(false));
   }, []);
 
-  const openEditor = (id: string) => navigate(`/newsroom/magazine-v2/${id}`);
+  const openEditor = (id: string) => navigate(`/production-system/magazine-v2/${id}`);
 
   const autoGrow = () => {
     const el = taRef.current;

@@ -21,7 +21,6 @@ import HorseProfiles from '@/pages/HorseProfiles';
 import HorseDetail from '@/pages/HorseDetail';
 import HorseEditor from '@/pages/HorseEditor';
 import ArticleDetail from '@/pages/ArticleDetail';
-import Newsroom from '@/pages/Newsroom';
 import MagazineStudio from '@/pages/MagazineStudio';
 import MagazineV2Home from '@/editor-v2/MagazineV2Home';
 import MagazineEditorV2 from '@/editor-v2/MagazineEditorV2';
@@ -40,6 +39,26 @@ import OrgDashboard from '@/pages/OrgDashboard';
 import Dashboard from '@/pages/Dashboard';
 import Studio from '@/pages/Studio';
 import SiteContent from '@/pages/SiteContent';
+
+/* Production system — one layout route, one page per sidebar screen. */
+import ProductionSystemLayout, { ProductionSystemIndex } from '@/pages/production-system/ProductionSystemLayout';
+import NewsroomRedirect from '@/pages/production-system/NewsroomRedirect';
+import OverviewScreen from '@/pages/production-system/screens/OverviewScreen';
+import WorkflowBoardScreen from '@/pages/production-system/screens/WorkflowBoardScreen';
+import PipelineMapScreen from '@/pages/production-system/screens/PipelineMapScreen';
+import AllStoriesScreen from '@/pages/production-system/screens/AllStoriesScreen';
+import EditorHubScreen from '@/pages/production-system/screens/EditorHubScreen';
+import MyAssetsScreen from '@/pages/production-system/screens/MyAssetsScreen';
+import CompensationScreen from '@/pages/production-system/screens/CompensationScreen';
+import HorsesScreen from '@/pages/production-system/screens/HorsesScreen';
+import PeopleScreen from '@/pages/production-system/screens/PeopleScreen';
+import MediaRecordsScreen from '@/pages/production-system/screens/MediaRecordsScreen';
+import RacingRecordsScreen from '@/pages/production-system/screens/RacingRecordsScreen';
+import TeamScreen from '@/pages/production-system/screens/TeamScreen';
+import RolesScreen from '@/pages/production-system/screens/RolesScreen';
+import AnalyticsScreen from '@/pages/production-system/screens/AnalyticsScreen';
+import SettingsScreen from '@/pages/production-system/screens/SettingsScreen';
+import MagazineStudioScreen from '@/pages/production-system/screens/MagazineStudioScreen';
 
 /* Inject Google Fonts for vintage skeuomorphic horse dashboard */
 function useVintageFonts() {
@@ -241,26 +260,46 @@ export default function App() {
 
         {/* Staff-only routes — readers/parties are redirected home */}
         <Route element={<RequireStaff />}>
-          <Route
-            path="/newsroom"
-            element={
-              <AppLayout>
-                <Newsroom />
-              </AppLayout>
-            }
-          />
-          {/* Full-screen magazine editor — its own deep-linkable route, no nav chrome. */}
-          <Route path="/newsroom/magazine/:id" element={<MagazineStudio />} />
-          {/* Magazine Builder v2 (free-form, AI-first) — behind the MAGAZINE_V2 server flag. */}
-          <Route
-            path="/newsroom/magazine-v2"
-            element={
-              <AppLayout>
-                <MagazineV2Home />
-              </AppLayout>
-            }
-          />
-          <Route path="/newsroom/magazine-v2/:id" element={<MagazineEditorV2 />} />
+          {/* ── Production system ──
+              Every screen is a real route under /production-system, sharing one
+              layout (sidebar + shared dialogs). Deliberately NOT wrapped in
+              AppLayout: the public site's three header rows are website chrome,
+              and the sidebar already owns navigation, identity and the way back
+              to the site. */}
+          <Route path="/production-system" element={<ProductionSystemLayout />}>
+            <Route index element={<ProductionSystemIndex />} />
+            <Route path="overview" element={<OverviewScreen />} />
+            <Route path="workflow" element={<WorkflowBoardScreen />} />
+            <Route path="pipeline" element={<PipelineMapScreen />} />
+            <Route path="all-stories" element={<AllStoriesScreen />} />
+            <Route path="editor-hub" element={<EditorHubScreen />} />
+            <Route path="my-assets" element={<MyAssetsScreen />} />
+            <Route path="compensation" element={<CompensationScreen />} />
+            <Route path="horses" element={<HorsesScreen />} />
+            <Route path="people" element={<PeopleScreen />} />
+            <Route path="media-records" element={<MediaRecordsScreen />} />
+            <Route path="racing-records" element={<RacingRecordsScreen />} />
+            <Route path="team" element={<TeamScreen />} />
+            <Route path="roles" element={<RolesScreen />} />
+            <Route path="analytics" element={<AnalyticsScreen />} />
+            <Route path="settings" element={<SettingsScreen />} />
+            <Route path="magazine-studio" element={<MagazineStudioScreen />} />
+            {/* Magazine Builder v2 (free-form, AI-first) — behind the MAGAZINE_V2 server flag. */}
+            <Route path="magazine-v2" element={<MagazineV2Home />} />
+            {/* An unrecognised sub-path would otherwise render the shell around
+                an empty <main>. Send it to whichever screen the user has. */}
+            <Route path="*" element={<ProductionSystemIndex />} />
+          </Route>
+
+          {/* Full-screen magazine editors — deep-linkable, no chrome at all, so
+              they sit outside the layout rather than inside it. */}
+          <Route path="/production-system/magazine/:id" element={<MagazineStudio />} />
+          <Route path="/production-system/magazine-v2/:id" element={<MagazineEditorV2 />} />
+
+          {/* Staff-invite and magazine-share emails already in people's inboxes
+              point at /newsroom, so the old path keeps resolving. */}
+          <Route path="/newsroom/*" element={<NewsroomRedirect />} />
+
           <Route
             path="/podcast/workflow"
             element={

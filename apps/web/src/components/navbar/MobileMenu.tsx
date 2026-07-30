@@ -188,22 +188,22 @@ export function MobileMenu({
 
         {staff && (
           <Link
-            to="/newsroom"
+            to="/production-system"
             onClick={() => setMobileOpen(false)}
             className={cn(
               'flex items-center gap-2.5 px-3 py-2.5 rounded-sm text-sm font-medium transition-colors border-l-2',
-              pathname === '/newsroom'
+              pathname === '/production-system'
                 ? 'bg-primary/8 text-primary'
                 : 'text-muted-foreground hover:text-foreground hover:bg-muted/50 border-transparent'
             )}
             style={
-              pathname === '/newsroom'
+              pathname === '/production-system'
                 ? { borderLeftColor: 'hsl(var(--brand-accent))' }
                 : undefined
             }
           >
             <Newspaper size={14} />
-            Newsroom Production System
+            Production System
           </Link>
         )}
       </div>

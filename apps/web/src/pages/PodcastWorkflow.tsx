@@ -75,7 +75,7 @@ export default function PodcastWorkflow() {
             Podcast workflow management needs a role with podcast permissions. Ask an administrator
             to grant you one.
           </p>
-          <Button variant="outline" onClick={() => navigate('/newsroom')}>
+          <Button variant="outline" onClick={() => navigate('/production-system')}>
             Return to Newsroom
           </Button>
         </div>

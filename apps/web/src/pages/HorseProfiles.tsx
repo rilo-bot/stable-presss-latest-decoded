@@ -160,7 +160,7 @@ export default function HorseProfiles() {
           heading="The stables await their first resident."
           description="No thoroughbred profiles have been entered yet. Editors can add horses through the Newsroom Production System to begin building the stable record."
           ctaLabel="Go to Newsroom"
-          onCta={() => navigate('/newsroom')}
+          onCta={() => navigate('/production-system')}
           size="lg"
         />
       ) : filtered.length === 0 ? (

@@ -195,10 +195,10 @@ export function NavBar() {
               <>
                 <span className="h-3 w-px bg-primary-foreground/20" />
                 <Link
-                  to="/newsroom"
+                  to="/production-system"
                   className="opacity-60 hover:opacity-100 transition-opacity"
                 >
-                  Newsroom
+                  Production System
                 </Link>
                 <span className="h-3 w-px bg-primary-foreground/20" />
                 <Link

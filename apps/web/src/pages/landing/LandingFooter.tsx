@@ -110,7 +110,7 @@ export function LandingFooter({ hasUser, isStaff, sponsors }: LandingFooterProps
                   { to: '/tipping', label: 'Leaderboard' },
                   { to: '/newsletter', label: 'Newsletter' },
                   { to: '/bulletins', label: 'Print Bulletins' },
-                  ...(isStaff ? [{ to: '/newsroom', label: 'Newsroom' }] : []),
+                  ...(isStaff ? [{ to: '/production-system', label: 'Production System' }] : []),
                 ].map((item) => (
                   <li key={item.label}>
                     <Link
@@ -137,7 +137,7 @@ export function LandingFooter({ hasUser, isStaff, sponsors }: LandingFooterProps
                         { to: '/signup', label: 'Create Account' },
                         { to: '/signup', label: 'Membership Plans' },
                       ]),
-                  ...(isStaff ? [{ to: '/newsroom', label: 'Newsroom' }] : []),
+                  ...(isStaff ? [{ to: '/production-system', label: 'Production System' }] : []),
                 ].map((item) => (
                   <li key={item.label}>
                     <Link

@@ -422,17 +422,17 @@ export default function Dashboard() {
 
         {/* Staff / admin */}
         {staff && (
-          <Section title="Newsroom & Staff" icon={<Users size={15} />}>
+          <Section title="Production System & Staff" icon={<Users size={15} />}>
             <p className="text-sm text-muted-foreground mb-3">
               Story workflow, thoroughbred records, parties, media and racing data all live in the
               production system.
             </p>
             <div className="flex flex-wrap gap-2">
               <Link
-                to="/newsroom"
+                to="/production-system"
                 className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-sm border border-border/60 text-sm hover:border-primary/50 transition-colors"
               >
-                <Newspaper size={15} /> Newsroom Production System
+                <Newspaper size={15} /> Production System
               </Link>
               {admin && (
                 <Link
