@@ -4,7 +4,7 @@ import { Button } from '@/components/ui/button';
 import { EmptyState } from '@/components/EmptyState';
 import { cn } from '@/lib/utils';
 import { canEditArticle } from '@/lib/permissions';
-import type { KanbanStatus } from '@/components/KanbanColumn';
+import type { ArticleStatus } from '@/types/article';
 import type { Article } from '@/types/article';
 
 import { StatusBadge } from '../components/StatusBadge';
@@ -16,7 +16,7 @@ interface AllStoriesViewProps {
   searchQuery: string;
   setSearchQuery: (v: string) => void;
   filteredArticles: Article[];
-  onNewInColumn: (status: KanbanStatus) => void;
+  onNewInColumn: (status: ArticleStatus) => void;
   onOpenStudio: () => void;
   currentUserDisplayName: string | undefined;
   onEdit: (article: Article) => void;

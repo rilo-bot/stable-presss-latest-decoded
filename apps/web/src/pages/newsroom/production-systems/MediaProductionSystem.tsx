@@ -1,4 +1,5 @@
-import { Plus, Search, Eye, File, CalendarDays, X } from 'lucide-react';
+import { useState } from 'react';
+import { Plus, Search, Eye, File, CalendarDays, X, Share2 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { EmptyState } from '@/components/EmptyState';
 import { cn } from '@/lib/utils';
@@ -6,6 +7,8 @@ import type { Horse } from '@/types/horse';
 import type { MediaItem, MediaType } from '@/types/mediaItem';
 import { MEDIA_TYPE_ICONS, MEDIA_TYPE_COLORS } from '../constants';
 import { DeleteConfirmDialog } from '../components/DeleteConfirmDialog';
+import { RecordShareDialog } from '@/components/RecordShareDialog';
+import { useMediaStore } from '@/stores/mediaStore';
 
 interface MediaProductionSystemProps {
   mediaItems: MediaItem[];
@@ -44,8 +47,17 @@ export function MediaProductionSystem({
   setMediaDeleteTarget,
   confirmMediaDelete,
 }: MediaProductionSystemProps) {
+  const shareItem = useMediaStore((s) => s.shareItem);
+  const unshareItem = useMediaStore((s) => s.unshareItem);
+  const [shareTargetId, setShareTargetId] = useState<string | null>(null);
+
   const safeMedia = mediaItems ?? [];
   const safeHorses = horses ?? [];
+
+  // Resolved from the live list, not held as a snapshot — otherwise the dialog
+  // would keep rendering the stale `sharedWith` from the moment it opened.
+  const shareTarget = safeMedia.find((m) => m.id === shareTargetId) ?? null;
+  const setShareTarget = (item: MediaItem | null) => setShareTargetId(item?.id ?? null);
 
   const mediaTypeCounts: Partial<Record<MediaType, number>> = {};
   for (const m of safeMedia) {
@@ -249,23 +261,42 @@ export function MediaProductionSystem({
                         )}
                       </td>
 
-                      {/* Actions */}
+                      {/* Actions — driven by the server's per-record flags, not
+                          by a local guess at what this viewer may do. */}
                       <td className="px-4 py-3">
                         <div className="flex items-center gap-3">
-                          <button
-                            onClick={() => onOpenMediaForm(item)}
-                            className="text-[12px] uppercase tracking-[0.08em] font-semibold text-primary hover:text-primary/80 transition-colors"
-                            aria-label={`Edit ${item.title}`}
-                          >
-                            Edit
-                          </button>
-                          <button
-                            onClick={() => onMediaDelete(item)}
-                            className="text-[12px] uppercase tracking-[0.08em] font-semibold text-destructive hover:text-destructive/80 transition-colors"
-                            aria-label={`Remove ${item.title}`}
-                          >
-                            Remove
-                          </button>
+                          {item.canEdit === false ? (
+                            <span className="text-[12px] uppercase tracking-[0.08em] font-semibold text-muted-foreground/60">
+                              View only
+                            </span>
+                          ) : (
+                            <>
+                              <button
+                                onClick={() => onOpenMediaForm(item)}
+                                className="text-[12px] uppercase tracking-[0.08em] font-semibold text-primary hover:text-primary/80 transition-colors"
+                                aria-label={`Edit ${item.title}`}
+                              >
+                                Edit
+                              </button>
+                              {item.canShare !== false && (
+                                <button
+                                  onClick={() => setShareTarget(item)}
+                                  className="text-[12px] uppercase tracking-[0.08em] font-semibold text-muted-foreground hover:text-foreground transition-colors inline-flex items-center gap-1"
+                                  aria-label={`Share ${item.title}`}
+                                >
+                                  <Share2 size={11} />
+                                  {(item.sharedWith?.length ?? 0) > 0 ? item.sharedWith!.length : 'Share'}
+                                </button>
+                              )}
+                              <button
+                                onClick={() => onMediaDelete(item)}
+                                className="text-[12px] uppercase tracking-[0.08em] font-semibold text-destructive hover:text-destructive/80 transition-colors"
+                                aria-label={`Remove ${item.title}`}
+                              >
+                                Remove
+                              </button>
+                            </>
+                          )}
                         </div>
                       </td>
                     </tr>
@@ -290,6 +321,17 @@ export function MediaProductionSystem({
         confirmLabel="Remove"
         onCancel={() => { setMediaDeleteConfirm(false); setMediaDeleteTarget(null); }}
         onConfirm={confirmMediaDelete}
+      />
+
+      {/* Share */}
+      <RecordShareDialog
+        open={!!shareTarget}
+        onClose={() => setShareTarget(null)}
+        recordLabel="media record"
+        ownerName={shareTarget?.createdByName}
+        sharedWith={shareTarget?.sharedWith ?? []}
+        onShare={(email) => shareItem(shareTarget!.id, email)}
+        onUnshare={(userId) => unshareItem(shareTarget!.id, userId)}
       />
 
       {/* Info note */}

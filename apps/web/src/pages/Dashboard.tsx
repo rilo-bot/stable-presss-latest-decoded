@@ -17,6 +17,7 @@ import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { HorseForm } from '@/components/HorseForm';
 import { AddHorseChoice } from '@/components/AddHorseChoice';
+import { SectionHeading } from '@/components/SectionHeading';
 import { toast } from 'sonner';
 import {
   Newspaper, Star, Mic, HelpCircle, Building2, ShieldCheck, Users, PlusCircle, Loader2, Crown, Check, BookOpen, Clock, Lock,
@@ -25,9 +26,7 @@ import {
 function Section({ title, icon, children }: { title: string; icon: React.ReactNode; children: React.ReactNode }) {
   return (
     <section className="border border-border/60 rounded-sm bg-card p-5">
-      <h2 className="flex items-center gap-2 text-sm font-bold uppercase tracking-[0.1em] text-foreground mb-4">
-        {icon} {title}
-      </h2>
+      <SectionHeading icon={icon} className="mb-4">{title}</SectionHeading>
       {children}
     </section>
   );
@@ -423,13 +422,17 @@ export default function Dashboard() {
 
         {/* Staff / admin */}
         {staff && (
-          <Section title="Newsroom & Staff" icon={<Users size={15} />}>
+          <Section title="Production System & Staff" icon={<Users size={15} />}>
+            <p className="text-sm text-muted-foreground mb-3">
+              Story workflow, thoroughbred records, parties, media and racing data all live in the
+              production system.
+            </p>
             <div className="flex flex-wrap gap-2">
               <Link
-                to="/newsroom"
+                to="/production-system"
                 className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-sm border border-border/60 text-sm hover:border-primary/50 transition-colors"
               >
-                <Newspaper size={15} /> Newsroom Production System
+                <Newspaper size={15} /> Production System
               </Link>
               {admin && (
                 <Link

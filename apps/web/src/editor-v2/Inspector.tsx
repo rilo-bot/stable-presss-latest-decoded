@@ -157,11 +157,17 @@ function ElementPanel({ el }: { el: MagazineElement }) {
                 value={matchFontOption(el.text!.fontFamily)?.stack ?? ''}
                 onChange={(e) => set({ text: { ...el.text!, fontFamily: e.target.value } })}
                 className="w-full rounded-sm border border-white/15 bg-white/5 px-2.5 py-2 text-sm text-white outline-none hover:bg-white/10"
-                style={{ fontFamily: el.text.fontFamily }}
+                // `colorScheme: dark` makes the browser render the native OPTION popup
+                // dark; without it the popup defaults to white and the inherited white
+                // text is invisible (white-on-white). Explicit per-option colours below
+                // are the belt-and-braces fallback for engines that ignore it.
+                style={{ fontFamily: el.text.fontFamily, colorScheme: 'dark' }}
               >
-                {!matchFontOption(el.text!.fontFamily) && <option value="">{primaryFamily(el.text.fontFamily) || 'Custom'}</option>}
+                {!matchFontOption(el.text!.fontFamily) && (
+                  <option value="" style={{ backgroundColor: '#0d1626', color: '#fff' }}>{primaryFamily(el.text.fontFamily) || 'Custom'}</option>
+                )}
                 {FONT_OPTIONS.map((f) => (
-                  <option key={f.stack} value={f.stack} style={{ fontFamily: f.stack }}>{f.label}</option>
+                  <option key={f.stack} value={f.stack} style={{ fontFamily: f.stack, backgroundColor: '#0d1626', color: '#fff' }}>{f.label}</option>
                 ))}
               </select>
             </Section>

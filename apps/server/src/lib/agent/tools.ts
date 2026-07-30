@@ -466,26 +466,39 @@ export function buildTools(account?: AccountUser, authHeader?: string): ToolSet 
     }),
 
     // Client-executed (no execute): the browser handles this via the widget's
-    // onToolCall and routes the app there with react-router. Use it to actually
-    // TAKE the reader to where they can do something (then tell them the next step).
+    // onToolCall and routes the app there with react-router (and, for
+    // story-studio, opens the drawer). Use it to actually TAKE the reader to
+    // where they can do something (then tell them the next step).
     navigateTo: tool({
       description:
-        "Navigate the reader to a page so they can do the thing they asked about (e.g. 'file a story' → newsroom, 'place a tip' → tipping" +
-        (MAGAZINE_V2_ENABLED ? ", 'build/edit the bulletin' → magazine-v2, the staff Magazine Builder" : '') +
-        "). Pair it with a short note on what to do once there. For a specific horse/party/article/bulletin/organisation, pass its id. Don't send a reader to a staff-only page (newsroom/site-content/claims/staff" +
-        (MAGAZINE_V2_ENABLED ? '/magazine-v2' : '') +
-        ") unless they're staff/admin — guide them instead.",
+        "Navigate the reader to a page — or OPEN an AI studio — so they can do the thing they asked about. " +
+        "Studios (each has its own built-in assistant): 'story-studio' opens the Story Studio drawer in the Production System (staff write & file a draft conversationally); " +
+        (MAGAZINE_V2_ENABLED ? "'magazine-v2' is the Magazine Builder (staff; pass a magazine id to open its editor); " : '') +
+        "'horse-studio' (pass the horse id) is a member's private editable horse page; 'profile-studio' (pass their party id — get it via myAccount) is a member's editable profile. " +
+        "'production-system' is the staff CMS — pass `screen` to land on a specific screen. " +
+        "Pair navigation with a short note on what to do once there. Don't send a non-staff reader to a staff-only surface (production-system, story-studio" +
+        (MAGAZINE_V2_ENABLED ? ', magazine-v2' : '') +
+        ", site-content, claims) — guide them instead; horse-studio/profile-studio only for records the member manages.",
       inputSchema: z.object({
         to: z
           .enum([
             'home', 'news', 'newsletter', 'bulletins', 'horses', 'parties', 'tipping', 'podcast',
-            'dashboard', 'newsroom', 'site-content', 'claims', 'staff', 'login', 'signup',
+            'dashboard', 'production-system', 'story-studio', 'horse-studio', 'profile-studio',
+            'site-content', 'claims', 'login', 'signup',
             'horse', 'party', 'article', 'bulletin', 'organisation',
             // The staff Magazine Builder home; with an id, that magazine's editor.
             ...(MAGAZINE_V2_ENABLED ? (['magazine-v2'] as const) : []),
           ] as [string, ...string[]])
-          .describe('Destination. horse/party/article/bulletin/organisation need an id.'),
-        id: z.string().optional().describe('Entity id — required for horse/party/article/bulletin/organisation; optional for magazine-v2 (opens that magazine in the Builder).'),
+          .describe('Destination or studio. horse/party/article/bulletin/organisation/horse-studio need an id.'),
+        id: z.string().optional().describe('Entity id — required for horse/party/article/bulletin/organisation and horse-studio (a horse id) / profile-studio (a party id); optional for magazine-v2 (opens that magazine in the Builder).'),
+        screen: z
+          .enum([
+            'overview', 'workflow', 'pipeline', 'all-stories', 'editor-hub', 'my-assets',
+            'compensation', 'horses', 'people', 'media-records', 'racing-records',
+            'team', 'roles', 'analytics', 'settings', 'magazine-studio',
+          ])
+          .optional()
+          .describe("Production System screen (only with to:'production-system'): workflow = the story Kanban, all-stories = every story, editor-hub = review/assignments/scheduling, horses/people/media-records/racing-records = the racing-data registers, team/roles = staff & permissions (admin)."),
       }),
     }),
 

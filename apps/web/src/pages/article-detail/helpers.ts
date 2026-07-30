@@ -2,18 +2,10 @@ import type { ArticleStatus } from '@/types/article';
 
 export const STATUS_LABELS: Record<ArticleStatus, string> = {
   draft: 'Draft — not yet published',
-  submitted: 'Submitted — awaiting editorial review',
-  editorial_review: 'Under editorial review',
-  revision: 'Returned for revision',
-  legal_review: 'Awaiting legal sign-off',
-  compliance: 'In compliance review',
-  approved: 'Approved — awaiting publisher',
-  publisher_review: 'Under publisher review',
+  submitted: 'Submitted — awaiting approval',
+  approved: 'Approved — cleared to run',
   scheduled: 'Scheduled for publication',
   published: 'Published',
-  newsletter: 'Published — distributed to newsletter',
-  bulletin: 'Published — included in bulletin',
-  archived: 'Archived',
 };
 
 /* Split body copy into readable paragraphs */

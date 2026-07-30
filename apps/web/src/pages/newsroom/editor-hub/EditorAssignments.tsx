@@ -3,7 +3,7 @@ import { Button } from '@/components/ui/button';
 import { EmptyState } from '@/components/EmptyState';
 import { cn } from '@/lib/utils';
 import { toast } from 'sonner';
-import type { KanbanStatus } from '@/components/KanbanColumn';
+import type { ArticleStatus } from '@/types/article';
 import type { Article } from '@/types/article';
 import type { ArticleUpdate } from '@/stores/articleStore';
 import { StatusBadge } from '../components/StatusBadge';
@@ -15,7 +15,7 @@ interface EditorAssignmentsProps {
   assignNote: string;
   setAssignNote: (v: string) => void;
   updateArticle: (id: string, updates: ArticleUpdate) => Promise<boolean>;
-  onNewInColumn: (status: KanbanStatus) => void;
+  onNewInColumn: (status: ArticleStatus) => void;
   onOpenStudio: () => void;
   onEdit: (article: Article) => void;
 }
@@ -33,7 +33,8 @@ export function EditorAssignments({
 }: EditorAssignmentsProps) {
   const allArticles = articles ?? [];
   const assignable = allArticles.filter(
-    (a) => a.status === 'draft' || a.status === 'revision' || a.status === 'editorial_review'
+    // Drafts (including ones sent back) and anything still awaiting approval.
+    (a) => a.status === 'draft' || a.status === 'submitted'
   );
 
   return (

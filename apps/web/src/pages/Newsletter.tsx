@@ -271,7 +271,7 @@ export default function Newsletter() {
             ) : (
               <div className="flex flex-col sm:flex-row items-center gap-3 justify-center">
                 <Button asChild className="bg-primary text-primary-foreground hover:bg-primary/90 gap-1.5">
-                  <Link to="/newsroom">
+                  <Link to="/production-system">
                     Go to Newsroom Production System
                     <ArrowRight size={14} />
                   </Link>

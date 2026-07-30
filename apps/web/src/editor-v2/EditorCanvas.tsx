@@ -352,7 +352,13 @@ function ActivePageLayer() {
   };
 
   return (
-    <div style={{ width: zoomWidth }} className="relative shrink-0">
+    // `isolate` creates a stacking context so the interaction overlay's very high
+    // z-index (100000, needed to sit above page elements whose z caps at 9999) stays
+    // CONTAINED within this page block. Without it that z-index leaks into the app's
+    // top-level stacking context and paints over popovers/modals that open across the
+    // canvas — making them unclickable. The page block itself stays at normal flow
+    // order, safely below those popups.
+    <div style={{ width: zoomWidth }} className="relative isolate shrink-0">
       {/* Base: the real published renderer (hide the element being edited in place) */}
       <IssuePageCanvas page={page} hideElementId={editingId ?? undefined} />
         {/* Interaction overlay (same box via inset-0). An explicit high z-index is

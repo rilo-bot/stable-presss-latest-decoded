@@ -1,6 +1,7 @@
 import { useMemo } from 'react';
 import { CATEGORIES } from '@/pages/NewsIndex';
-import type { Article, ArticleStatus } from '@/types/article';
+import { isLiveOn } from '@/types/article';
+import type { Article, ArticleChannel } from '@/types/article';
 
 export type SectionGroup = {
   section: string;
@@ -23,14 +24,21 @@ export interface ArticleGroups {
  * Behaviour is identical to the original inline useMemo blocks; only the
  * status filter differs between the two pages.
  */
+/**
+ * Groups the live stories carried on one distribution channel.
+ *
+ * Took an `ArticleStatus` before, because "newsletter" and "bulletin" were
+ * statuses — which meant a story could appear in the newsletter or on the news
+ * index but never both. It takes the channel now, and only live stories qualify.
+ */
 export function useArticleGroups(
   articles: Article[] | null | undefined,
-  status: ArticleStatus,
+  channel: ArticleChannel,
   categoryParam: string | null,
   search: string
 ): ArticleGroups {
   const source = useMemo(() => {
-    let base = (articles ?? []).filter((a) => a.status === status);
+    let base = (articles ?? []).filter((a) => isLiveOn(a, channel));
     if (categoryParam) base = base.filter((a) => (a.category ?? '') === categoryParam);
     if (search.trim()) {
       const q = search.toLowerCase();
@@ -42,7 +50,7 @@ export function useArticleGroups(
       );
     }
     return base;
-  }, [articles, status, categoryParam, search]);
+  }, [articles, channel, categoryParam, search]);
 
   const hasCmsArticles = source.length > 0;
 

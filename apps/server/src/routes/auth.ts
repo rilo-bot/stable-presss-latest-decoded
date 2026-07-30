@@ -5,6 +5,7 @@ import { sendOtpEmail, isEmailConfigured } from '../lib/email.js';
 import { withIdentityDefaults, newReaderFields } from '../lib/identity.js';
 import { resolveAccount, toClientUser } from '../lib/effectiveAccess.js';
 import { getRoles } from '../lib/roleRegistry.js';
+import { COLLECTION as INVITES, isExpired } from '../lib/invites.js';
 
 type WithMongoId = { _id: string; [key: string]: unknown };
 function project<T extends WithMongoId>(doc: T): Omit<T, '_id'> & { id: string } {
@@ -108,7 +109,7 @@ router.post('/request-otp', async (req, res) => {
   // delivery when email isn't configured — that would let anyone sign in as any
   // account with a known code. Refuse instead of silently degrading.
   if (IS_PROD && !isEmailConfigured()) {
-    console.error('[auth] request-otp refused: PROD=true but email is not configured (SENDGRID_API_KEY / SENDGRID_FROM_EMAIL).');
+    console.error('[auth] request-otp refused: PROD=true but email is not configured (need RESEND_API_KEY + RESEND_FROM_EMAIL, or SMTP_HOST + SMTP_FROM).');
     res.status(503).json({ error: 'Sign-in is temporarily unavailable. Please try again later.' });
     return;
   }
@@ -209,19 +210,24 @@ router.post('/verify-otp', async (req, res) => {
     return;
   }
 
-  // Apply any roles pre-granted to this email (first sign-in). Each invite is
-  // re-validated against the live registry: a role deleted between invite and
-  // sign-in is dropped rather than written as a dangling slug.
+  // Apply any roles pre-granted to this email (first sign-in). Two filters:
+  //   - the role must still exist, so a role deleted between invite and sign-in
+  //     is dropped rather than written as a dangling slug;
+  //   - the invite must not have expired, or the 14-day window on the emailed
+  //     link would be cosmetic — the grant would still land whenever they
+  //     eventually signed up.
+  // Expired rows are consumed either way, so they don't linger forever.
   let finalDoc = userDoc;
-  const grants = await db.collection('pendingStaffGrants').find({ email });
+  const grants = await db.collection(INVITES).find({ email });
   if (grants.length > 0) {
     const known = await getRoles();
     const merged = new Set(withIdentityDefaults(project(finalDoc)).staffRoles);
     for (const g of grants) {
+      if (isExpired(g)) continue;
       if (typeof g.role === 'string' && known.has(g.role)) merged.add(g.role);
     }
     await db.collection('users').updateOne(String(finalDoc._id), { staffRoles: [...merged] });
-    await Promise.all(grants.map((g) => db.collection('pendingStaffGrants').deleteOne(g._id)));
+    await Promise.all(grants.map((g) => db.collection(INVITES).deleteOne(g._id)));
     const refreshed = await db.collection('users').findById(finalDoc._id);
     if (refreshed) finalDoc = refreshed;
   }

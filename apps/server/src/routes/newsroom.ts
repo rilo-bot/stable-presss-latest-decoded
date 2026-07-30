@@ -23,13 +23,16 @@ import type { AccountUser, PartyClaim } from '../lib/identity.js'
 const router = Router()
 router.use(attachAccount)
 
-const LIVE_STATUSES = ['published', 'newsletter', 'bulletin']
+/**
+ * "Live" is one status now. It used to be three, because newsletter/bulletin
+ * were statuses rather than distribution channels.
+ */
+const LIVE_STATUSES = ['published']
 
 // "Needs your attention" is driven by what the caller can ACT on. These used to
 // hardcode role slugs, which meant a superadmin-created role could never surface
 // a queue no matter what it was granted.
 const canReview = (a: AccountUser) => accountCan(a, 'content.editorial_review')
-const canClearLegal = (a: AccountUser) => accountCan(a, 'content.legal_review')
 const canPublish = (a: AccountUser) => accountCan(a, 'content.publish')
 
 export interface NeedItem {
@@ -81,19 +84,22 @@ async function buildNewsroomSummary(account: AccountUser) {
   // ── "Needs your attention" — only what THIS role acts on, only when non-zero ──
   const needs: NeedItem[] = []
   if (canReview(account)) {
-    const c = countStatus('submitted', 'editorial_review')
+    const c = countStatus('submitted')
     if (c) needs.push({ id: 'review-stories', label: 'Stories awaiting your review', count: c, where: 'review' })
   }
-  if (canClearLegal(account)) {
-    const c = countStatus('legal_review', 'compliance')
-    if (c) needs.push({ id: 'legal-review', label: 'Stories awaiting legal / compliance', count: c, where: 'review' })
-  }
+  // The separate legal / compliance queues are gone: approval is one step now,
+  // so anyone who can review sees the same Submitted queue above.
   if (canPublish(account)) {
-    const c = countStatus('approved', 'publisher_review', 'scheduled')
+    const c = countStatus('approved', 'scheduled')
     if (c) needs.push({ id: 'publish-stories', label: 'Stories ready to publish or schedule', count: c, where: 'workflow' })
   }
-  const myRevision = countMine('revision')
-  if (myRevision) needs.push({ id: 'my-revisions', label: 'Your stories need revision', count: myRevision, where: 'drafts' })
+  // A sent-back story is a Draft with `changesRequested` set, not its own status.
+  const myChangesRequested = mine.filter(
+    (a) => a.status === 'draft' && a.changesRequested,
+  ).length
+  if (myChangesRequested) {
+    needs.push({ id: 'my-revisions', label: 'Your stories need changes', count: myChangesRequested, where: 'drafts' })
+  }
   const myDrafts = countMine('draft')
   if (myDrafts) needs.push({ id: 'my-drafts', label: 'Your drafts in progress', count: myDrafts, where: 'drafts' })
   if (pendingClaims) needs.push({ id: 'verify-claims', label: 'Racing-role claims to verify', count: pendingClaims, where: 'claims' })

@@ -57,7 +57,7 @@ export default function MagazineV2Home() {
     api.listIssues().then(setIssues).catch((e) => setError(e instanceof Error ? e.message : 'Failed to load')).finally(() => setLoading(false));
   }, []);
 
-  const openEditor = (id: string) => navigate(`/newsroom/magazine-v2/${id}`);
+  const openEditor = (id: string) => navigate(`/production-system/magazine-v2/${id}`);
 
   const autoGrow = () => {
     const el = taRef.current;
@@ -239,7 +239,7 @@ export default function MagazineV2Home() {
   return (
     <div className="mx-auto max-w-5xl px-4 pb-16">
       {/* ── Hero composer ─────────────────────────────────────────────── */}
-      <section className="flex flex-col items-center pt-16 text-center sm:pt-24">
+      <section className="flex flex-col items-center pt-6 text-center sm:pt-10">
         <span
           className="mb-5 inline-flex items-center gap-1.5 rounded-full px-3 py-1 text-xs font-medium"
           style={{ backgroundColor: `${ACCENT}14`, color: ACCENT }}
@@ -254,7 +254,7 @@ export default function MagazineV2Home() {
 
         {/* The one input the whole flow starts from. */}
         <div
-          className="mt-8 w-full max-w-2xl rounded-2xl border bg-background text-left shadow-sm transition-shadow focus-within:shadow-md"
+          className="mt-6 w-full max-w-3xl rounded-[26px] border border-border/70 bg-card text-left shadow-[0_10px_34px_rgba(0,0,0,0.09)] transition-all duration-200 focus-within:border-[#7c3aed]/60 focus-within:shadow-[0_14px_44px_rgba(124,58,237,0.16)]"
           style={{ borderColor: dragOver ? ACCENT : undefined, boxShadow: dragOver ? `0 0 0 3px ${ACCENT}33` : undefined }}
           onDragOver={(e) => { e.preventDefault(); setDragOver(true); }}
           onDragLeave={() => setDragOver(false)}
@@ -262,8 +262,8 @@ export default function MagazineV2Home() {
         >
           <textarea
             ref={taRef}
-            className="w-full resize-none rounded-2xl bg-transparent px-4 pt-4 text-[15px] leading-relaxed placeholder:text-muted-foreground focus:outline-none"
-            rows={3}
+            className="w-full resize-none rounded-[26px] bg-transparent px-5 pt-5 text-[16px] leading-relaxed placeholder:text-muted-foreground/70 focus:outline-none"
+            rows={2}
             autoFocus
             placeholder="e.g. A spring issue for New Zealand racehorse owners — bold, modern, photo-led…"
             value={brief}
@@ -282,13 +282,13 @@ export default function MagazineV2Home() {
           ))}
 
           {/* toolbar */}
-          <div className="flex items-center justify-between gap-2 px-2.5 py-2">
+          <div className="flex items-center justify-between gap-2 px-3.5 pb-3 pt-1">
             <div className="flex items-center gap-1">
               <button
                 type="button"
                 onClick={() => fileRef.current?.click()}
                 disabled={starting}
-                className="inline-flex items-center gap-1.5 rounded-lg px-2.5 py-1.5 text-sm text-muted-foreground hover:bg-muted hover:text-foreground disabled:opacity-50"
+                className="inline-flex items-center gap-1.5 rounded-lg px-3 py-2 text-sm text-muted-foreground hover:bg-muted hover:text-foreground disabled:opacity-50"
                 title="Attach a document or image to build from"
               >
                 <Paperclip size={16} /> <span className="hidden sm:inline">Attach</span>
@@ -301,12 +301,12 @@ export default function MagazineV2Home() {
             <button
               onClick={() => void startAI()}
               disabled={!canGenerate}
-              className="inline-flex items-center gap-1.5 rounded-xl px-4 py-2 text-sm font-semibold text-white shadow-sm transition-opacity disabled:cursor-not-allowed disabled:opacity-40"
-              style={{ backgroundColor: ACCENT }}
+              className="inline-flex items-center gap-1.5 rounded-2xl px-5 py-2.5 text-[15px] font-semibold text-white shadow-lg shadow-[#7c3aed]/25 transition-all hover:-translate-y-px hover:shadow-xl hover:shadow-[#7c3aed]/30 disabled:cursor-not-allowed disabled:opacity-40 disabled:shadow-none disabled:hover:translate-y-0"
+              style={{ backgroundImage: `linear-gradient(135deg, #9061f9 0%, ${ACCENT} 100%)`, backgroundColor: ACCENT }}
             >
               {starting ? <Loader2 size={16} className="animate-spin" /> : <Sparkles size={16} />}
               {starting ? 'Starting…' : 'Generate'}
-              {!starting && <ArrowUp size={14} className="opacity-70" />}
+              {!starting && <ArrowUp size={15} className="opacity-80" />}
             </button>
           </div>
 

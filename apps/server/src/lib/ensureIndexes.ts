@@ -39,6 +39,10 @@ const INDEX_SPECS: IndexSpec[] = [
   { collection: COL.issues, keys: { deletedAt: 1, updatedAt: -1 } },
   // User lookup by email (collaborator-add and auth paths).
   { collection: 'users', keys: { email: 1, deletedAt: 1 } },
+  // Invite links resolve by token hash on an unauthenticated route — the one
+  // lookup an anonymous caller can trigger, so it must not scan.
+  { collection: 'pendingStaffGrants', keys: { tokenHash: 1 } },
+  { collection: 'pendingStaffGrants', keys: { email: 1 } },
   // Dynamic RBAC: slug is the key stored on every user, so it must be unique.
   // Enforced in the database, not just in the create/rename handler — two
   // concurrent creates would otherwise both pass the application-level check.

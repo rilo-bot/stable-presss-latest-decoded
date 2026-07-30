@@ -112,15 +112,15 @@ export function DesktopMenu({
 
           {staff && (
             <Link
-              to="/newsroom"
+              to="/production-system"
               className={cn(
                 'flex items-center gap-1.5 px-3 py-2.5 text-[11px] uppercase tracking-[0.1em] font-semibold transition-colors border-b-2 flex-shrink-0',
-                pathname === '/newsroom'
+                pathname === '/production-system'
                   ? 'text-primary-foreground'
                   : 'text-primary-foreground/65 hover:text-primary-foreground border-transparent'
               )}
               style={
-                pathname === '/newsroom'
+                pathname === '/production-system'
                   ? { borderBottomColor: 'hsl(var(--brand-accent))' }
                   : undefined
               }

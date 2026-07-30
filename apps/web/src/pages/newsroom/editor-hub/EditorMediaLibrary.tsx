@@ -1,4 +1,5 @@
 import { Upload, FolderOpen } from 'lucide-react';
+import { isLive } from '@/types/article';
 import { Button } from '@/components/ui/button';
 import { EmptyState } from '@/components/EmptyState';
 import { cn } from '@/lib/utils';
@@ -17,7 +18,7 @@ interface EditorMediaLibraryProps {
 export function EditorMediaLibrary({ articles, mediaItems, horses, onOpenMediaForm, onMediaDelete }: EditorMediaLibraryProps) {
   const allArticles = articles ?? [];
   const publishedWithMedia = allArticles.filter(
-    (a) => a.status === 'published' || a.status === 'newsletter' || a.status === 'bulletin'
+    (a) => isLive(a)
   );
 
   return (

@@ -213,7 +213,6 @@ export const MODULE_CATALOGUE: ModuleMeta[] = [
   // Editor Hub tabs — gated the same way, one level down.
   { id: 'review-queue', label: 'Review Queue', section: 'Editor Hub', requiresPermission: 'content.editorial_review' },
   { id: 'assignments', label: 'Assignments', section: 'Editor Hub', requiresPermission: 'content.draft.edit_any' },
-  { id: 'approval-routing', label: 'Approval Routing', section: 'Editor Hub', requiresPermission: 'content.approve' },
   { id: 'scheduling', label: 'Scheduling', section: 'Editor Hub', requiresPermission: 'content.schedule' },
   { id: 'media-library', label: 'Media Library', section: 'Editor Hub', requiresPermission: 'media.manage_all' },
   { id: 'horse-records', label: 'Horse Records', section: 'Editor Hub', requiresPermission: 'media.manage_all' },
@@ -237,19 +236,25 @@ export interface WorkflowStageMeta {
   label: string
 }
 
+/**
+ * Five stages, matching ARTICLE_STATUSES in lib/workflow.ts.
+ *
+ * Was twelve. The four per-department review gates (editorial_review,
+ * legal_review, compliance, publisher_review) collapsed into one approval step;
+ * `revision` became a `changesRequested` flag on a Draft; and newsletter/bulletin
+ * were never workflow stages at all — they were distribution, and now live in
+ * the article's `channels`.
+ *
+ * Roles store stage ids in `workflowStages`. Rows still holding a retired id are
+ * cleaned by `scripts/migrate-article-status.ts`; anything missed simply no
+ * longer matches a stage and is ignored.
+ */
 export const WORKFLOW_STAGE_CATALOGUE: WorkflowStageMeta[] = [
   { id: 'draft', label: 'Draft' },
   { id: 'submitted', label: 'Submitted' },
-  { id: 'editorial_review', label: 'Editor Review' },
-  { id: 'revision', label: 'Revision Required' },
-  { id: 'legal_review', label: 'Legal Review' },
-  { id: 'compliance', label: 'Compliance Check' },
   { id: 'approved', label: 'Approved' },
-  { id: 'publisher_review', label: 'Publisher Review' },
   { id: 'scheduled', label: 'Schedule Publish' },
   { id: 'published', label: 'Published' },
-  { id: 'newsletter', label: 'Newsletter + Podcast' },
-  { id: 'bulletin', label: 'Bulletin Inclusion' },
 ]
 
 const STAGE_IDS = new Set<string>(WORKFLOW_STAGE_CATALOGUE.map((s) => s.id))

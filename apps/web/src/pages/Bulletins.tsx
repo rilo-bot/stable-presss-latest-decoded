@@ -360,7 +360,7 @@ export default function Bulletins() {
                 asChild
                 className="bg-primary text-primary-foreground hover:bg-primary/90 gap-1.5"
               >
-                <Link to="/newsroom">
+                <Link to="/production-system">
                   Go to Newsroom Production System
                   <ArrowRight size={14} />
                 </Link>

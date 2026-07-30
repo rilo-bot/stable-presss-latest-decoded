@@ -4,7 +4,7 @@ import {
   Settings, Eye, ArrowRight, BookOpen, Mic, Star, Edit, DollarSign, Image,
   File, UserCheck, CalendarClock, FolderOpen, Inbox, Layers, Newspaper, Flag,
 } from 'lucide-react';
-import type { KanbanStatus } from '@/components/KanbanColumn';
+import type { ArticleStatus } from '@/types/article';
 import type { PartyRole } from '@/types/party';
 import type { MediaType } from '@/types/mediaItem';
 import type { can } from '@/lib/permissions';
@@ -49,6 +49,17 @@ export const MEDIA_TYPE_COLORS: Record<MediaType, string> = {
 
 /* ── Sidebar navigation ───────────────────────────────── */
 
+/**
+ * Base path for the production system. Every sidebar screen is a real route
+ * under here — they used to be `activeNav` branches inside one 755-line page,
+ * which meant no deep links, no back button, and no way to reach any of them
+ * when the sidebar was hidden on a narrow viewport.
+ *
+ * `/newsroom` still redirects here (App.tsx) because staff-invite and
+ * magazine-share emails already in people's inboxes point at the old path.
+ */
+export const PS_BASE = '/production-system';
+
 export interface SideNavItem {
   id: string;
   label: string;
@@ -57,15 +68,29 @@ export interface SideNavItem {
   requiresPermission?: Parameters<typeof can>[0];
   editorOnly?: boolean;
   badge?: string;
-  /** When set, the item navigates to this route instead of switching in-page tabs. */
+  /**
+   * URL segment under PS_BASE. Deliberately NOT always equal to `id`: role
+   * permissions are stored in the database against the module `id`
+   * (server MODULE_CATALOGUE), so ids are frozen, while two of them
+   * ('media-production-system', 'racing-production-system') make for
+   * unreadable URLs. RBAC keeps resolving on `id`; only the address bar
+   * uses `slug`.
+   */
+  slug: string;
+  /** Absolute route, for items that leave the sidebar's own screens. */
   href?: string;
 }
 
+/** Full path for a sidebar item. */
+export function navPath(item: SideNavItem): string {
+  return item.href ?? `${PS_BASE}/${item.slug}`;
+}
+
 export const SIDE_NAV: SideNavItem[] = [
-  { id: 'overview', label: 'Overview', icon: <LayoutDashboard size={15} />, section: 'Workspace' },
-  { id: 'workflow', label: 'Workflow Board', icon: <LayoutDashboard size={15} />, section: 'Workspace' },
-  { id: 'pipeline', label: 'Pipeline Map', icon: <ArrowRight size={15} />, section: 'Workspace' },
-  { id: 'all-stories', label: 'All Stories', icon: <FileText size={15} />, section: 'Content' },
+  { id: 'overview', label: 'Overview', icon: <LayoutDashboard size={15} />, section: 'Workspace', slug: 'overview' },
+  { id: 'workflow', label: 'Workflow Board', icon: <LayoutDashboard size={15} />, section: 'Workspace', slug: 'workflow' },
+  { id: 'pipeline', label: 'Pipeline Map', icon: <ArrowRight size={15} />, section: 'Workspace', slug: 'pipeline' },
+  { id: 'all-stories', label: 'All Stories', icon: <FileText size={15} />, section: 'Content', slug: 'all-stories' },
   // { id: 'drafts', label: 'Drafts', icon: <FileText size={15} />, section: 'Content' },
   // { id: 'review', label: 'In Review', icon: <Eye size={15} />, section: 'Content' },
   // {
@@ -81,35 +106,62 @@ export const SIDE_NAV: SideNavItem[] = [
     label: 'Magazine Builder',
     icon: <Layers size={15} />,
     section: 'Content',
-    href: '/newsroom/magazine-v2',
-    badge: 'v2',
+    slug: 'magazine-v2',
+    href: `${PS_BASE}/magazine-v2`,
   },
   {
     id: 'editor-hub',
     label: 'Editor Hub',
     icon: <Edit size={15} />,
     section: 'Content',
+    slug: 'editor-hub',
     requiresPermission: 'content.editorial_review',
     editorOnly: true,
   },
-  { id: 'my-assets', label: 'My Media Assets', icon: <Image size={15} />, section: 'Content', requiresPermission: 'media.upload_own' },
-  { id: 'compensation', label: 'My Compensation', icon: <DollarSign size={15} />, section: 'Content', requiresPermission: 'compensation.view_own' },
-  { id: 'horses', label: 'Horses Management', icon: <Star size={15} />, section: 'Stables', requiresPermission: 'content.draft.create' },
-  { id: 'parties', label: 'People Management', icon: <Users size={15} />, section: 'Stables', requiresPermission: 'content.draft.create' },
-  { id: 'media-production-system', label: 'Media Records ', icon: <File size={15} />, section: 'Stables', requiresPermission: 'content.draft.create' },
-  { id: 'racing-production-system', label: 'Racing Data ', icon: <Flag size={15} />, section: 'Stables', requiresPermission: 'content.draft.create' },
-  { id: 'team', label: 'Team Members', icon: <Users size={15} />, section: 'Management', requiresPermission: 'team.manage' },
-  { id: 'roles', label: 'Roles & Permissions', icon: <Shield size={15} />, section: 'Management', requiresPermission: 'roles.manage' },
-  { id: 'analytics', label: 'Analytics', icon: <BarChart2 size={15} />, section: 'Management', requiresPermission: 'analytics.view' },
-  { id: 'settings', label: 'Settings', icon: <Settings size={15} />, section: 'Management', requiresPermission: 'settings.view' },
+  { id: 'my-assets', label: 'My Media Assets', icon: <Image size={15} />, section: 'Content', slug: 'my-assets', requiresPermission: 'media.upload_own' },
+  { id: 'compensation', label: 'My Compensation', icon: <DollarSign size={15} />, section: 'Content', slug: 'compensation', requiresPermission: 'compensation.view_own' },
+  /* One naming rule across the four registers: name what the register holds.
+     Horses and people are entities; media and racing entries are records. No
+     "Management" — that's system-speak, not what anyone calls these screens. */
+  { id: 'horses', label: 'Horses', icon: <Star size={15} />, section: 'Stables', slug: 'horses', requiresPermission: 'content.draft.create' },
+  { id: 'parties', label: 'People', icon: <Users size={15} />, section: 'Stables', slug: 'people', requiresPermission: 'content.draft.create' },
+  { id: 'media-production-system', label: 'Media Records', icon: <File size={15} />, section: 'Stables', slug: 'media-records', requiresPermission: 'content.draft.create' },
+  { id: 'racing-production-system', label: 'Racing Records', icon: <Flag size={15} />, section: 'Stables', slug: 'racing-records', requiresPermission: 'content.draft.create' },
+  { id: 'team', label: 'Team Members', icon: <Users size={15} />, section: 'Management', slug: 'team', requiresPermission: 'team.manage' },
+  { id: 'roles', label: 'Roles & Permissions', icon: <Shield size={15} />, section: 'Management', slug: 'roles', requiresPermission: 'roles.manage' },
+  { id: 'analytics', label: 'Analytics', icon: <BarChart2 size={15} />, section: 'Management', slug: 'analytics', requiresPermission: 'analytics.view' },
+  { id: 'settings', label: 'Settings', icon: <Settings size={15} />, section: 'Management', slug: 'settings', requiresPermission: 'settings.view' },
 ];
+
+/**
+ * Magazine Studio is reached from Overview rather than the sidebar, so it has
+ * no SIDE_NAV row — but it still needs a slug and a page title.
+ */
+export const MAGAZINE_STUDIO_SLUG = 'magazine-studio';
+export const MAGAZINE_STUDIO_MODULE = 'bulletin-templates';
+
+/** Module id for a URL slug, or undefined if the slug isn't a known screen. */
+export function moduleForSlug(slug: string): string | undefined {
+  if (slug === MAGAZINE_STUDIO_SLUG) return MAGAZINE_STUDIO_MODULE;
+  return SIDE_NAV.find((i) => i.slug === slug)?.id;
+}
+
+/**
+ * Route for a module id. Used by the screens that used to call
+ * `setActiveNav(...)` to move the user sideways (Overview's tiles, the
+ * Compensation empty state, the dashboard cards).
+ */
+export function pathForModule(id: string): string {
+  if (id === MAGAZINE_STUDIO_MODULE) return `${PS_BASE}/${MAGAZINE_STUDIO_SLUG}`;
+  const item = SIDE_NAV.find((i) => i.id === id);
+  return item ? navPath(item) : PS_BASE;
+}
 
 /* ── Editor Hub tab types ─────────────────────────────── */
 
 export type EditorTab =
   | 'review-queue'
   | 'assignments'
-  | 'approval-routing'
   | 'scheduling'
   | 'media-library'
   | 'horse-records';
@@ -136,13 +188,6 @@ export const EDITOR_TABS: EditorTabConfig[] = [
     icon: <UserCheck size={14} />,
     description: 'Content assignment & modification',
     permission: 'content.draft.edit_any',
-  },
-  {
-    id: 'approval-routing',
-    label: 'Approval Routing',
-    icon: <Layers size={14} />,
-    description: 'Approval workflow routing',
-    permission: 'content.approve',
   },
   {
     id: 'scheduling',

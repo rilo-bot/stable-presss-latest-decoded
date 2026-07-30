@@ -136,7 +136,7 @@ export default function MagazineEditorV2() {
     return (
       <div className="fixed inset-0 z-[60] flex items-center justify-center bg-[#0b1220] text-red-300">
         {s.error}
-        <button onClick={() => navigate('/newsroom/magazine-v2')} className="ml-3 underline">Back</button>
+        <button onClick={() => navigate('/production-system/magazine-v2')} className="ml-3 underline">Back</button>
       </div>
     );
   }
@@ -155,7 +155,7 @@ export default function MagazineEditorV2() {
       {/* Toolbar */}
       <div className="flex items-center gap-3 border-b border-white/10 bg-[#0d1626] px-4 py-2.5">
         <button
-          onClick={() => navigate('/newsroom/magazine-v2')}
+          onClick={() => navigate('/production-system/magazine-v2')}
           className="flex h-8 w-8 items-center justify-center rounded-sm text-white/60 hover:bg-white/10 hover:text-white"
           aria-label="Back to library"
         >
@@ -308,7 +308,7 @@ export default function MagazineEditorV2() {
               <button
                 onClick={async () => {
                   if (!window.confirm('Delete this magazine? This removes the draft, all pages, and any published Bulletins edition. This cannot be undone.')) return;
-                  if (await s.remove()) navigate('/newsroom/magazine-v2');
+                  if (await s.remove()) navigate('/production-system/magazine-v2');
                 }}
                 disabled={s.publishing}
                 className="flex items-center gap-1 rounded-sm border border-red-400/30 px-2 py-1.5 text-[11px] text-red-300/80 hover:bg-red-500/10 disabled:opacity-40"
@@ -419,8 +419,8 @@ export default function MagazineEditorV2() {
               <div className="absolute right-3 top-full z-30 mt-1 w-64 rounded-md border border-white/15 bg-[#0d1626] p-2.5 shadow-xl">
                 <div className="mb-1.5 flex items-center gap-1.5 text-[11px] text-white/80">
                   <span>Add</span>
-                  <select className="rounded border border-white/20 bg-[#0b1220] px-1 py-0.5 text-white" value={aiCount} onChange={(e) => setAiCount(Number(e.target.value))}>
-                    {[1, 2, 3, 4, 6].map((n) => <option key={n} value={n}>{n}</option>)}
+                  <select className="rounded border border-white/20 bg-[#0b1220] px-1 py-0.5 text-white" style={{ colorScheme: 'dark' }} value={aiCount} onChange={(e) => setAiCount(Number(e.target.value))}>
+                    {[1, 2, 3, 4, 6].map((n) => <option key={n} value={n} style={{ backgroundColor: '#0d1626', color: '#fff' }}>{n}</option>)}
                   </select>
                   <span>on-theme page{aiCount === 1 ? '' : 's'}</span>
                 </div>

@@ -1,3 +1,5 @@
+import type { Shareable } from './sharing';
+
 export type RaceStatus = 'Entered' | 'Accepted' | 'Scratched' | 'Declared' | 'Finished';
 
 export const RACE_STATUSES: RaceStatus[] = [
@@ -16,7 +18,7 @@ export const RACE_STATUS_LABELS: Record<RaceStatus, string> = {
   Finished: 'Finished',
 };
 
-export interface RacingEntry {
+export interface RacingEntry extends Shareable {
   id: string;
   createdAt: Date;
 

@@ -6,14 +6,14 @@
 
 import { MAGAZINE_V2_ENABLED } from '../magazineV2/config.js'
 
-// Where staff build bulletins. With MAGAZINE_V2 on, the Newsroom sidebar shows
-// the free-form "Magazine Builder"; the old template Magazine Studio entry is
-// retired from the nav.
+// Where staff build bulletins. With MAGAZINE_V2 on, the Production System
+// sidebar shows the free-form "Magazine Builder"; the old template Magazine
+// Studio is reached from Overview instead of the rail.
 const BUILDER = MAGAZINE_V2_ENABLED ? 'Magazine Builder' : 'Magazine Studio'
 
 export const FEATURE_GUIDES: Record<string, string> = {
   overview:
-    'Stable Press is a racing publication and industry Production System. Anyone can browse Horses, Parties, the News, print Bulletins, the Podcast and the Tipping Ring. Creating a free account lets you follow horses, take part in tipping, and — once verified — manage your own stable. Editorial staff manage content from the Newsroom.',
+    'Stable Press is a racing publication and industry Production System. Anyone can browse Horses, Parties, the News, print Bulletins, the Podcast and the Tipping Ring. Creating a free account lets you follow horses, take part in tipping, and — once verified — manage your own stable. Editorial staff manage content from the Production System (the staff CMS).',
 
   'get-started':
     'Create a free account from the Sign up page (top-right). Sign-in is passwordless: enter your email and we send a 6-digit code. Once in, you land on your Dashboard, where you can follow horses, join the Tipping Ring, claim a racing role, or set up an organisation.',
@@ -28,7 +28,7 @@ export const FEATURE_GUIDES: Record<string, string> = {
     'Once you have a verified racing role (or are setting up your own party profile), open your Dashboard → My Stable, or your party profile, and use "Register Horse". Newly registered horses start as provisional (hidden from the public) until verified, but you can see and edit them straight away.',
 
   'manage-stable':
-    'Your Dashboard → My Stable shows the horses you can manage. Open one in the Horse Studio to edit its profile, connections, media, racing entries, sales and reports. You can only edit horses you are currently linked to (or that you registered).',
+    'Your Dashboard → My Stable shows the horses you can manage. Open one in the Horse Studio to edit its profile, connections, media, racing entries, sales and reports — the studio has its own assistant that can update details with you. You can only edit horses you are currently linked to (or that you registered).',
 
   'upgrade-plan':
     'Some articles and content are premium. Plans are free, standard and premium. Open your Dashboard → Your Plan to switch tiers. (Billing is handled separately; the selector sets your access level.)',
@@ -40,17 +40,20 @@ export const FEATURE_GUIDES: Record<string, string> = {
     'Use the Follow button on a horse to add it to "My Stable" on the Horses page and your Dashboard, so you can track it easily. Following is just for you and needs a free account.',
 
   bulletins:
-    `Bulletins are the print-style magazine editions. Browse them on the Bulletins page and open one to read it page by page. Staff create and publish editions from the Newsroom → ${BUILDER}.`,
+    `Bulletins are the print-style magazine editions. Browse them on the Bulletins page and open one to read it page by page. Staff create and publish editions from the Production System → ${BUILDER}.`,
 
-  newsroom:
-    `The Newsroom is the editorial workspace for staff: an editorial Kanban, story drafting and review, the ${BUILDER} for bulletins, and Production System modules for horses, parties, media and racing data. It is available to editorial staff accounts.`,
+  'production-system':
+    `The Production System is the staff CMS (it replaced the old "Newsroom" — the old links redirect). Its sidebar screens are each their own page: Overview, Workflow Board (the story Kanban), Pipeline Map, All Stories, Editor Hub (review queue, assignments, approval routing, scheduling), My Media Assets, My Compensation, the racing-data registers (Horses, People, Media Records, Racing Records), Team Members, Roles & Permissions, Analytics and Settings — plus the ${BUILDER} for bulletins. Which screens you see depends on your role.`,
 
   'file-story':
-    'Filing a story is an editorial-staff action. Go to the Newsroom — from there start a new story/draft on the editorial board, write the headline, summary and body, link any horses, set the category, then submit it for review. Editors move it along the pipeline (draft → review → published / newsletter / bulletin). If you are not editorial staff yet, I can show you what you can do instead, or you can ask an editor to grant access.',
+    'Filing a story is an editorial-staff action. In the Production System, the "File a Story" button (on Overview, the Workflow Board, All Stories and the Editor Hub) offers two ways: the AI Story Studio — a drawer where you tell the assistant your story and it writes and files the draft with you — or a manual draft form. Either way the draft lands on the Workflow Board, where you write/polish, link horses, set the category and submit for review; editors move it along the pipeline (draft → review → published / newsletter / bulletin). If you are not editorial staff yet, I can show you what you can do instead, or you can ask an editor to grant access.',
 
   'edit-bulletin': MAGAZINE_V2_ENABLED
-    ? 'Bulletins (the print magazine) are built in the Newsroom → Magazine Builder. Start a magazine three ways: Build with AI from a brief (attach source documents/images if you like), Import a PDF/DOCX pixel-faithfully, or start Blank. Then edit each page on the free-form canvas — the docked assistant can write, fill and restyle pages for you. When ready, Publish (the full edition or selected pages) to put it on the public Bulletins page.'
-    : 'Bulletins (the print magazine) are built in the Newsroom → Magazine Studio. Open or create a magazine, edit each page\'s regions, and use the in-editor Studio Assistant to write/fill pages. When ready, owners/editors Publish it to the public Bulletins page.',
+    ? 'Bulletins (the print magazine) are built in the Production System → Magazine Builder. Start a magazine three ways: Build with AI from a brief (attach source documents/images if you like), Import a PDF/DOCX pixel-faithfully, or start Blank. Then edit each page on the free-form canvas — the docked assistant can write, fill and restyle pages for you. When ready, Publish (the full edition or selected pages) to put it on the public Bulletins page.'
+    : 'Bulletins (the print magazine) are built in the Production System → Magazine Studio. Open or create a magazine, edit each page\'s regions, and use the in-editor Studio Assistant to write/fill pages. When ready, owners/editors Publish it to the public Bulletins page.',
+
+  'ai-studios':
+    `Stable Press has AI studios — each surface has its own assistant that does the work with you. Story Studio (Production System): tell it your story and it writes & files the draft. ${BUILDER} (Production System): build a bulletin from an AI brief, an imported PDF/DOCX or blank, with an in-editor assistant. Horse Studio (Dashboard → My Stable → open a horse): edit your horse's profile with an assistant. Profile Studio (Dashboard → your profile): complete your own party profile with an assistant. Writers editing an article also get an assistant right on the article page. Ask me to open any of them.`,
 
   organisations:
     'An organisation (syndicate, stud, stable or agency) groups members and the parties/horses it manages under one umbrella. Create one during sign-up (choose Organisation) or manage it from My Organisation: invite members, add managed parties, and verify members’ role claims for parties your organisation controls.',
@@ -59,7 +62,7 @@ export const FEATURE_GUIDES: Record<string, string> = {
     'Administrators review pending racing-role claims under Verify Claims; organisation owners/managers can verify claims for parties their organisation controls from My Organisation. Approving a claim activates the role for that member.',
 
   contact:
-    'I can help right here on any page — just ask. For account or content matters that need a person, point staff to the Newsroom, and members to their Dashboard where most self-service options live.',
+    'I can help right here on any page — just ask. For account or content matters that need a person, point staff to the Production System, and members to their Dashboard where most self-service options live.',
 }
 
 export const GUIDE_TOPICS = Object.keys(FEATURE_GUIDES)

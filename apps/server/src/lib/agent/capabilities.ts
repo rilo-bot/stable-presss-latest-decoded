@@ -143,7 +143,7 @@ function buildCapabilities(
         reason: contentCan(account, 'content.draft.create')
           ? undefined
           : 'Your editorial role does not include drafting — an editor can assign you.',
-        where: 'Newsroom → Drafts',
+        where: 'Production System → Workflow Board → File a Story (manual, or the AI Story Studio)',
       },
       {
         id: 'edit-any-story',
@@ -151,7 +151,7 @@ function buildCapabilities(
         category: 'editorial',
         allowed: contentCan(account, 'content.draft.edit_any'),
         reason: contentCan(account, 'content.draft.edit_any') ? undefined : 'Reserved for editors, legal reviewers and publishers.',
-        where: 'Newsroom → All Stories',
+        where: 'Production System → All Stories',
       },
       {
         id: 'review-story',
@@ -159,7 +159,7 @@ function buildCapabilities(
         category: 'editorial',
         allowed: isReviewer(account),
         reason: isReviewer(account) ? undefined : 'Reserved for editors, legal reviewers and administrators.',
-        where: 'Newsroom → In Review',
+        where: 'Production System → Editor Hub',
       },
       {
         id: 'publish-story',
@@ -167,21 +167,21 @@ function buildCapabilities(
         category: 'editorial',
         allowed: isPublisher(account),
         reason: isPublisher(account) ? undefined : 'Publishing is reserved for publishers and administrators.',
-        where: 'Newsroom → Workflow Board',
+        where: 'Production System → Workflow Board',
       },
       {
         id: 'manage-bulletins',
         label: 'Build & publish bulletins',
         category: 'editorial',
         allowed: true,
-        where: `Newsroom → ${MAGAZINE_SURFACE}`,
+        where: `Production System → ${MAGAZINE_SURFACE}`,
       },
       {
         id: 'manage-racing-data',
         label: 'Edit racing data (horses, parties, media, entries)',
         category: 'editorial',
         allowed: true,
-        where: 'Newsroom → Production Systems',
+        where: 'Production System → Horses / People / Media Records / Racing Records',
       },
       {
         id: 'verify-claims',
@@ -197,7 +197,7 @@ function buildCapabilities(
         category: 'editorial',
         allowed: admin,
         reason: admin ? undefined : 'Reserved for administrators.',
-        where: 'Newsroom → Team',
+        where: 'Production System → Team Members',
       },
     )
   }
@@ -292,7 +292,7 @@ export function summariseCapabilities(account?: AccountUser): string {
   if (account.subscriptionTier !== 'premium') gated.push('premium articles → switch plan on Dashboard → Your Plan')
 
   if (staff) {
-    can.push('work in the Newsroom', `build & publish bulletins in the ${MAGAZINE_SURFACE}`)
+    can.push('work in the Production System (the staff CMS)', `build & publish bulletins in the ${MAGAZINE_SURFACE}`)
     if (contentCan(account, 'content.draft.create')) can.push('create story drafts')
     if (contentCan(account, 'content.draft.edit_any')) can.push('edit any story')
     if (isReviewer(account)) can.push('review stories')

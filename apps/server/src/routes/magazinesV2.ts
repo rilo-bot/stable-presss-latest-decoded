@@ -26,6 +26,8 @@ import { COL } from '../lib/magazineV2/collections.js';
 import { rateLimit } from '../lib/rateLimit.js';
 import { safePublicImageUrl } from '../lib/magazineV2/url.js';
 import { roleOnMagazine, isOwner, canEditPage, editablePageIds, collaboratorsOf, type V2Collaborator } from '../lib/magazineV2/access.js';
+import { notifyShared } from '../lib/notifyShare.js';
+import { magazinePath } from '../lib/invites.js';
 import { withIdentityDefaults, type IdentityUser } from '../lib/identity.js';
 import { identityCan } from '../lib/effectiveAccess.js';
 import { normalizeElements, normalizeElementPatch } from '../lib/magazineV2/writePipeline.js';
@@ -169,6 +171,16 @@ function withViewer(doc: Doc, uid: string) {
   return { ...project(doc), myRole: roleOnMagazine(doc, uid), myEditablePageIds: editablePageIds(doc, uid) };
 }
 
+/** The pages a user may SEE, in this share-only model: the owner and 'all'-scoped
+ *  collaborators see every page; a page-scoped collaborator sees ONLY their assigned
+ *  pages. View scope == edit scope here, so this mirrors editablePageIds. */
+function visiblePages(doc: Doc, uid: string, pages: Doc[]): Doc[] {
+  const ids = editablePageIds(doc, uid);
+  if (ids === 'all') return pages;
+  const set = new Set(ids.map(String));
+  return pages.filter((p) => set.has(String(p._id)));
+}
+
 /** Guard structural ops while a worker is digitising/generating the issue. */
 function isBusy(issue: Doc): boolean {
   return issue.status === 'processing' || issue.status === 'uploading';
@@ -206,9 +218,9 @@ function pageSummary(p: Doc) {
 
 // ── Issue lifecycle ─────────────────────────────────────────────────────────
 
-// list — EVERY magazine is visible to any staff member (shared admin library).
-// Editing stays gated per-magazine by owner/collaborator role; `myRole` (null =
-// view-only) + `ownerName` tell the client who can edit what and who created it.
+// list — SHARE-ONLY: a magazine is listed only for its owner and the staff it's
+// shared with (roleOnMagazine != null). Editing is further gated per-page by the
+// collaborator's assignment; `myRole` + `ownerName` tell the client its rights.
 router.get('/issues', async (req, res) => {
   const uid = req.account!.id;
   const all = (await db.collection(COL.issues).find()) as Doc[];
@@ -223,6 +235,10 @@ router.get('/issues', async (req, res) => {
   ])) as Doc[];
   const countByMag = new Map<string, number>(countRows.map((r) => [String(r._id), Number(r.count) || 0]));
   const rows = all
+    // Access is by SHARING only: a magazine appears solely for its owner and the
+    // staff it's been shared with. (Was a "shared admin library" where every staff
+    // member saw every magazine — roleOnMagazine null now hides it entirely.)
+    .filter((d) => roleOnMagazine(d, uid) !== null)
     .map((d) => ({
       id: d._id,
       title: d.title,
@@ -295,15 +311,16 @@ function templatizeElement(e: MagazineElement): MagazineElement {
 /**
  * Reuse an existing magazine's LAYOUT as a brand-new magazine of your own.
  *
- * Every magazine is visible to any staff member (see GET /issues), so any staff
- * member may reuse any layout — the copy is owned by the caller and the source is
- * never touched or modified. Content is stripped by templatizeElement, so this
- * shares design only, not editorial work.
+ * Share-only: you may reuse a magazine's layout ONLY if it's shared with you
+ * (owner or collaborator). The copy is owned by the caller and the source is never
+ * touched; content is stripped by templatizeElement, so this shares design only,
+ * not editorial work — but the design/structure/page-count is still access-gated so
+ * an unshared magazine can't be probed or cloned by id.
  */
 router.post('/issues/:id/reuse', rateLimit('mag2-write', 300, 60_000), async (req, res) => {
   const uid = req.account!.id;
   const src = await loadIssue(String(req.params.id));
-  if (!src) {
+  if (!src || !roleOnMagazine(src, uid)) {
     res.status(404).json({ error: 'Magazine not found' });
     return;
   }
@@ -769,16 +786,16 @@ router.post('/issues/:id/media', rateLimit('mag2-write', 300, 60_000), async (re
   res.status(201).json({ asset: { id: String(assetId), url, alt, kind: 'upload', pageIndex: null, contentType: head.contentType, size: head.contentLength } });
 });
 
-// get issue meta + page summaries (NOT full element payloads). Any staff may
-// VIEW; withViewer's myRole/myEditablePageIds tell the client its edit rights.
+// get issue meta + page summaries (NOT full element payloads). Owner/collaborator
+// only (share-only access); a page-scoped collaborator sees only their pages.
 router.get('/issues/:id', async (req, res) => {
   const uid = req.account!.id;
   const doc = await loadIssue(req.params.id);
-  if (!doc) {
+  if (!doc || !roleOnMagazine(doc, uid)) {
     res.status(404).json({ error: 'Not found' });
     return;
   }
-  res.json({ issue: withViewer(doc, uid), pages: (await pagesFor(doc._id)).map(pageSummary) });
+  res.json({ issue: withViewer(doc, uid), pages: visiblePages(doc, uid, await pagesFor(doc._id)).map(pageSummary) });
 });
 
 // settings — owner only (slug is immutable). Accepts `title` and/or a cover:
@@ -1097,9 +1114,28 @@ router.post('/issues/:id/collaborators', async (req, res) => {
     pageIds,
   };
   const others = collaboratorsOf(doc).filter((c) => c.userId !== acct.id);
+  const alreadyShared = collaboratorsOf(doc).some((c) => c.userId === acct.id);
   await db.collection(COL.issues).updateOne(doc._id, { collaborators: [...others, next], updatedAt: new Date().toISOString() });
+
+  // Email a deep link to the magazine. Only on the FIRST share — re-saving
+  // someone's page assignment shouldn't spam them. The share itself is already
+  // committed, so a delivery failure is reported, never fatal.
+  let emailed = false;
+  let emailError: string | undefined;
+  if (!alreadyShared) {
+    const r = await notifyShared({
+      to: acct.email,
+      sharedBy: req.account!.displayName || req.account!.email,
+      title: String(doc.title ?? 'Untitled magazine'),
+      path: magazinePath(String(doc._id), 'v2'),
+      pageIds,
+    });
+    emailed = r.delivered;
+    emailError = r.error;
+  }
+
   const fresh = await loadIssue(doc._id);
-  res.status(201).json({ issue: withViewer(fresh ?? doc, uid) });
+  res.status(201).json({ issue: withViewer(fresh ?? doc, uid), emailed, emailError });
 });
 
 // remove a collaborator — owner only
@@ -1349,16 +1385,18 @@ function requireRev(req: any, res: any): number | null {
   return rev;
 }
 
-// get one page's full element payload. Any staff may VIEW; editing is gated
-// separately (loadEditablePage on the element write routes).
+// get one page's full element payload. Share-only: owner/collaborator, and a
+// page-scoped collaborator only for pages shared with them. 404 (not 403) so an
+// unshared page's existence isn't revealed.
 router.get('/issues/:id/pages/:pageId', async (req, res) => {
+  const uid = req.account!.id;
   const issue = await loadIssue(req.params.id);
-  if (!issue) {
+  if (!issue || !roleOnMagazine(issue, uid)) {
     res.status(404).json({ error: 'Not found' });
     return;
   }
   const page = await pageById(req.params.pageId);
-  if (!page || page.magazineId !== issue._id) {
+  if (!page || page.magazineId !== issue._id || !canEditPage(issue, uid, page._id)) {
     res.status(404).json({ error: 'Page not found' });
     return;
   }

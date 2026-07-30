@@ -1,7 +1,7 @@
 import { Star } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { can, canOpenModule, isSuperAdmin } from '@/lib/permissions';
-import type { KanbanStatus } from '@/components/KanbanColumn';
+import type { ArticleStatus } from '@/types/article';
 import type { Article } from '@/types/article';
 import type { ArticleUpdate } from '@/stores/articleStore';
 import type { Horse } from '@/types/horse';
@@ -12,7 +12,6 @@ import { EDITOR_TABS } from '../constants';
 import type { EditorTab } from '../constants';
 import { EditorReviewQueue } from './EditorReviewQueue';
 import { EditorAssignments } from './EditorAssignments';
-import { EditorApprovalRouting } from './EditorApprovalRouting';
 import { EditorScheduling } from './EditorScheduling';
 import { EditorMediaLibrary } from './EditorMediaLibrary';
 import { HorseRecordsTab } from '../production-systems/HorseRecordsTab';
@@ -22,10 +21,10 @@ interface EditorHubViewProps {
   setEditorTab: (tab: EditorTab) => void;
   // Shared data + handlers
   articles: Article[];
-  buckets: Record<KanbanStatus, Article[]>;
-  onAdvance: (articleId: string, toStatus: KanbanStatus) => void;
+  buckets: Record<ArticleStatus, Article[]>;
+  onAdvance: (articleId: string, toStatus: ArticleStatus) => void;
   onEdit: (article: Article) => void;
-  onNewInColumn: (status: KanbanStatus) => void;
+  onNewInColumn: (status: ArticleStatus) => void;
   onOpenStudio: () => void;
   // Assignments
   assignDialogArticle: Article | null;
@@ -116,13 +115,6 @@ export function EditorHubView(props: EditorHubViewProps) {
             onNewInColumn={props.onNewInColumn}
             onOpenStudio={props.onOpenStudio}
             onEdit={props.onEdit}
-          />
-        )}
-        {activeTab === 'approval-routing' && (
-          <EditorApprovalRouting
-            articles={props.articles}
-            onAdvance={props.onAdvance}
-            setEditorTab={props.setEditorTab}
           />
         )}
         {activeTab === 'scheduling' && (

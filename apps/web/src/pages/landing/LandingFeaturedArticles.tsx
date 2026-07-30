@@ -71,7 +71,7 @@ export function LandingFeaturedArticles({
             heading="The press stands ready. No dispatches have been filed."
             description="Published stories will appear here. Head to the newsroom to file your first dispatch."
             ctaLabel="Go to Newsroom"
-            ctaHref="/newsroom"
+            ctaHref="/production-system"
           />
         )}
       </section>

@@ -29,6 +29,8 @@ import { withIdentityDefaults, type IdentityUser } from '../lib/identity.js';
 import { identityCan, identitiesWith } from '../lib/effectiveAccess.js';
 import { canAccessNewsroom } from '../lib/rbac.js';
 import { sanitizeContentMap, sanitizePages } from '../lib/sanitizeHtml.js';
+import { notifyShared } from '../lib/notifyShare.js';
+import { magazinePath } from '../lib/invites.js';
 
 type WithMongoId = { _id: string; [key: string]: unknown };
 
@@ -347,12 +349,26 @@ router.post('/:id/collaborators', async (req, res) => {
     pageIds,
   };
   const others = collaborators(doc).filter((c) => c.userId !== acct.id);
+  const alreadyShared = collaborators(doc).some((c) => c.userId === acct.id);
   await db.collection('magazines').updateOne(req.params.id, {
     collaborators: [...others, next],
     updatedAt: new Date().toISOString(),
   });
+
+  // Deep-link email, first share only — re-saving a page assignment is not a
+  // new share and shouldn't email them again. Never fatal; the share is done.
+  const share = alreadyShared
+    ? { delivered: false as boolean, error: undefined as string | undefined }
+    : await notifyShared({
+        to: acct.email,
+        sharedBy: req.account!.displayName || req.account!.email,
+        title: String(doc.title ?? 'Untitled magazine'),
+        path: magazinePath(String(req.params.id), 'v1'),
+        pageIds,
+      });
+
   const updated = await db.collection('magazines').findById(req.params.id);
-  res.status(201).json(withViewer(updated!, uid));
+  res.status(201).json({ ...withViewer(updated!, uid), emailed: share.delivered, emailError: share.error });
 });
 
 // remove a collaborator — owner or editor only

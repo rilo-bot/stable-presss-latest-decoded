@@ -5,11 +5,12 @@
  * as a layout route (renders <Outlet/>) and as a wrapper (renders children).
  */
 import type { ReactNode } from 'react';
-import { Navigate, Outlet } from 'react-router-dom';
+import { Navigate, Outlet, useLocation } from 'react-router-dom';
 import { useAuthStore } from '@/stores/authStore';
 import type { PermissionAction } from '@/lib/permissions';
 import type { SubscriptionTier } from '@/rbac/entitlement';
 import { tierAtLeast } from '@/rbac/entitlement';
+import { loginUrlFor } from '@/lib/safeRedirect';
 
 interface GuardProps {
   children?: ReactNode;
@@ -21,10 +22,24 @@ function render(children?: ReactNode) {
   return children ? <>{children}</> : <Outlet />;
 }
 
-/** Must be signed in (any role). Anonymous → /login. */
+/**
+ * The sign-in URL for wherever the visitor was actually trying to go.
+ *
+ * Without this, an emailed deep link (a shared magazine, say) bounced an
+ * anonymous visitor to /login and then dropped them on the home page — the
+ * destination was simply lost, and the link may as well not have pointed
+ * anywhere in particular.
+ */
+function useLoginUrl(): string {
+  const { pathname, search, hash } = useLocation();
+  return loginUrlFor(pathname, search, hash);
+}
+
+/** Must be signed in (any role). Anonymous → /login, remembering where. */
 export function RequireAuth({ children }: GuardProps) {
   const user = useAuthStore((s) => s.currentUser);
-  if (!user) return <Navigate to="/login" replace />;
+  const loginUrl = useLoginUrl();
+  if (!user) return <Navigate to={loginUrl} replace />;
   return render(children);
 }
 
@@ -43,7 +58,8 @@ export function RequirePermission({
   const allowed = useAuthStore(
     (s) => s.currentUser?.access?.permissions.includes(permission) ?? false,
   );
-  if (!user) return <Navigate to="/login" replace />;
+  const loginUrl = useLoginUrl();
+  if (!user) return <Navigate to={loginUrl} replace />;
   if (!allowed) return <Navigate to={redirect} replace />;
   return render(children);
 }

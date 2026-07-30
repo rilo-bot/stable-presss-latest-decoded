@@ -108,9 +108,8 @@ export const SECTIONS = [
 
 /* ── Helpers ─────────────────────────────────────────── */
 
-/** Articles that are visible on the public index */
-export const LIVE_STATUSES = ['published', 'newsletter', 'bulletin'] as const;
-
-export function isLive(status: string): boolean {
-  return (LIVE_STATUSES as readonly string[]).includes(status);
-}
+/* `LIVE_STATUSES` / `isLive(status)` lived here, listing the three statuses that
+ * counted as public: published, newsletter, bulletin. Newsletter and bulletin
+ * are distribution channels now, not statuses, so "live" is a single status and
+ * the check belongs with the type: `isLive(article)` / `isLiveOn(article,
+ * channel)` in `@/types/article`. */

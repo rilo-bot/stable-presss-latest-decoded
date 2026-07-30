@@ -1,4 +1,5 @@
 import { useMemo, useState, useEffect } from 'react';
+import { isLive } from '@/types/article';
 import { useNavigate } from 'react-router-dom';
 import { useArticleStore } from '@/stores/articleStore';
 import { useHorseStore } from '@/stores/horseStore';
@@ -78,7 +79,7 @@ export default function Landing() {
   const [subscribeEmail, setSubscribeEmail] = useState('');
 
   const published = useMemo(
-    () => (articles ?? []).filter((a) => a.status === 'published' || a.status === 'newsletter' || a.status === 'bulletin'),
+    () => (articles ?? []).filter(isLive),
     [articles]
   );
 

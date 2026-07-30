@@ -1,22 +1,23 @@
 import { Lock, DollarSign } from 'lucide-react';
+import { isLive } from '@/types/article';
 import { EmptyState } from '@/components/EmptyState';
 import { cn } from '@/lib/utils';
 import type { Article } from '@/types/article';
-import type { KanbanStatus } from '@/components/KanbanColumn';
+import type { ArticleStatus } from '@/types/article';
 
 interface CompensationViewProps {
   articles: Article[];
   currentUserDisplayName: string | undefined;
-  setActiveNav: (nav: string) => void;
-  onNewInColumn: (status: KanbanStatus) => void;
+  onNavigate: (nav: string) => void;
+  onNewInColumn: (status: ArticleStatus) => void;
   onOpenStudio: () => void;
 }
 
-export function CompensationView({ articles, currentUserDisplayName, setActiveNav, onNewInColumn, onOpenStudio }: CompensationViewProps) {
+export function CompensationView({ articles, currentUserDisplayName, onNavigate, onNewInColumn, onOpenStudio }: CompensationViewProps) {
   const myPublished = (articles ?? []).filter(
     (a) =>
       a.author === currentUserDisplayName &&
-      (a.status === 'published' || a.status === 'newsletter' || a.status === 'bulletin')
+      isLive(a)
   );
 
   return (
@@ -80,7 +81,7 @@ export function CompensationView({ articles, currentUserDisplayName, setActiveNa
               description="Your compensation record will populate here once your first story is published. Keep writing — the press is waiting."
               ctaLabel="File a Story"
               onCta={() => {
-                setActiveNav('workflow');
+                onNavigate('workflow');
                 onNewInColumn('draft');
               }}
               secondaryCtaLabel="Story Studio AI"
