@@ -24,13 +24,13 @@ import { useMagazineStore } from '@/stores/magazineStore';
 import { useIssueStore } from '@/stores/issueStore';
 import type { Article, ArticleStatus } from '@/types/article';
 import { useStaffStore } from '@/stores/staffStore';
-import type { StaffRole } from '@/rbac/roles';
 import { can, canEditArticle } from '@/lib/permissions';
+import { roleColor, roleSummary } from '@/lib/roleDisplay';
 import { AlertCircle} from 'lucide-react';
 import { articleToast } from '@/components/Toast';
 import { toast } from 'sonner';
 import {
-  getRoleConfig, SIDE_NAV,
+  SIDE_NAV,
 } from './newsroom/constants';
 import type { EditorTab } from './newsroom/constants';
 import { OverviewView } from './newsroom/views/OverviewView';
@@ -38,6 +38,7 @@ import { WorkflowBoardView } from './newsroom/views/WorkflowBoardView';
 import { PipelineMapView } from './newsroom/views/PipelineMapView';
 import { AllStoriesView } from './newsroom/views/AllStoriesView';
 import { TeamManagementView } from './newsroom/views/TeamManagementView';
+import { RolesPermissionsView } from './newsroom/views/RolesPermissionsView';
 import { MyAssetsView } from './newsroom/views/MyAssetsView';
 import { CompensationView } from './newsroom/views/CompensationView';
 import { AnalyticsView } from './newsroom/views/AnalyticsView';
@@ -160,23 +161,35 @@ export default function Newsroom() {
     if (await removeIssue(id)) toast.success('Edition deleted.');
   };
 
-  // Team management (admin) — reuses the same staff store as the /staff page.
+  // Team management. Role grant/revoke now goes through the roles API (slugs);
+  // this store keeps the roster and the invite-by-email flow.
   const teamStaff = useStaffStore((s) => s.staff);
   const teamPending = useStaffStore((s) => s.pending);
   const teamLoading = useStaffStore((s) => s.loading);
   const fetchTeam = useStaffStore((s) => s.fetchStaff);
-  const grantStaff = useStaffStore((s) => s.grant);
-  const revokeStaff = useStaffStore((s) => s.revoke);
+  const inviteStaff = useStaffStore((s) => s.invite);
+  const cancelInvite = useStaffStore((s) => s.cancelInvite);
   const [teamEmail, setTeamEmail] = useState('');
-  const [teamRole, setTeamRole] = useState<StaffRole>('contributor');
+  // A role SLUG. Empty until the roles load — TeamManagementView picks a default.
+  const [teamRole, setTeamRole] = useState('');
   const [teamBusy, setTeamBusy] = useState(false);
 
-  const userRole = currentUser?.role ?? null;
-  const currentRoleConfig = getRoleConfig(userRole);
+  // Role presentation comes from the server now — the user may hold several, so
+  // there is no single "current role". The first is used for chrome that only
+  // has room for one; `roleSummary` names them all.
+  const assignedRoles = currentUser?.access?.roles ?? [];
+  const primaryRole = assignedRoles[0];
+  const roleLabel = assignedRoles.length ? roleSummary(assignedRoles) : 'No role assigned';
+  const accentColor = roleColor(primaryRole);
 
-  const isContributor = userRole === 'contributor';
-  const isEditor = userRole === 'editor' || userRole === 'administrator';
-  const canManageTeam = can(userRole, 'team.manage');
+  // Behavioural branches are permissions now, not role-name equality.
+  // `isContributor` meant "can only touch their own drafts".
+  const isContributor = !can('content.draft.edit_any');
+  const isEditor = can('content.editorial_review');
+  const canManageTeam = can('team.manage');
+  // Distinct from team.manage: /api/roles enforces roles.manage, so the console
+  // must ask for the same thing the server does.
+  const canManageRoles = can('roles.manage');
 
   // Load the team roster when the Team Members tab is opened (admins only).
   useEffect(() => {
@@ -184,18 +197,18 @@ export default function Newsroom() {
   }, [activeNav, canManageTeam, fetchTeam]);
 
   const onGrantStaff = async () => {
-    if (!teamEmail.trim()) return;
+    if (!teamEmail.trim() || !teamRole) return;
     setTeamBusy(true);
-    const r = await grantStaff(teamEmail.trim(), teamRole);
+    const r = await inviteStaff(teamEmail.trim(), teamRole);
     setTeamBusy(false);
-    if (r.ok) { toast.success('Role granted.'); setTeamEmail(''); }
-    else toast.error(r.error ?? 'Could not grant the role.');
+    if (r.ok) { toast.success('Invite sent.'); setTeamEmail(''); }
+    else toast.error(r.error ?? 'Could not send the invite.');
   };
 
-  const onRevokeStaff = async (userId: string, role: StaffRole) => {
-    const r = await revokeStaff(userId, role);
-    if (r.ok) toast.success('Role revoked.');
-    else toast.error(r.error ?? 'Could not revoke the role.');
+  const onCancelInvite = async (inviteId: string) => {
+    const r = await cancelInvite(inviteId);
+    if (r.ok) toast.success('Invite cancelled.');
+    else toast.error(r.error ?? 'Could not cancel the invite.');
   };
 
   const buckets = useMemo(() => {
@@ -215,17 +228,30 @@ export default function Newsroom() {
     return map;
   }, [articles, isContributor, currentUser?.displayName]);
 
-  const visibleStages = WORKFLOW_STAGES.filter((col) =>
-    currentRoleConfig.allowedStatuses.includes(col.status)
+  // Kanban visibility is the third role axis, ticked per role by a superadmin
+  // (was the static `RoleConfig.allowedStatuses`).
+  const stageIds = currentUser?.access?.workflowStages ?? [];
+  const visibleStages = WORKFLOW_STAGES.filter((col) => stageIds.includes(col.status));
+
+  // Navigation is driven by the server-resolved MODULE list. Fails closed: no
+  // access payload means no sidebar, rather than the full one.
+  const accessModules = currentUser?.access?.modules;
+  const visibleNav = useMemo(
+    () => SIDE_NAV.filter((item) => (accessModules ?? []).includes(item.id)),
+    [accessModules],
   );
 
-  const visibleNav = useMemo(() =>
-    SIDE_NAV.filter((item) => {
-      if (!item.requiresPermission) return true;
-      return can(userRole, item.requiresPermission);
-    }),
-    [userRole]
-  );
+  // Hiding a sidebar entry is not the same as closing the screen behind it.
+  // activeNav starts at 'workflow', so a role without the Workflow Board module
+  // still landed on the board — the entry was gone but the body rendered anyway.
+  // Bounce to the first surface they DO have. Ids outside SIDE_NAV
+  // ('bulletin-templates', reached from Overview) are left alone.
+  useEffect(() => {
+    if (!accessModules) return; // session not resolved yet — don't bounce
+    if (!SIDE_NAV.some((i) => i.id === activeNav)) return;
+    if (visibleNav.some((i) => i.id === activeNav)) return;
+    setActiveNav(visibleNav[0]?.id ?? '');
+  }, [accessModules, activeNav, visibleNav]);
 
   const handleAdvance = (articleId: string, toStatus: KanbanStatus) => {
     const article = (articles ?? []).find((a) => a.id === articleId);
@@ -242,13 +268,13 @@ export default function Newsroom() {
   };
 
   const handleEdit = (article: Article) => {
-    if (!canEditArticle(userRole, article.author, currentUser?.displayName)) return;
+    if (!canEditArticle(article.author, currentUser?.displayName)) return;
     setEditArticle(article);
     setFormOpen(true);
   };
 
   const handleDelete = (article: Article) => {
-    if (!canEditArticle(userRole, article.author, currentUser?.displayName)) return;
+    if (!canEditArticle(article.author, currentUser?.displayName)) return;
     setDeleteTarget(article);
   };
 
@@ -262,7 +288,7 @@ export default function Newsroom() {
   };
 
   const handleNewInColumn = (status: KanbanStatus) => {
-    if (!can(userRole, 'content.draft.create')) return;
+    if (!can('content.draft.create')) return;
     setEditArticle(null);
     setDefaultStatus(status);
     setFormOpen(true);
@@ -270,7 +296,7 @@ export default function Newsroom() {
 
   // Open the Story Studio AI drawer (same gate as filing a story manually).
   const handleOpenStudio = () => {
-    if (!can(userRole, 'content.draft.create')) return;
+    if (!can('content.draft.create')) return;
     useStoryStudioUi.getState().setOpen(true);
   };
 
@@ -326,7 +352,7 @@ export default function Newsroom() {
       <NewsroomSidebar
         sidebarCollapsed={sidebarCollapsed}
         setSidebarCollapsed={setSidebarCollapsed}
-        currentRoleConfig={currentRoleConfig}
+        accentColor={accentColor}
         visibleNav={visibleNav}
         activeNav={activeNav}
         setActiveNav={setActiveNav}
@@ -338,20 +364,14 @@ export default function Newsroom() {
         currentUser={currentUser}
       />
 
-      {/* ── Main panel ── */}
-      <div className="flex-1 flex flex-col overflow-hidden">
+      {/* ── Main panel ── min-w-0 so wide children (stage strip, kanban grid,
+           record tables) scroll inside their own containers instead of
+           stretching the row and scrolling the whole page sideways. */}
+      <div className="flex-1 min-w-0 flex flex-col overflow-hidden">
         {/* Top bar */}
         <NewsroomTopBar
-          visibleNav={visibleNav}
           activeNav={activeNav}
-          pendingReview={pendingReview}
-          currentRoleConfig={currentRoleConfig}
-          userRole={userRole}
           setActiveNav={setActiveNav}
-          onOpenHorseForm={handleOpenHorseForm}
-          onOpenPartyForm={handleOpenPartyForm}
-          onOpenMediaForm={handleOpenMediaForm}
-          onOpenRacingForm={handleOpenRacingForm}
           onNewInColumn={handleNewInColumn}
           onOpenStudio={handleOpenStudio}
         />
@@ -372,32 +392,28 @@ export default function Newsroom() {
             />
           )}
 
-          {activeNav === 'workflow' &&
-            userRole !== 'editor' &&
-            userRole !== 'administrator' && (
-              <div
-                className="mb-5 flex items-start gap-2.5 px-4 py-3 rounded-sm border text-sm"
-                style={{ borderColor: `${currentRoleConfig.color}40`, background: `${currentRoleConfig.color}08` }}
-              >
-                <AlertCircle size={14} style={{ color: currentRoleConfig.color }} className="flex-shrink-0 mt-0.5" />
-                <span className="text-foreground/70">
-                  Viewing as <strong className="text-foreground">{currentRoleConfig.label}</strong> —
-                  {isContributor
-                    ? ' you can create drafts and submit stories. Only your own stories are shown.'
-                    : ` access is scoped to: ${currentRoleConfig.allowedStatuses
-                        .map((s) => WORKFLOW_STAGES.find((w) => w.status === s)?.label ?? s)
-                        .join(', ')}.`}
-                </span>
-              </div>
-            )}
+          {/* Scope notice — shown whenever the user cannot see the whole board. */}
+          {activeNav === 'workflow' && visibleStages.length < WORKFLOW_STAGES.length && (
+            <div
+              className="mb-5 flex items-start gap-2.5 px-4 py-3 rounded-sm border text-sm"
+              style={{ borderColor: `${accentColor}40`, background: `${accentColor}08` }}
+            >
+              <AlertCircle size={14} style={{ color: accentColor }} className="flex-shrink-0 mt-0.5" />
+              <span className="text-foreground/70">
+                Viewing as <strong className="text-foreground">{roleLabel}</strong> —
+                {isContributor
+                  ? ' you can create drafts and submit stories. Only your own stories are shown.'
+                  : ` access is scoped to: ${visibleStages.map((s) => s.label).join(', ')}.`}
+              </span>
+            </div>
+          )}
 
           {activeNav === 'overview' && (
             <OverviewView
               isContributor={isContributor}
               myStories={myStories}
               totalStories={totalStories}
-              currentRoleConfig={currentRoleConfig}
-              userRole={userRole}
+              roleLabel={roleLabel} accentColor={accentColor}
               pendingReview={pendingReview}
               setActiveNav={setActiveNav}
               setActiveColumn={setActiveColumn}
@@ -424,7 +440,6 @@ export default function Newsroom() {
               activeColumn={activeColumn}
               setActiveColumn={setActiveColumn}
               buckets={buckets}
-              userRole={userRole}
               onAdvance={handleAdvance}
               onEdit={handleEdit}
               onDelete={handleDelete}
@@ -435,20 +450,18 @@ export default function Newsroom() {
           {(activeNav === 'all-stories' || activeNav === 'drafts' || activeNav === 'review') && (
             <AllStoriesView
               isContributor={isContributor}
-              currentRoleConfig={currentRoleConfig}
+              roleLabel={roleLabel} accentColor={accentColor}
               searchQuery={searchQuery}
               setSearchQuery={setSearchQuery}
               filteredArticles={filteredArticles}
               onNewInColumn={handleNewInColumn}
               onOpenStudio={handleOpenStudio}
-              userRole={userRole}
               currentUserDisplayName={currentUser?.displayName}
               onEdit={handleEdit}
             />
           )}
           {activeNav === 'editor-hub' && (
             <EditorHubView
-              userRole={userRole}
               editorTab={editorTab}
               setEditorTab={setEditorTab}
               articles={articles ?? []}
@@ -570,9 +583,10 @@ export default function Newsroom() {
               setTeamRole={setTeamRole}
               teamBusy={teamBusy}
               onGrantStaff={onGrantStaff}
-              onRevokeStaff={onRevokeStaff}
+              onCancelInvite={onCancelInvite}
             />
           )}
+          {activeNav === 'roles' && <RolesPermissionsView canManageRoles={canManageRoles} />}
           {activeNav === 'bulletin-templates' && (
             <MagazineStudio
               magazines={magazines}
@@ -605,7 +619,6 @@ export default function Newsroom() {
         onClose={handleFormClose}
         editArticle={editArticle}
         defaultStatus={defaultStatus}
-        userRole={userRole}
       />
 
       {/* Delete story confirmation */}

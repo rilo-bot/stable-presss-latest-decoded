@@ -1,17 +1,18 @@
 import { Filter } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
 import { cn } from '@/lib/utils';
+import { roleColor, roleIcon, useAssignedRoles } from '@/lib/roleDisplay';
 import type { AuthUser } from '@/stores/authStore';
 import type { Horse } from '@/types/horse';
 import type { Party } from '@/types/party';
 import type { MediaItem } from '@/types/mediaItem';
 import type { RacingEntry } from '@/types/racingEntry';
-import type { RoleConfig, SideNavItem } from '../constants';
+import type { SideNavItem } from '../constants';
 
 interface NewsroomSidebarProps {
   sidebarCollapsed: boolean;
   setSidebarCollapsed: React.Dispatch<React.SetStateAction<boolean>>;
-  currentRoleConfig: RoleConfig;
+  accentColor: string;
   visibleNav: SideNavItem[];
   activeNav: string;
   setActiveNav: (nav: string) => void;
@@ -26,7 +27,7 @@ interface NewsroomSidebarProps {
 export function NewsroomSidebar({
   sidebarCollapsed,
   setSidebarCollapsed,
-  currentRoleConfig,
+  accentColor,
   visibleNav,
   activeNav,
   setActiveNav,
@@ -38,10 +39,11 @@ export function NewsroomSidebar({
   currentUser,
 }: NewsroomSidebarProps) {
   const navigate = useNavigate();
+  const assignedRoles = useAssignedRoles();
   return (
     <aside
       className={cn(
-        'hidden md:flex flex-col border-r border-border/60 bg-card transition-all duration-200',
+        'hidden md:flex flex-col flex-shrink-0 border-r border-border/60 bg-card transition-all duration-200',
         sidebarCollapsed ? 'w-14' : 'w-56'
       )}
     >
@@ -63,15 +65,26 @@ export function NewsroomSidebar({
 
       {!sidebarCollapsed && (
         <div className="px-3 py-3 border-b border-border/40">
-          <p className="text-[11px] uppercase tracking-[0.14em] font-semibold text-muted-foreground mb-1.5">Your Role</p>
-          <div
-            className="flex items-center gap-2 px-2.5 py-1.5 rounded-sm border text-sm font-semibold"
-            style={{ borderColor: `${currentRoleConfig.color}40`, background: `${currentRoleConfig.color}08` }}
-          >
-            <span style={{ color: currentRoleConfig.color }}>{currentRoleConfig.icon}</span>
-            <span style={{ color: currentRoleConfig.color }}>{currentRoleConfig.label}</span>
+          <p className="text-[11px] uppercase tracking-[0.14em] font-semibold text-muted-foreground mb-1.5">
+            {assignedRoles.length > 1 ? 'Your Roles' : 'Your Role'}
+          </p>
+          {/* One chip per assigned role — a user can hold several, and there is
+              no "primary" any more to collapse them into. */}
+          <div className="flex flex-wrap gap-1.5">
+            {assignedRoles.length === 0 && (
+              <span className="text-[11px] text-muted-foreground italic">No role assigned</span>
+            )}
+            {assignedRoles.map((r) => (
+              <div
+                key={r.slug}
+                className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-sm border text-sm font-semibold"
+                style={{ borderColor: `${roleColor(r)}40`, background: `${roleColor(r)}08` }}
+              >
+                <span style={{ color: roleColor(r) }}>{roleIcon(r.icon, 13)}</span>
+                <span style={{ color: roleColor(r) }}>{r.label}</span>
+              </div>
+            ))}
           </div>
-          <p className="text-[11px] text-muted-foreground mt-1.5 leading-snug">{currentRoleConfig.description}</p>
         </div>
       )}
 
@@ -164,13 +177,13 @@ export function NewsroomSidebar({
           <div className="flex items-center gap-2">
             <div
               className="w-7 h-7 rounded-full flex items-center justify-center text-[12px] font-bold text-primary-foreground flex-shrink-0"
-              style={{ background: currentRoleConfig.color }}
+              style={{ background: accentColor }}
             >
               {currentUser.displayName.charAt(0)}
             </div>
             <div className="min-w-0">
               <p className="text-sm font-semibold text-foreground truncate">{currentUser.displayName}</p>
-              <p className="text-[11px] text-muted-foreground capitalize">{currentRoleConfig.label}</p>
+              <p className="text-[11px] text-muted-foreground truncate">{currentUser.email}</p>
             </div>
           </div>
         </div>

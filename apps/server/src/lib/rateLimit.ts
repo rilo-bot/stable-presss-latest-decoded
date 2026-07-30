@@ -1,11 +1,11 @@
 // ---------------------------------------------------------------------------
-// Magazine Builder v2 — a tiny in-memory sliding-window rate limiter.
+// A tiny in-memory sliding-window rate limiter (shared).
 //
 // Self-contained (no express-rate-limit dependency) — enough to stop a runaway
-// client / abusive loop from hammering write + AI endpoints (closes review
-// finding H5 for the v2 surface). Keyed by account id (falling back to IP), so
-// one user can't be blocked by another behind the same proxy. In-memory is fine
-// for a single API process; swap for a shared store if the API is scaled out.
+// client / abusive loop from hammering write + AI endpoints. Keyed by account id
+// (falling back to IP), so one user can't be blocked by another behind the same
+// proxy. In-memory is fine for a single API process; swap for a shared store
+// (Redis) if the API is scaled out horizontally.
 // ---------------------------------------------------------------------------
 
 import type { Request, Response, NextFunction } from 'express';

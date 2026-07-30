@@ -184,6 +184,26 @@ export const chatAgent = (
 ) =>
   authFetch(`${BASE}/issues/${id}/pages/${pageId}/agent`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ messages, selectedElementId, sourceText, attachedImages }) }).then(parse<{ reply: string; proposals: AgentProposal[] }>);
 
+// The persistent per-magazine chat thread (page-tagged). `before` (ISO cursor)
+// loads the batch OLDER than it — for lazy "load earlier" upward.
+export interface ChatMsgDto {
+  id: string;
+  role: 'user' | 'assistant';
+  content: string;
+  pageIndex: number | null;
+  attachments?: { name: string; isImage: boolean; url?: string }[];
+  createdAt: string;
+}
+export const listChat = (id: string, opts?: { before?: string; limit?: number }) => {
+  const p = new URLSearchParams();
+  if (opts?.before) p.set('before', opts.before);
+  if (opts?.limit) p.set('limit', String(opts.limit));
+  const qs = p.toString();
+  return authFetch(`${BASE}/issues/${id}/chat${qs ? `?${qs}` : ''}`).then(
+    parse<{ messages: ChatMsgDto[]; hasMore: boolean; oldestCreatedAt: string | null }>,
+  );
+};
+
 // ── PDF import (upload → S3 → confirm → background extraction) ──
 export interface MediaAsset {
   id: string;

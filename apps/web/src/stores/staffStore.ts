@@ -1,17 +1,19 @@
 import { create } from 'zustand';
 import { authFetch } from '@/lib/api';
-import type { StaffRole } from '@/rbac/roles';
 
 export interface StaffUser {
   userId: string;
   displayName: string;
   email: string;
-  staffRoles: StaffRole[];
+  /** Role SLUGS into the server's `roles` collection. */
+  staffRoles: string[];
 }
 
 export interface PendingGrant {
+  id: string;
   email: string;
-  role: StaffRole;
+  /** Role SLUG. Re-validated against the live registry at sign-in. */
+  role: string;
 }
 
 interface Result {
@@ -24,8 +26,8 @@ interface StaffState {
   pending: PendingGrant[];
   loading: boolean;
   fetchStaff: () => Promise<void>;
-  grant: (email: string, role: StaffRole) => Promise<Result>;
-  revoke: (userId: string, role: StaffRole) => Promise<Result>;
+  invite: (email: string, slug: string) => Promise<Result>;
+  cancelInvite: (id: string) => Promise<Result>;
 }
 
 async function readError(res: Response, fallback: string): Promise<string> {
@@ -49,14 +51,14 @@ export const useStaffStore = create<StaffState>((set, get) => ({
     }
   },
 
-  grant: async (email, role) => {
+  invite: async (email, slug) => {
     try {
       const res = await authFetch('/api/staff', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ email, role }),
+        body: JSON.stringify({ email, role: slug }),
       });
-      if (!res.ok) return { ok: false, error: await readError(res, 'Could not grant the role.') };
+      if (!res.ok) return { ok: false, error: await readError(res, 'Could not send the invite.') };
       await get().fetchStaff();
       return { ok: true };
     } catch {
@@ -64,10 +66,10 @@ export const useStaffStore = create<StaffState>((set, get) => ({
     }
   },
 
-  revoke: async (userId, role) => {
+  cancelInvite: async (id) => {
     try {
-      const res = await authFetch(`/api/staff/${userId}/roles/${role}`, { method: 'DELETE' });
-      if (!res.ok) return { ok: false, error: await readError(res, 'Could not revoke the role.') };
+      const res = await authFetch(`/api/staff/pending/${id}`, { method: 'DELETE' });
+      if (!res.ok) return { ok: false, error: await readError(res, 'Could not cancel the invite.') };
       await get().fetchStaff();
       return { ok: true };
     } catch {

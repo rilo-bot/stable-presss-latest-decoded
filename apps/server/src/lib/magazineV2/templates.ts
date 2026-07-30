@@ -65,6 +65,11 @@ export interface PageTemplateSlot {
   id: string; // stable within the template, e.g. "headline"
   role: SlotRole;
   textRole?: TextRole; // for text slots
+  /** The ORIGINAL DSL leaf role for AI-authored pseudo-templates (e.g. 'figure',
+   *  'entry', 'kicker', 'label') — finer than textRole, which collapses several
+   *  of these together. Used to re-flow drafted copy across layout retries WITHOUT
+   *  cross-routing a stat figure into a headline slot. Absent on fixed templates. */
+  leafRole?: string;
   required: boolean;
   /** Box as fractions of page width/height (0..1). Resolved to px at fill. */
   box: { x: number; y: number; w: number; h: number };
@@ -345,8 +350,9 @@ export function composePage(
       const content = fill?.text ?? '';
       // Skip ANY empty text slot — required included. An empty required slot used
       // to emit an invisible, zero-content text element that just occupied a dead
-      // box; required copy is now guaranteed upstream by backfillDraft, so a still-
-      // empty slot here (e.g. an unfillable figure) should simply be dropped.
+      // box; real copy is now produced upstream by the copywriter self-heal
+      // (draftGaps + DRAFT_ATTEMPTS), with the headline guaranteed by ensureHeadline,
+      // so a still-empty slot here (e.g. an unfillable figure) should simply be dropped.
       if (!content) continue;
       const s = slot.style ?? {};
       const maxFont = s.fontSize ?? 28;

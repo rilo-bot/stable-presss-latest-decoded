@@ -80,6 +80,24 @@ export async function processNextJob(handlers: JobHandlers): Promise<boolean> {
           ? { status: 'failed', finishedAt: nowIso(), lastError: message, updatedAt: nowIso() }
           : { status: 'queued', lastError: message, updatedAt: nowIso() },
       );
+    // Idempotent issue handlers now RETHROW on failure (instead of self-marking
+    // the issue failed) so these retries actually run. Once attempts are spent,
+    // the queue owns the terminal state — surface it on the issue so the client's
+    // progress poll stops spinning. Guarded on 'processing' so it can never
+    // clobber an issue a self-handling job (e.g. add-pages) already restored, and
+    // is a harmless no-op for jobs with no issueId (e.g. `noop`).
+    if (permanent) {
+      const failedIssueId = (job.payload as { issueId?: string } | undefined)?.issueId;
+      if (failedIssueId) {
+        await db
+          .collection(COL.issues)
+          .updateOneIf(
+            failedIssueId,
+            { status: 'processing' },
+            { status: 'failed', stage: '', processingError: message, updatedAt: nowIso() },
+          );
+      }
+    }
   }
   return true;
 }

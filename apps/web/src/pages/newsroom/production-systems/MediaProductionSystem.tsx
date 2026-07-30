@@ -5,6 +5,7 @@ import { cn } from '@/lib/utils';
 import type { Horse } from '@/types/horse';
 import type { MediaItem, MediaType } from '@/types/mediaItem';
 import { MEDIA_TYPE_ICONS, MEDIA_TYPE_COLORS } from '../constants';
+import { DeleteConfirmDialog } from '../components/DeleteConfirmDialog';
 
 interface MediaProductionSystemProps {
   mediaItems: MediaItem[];
@@ -54,17 +55,7 @@ export function MediaProductionSystem({
   return (
     <div className="space-y-5">
       {/* Header strip */}
-      <div className="flex items-center justify-between gap-4 flex-wrap">
-        <div>
-          <p className="text-[12px] uppercase tracking-[0.14em] font-bold text-muted-foreground mb-0.5">
-            Stable Press Production System
-          </p>
-          <p className="text-sm text-muted-foreground">
-            {safeMedia.length === 0
-              ? 'No media records on file yet.'
-              : `${safeMedia.length} media record${safeMedia.length !== 1 ? 's' : ''} across all horses`}
-          </p>
-        </div>
+      <div className="flex items-center justify-end gap-4 flex-wrap">
         <Button
           size="sm"
           className="bg-primary text-primary-foreground hover:bg-primary/90 gap-1.5 text-sm"
@@ -287,33 +278,19 @@ export function MediaProductionSystem({
       )}
 
       {/* Delete confirm */}
-      {mediaDeleteConfirm && mediaDeleteTarget && (
-        <div className="border border-destructive/30 rounded-sm bg-destructive/5 px-4 py-3 flex items-center justify-between gap-4 flex-wrap">
-          <p className="text-sm text-foreground">
-            Remove{' '}
-            <span className="font-semibold">{mediaDeleteTarget.title}</span>
+      <DeleteConfirmDialog
+        open={mediaDeleteConfirm && !!mediaDeleteTarget}
+        title="Remove media record"
+        message={
+          <>
+            Remove <span className="font-semibold">{mediaDeleteTarget?.title}</span>
             {' '}from Stable Press? This cannot be undone.
-          </p>
-          <div className="flex items-center gap-2 flex-shrink-0">
-            <Button
-              size="sm"
-              variant="outline"
-              className="text-sm"
-              onClick={() => { setMediaDeleteConfirm(false); setMediaDeleteTarget(null); }}
-            >
-              Cancel
-            </Button>
-            <Button
-              size="sm"
-              variant="destructive"
-              className="text-sm"
-              onClick={confirmMediaDelete}
-            >
-              Remove
-            </Button>
-          </div>
-        </div>
-      )}
+          </>
+        }
+        confirmLabel="Remove"
+        onCancel={() => { setMediaDeleteConfirm(false); setMediaDeleteTarget(null); }}
+        onConfirm={confirmMediaDelete}
+      />
 
       {/* Info note */}
       {safeMedia.length > 0 && (

@@ -7,7 +7,8 @@ import crypto from 'crypto'
 import jwt from 'jsonwebtoken'
 import type { Request, Response, NextFunction } from 'express'
 import { db } from './db.js'
-import { withIdentityDefaults, type AccountUser } from './identity.js'
+import { withIdentityDefaults } from './identity.js'
+import { resolveAccount, type AccountUser } from './effectiveAccess.js'
 
 const IS_PROD = process.env.PROD === 'true'
 const RAW_JWT_SECRET = (process.env.JWT_SECRET ?? '').trim()
@@ -28,7 +29,6 @@ const TOKEN_TTL = '7d'
 export interface TokenClaims {
   sub: string // user id
   email: string
-  role: string
 }
 
 /** Cryptographically-random 6-digit code, zero-padded. */
@@ -96,10 +96,16 @@ export function optionalAuth(req: Request, _res: Response, next: NextFunction): 
 }
 
 /**
- * Like requireAuth, but also loads the LIVE user record and attaches the
- * normalized account to req.account. Permission checks read roles/claims/tier
- * from here so changes take effect without re-issuing a token (the JWT only
- * carries {sub,email,role}). Rejects with 401 if the token or user is invalid.
+ * Like requireAuth, but also loads the LIVE user record and RESOLVES its role
+ * slugs into a permission set, attaching the result to req.account.
+ *
+ * This is the only producer of an AccountUser, and therefore the only way a
+ * route can reach a permission check. Roles come from the in-process registry
+ * cache, so resolution adds no database round trip. The JWT carries only
+ * {sub,email} — every authorization input is read live, so a role edit takes
+ * effect on the next request rather than the next login.
+ *
+ * Rejects with 401 if the token or user is invalid.
  */
 export async function attachAccount(req: Request, res: Response, next: NextFunction): Promise<void> {
   const claims = claimsFromHeader(req)
@@ -113,7 +119,7 @@ export async function attachAccount(req: Request, res: Response, next: NextFunct
     return
   }
   req.user = claims
-  req.account = withIdentityDefaults({ id: doc._id, ...doc })
+  req.account = await resolveAccount(withIdentityDefaults({ id: doc._id, ...doc }))
   next()
 }
 
@@ -128,7 +134,7 @@ export async function attachAccountOptional(req: Request, _res: Response, next: 
     const doc = await db.collection('users').findById(claims.sub)
     if (doc) {
       req.user = claims
-      req.account = withIdentityDefaults({ id: doc._id, ...doc })
+      req.account = await resolveAccount(withIdentityDefaults({ id: doc._id, ...doc }))
     }
   }
   next()

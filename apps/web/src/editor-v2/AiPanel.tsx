@@ -54,6 +54,9 @@ function thumbOf(p: AgentProposal): string | undefined {
 export function AiPanel() {
   const chat = useEditorStore((s) => s.chat);
   const chatBusy = useEditorStore((s) => s.chatBusy);
+  const chatHasMore = useEditorStore((s) => s.chatHasMore);
+  const chatLoadingOlder = useEditorStore((s) => s.chatLoadingOlder);
+  const loadOlderChat = useEditorStore((s) => s.loadOlderChat);
   const proposals = useEditorStore((s) => s.proposals);
   const proposalsPageId = useEditorStore((s) => s.proposalsPageId);
   const currentPageId = useEditorStore((s) => s.currentPageId);
@@ -144,8 +147,17 @@ export function AiPanel() {
     autoSpeakOnMic: false,
   });
 
+  const prevFirstId = useRef<string | undefined>(undefined);
   useEffect(() => {
-    scrollRef.current?.scrollTo({ top: scrollRef.current.scrollHeight, behavior: 'smooth' });
+    const el = scrollRef.current;
+    if (!el) return;
+    // Auto-scroll to the newest message on an append/new turn — but NOT when older
+    // history was prepended (Load earlier), which would yank the user off what they
+    // came to read. A prepend changes the first message's id.
+    const firstId = chat[0]?.id;
+    const prepended = prevFirstId.current !== undefined && firstId !== prevFirstId.current;
+    prevFirstId.current = firstId;
+    if (!prepended) el.scrollTo({ top: el.scrollHeight, behavior: 'smooth' });
   }, [chat, chatBusy, proposals.length]);
 
   // Stage newly picked/dropped files (multi-attach: an article + its graphs can
@@ -358,6 +370,17 @@ export function AiPanel() {
         <>
       {/* Conversation */}
       <div ref={scrollRef} className="flex-1 space-y-3 overflow-y-auto px-3 py-3">
+        {chatHasMore && (
+          <div className="flex justify-center">
+            <button
+              onClick={() => void loadOlderChat()}
+              disabled={chatLoadingOlder}
+              className="rounded-sm border border-white/15 px-2 py-0.5 text-[11px] text-white/55 hover:bg-white/10 disabled:opacity-40"
+            >
+              {chatLoadingOlder ? 'Loading…' : 'Load earlier messages'}
+            </button>
+          </div>
+        )}
         {chat.length === 0 && (
           <p className="text-[12px] leading-relaxed text-white/55">
             I’m your studio assistant for this page. Ask me to <strong className="text-white/85">rewrite the headline</strong>,{' '}
@@ -392,6 +415,9 @@ export function AiPanel() {
                         </span>
                       ))}
                     </div>
+                  )}
+                  {typeof m.pageIndex === 'number' && (
+                    <span className="mb-0.5 block text-[9px] font-semibold uppercase tracking-wide text-white/55">Page {m.pageIndex + 1}</span>
                   )}
                   {m.content}
                 </>

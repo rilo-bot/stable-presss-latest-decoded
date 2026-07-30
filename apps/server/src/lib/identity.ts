@@ -1,21 +1,27 @@
 // ---------------------------------------------------------------------------
-// Identity model — role families, subscription tiers, and normalization.
+// Identity model — the PERSISTED user shape.
 //
-// Mirrors apps/web/src/rbac/roles.ts + entitlement.ts. The web side owns UI
-// affordances; this is the server's source of truth for the persisted shape and
-// is where defaults/normalization (lazy migration on read) happen.
+// Staff/editorial roles are NO LONGER a TypeScript union. They are rows in the
+// `roles` collection, referenced from `user.staffRoles[]` by slug, and resolved
+// through lib/roleRegistry.ts. This file owns only what is stored on the user
+// doc; what an account may DO lives in lib/effectiveAccess.ts.
 //
-// See RBAC.md for the full model.
+// Two role axes, deliberately kept in separate arrays so a superadmin-created
+// slug can never collide with a racing identity:
+//
+//   roles[]       STATIC  — 'reader' + verified PartyRoles ('trainer', 'owner'…)
+//   staffRoles[]  DYNAMIC — slugs into the `roles` collection
+//
+// See RBAC.md and docs/DYNAMIC-RBAC-PLAN.md.
 // ---------------------------------------------------------------------------
 
 export type ReaderRole = 'reader'
-export type StaffRole =
-  | 'contributor'
-  | 'editor'
-  | 'legal_reviewer'
-  | 'podcast_producer'
-  | 'publisher'
-  | 'administrator'
+
+/**
+ * Racing identities. STATIC by design — these are bound to horsePartyLinks,
+ * ROLE_BINDINGS and the claim-verification flow, and are a different axis from
+ * "what may this employee do". Deliberately excluded from dynamic RBAC.
+ */
 export type PartyRole =
   | 'owner'
   | 'trainer'
@@ -24,19 +30,15 @@ export type PartyRole =
   | 'bloodstock agent'
   | 'syndicate manager'
   | 'personnel'
+
+/** Org-membership roles — scoped to one organisation. Also static by design. */
 export type OrgRole = 'org_owner' | 'org_manager' | 'org_member'
 
-/** Roles stored in user.roles[]. Org roles are scoped → live in orgMemberships. */
-export type Role = ReaderRole | StaffRole | PartyRole
+/** Roles stored in user.roles[] — the static axis only. */
+export type Role = ReaderRole | PartyRole
 
-export const STAFF_ROLES: StaffRole[] = [
-  'contributor',
-  'editor',
-  'legal_reviewer',
-  'podcast_producer',
-  'publisher',
-  'administrator',
-]
+/** A slug into the `roles` collection. Any string; validity is a DB question. */
+export type RoleSlug = string
 
 export const PARTY_ROLES: PartyRole[] = [
   'owner',
@@ -47,6 +49,13 @@ export const PARTY_ROLES: PartyRole[] = [
   'syndicate manager',
   'personnel',
 ]
+
+const STATIC_ROLES = new Set<string>(['reader', ...PARTY_ROLES])
+
+/** Narrow an arbitrary stored string to the static `roles[]` axis. */
+export function isStaticRole(v: unknown): v is Role {
+  return typeof v === 'string' && STATIC_ROLES.has(v)
+}
 
 export type SubscriptionTier = 'free' | 'standard' | 'premium'
 
@@ -76,56 +85,50 @@ export interface OrgMembership {
   orgRole: OrgRole
 }
 
-/** The shape every user doc conforms to after normalization. */
-export interface AccountUser {
+/**
+ * The persisted user shape — plain, JSON-safe, no resolved permissions.
+ *
+ * This type CANNOT be used for an authorization check: `accountCan` requires an
+ * `AccountUser`, which only `attachAccount` can produce. That split is
+ * deliberate — it makes "forgot to resolve permissions" a compile error rather
+ * than a silent allow/deny.
+ */
+export interface IdentityUser {
   id: string
   email: string
   displayName: string
   createdAt: string
+  /** STATIC axis: 'reader' + verified party roles. */
   roles: Role[]
   subscriptionTier: SubscriptionTier
   partyClaims: PartyClaim[]
   orgMemberships: OrgMembership[]
-  /** Derived: highest-privilege staff role if any, else 'reader'. Back-compat for token + UI. */
-  role: Role
-}
-
-const STAFF_RANK: Record<StaffRole, number> = {
-  administrator: 6,
-  publisher: 5,
-  editor: 4,
-  legal_reviewer: 3,
-  podcast_producer: 2,
-  contributor: 1,
-}
-
-function isStaffRole(r: unknown): r is StaffRole {
-  return typeof r === 'string' && (STAFF_ROLES as string[]).includes(r)
-}
-
-/** Highest-privilege staff role the user holds, else 'reader'. */
-export function primaryRole(roles: Role[]): Role {
-  let best: StaffRole | null = null
-  for (const r of roles) {
-    if (isStaffRole(r) && (!best || STAFF_RANK[r] > STAFF_RANK[best])) best = r
-  }
-  return best ?? 'reader'
+  /** DYNAMIC axis: slugs into the `roles` collection. */
+  staffRoles: RoleSlug[]
 }
 
 /**
- * Guarantee a (possibly legacy single-`role`) user doc has the full identity
- * shape. Doubles as lazy migration on read. `raw` is a projected doc ({ id, … }).
+ * Guarantee a user doc has the full identity shape. `raw` is a projected doc
+ * ({ id, … }).
+ *
+ * The two role axes are kept strictly apart. `roles[]` is filtered down to
+ * values that are actually static roles, so a stray string in that array can
+ * never be mistaken for a party identity; anything dynamic must arrive through
+ * `staffRoles[]`, which is the only path to a permission.
  */
-export function withIdentityDefaults(raw: Record<string, any>): AccountUser {
-  const legacyRole = typeof raw.role === 'string' ? raw.role : undefined
-  let roles: Role[] = Array.isArray(raw.roles)
-    ? raw.roles.filter((r: unknown): r is Role => typeof r === 'string')
+export function withIdentityDefaults(raw: Record<string, any>): IdentityUser {
+  const rawRoles: string[] = Array.isArray(raw.roles)
+    ? raw.roles.filter((r: unknown): r is string => typeof r === 'string')
     : []
-  if (roles.length === 0) {
-    // Derive from the legacy single-role field: staff role → keep it, else reader.
-    roles = isStaffRole(legacyRole) ? ['reader', legacyRole] : ['reader']
-  }
+
+  // Static axis: 'reader' plus verified party identities, nothing else.
+  let roles = rawRoles.filter(isStaticRole)
   if (!roles.includes('reader')) roles = ['reader', ...roles]
+
+  // Dynamic axis: role slugs, resolved against the `roles` collection.
+  const staff = Array.isArray(raw.staffRoles)
+    ? [...new Set(raw.staffRoles.filter((r: unknown): r is string => typeof r === 'string'))]
+    : []
 
   const tier: SubscriptionTier =
     raw.subscriptionTier === 'standard' || raw.subscriptionTier === 'premium'
@@ -141,14 +144,28 @@ export function withIdentityDefaults(raw: Record<string, any>): AccountUser {
     subscriptionTier: tier,
     partyClaims: Array.isArray(raw.partyClaims) ? raw.partyClaims : [],
     orgMemberships: Array.isArray(raw.orgMemberships) ? raw.orgMemberships : [],
-    role: primaryRole(roles),
+    staffRoles: staff,
   }
 }
 
+/**
+ * Convenience re-export. `AccountUser` (IdentityUser + resolved permissions)
+ * lives in effectiveAccess.ts, but most callers import their identity types
+ * from here. Type-only, so it is erased at compile time and creates no runtime
+ * import cycle.
+ */
+export type { AccountUser } from './effectiveAccess.js'
+
 /** Persisted fields for a brand-new reader account (default state of every signup). */
 export function newReaderFields(): Pick<
-  AccountUser,
-  'roles' | 'subscriptionTier' | 'partyClaims' | 'orgMemberships'
+  IdentityUser,
+  'roles' | 'subscriptionTier' | 'partyClaims' | 'orgMemberships' | 'staffRoles'
 > {
-  return { roles: ['reader'], subscriptionTier: 'free', partyClaims: [], orgMemberships: [] }
+  return {
+    roles: ['reader'],
+    subscriptionTier: 'free',
+    partyClaims: [],
+    orgMemberships: [],
+    staffRoles: [],
+  }
 }

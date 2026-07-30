@@ -3,6 +3,8 @@ import { db } from '../lib/db.js';
 import { genOtp, hashOtp, signToken, attachAccount } from '../lib/auth.js';
 import { sendOtpEmail, isEmailConfigured } from '../lib/email.js';
 import { withIdentityDefaults, newReaderFields } from '../lib/identity.js';
+import { resolveAccount, toClientUser } from '../lib/effectiveAccess.js';
+import { getRoles } from '../lib/roleRegistry.js';
 
 type WithMongoId = { _id: string; [key: string]: unknown };
 function project<T extends WithMongoId>(doc: T): Omit<T, '_id'> & { id: string } {
@@ -207,30 +209,35 @@ router.post('/verify-otp', async (req, res) => {
     return;
   }
 
-  // Apply any staff roles an administrator pre-granted to this email (first sign-in).
+  // Apply any roles pre-granted to this email (first sign-in). Each invite is
+  // re-validated against the live registry: a role deleted between invite and
+  // sign-in is dropped rather than written as a dangling slug.
   let finalDoc = userDoc;
   const grants = await db.collection('pendingStaffGrants').find({ email });
   if (grants.length > 0) {
-    const current = withIdentityDefaults(project(finalDoc)).roles;
-    const merged: string[] = [...current];
+    const known = await getRoles();
+    const merged = new Set(withIdentityDefaults(project(finalDoc)).staffRoles);
     for (const g of grants) {
-      if (typeof g.role === 'string' && !merged.includes(g.role)) merged.push(g.role);
+      if (typeof g.role === 'string' && known.has(g.role)) merged.add(g.role);
     }
-    await db.collection('users').updateOne(finalDoc._id, { roles: merged });
+    await db.collection('users').updateOne(String(finalDoc._id), { staffRoles: [...merged] });
     await Promise.all(grants.map((g) => db.collection('pendingStaffGrants').deleteOne(g._id)));
     const refreshed = await db.collection('users').findById(finalDoc._id);
     if (refreshed) finalDoc = refreshed;
   }
 
-  // Normalize (fills identity defaults for legacy docs too) before issuing the token.
-  const account = withIdentityDefaults(project(finalDoc));
-  const token = signToken({ sub: account.id, email: account.email, role: String(account.role) });
-  res.json({ token, user: account });
+  // Normalize (fills identity defaults for legacy docs too) before issuing the
+  // token. The JWT deliberately carries NO role/permission data — every
+  // authorization input is read live on each request, so a role edit takes
+  // effect immediately rather than at the next login.
+  const identity = withIdentityDefaults(project(finalDoc));
+  const token = signToken({ sub: identity.id, email: identity.email });
+  res.json({ token, user: toClientUser(await resolveAccount(identity)) });
 });
 
 // ── Session check — validate a persisted token, return the live account ───────
-router.get('/me', attachAccount, async (req, res) => {
-  res.json({ user: req.account });
+router.get('/me', attachAccount, (req, res) => {
+  res.json({ user: toClientUser(req.account!) });
 });
 
 export default router;

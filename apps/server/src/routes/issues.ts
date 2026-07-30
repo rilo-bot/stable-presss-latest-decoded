@@ -18,7 +18,7 @@
 
 import { Router } from 'express';
 import { db } from '../lib/db.js';
-import { isStaff, isAdmin } from '../lib/rbac.js';
+import { canAccessNewsroom, isPlatformAdmin } from '../lib/rbac.js';
 import { sanitizePages } from '../lib/sanitizeHtml.js';
 import { renderBulletinPdf } from '../lib/pdf.js';
 import type { AccountUser } from '../lib/identity.js';
@@ -47,7 +47,7 @@ type WithMongoId = { _id: string; [key: string]: unknown };
  */
 async function canManageIssue(issue: WithMongoId, account: AccountUser | undefined): Promise<boolean> {
   if (!account) return false;
-  if (isAdmin(account)) return true;
+  if (isPlatformAdmin(account)) return true;
   if (issue.createdByUserId && issue.createdByUserId === account.id) return true;
   if (issue.magazineId) {
     const mag = await db.collection('magazines').findById(String(issue.magazineId));
@@ -85,7 +85,7 @@ const router = Router();
 // list — public sees published only; staff may include unpublished (?includeUnpublished=1)
 router.get('/', async (req, res) => {
   const all = await db.collection('issues').find();
-  const includeUnpublished = isStaff(req.account) && req.query.includeUnpublished === '1';
+  const includeUnpublished = canAccessNewsroom(req.account) && req.query.includeUnpublished === '1';
   const visible = all.filter((d) => includeUnpublished || !d.unpublishedAt);
   visible.sort(byPublishedAtDesc);
   res.json(visible.map(summarize));
@@ -98,7 +98,7 @@ router.get('/:id', async (req, res) => {
     res.status(404).json({ error: 'Not found' });
     return;
   }
-  if (doc.unpublishedAt && !isStaff(req.account)) {
+  if (doc.unpublishedAt && !canAccessNewsroom(req.account)) {
     res.status(404).json({ error: 'Not found' });
     return;
   }
@@ -114,7 +114,7 @@ router.get('/:id/pdf', async (req, res) => {
     res.status(404).json({ error: 'Not found' });
     return;
   }
-  const staff = isStaff(req.account);
+  const staff = canAccessNewsroom(req.account);
   if (doc.unpublishedAt && !staff) {
     res.status(404).json({ error: 'Not found' });
     return;
@@ -167,7 +167,7 @@ router.post('/', async (req, res) => {
   // Only the owner of the source magazine (or an admin) may publish from it.
   if (body.magazineId) {
     const mag = await db.collection('magazines').findById(String(body.magazineId));
-    if (!mag || (mag.ownerId !== req.account?.id && !isAdmin(req.account))) {
+    if (!mag || (mag.ownerId !== req.account?.id && !isPlatformAdmin(req.account))) {
       res.status(403).json({ error: 'Only the magazine owner can publish this edition.' });
       return;
     }

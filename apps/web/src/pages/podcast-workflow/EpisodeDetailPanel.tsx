@@ -26,7 +26,6 @@ export function EpisodeDetailPanel({
   onClose: () => void;
 }) {
   const currentUser = useAuthStore((s) => s.currentUser);
-  const role = currentUser?.role;
 
   const advanceStatus = usePodcastStore((s) => s.advanceStatus);
   const addGuest = usePodcastStore((s) => s.addGuest);
@@ -54,14 +53,14 @@ export function EpisodeDetailPanel({
   const [descEdit, setDescEdit] = useState(liveEpisode.description ?? '');
   const [tab, setTab] = useState<'overview' | 'guests' | 'distribution' | 'review'>('overview');
 
-  const isOwn = canEditEpisode(role, liveEpisode.producedBy, currentUser?.displayName);
-  const canAdvanceToAudio = can(role, 'podcast.audio.upload') && liveEpisode.status === 'draft' && isOwn;
-  const canAdvanceToGuests = can(role, 'podcast.guests.manage') && liveEpisode.status === 'audio_uploaded' && isOwn;
-  const canAdvanceToDesc = (can(role, 'podcast.episode.edit_own') || can(role, 'podcast.episode.edit_any')) && liveEpisode.status === 'guests_added' && isOwn;
-  const canAdvanceToScheduled = can(role, 'podcast.episode.schedule') && liveEpisode.status === 'description_written' && isOwn;
-  const canSubmitReview = can(role, 'podcast.episode.submit_review') && liveEpisode.status === 'scheduled' && isOwn;
-  const canApprove = can(role, 'podcast.episode.approve') && liveEpisode.status === 'in_review';
-  const canDelete = can(role, 'podcast.episode.delete') && liveEpisode.status !== 'published' && isOwn;
+  const isOwn = canEditEpisode(liveEpisode.producedBy, currentUser?.displayName);
+  const canAdvanceToAudio = can('podcast.audio.upload') && liveEpisode.status === 'draft' && isOwn;
+  const canAdvanceToGuests = can('podcast.guests.manage') && liveEpisode.status === 'audio_uploaded' && isOwn;
+  const canAdvanceToDesc = (can('podcast.episode.edit_own') || can('podcast.episode.edit_any')) && liveEpisode.status === 'guests_added' && isOwn;
+  const canAdvanceToScheduled = can('podcast.episode.schedule') && liveEpisode.status === 'description_written' && isOwn;
+  const canSubmitReview = can('podcast.episode.submit_review') && liveEpisode.status === 'scheduled' && isOwn;
+  const canApprove = can('podcast.episode.approve') && liveEpisode.status === 'in_review';
+  const canDelete = can('podcast.episode.delete') && liveEpisode.status !== 'published' && isOwn;
 
   const handleAddGuest = () => {
     if (!guestForm.name.trim()) {
@@ -348,7 +347,7 @@ export function EpisodeDetailPanel({
           {tab === 'overview' && (
             <OverviewTab
               liveEpisode={liveEpisode}
-              role={role}
+
               isOwn={isOwn}
               descEdit={descEdit}
               setDescEdit={setDescEdit}
@@ -365,7 +364,7 @@ export function EpisodeDetailPanel({
             <GuestsTab
               liveEpisode={liveEpisode}
               liveGuests={liveGuests}
-              role={role}
+
               isOwn={isOwn}
               guestForm={guestForm}
               setGuestForm={setGuestForm}
@@ -381,7 +380,7 @@ export function EpisodeDetailPanel({
             <DistributionTab
               liveEpisode={liveEpisode}
               liveChannels={liveChannels}
-              role={role}
+
               isOwn={isOwn}
               handleToggleChannel={handleToggleChannel}
             />
@@ -391,7 +390,7 @@ export function EpisodeDetailPanel({
           {tab === 'review' && (
             <ReviewTab
               liveEpisode={liveEpisode}
-              role={role}
+
               reviewNote={reviewNote}
               setReviewNote={setReviewNote}
               handleSaveNote={handleSaveNote}

@@ -1,16 +1,8 @@
 import { create } from 'zustand';
 import { persist } from 'zustand/middleware';
 import { apiUrl } from '@/lib/api';
-import type { Role, StaffRole, PartyRole, OrgRole } from '@/rbac/roles';
-import { primaryStaffRole } from '@/rbac/roles';
+import type { Role, PartyRole, OrgRole } from '@/rbac/roles';
 import type { SubscriptionTier } from '@/rbac/entitlement';
-
-/**
- * Back-compat alias: the six editorial roles. Existing UI (Newsroom, KanbanColumn,
- * permission matrix) types against this. A reader/party with no staff role has
- * `role: undefined`.
- */
-export type UserRole = StaffRole;
 
 /** A self-claimed racing identity, pending until verified. See RBAC.md §7. */
 export interface PartyClaim {
@@ -37,6 +29,34 @@ export interface OrgMembership {
   orgRole: OrgRole;
 }
 
+/** One role the user holds, as defined in the database. */
+export interface AssignedRole {
+  slug: string;
+  label: string;
+  color?: string;
+  /** A lucide icon NAME — resolved to a component by lib/roleDisplay.tsx. */
+  icon?: string;
+}
+
+/**
+ * What the signed-in user may actually do, resolved SERVER-side as the union
+ * across every role they hold. This is the ONLY source of permission truth on
+ * the client — there is no local role matrix any more, because roles are rows
+ * in a database that a superadmin edits at runtime.
+ */
+export interface ResolvedAccess {
+  /** Granted action ids, e.g. 'content.publish'. */
+  permissions: string[];
+  /** Navigation surfaces the user may open, e.g. 'analytics'. */
+  modules: string[];
+  /** Kanban columns the user may see (was the static `allowedStatuses`). */
+  workflowStages: string[];
+  /** Unrestricted access. Rendered as a badge; enforcement is server-side. */
+  isSuperAdmin: boolean;
+  /** The roles themselves, for display (label, colour, icon). */
+  roles: AssignedRole[];
+}
+
 export interface AuthUser {
   id: string;
   email: string;
@@ -48,14 +68,34 @@ export interface AuthUser {
   subscriptionTier: SubscriptionTier;
   partyClaims: PartyClaim[];
   orgMemberships: OrgMembership[];
-  /** Derived: highest staff role, or undefined for non-staff. Back-compat for can()/UI. */
-  role?: UserRole;
+  /** DYNAMIC axis — role slugs into the server's `roles` collection. */
+  staffRoles: string[];
+  /** Server-resolved effective access. Absent only on a partial payload. */
+  access?: ResolvedAccess;
 }
 
-/** Normalize a raw user payload from the API into a complete AuthUser. */
-function hydrateUser(raw: any): AuthUser {
+/**
+ * Normalize a raw user payload from the API into a complete AuthUser.
+ *
+ * `previous` carries forward `access` when an endpoint returns a user object
+ * without it (e.g. /api/subscription, which only touches the entitlement axis).
+ * Without this a tier change would blank the whole navigation until the next
+ * session check.
+ */
+function hydrateUser(raw: any, previous?: AuthUser | null): AuthUser {
   const roles: Role[] =
     Array.isArray(raw?.roles) && raw.roles.length > 0 ? raw.roles : ['reader'];
+  const rawAccess = raw?.access;
+  const access: ResolvedAccess | undefined = rawAccess
+    ? {
+        permissions: Array.isArray(rawAccess.permissions) ? rawAccess.permissions : [],
+        modules: Array.isArray(rawAccess.modules) ? rawAccess.modules : [],
+        workflowStages: Array.isArray(rawAccess.workflowStages) ? rawAccess.workflowStages : [],
+        isSuperAdmin: rawAccess.isSuperAdmin === true,
+        roles: Array.isArray(rawAccess.roles) ? rawAccess.roles : [],
+      }
+    : previous?.access;
+
   return {
     id: String(raw?.id ?? ''),
     email: String(raw?.email ?? ''),
@@ -65,7 +105,8 @@ function hydrateUser(raw: any): AuthUser {
     subscriptionTier: (raw?.subscriptionTier as SubscriptionTier) ?? 'free',
     partyClaims: Array.isArray(raw?.partyClaims) ? raw.partyClaims : [],
     orgMemberships: Array.isArray(raw?.orgMemberships) ? raw.orgMemberships : [],
-    role: primaryStaffRole(roles),
+    staffRoles: Array.isArray(raw?.staffRoles) ? raw.staffRoles : [],
+    access,
   };
 }
 
@@ -172,7 +213,7 @@ export const useAuthStore = create<AuthState>()(
             return;
           }
           const data = await res.json();
-          if (data?.user) set({ currentUser: hydrateUser(data.user) });
+          if (data?.user) set({ currentUser: hydrateUser(data.user, get().currentUser) });
         } catch {
           /* offline — keep the persisted session optimistically */
         }
@@ -191,7 +232,7 @@ export const useAuthStore = create<AuthState>()(
           });
           const data = await res.json().catch(() => null);
           if (!res.ok) return { ok: false, error: data?.error ?? 'Could not update your plan.' };
-          if (data?.user) set({ currentUser: hydrateUser(data.user) });
+          if (data?.user) set({ currentUser: hydrateUser(data.user, get().currentUser) });
           return { ok: true };
         } catch {
           return { ok: false, error: 'Network error. Please try again.' };
@@ -202,9 +243,10 @@ export const useAuthStore = create<AuthState>()(
     }),
     {
       name: 'stablepress-auth',
-      // v3: multi-role identity (roles[] + subscriptionTier + claims + memberships).
-      // Reset persisted session so the new shape is re-fetched fresh from the server.
-      version: 3,
+      // v4: adds server-resolved `access` (effective permissions + modules) and
+      // customRoleIds. A v3 session has no access payload, so permission checks
+      // would fall back to the legacy single-role matrix — reset instead.
+      version: 4,
       migrate: () => ({ currentUser: null, token: null }),
       partialize: (s) => ({ currentUser: s.currentUser, token: s.token }),
     }

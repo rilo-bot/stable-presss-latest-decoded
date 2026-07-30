@@ -25,7 +25,23 @@ export interface ChatMessage {
   role: 'user' | 'assistant';
   content: string;
   attachments?: ChatAttachmentRef[];
+  /** Present on messages loaded from the persisted server thread (used as the
+   *  paging cursor identity + optional page tag); absent on optimistic in-session
+   *  messages until the next reload pulls them back from the server. */
+  id?: string;
+  pageIndex?: number | null;
+  createdAt?: string;
 }
+
+/** Map a persisted server chat message into the in-store shape. */
+const dtoToChat = (m: api.ChatMsgDto): ChatMessage => ({
+  role: m.role,
+  content: m.content,
+  id: m.id,
+  pageIndex: m.pageIndex,
+  createdAt: m.createdAt,
+  attachments: m.attachments,
+});
 
 /** A chat attachment surfaced in the right pane (docks over the Inspector). */
 export interface PreviewDoc {
@@ -66,12 +82,16 @@ interface EditorState {
   // AI editing assistant (per open page)
   chat: ChatMessage[];
   chatBusy: boolean;
+  chatHasMore: boolean;
+  chatOldest: string | null;
+  chatLoadingOlder: boolean;
   proposals: AgentProposal[];
   proposalsPageId: string | null;
   /** When set, the right pane shows this attachment instead of the Inspector. */
   previewDoc: PreviewDoc | null;
   setPreviewDoc: (d: PreviewDoc | null) => void;
   sendChat: (text: string, sourceText?: string, attachedImages?: api.AttachedImage[], attachments?: ChatAttachmentRef[]) => Promise<void>;
+  loadOlderChat: () => Promise<void>;
   applyAllProposals: () => Promise<void>;
   discardProposals: () => void;
 
@@ -89,6 +109,8 @@ interface EditorState {
   commit: (elementId: string, patch: Partial<MagazineElement>, before?: MagazineElement) => Promise<void>;
   addElement: (partial: Partial<MagazineElement>) => Promise<string | null>;
   deleteElement: (elementId: string) => Promise<void>;
+  /** Copy an element (offset slightly, on top) and select the copy. */
+  duplicateElement: (elementId: string) => Promise<void>;
   undo: () => Promise<void>;
   redo: () => Promise<void>;
 
@@ -148,6 +170,9 @@ export const useEditorStore = create<EditorState>((set, get) => ({
   redoStack: [],
   chat: [],
   chatBusy: false,
+  chatHasMore: false,
+  chatOldest: null,
+  chatLoadingOlder: false,
   proposals: [],
   proposalsPageId: null,
   previewDoc: null,
@@ -158,11 +183,20 @@ export const useEditorStore = create<EditorState>((set, get) => ({
 
   load: async (id) => {
     stopGenPoll();
-    set({ loading: true, error: null, issueId: id, generating: false, justGenerated: false, currentPageId: null, page: null });
+    set({ loading: true, error: null, issueId: id, generating: false, justGenerated: false, currentPageId: null, page: null, chat: [], proposals: [], proposalsPageId: null });
     try {
       const { issue, pages } = await api.getIssue(id);
       set({ issue, pages, loading: false, undoStack: [], redoStack: [], selectedId: null });
       if (pages[0]) await get().openPage(pages[0].id);
+      // Load the persisted chat thread (most recent batch). Best-effort — a chat
+      // fetch failure must never block opening the magazine.
+      try {
+        const t = await api.listChat(id, { limit: 50 });
+        // Guard against a slow response landing after the user opened another issue.
+        if (get().issueId === id) set({ chat: t.messages.map(dtoToChat), chatHasMore: t.hasMore, chatOldest: t.oldestCreatedAt });
+      } catch {
+        /* leave the thread empty */
+      }
       // Still generating (from "Build with AI" / import)? Poll and reveal pages
       // as they arrive instead of making the user wait on a loading screen.
       if (issue.status === 'processing') get().watchGeneration();
@@ -174,12 +208,18 @@ export const useEditorStore = create<EditorState>((set, get) => ({
   openPage: async (pageId) => {
     const { issueId } = get();
     if (!issueId) return;
+    // Re-opening the already-active page (scroll jitter, or clicking the active
+    // tab) would needlessly refetch and reset selection — skip it.
+    if (get().currentPageId === pageId && get().page) return;
     try {
       const page = await api.getPage(issueId, pageId);
-      // Chat + proposals are scoped to the open page — reset on page change.
-      // previewDoc is NOT page-scoped (an uploaded doc fills any page), so it
-      // survives navigation — clearing it here silently closed the preview.
-      set({ page, currentPageId: pageId, selectedId: null, chat: [], proposals: [], proposalsPageId: null });
+      // Proposals are page-scoped → reset on a page change. Selection and chat are
+      // deliberately NOT reset here: a stale selectedId harmlessly resolves to
+      // nothing on a page that doesn't contain it (every consumer looks it up on
+      // the current page), and keeping both means scrolling/switching pages no
+      // longer clears your selection or wipes the conversation. Both are cleared
+      // per-issue in load(). previewDoc is not page-scoped and survives too.
+      set({ page, currentPageId: pageId, proposals: [], proposalsPageId: null });
     } catch (e) {
       set({ error: e instanceof Error ? e.message : 'Failed to load page' });
     }
@@ -203,21 +243,43 @@ export const useEditorStore = create<EditorState>((set, get) => ({
     }),
 
   commit: async (elementId, patch, before) => {
-    const s = get();
-    if (!s.page || !s.issueId) return;
-    const pageId = s.page.id;
-    const rev = s.page.rev;
-    const beforeEl = before ?? el(s.page, elementId) ?? undefined;
-    try {
-      const { element, rev: newRev } = await api.patchElement(s.issueId, pageId, elementId, rev, patch);
-      set((st) => ({
-        page: st.page ? { ...st.page, rev: newRev, elements: st.page.elements.map((e) => (e.id === elementId ? element : e)) } : st.page,
-        undoStack: beforeEl ? [...st.undoStack.slice(-59), { pageId, elementId, before: beforeEl, after: element }] : st.undoStack,
-        redoStack: [],
-      }));
-    } catch (e) {
-      handleWriteError(e, set, get);
-    }
+    const s0 = get();
+    if (!s0.page || !s0.issueId) return;
+    const pageId = s0.page.id;
+    const issueId = s0.issueId;
+    const beforeEl = before ?? el(s0.page, elementId) ?? undefined;
+
+    // Optimistic: reflect the edit on the canvas IMMEDIATELY so the inspector
+    // never feels "dead" waiting on the network, and a later conflict can't erase
+    // the change silently. The server write then confirms (or reconciles) it.
+    get().updateLocal(elementId, patch);
+
+    const send = async (rev: number, isRetry: boolean): Promise<void> => {
+      try {
+        const { element, rev: newRev } = await api.patchElement(issueId, pageId, elementId, rev, patch);
+        set((st) => ({
+          page: st.page && st.page.id === pageId
+            ? { ...st.page, rev: newRev, elements: st.page.elements.map((e) => (e.id === elementId ? element : e)) }
+            : st.page,
+          undoStack: beforeEl ? [...st.undoStack.slice(-59), { pageId, elementId, before: beforeEl, after: element }] : st.undoStack,
+          redoStack: [],
+        }));
+      } catch (e) {
+        // A stale rev (an AI/format write or a collaborator landed first) must NOT
+        // discard the user's edit or their selection — that is exactly what made
+        // the inspector look "dead" after using the assistant. Adopt the server's
+        // fresh page, re-apply the edit on top, and retry ONCE against the new rev.
+        const fresh = e instanceof ApiError && e.status === 409 ? (e.body?.page as MagazinePageV2 | undefined) : undefined;
+        if (fresh && !isRetry && fresh.elements.some((x) => x.id === elementId)) {
+          set((st) => (st.page && st.page.id === pageId ? { page: fresh } : {}));
+          get().updateLocal(elementId, patch);
+          await send(fresh.rev, true);
+          return;
+        }
+        handleWriteError(e, set, get);
+      }
+    };
+    await send(s0.page.rev, false);
   },
 
   addElement: async (partial) => {
@@ -250,10 +312,28 @@ export const useEditorStore = create<EditorState>((set, get) => ({
     }
   },
 
-  undo: async () => {
+  duplicateElement: async (elementId) => {
     const s = get();
-    const entry = s.undoStack[s.undoStack.length - 1];
-    if (!entry || !s.page || s.page.id !== entry.pageId || !s.issueId) return;
+    if (!s.page) return;
+    const src = s.page.elements.find((e) => e.id === elementId);
+    if (!src) return;
+    const topZ = s.page.elements.reduce((m, e) => Math.max(m, e.zIndex), 0);
+    // Offset so the copy is visibly distinct; the server re-clamps to the page box.
+    const off = 24;
+    const { id: _id, ...rest } = src;
+    void _id;
+    await get().addElement({ ...rest, x: src.x + off, y: src.y + off, zIndex: topZ + 1, source: 'manual' });
+    // addElement already selects the new element.
+  },
+
+  undo: async () => {
+    const entry = get().undoStack[get().undoStack.length - 1];
+    if (!entry || !get().issueId) return;
+    // The edit may live on another page (you scrolled/navigated away since). Bring
+    // that page into view first, so Undo always works — not just on the current page.
+    if (get().page?.id !== entry.pageId) await get().openPage(entry.pageId);
+    const s = get();
+    if (!s.page || s.page.id !== entry.pageId || !s.issueId) return;
     try {
       const { element, rev } = await api.patchElement(s.issueId, s.page.id, entry.elementId, s.page.rev, entry.before);
       set((st) => ({
@@ -267,9 +347,11 @@ export const useEditorStore = create<EditorState>((set, get) => ({
   },
 
   redo: async () => {
+    const entry = get().redoStack[get().redoStack.length - 1];
+    if (!entry || !get().issueId) return;
+    if (get().page?.id !== entry.pageId) await get().openPage(entry.pageId);
     const s = get();
-    const entry = s.redoStack[s.redoStack.length - 1];
-    if (!entry || !s.page || s.page.id !== entry.pageId || !s.issueId) return;
+    if (!s.page || s.page.id !== entry.pageId || !s.issueId) return;
     try {
       const { element, rev } = await api.patchElement(s.issueId, s.page.id, entry.elementId, s.page.rev, entry.after);
       set((st) => ({
@@ -562,6 +644,27 @@ export const useEditorStore = create<EditorState>((set, get) => ({
     }
   },
 
+  // Lazily pull the batch OLDER than the oldest message we hold, prepending it —
+  // so the persisted thread pages upward without loading the whole history at once.
+  loadOlderChat: async () => {
+    const s = get();
+    if (!s.issueId || !s.chatHasMore || s.chatLoadingOlder || !s.chatOldest) return;
+    const issueId = s.issueId;
+    const before = s.chatOldest;
+    set({ chatLoadingOlder: true });
+    try {
+      const t = await api.listChat(issueId, { before, limit: 50 });
+      set((st) => (st.issueId !== issueId ? { chatLoadingOlder: false } : {
+        chat: [...t.messages.map(dtoToChat), ...st.chat],
+        chatHasMore: t.hasMore,
+        chatOldest: t.oldestCreatedAt ?? st.chatOldest,
+        chatLoadingOlder: false,
+      }));
+    } catch {
+      set({ chatLoadingOlder: false });
+    }
+  },
+
   // Apply every staged proposal in order through the rev-guarded CRUD. 'add'
   // proposals return the server id, remapped so later proposals that referenced
   // the temp id resolve. Each write bumps the page rev (handled by the reused
@@ -625,11 +728,17 @@ export const useEditorStore = create<EditorState>((set, get) => ({
   discardProposals: () => set({ proposals: [], proposalsPageId: null }),
 }));
 
-/** Shared write-error handling: a 409 reconciles to the server's current page. */
+/** Shared write-error handling: a 409 reconciles to the server's current page.
+ *  Keeps the user's SELECTION if that element still exists on the fresh page —
+ *  blanking it is what made the inspector snap to "Nothing selected" after a
+ *  conflict and read as a dead panel. */
 function handleWriteError(e: unknown, set: any, get: any) {
   if (e instanceof ApiError && e.status === 409 && e.body?.page) {
-    set({ page: e.body.page, selectedId: null });
-    toast.message('This page was updated elsewhere — reloaded the latest. Please redo your change.');
+    const fresh = e.body.page as MagazinePageV2;
+    const keep = get().selectedId as string | null;
+    const stillThere = Array.isArray(fresh.elements) && fresh.elements.some((x: MagazineElement) => x.id === keep);
+    set({ page: fresh, selectedId: stillThere ? keep : null });
+    toast.message('This page was updated elsewhere — reloaded the latest.');
     return;
   }
   toast.error(e instanceof Error ? e.message : 'Save failed');

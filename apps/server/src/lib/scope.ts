@@ -7,7 +7,14 @@
 // the web engine. See RBAC.md §6.
 // ---------------------------------------------------------------------------
 
-import type { AccountUser } from './identity.js'
+import type { IdentityUser, PartyClaim, OrgMembership } from './identity.js'
+
+/**
+ * Scope depends only on the PERSISTED identity (claims + memberships), never on
+ * resolved permissions — racing reach comes from relationships, not roles. Typed
+ * against IdentityUser so a resolved AccountUser also satisfies it.
+ */
+type ScopedAccount = Pick<IdentityUser, 'partyClaims' | 'orgMemberships'>
 
 /** A raw horse/link doc as returned by db.collection().find() (carries _id). */
 export interface ScopeDoc {
@@ -69,12 +76,12 @@ export function horsesLinkedToParty(partyId: string, data: ScopeData, currentOnl
  * VERIFIED, or PENDING but self-registered (provisional access to one's own
  * party — see PartyClaim.selfRegistered).
  */
-export function manageablePartyIds(account: AccountUser): string[] {
+export function manageablePartyIds(account: ScopedAccount): string[] {
   // `selfRegistered` unset counts as self-registered (every legacy/dashboard claim
   // is one); only an explicit `false` (claiming a pre-existing party) opts out.
   return account.partyClaims
-    .filter((c) => c.status === 'verified' || (c.status === 'pending' && c.selfRegistered !== false))
-    .map((c) => c.partyId)
+    .filter((c: PartyClaim) => c.status === 'verified' || (c.status === 'pending' && c.selfRegistered !== false))
+    .map((c: PartyClaim) => c.partyId)
 }
 
 /**
@@ -82,10 +89,10 @@ export function manageablePartyIds(account: AccountUser): string[] {
  * linked to any manageable party claim they hold and any organisation they belong
  * to. Current links only (a past relationship grants no write access).
  */
-export function authorisedHorseIds(account: AccountUser, data: ScopeData): string[] {
+export function authorisedHorseIds(account: ScopedAccount, data: ScopeData): string[] {
   const partyIds = [
     ...manageablePartyIds(account),
-    ...account.orgMemberships.map((m) => m.orgId),
+    ...account.orgMemberships.map((m: OrgMembership) => m.orgId),
   ]
   const ids = new Set<string>()
   for (const pid of partyIds) {

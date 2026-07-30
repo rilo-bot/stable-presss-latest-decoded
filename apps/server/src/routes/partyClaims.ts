@@ -9,7 +9,7 @@ import {
   type PartyClaim,
   type PartyRole,
 } from '../lib/identity.js';
-import { isAdmin } from '../lib/rbac.js';
+import { isPlatformAdmin } from '../lib/rbac.js';
 import { createNotification } from '../lib/notify.js';
 
 const router = Router();
@@ -34,7 +34,7 @@ async function verifierTypeFor(
   account: AccountUser,
   claim: PartyClaim,
 ): Promise<'admin' | 'org' | null> {
-  if (isAdmin(account)) return 'admin';
+  if (isPlatformAdmin(account)) return 'admin';
   const orgs = await orgsForParty(claim.partyId);
   const canOrg = account.orgMemberships.some(
     (m) => (m.orgRole === 'org_owner' || m.orgRole === 'org_manager') && orgs.includes(m.orgId),
@@ -123,7 +123,7 @@ router.post('/', async (req, res) => {
 // linked to their org (Phase D). Regular users get an empty list here.
 router.get('/pending', async (req, res) => {
   const account = req.account!;
-  const admin = isAdmin(account);
+  const admin = isPlatformAdmin(account);
   const orgVerifier = account.orgMemberships.some(
     (m) => m.orgRole === 'org_owner' || m.orgRole === 'org_manager',
   );

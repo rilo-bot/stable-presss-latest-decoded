@@ -12,11 +12,12 @@
 import { tool, type ToolSet } from 'ai'
 import { z } from 'zod'
 import { db } from '../db.js'
-import { isStaff } from '../rbac.js'
+import { canAccessNewsroom } from '../rbac.js'
 import { authorisedHorseIds, manageablePartyIds, horsesLinkedToParty } from '../scope.js'
 import type { AccountUser } from '../identity.js'
 import { FEATURE_GUIDES, GUIDE_TOPICS } from './guides.js'
 import { getCapabilities } from './capabilities.js'
+import { MAGAZINE_V2_ENABLED } from '../magazineV2/config.js'
 
 type Doc = Record<string, any> & { _id?: string; id?: string }
 
@@ -25,6 +26,13 @@ const clamp = (n: number | undefined, def: number, max: number) =>
   Math.min(Math.max(1, Math.floor(n ?? def)), max)
 const matches = (hay: unknown, needle: string) =>
   String(hay ?? '').toLowerCase().includes(needle.toLowerCase())
+
+// Match docs whose `horse_id` equals `horseId` regardless of how it is stored
+// (string / number / ObjectId). Mirrors the historical `String(x) === id`
+// compare — but server-side, so Mongo filters instead of the API loading the
+// whole collection and filtering every row in JS. $toString on a missing field
+// yields null (never equals a real id), so absent horse_id is excluded, as before.
+const horseIdMatch = (horseId: string) => ({ $expr: { $eq: [{ $toString: '$horse_id' }, horseId] } })
 
 /** Compact horse projection — keeps token use sane. */
 function horseCard(h: Doc) {
@@ -51,7 +59,7 @@ function horseCard(h: Doc) {
  */
 async function visibleHorses(account?: AccountUser): Promise<Doc[]> {
   const horses = await db.collection('horses').find()
-  if (isStaff(account)) return horses
+  if (canAccessNewsroom(account)) return horses
   let allowed = new Set<string>()
   if (account) {
     const links = await db.collection('horsePartyLinks').find()
@@ -68,7 +76,7 @@ async function visibleHorses(account?: AccountUser): Promise<Doc[]> {
 /** Parties this account may see, mirroring routes/parties.ts GET exactly. */
 async function visibleParties(account?: AccountUser): Promise<Doc[]> {
   const parties = await db.collection('parties').find()
-  if (isStaff(account)) return parties
+  if (canAccessNewsroom(account)) return parties
   const own = new Set<string>(account ? manageablePartyIds(account) : [])
   return parties.filter(
     (p) =>
@@ -90,7 +98,7 @@ const SELF_PORT = process.env.PORT ? parseInt(process.env.PORT, 10) : 3001
 const SELF_BASE = `http://127.0.0.1:${SELF_PORT}`
 
 export function buildTools(account?: AccountUser, authHeader?: string): ToolSet {
-  const staff = isStaff(account)
+  const staff = canAccessNewsroom(account)
 
   // Call one of our own endpoints AS the current user. The route's gate decides
   // if it is allowed — the agent never bypasses a permission check.
@@ -136,7 +144,7 @@ export function buildTools(account?: AccountUser, authHeader?: string): ToolSet 
           signedIn: true,
           name: account.displayName || account.email,
           roles: account.roles,
-          isStaff: staff,
+          canAccessNewsroom: staff,
           subscriptionTier: account.subscriptionTier,
           racingClaims: account.partyClaims.map((c) => ({
             party: partyName(c.partyId),
@@ -191,34 +199,68 @@ export function buildTools(account?: AccountUser, authHeader?: string): ToolSet 
         "A horse's full dossier the reader is allowed to see: profile, connections (owners/trainers/etc.), race entries, sales, media, and any reports visible to this reader (private reports only show for staff). Returns notFound if the horse is not visible to them.",
       inputSchema: z.object({ horseId: z.string() }),
       execute: async ({ horseId }) => {
-        const horse = (await visibleHorses(account)).find((h) => idOf(h) === horseId)
-        if (!horse) {
-          return {
-            notFound: true,
-            note: 'That horse is not in this reader\'s view (it may be unverified or private). Suggest searching the public register, or — if it is their own horse — claiming the matching racing role from the Dashboard.',
-          }
+        // Fetch just THIS horse + just ITS links, rather than loading every horse
+        // and every link into the API and filtering in JS. Visibility reuses the
+        // exact scope rule via authorisedHorseIds() fed a single-horse dataset, so
+        // there is no second, drift-prone copy of the permission logic.
+        const horse = await db.collection('horses').findById(horseId)
+        const notFound = {
+          notFound: true,
+          note: 'That horse is not in this reader\'s view (it may be unverified or private). Suggest searching the public register, or — if it is their own horse — claiming the matching racing role from the Dashboard.',
         }
-        const parties = await visibleParties(account)
-        const partyName = (pid: string) => parties.find((p) => idOf(p) === pid)?.name
-        const links = (await db.collection('horsePartyLinks').find()).filter(
-          (l) => String(l.horse_id) === horseId,
-        )
-        const reports = (await db.collection('reports').find()).filter(
-          (r) => String(r.horse_id) === horseId && (staff || (r.visibility ?? 'public') === 'public'),
-        )
-        const byHorse = (coll: string) =>
-          db.collection(coll).find().then((rows) => rows.filter((r) => String(r.horse_id) === horseId))
+        if (!horse) return notFound
+        const links = await db.collection('horsePartyLinks').find(horseIdMatch(horseId))
+        const authorised = account ? new Set(authorisedHorseIds(account, { horses: [horse], links })) : new Set<string>()
+        const visible =
+          staff ||
+          horse.verificationStatus !== 'unverified' ||
+          (account ? horse.createdByUserId === account.id : false) ||
+          authorised.has(idOf(horse))
+        if (!visible) return notFound
+
+        // Resolve names for ONLY the parties this horse links to, applying the same
+        // visibility rule routes/parties.ts GET uses (unverified parties stay hidden
+        // unless the reader is staff / their owner / a manager).
+        const own = new Set<string>(account ? manageablePartyIds(account) : [])
+        const isPartyVisible = (p: Doc) =>
+          p.verificationStatus !== 'unverified' ||
+          (account ? p.createdByUserId === account.id : false) ||
+          own.has(idOf(p))
+        const partyIds = [...new Set(links.map((l) => String(l.party_id)))]
+        const partyDocs = (
+          await Promise.all(partyIds.map((pid) => db.collection('parties').findById(pid)))
+        ).filter((p): p is NonNullable<typeof p> => p !== null)
+        const partyName = (pid: string) => {
+          const p = partyDocs.find((x) => idOf(x) === pid)
+          return p && isPartyVisible(p) ? p.name : undefined
+        }
+
+        // Child collections: match horse_id + cap in Mongo. aggregate() does NOT
+        // auto-filter soft-deletes, so match deletedAt:null explicitly (find() would).
+        const capped = (coll: string, extraMatch: Record<string, unknown> = {}) =>
+          db.collection(coll).aggregate([
+            { $match: { deletedAt: null, ...extraMatch, ...horseIdMatch(horseId) } },
+            { $limit: 25 },
+          ])
+        // Non-staff only see public reports (unset visibility defaults to public).
+        const reportMatch = staff ? {} : { $or: [{ visibility: 'public' }, { visibility: null }] }
+        const [racingEntries, sales, media, reports] = await Promise.all([
+          capped('racingEntries'),
+          capped('sales'),
+          capped('mediaItems'),
+          capped('reports', reportMatch),
+        ])
         return {
           horse: horseCard(horse),
-          connections: links.map((l) => ({
+          connections: links.slice(0, 50).map((l) => ({
             party: partyName(String(l.party_id)) ?? 'a party',
             relationship: l.relationship_type,
             current: !l.end_date,
           })),
-          racingEntries: (await byHorse('racingEntries')).slice(0, 25),
-          sales: (await byHorse('sales')).slice(0, 25),
-          media: (await byHorse('mediaItems')).slice(0, 25).map((m) => ({ title: m.title, type: m.type, url: m.url })),
-          reports: reports.slice(0, 25).map((r) => ({ title: r.title, type: r.doc_type, visibility: r.visibility ?? 'public' })),
+          racingEntries,
+          sales,
+          media: media.map((m) => ({ title: m.title, type: m.type, url: m.url })),
+          reports: reports.map((r) => ({ title: r.title, type: r.doc_type, visibility: r.visibility ?? 'public' })),
         }
       },
     }),
@@ -428,16 +470,22 @@ export function buildTools(account?: AccountUser, authHeader?: string): ToolSet 
     // TAKE the reader to where they can do something (then tell them the next step).
     navigateTo: tool({
       description:
-        "Navigate the reader to a page so they can do the thing they asked about (e.g. 'file a story' → newsroom, 'place a tip' → tipping). Pair it with a short note on what to do once there. For a specific horse/party/article/bulletin/organisation, pass its id. Don't send a reader to a staff-only page (newsroom/site-content/claims/staff) unless they're staff/admin — guide them instead.",
+        "Navigate the reader to a page so they can do the thing they asked about (e.g. 'file a story' → newsroom, 'place a tip' → tipping" +
+        (MAGAZINE_V2_ENABLED ? ", 'build/edit the bulletin' → magazine-v2, the staff Magazine Builder" : '') +
+        "). Pair it with a short note on what to do once there. For a specific horse/party/article/bulletin/organisation, pass its id. Don't send a reader to a staff-only page (newsroom/site-content/claims/staff" +
+        (MAGAZINE_V2_ENABLED ? '/magazine-v2' : '') +
+        ") unless they're staff/admin — guide them instead.",
       inputSchema: z.object({
         to: z
           .enum([
             'home', 'news', 'newsletter', 'bulletins', 'horses', 'parties', 'tipping', 'podcast',
             'dashboard', 'newsroom', 'site-content', 'claims', 'staff', 'login', 'signup',
             'horse', 'party', 'article', 'bulletin', 'organisation',
-          ])
-          .describe('Destination. The last five need an id.'),
-        id: z.string().optional().describe('Entity id, required for horse/party/article/bulletin/organisation.'),
+            // The staff Magazine Builder home; with an id, that magazine's editor.
+            ...(MAGAZINE_V2_ENABLED ? (['magazine-v2'] as const) : []),
+          ] as [string, ...string[]])
+          .describe('Destination. horse/party/article/bulletin/organisation need an id.'),
+        id: z.string().optional().describe('Entity id — required for horse/party/article/bulletin/organisation; optional for magazine-v2 (opens that magazine in the Builder).'),
       }),
     }),
 

@@ -42,16 +42,15 @@ export function NavBar() {
     };
   }, [collapsed]);
 
-  const role = currentUser?.role;
   const staff = isStaff(currentUser);
   const accountLabel = staff ? 'Staff' : 'Member';
   const myPartyId = primaryPartyId(currentUser);
 
   const showPodcastWorkflow =
-    can(role, 'podcast.manage') ||
-    can(role, 'podcast.episode.create') ||
-    can(role, 'podcast.episode.approve') ||
-    can(role, 'podcast.episode.edit_any');
+    can('podcast.manage') ||
+    can('podcast.episode.create') ||
+    can('podcast.episode.approve') ||
+    can('podcast.episode.edit_any');
 
   const handleLogout = () => {
     logout();
@@ -213,7 +212,7 @@ export function NavBar() {
                 </Link>
               </>
             )}
-            {role === 'administrator' && (
+            {can('platform.admin') && (
               <>
                 <span className="h-3 w-px bg-primary-foreground/20" />
                 <Link

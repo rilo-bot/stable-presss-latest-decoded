@@ -76,18 +76,55 @@ data, not what you are in racing terms. They live in `orgMemberships`, never the
 A member's effective access is always: **their org role × the org's scope** (the horses
 that org is linked to).
 
-### 4.4 Staff / editorial roles — *admin-granted ONLY*
-`contributor` · `editor` · `podcast_producer` · `legal_reviewer` · `publisher` · `administrator`
+### 4.4 Staff / editorial roles — *fully dynamic, admin-granted ONLY*
 
-- Never self-serve. The **first admin is seeded** via a setup step (`/api/admin/seed`,
-  guarded by `SETUP_SECRET`). After that, only an admin grants the rest.
-- **Multiple admins are supported** — `administrator` is just another entry in `roles[]`,
-  so any number of users can hold it.
-- **Admins can add other admins.** The staff-grant flow (portal) lets an existing admin
-  grant ANY staff role **including `administrator`** to another user. Granting/revoking
-  `administrator` is itself an admin-only action.
-- Governed by the existing action matrix (see `apps/web/src/lib/permissions.ts`); the
-  `team.manage` permission gates inviting/granting staff (admin-only).
+**There is no hardcoded staff-role list.** Staff roles are rows in the `roles` collection,
+referenced from `user.staffRoles[]` by slug and resolved through
+`apps/server/src/lib/roleRegistry.ts`. Anything a superadmin creates in the console is a
+first-class role, indistinguishable from a seeded one.
+
+A fresh install is seeded with four:
+
+| Slug | Notes |
+|------|-------|
+| `superadmin` | All access, short-circuited in code. `isImmutable` — cannot be edited or deleted. |
+| `administrator` | Every permission in the catalogue, but editable and deletable. |
+| `editor` | Full editorial control across all workflow stages. |
+| `contributor` | Draft and submit only. |
+
+`legal_reviewer`, `podcast_producer` and `publisher` were part of the pre-dynamic union and
+are deliberately **not** seeded. Every permission they held still exists in the catalogue, so
+a superadmin can rebuild any of them from the console.
+
+- Never self-serve. The **first superadmin is seeded** via `/api/admin/seed`, guarded by
+  `SETUP_SECRET`. After that, only someone holding `roles.manage` grants the rest.
+- Any number of users may hold any role; `staffRoles[]` is an array.
+- Only a superadmin may grant `superadmin`, and the last one cannot be unassigned.
+
+### 4.5 Defining a role — *three checkbox axes*
+
+From **Newsroom → Roles & Permissions**, a superadmin ticks three independent sets:
+
+| Axis | What it controls | Stored as |
+|------|------------------|-----------|
+| **Modules** | Which navigation surfaces the role can open (sidebar entries, Editor Hub tabs) | `roles.modules[]` |
+| **Workflow columns** | Which Kanban stages are visible on the board | `roles.workflowStages[]` |
+| **Permissions** | Which actions from the catalogue the role may perform | `roles.permissions[]` |
+
+The catalogue backing all three lives in `apps/server/src/lib/permissionCatalogue.ts` — the
+single source of truth — and the web app fetches it via `GET /api/roles/catalogue`, so adding
+an action makes a new checkbox appear without a frontend change.
+
+- Effective access = **union** across every role the user holds. Roles are additive; nothing
+  subtracts. Resolved server-side in `apps/server/src/lib/effectiveAccess.ts` and returned as
+  `user.access` on `/api/auth/me`.
+- `superadmin` short-circuits in `accountCan()` **before** any registry read, so an empty or
+  corrupt `roles` collection cannot lock the platform out.
+- Roles are cached in-process for 60s and busted explicitly on every mutation.
+
+> **Current enforcement depth.** The three axes drive **navigation and UI affordances**; the
+> API gates enforce the permission axis via `accountCan`. Modules and workflow stages are not
+> re-checked server-side — see §10.
 
 ---
 
@@ -186,3 +223,9 @@ scope machinery) **+** a membership collection (users↔org) **+** *managed part
 - **Billing/payments** — tier is set manually; `/api/subscription` is the seam.
 - **Real evidence storage** — reuse media pipeline now; swap for object storage later.
 - **Finer org roles** — `org_manager` stays single-level until a later milestone.
+- **Custom roles as a server boundary** — §4.5 roles are UI-scoped today. The seam is
+  `resolveAccess()` vs `builtinPermissions()` in `lib/effectiveAccess.ts`: the gates in
+  `rbac.ts` call the built-in-only path, and switching them to action checks against the
+  resolved set is what makes custom roles enforceable.
+- **Org-scoped custom roles** — §4.5 roles are global/editorial. Letting an org owner define
+  roles for their own members is a separate system.

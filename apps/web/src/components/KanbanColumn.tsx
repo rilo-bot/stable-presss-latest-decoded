@@ -6,7 +6,6 @@ import {
 } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
 import { canEditArticle, can } from '@/lib/permissions';
-import type { UserRole } from '@/stores/authStore';
 
 export type KanbanStatus =
   | 'draft'
@@ -178,7 +177,6 @@ interface KanbanCardProps {
   canAdvance: boolean;
   canRevision: boolean;
   // Permission context
-  userRole: UserRole | null;
   currentUserDisplayName: string | null;
 }
 
@@ -193,7 +191,6 @@ function KanbanCard({
   onDelete,
   canAdvance,
   canRevision,
-  userRole,
   currentUserDisplayName,
 }: KanbanCardProps) {
   const navigate = useNavigate();
@@ -203,10 +200,10 @@ function KanbanCard({
     : null;
 
   // Permission checks
-  const canEdit = canEditArticle(userRole, article.author, currentUserDisplayName);
+  const canEdit = canEditArticle(article.author, currentUserDisplayName);
 
   // Contributors can only advance their own articles from draft→submitted or revision→editorial_review
-  const isContributor = userRole === 'contributor';
+  const isContributor = !can('content.draft.edit_any');
   const isOwnArticle = article.author === currentUserDisplayName;
 
   // Legacy/seed articles may lack linkedHorseIds entirely — guard the read.
@@ -221,7 +218,7 @@ function KanbanCard({
   // Only editors/admins can send to revision
   const showRevision =
     canRevision &&
-    can(userRole, 'content.send_revision');
+    can('content.send_revision');
 
   return (
     <div
@@ -347,7 +344,6 @@ interface KanbanColumnProps {
   onEdit: (article: Article) => void;
   onDelete: (article: Article) => void;
   // Permission context
-  userRole?: UserRole | null;
   currentUserDisplayName?: string | null;
 }
 
@@ -359,7 +355,6 @@ export function KanbanColumn({
   onAdvance,
   onEdit,
   onDelete,
-  userRole = null,
   currentUserDisplayName = null,
 }: KanbanColumnProps) {
   const colConfig = WORKFLOW_STAGES.find((c) => c.status === status)!;
@@ -460,7 +455,6 @@ export function KanbanColumn({
                 columnStatus={status}
                 canAdvance={canAdvance}
                 canRevision={canRevision}
-                userRole={userRole}
                 currentUserDisplayName={currentUserDisplayName}
                 onAdvance={() => nextStatus && onAdvance(article.id, nextStatus)}
                 onSendRevision={() => onAdvance(article.id, 'revision')}

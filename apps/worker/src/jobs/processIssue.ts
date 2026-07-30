@@ -45,6 +45,9 @@ export async function processIssue(payload: { issueId: string }): Promise<void> 
   const issue = (await db.collection(COL.issues).findById(issueId)) as Doc | null;
   if (!issue) return; // deleted before the job ran — nothing to do
   const now = () => new Date().toISOString();
+  // MuPDF Document lives in the WASM heap (not GC'd) — free it in finally so the
+  // fz_document + its cached page tree don't leak once this issue is processed.
+  let doc: ReturnType<typeof openPdf> | null = null;
 
   try {
     const src = issue.sourceFile as { key?: string; mimeType?: string } | undefined;
@@ -61,7 +64,7 @@ export async function processIssue(payload: { issueId: string }): Promise<void> 
     // Word docs: convert to PDF up front (via LibreOffice) so the rest of the
     // pipeline — openPdf and every per-page extractor — is unchanged.
     if (isDocx(src)) buffer = await convertDocxToPdf(buffer);
-    const doc = openPdf(buffer);
+    doc = openPdf(buffer);
     const totalPages = countPages(doc);
     if (totalPages <= 0) throw new Error('This file has no pages to process.');
 
@@ -103,7 +106,7 @@ export async function processIssue(payload: { issueId: string }): Promise<void> 
     let coverImage = '';
     const indices = Array.from({ length: capped }, (_v, i) => i);
     await mapWithConcurrency(indices, PAGE_CONCURRENCY, async (index) => {
-      const result = await processSinglePage(doc, index, { issueId, pageId: pageIds[index]! });
+      const result = await processSinglePage(doc!, index, { issueId, pageId: pageIds[index]! });
       if (index === 0 && result?.backgroundUrl) coverImage = result.backgroundUrl;
       done += 1;
       await db.collection(COL.issues).updateOne(issueId, { pagesProcessed: done });
@@ -133,9 +136,14 @@ export async function processIssue(payload: { issueId: string }): Promise<void> 
       });
     }
   } catch (err) {
+    // Idempotent (clears pages up top) → RETHROW so the queue retries transient
+    // failures instead of marking the job done; the queue records the terminal
+    // 'failed' status on the issue only once attempts are exhausted.
     const message = err instanceof Error ? err.message : 'Processing failed';
     console.error(`[worker] issue ${issueId} failed:`, message);
-    await db.collection(COL.issues).updateOne(issueId, { status: 'failed', processingError: message, stage: '', updatedAt: now() });
+    throw err instanceof Error ? err : new Error(message);
+  } finally {
+    doc?.destroy();
   }
 }
 
@@ -236,16 +244,19 @@ export async function processPageJob(payload: { issueId: string; pageId: string;
     return;
   }
 
+  let doc: ReturnType<typeof openPdf> | null = null;
   try {
     let buffer = await storage.downloadObject(src.key);
     // Same DOCX→PDF conversion as the full run — a retry re-downloads the
     // original source, which may be a Word doc.
     if (isDocx(src)) buffer = await convertDocxToPdf(buffer);
-    const doc = openPdf(buffer);
+    doc = openPdf(buffer);
     await processSinglePage(doc, index, { issueId, pageId });
   } catch (err) {
     const message = err instanceof Error ? err.message : 'Page retry failed';
     await db.collection(COL.pages).updateOne(pageId, { status: 'failed', error: message, updatedAt: now() });
+  } finally {
+    doc?.destroy();
   }
 
   const all = (await db.collection(COL.pages).find({ magazineId: issueId })) as Doc[];

@@ -94,12 +94,45 @@ export function resolveFontMetrics(fontFamily: string | undefined): FontMetricEn
   return FALLBACK_SANS;
 }
 
+/** East-Asian WIDE / full-width code points (CJK, kana, Hangul, full-width
+ *  forms, emoji): these render ~1em, far wider than a Latin mean advance, so
+ *  they must NOT fall back to `base` or the line width is under-counted. */
+function isWideCodePoint(cp: number): boolean {
+  return (
+    (cp >= 0x1100 && cp <= 0x115f) || // Hangul Jamo
+    (cp >= 0x2e80 && cp <= 0x303e) || // CJK radicals … symbols/punctuation
+    (cp >= 0x3041 && cp <= 0x33ff) || // Hiragana, Katakana, CJK compat
+    (cp >= 0x3400 && cp <= 0x4dbf) || // CJK Ext A
+    (cp >= 0x4e00 && cp <= 0x9fff) || // CJK Unified
+    (cp >= 0xac00 && cp <= 0xd7a3) || // Hangul syllables
+    (cp >= 0xf900 && cp <= 0xfaff) || // CJK compat ideographs
+    (cp >= 0xfe30 && cp <= 0xfe4f) || // CJK compat forms
+    (cp >= 0xff00 && cp <= 0xff60) || // Full-width forms
+    (cp >= 0xffe0 && cp <= 0xffe6) || // Full-width signs
+    (cp >= 0x1f300 && cp <= 0x1faff) || // emoji & pictographs
+    (cp >= 0x20000 && cp <= 0x3fffd) // CJK Ext B+ (supplementary)
+  );
+}
+
+/** Conservative advance for a glyph OUTSIDE the measured ASCII table. Wide
+ *  scripts and the common editorial punctuation that renders ~1em (em-dash,
+ *  ellipsis, horizontal bar) get ~1em so they can never be under-counted;
+ *  accented Latin, quotes and en-dash render ≈ their base letter, for which the
+ *  weight mean `base` is already a safe over-estimate. Never returns < base. */
+function unmeasuredAdvance(cp: number, base: number): number {
+  if (isWideCodePoint(cp)) return Math.max(base, 1.0);
+  if (cp === 0x2014 /* — em dash */ || cp === 0x2015 /* ― horizontal bar */ || cp === 0x2026 /* … ellipsis */) return Math.max(base, 1.0);
+  return base;
+}
+
 /**
  * Width (px) of `text` laid out on a SINGLE line — the sum of measured glyph
  * advances (at the nearest measured weight) × font size, plus letter-spacing.
- * Glyphs outside the measured ASCII table fall back to that weight's mean
- * advance (`base`). Conservative by construction (ignores kerning, which only
- * narrows real text), so a fit derived from it never overflows.
+ * Glyphs outside the measured ASCII table are estimated CONSERVATIVELY by
+ * Unicode range (see unmeasuredAdvance): wide/full-width and em-dash/ellipsis
+ * get ~1em so they're never under-counted, other non-ASCII keeps the weight
+ * mean. Conservative by construction (ignores kerning, which only narrows real
+ * text), so a fit derived from it never overflows — including for non-ASCII.
  */
 export function measureRunWidthPx(
   text: string,
@@ -115,7 +148,12 @@ export function measureRunWidthPx(
   let em = 0;
   let count = 0;
   for (const ch of text) {
-    em += adv[ch] ?? base;
+    const measured = adv[ch];
+    if (measured !== undefined) em += measured;
+    else {
+      const cp = ch.codePointAt(0) ?? 0;
+      em += cp < 0x80 ? base : unmeasuredAdvance(cp, base);
+    }
     count += 1;
   }
   return em * fontSizePx + Math.max(0, letterSpacing) * count;

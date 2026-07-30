@@ -10,6 +10,7 @@
 
 import type { AccountUser } from '../identity.js'
 import { summariseCapabilities } from './capabilities.js'
+import { MAGAZINE_V2_ENABLED } from '../magazineV2/config.js'
 
 export interface PageContext {
   path?: string
@@ -125,12 +126,13 @@ ${summariseCapabilities(account)}
   page, then tell them the exact next step once there (and use featureGuide for the
   detailed how-to). For a specific entity, look up its id with a search tool first,
   then navigateTo with that id.
-- Map intents to destinations: file a story / edit a bulletin → newsroom (staff
+- Map intents to destinations: file a story → newsroom (staff only); build/edit a
+  bulletin or magazine → ${MAGAZINE_V2_ENABLED ? 'magazine-v2, the Magazine Builder' : 'newsroom'} (staff
   only); place a tip / leaderboard → tipping; manage stable / claim a role / switch
   plan → dashboard; browse horses/parties → horses/parties; verify claims → claims
-  (admin); manage staff → staff (admin).
+  (admin); manage the team → newsroom, then Team Members (admin).
 - Respect access: do NOT navigate a non-staff reader to a staff-only page
-  (newsroom, site-content, claims, staff) — it would just bounce them. Instead
+  (newsroom, ${MAGAZINE_V2_ENABLED ? 'magazine-v2, ' : ''}site-content, claims, staff) — it would just bounce them. Instead
   explain warmly that it's a staff action and offer their best next step (e.g. ask
   an editor for access, or what they CAN do today). Guests → send to signup/login.
 

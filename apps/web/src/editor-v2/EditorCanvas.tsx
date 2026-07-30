@@ -3,10 +3,12 @@
 //
 // Renders the REAL read-only IssuePageCanvas as the base layer (so what you edit
 // is pixel-identical to what publishes — zero drift), then overlays a
-// transparent interaction layer: one hit box per element (click to select, drag
-// to move) plus 8 resize handles on the selection. Drag converts screen-pixel
-// deltas to page-canonical deltas via the measured render width. Live drag uses
-// updateLocal (no server call); pointerup commits once (one undo entry).
+// transparent interaction layer: one hit box per element. A clean click on a text
+// box opens it for typing (single-click inline edit — no double-click); a
+// deliberate drag (past DRAG_THRESHOLD_PX) moves it; 8 resize handles sit on the
+// selection. Drag converts screen-pixel deltas to page-canonical deltas via the
+// measured render width. Live drag uses updateLocal (no server call); pointerup
+// commits once (one undo entry).
 // ---------------------------------------------------------------------------
 
 import React, { useEffect, useRef, useState, type CSSProperties } from 'react';
@@ -29,6 +31,11 @@ const HANDLES: { m: Mode; cx: number; cy: number; cur: string }[] = [
   { m: 'sw', cx: 0, cy: 1, cur: 'nesw-resize' },
   { m: 'w', cx: 0, cy: 0.5, cur: 'ew-resize' },
 ];
+
+// Screen-pixel movement below which a pointer gesture counts as a CLICK (select /
+// open text for typing) rather than a drag — this is what lets a single click
+// start editing a text box while a deliberate drag still moves it.
+const DRAG_THRESHOLD_PX = 4;
 
 /**
  * An element that carries no content yet, so the read-only renderer draws nothing
@@ -88,8 +95,35 @@ function TextEditingOverlay({
   const ref = useRef<HTMLDivElement>(null);
   const before = useRef<MagazineElement>({ ...element });
   const debounce = useRef<number | undefined>(undefined);
+  const latestHtml = useRef<string | null>(null);
+  const persisted = useRef(false);
   const t = element.text!;
   const vAlign = t.vAlign ?? 'top';
+
+  // Read the current text from the live node, or — if it has already been
+  // unmounted (refs detach before the effect cleanup) — the last value captured on
+  // input, so keystrokes are never lost when editing exits without a blur.
+  const readHtml = () => ref.current?.innerHTML ?? latestHtml.current;
+
+  const liveUpdate = () => {
+    const cur = useEditorStore.getState().page?.elements.find((x) => x.id === element.id);
+    if (!cur || cur.type !== 'text' || !cur.text) return;
+    const html = readHtml();
+    if (html != null) updateLocal(element.id, { text: { ...cur.text, content: html } });
+  };
+
+  // Persist the final text exactly ONCE — on blur OR on unmount, whichever fires
+  // first (a programmatic exit — page switch, proposal apply, generation poll —
+  // clears editingId with no blur, so relying on blur alone silently dropped edits).
+  const persist = () => {
+    if (persisted.current) return;
+    persisted.current = true;
+    const html = readHtml();
+    if (html == null) return;
+    const cur = useEditorStore.getState().page?.elements.find((x) => x.id === element.id);
+    if (!cur || cur.type !== 'text' || !cur.text) return;
+    if (sanitizeRichText(cur.text.content) !== html) void commit(element.id, { text: { ...cur.text, content: html } }, before.current);
+  };
 
   // Seed the DOM once, focus, drop the caret at the end. Never write innerHTML
   // again while focused (that would reset the caret) — the node is uncontrolled.
@@ -104,20 +138,9 @@ function TextEditingOverlay({
     const sel = window.getSelection();
     sel?.removeAllRanges();
     sel?.addRange(r);
-    return () => window.clearTimeout(debounce.current);
+    return () => { window.clearTimeout(debounce.current); persist(); };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
-
-  const flush = (persist: boolean) => {
-    const el = ref.current;
-    if (!el) return;
-    const cur = useEditorStore.getState().page?.elements.find((x) => x.id === element.id);
-    if (!cur || cur.type !== 'text' || !cur.text) return;
-    const html = el.innerHTML;
-    const patch = { text: { ...cur.text, content: html } };
-    if (!persist) return updateLocal(element.id, patch);
-    if (sanitizeRichText(cur.text.content) !== html) void commit(element.id, patch, before.current);
-  };
 
   const box: CSSProperties = {
     position: 'absolute',
@@ -152,12 +175,13 @@ function TextEditingOverlay({
         suppressContentEditableWarning
         spellCheck={false}
         onInput={() => {
+          latestHtml.current = ref.current?.innerHTML ?? null;
           window.clearTimeout(debounce.current);
-          debounce.current = window.setTimeout(() => flush(false), 150);
+          debounce.current = window.setTimeout(liveUpdate, 150);
         }}
         onBlur={() => {
           window.clearTimeout(debounce.current);
-          flush(true);
+          persist();
           onExit();
         }}
         onKeyDown={(e) => {
@@ -190,10 +214,11 @@ function ActivePageLayer() {
   const updateLocal = useEditorStore((s) => s.updateLocal);
   const commit = useEditorStore((s) => s.commit);
   const deleteElement = useEditorStore((s) => s.deleteElement);
+  const duplicateElement = useEditorStore((s) => s.duplicateElement);
   const [editingId, setEditingId] = useState<string | null>(null);
 
   const overlayRef = useRef<HTMLDivElement>(null);
-  const drag = useRef<{ mode: Mode; sx: number; sy: number; orig: MagazineElement; before: MagazineElement } | null>(null);
+  const drag = useRef<{ mode: Mode; sx: number; sy: number; orig: MagazineElement; before: MagazineElement; moved: boolean } | null>(null);
 
   // Switching pages ends any in-place edit (selection changes blur the editor,
   // which commits + exits on its own).
@@ -212,6 +237,10 @@ function ActivePageLayer() {
         e.preventDefault();
         return setEditingId(cur.id);
       }
+      if ((e.ctrlKey || e.metaKey) && (e.key === 'd' || e.key === 'D') && canEdit) {
+        e.preventDefault(); // else the browser's "bookmark" dialog steals it
+        return void duplicateElement(selectedId);
+      }
       const step = e.shiftKey ? 10 : 1;
       if (e.key === 'Escape') return select(null);
       if (e.key === 'Delete' || e.key === 'Backspace') { e.preventDefault(); return void deleteElement(selectedId); }
@@ -225,7 +254,7 @@ function ActivePageLayer() {
     };
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
-  }, [selectedId, page, select, commit, deleteElement, canEdit]);
+  }, [selectedId, page, select, commit, deleteElement, duplicateElement, canEdit]);
 
   if (!page) return null;
   const scale = zoomWidth / (page.width > 0 ? page.width : zoomWidth);
@@ -235,13 +264,17 @@ function ActivePageLayer() {
     e.preventDefault();
     e.stopPropagation();
     select(element.id);
-    drag.current = { mode, sx: e.clientX, sy: e.clientY, orig: { ...element }, before: { ...element } };
+    drag.current = { mode, sx: e.clientX, sy: e.clientY, orig: { ...element }, before: { ...element }, moved: false };
     overlayRef.current?.setPointerCapture(e.pointerId);
   };
 
   const onMove = (e: React.PointerEvent) => {
     const d = drag.current;
     if (!d) return;
+    // Sub-threshold jitter keeps the gesture a click (→ edit/select); only real
+    // movement promotes it to a drag.
+    if (!d.moved && Math.abs(e.clientX - d.sx) + Math.abs(e.clientY - d.sy) <= DRAG_THRESHOLD_PX) return;
+    d.moved = true;
     const dw = overlayRef.current?.getBoundingClientRect().width ?? zoomWidth;
     const ratio = page.width / (dw || page.width); // page-px per screen-px (aspect preserved → same for y)
     const dx = (e.clientX - d.sx) * ratio;
@@ -250,11 +283,24 @@ function ActivePageLayer() {
     updateLocal(d.orig.id, next);
   };
 
+  const startEditing = (element: MagazineElement) => {
+    if (!canEdit || element.type !== 'text' || !element.text) return;
+    select(element.id);
+    setEditingId(element.id);
+  };
+
   const endDrag = (e: React.PointerEvent) => {
     const d = drag.current;
     if (!d) return;
     drag.current = null;
     overlayRef.current?.releasePointerCapture(e.pointerId);
+    // A clean click (no real movement) on an element BODY opens text for typing —
+    // single-click to edit, no double-click. startEditing no-ops for non-text
+    // elements and resize handles (mode !== 'move'), so they just stay selected.
+    if (!d.moved) {
+      if (d.mode === 'move') startEditing(d.orig);
+      return;
+    }
     const final = useEditorStore.getState().page?.elements.find((x) => x.id === d.orig.id);
     if (final && (final.x !== d.before.x || final.y !== d.before.y || final.w !== d.before.w || final.h !== d.before.h)) {
       void commit(d.orig.id, { x: final.x, y: final.y, w: final.w, h: final.h }, d.before);
@@ -262,44 +308,86 @@ function ActivePageLayer() {
   };
 
   const selected = page.elements.find((x) => x.id === selectedId) ?? null;
+  const editingElement = editingId ? (page.elements.find((x) => x.id === editingId && x.type === 'text' && !!x.text) ?? null) : null;
 
-  const startEditing = (element: MagazineElement) => {
-    if (!canEdit || element.type !== 'text' || !element.text) return;
-    select(element.id);
-    setEditingId(element.id);
+  // A near-full-page element is a background/scrim: the user almost never means to
+  // grab IT when there's content on top, so it's the last hit-test choice.
+  const isFullBleed = (el: MagazineElement) => el.w * el.h >= 0.85 * page.width * page.height;
+
+  // Hit-test the page ourselves rather than stacking a hit box per element — that
+  // stack let a full-bleed image/scrim intercept every click ("drag covers full").
+  // Pick the topmost, most-specific element under the point; near-full-page
+  // elements sort LAST, so you click "past" a background to the content on it, yet
+  // can still select the background where nothing sits on top.
+  const hitTest = (e: React.PointerEvent): MagazineElement | null => {
+    const rect = overlayRef.current?.getBoundingClientRect();
+    if (!rect || rect.width === 0 || rect.height === 0) return null;
+    // Use the SAME width/height fallback as IssuePageCanvas: a page still being
+    // composed can arrive with height (or width) 0, and dividing the click point by
+    // 0 yields NaN — no element ever matches, so every click reads as "empty" and
+    // silently deselects. Mirroring the renderer's fallback keeps the hit-test grid
+    // aligned with what's actually drawn.
+    const pw = page.width > 0 ? page.width : 1;
+    const ph = page.height > 0 ? page.height : Math.round(pw * 1.414);
+    const fx = (e.clientX - rect.left) / rect.width;
+    const fy = (e.clientY - rect.top) / rect.height;
+    const hits = page.elements.filter(
+      (el) =>
+        fx >= el.x / pw && fx <= (el.x + el.w) / pw &&
+        fy >= el.y / ph && fy <= (el.y + el.h) / ph,
+    );
+    if (hits.length === 0) return null;
+    hits.sort((a, b) => {
+      const af = isFullBleed(a), bf = isFullBleed(b);
+      if (af !== bf) return af ? 1 : -1; // non-full-bleed first
+      return b.zIndex - a.zIndex || a.w * a.h - b.w * b.h; // then topmost, then smaller
+    });
+    return hits[0]!;
+  };
+
+  const onOverlayPointerDown = (e: React.PointerEvent) => {
+    const target = hitTest(e);
+    if (!target) return select(null);
+    startDrag(e, target, 'move');
   };
 
   return (
     <div style={{ width: zoomWidth }} className="relative shrink-0">
       {/* Base: the real published renderer (hide the element being edited in place) */}
       <IssuePageCanvas page={page} hideElementId={editingId ?? undefined} />
-        {/* Interaction overlay (same box via inset-0) */}
+        {/* Interaction overlay (same box via inset-0). An explicit high z-index is
+            REQUIRED, not cosmetic: page elements carry positive zIndex values, and
+            without this the transparent overlay can paint BELOW them — a click on any
+            headline/photo then lands on the (handler-less) content and does nothing,
+            so the whole canvas feels dead. Its own chrome (selection ring 10000,
+            text-edit 10001) lives inside this stacking context, so those still layer
+            correctly above the page. */}
         <div
           ref={overlayRef}
           className="absolute inset-0"
+          style={{ zIndex: 100000 }}
           onPointerMove={onMove}
           onPointerUp={endDrag}
-          onPointerDown={() => select(null)}
+          onPointerDown={onOverlayPointerDown}
         >
+          {/* The text box currently being typed into. */}
+          {editingElement && (
+            <TextEditingOverlay key={editingElement.id} element={editingElement} page={page} scale={scale} onExit={() => setEditingId(null)} />
+          )}
+          {/* Empty-slot hints only (pointer-events:none) — all hit-testing is done
+              by the overlay handler above, so these never intercept a click. */}
           {page.elements.map((element) =>
-            editingId === element.id && element.type === 'text' && element.text ? (
-              <TextEditingOverlay key={element.id} element={element} page={page} scale={scale} onExit={() => setEditingId(null)} />
-            ) : (
+            isEmptySlot(element) && editingId !== element.id ? (
               <div
                 key={element.id}
-                className={`absolute cursor-move ${isEmptySlot(element) ? 'border border-dashed border-[#7c3aed]/50 bg-[#7c3aed]/[0.06]' : ''}`}
+                className="pointer-events-none absolute border border-dashed border-[#7c3aed]/50 bg-[#7c3aed]/[0.06]"
                 style={{ ...pctRect(element, page), zIndex: element.zIndex }}
-                onPointerDown={(e) => startDrag(e, element, 'move')}
-                onDoubleClick={(e) => { if (element.type === 'text') { e.stopPropagation(); startEditing(element); } }}
-                title={isEmptySlot(element) ? `Empty ${slotLabel(element)} — ${element.type === 'text' ? 'double-click to write' : 'use the Inspector to fill it'}` : element.type === 'text' ? 'Double-click to edit text' : undefined}
               >
-                {isEmptySlot(element) && (
-                  <span className="pointer-events-none absolute inset-0 flex items-center justify-center overflow-hidden px-1 text-center text-[9px] font-semibold uppercase tracking-wide text-[#7c3aed]/70">
-                    {slotLabel(element)}
-                  </span>
-                )}
+                <span className="absolute inset-0 flex items-center justify-center overflow-hidden px-1 text-center text-[9px] font-semibold uppercase tracking-wide text-[#7c3aed]/70">
+                  {slotLabel(element)}
+                </span>
               </div>
-            ),
+            ) : null,
           )}
 
           {selected && !editingId && (
@@ -379,6 +467,35 @@ export function EditorCanvas() {
     return () => io.disconnect();
   }, [issueId, pages, cache, currentPageId]);
 
+  // Scroll-aware active page: the page nearest the viewport centre becomes the
+  // ACTIVE (editable + AI-targeted) page, so the assistant acts on whatever the
+  // user has scrolled to — no need to click a tab first. Settle-debounced (fires
+  // after scrolling stops, not mid-scroll) and suppressed while the user is typing
+  // into a field/text box, so it can never yank focus out of an edit.
+  useEffect(() => {
+    const content = rootRef.current;
+    const scroller = content?.parentElement;
+    if (!content || !scroller) return;
+    let timer: number | undefined;
+    const pick = () => {
+      const ae = document.activeElement as HTMLElement | null;
+      if (ae && (ae.isContentEditable || ae.tagName === 'INPUT' || ae.tagName === 'TEXTAREA')) return;
+      const vr = scroller.getBoundingClientRect();
+      const mid = vr.top + vr.height / 2;
+      let bestId: string | null = null;
+      let bestDist = Infinity;
+      content.querySelectorAll<HTMLElement>('[data-page]').forEach((elp) => {
+        const r = elp.getBoundingClientRect();
+        const dist = Math.abs(r.top + r.height / 2 - mid);
+        if (dist < bestDist) { bestDist = dist; bestId = elp.dataset.page ?? null; }
+      });
+      if (bestId && bestId !== useEditorStore.getState().currentPageId) void openPage(bestId);
+    };
+    const onScroll = () => { window.clearTimeout(timer); timer = window.setTimeout(pick, 120); };
+    scroller.addEventListener('scroll', onScroll, { passive: true });
+    return () => { scroller.removeEventListener('scroll', onScroll); window.clearTimeout(timer); };
+  }, [openPage, pages.length]);
+
   if (!pages.length) {
     return <div className="flex h-full items-center justify-center text-sm text-white/40">No pages.</div>;
   }
@@ -389,7 +506,7 @@ export function EditorCanvas() {
         const active = sum.id === currentPageId;
         const preview = cache[sum.id];
         return (
-          <div key={sum.id} className="shrink-0" style={{ width: zoomWidth }}>
+          <div key={sum.id} data-page={sum.id} className="shrink-0" style={{ width: zoomWidth }}>
             {/* Per-page header: number · publish checkbox · Fill / Adjust (every page) */}
             <div className="mb-1.5 flex items-center gap-2 text-[11px] text-white/40">
               <span>Page {sum.index + 1}</span>

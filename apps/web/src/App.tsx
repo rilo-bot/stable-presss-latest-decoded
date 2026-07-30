@@ -7,7 +7,7 @@ import { Toaster } from 'sonner';
 
 import { NavBar } from '@/components/NavBar';
 import { AgentWidget } from '@/components/AgentWidget';
-import { RequireAuth, RequireStaff, RequireRole } from '@/rbac/guards';
+import { RequireAuth, RequireStaff, RequirePermission } from '@/rbac/guards';
 import { useAuthStore } from '@/stores/authStore';
 import { useHorseStore } from '@/stores/horseStore';
 import { usePartyStore } from '@/stores/partyStore';
@@ -38,7 +38,6 @@ import ClaimsQueue from '@/pages/ClaimsQueue';
 import OrgDashboard from '@/pages/OrgDashboard';
 import Dashboard from '@/pages/Dashboard';
 import Studio from '@/pages/Studio';
-import StaffAdmin from '@/pages/StaffAdmin';
 import SiteContent from '@/pages/SiteContent';
 
 /* Inject Google Fonts for vintage skeuomorphic horse dashboard */
@@ -312,21 +311,15 @@ export default function App() {
           />
         </Route>
 
-        {/* Admin-only routes */}
-        <Route element={<RequireRole roles={['administrator']} />}>
+        {/* Permission-gated admin routes. Was `RequireRole roles={['administrator']}`
+            — a hardcoded slug that a superadmin-defined role could never satisfy.
+            /staff is gone: it duplicated Newsroom → Team Members. */}
+        <Route element={<RequirePermission permission="platform.admin" />}>
           <Route
             path="/claims"
             element={
               <AppLayout>
                 <ClaimsQueue />
-              </AppLayout>
-            }
-          />
-          <Route
-            path="/staff"
-            element={
-              <AppLayout>
-                <StaffAdmin />
               </AppLayout>
             }
           />

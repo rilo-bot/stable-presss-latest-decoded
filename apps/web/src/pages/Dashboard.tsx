@@ -6,6 +6,7 @@ import { useClaimStore } from '@/stores/claimStore';
 import { useHorseStore } from '@/stores/horseStore';
 import { useHorsePartyLinkStore } from '@/stores/horsePartyLinkStore';
 import { authorisedHorseIds, previewHorseIds, hasProvisionalParty, primaryPartyId, isStaff } from '@/rbac/can';
+import { can } from '@/lib/permissions';
 import { PARTY_ROLES, PARTY_ROLE_LABELS } from '@/types/party';
 import type { PartyRole } from '@/types/party';
 import type { Horse } from '@/types/horse';
@@ -73,7 +74,8 @@ export default function Dashboard() {
 
   if (!currentUser) return null;
   const staff = isStaff(currentUser);
-  const admin = currentUser.roles.includes('administrator');
+  // Was roles.includes('administrator') — roles[] no longer carries staff slugs.
+  const admin = can('platform.admin');
   const claims = currentUser.partyClaims ?? [];
   // Provisional = a self-registered party they can edit NOW (hidden from public
   // until verified). Awaiting-existing = a claim on a pre-existing party that
@@ -430,20 +432,12 @@ export default function Dashboard() {
                 <Newspaper size={15} /> Newsroom Production System
               </Link>
               {admin && (
-                <>
-                  <Link
-                    to="/claims"
-                    className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-sm border border-border/60 text-sm hover:border-primary/50 transition-colors"
-                  >
-                    <ShieldCheck size={15} /> Verify Claims
-                  </Link>
-                  <Link
-                    to="/staff"
-                    className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-sm border border-border/60 text-sm hover:border-primary/50 transition-colors"
-                  >
-                    <Users size={15} /> Manage Staff
-                  </Link>
-                </>
+                <Link
+                  to="/claims"
+                  className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-sm border border-border/60 text-sm hover:border-primary/50 transition-colors"
+                >
+                  <ShieldCheck size={15} /> Verify Claims
+                </Link>
               )}
             </div>
           </Section>

@@ -7,8 +7,6 @@ import {
 import type { KanbanStatus } from '@/components/KanbanColumn';
 import type { PartyRole } from '@/types/party';
 import type { MediaType } from '@/types/mediaItem';
-import type { UserRole } from '@/stores/authStore';
-import type { StaffRole } from '@/rbac/roles';
 import type { can } from '@/lib/permissions';
 
 /* ── Role colour map (for party cards) ──────── */
@@ -38,90 +36,16 @@ export const MEDIA_TYPE_COLORS: Record<MediaType, string> = {
   Publication: 'bg-[hsl(var(--brand-accent)/0.15)] text-[hsl(var(--brand-accent))] border-[hsl(var(--brand-accent)/0.3)]',
 };
 
-/* ── Role definitions ─────────────────────────────────── */
 
-export interface RoleConfig {
-  id: UserRole;
-  label: string;
-  description: string;
-  icon: ReactNode;
-  allowedStatuses: KanbanStatus[];
-  color: string;
-}
-
-export const ROLES: RoleConfig[] = [
-  {
-    id: 'contributor',
-    label: 'Contributor',
-    description: 'Draft & submit stories',
-    icon: <FileText size={14} />,
-    allowedStatuses: ['draft', 'submitted', 'revision'],
-    color: 'hsl(var(--chart-1))',
-  },
-  {
-    id: 'editor',
-    label: 'Editor',
-    description: 'Full editorial control',
-    icon: <CheckSquare size={14} />,
-    allowedStatuses: [
-      'draft', 'submitted', 'editorial_review', 'revision',
-      'legal_review', 'compliance', 'approved', 'publisher_review',
-      'scheduled', 'published', 'newsletter', 'bulletin',
-    ],
-    color: 'hsl(var(--primary))',
-  },
-  {
-    id: 'legal_reviewer',
-    label: 'Legal Reviewer',
-    description: 'Review & clear content',
-    icon: <Shield size={14} />,
-    allowedStatuses: ['legal_review', 'compliance', 'approved'],
-    color: 'hsl(var(--chart-3))',
-  },
-  {
-    id: 'podcast_producer',
-    label: 'Podcast Producer',
-    description: 'Manage podcast content',
-    icon: <Mic size={14} />,
-    allowedStatuses: ['approved', 'publisher_review', 'scheduled', 'published', 'newsletter'],
-    color: 'hsl(var(--chart-2))',
-  },
-  {
-    id: 'publisher',
-    label: 'Publisher',
-    description: 'Approve & schedule',
-    icon: <Send size={14} />,
-    allowedStatuses: [
-      'publisher_review', 'scheduled', 'published', 'newsletter', 'bulletin',
-    ],
-    color: 'hsl(var(--brand-accent))',
-  },
-  {
-    id: 'administrator',
-    label: 'Administrator',
-    description: 'Full platform access',
-    icon: <Star size={14} />,
-    allowedStatuses: [
-      'draft', 'submitted', 'editorial_review', 'revision',
-      'legal_review', 'compliance', 'approved', 'publisher_review',
-      'scheduled', 'published', 'newsletter', 'bulletin',
-    ],
-    color: 'hsl(var(--primary))',
-  },
-];
-
-export function getRoleConfig(role: UserRole | undefined | null): RoleConfig {
-  return ROLES.find((r) => r.id === role) ?? ROLES[0];
-}
-
-export const STAFF_ROLE_LABELS: Record<StaffRole, string> = {
-  contributor: 'Contributor',
-  editor: 'Editor',
-  legal_reviewer: 'Legal Reviewer',
-  podcast_producer: 'Podcast Producer',
-  publisher: 'Publisher',
-  administrator: 'Administrator',
-};
+/* ── Role config REMOVED ───────────────────────────────────
+ * The static `ROLES: RoleConfig[]` table (label/description/icon/colour plus
+ * `allowedStatuses`), `getRoleConfig()` and `STAFF_ROLE_LABELS` all lived here.
+ * Roles are database rows now:
+ *   - label / colour / icon  → user.access.roles[]  (see lib/roleDisplay.tsx)
+ *   - allowedStatuses        → user.access.workflowStages
+ * `getRoleConfig()` in particular fell back to ROLES[0], so any role it didn't
+ * recognise silently rendered as "Contributor".
+ * ────────────────────────────────────────────────────────── */
 
 /* ── Sidebar navigation ───────────────────────────────── */
 
@@ -130,7 +54,7 @@ export interface SideNavItem {
   label: string;
   icon: ReactNode;
   section?: string;
-  requiresPermission?: Parameters<typeof can>[1];
+  requiresPermission?: Parameters<typeof can>[0];
   editorOnly?: boolean;
   badge?: string;
   /** When set, the item navigates to this route instead of switching in-page tabs. */
@@ -175,6 +99,7 @@ export const SIDE_NAV: SideNavItem[] = [
   { id: 'media-production-system', label: 'Media Records ', icon: <File size={15} />, section: 'Stables', requiresPermission: 'content.draft.create' },
   { id: 'racing-production-system', label: 'Racing Data ', icon: <Flag size={15} />, section: 'Stables', requiresPermission: 'content.draft.create' },
   { id: 'team', label: 'Team Members', icon: <Users size={15} />, section: 'Management', requiresPermission: 'team.manage' },
+  { id: 'roles', label: 'Roles & Permissions', icon: <Shield size={15} />, section: 'Management', requiresPermission: 'roles.manage' },
   { id: 'analytics', label: 'Analytics', icon: <BarChart2 size={15} />, section: 'Management', requiresPermission: 'analytics.view' },
   { id: 'settings', label: 'Settings', icon: <Settings size={15} />, section: 'Management', requiresPermission: 'settings.view' },
 ];
@@ -194,7 +119,7 @@ export interface EditorTabConfig {
   label: string;
   icon: ReactNode;
   description: string;
-  permission: Parameters<typeof can>[1];
+  permission: Parameters<typeof can>[0];
 }
 
 export const EDITOR_TABS: EditorTabConfig[] = [

@@ -1,43 +1,51 @@
 // ---------------------------------------------------------------------------
 // Server-side permission enforcement.
 //
-// Replaces the old blanket "any logged-in user may write" gate with role-aware
-// middleware. Mirrors the enforcing subset of the web engine (apps/web/src/rbac).
+// NO ROLE SLUG APPEARS IN THIS FILE. Every gate asks what the account may DO,
+// never what it IS. The two old role-family tests are gone:
 //
-// Interim posture (Phase B): racing DATA writes are staff-only; tipping is open
-// to any authenticated user; articles use the editorial matrix with author match.
-// Party/organisation-scoped write access is layered in Phase C/D — see the
-// `// TODO(phase C/D)` seams. See RBAC.md §6.
+//   isStaff(account)  →  canAccessNewsroom(account)   // 'newsroom.access'
+//   isAdmin(account)  →  isPlatformAdmin(account)     // 'platform.admin'
+//
+// They were deleted rather than deprecated so the compiler enumerated every
+// call site during the migration — a missed one is an access-control bug that
+// no test would necessarily catch. See docs/DYNAMIC-RBAC-PLAN.md §2.
+//
+// Racing scope (which horses/parties an account may write) is a separate axis
+// and still comes from relationships, never from a role. See scope.ts, RBAC.md §6.
 // ---------------------------------------------------------------------------
 
 import type { Request, Response, NextFunction } from 'express'
 import { db } from './db.js'
 import { attachAccount, attachAccountOptional } from './auth.js'
-import { STAFF_ROLES, type AccountUser, type OrgRole, type StaffRole } from './identity.js'
+import type { OrgRole } from './identity.js'
 import { authorisedHorseIds, manageablePartyIds } from './scope.js'
+import { accountCan, accountCanOpenModule, type AccountUser } from './effectiveAccess.js'
+import type { PermissionAction } from './permissionCatalogue.js'
+
+export { accountCan, accountCanOpenModule }
+export type { AccountUser }
 
 type ContentAction =
   | 'content.draft.create'
   | 'content.draft.edit_own'
   | 'content.draft.edit_any'
 
-// Mirror of the content slice of apps/web/src/lib/permissions.ts.
-const CONTENT_PERMS: Record<StaffRole, ContentAction[]> = {
-  contributor: ['content.draft.create', 'content.draft.edit_own'],
-  editor: ['content.draft.create', 'content.draft.edit_own', 'content.draft.edit_any'],
-  legal_reviewer: ['content.draft.edit_any'],
-  podcast_producer: [],
-  publisher: ['content.draft.edit_any'],
-  administrator: ['content.draft.create', 'content.draft.edit_own', 'content.draft.edit_any'],
+/**
+ * May the account use newsroom tooling and see unverified/private records?
+ * This is what `isStaff()` meant. It is now a grantable permission, so a role
+ * can have data access without the newsroom, or the reverse.
+ */
+export function canAccessNewsroom(account: AccountUser | undefined): boolean {
+  return accountCan(account, 'newsroom.access')
 }
 
-export function isStaff(account: AccountUser | undefined): boolean {
-  return !!account && account.roles.some((r) => (STAFF_ROLES as string[]).includes(r))
-}
-
-/** Holds the administrator role. Admins can grant staff roles (incl. administrator). */
-export function isAdmin(account: AccountUser | undefined): boolean {
-  return !!account && account.roles.includes('administrator')
+/**
+ * Platform-wide administrative override — verify any claim, manage any
+ * organisation, see everything. This is what `isAdmin()` meant.
+ */
+export function isPlatformAdmin(account: AccountUser | undefined): boolean {
+  return accountCan(account, 'platform.admin')
 }
 
 /** The account's role within a given organisation, if any. */
@@ -45,24 +53,35 @@ export function orgRoleIn(account: AccountUser | undefined, orgId: string): OrgR
   return account?.orgMemberships.find((m) => m.orgId === orgId)?.orgRole
 }
 
-/** May run operational org actions (add members/parties): owner, manager, or a global admin. */
+/** May run operational org actions (add members/parties): owner, manager, or a platform admin. */
 export function canManageOrg(account: AccountUser | undefined, orgId: string): boolean {
-  if (isAdmin(account)) return true
+  if (isPlatformAdmin(account)) return true
   const r = orgRoleIn(account, orgId)
   return r === 'org_owner' || r === 'org_manager'
 }
 
-/** Owner-only actions (members/roles/billing/delete): the org owner or a global admin. */
+/** Owner-only actions (members/roles/billing/delete): the org owner or a platform admin. */
 export function isOrgOwner(account: AccountUser | undefined, orgId: string): boolean {
-  if (isAdmin(account)) return true
+  if (isPlatformAdmin(account)) return true
   return orgRoleIn(account, orgId) === 'org_owner'
 }
 
 export function contentCan(account: AccountUser | undefined, action: ContentAction): boolean {
-  if (!account) return false
-  return account.roles.some(
-    (r) => (STAFF_ROLES as string[]).includes(r) && CONTENT_PERMS[r as StaffRole]?.includes(action),
-  )
+  return accountCan(account, action)
+}
+
+/**
+ * May DEFINE roles — create them, change what they grant, delete them.
+ * Distinct from canManageTeam: deciding what a role can do is a different
+ * (and strictly more dangerous) power than deciding who holds it.
+ */
+export function canManageRoles(account: AccountUser | undefined): boolean {
+  return accountCan(account, 'roles.manage')
+}
+
+/** May manage the roster — invite people and assign/unassign existing roles. */
+export function canManageTeam(account: AccountUser | undefined): boolean {
+  return accountCan(account, 'team.manage')
 }
 
 const forbid = (res: Response, msg: string) => res.status(403).json({ error: msg })
@@ -77,7 +96,7 @@ export function authedWriteGate(req: Request, res: Response, next: NextFunction)
 export function staffWriteGate(req: Request, res: Response, next: NextFunction): void {
   if (req.method === 'GET') return next()
   void attachAccount(req, res, () => {
-    if (!isStaff(req.account)) {
+    if (!canAccessNewsroom(req.account)) {
       forbid(res, 'Staff access required.')
       return
     }
@@ -96,7 +115,7 @@ export async function accountCanManageHorse(
   horseId: string,
 ): Promise<boolean> {
   if (!account) return false
-  if (isStaff(account)) return true
+  if (canAccessNewsroom(account)) return true
   const horse = await db.collection('horses').findById(horseId)
   if (!horse) return false
   if (horse.createdByUserId && horse.createdByUserId === account.id) return true
@@ -131,7 +150,7 @@ export function horseScopedWriteGate(opts: {
     }
     void attachAccount(req, res, async () => {
       const account = req.account
-      if (isStaff(account)) return next()
+      if (canAccessNewsroom(account)) return next()
 
       if (req.method === 'POST') {
         if (opts.idIsHorse) return next() // create a horse: handler stamps creator + auto-links owner
@@ -171,7 +190,7 @@ export async function accountCanManageParty(
   partyId: string,
 ): Promise<boolean> {
   if (!account) return false
-  if (isStaff(account)) return true
+  if (canAccessNewsroom(account)) return true
   if (manageablePartyIds(account).includes(partyId)) return true
   const party = await db.collection('parties').findById(partyId)
   return !!party && party.createdByUserId === account.id
@@ -191,7 +210,7 @@ export function partyScopedWriteGate(req: Request, res: Response, next: NextFunc
   }
   void attachAccount(req, res, async () => {
     const account = req.account
-    if (isStaff(account)) return next()
+    if (canAccessNewsroom(account)) return next()
     // Members may create a provisional party (e.g. adding a trainer from a horse
     // page); the handler stamps it unverified + createdByUserId so it stays hidden
     // from the public until staff verify it.
@@ -240,7 +259,7 @@ export function reportsGate(req: Request, res: Response, next: NextFunction): vo
     return
   }
   void attachAccount(req, res, () => {
-    if (!isStaff(req.account)) {
+    if (!canAccessNewsroom(req.account)) {
       forbid(res, 'Staff access required.')
       return
     }
@@ -259,7 +278,7 @@ export function issuesGate(req: Request, res: Response, next: NextFunction): voi
     return
   }
   void attachAccount(req, res, () => {
-    if (!isStaff(req.account)) {
+    if (!canAccessNewsroom(req.account)) {
       forbid(res, 'Staff access required.')
       return
     }

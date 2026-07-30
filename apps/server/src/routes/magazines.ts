@@ -25,8 +25,9 @@
 
 import { Router } from 'express';
 import { db } from '../lib/db.js';
-import { withIdentityDefaults, STAFF_ROLES } from '../lib/identity.js';
-import { isStaff } from '../lib/rbac.js';
+import { withIdentityDefaults, type IdentityUser } from '../lib/identity.js';
+import { identityCan, identitiesWith } from '../lib/effectiveAccess.js';
+import { canAccessNewsroom } from '../lib/rbac.js';
 import { sanitizeContentMap, sanitizePages } from '../lib/sanitizeHtml.js';
 
 type WithMongoId = { _id: string; [key: string]: unknown };
@@ -69,9 +70,18 @@ function roleOnMagazine(doc: WithMongoId, userId: string): MagRole | null {
 // The stored editor/contributor role is derived from staff role for display only.
 const isOwner = (role: MagRole | null) => role === 'owner';
 
-const MAG_EDITOR_ROLES = ['administrator', 'publisher', 'editor'];
-function magRoleForStaff(roles: string[]): 'editor' | 'contributor' {
-  return roles.some((r) => MAG_EDITOR_ROLES.includes(r)) ? 'editor' : 'contributor';
+/**
+ * The collaborator badge shown in the Share dialog. This is the per-magazine
+ * sharing axis (MagRole), NOT a staff role — it grants nothing on its own.
+ *
+ * Derived from a permission rather than a role slug: it used to test for
+ * ['administrator','publisher','editor'] against `user.roles[]`, which no
+ * longer carries staff slugs at all, so every collaborator would have silently
+ * been badged "contributor". `content.draft.edit_any` is the same semantic and
+ * follows whatever a superadmin configures.
+ */
+async function magRoleForStaff(identity: IdentityUser): Promise<'editor' | 'contributor'> {
+  return (await identityCan(identity, 'content.draft.edit_any')) ? 'editor' : 'contributor';
 }
 
 /** The set of page ids a user may edit: 'all' for the owner, else their assignment. */
@@ -101,7 +111,7 @@ const router = Router();
 import { attachAccount } from '../lib/auth.js';
 router.use(attachAccount);
 router.use((req, res, next) => {
-  if (!isStaff(req.account)) {
+  if (!canAccessNewsroom(req.account)) {
     res.status(403).json({ error: 'Staff access required.' });
     return;
   }
@@ -123,9 +133,8 @@ router.get('/', async (req, res) => {
 router.get('/staff-directory', async (_req, res) => {
   const users = await db.collection('users').find();
   // Only the fields the Share picker needs — no staff-role enumeration.
-  const staff = users
-    .map((u) => withIdentityDefaults({ id: u._id, ...u }))
-    .filter((u) => u.roles.some((r) => (STAFF_ROLES as string[]).includes(r)))
+  const candidates = users.map((u) => withIdentityDefaults({ id: u._id, ...u }));
+  const staff = (await identitiesWith(candidates, 'newsroom.access'))
     .map((u) => ({ userId: u.id, displayName: u.displayName, email: u.email }))
     .sort((a, b) => (a.displayName || a.email).localeCompare(b.displayName || b.email));
   res.json(staff);
@@ -311,7 +320,7 @@ router.post('/:id/collaborators', async (req, res) => {
     return;
   }
   const acct = withIdentityDefaults({ id: existing._id, ...existing });
-  if (!acct.roles.some((r) => (STAFF_ROLES as string[]).includes(r))) {
+  if (!(await identityCan(acct, 'newsroom.access'))) {
     res.status(400).json({ error: 'That person is not a staff member, so they cannot be added.' });
     return;
   }
@@ -322,7 +331,7 @@ router.post('/:id/collaborators', async (req, res) => {
 
   // Manage/publish capability follows their staff role; the editable page scope
   // is whatever the sharer assigned (all pages, or a specific set).
-  const role = magRoleForStaff(acct.roles);
+  const role = await magRoleForStaff(acct);
   const pageIds: string[] | 'all' =
     rawPageIds === 'all' || rawPageIds == null
       ? 'all'

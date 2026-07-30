@@ -46,6 +46,7 @@ import { isImageGenConfigured, generateAndStoreImage } from './imagegen.js';
 import type { TextRole } from './model.js';
 import { normalizeLayoutSpec, type LayoutSpec } from './layoutSpec.js';
 import { pruneLayoutSpec } from './pruneSpec.js';
+import { retrieveSource, isTruncated } from './retrieval.js';
 import { seedSpecFor } from './seedSpecs.js';
 import { archetypeLibraryText, archetypeSteer } from './layoutArchetypes.js';
 import { solveLayout } from './solveLayout.js';
@@ -71,22 +72,28 @@ const BODY_FONTS = [
   'Arial, Helvetica, sans-serif',
 ];
 
-// The publication's subject. Stable Press is a New Zealand horse-racing title, so
-// every generation is grounded here by default — copy, section ideas, names,
-// terminology and (especially) photo briefs stay in the NZ thoroughbred world.
-// A brief may steer the angle, but the domain only changes if the brief CLEARLY
-// asks for a different subject. Injected into the planner, copywriter and
-// art-director prompts.
-const DOMAIN_CONTEXT = [
-  'ABOUT THIS PUBLICATION — READ FIRST: this is a New Zealand horse-racing magazine.',
-  'Its world is thoroughbred racing and breeding in NZ: owners, breeders, trainers,',
-  'jockeys, studs, racedays, NZ racecourses and the racing calendar, bloodstock and the',
-  'wider industry. Ground EVERYTHING here by default — the title, section ideas, copy,',
-  'names, statistics, terminology, and especially PHOTO briefs (horses, racing action,',
-  'paddocks, stables, winners’ circles, NZ rural and racecourse settings; never text in',
-  'photos, no identifiable real individuals). Only depart from NZ horse racing if the',
-  'brief clearly asks for a different subject.',
+// The magazine's subject is DERIVED from the user's brief (and source document,
+// if any) — never a preset. The planner establishes it from the brief/source;
+// these helpers then ground the per-page copywriter/art-director in that derived
+// subject so copy, terminology and photo briefs stay on-topic, without hardcoding
+// any particular domain into a general-purpose builder.
+const PLANNER_DOMAIN = [
+  'SUBJECT: establish the magazine’s subject from the brief (and the source document, if provided).',
+  'Do NOT default to any preset topic or industry. Ground the title, section ideas, copy, names,',
+  'terminology and especially PHOTO briefs in THAT subject. Photo briefs: never text in the image,',
+  'no identifiable real individuals.',
 ].join('\n');
+
+/** Per-page grounding derived from the plan the Editorial Director produced (so
+ *  the copywriter/art-director stay on the user's subject, whatever it is). */
+function domainGrounding(plan: { title: string; subtitle: string }): string {
+  return [
+    `SUBJECT — GROUND EVERYTHING HERE: this magazine is “${plan.title}”${plan.subtitle ? ` — ${plan.subtitle}` : ''}.`,
+    'Keep the copy, section ideas, names, terminology and especially PHOTO briefs within THIS subject',
+    'and the page intent below; do not drift to unrelated topics. Photo briefs: never text in the',
+    'image, no identifiable real individuals.',
+  ].join('\n');
+}
 
 const DEFAULT_PALETTE: GenPalette = {
   primary: '#1b3a6b',
@@ -171,22 +178,30 @@ function normalizeFonts(f: unknown): GenFonts {
   };
 }
 
-// Guarantee a real magazine shape: 4–24 pages, cover first, back-cover last.
-function normalizePages(pages: GenPlanPage[], target?: number): GenPlanPage[] {
-  const MIN = 4;
+// Guarantee a real magazine shape: cover first, back-cover last. An EXPLICIT page
+// count is honoured down to 3 (cover + 1 inner + back-cover) — the same floor the
+// create route validates (pc >= 3) — so a user who asks for 3 gets 3, not a
+// silently-bumped 4. Only the DEFAULT (no count given) keeps the 4-page floor, so
+// an auto preview still reads as a real issue.
+function normalizePages(pages: GenPlanPage[], target?: number, subject?: { title: string; subtitle: string }): GenPlanPage[] {
+  const ABS_MIN = 3; // cover + at least one inner page + back-cover
+  const DEFAULT_MIN = 4;
   const MAX = Math.min(MAX_PAGES_PER_ISSUE, 24);
   let inner: GenPlanPage[] = pages.filter((p) => p.kind !== 'cover' && p.kind !== 'back-cover');
-  const desiredTotal = Math.min(MAX, Math.max(MIN, target ?? (pages.length || 8)));
-  const desiredInner = Math.max(2, desiredTotal - 2);
-  // Distinct per-kind intent + section for padded pages: a single shared intent
-  // string made every filler page draft (and lay out) the same. Each is grounded
-  // in the NZ racing world so a padded page still reads as a real editorial page.
+  const floor = target != null ? ABS_MIN : DEFAULT_MIN;
+  const desiredTotal = Math.min(MAX, Math.max(floor, target ?? (pages.length || 8)));
+  const desiredInner = Math.max(1, desiredTotal - 2);
+  // Distinct per-kind intent + section for padded pages (a single shared intent
+  // string made every filler page draft/lay-out the same). Grounded in the
+  // issue's OWN subject — never a preset domain — so a padded page still reads as
+  // a real, on-topic editorial page.
+  const subjectRef = subject?.title ? `“${subject.title}”${subject.subtitle ? ` — ${subject.subtitle}` : ''}` : 'the issue’s subject';
   const FILLERS: { kind: PageTemplateKind; intent: string; sectionTitle: string }[] = [
-    { kind: 'feature-full-bleed', intent: 'A full-bleed feature spotlighting a leading NZ stable, trainer or a standout thoroughbred and its current campaign.', sectionTitle: 'Feature' },
-    { kind: 'two-column-article', intent: 'An in-depth article on a live story in NZ thoroughbred racing or breeding — a season, a stud, a rivalry.', sectionTitle: 'The Long Read' },
-    { kind: 'photo-grid', intent: 'A photo essay capturing raceday atmosphere and equine imagery across New Zealand racecourses.', sectionTitle: 'Gallery' },
-    { kind: 'pull-quote', intent: 'A reflective full-page pull-quote from a notable figure in NZ racing — an owner, trainer or jockey.', sectionTitle: 'In Their Words' },
-    { kind: 'stat-infographic', intent: 'A by-the-numbers spread on the NZ racing and breeding season told through figures.', sectionTitle: 'By the Numbers' },
+    { kind: 'feature-full-bleed', intent: `A full-bleed feature developing a distinct, specific aspect of ${subjectRef} not covered by other pages.`, sectionTitle: 'Feature' },
+    { kind: 'two-column-article', intent: `An in-depth article on a specific story within ${subjectRef}, written with real substance.`, sectionTitle: 'The Long Read' },
+    { kind: 'photo-grid', intent: `A photo essay capturing imagery central to ${subjectRef}.`, sectionTitle: 'Gallery' },
+    { kind: 'pull-quote', intent: `A reflective full-page pull-quote from a plausible voice connected to ${subjectRef} (a role, never a real named person).`, sectionTitle: 'In Their Words' },
+    { kind: 'stat-infographic', intent: `A by-the-numbers spread on ${subjectRef} told through figures.`, sectionTitle: 'By the Numbers' },
   ];
   while (inner.length < desiredInner) {
     const f = FILLERS[inner.length % FILLERS.length]!;
@@ -225,7 +240,7 @@ export async function planIssue(brief: string, options?: { pageCount?: number; t
     'design a complete issue: a strong title, a one-line subtitle, a tight colour',
     'palette, a font pairing, and an ordered list of pages.',
     '',
-    DOMAIN_CONTEXT,
+    PLANNER_DOMAIN,
     '',
     'Rules:',
     "- The FIRST page must be a 'cover' and the LAST a 'back-cover'. Never repeat a kind twice in a row.",
@@ -242,8 +257,8 @@ export async function planIssue(brief: string, options?: { pageCount?: number; t
     '- Choose fonts ONLY from the provided display/body lists (a serif display with a sans',
     '  body, or vice-versa, reads most editorial).',
     '- Each page needs a CONCRETE, DISTINCT `intent`: name the specific subject/angle that page covers',
-    '  (a named race or season storyline, a particular stud / trainer / horse arc, a specific set of',
-    '  figures). NO TWO PAGES may cover the same subject or reuse wording — every page must earn its place',
+    '  (a particular story, person, place, product, event or set of figures drawn from the subject).',
+    '  NO TWO PAGES may cover the same subject or reuse wording — every page must earn its place',
     '  with its own substance, so later pages are as rich as the cover, never filler.',
     source
       ? '- SOURCE DOCUMENT is provided: build the issue FROM it — derive the title, sections and each page’s intent from its ACTUAL content (real names, figures, quotes, structure). Cover what the document says, in a sensible order; do not invent facts. Use the brief (if any) only to steer tone/emphasis.'
@@ -253,7 +268,9 @@ export async function planIssue(brief: string, options?: { pageCount?: number; t
 
   const user = [
     brief.trim() ? `Brief: ${brief.trim().slice(0, 4000)}` : 'Brief: (none — use the source document below)',
-    source ? `\nSOURCE DOCUMENT (build the issue from this):\n"""\n${source.slice(0, 14000)}\n"""` : '',
+    source
+      ? `\nSOURCE DOCUMENT (build the issue from this${isTruncated(source, 14000) ? ' — a representative sample spanning the WHOLE document, so cover its full breadth, not just the opening' : ''}):\n"""\n${retrieveSource(source, { maxChars: 14000 })}\n"""`
+      : '',
     options?.pageCount
       ? `Target page count: about ${options.pageCount}.`
       : 'PAGE COUNT: unless the brief explicitly names a number of pages, design a SHORT PREVIEW of 4–5 pages only (cover, 2–3 content pages, back-cover) so the reader sees the direction fast — they can ask for more afterwards. If the brief names a count, use that.',
@@ -279,12 +296,14 @@ export async function planIssue(brief: string, options?: { pageCount?: number; t
       sectionTitle: str(x.sectionTitle, 120),
     }));
 
+  const title = str(object.title, 120, 'Untitled Magazine');
+  const subtitle = str(object.subtitle, 200);
   return {
-    title: str(object.title, 120, 'Untitled Magazine'),
-    subtitle: str(object.subtitle, 200),
+    title,
+    subtitle,
     palette: normalizePalette(object.palette),
     fonts: normalizeFonts(object.fonts),
-    pages: normalizePages(pages, options?.pageCount),
+    pages: normalizePages(pages, options?.pageCount, { title, subtitle }),
   };
 }
 
@@ -298,26 +317,24 @@ const PagesSchema = z.object({
 
 export async function planPages(opts: { title: string; subtitle?: string; topic?: string; count: number }): Promise<GenPlanPage[]> {
   const count = Math.max(1, Math.min(12, Math.round(opts.count) || 1));
-  // Distinct per-index angles so a failed planner call still yields varied pages
-  // (not N clones of one intent). Grounded in the NZ racing world.
-  const FALLBACK_ANGLES = [
-    'a leading stable or trainer and its current campaign',
-    'a standout thoroughbred and its form line',
-    'raceday atmosphere at a specific NZ racecourse',
-    'the breeding/sales season told through figures',
-    'a notable owner or syndicate story',
-    'a rivalry or a Group-race build-up',
+  // Distinct per-index angles so a failed planner call still yields varied,
+  // ON-SUBJECT pages (not N clones, and not a preset domain) — derived from the
+  // issue's own title/topic.
+  const GENERIC_ANGLES = [
+    'a key theme',
+    'a specific story or moment',
+    'a notable person, place or detail',
+    'the numbers behind it',
+    'a close-up on one aspect',
+    'a broader trend or context',
   ];
+  const subjectRef = opts.topic?.trim() ? opts.topic.trim() : `“${opts.title}”${opts.subtitle ? ` — ${opts.subtitle}` : ''}`;
   const fallback = (): GenPlanPage[] =>
-    Array.from({ length: count }, (_v, i) => {
-      const angle = FALLBACK_ANGLES[i % FALLBACK_ANGLES.length]!;
-      const focus = opts.topic ? `${opts.topic}: ${angle}` : angle;
-      return {
-        kind: INTERIOR_KINDS[i % INTERIOR_KINDS.length]!,
-        intent: `A page on ${focus} — its own distinct subject, written with real substance (not a rehash of other pages).`,
-        sectionTitle: '',
-      };
-    });
+    Array.from({ length: count }, (_v, i) => ({
+      kind: INTERIOR_KINDS[i % INTERIOR_KINDS.length]!,
+      intent: `A page developing ${GENERIC_ANGLES[i % GENERIC_ANGLES.length]!} of ${subjectRef} — its own distinct angle, written with real substance (not a rehash of other pages).`,
+      sectionTitle: '',
+    }));
 
   try {
     const { object } = await generateObject({
@@ -366,6 +383,33 @@ const DraftSchema = z.object({
   qr: z.array(z.object({ slotId: z.string(), url: z.string() })),
 });
 
+// How many times the copywriter may attempt a page's copy: the first try plus
+// bounded self-heal retries that feed back EXACTLY which backbone slots came back
+// empty/too-thin, so it rewrites real copy instead of us fabricating it. Bounded
+// (never a runaway loop). Override with MAGAZINE_V2_DRAFT_ATTEMPTS.
+const DRAFT_ATTEMPTS = Math.max(1, Math.min(4, Number(process.env.MAGAZINE_V2_DRAFT_ATTEMPTS) || 2));
+// A body slot below this many characters isn't a real paragraph — treat the
+// page's prose backbone as missing so the copywriter self-heal rewrites it.
+const MIN_BODY_CHARS = 200;
+
+/** Which REQUIRED backbone slots a draft is still missing (an empty headline, or
+ *  a body that's absent/too thin) — drives the copywriter self-heal + its feedback.
+ *  Secondary devices (kicker/deck/caption/stat) are optional and never gate. */
+function draftGaps(draft: PageDraft, template: PageTemplate): string[] {
+  const textSlots = template.slots.filter((s) => s.role === 'text');
+  const roleOf = (s: PageTemplateSlot) => s.textRole ?? 'body';
+  const has = (id: string) => !!draft.texts[id]?.trim();
+  const gaps: string[] = [];
+  const headline = textSlots.find((s) => roleOf(s) === 'headline');
+  if (headline && !has(headline.id)) gaps.push('headline (a punchy title, a few words)');
+  const bodySlots = textSlots.filter((s) => roleOf(s) === 'body');
+  if (bodySlots.length > 0) {
+    const chars = bodySlots.reduce((n, s) => n + (draft.texts[s.id]?.trim().length ?? 0), 0);
+    if (chars < MIN_BODY_CHARS) gaps.push('body (2–3 full paragraphs of real, specific prose)');
+  }
+  return gaps;
+}
+
 export async function draftPage(opts: {
   plan: GenPlan;
   page: GenPlanPage;
@@ -398,7 +442,7 @@ export async function draftPage(opts: {
     `This page (${opts.pageNumber} of ${opts.totalPages}) is a "${page.kind}". Intent: ${page.intent}`,
     `Section: ${page.sectionTitle || '(none)'}.`,
     '',
-    DOMAIN_CONTEXT,
+    domainGrounding(plan),
     '',
     'Fill each slot below:',
     '- text slots: write crisp, specific, publication-quality copy WITHIN the char limit.',
@@ -416,7 +460,7 @@ export async function draftPage(opts: {
     '  short supporting line. Keep an icon row’s labels parallel in style.',
     '- pullquote slots: a vivid, quotable line; its attribution/byline may name a plausible ROLE',
     '  ("— A Cambridge breeder", "— Owner, Waikato"), NEVER a real named individual.',
-    '- cta / qrLabel slots: short action text ("Scan to join", "raceowners.co.nz").',
+    '- cta / qrLabel slots: short action text, or a short URL, for the call-to-action ("Scan to join", "Learn more").',
     '- image BRIEF slots: describe a single photograph for this page — subject + setting +',
     '  mood + lighting, on-theme. NO text/words in the image, no identifiable named individuals.',
     '- qr slots: a plausible https:// destination for the call-to-action.',
@@ -427,28 +471,107 @@ export async function draftPage(opts: {
       : '',
   ].join('\n');
 
-  const draft: PageDraft = { texts: {}, images: {}, qr: {} };
-  try {
-    const { object } = await generateObject({
-      model: getAgentModel(),
-      schema: DraftSchema,
-      system,
-      prompt: [
-        'Slots:',
-        ...slotLines,
-        source ? `\nSOURCE DOCUMENT (use the parts relevant to this page):\n"""\n${source.slice(0, 6000)}\n"""` : '',
-      ].join('\n'),
-      temperature: 0.75,
-      maxRetries: 2,
-      abortSignal: AbortSignal.timeout(60_000),
-    });
-    for (const t of object.texts ?? []) if (t?.slotId && t.text) draft.texts[t.slotId] = String(t.text);
-    for (const im of object.images ?? []) if (im?.slotId && im.query) draft.images[im.slotId] = String(im.query);
-    for (const q of object.qr ?? []) if (q?.slotId && q.url) draft.qr[q.slotId] = String(q.url);
-  } catch {
-    /* leave draft empty — buildPage still composes required slots / SAFE fallback */
+  const basePrompt = [
+    'Slots:',
+    ...slotLines,
+    source ? `\nSOURCE DOCUMENT (excerpts most relevant to THIS page — draw its copy from here):\n"""\n${retrieveSource(source, { intent: `${page.intent} ${page.sectionTitle ?? ''}`, maxChars: 6000 })}\n"""` : '',
+  ].join('\n');
+
+  // Copywriter self-heal: keep the attempt with the fewest missing backbone slots,
+  // re-asking (with feedback naming exactly what's empty/thin) until the copy is
+  // complete or attempts run out. This is what lets us DELETE the old
+  // fabricate-a-body fallback — real copy is produced HERE, never invented
+  // downstream. Each attempt is a whole, single-voice draft; we pick the best
+  // rather than stitch several together.
+  let best: PageDraft = { texts: {}, images: {}, qr: {} };
+  let bestGaps = Infinity;
+  let gaps: string[] = [];
+  for (let attempt = 1; attempt <= DRAFT_ATTEMPTS; attempt++) {
+    const feedback =
+      attempt > 1 && gaps.length
+        ? `\n\nYOUR PREVIOUS DRAFT WAS INCOMPLETE — these REQUIRED slots came back empty or too thin. Write real, substantive copy for them now${source ? ', drawn from the source document above' : ''}, and return the FULL page (every slot): ${gaps.join('; ')}.`
+        : '';
+    const draft: PageDraft = { texts: {}, images: {}, qr: {} };
+    try {
+      const { object } = await generateObject({
+        model: getAgentModel(),
+        schema: DraftSchema,
+        system,
+        prompt: basePrompt + feedback,
+        temperature: 0.75,
+        maxRetries: 2,
+        abortSignal: AbortSignal.timeout(60_000),
+      });
+      for (const t of object.texts ?? []) if (t?.slotId && t.text) draft.texts[t.slotId] = String(t.text);
+      for (const im of object.images ?? []) if (im?.slotId && im.query) draft.images[im.slotId] = String(im.query);
+      for (const q of object.qr ?? []) if (q?.slotId && q.url) draft.qr[q.slotId] = String(q.url);
+    } catch {
+      /* this attempt failed to generate — retry if attempts remain */
+    }
+    gaps = draftGaps(draft, template);
+    if (gaps.length < bestGaps) {
+      best = draft;
+      bestGaps = gaps.length;
+    }
+    if (gaps.length === 0) break;
   }
-  return draft;
+  return best;
+}
+
+/**
+ * Flow an already-drafted page's copy onto a DIFFERENT layout's slots, matched by
+ * (slot role, text role) in document order. This decouples COPY from LAYOUT: the
+ * AI layout self-heal can retry a new layout WITHOUT paying for another copywriter
+ * pass, because the substantive prose (the expensive part) is written once and
+ * re-flowed into whatever slots the next layout offers. Empty results for a role
+ * the new layout has more of are left empty (the composer skips empty text leaves);
+ * surplus prior copy is dropped. The caller checks draftGaps on the result and only
+ * drafts fresh when a REQUIRED backbone slot ends up empty — so quality never
+ * regresses, and the common case (a layout that overflowed → a roomier layout for
+ * the SAME copy) costs zero extra tokens.
+ */
+function remapDraftByRole(prev: PageDraft, prevTpl: PageTemplate, nextTpl: PageTemplate): PageDraft {
+  const textPool = new Map<string, string[]>();
+  const imagePool: string[] = [];
+  const qrPool: string[] = [];
+  // Key text by the FINE leaf role (e.g. 'figure' vs 'headline', 'entry' vs 'body'),
+  // NOT the collapsed textRole — otherwise a stat figure and the real headline share
+  // one pool and remap could flow "4.8%" into the headline slot, dropping the title.
+  const textKey = (s: PageTemplateSlot) => s.leafRole ?? s.textRole ?? 'body';
+  for (const s of prevTpl.slots) {
+    if (s.role === 'text') {
+      const v = prev.texts[s.id];
+      if (v && v.trim()) {
+        const k = textKey(s);
+        const list = textPool.get(k) ?? [];
+        list.push(v);
+        textPool.set(k, list);
+      }
+    } else if (s.role === 'image') {
+      const v = prev.images[s.id];
+      if (v && v.trim()) imagePool.push(v);
+    } else if (s.role === 'qr') {
+      const v = prev.qr[s.id];
+      if (v && v.trim()) qrPool.push(v);
+    }
+  }
+  const textCursor = new Map<string, number>();
+  let imageCursor = 0;
+  let qrCursor = 0;
+  const out: PageDraft = { texts: {}, images: {}, qr: {} };
+  for (const s of nextTpl.slots) {
+    if (s.role === 'text') {
+      const k = textKey(s);
+      const list = textPool.get(k) ?? [];
+      const i = textCursor.get(k) ?? 0;
+      if (i < list.length) { out.texts[s.id] = list[i]!; textCursor.set(k, i + 1); }
+    } else if (s.role === 'image') {
+      if (imageCursor < imagePool.length) out.images[s.id] = imagePool[imageCursor++]!;
+    } else if (s.role === 'qr') {
+      if (qrCursor < qrPool.length) out.qr[s.id] = qrPool[qrCursor++]!;
+    }
+  }
+  return out;
 }
 
 /** Ensure the cover always has a strong title/subtitle even if the per-page draft
@@ -468,48 +591,34 @@ function clampCopy(s: string, max: number): string {
   return t.slice(0, max - 1).replace(/\s+\S*$/, '').trim() + '…';
 }
 
-/** A never-blank fallback headline for a page, from its section/intent. */
+/** A never-blank fallback headline: the clean SECTION label, else the magazine
+ *  title — NEVER the intent string (a brief-like sentence that reads as internal
+ *  plumbing if shown as a headline). No fragile clause-splitting. */
 function deriveHeadline(page: GenPlanPage, plan: GenPlan): string {
-  const base = (page.sectionTitle?.trim() || page.intent?.trim() || plan.title).trim();
-  const firstClause = (base.split(/[.!?—:]/)[0] ?? base).trim() || base;
-  return clampCopy(firstClause, 70);
-}
-
-/** A never-blank fallback body paragraph for a page, from its intent. */
-function deriveBody(page: GenPlanPage, plan: GenPlan): string {
-  const base = (page.intent?.trim() || plan.subtitle || plan.title).trim();
-  return clampCopy(base, 400);
+  return clampCopy((page.sectionTitle?.trim() || plan.title || 'Untitled').trim(), 70);
 }
 
 /**
- * Guarantee a page's backbone copy so a thin or failed draft can NEVER leave a
- * page blank/half-empty. Fills — only when the copywriter left them empty — the
- * headline (every page) and at least one body slot (the page's prose backbone),
- * plus the cover's title/subtitle, deriving text from the plan + this page's own
- * intent (no extra model call). Secondary devices (kicker/deck/caption) are left
- * to the copywriter and pruned if empty, so pages never over-fill with filler.
- * Supersedes polishCoverDraft (kept for compatibility) and runs on BOTH the AI
- * and fixed-template paths.
+ * Guarantee a page has a HEADLINE (and the cover its title/subtitle) — the one
+ * piece a page can't render without. Uses the page's REAL section title (or the
+ * magazine title / plan subtitle): honest structural labels, never invented prose.
+ * It deliberately does NOT fabricate body copy — the copywriter self-heal
+ * (draftGaps + DRAFT_ATTEMPTS) owns producing real body prose, so a page that
+ * genuinely has none composes with the real content it has rather than shipping
+ * the internal intent string dressed up as an article. Runs on BOTH paths.
  */
-function backfillDraft(draft: PageDraft, plan: GenPlan, page: GenPlanPage, template: PageTemplate): PageDraft {
+function ensureHeadline(draft: PageDraft, plan: GenPlan, page: GenPlanPage, template: PageTemplate): PageDraft {
   const textSlots = template.slots.filter((s) => s.role === 'text');
   const hasCopy = (id: string) => !!draft.texts[id]?.trim();
   const roleOf = (s: PageTemplateSlot) => s.textRole ?? 'body';
 
-  // Headline — always guaranteed.
   const headlineSlot = textSlots.find((s) => roleOf(s) === 'headline');
   if (headlineSlot && !hasCopy(headlineSlot.id)) {
     draft.texts[headlineSlot.id] = page.kind === 'cover' ? plan.title : deriveHeadline(page, plan);
   }
-  // Cover subtitle — the plan's subtitle.
   if (page.kind === 'cover' && plan.subtitle) {
     const subSlot = textSlots.find((s) => roleOf(s) === 'subhead' && s.id !== headlineSlot?.id);
     if (subSlot && !hasCopy(subSlot.id)) draft.texts[subSlot.id] = plan.subtitle;
-  }
-  // Body — guarantee at least one prose slot carries content (the backbone).
-  const bodySlots = textSlots.filter((s) => roleOf(s) === 'body');
-  if (bodySlots.length > 0 && !bodySlots.some((s) => hasCopy(s.id))) {
-    draft.texts[bodySlots[0]!.id] = deriveBody(page, plan);
   }
   return draft;
 }
@@ -558,9 +667,58 @@ function makeUserPhotoPool(photos: UserPhoto[]) {
     claim(): UserPhoto | null {
       return remaining.shift() ?? null;
     },
+    /** Return photos a page over-claimed but didn't use, so other pages can
+     *  still place them. Synchronous (no await) → concurrency-safe like claim(). */
+    release(back: UserPhoto[]): void {
+      for (const p of back) remaining.push(p);
+    },
   };
 }
 type UserPhotoPool = ReturnType<typeof makeUserPhotoPool>;
+
+/** Anything a composer can claim a user photo from (the shared pool, or a
+ *  per-page allocator over it). */
+interface PhotoClaimer {
+  claim(): UserPhoto | null;
+  release?(photos: UserPhoto[]): void;
+}
+
+/**
+ * Per-PAGE allocator over the shared pool. Claims each distinct user photo from
+ * the pool AT MOST ONCE, caches it, and hands the SAME photos back on retry
+ * (reset() rewinds the cursor). Self-heal re-composes a page several times and
+ * then may fall back to the template path; without this, each discarded attempt
+ * would call pool.claim() again and permanently consume the user's uploaded
+ * photos, starving later pages (a WS3 regression). Concurrency-safe: claim()
+ * stays fully synchronous, exactly like the pool it wraps.
+ */
+function makePagePhotos(pool?: PhotoClaimer): { claim(): UserPhoto | null; reset(): void; releaseUnused(): void } {
+  const claimed: UserPhoto[] = [];
+  let cursor = 0;
+  return {
+    claim() {
+      if (cursor < claimed.length) return claimed[cursor++]!;
+      const p = pool?.claim() ?? null;
+      if (p) {
+        claimed.push(p);
+        cursor++;
+      }
+      return p;
+    },
+    reset() {
+      cursor = 0;
+    },
+    /** At page finalize, return any photos claimed by a discarded (higher-slot)
+     *  attempt but unused by the one that won, so other pages can still place
+     *  them. Call once, AFTER the winning/fallback compose has resolved. */
+    releaseUnused() {
+      if (cursor < claimed.length) {
+        pool?.release?.(claimed.slice(cursor));
+        claimed.length = cursor;
+      }
+    },
+  };
+}
 
 /**
  * The Asset Curator: turn a page's draft into SlotFills. For image slots, source
@@ -574,7 +732,7 @@ async function curateFills(
   draft: PageDraft,
   palette: GenPalette,
   ctx?: { magazineId: string; pageIndex: number },
-  pool?: UserPhotoPool,
+  pool?: PhotoClaimer,
 ): Promise<SlotFill[]> {
   const maybeFills = await mapWithConcurrency(
     template.slots,
@@ -614,10 +772,12 @@ async function curateFills(
 }
 
 // Remap the page's copy + any image onto the SAFE_TEMPLATE slots. Pure reshuffle.
-function buildSafeFills(template: PageTemplate, draft: PageDraft, fills: SlotFill[], palette: GenPalette): SlotFill[] {
+function buildSafeFills(template: PageTemplate, draft: PageDraft, fills: SlotFill[], palette: GenPalette, fallbackHeadline: string): SlotFill[] {
   const roleOf = (slotId: string) => template.slots.find((s) => s.id === slotId)?.textRole;
   const headlineId = Object.keys(draft.texts).find((id) => roleOf(id) === 'headline');
-  const headline = (headlineId && draft.texts[headlineId]) || 'Untitled';
+  // Real drafted headline, else the honest section-title/plan fallback — NEVER a
+  // fabricated "Untitled" (the fake the copywriter self-heal + ensureHeadline exist to avoid).
+  const headline = (headlineId && draft.texts[headlineId]) || fallbackHeadline;
   const body = Object.entries(draft.texts)
     .filter(([id]) => id !== headlineId && ['body', 'subhead', 'pullquote', 'caption'].includes(roleOf(id) ?? ''))
     .map(([, t]) => t)
@@ -637,16 +797,22 @@ async function buildPage(
   template: PageTemplate,
   draft: PageDraft,
   theme: { palette: GenPalette; fonts: GenFonts },
+  fallbackHeadline: string,
   ctx?: { magazineId: string; pageIndex: number },
-  pool?: UserPhotoPool,
+  pool?: PhotoClaimer,
 ): Promise<ComposedPage> {
   const dims = { width: PAGE_W, height: PAGE_H };
   const fills = await curateFills(template, draft, theme.palette, ctx, pool);
   let composed = composePage(template, fills, theme);
   let elements = normalizeElements(composed.elements, dims);
 
-  if (!validatePageLayout(elements, dims).ok) {
-    composed = composePage(SAFE_TEMPLATE, buildSafeFills(template, draft, fills, theme.palette), theme);
+  const report = validatePageLayout(elements, dims);
+  if (!report.ok) {
+    // Last-resort safety net (now rare — the AI path self-heals before ever
+    // reaching here). Log WHY: this swap used to be silent, so every fallback was
+    // an unexplained short/blank page in the output.
+    console.warn(`[magazineV2] template "${template.kind}" failed QA (${report.issues.map((i) => i.kind).join(', ') || 'unknown'}) — using SAFE_TEMPLATE.`);
+    composed = composePage(SAFE_TEMPLATE, buildSafeFills(template, draft, fills, theme.palette, fallbackHeadline), theme);
     elements = normalizeElements(composed.elements, dims);
   }
   return { background: composed.background, elements };
@@ -661,12 +827,13 @@ async function composeOnePageTemplate(
   totalPages: number,
   ctx?: { magazineId: string; pageIndex: number },
   sourceText?: string,
-  pool?: UserPhotoPool,
+  pool?: PhotoClaimer,
 ): Promise<ComposedPage> {
   const template = defaultTemplateForKind(page.kind);
   let draft = await draftPage({ plan, page, template, pageNumber, totalPages, sourceText });
-  draft = backfillDraft(draft, plan, page, template);
-  return buildPage(template, draft, { palette: plan.palette, fonts: plan.fonts }, ctx, pool);
+  draft = ensureHeadline(draft, plan, page, template);
+  const fallbackHeadline = page.kind === 'cover' ? plan.title : deriveHeadline(page, plan);
+  return buildPage(template, draft, { palette: plan.palette, fonts: plan.fonts }, fallbackHeadline, ctx, pool);
 }
 
 /** Compose one page. Dispatches to the AI-authored-layout path when the flag is
@@ -679,7 +846,7 @@ async function composeOnePage(
   totalPages: number,
   ctx?: { magazineId: string; pageIndex: number },
   sourceText?: string,
-  pool?: UserPhotoPool,
+  pool?: PhotoClaimer,
 ): Promise<ComposedPage> {
   if (aiLayoutEnabled()) {
     return composeOnePageAI(plan, page, pageNumber, totalPages, ctx, sourceText, pool);
@@ -702,6 +869,12 @@ function aiLayoutEnabled(): boolean {
   const v = (process.env.MAGAZINE_V2_AI_LAYOUT ?? '').trim().toLowerCase();
   return v !== '0' && v !== 'false' && v !== 'off' && v !== 'no';
 }
+
+// How many times the art-director may attempt a page: the first try, plus
+// bounded self-heal retries that feed the QA-failure reason back so it fixes its
+// OWN layout before we fall back to the fixed template. Bounded (not a runaway
+// loop). Override with MAGAZINE_V2_AI_LAYOUT_ATTEMPTS.
+const AI_LAYOUT_ATTEMPTS = Math.max(1, Math.min(4, Number(process.env.MAGAZINE_V2_AI_LAYOUT_ATTEMPTS) || 2));
 
 /** Map a DSL leaf role to the element model's text role (for draftPage's copy
  *  guidance). Non-obvious roles collapse to their nearest editorial equivalent. */
@@ -744,6 +917,7 @@ function buildPseudoTemplate(spec: LayoutSpec): PageTemplate {
       id: ref,
       role: sRole,
       textRole,
+      leafRole: role, // finer than textRole — keeps figure≠headline, entry≠body for copy re-flow
       required: false,
       z: leaf.z,
       box: { x: leaf.box.x / PAGE_W, y: leaf.box.y / PAGE_H, w: leaf.box.w / PAGE_W, h: leaf.box.h / PAGE_H },
@@ -778,7 +952,7 @@ async function composeSpecToPage(
   draft: PageDraft,
   theme: { palette: GenPalette; fonts: GenFonts },
   ctx?: { magazineId: string; pageIndex: number },
-  pool?: UserPhotoPool,
+  pool?: PhotoClaimer,
 ): Promise<{ page: ComposedPage | null; why?: string }> {
   const dims = { width: PAGE_W, height: PAGE_H };
   const fills = await curateFills(pseudo, draft, theme.palette, ctx, pool);
@@ -805,18 +979,40 @@ async function composeSpecToPage(
   return { page: { background: composed.background, elements } };
 }
 
-/** Extract the first complete JSON object from model text (tolerates prose /
- *  ``` fences — the braces sit inside them). Returns null if unparseable. */
+/** Extract the FIRST complete, brace-balanced JSON object from model text
+ *  (tolerates prose or ``` fences around it, and stray braces AFTER it). The old
+ *  first-`{`/last-`}` slice spanned two objects or embedded prose braces and
+ *  failed to parse — silently forcing the seed layout. String-aware so braces
+ *  inside string literals don't miscount. Returns null if none parses. */
 function parseJsonObject(text: string): unknown | null {
   if (!text) return null;
-  const start = text.indexOf('{');
-  const end = text.lastIndexOf('}');
-  if (start < 0 || end <= start) return null;
-  try {
-    return JSON.parse(text.slice(start, end + 1));
-  } catch {
-    return null;
+  // Try each '{' as a candidate start: scan its brace-balanced (string-aware)
+  // group and parse it; if that group isn't valid JSON (e.g. a prose "{note}"
+  // before the real object), advance to the next '{' and try again.
+  for (let start = text.indexOf('{'); start !== -1; start = text.indexOf('{', start + 1)) {
+    let depth = 0;
+    let inStr = false;
+    let esc = false;
+    for (let i = start; i < text.length; i++) {
+      const ch = text[i]!;
+      if (inStr) {
+        if (esc) esc = false;
+        else if (ch === '\\') esc = true;
+        else if (ch === '"') inStr = false;
+        continue;
+      }
+      if (ch === '"') inStr = true;
+      else if (ch === '{') depth++;
+      else if (ch === '}' && --depth === 0) {
+        try {
+          return JSON.parse(text.slice(start, i + 1));
+        } catch {
+          break; // this candidate group isn't valid JSON — try the next '{'
+        }
+      }
+    }
   }
+  return null;
 }
 
 /**
@@ -830,7 +1026,7 @@ function parseJsonObject(text: string): unknown | null {
  * if the model returns nothing usable. Never throws.
  * `source` reports whether the model authored it ('agent') or we used the seed.
  */
-async function artDirectPage(plan: GenPlan, page: GenPlanPage, pageNumber: number): Promise<{ spec: LayoutSpec; source: 'agent' | 'seed' }> {
+async function artDirectPage(plan: GenPlan, page: GenPlanPage, pageNumber: number, retryHint?: string): Promise<{ spec: LayoutSpec; source: 'agent' | 'seed' }> {
   const system = [
     'You are the Art Director of a premium print magazine. Design ONE page as a relative',
     'LAYOUT TREE in JSON — never pixels, never x/y/width/height. Output ONLY the JSON object,',
@@ -903,8 +1099,8 @@ async function artDirectPage(plan: GenPlan, page: GenPlanPage, pageNumber: numbe
     '• A COVER: make the magazine TITLE the dominant element across (near) the FULL width — never a narrow',
     '  column — and keep titles/headlines SHORT so words never break awkwardly.',
     '',
-    'This is a New Zealand horse-racing magazine — favour photo-led, premium editorial layouts suited to',
-    'racing and equine imagery.',
+    domainGrounding(plan),
+    'Favour photo-led, premium editorial layouts suited to the subject.',
     '',
     `Palette: ${JSON.stringify(plan.palette)}. Fonts: display="${plan.fonts.display}", body="${plan.fonts.body}".`,
     '',
@@ -932,6 +1128,9 @@ async function artDirectPage(plan: GenPlan, page: GenPlanPage, pageNumber: numbe
         `Design a distinct, modern layout tree for a "${page.kind}" page.`,
         `Intent: ${page.intent}${page.sectionTitle ? ` (section: ${page.sectionTitle})` : ''}.`,
         archetypeSteer(page.kind, pageNumber),
+        retryHint
+          ? `\nYOUR PREVIOUS LAYOUT FAILED THE QUALITY CHECK: ${retryHint}\nProduce a CORRECTED layout that specifically fixes that — give text enough room, use fewer/shorter leaves or a simpler tree, and make sure nothing overflows its box or overlaps. Do not repeat the same mistake.`
+          : '',
         'Return ONLY the JSON.',
       ].join('\n'),
       temperature: 0.95,
@@ -960,27 +1159,80 @@ async function composeOnePageAI(
   totalPages: number,
   ctx?: { magazineId: string; pageIndex: number },
   sourceText?: string,
-  pool?: UserPhotoPool,
+  pool?: PhotoClaimer,
 ): Promise<ComposedPage> {
   const theme = { palette: plan.palette, fonts: plan.fonts };
+  // Claim each of the user's uploaded photos AT MOST ONCE for this page (not once
+  // per attempt): discarded self-heal attempts and the template fallback must not
+  // drain the shared pool and starve later pages of the user's real photos.
+  const pagePool = makePagePhotos(pool);
   try {
-    const { spec, source } = await artDirectPage(plan, page, pageNumber);
-    const pseudo = buildPseudoTemplate(spec);
-    if (pseudo.slots.length > 0) {
-      let draft = await draftPage({ plan, page, template: pseudo, pageNumber, totalPages, sourceText });
-      draft = backfillDraft(draft, plan, page, pseudo);
-      const { page: aiPage, why } = await composeSpecToPage(spec, pseudo, draft, theme, ctx, pool);
+  // Self-heal: when the composed spec fails layout QA, feed the SPECIFIC reason
+  // back to the art-director so it fixes its OWN layout (bounded retries) instead
+  // of silently dropping to the fixed template on the first failure. The template
+  // path remains only as a rare, logged last resort once attempts are spent.
+  let hint: string | undefined;
+  // Copy is drafted ONCE and re-flowed across layout retries (see remapDraftByRole):
+  // a layout self-heal must not re-run the copywriter. Holds the last FRESHLY-drafted
+  // copy + the template it was written against, so retries remap from it by role.
+  let contentDraft: PageDraft | null = null;
+  let contentTpl: PageTemplate | null = null;
+  for (let attempt = 1; attempt <= AI_LAYOUT_ATTEMPTS; attempt++) {
+    pagePool.reset(); // every attempt reuses the same claimed photos, never fresh ones
+    try {
+      const { spec, source } = await artDirectPage(plan, page, pageNumber, hint);
+      const pseudo = buildPseudoTemplate(spec);
+      if (pseudo.slots.length === 0) break; // unusable spec shape → template path
+      // Reuse prior copy when possible: remap it onto THIS attempt's slots and only
+      // pay for a fresh copywriter pass when there's no prior copy or the remap
+      // leaves a required backbone slot empty. A layout that overflowed then needs a
+      // roomier layout for the SAME words — not new words.
+      let draft: PageDraft;
+      let draftedFresh = false;
+      if (contentDraft && contentTpl) {
+        draft = remapDraftByRole(contentDraft, contentTpl, pseudo);
+        if (draftGaps(draft, pseudo).length > 0) {
+          draft = await draftPage({ plan, page, template: pseudo, pageNumber, totalPages, sourceText });
+          draftedFresh = true;
+        }
+      } else {
+        draft = await draftPage({ plan, page, template: pseudo, pageNumber, totalPages, sourceText });
+        draftedFresh = true;
+      }
+      draft = ensureHeadline(draft, plan, page, pseudo);
+      // Remember the (headline-ensured) fresh copy as the source for later remaps.
+      if (draftedFresh) { contentDraft = draft; contentTpl = pseudo; }
+      const { page: aiPage, why } = await composeSpecToPage(spec, pseudo, draft, theme, ctx, pagePool);
       if (aiPage && !isTooSparse(aiPage, page.kind)) {
-        console.log(`[magazineV2] page ${pageNumber}/${totalPages} "${page.kind}" → AI layout (spec: ${source}, ${pseudo.slots.length} slots, ${aiPage.elements.length} elements)`);
+        console.log(`[magazineV2] page ${pageNumber}/${totalPages} "${page.kind}" → AI layout (attempt ${attempt}, spec: ${source}, ${pseudo.slots.length} slots, ${aiPage.elements.length} elements)`);
         return aiPage;
       }
-      const reason = aiPage ? 'too sparse' : `failed QA (${why})`;
-      console.warn(`[magazineV2] page ${pageNumber} "${page.kind}" AI layout ${reason} — using template path.`);
+      if (aiPage) {
+        // Too sparse: the page needs MORE substance, so draft FRESH copy for the
+        // next (richer) layout instead of re-flowing the same thin copy — reuse is
+        // only the right call when the copy was fine and the LAYOUT overflowed.
+        hint = 'the layout was too sparse — too few real content elements; fill the page with substantive content leaves';
+        contentDraft = null;
+        contentTpl = null;
+      } else {
+        hint = why; // a QA/overflow failure → keep the copy, re-solve the layout
+      }
+      const spent = attempt >= AI_LAYOUT_ATTEMPTS;
+      console.warn(`[magazineV2] page ${pageNumber} "${page.kind}" AI layout attempt ${attempt}/${AI_LAYOUT_ATTEMPTS} failed (${aiPage ? 'too sparse' : `QA: ${why}`}) — ${spent ? 'using template path' : 'self-healing'}.`);
+      // A fixed SEED spec is deterministic — retrying it changes nothing, so don't
+      // burn an attempt; drop to the template path now.
+      if (source === 'seed') break;
+    } catch (err) {
+      console.warn('[magazineV2] AI-layout page errored, using template path:', err instanceof Error ? err.message : err);
+      break;
     }
-  } catch (err) {
-    console.warn('[magazineV2] AI-layout page errored, using template path:', err instanceof Error ? err.message : err);
   }
-  return composeOnePageTemplate(plan, page, pageNumber, totalPages, ctx, sourceText, pool);
+    pagePool.reset(); // the template fallback reuses the same claimed photos, not fresh ones
+    // `return await` so the finally below runs AFTER the fallback has claimed, not before.
+    return await composeOnePageTemplate(plan, page, pageNumber, totalPages, ctx, sourceText, pagePool);
+  } finally {
+    pagePool.releaseUnused(); // return any over-claimed user photos to the shared pool
+  }
 }
 
 // ── Public entry points ───────────────────────────────────────────────────────
@@ -1079,13 +1331,14 @@ export async function generateMagazineIssue(issueId: string, brief: string, page
       updatedAt: new Date().toISOString(),
     });
   } catch (err) {
+    // This handler is idempotent (it clears stale pages up top), so RETHROW
+    // rather than silently marking the issue failed and returning: the queue
+    // then retries transient failures (a 429/timeout on one page) up to
+    // maxAttempts, and records the terminal 'failed' status on the issue only
+    // once attempts are exhausted. Marking failed + returning here is what made
+    // "generation failed … job done" swallow the error with no retry.
     console.error('[magazineV2] generation failed:', err instanceof Error ? err.message : err);
-    await db.collection(COL.issues).updateOne(issueId, {
-      status: 'failed',
-      processingError: err instanceof Error ? err.message : 'Generation failed',
-      stage: '',
-      updatedAt: new Date().toISOString(),
-    });
+    throw err;
   }
 }
 

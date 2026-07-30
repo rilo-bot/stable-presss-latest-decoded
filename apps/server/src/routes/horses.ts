@@ -1,6 +1,6 @@
 import { Router } from 'express';
 import { db } from '../lib/db.js';
-import { isStaff } from '../lib/rbac.js';
+import { canAccessNewsroom } from '../lib/rbac.js';
 import { authorisedHorseIds, manageablePartyIds } from '../lib/scope.js';
 
 type WithMongoId = { _id: string; [key: string]: unknown };
@@ -27,7 +27,7 @@ const ROLE_LINK_FIELDS: { field: string; rel: string }[] = [
 router.get('/', async (req, res) => {
   const items = await db.collection('horses').find();
   const account = req.account;
-  if (isStaff(account)) {
+  if (canAccessNewsroom(account)) {
     res.json(items.map(project));
     return;
   }
@@ -91,7 +91,7 @@ router.post('/', async (req, res) => {
   }
 
   const account = req.account;
-  const staff = isStaff(account);
+  const staff = canAccessNewsroom(account);
   const now = new Date().toISOString();
 
   // Staff-created horses are live; member-created horses are unverified (hidden
@@ -190,7 +190,7 @@ router.put('/:id', async (req, res) => {
   }>;
 
   const account = req.account;
-  const staff = isStaff(account);
+  const staff = canAccessNewsroom(account);
   const now = new Date().toISOString();
   const update: Record<string, unknown> = { ...body, updatedAt: now };
   delete (update as { id?: unknown }).id;

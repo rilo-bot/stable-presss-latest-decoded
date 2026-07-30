@@ -83,11 +83,7 @@ export default function ArticleDetail() {
   // Closing the page closes the studio so it never lingers on another route.
   useEffect(() => () => useArticleStudioUi.getState().close(), []);
 
-  const canEdit = canEditArticle(
-    currentUser?.role ?? null,
-    article?.author ?? '',
-    currentUser?.displayName,
-  );
+  const canEdit = canEditArticle(article?.author ?? '', currentUser?.displayName);
 
   const startEditing = () => {
     if (!article) return;

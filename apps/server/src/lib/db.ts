@@ -162,6 +162,41 @@ function mongoCollection(name: string) {
       if (!doc) return null
       return { ...doc, _id: doc._id.toString() } as Doc
     },
+    // Atomic array add/remove on ONE doc. Read-modify-write on an array field
+    // loses concurrent updates (two admins editing the same user's roles at once
+    // drops one of the writes); $addToSet / $pull are evaluated server-side, so
+    // they don't. Prefer these over find-then-updateOne for any array field.
+    async addToSet(id: string, field: string, value: unknown): Promise<boolean> {
+      const db = await getMongoDb()
+      const update = { $addToSet: { [field]: value } }
+      let result
+      try {
+        result = await db.collection(name).updateOne({ _id: new ObjectId(id), deletedAt: null }, update)
+      } catch {
+        result = await db.collection(name).updateOne({ _id: id as any, deletedAt: null }, update)
+      }
+      return result.matchedCount > 0
+    },
+    async pullFrom(id: string, field: string, value: unknown): Promise<boolean> {
+      const db = await getMongoDb()
+      const update = { $pull: { [field]: value } } as Record<string, unknown>
+      let result
+      try {
+        result = await db.collection(name).updateOne({ _id: new ObjectId(id), deletedAt: null }, update)
+      } catch {
+        result = await db.collection(name).updateOne({ _id: id as any, deletedAt: null }, update)
+      }
+      return result.matchedCount > 0
+    },
+    // $pull a value from an array field across EVERY live doc. Used to clean up
+    // references when the thing being referenced is deleted.
+    async pullFromAll(field: string, value: unknown): Promise<number> {
+      const db = await getMongoDb()
+      const result = await db
+        .collection(name)
+        .updateMany({ deletedAt: null }, { $pull: { [field]: value } } as Record<string, unknown>)
+      return result.modifiedCount
+    },
     // Soft delete only — stamp `deletedAt` instead of removing the document, so
     // find()/findById() hide it while the data stays recoverable. There is no
     // hard-delete path anywhere.

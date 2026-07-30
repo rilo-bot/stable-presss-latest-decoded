@@ -6,6 +6,7 @@ import { cn } from '@/lib/utils';
 import type { Party } from '@/types/party';
 import { PARTY_ROLE_LABELS } from '@/types/party';
 import { ROLE_COLORS } from '../constants';
+import { DeleteConfirmDialog } from '../components/DeleteConfirmDialog';
 
 interface PartiesProductionSystemProps {
   safeParties: Party[];
@@ -37,17 +38,7 @@ export function PartiesProductionSystem({
   const currentYear = new Date().getFullYear();
   return (
     <div className="space-y-5">
-      <div className="flex items-center justify-between gap-4 flex-wrap">
-        <div>
-          <p className="text-[12px] uppercase tracking-[0.14em] font-bold text-muted-foreground mb-0.5">
-            Stable Press Production System
-          </p>
-          <p className="text-sm text-muted-foreground">
-            {safeParties.length === 0
-              ? 'No parties on record yet.'
-              : `${safeParties.length} ${safeParties.length === 1 ? 'party' : 'parties'} registered`}
-          </p>
-        </div>
+      <div className="flex items-center justify-end gap-4 flex-wrap">
         <Button
           size="sm"
           className="bg-primary text-primary-foreground hover:bg-primary/90 gap-1.5 text-sm"
@@ -233,33 +224,19 @@ export function PartiesProductionSystem({
         </div>
       )}
 
-      {partyDeleteConfirm && partyDeleteTarget && (
-        <div className="border border-destructive/30 rounded-sm bg-destructive/5 px-4 py-3 flex items-center justify-between gap-4 flex-wrap">
-          <p className="text-sm text-foreground">
-            Remove{' '}
-            <span className="font-semibold">{partyDeleteTarget.name}</span>
+      <DeleteConfirmDialog
+        open={partyDeleteConfirm && !!partyDeleteTarget}
+        title="Remove party"
+        message={
+          <>
+            Remove <span className="font-semibold">{partyDeleteTarget?.name}</span>
             {' '}from Stable Press? This cannot be undone.
-          </p>
-          <div className="flex items-center gap-2 flex-shrink-0">
-            <Button
-              size="sm"
-              variant="outline"
-              className="text-sm"
-              onClick={() => { setPartyDeleteConfirm(false); setPartyDeleteTarget(null); }}
-            >
-              Cancel
-            </Button>
-            <Button
-              size="sm"
-              variant="destructive"
-              className="text-sm"
-              onClick={confirmPartyDelete}
-            >
-              Remove
-            </Button>
-          </div>
-        </div>
-      )}
+          </>
+        }
+        confirmLabel="Remove"
+        onCancel={() => { setPartyDeleteConfirm(false); setPartyDeleteTarget(null); }}
+        onConfirm={confirmPartyDelete}
+      />
 
       {safeParties.length > 0 && (
         <div className="flex items-start gap-2.5 px-4 py-3 rounded-sm border border-border/50 bg-muted/20">

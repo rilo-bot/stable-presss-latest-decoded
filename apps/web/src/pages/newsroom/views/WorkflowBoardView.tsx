@@ -5,7 +5,6 @@ import { can } from '@/lib/permissions';
 import { KanbanColumn, WORKFLOW_STAGES } from '@/components/KanbanColumn';
 import type { KanbanStatus } from '@/components/KanbanColumn';
 import type { Article } from '@/types/article';
-import type { UserRole } from '@/stores/authStore';
 import { WorkflowFlowBar } from '../components/WorkflowFlowBar';
 
 interface WorkflowBoardViewProps {
@@ -18,7 +17,6 @@ interface WorkflowBoardViewProps {
   activeColumn: KanbanStatus;
   setActiveColumn: (status: KanbanStatus) => void;
   buckets: Record<KanbanStatus, Article[]>;
-  userRole: UserRole | null;
   onAdvance: (articleId: string, toStatus: KanbanStatus) => void;
   onEdit: (article: Article) => void;
   onDelete: (article: Article) => void;
@@ -35,7 +33,6 @@ export function WorkflowBoardView({
   activeColumn,
   setActiveColumn,
   buckets,
-  userRole,
   onAdvance,
   onEdit,
   onDelete,
@@ -99,7 +96,7 @@ export function WorkflowBoardView({
         )}
       >
         {visibleStages.map((col) => {
-          const canAdd = can(userRole, 'content.draft.create') && col.status === 'draft';
+          const canAdd = can('content.draft.create') && col.status === 'draft';
           return (
             <div key={col.status} className="flex flex-col gap-2">
               <KanbanColumn
@@ -111,7 +108,6 @@ export function WorkflowBoardView({
                 onEdit={onEdit}
                 onDelete={onDelete}
                 currentUserDisplayName={currentUserDisplayName}
-                userRole={userRole}
               />
               {canAdd && (
                 <button
@@ -142,9 +138,8 @@ export function WorkflowBoardView({
                 onEdit={onEdit}
                 onDelete={onDelete}
                 currentUserDisplayName={currentUserDisplayName}
-                userRole={userRole}
               />
-              {can(userRole, 'content.draft.create') && col.status === 'draft' && (
+              {can('content.draft.create') && col.status === 'draft' && (
                 <button
                   onClick={() => onNewInColumn(col.status)}
                   className="flex items-center justify-center gap-1.5 py-2 rounded-sm border border-dashed border-border/60 text-[12px] uppercase tracking-[0.08em] font-semibold text-muted-foreground hover:text-foreground hover:border-primary/40 transition-colors"
