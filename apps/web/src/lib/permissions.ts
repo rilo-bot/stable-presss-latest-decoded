@@ -79,7 +79,8 @@ export type PermissionAction =
   | 'podcast.episode.approve'       // Approve an episode (move → Published)
   | 'podcast.episode.publish'       // Publish episode & push to channels
   | 'podcast.distribution.manage'   // Toggle distribution channels per episode
-  | 'podcast.episode.delete';       // Delete a draft or unpublished episode
+  | 'podcast.episode.delete'        // Delete a draft or unpublished episode
+  | 'podcast.read_all';             // See unpublished episodes, not just live ones
 
 // The local role→permission matrix that used to live here is GONE. Roles are
 // rows in the database now, so the only correct answer comes from the server-

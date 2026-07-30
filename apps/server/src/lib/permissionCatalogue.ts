@@ -204,7 +204,9 @@ export const MODULE_CATALOGUE: ModuleMeta[] = [
   { id: 'media-production-system', label: 'Media Records', section: 'Stables', requiresPermission: 'content.draft.create' },
   { id: 'racing-production-system', label: 'Racing Data', section: 'Stables', requiresPermission: 'content.draft.create' },
   { id: 'team', label: 'Team Members', section: 'Management', requiresPermission: 'team.manage' },
-  { id: 'roles', label: 'Roles & Permissions', section: 'Management', requiresPermission: 'team.manage' },
+  // roles.manage, NOT team.manage — /api/roles enforces roles.manage, so gating
+  // the surface on anything looser shows a console whose every call 403s.
+  { id: 'roles', label: 'Roles & Permissions', section: 'Management', requiresPermission: 'roles.manage' },
   { id: 'analytics', label: 'Analytics', section: 'Management', requiresPermission: 'analytics.view' },
   { id: 'settings', label: 'Settings', section: 'Management', requiresPermission: 'settings.view' },
 

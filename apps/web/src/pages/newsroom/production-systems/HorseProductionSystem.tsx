@@ -5,6 +5,7 @@ import { Button } from '@/components/ui/button';
 import { EmptyState } from '@/components/EmptyState';
 import { HorsePartyLinkPanel } from '@/components/HorsePartyLinkPanel';
 import { AddHorseChoice } from '@/components/AddHorseChoice';
+import { DeleteConfirmDialog } from '../components/DeleteConfirmDialog';
 import { useHorseStore } from '@/stores/horseStore';
 import { cn } from '@/lib/utils';
 import type { Horse } from '@/types/horse';
@@ -93,17 +94,7 @@ export function HorseProductionSystem({
 
   return (
     <div className="space-y-5">
-      <div className="flex items-center justify-between gap-4 flex-wrap">
-        <div>
-          <p className="text-[12px] uppercase tracking-[0.14em] font-bold text-muted-foreground mb-0.5">
-            Stable Press Production System
-          </p>
-          <p className="text-sm text-muted-foreground">
-            {safeHorses.length === 0
-              ? 'No thoroughbreds on record yet.'
-              : `${safeHorses.length} thoroughbred${safeHorses.length !== 1 ? 's' : ''} in the stables`}
-          </p>
-        </div>
+      <div className="flex items-center justify-end gap-4 flex-wrap">
         <Button
           size="sm"
           className="bg-primary text-primary-foreground hover:bg-primary/90 gap-1.5 text-sm"
@@ -315,51 +306,18 @@ export function HorseProductionSystem({
         </div>
       )}
 
-      {horseDeleteConfirm && horseDeleteTarget && (
-        <div
-          role="dialog"
-          aria-modal="true"
-          aria-label="Confirm delete"
-          className="fixed inset-0 z-[90] flex items-center justify-center p-4"
-        >
-          <div
-            aria-hidden
-            onClick={() => { setHorseDeleteConfirm(false); setHorseDeleteTarget(null); }}
-            className="absolute inset-0 bg-foreground/40 backdrop-blur-[2px]"
-          />
-          <div className="relative z-[1] w-[min(94vw,440px)] rounded-sm border border-destructive/30 bg-card shadow-xl">
-            <div className="flex items-center gap-2 px-5 py-3 border-b border-border/50">
-              <Trash2 size={15} className="text-destructive flex-shrink-0" />
-              <span className="text-sm font-bold text-foreground">Delete thoroughbred</span>
-            </div>
-            <div className="px-5 py-4">
-              <p className="text-sm text-foreground leading-relaxed">
-                Remove{' '}
-                <span className="font-semibold">{horseDeleteTarget.name || 'Unnamed'}</span>
-                {' '}from Stable Press? This cannot be undone.
-              </p>
-            </div>
-            <div className="flex items-center justify-end gap-2 px-5 py-3 border-t border-border/50 bg-muted/20">
-              <Button
-                size="sm"
-                variant="outline"
-                className="text-sm"
-                onClick={() => { setHorseDeleteConfirm(false); setHorseDeleteTarget(null); }}
-              >
-                Cancel
-              </Button>
-              <Button
-                size="sm"
-                variant="destructive"
-                className="text-sm"
-                onClick={confirmHorseDelete}
-              >
-                Delete
-              </Button>
-            </div>
-          </div>
-        </div>
-      )}
+      <DeleteConfirmDialog
+        open={horseDeleteConfirm && !!horseDeleteTarget}
+        title="Delete thoroughbred"
+        message={
+          <>
+            Remove <span className="font-semibold">{horseDeleteTarget?.name || 'Unnamed'}</span>
+            {' '}from Stable Press? This cannot be undone.
+          </>
+        }
+        onCancel={() => { setHorseDeleteConfirm(false); setHorseDeleteTarget(null); }}
+        onConfirm={confirmHorseDelete}
+      />
 
       {safeHorses.length > 0 && (
         <div className="flex items-start gap-2.5 px-4 py-3 rounded-sm border border-border/50 bg-muted/20">

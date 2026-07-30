@@ -432,20 +432,12 @@ export default function Dashboard() {
                 <Newspaper size={15} /> Newsroom Production System
               </Link>
               {admin && (
-                <>
-                  <Link
-                    to="/claims"
-                    className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-sm border border-border/60 text-sm hover:border-primary/50 transition-colors"
-                  >
-                    <ShieldCheck size={15} /> Verify Claims
-                  </Link>
-                  <Link
-                    to="/staff"
-                    className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-sm border border-border/60 text-sm hover:border-primary/50 transition-colors"
-                  >
-                    <Users size={15} /> Manage Staff
-                  </Link>
-                </>
+                <Link
+                  to="/claims"
+                  className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-sm border border-border/60 text-sm hover:border-primary/50 transition-colors"
+                >
+                  <ShieldCheck size={15} /> Verify Claims
+                </Link>
               )}
             </div>
           </Section>

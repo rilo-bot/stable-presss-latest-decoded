@@ -511,16 +511,11 @@ export function RolesPermissionsView({ canManageRoles }: RolesPermissionsViewPro
     <div className="space-y-4">
       {/* Header */}
       <div className="flex items-start justify-between gap-4 flex-wrap">
-        <div>
-          <p className="text-[12px] uppercase tracking-[0.14em] font-bold text-muted-foreground mb-0.5">
-            Roles &amp; Permissions
-          </p>
-          <p className="text-sm text-muted-foreground max-w-2xl">
-            Every role on the platform lives here, with everything it grants shown up front. Edit a
-            role to change it, then assign it from{' '}
-            <span className="font-medium text-foreground">Team Members</span>.
-          </p>
-        </div>
+        <p className="text-sm text-muted-foreground max-w-2xl">
+          Every role on the platform lives here, with everything it grants shown up front. Edit a
+          role to change it, then assign it from{' '}
+          <span className="font-medium text-foreground">Team Members</span>.
+        </p>
         {editingSlug === null && (
           <Button size="sm" onClick={startNew} className="gap-1.5">
             <Plus size={14} /> New role

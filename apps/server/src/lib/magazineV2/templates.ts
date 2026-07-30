@@ -65,6 +65,11 @@ export interface PageTemplateSlot {
   id: string; // stable within the template, e.g. "headline"
   role: SlotRole;
   textRole?: TextRole; // for text slots
+  /** The ORIGINAL DSL leaf role for AI-authored pseudo-templates (e.g. 'figure',
+   *  'entry', 'kicker', 'label') — finer than textRole, which collapses several
+   *  of these together. Used to re-flow drafted copy across layout retries WITHOUT
+   *  cross-routing a stat figure into a headline slot. Absent on fixed templates. */
+  leafRole?: string;
   required: boolean;
   /** Box as fractions of page width/height (0..1). Resolved to px at fill. */
   box: { x: number; y: number; w: number; h: number };

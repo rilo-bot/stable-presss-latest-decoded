@@ -78,24 +78,36 @@ let cache: Map<string, RoleDoc> | null = null
 let cachedAt = 0
 /** In-flight load, so a burst of concurrent requests triggers ONE query. */
 let inflight: Promise<Map<string, RoleDoc>> | null = null
+/**
+ * Bumped on every bust. A load that started before a bust must not commit its
+ * (now stale) result afterwards — without this, an edit saved while another
+ * request happened to be mid-load would appear to succeed and then not take
+ * effect for a full TTL, which is exactly the bug an explicit bust exists to
+ * prevent.
+ */
+let generation = 0
 
 /** Drop the cache. Call after every write to the roles collection. */
 export function bustRoleCache(): void {
   cache = null
   cachedAt = 0
   inflight = null
+  generation++
 }
 
 async function loadRoles(): Promise<Map<string, RoleDoc>> {
+  const startedAt = generation
   const docs = await db.collection('roles').find()
   const map = new Map<string, RoleDoc>()
   for (const doc of docs) {
     const role = projectRole(doc)
     if (role.slug) map.set(role.slug, role)
   }
-  cache = map
-  cachedAt = Date.now()
-  inflight = null
+  // Anything busted while this read was in flight wins; drop our result.
+  if (generation === startedAt) {
+    cache = map
+    cachedAt = Date.now()
+  }
   return map
 }
 
@@ -103,7 +115,19 @@ async function loadRoles(): Promise<Map<string, RoleDoc>> {
 export function getRoles(): Promise<Map<string, RoleDoc>> {
   if (cache && Date.now() - cachedAt < CACHE_TTL_MS) return Promise.resolve(cache)
   // Collapse concurrent misses onto a single load.
-  if (!inflight) inflight = loadRoles()
+  if (!inflight) {
+    const load = loadRoles()
+    inflight = load
+    // Clear on BOTH settle paths. Clearing only on success (inside loadRoles)
+    // meant one failed read left a rejected promise parked here forever, and
+    // every later getRoles() re-returned it — permanently breaking every
+    // authorization check until the process restarted.
+    void load
+      .catch(() => undefined)
+      .finally(() => {
+        if (inflight === load) inflight = null
+      })
+  }
   return inflight
 }
 

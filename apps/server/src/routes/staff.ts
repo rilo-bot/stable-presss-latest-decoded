@@ -15,14 +15,16 @@ import { Router } from 'express'
 import { db } from '../lib/db.js'
 import { attachAccount } from '../lib/auth.js'
 import { withIdentityDefaults } from '../lib/identity.js'
-import { canManageRoles } from '../lib/rbac.js'
+import { canManageTeam } from '../lib/rbac.js'
 import { SUPERADMIN_SLUG, getRoles } from '../lib/roleRegistry.js'
 
 const router = Router()
 
 router.use(attachAccount)
+// The roster is `team.manage`, not `roles.manage` — inviting someone is a
+// different power from defining what a role may do. See routes/roles.ts.
 router.use((req, res, next) => {
-  if (!canManageRoles(req.account)) {
+  if (!canManageTeam(req.account)) {
     res.status(403).json({ error: 'You do not have permission to manage the team.' })
     return
   }

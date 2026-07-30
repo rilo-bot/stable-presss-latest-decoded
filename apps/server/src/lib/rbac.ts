@@ -70,9 +70,18 @@ export function contentCan(account: AccountUser | undefined, action: ContentActi
   return accountCan(account, action)
 }
 
-/** May create/edit roles and assign them. */
+/**
+ * May DEFINE roles — create them, change what they grant, delete them.
+ * Distinct from canManageTeam: deciding what a role can do is a different
+ * (and strictly more dangerous) power than deciding who holds it.
+ */
 export function canManageRoles(account: AccountUser | undefined): boolean {
-  return accountCan(account, 'roles.manage' as PermissionAction)
+  return accountCan(account, 'roles.manage')
+}
+
+/** May manage the roster — invite people and assign/unassign existing roles. */
+export function canManageTeam(account: AccountUser | undefined): boolean {
+  return accountCan(account, 'team.manage')
 }
 
 const forbid = (res: Response, msg: string) => res.status(403).json({ error: msg })

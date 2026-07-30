@@ -34,7 +34,7 @@ export interface AssignedRole {
   slug: string;
   label: string;
   color?: string;
-  /** A lucide icon NAME — resolved to a component by lib/roleIcons.ts. */
+  /** A lucide icon NAME — resolved to a component by lib/roleDisplay.tsx. */
   icon?: string;
 }
 

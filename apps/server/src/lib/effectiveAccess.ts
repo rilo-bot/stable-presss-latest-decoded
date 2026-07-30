@@ -19,13 +19,22 @@
 
 import type { IdentityUser, RoleSlug } from './identity.js'
 import { SUPERADMIN_SLUG, rolesForSlugs, type RoleDoc } from './roleRegistry.js'
-import type { PermissionAction } from './permissionCatalogue.js'
+import {
+  ALL_WORKFLOW_STAGES,
+  MODULE_CATALOGUE,
+  PERMISSION_CATALOGUE,
+  type PermissionAction,
+} from './permissionCatalogue.js'
 
 /** An identity whose roles have been resolved. Required for every auth check. */
 export interface AccountUser extends IdentityUser {
   /** True when the account holds the immutable superadmin role. */
   isSuperAdmin: boolean
-  /** Union of every held role's permissions. Empty for superadmin — see accountCan. */
+  /**
+   * Union of every held role's permissions. NOT consulted for a superadmin —
+   * accountCan short-circuits first, so this may legitimately be empty for one
+   * whose role row is missing.
+   */
   permissions: ReadonlySet<PermissionAction>
   /** Union of every held role's navigation surfaces. */
   modules: ReadonlySet<string>
@@ -134,20 +143,23 @@ export interface ClientAccess {
  * goes through here rather than spreading `req.account` into a response.
  */
 export function toClientUser(account: AccountUser): Record<string, unknown> {
+  // Superadmin is derived from the CATALOGUE, not from its role row. accountCan
+  // short-circuits before any lookup, so the server grants everything even when
+  // that row is missing — reading the row here would hand the client an empty
+  // payload in exactly that case, leaving a superadmin with no sidebar on a
+  // platform that considers them omnipotent.
+  const superRoles = account.roleDocs.length
+    ? account.roleDocs
+    : [{ slug: SUPERADMIN_SLUG, label: 'Superadmin', color: undefined, icon: 'ShieldCheck' }]
+
   const access: ClientAccess = {
-    // Superadmin's sets are empty (it short-circuits), so materialise its role
-    // doc's stored lists instead — otherwise the UI would render nothing.
     permissions: account.isSuperAdmin
-      ? [...new Set(account.roleDocs.flatMap((r) => r.permissions))]
+      ? PERMISSION_CATALOGUE.map((p) => p.id)
       : [...account.permissions],
-    modules: account.isSuperAdmin
-      ? [...new Set(account.roleDocs.flatMap((r) => r.modules))]
-      : [...account.modules],
-    workflowStages: account.isSuperAdmin
-      ? [...new Set(account.roleDocs.flatMap((r) => r.workflowStages))]
-      : [...account.workflowStages],
+    modules: account.isSuperAdmin ? MODULE_CATALOGUE.map((m) => m.id) : [...account.modules],
+    workflowStages: account.isSuperAdmin ? [...ALL_WORKFLOW_STAGES] : [...account.workflowStages],
     isSuperAdmin: account.isSuperAdmin,
-    roles: account.roleDocs.map((r) => ({
+    roles: (account.isSuperAdmin ? superRoles : account.roleDocs).map((r) => ({
       slug: r.slug,
       label: r.label,
       color: r.color,

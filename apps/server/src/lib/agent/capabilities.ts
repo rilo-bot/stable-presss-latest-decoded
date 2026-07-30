@@ -15,6 +15,7 @@
 // ---------------------------------------------------------------------------
 
 import { db } from '../db.js'
+import { MAGAZINE_V2_ENABLED } from '../magazineV2/config.js'
 import { canAccessNewsroom, isPlatformAdmin, contentCan } from '../rbac.js'
 import { accountCan, accountCanAny } from '../effectiveAccess.js'
 import { manageablePartyIds, authorisedHorseIds } from '../scope.js'
@@ -57,6 +58,10 @@ export interface CapabilityReport {
 // Capability-based, not role-based: these used to test for hardcoded slugs
 // ('publisher', 'editor', 'legal_reviewer', 'administrator'), which no longer
 // exist as a fixed set. They now follow whatever a superadmin configures.
+// The staff magazine surface: the free-form Magazine Builder (v2) when the
+// MAGAZINE_V2 flag is on, else the legacy template Magazine Studio.
+const MAGAZINE_SURFACE = MAGAZINE_V2_ENABLED ? 'Magazine Builder' : 'Magazine Studio'
+
 const isPublisher = (a: AccountUser) => accountCan(a, 'content.publish')
 const isReviewer = (a: AccountUser) =>
   accountCanAny(a, ['content.editorial_review', 'content.legal_review'])
@@ -169,7 +174,7 @@ function buildCapabilities(
         label: 'Build & publish bulletins',
         category: 'editorial',
         allowed: true,
-        where: 'Newsroom → Magazine Studio',
+        where: `Newsroom → ${MAGAZINE_SURFACE}`,
       },
       {
         id: 'manage-racing-data',
@@ -287,7 +292,7 @@ export function summariseCapabilities(account?: AccountUser): string {
   if (account.subscriptionTier !== 'premium') gated.push('premium articles → switch plan on Dashboard → Your Plan')
 
   if (staff) {
-    can.push('work in the Newsroom', 'build & publish bulletins in the Magazine Studio')
+    can.push('work in the Newsroom', `build & publish bulletins in the ${MAGAZINE_SURFACE}`)
     if (contentCan(account, 'content.draft.create')) can.push('create story drafts')
     if (contentCan(account, 'content.draft.edit_any')) can.push('edit any story')
     if (isReviewer(account)) can.push('review stories')

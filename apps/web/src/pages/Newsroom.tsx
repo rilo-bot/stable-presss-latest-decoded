@@ -187,6 +187,9 @@ export default function Newsroom() {
   const isContributor = !can('content.draft.edit_any');
   const isEditor = can('content.editorial_review');
   const canManageTeam = can('team.manage');
+  // Distinct from team.manage: /api/roles enforces roles.manage, so the console
+  // must ask for the same thing the server does.
+  const canManageRoles = can('roles.manage');
 
   // Load the team roster when the Team Members tab is opened (admins only).
   useEffect(() => {
@@ -237,6 +240,18 @@ export default function Newsroom() {
     () => SIDE_NAV.filter((item) => (accessModules ?? []).includes(item.id)),
     [accessModules],
   );
+
+  // Hiding a sidebar entry is not the same as closing the screen behind it.
+  // activeNav starts at 'workflow', so a role without the Workflow Board module
+  // still landed on the board — the entry was gone but the body rendered anyway.
+  // Bounce to the first surface they DO have. Ids outside SIDE_NAV
+  // ('bulletin-templates', reached from Overview) are left alone.
+  useEffect(() => {
+    if (!accessModules) return; // session not resolved yet — don't bounce
+    if (!SIDE_NAV.some((i) => i.id === activeNav)) return;
+    if (visibleNav.some((i) => i.id === activeNav)) return;
+    setActiveNav(visibleNav[0]?.id ?? '');
+  }, [accessModules, activeNav, visibleNav]);
 
   const handleAdvance = (articleId: string, toStatus: KanbanStatus) => {
     const article = (articles ?? []).find((a) => a.id === articleId);
@@ -337,7 +352,7 @@ export default function Newsroom() {
       <NewsroomSidebar
         sidebarCollapsed={sidebarCollapsed}
         setSidebarCollapsed={setSidebarCollapsed}
-        roleLabel={roleLabel} accentColor={accentColor}
+        accentColor={accentColor}
         visibleNav={visibleNav}
         activeNav={activeNav}
         setActiveNav={setActiveNav}
@@ -349,19 +364,14 @@ export default function Newsroom() {
         currentUser={currentUser}
       />
 
-      {/* ── Main panel ── */}
-      <div className="flex-1 flex flex-col overflow-hidden">
+      {/* ── Main panel ── min-w-0 so wide children (stage strip, kanban grid,
+           record tables) scroll inside their own containers instead of
+           stretching the row and scrolling the whole page sideways. */}
+      <div className="flex-1 min-w-0 flex flex-col overflow-hidden">
         {/* Top bar */}
         <NewsroomTopBar
-          visibleNav={visibleNav}
           activeNav={activeNav}
-          pendingReview={pendingReview}
-          roleLabel={roleLabel} accentColor={accentColor}
           setActiveNav={setActiveNav}
-          onOpenHorseForm={handleOpenHorseForm}
-          onOpenPartyForm={handleOpenPartyForm}
-          onOpenMediaForm={handleOpenMediaForm}
-          onOpenRacingForm={handleOpenRacingForm}
           onNewInColumn={handleNewInColumn}
           onOpenStudio={handleOpenStudio}
         />
@@ -573,11 +583,10 @@ export default function Newsroom() {
               setTeamRole={setTeamRole}
               teamBusy={teamBusy}
               onGrantStaff={onGrantStaff}
-              onRevokeStaff={() => {}}
               onCancelInvite={onCancelInvite}
             />
           )}
-          {activeNav === 'roles' && <RolesPermissionsView canManageRoles={canManageTeam} />}
+          {activeNav === 'roles' && <RolesPermissionsView canManageRoles={canManageRoles} />}
           {activeNav === 'bulletin-templates' && (
             <MagazineStudio
               magazines={magazines}

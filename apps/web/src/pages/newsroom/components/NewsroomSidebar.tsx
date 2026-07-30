@@ -12,7 +12,6 @@ import type { SideNavItem } from '../constants';
 interface NewsroomSidebarProps {
   sidebarCollapsed: boolean;
   setSidebarCollapsed: React.Dispatch<React.SetStateAction<boolean>>;
-  roleLabel: string;
   accentColor: string;
   visibleNav: SideNavItem[];
   activeNav: string;
@@ -28,7 +27,6 @@ interface NewsroomSidebarProps {
 export function NewsroomSidebar({
   sidebarCollapsed,
   setSidebarCollapsed,
-  roleLabel,
   accentColor,
   visibleNav,
   activeNav,
@@ -45,7 +43,7 @@ export function NewsroomSidebar({
   return (
     <aside
       className={cn(
-        'hidden md:flex flex-col border-r border-border/60 bg-card transition-all duration-200',
+        'hidden md:flex flex-col flex-shrink-0 border-r border-border/60 bg-card transition-all duration-200',
         sidebarCollapsed ? 'w-14' : 'w-56'
       )}
     >
@@ -185,7 +183,7 @@ export function NewsroomSidebar({
             </div>
             <div className="min-w-0">
               <p className="text-sm font-semibold text-foreground truncate">{currentUser.displayName}</p>
-              <p className="text-[11px] text-muted-foreground capitalize">{roleLabel}</p>
+              <p className="text-[11px] text-muted-foreground truncate">{currentUser.email}</p>
             </div>
           </div>
         </div>

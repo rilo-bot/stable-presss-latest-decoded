@@ -5,6 +5,7 @@ import { cn } from '@/lib/utils';
 import type { Horse } from '@/types/horse';
 import type { RacingEntry } from '@/types/racingEntry';
 import { RacingStatusBadge } from '../components/RacingStatusBadge';
+import { DeleteConfirmDialog } from '../components/DeleteConfirmDialog';
 
 interface RacingProductionSystemProps {
   racingEntries: RacingEntry[];
@@ -45,17 +46,7 @@ export function RacingProductionSystem({
   return (
     <div className="space-y-5">
       {/* Header */}
-      <div className="flex items-center justify-between gap-4 flex-wrap">
-        <div>
-          <p className="text-[12px] uppercase tracking-[0.14em] font-bold text-muted-foreground mb-0.5">
-            Stable Press Production System
-          </p>
-          <p className="text-sm text-muted-foreground">
-            {safeEntries.length === 0
-              ? 'No racing records on file yet.'
-              : `${safeEntries.length} racing record${safeEntries.length !== 1 ? 's' : ''} across all horses`}
-          </p>
-        </div>
+      <div className="flex items-center justify-end gap-4 flex-wrap">
         <Button
           size="sm"
           className="bg-primary text-primary-foreground hover:bg-primary/90 gap-1.5 text-sm"
@@ -252,33 +243,19 @@ export function RacingProductionSystem({
       )}
 
       {/* Delete confirm */}
-      {racingDeleteConfirm && racingDeleteTarget && (
-        <div className="border border-destructive/30 rounded-sm bg-destructive/5 px-4 py-3 flex items-center justify-between gap-4 flex-wrap">
-          <p className="text-sm text-foreground">
-            Remove{' '}
-            <span className="font-semibold">{racingDeleteTarget.race_name}</span>
+      <DeleteConfirmDialog
+        open={racingDeleteConfirm && !!racingDeleteTarget}
+        title="Remove racing record"
+        message={
+          <>
+            Remove <span className="font-semibold">{racingDeleteTarget?.race_name}</span>
             {' '}from Stable Press? This cannot be undone.
-          </p>
-          <div className="flex items-center gap-2 flex-shrink-0">
-            <Button
-              size="sm"
-              variant="outline"
-              className="text-sm"
-              onClick={() => { setRacingDeleteConfirm(false); setRacingDeleteTarget(null); }}
-            >
-              Cancel
-            </Button>
-            <Button
-              size="sm"
-              variant="destructive"
-              className="text-sm"
-              onClick={confirmRacingDelete}
-            >
-              Remove
-            </Button>
-          </div>
-        </div>
-      )}
+          </>
+        }
+        confirmLabel="Remove"
+        onCancel={() => { setRacingDeleteConfirm(false); setRacingDeleteTarget(null); }}
+        onConfirm={confirmRacingDelete}
+      />
 
       {/* Info note */}
       {safeEntries.length > 0 && (

@@ -1,22 +1,23 @@
 // ---------------------------------------------------------------------------
 // Roles API — full CRUD over the dynamic `roles` collection, plus assignment.
 //
-// Every role in the platform lives here, including the seven seeded ones. A
+// Every role in the platform lives here, including the seeded ones. A
 // superadmin may edit any of them; the only hard limits are:
 //
-//   isImmutable (superadmin)  — cannot be edited or deleted, ever
-//   isSystem    (the seeded 6) — cannot be DELETED, but may be freely edited
+//   isImmutable (superadmin) — cannot be edited or deleted, ever
+//   isSystem    (seeded)     — cannot be DELETED, but may be freely edited
 //
 // Lockout guards below stop an admin removing their own ability to get back in.
 //
-// Gated on `roles.manage`. See docs/DYNAMIC-RBAC-PLAN.md.
+// See docs/DYNAMIC-RBAC-PLAN.md.
 // ---------------------------------------------------------------------------
 
 import { Router } from 'express'
+import type { NextFunction, Request, Response } from 'express'
 import { db } from '../lib/db.js'
 import { attachAccount } from '../lib/auth.js'
 import { withIdentityDefaults } from '../lib/identity.js'
-import { canManageRoles } from '../lib/rbac.js'
+import { canManageRoles, canManageTeam } from '../lib/rbac.js'
 import {
   SUPERADMIN_SLUG,
   bustRoleCache,
@@ -33,12 +34,41 @@ import {
   isWorkflowStage,
   type PermissionAction,
 } from '../lib/permissionCatalogue.js'
+import type { AccountUser } from '../lib/effectiveAccess.js'
 
 const router = Router()
 
 router.use(attachAccount)
-router.use((req, res, next) => {
+
+/**
+ * Two different powers, two different gates:
+ *
+ *   roles.manage — DEFINE a role (create / edit what it grants / delete)
+ *   team.manage  — decide WHO HOLDS one (assign / unassign)
+ *
+ * Reads are open to either, because the Team Members screen has to list the
+ * roles it offers in its dropdown. Gating the whole router on roles.manage (as
+ * it originally did) meant anyone with only team.manage got a fully-rendered
+ * team screen where every call 403'd.
+ */
+const requireDefineRoles = (req: Request, res: Response, next: NextFunction): void => {
   if (!canManageRoles(req.account)) {
+    res.status(403).json({ error: 'You do not have permission to create or change roles.' })
+    return
+  }
+  next()
+}
+
+const requireAssignRoles = (req: Request, res: Response, next: NextFunction): void => {
+  if (!canManageTeam(req.account)) {
+    res.status(403).json({ error: 'You do not have permission to change who holds a role.' })
+    return
+  }
+  next()
+}
+
+router.use((req, res, next) => {
+  if (!canManageRoles(req.account) && !canManageTeam(req.account)) {
     res.status(403).json({ error: 'You do not have permission to manage roles.' })
     return
   }
@@ -96,16 +126,23 @@ async function assigneeCounts(): Promise<Map<string, number>> {
 /**
  * Would this change strip the acting user's own ability to manage roles?
  * A superadmin is exempt — they can never lock themselves out.
+ *
+ * Checks the union across their OTHER roles too. Testing only the role being
+ * edited rejected a perfectly safe edit whenever someone held two roles that
+ * both granted roles.manage — dropping it from one still leaves the other.
  */
 function wouldSelfLockOut(
-  actorStaffRoles: string[],
-  actorIsSuperAdmin: boolean,
+  actor: AccountUser,
   slug: string,
   nextPermissions: PermissionAction[],
 ): boolean {
-  if (actorIsSuperAdmin) return false
-  if (!actorStaffRoles.includes(slug)) return false
-  return !nextPermissions.includes('roles.manage')
+  if (actor.isSuperAdmin) return false
+  if (!actor.staffRoles.includes(slug)) return false
+  if (nextPermissions.includes('roles.manage')) return false
+  const stillGranted = actor.roleDocs.some(
+    (r) => r.slug !== slug && r.permissions.includes('roles.manage'),
+  )
+  return !stillGranted
 }
 
 // ── Catalogue the admin UI renders checkboxes from ───────────────────────────
@@ -132,7 +169,7 @@ router.get('/', async (_req, res) => {
 })
 
 // ── Create ───────────────────────────────────────────────────────────────────
-router.post('/', async (req, res) => {
+router.post('/', requireDefineRoles, async (req, res) => {
   const parsed = readRoleBody(req.body)
   if ('error' in parsed) {
     res.status(400).json({ error: parsed.error })
@@ -174,8 +211,8 @@ router.post('/', async (req, res) => {
 })
 
 // ── Update ───────────────────────────────────────────────────────────────────
-router.put('/:slug', async (req, res) => {
-  const current = (await getRoles()).get(req.params.slug)
+router.put('/:slug', requireDefineRoles, async (req, res) => {
+  const current = (await getRoles()).get(String(req.params.slug))
   if (!current) {
     res.status(404).json({ error: 'Role not found.' })
     return
@@ -189,14 +226,7 @@ router.put('/:slug', async (req, res) => {
     res.status(400).json({ error: parsed.error })
     return
   }
-  if (
-    wouldSelfLockOut(
-      req.account!.staffRoles,
-      req.account!.isSuperAdmin,
-      current.slug,
-      parsed.permissions,
-    )
-  ) {
+  if (wouldSelfLockOut(req.account!, current.slug, parsed.permissions)) {
     res.status(409).json({
       error:
         'That would remove your own ability to manage roles. Grant "Manage roles" to another role you hold first.',
@@ -222,8 +252,8 @@ router.put('/:slug', async (req, res) => {
 })
 
 // ── Delete ───────────────────────────────────────────────────────────────────
-router.delete('/:slug', async (req, res) => {
-  const current = (await getRoles()).get(req.params.slug)
+router.delete('/:slug', requireDefineRoles, async (req, res) => {
+  const current = (await getRoles()).get(String(req.params.slug))
   if (!current) {
     res.status(404).json({ error: 'Role not found.' })
     return
@@ -248,8 +278,8 @@ router.delete('/:slug', async (req, res) => {
 })
 
 // ── Assign / unassign ────────────────────────────────────────────────────────
-router.post('/:slug/assign', async (req, res) => {
-  const role = (await getRoles()).get(req.params.slug)
+router.post('/:slug/assign', requireAssignRoles, async (req, res) => {
+  const role = (await getRoles()).get(String(req.params.slug))
   if (!role) {
     res.status(404).json({ error: 'Role not found.' })
     return
@@ -276,13 +306,13 @@ router.post('/:slug/assign', async (req, res) => {
   res.status(201).json({ ok: true })
 })
 
-router.delete('/:slug/assign/:userId', async (req, res) => {
-  const role = (await getRoles()).get(req.params.slug)
+router.delete('/:slug/assign/:userId', requireAssignRoles, async (req, res) => {
+  const role = (await getRoles()).get(String(req.params.slug))
   if (!role) {
     res.status(404).json({ error: 'Role not found.' })
     return
   }
-  const target = await db.collection('users').findById(req.params.userId)
+  const target = await db.collection('users').findById(String(req.params.userId))
   if (!target) {
     res.status(404).json({ error: 'Team member not found.' })
     return
@@ -301,7 +331,7 @@ router.delete('/:slug/assign/:userId', async (req, res) => {
     }
   }
 
-  await db.collection('users').pullFrom(req.params.userId, 'staffRoles', role.slug)
+  await db.collection('users').pullFrom(String(req.params.userId), 'staffRoles', role.slug)
   res.json({ ok: true })
 })
 

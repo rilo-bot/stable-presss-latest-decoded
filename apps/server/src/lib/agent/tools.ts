@@ -17,6 +17,7 @@ import { authorisedHorseIds, manageablePartyIds, horsesLinkedToParty } from '../
 import type { AccountUser } from '../identity.js'
 import { FEATURE_GUIDES, GUIDE_TOPICS } from './guides.js'
 import { getCapabilities } from './capabilities.js'
+import { MAGAZINE_V2_ENABLED } from '../magazineV2/config.js'
 
 type Doc = Record<string, any> & { _id?: string; id?: string }
 
@@ -469,16 +470,22 @@ export function buildTools(account?: AccountUser, authHeader?: string): ToolSet 
     // TAKE the reader to where they can do something (then tell them the next step).
     navigateTo: tool({
       description:
-        "Navigate the reader to a page so they can do the thing they asked about (e.g. 'file a story' → newsroom, 'place a tip' → tipping). Pair it with a short note on what to do once there. For a specific horse/party/article/bulletin/organisation, pass its id. Don't send a reader to a staff-only page (newsroom/site-content/claims/staff) unless they're staff/admin — guide them instead.",
+        "Navigate the reader to a page so they can do the thing they asked about (e.g. 'file a story' → newsroom, 'place a tip' → tipping" +
+        (MAGAZINE_V2_ENABLED ? ", 'build/edit the bulletin' → magazine-v2, the staff Magazine Builder" : '') +
+        "). Pair it with a short note on what to do once there. For a specific horse/party/article/bulletin/organisation, pass its id. Don't send a reader to a staff-only page (newsroom/site-content/claims/staff" +
+        (MAGAZINE_V2_ENABLED ? '/magazine-v2' : '') +
+        ") unless they're staff/admin — guide them instead.",
       inputSchema: z.object({
         to: z
           .enum([
             'home', 'news', 'newsletter', 'bulletins', 'horses', 'parties', 'tipping', 'podcast',
             'dashboard', 'newsroom', 'site-content', 'claims', 'staff', 'login', 'signup',
             'horse', 'party', 'article', 'bulletin', 'organisation',
-          ])
-          .describe('Destination. The last five need an id.'),
-        id: z.string().optional().describe('Entity id, required for horse/party/article/bulletin/organisation.'),
+            // The staff Magazine Builder home; with an id, that magazine's editor.
+            ...(MAGAZINE_V2_ENABLED ? (['magazine-v2'] as const) : []),
+          ] as [string, ...string[]])
+          .describe('Destination. horse/party/article/bulletin/organisation need an id.'),
+        id: z.string().optional().describe('Entity id — required for horse/party/article/bulletin/organisation; optional for magazine-v2 (opens that magazine in the Builder).'),
       }),
     }),
 

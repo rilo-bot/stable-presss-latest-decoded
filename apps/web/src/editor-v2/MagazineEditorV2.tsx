@@ -11,6 +11,7 @@ import { useParams, useNavigate } from 'react-router-dom';
 import { toast } from 'sonner';
 import { ArrowLeft, Undo2, Redo2, Plus, Minus, Copy, Trash2, ChevronLeft, ChevronRight, ChevronDown, Sparkles, Loader2, Wand2, WandSparkles, RotateCcw, ImageIcon, Globe, ExternalLink, Send, Users, EyeOff } from 'lucide-react';
 import { useEditorStore } from './store';
+import { useEditorAgentUi } from '@/stores/editorAgentUiStore';
 import { EditorCanvas } from './EditorCanvas';
 import { Inspector } from './Inspector';
 import { AiPanel } from './AiPanel';
@@ -60,6 +61,13 @@ export default function MagazineEditorV2() {
   const [publishDialogOpen, setPublishDialogOpen] = useState(false);
   const [shareOpen, setShareOpen] = useState(false);
   const isPublished = !!s.issue?.publishedIssueId && s.issue?.status === 'published';
+
+  // Hide the global Stablehand launcher while the v2 editor is open — it has
+  // its own docked assistant (AiPanel). Same pattern as the v1 MagazineEditor.
+  useEffect(() => {
+    useEditorAgentUi.getState().setSuppressGlobal(true);
+    return () => useEditorAgentUi.getState().setSuppressGlobal(false);
+  }, []);
 
   // Post-publish: match the v1 flow — toast with a "View" action that opens the
   // frozen edition on the public Bulletins page.

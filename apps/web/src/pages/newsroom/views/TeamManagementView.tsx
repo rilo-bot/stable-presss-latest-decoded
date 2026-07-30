@@ -19,7 +19,6 @@ interface TeamManagementViewProps {
   setTeamRole: (v: string) => void;
   teamBusy: boolean;
   onGrantStaff: () => void;
-  onRevokeStaff: (userId: string, slug: string) => void;
   onCancelInvite: (inviteId: string) => void;
 }
 
@@ -34,7 +33,6 @@ export function TeamManagementView({
   setTeamRole,
   teamBusy,
   onGrantStaff,
-  onRevokeStaff,
   onCancelInvite,
 }: TeamManagementViewProps) {
   const roles = useRoleStore((s) => s.roles);
@@ -85,18 +83,11 @@ export function TeamManagementView({
   return (
     <div className="space-y-5">
       {/* Header */}
-      <div className="flex items-center justify-between gap-4 flex-wrap">
-        <div>
-          <p className="text-[12px] uppercase tracking-[0.14em] font-bold text-muted-foreground mb-0.5">
-            Newsroom Team
-          </p>
-          <p className="text-sm text-muted-foreground">
-            {teamStaff.length === 0
-              ? 'No team members on record yet.'
-              : `${teamStaff.length} team member${teamStaff.length !== 1 ? 's' : ''}`}
-          </p>
-        </div>
-      </div>
+      <p className="text-sm text-muted-foreground">
+        {teamStaff.length === 0
+          ? 'No team members on record yet.'
+          : `${teamStaff.length} team member${teamStaff.length !== 1 ? 's' : ''}`}
+      </p>
 
       {/* Invite */}
       <div className="border border-dashed border-border/60 rounded-sm p-4 space-y-3 bg-card">

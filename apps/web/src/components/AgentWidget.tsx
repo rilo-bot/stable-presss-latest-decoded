@@ -56,7 +56,6 @@ function describePage(pathname: string): PageContext {
     newsroom: 'Newsroom',
     'site-content': 'Site Content',
     claims: 'Verify Claims',
-    staff: 'Staff Admin',
   };
   const entityType: Record<string, string> = {
     horses: 'horse',
@@ -67,6 +66,12 @@ function describePage(pathname: string): PageContext {
     studio: 'party',
   };
   const root = seg[0] ?? '';
+  // The Magazine Builder (v2) lives under /newsroom/magazine-v2[/:id].
+  if (root === 'newsroom' && seg[1] === 'magazine-v2') {
+    const ctx: PageContext = { path: pathname, title: 'Magazine Builder' };
+    if (seg[2]) ctx.entity = { type: 'magazine', id: seg[2] };
+    return ctx;
+  }
   const ctx: PageContext = { path: pathname, title: titleFor[root] ?? 'Stable Press' };
   if (seg.length >= 2 && entityType[root]) {
     ctx.entity = { type: entityType[root], id: seg[1] };
@@ -96,6 +101,8 @@ function contextStarters(pathname: string): string[] {
   if (root === 'bulletins') return ['What is in the latest bulletin?', 'Show me past editions'];
   if (root === 'dashboard') return ['What can I do here?', 'How do I claim a racing role?'];
   if (root === 'podcast') return ['What is the latest episode?'];
+  if (root === 'newsroom' && seg[1] === 'magazine-v2') return ['How do I build a magazine?', 'How do I publish this to Bulletins?'];
+  if (root === 'newsroom') return ['What can I do in the Newsroom?', 'How do I file a story?'];
   return DEFAULT_STARTERS;
 }
 
@@ -133,6 +140,8 @@ function navPathFor(to: string, id?: string): string | null {
     case 'article': return id ? `/articles/${id}` : '/news';
     case 'bulletin': return id ? `/bulletins/${id}` : '/bulletins';
     case 'organisation': return id ? `/orgs/${id}` : '/dashboard';
+    // Staff Magazine Builder (v2): home, or straight into a magazine's editor.
+    case 'magazine-v2': return id ? `/newsroom/magazine-v2/${id}` : '/newsroom/magazine-v2';
     default: return null;
   }
 }

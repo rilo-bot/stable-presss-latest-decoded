@@ -518,6 +518,62 @@ export async function draftPage(opts: {
   return best;
 }
 
+/**
+ * Flow an already-drafted page's copy onto a DIFFERENT layout's slots, matched by
+ * (slot role, text role) in document order. This decouples COPY from LAYOUT: the
+ * AI layout self-heal can retry a new layout WITHOUT paying for another copywriter
+ * pass, because the substantive prose (the expensive part) is written once and
+ * re-flowed into whatever slots the next layout offers. Empty results for a role
+ * the new layout has more of are left empty (the composer skips empty text leaves);
+ * surplus prior copy is dropped. The caller checks draftGaps on the result and only
+ * drafts fresh when a REQUIRED backbone slot ends up empty — so quality never
+ * regresses, and the common case (a layout that overflowed → a roomier layout for
+ * the SAME copy) costs zero extra tokens.
+ */
+function remapDraftByRole(prev: PageDraft, prevTpl: PageTemplate, nextTpl: PageTemplate): PageDraft {
+  const textPool = new Map<string, string[]>();
+  const imagePool: string[] = [];
+  const qrPool: string[] = [];
+  // Key text by the FINE leaf role (e.g. 'figure' vs 'headline', 'entry' vs 'body'),
+  // NOT the collapsed textRole — otherwise a stat figure and the real headline share
+  // one pool and remap could flow "4.8%" into the headline slot, dropping the title.
+  const textKey = (s: PageTemplateSlot) => s.leafRole ?? s.textRole ?? 'body';
+  for (const s of prevTpl.slots) {
+    if (s.role === 'text') {
+      const v = prev.texts[s.id];
+      if (v && v.trim()) {
+        const k = textKey(s);
+        const list = textPool.get(k) ?? [];
+        list.push(v);
+        textPool.set(k, list);
+      }
+    } else if (s.role === 'image') {
+      const v = prev.images[s.id];
+      if (v && v.trim()) imagePool.push(v);
+    } else if (s.role === 'qr') {
+      const v = prev.qr[s.id];
+      if (v && v.trim()) qrPool.push(v);
+    }
+  }
+  const textCursor = new Map<string, number>();
+  let imageCursor = 0;
+  let qrCursor = 0;
+  const out: PageDraft = { texts: {}, images: {}, qr: {} };
+  for (const s of nextTpl.slots) {
+    if (s.role === 'text') {
+      const k = textKey(s);
+      const list = textPool.get(k) ?? [];
+      const i = textCursor.get(k) ?? 0;
+      if (i < list.length) { out.texts[s.id] = list[i]!; textCursor.set(k, i + 1); }
+    } else if (s.role === 'image') {
+      if (imageCursor < imagePool.length) out.images[s.id] = imagePool[imageCursor++]!;
+    } else if (s.role === 'qr') {
+      if (qrCursor < qrPool.length) out.qr[s.id] = qrPool[qrCursor++]!;
+    }
+  }
+  return out;
+}
+
 /** Ensure the cover always has a strong title/subtitle even if the per-page draft
  *  came back thin — falls back to the plan's own title. No extra model call. */
 export function polishCoverDraft(draft: PageDraft, plan: GenPlan, template: PageTemplate): PageDraft {
@@ -861,6 +917,7 @@ function buildPseudoTemplate(spec: LayoutSpec): PageTemplate {
       id: ref,
       role: sRole,
       textRole,
+      leafRole: role, // finer than textRole — keeps figure≠headline, entry≠body for copy re-flow
       required: false,
       z: leaf.z,
       box: { x: leaf.box.x / PAGE_W, y: leaf.box.y / PAGE_H, w: leaf.box.w / PAGE_W, h: leaf.box.h / PAGE_H },
@@ -1115,22 +1172,51 @@ async function composeOnePageAI(
   // of silently dropping to the fixed template on the first failure. The template
   // path remains only as a rare, logged last resort once attempts are spent.
   let hint: string | undefined;
+  // Copy is drafted ONCE and re-flowed across layout retries (see remapDraftByRole):
+  // a layout self-heal must not re-run the copywriter. Holds the last FRESHLY-drafted
+  // copy + the template it was written against, so retries remap from it by role.
+  let contentDraft: PageDraft | null = null;
+  let contentTpl: PageTemplate | null = null;
   for (let attempt = 1; attempt <= AI_LAYOUT_ATTEMPTS; attempt++) {
     pagePool.reset(); // every attempt reuses the same claimed photos, never fresh ones
     try {
       const { spec, source } = await artDirectPage(plan, page, pageNumber, hint);
       const pseudo = buildPseudoTemplate(spec);
       if (pseudo.slots.length === 0) break; // unusable spec shape → template path
-      let draft = await draftPage({ plan, page, template: pseudo, pageNumber, totalPages, sourceText });
+      // Reuse prior copy when possible: remap it onto THIS attempt's slots and only
+      // pay for a fresh copywriter pass when there's no prior copy or the remap
+      // leaves a required backbone slot empty. A layout that overflowed then needs a
+      // roomier layout for the SAME words — not new words.
+      let draft: PageDraft;
+      let draftedFresh = false;
+      if (contentDraft && contentTpl) {
+        draft = remapDraftByRole(contentDraft, contentTpl, pseudo);
+        if (draftGaps(draft, pseudo).length > 0) {
+          draft = await draftPage({ plan, page, template: pseudo, pageNumber, totalPages, sourceText });
+          draftedFresh = true;
+        }
+      } else {
+        draft = await draftPage({ plan, page, template: pseudo, pageNumber, totalPages, sourceText });
+        draftedFresh = true;
+      }
       draft = ensureHeadline(draft, plan, page, pseudo);
+      // Remember the (headline-ensured) fresh copy as the source for later remaps.
+      if (draftedFresh) { contentDraft = draft; contentTpl = pseudo; }
       const { page: aiPage, why } = await composeSpecToPage(spec, pseudo, draft, theme, ctx, pagePool);
       if (aiPage && !isTooSparse(aiPage, page.kind)) {
         console.log(`[magazineV2] page ${pageNumber}/${totalPages} "${page.kind}" → AI layout (attempt ${attempt}, spec: ${source}, ${pseudo.slots.length} slots, ${aiPage.elements.length} elements)`);
         return aiPage;
       }
-      hint = aiPage
-        ? 'the layout was too sparse — too few real content elements; fill the page with substantive content leaves'
-        : why;
+      if (aiPage) {
+        // Too sparse: the page needs MORE substance, so draft FRESH copy for the
+        // next (richer) layout instead of re-flowing the same thin copy — reuse is
+        // only the right call when the copy was fine and the LAYOUT overflowed.
+        hint = 'the layout was too sparse — too few real content elements; fill the page with substantive content leaves';
+        contentDraft = null;
+        contentTpl = null;
+      } else {
+        hint = why; // a QA/overflow failure → keep the copy, re-solve the layout
+      }
       const spent = attempt >= AI_LAYOUT_ATTEMPTS;
       console.warn(`[magazineV2] page ${pageNumber} "${page.kind}" AI layout attempt ${attempt}/${AI_LAYOUT_ATTEMPTS} failed (${aiPage ? 'too sparse' : `QA: ${why}`}) — ${spent ? 'using template path' : 'self-healing'}.`);
       // A fixed SEED spec is deterministic — retrying it changes nothing, so don't
