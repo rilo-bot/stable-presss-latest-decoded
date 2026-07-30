@@ -5,6 +5,7 @@
  * Presentational: the caller wires what each choice does.
  */
 import { useEffect } from 'react';
+import { createPortal } from 'react-dom';
 import { X, Sparkles, PenLine, ArrowRight } from 'lucide-react';
 
 interface FileStoryChoiceProps {
@@ -29,7 +30,13 @@ export function FileStoryChoice({ open, onClose, onAI, onManual }: FileStoryChoi
 
   if (!open) return null;
 
-  return (
+  // Portalled to <body> because the caller lives in the production system's
+  // topbar, and that header has `backdrop-blur`. A non-`none` backdrop-filter
+  // makes an element the containing block for its fixed-position descendants,
+  // so `fixed inset-0` resolved to the 56px header box: the panel centred on
+  // the header's midline with its title row off-screen, the backdrop covered
+  // only the header strip, and the header's z-30 capped this z-[90].
+  return createPortal(
     <div
       role="dialog"
       aria-modal="true"
@@ -101,6 +108,7 @@ export function FileStoryChoice({ open, onClose, onAI, onManual }: FileStoryChoi
           </div>
         </div>
       </div>
-    </div>
+    </div>,
+    document.body,
   );
 }

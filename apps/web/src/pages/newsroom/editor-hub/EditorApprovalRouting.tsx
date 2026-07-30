@@ -1,13 +1,13 @@
 import { Layers, ChevronRight, Scale, RotateCcw, CheckCircle, BookOpen } from 'lucide-react';
 import { EmptyState } from '@/components/EmptyState';
-import type { KanbanStatus } from '@/components/KanbanColumn';
+import type { ArticleStatus } from '@/types/article';
 import type { Article } from '@/types/article';
 import type { EditorTab } from '../constants';
 import { StatusBadge } from '../components/StatusBadge';
 
 interface EditorApprovalRoutingProps {
   articles: Article[];
-  onAdvance: (articleId: string, toStatus: KanbanStatus) => void;
+  onAdvance: (articleId: string, toStatus: ArticleStatus) => void;
   setEditorTab: (tab: EditorTab) => void;
 }
 
@@ -22,7 +22,7 @@ export function EditorApprovalRouting({ articles, onAdvance, setEditorTab }: Edi
 
   type RouteAction = {
     label: string;
-    toStatus: KanbanStatus;
+    toStatus: ArticleStatus;
     color: string;
     icon: React.ReactNode;
   };

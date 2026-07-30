@@ -1,21 +1,21 @@
 import { CalendarClock, Clock, CheckCircle } from 'lucide-react';
 import { EmptyState } from '@/components/EmptyState';
-import type { KanbanStatus } from '@/components/KanbanColumn';
+import type { ArticleStatus } from '@/types/article';
 import type { Article } from '@/types/article';
 import type { EditorTab } from '../constants';
 import { StatusBadge } from '../components/StatusBadge';
 
 interface EditorSchedulingProps {
   articles: Article[];
-  buckets: Record<KanbanStatus, Article[]>;
-  onAdvance: (articleId: string, toStatus: KanbanStatus) => void;
+  buckets: Record<ArticleStatus, Article[]>;
+  onAdvance: (articleId: string, toStatus: ArticleStatus) => void;
   setEditorTab: (tab: EditorTab) => void;
 }
 
 export function EditorScheduling({ articles, buckets, onAdvance, setEditorTab }: EditorSchedulingProps) {
-  const schedulable = (articles ?? []).filter(
-    (a) => a.status === 'approved' || a.status === 'publisher_review'
-  );
+  // Approved stories are booked straight in — the Publisher Review stage that
+  // used to sit between Approved and Scheduled is gone.
+  const schedulable = (articles ?? []).filter((a) => a.status === 'approved');
   const alreadyScheduled = buckets.scheduled;
 
   return (
@@ -101,15 +101,11 @@ export function EditorScheduling({ articles, buckets, onAdvance, setEditorTab }:
                   </p>
                 </div>
                 <button
-                  onClick={() => {
-                    const toStatus: KanbanStatus =
-                      article.status === 'publisher_review' ? 'scheduled' : 'publisher_review';
-                    onAdvance(article.id, toStatus);
-                  }}
+                  onClick={() => onAdvance(article.id, 'scheduled')}
                   className="flex-shrink-0 flex items-center gap-1.5 px-3 py-1.5 rounded-sm border border-primary/30 bg-primary/8 text-primary text-[12px] uppercase tracking-[0.08em] font-semibold hover:bg-primary/15 transition-colors"
                 >
                   <CalendarClock size={11} />
-                  {article.status === 'publisher_review' ? 'Schedule →' : 'Route to Publisher →'}
+                  Schedule →
                 </button>
               </div>
             ))}

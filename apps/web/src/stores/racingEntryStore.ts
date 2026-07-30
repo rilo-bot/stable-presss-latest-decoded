@@ -2,6 +2,7 @@ import { create } from 'zustand';
 import { toast } from 'sonner';
 import type { RacingEntry } from '@/types/racingEntry';
 import { authFetch } from '@/lib/api';
+import { shareRecord, unshareRecord, type ShareResult } from '@/lib/recordSharing';
 
 interface RacingEntryState {
   entries: RacingEntry[];
@@ -12,6 +13,10 @@ interface RacingEntryState {
   addEntry: (entry: Omit<RacingEntry, 'id' | 'createdAt'>) => Promise<string>;
   updateEntry: (id: string, updates: Partial<Omit<RacingEntry, 'id' | 'createdAt'>>) => Promise<void>;
   removeEntry: (id: string) => Promise<void>;
+  /** Grant read access to a colleague, by email. */
+  shareEntry: (id: string, email: string) => Promise<ShareResult>;
+  /** Revoke one person's access. */
+  unshareEntry: (id: string, userId: string) => Promise<ShareResult>;
 }
 
 export const useRacingEntryStore = create<RacingEntryState>()((set, get) => ({
@@ -89,5 +94,23 @@ export const useRacingEntryStore = create<RacingEntryState>()((set, get) => ({
       set({ entries: previous, error: message });
       toast.error(message);
     }
+  },
+
+  // Both share calls return the whole updated record — the server recomputes
+  // `sharedWith` and the viewer flags, so we replace rather than patch.
+  shareEntry: async (id, email) => {
+    const r = await shareRecord<RacingEntry>('racingEntries', id, email);
+    if (r.ok && r.record) {
+      set((state) => ({ entries: state.entries.map((e) => (e.id === id ? r.record! : e)) }));
+    }
+    return r;
+  },
+
+  unshareEntry: async (id, userId) => {
+    const r = await unshareRecord<RacingEntry>('racingEntries', id, userId);
+    if (r.ok && r.record) {
+      set((state) => ({ entries: state.entries.map((e) => (e.id === id ? r.record! : e)) }));
+    }
+    return r;
   },
 }));

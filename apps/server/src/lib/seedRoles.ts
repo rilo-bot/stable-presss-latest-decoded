@@ -37,7 +37,10 @@ const SEED_PRESENTATION: Record<
     description: 'Draft & submit stories',
     color: 'hsl(var(--chart-1))',
     icon: 'FileText',
-    workflowStages: ['draft', 'submitted', 'revision'],
+    // A contributor sees their own work up to the point it leaves their hands.
+    // 'revision' is gone — a sent-back story is a Draft carrying a
+    // `changesRequested` flag, so it shows up in the Draft column.
+    workflowStages: ['draft', 'submitted'],
   },
   editor: {
     description: 'Full editorial control',

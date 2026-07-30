@@ -23,6 +23,10 @@ function scopeLabel(pageIds: string[] | 'all'): string {
   return `You can edit ${n} page${n !== 1 ? 's' : ''}.`
 }
 
+/** `delivered` = the email actually went out. On failure, `error` carries the
+ *  concrete reason (provider rejection, or "not configured") so the caller can
+ *  SHOW it instead of a vague "couldn't email them" — a swallowed reason is a bug
+ *  you can't act on. Never throws: the share is already committed. */
 export async function notifyShared(opts: {
   to: string
   sharedBy: string
@@ -30,7 +34,7 @@ export async function notifyShared(opts: {
   /** Same-origin path to the magazine, from `magazinePath()`. */
   path: string
   pageIds: string[] | 'all'
-}): Promise<boolean> {
+}): Promise<{ delivered: boolean; error?: string }> {
   try {
     const { delivered } = await sendMagazineShareEmail({
       to: opts.to,
@@ -39,9 +43,13 @@ export async function notifyShared(opts: {
       magazineUrl: absoluteUrl(WEB_PUBLIC_URL, opts.path),
       scope: scopeLabel(opts.pageIds),
     })
-    return delivered
+    // `send()` returns delivered:false WITHOUT throwing only when no provider is
+    // configured — name that reason rather than leaving it blank.
+    if (!delivered) return { delivered: false, error: 'No email provider is configured on the server.' }
+    return { delivered: true }
   } catch (err) {
-    console.error('[share] magazine share email failed:', err instanceof Error ? err.message : err)
-    return false
+    const error = err instanceof Error ? err.message : String(err)
+    console.error('[share] magazine share email failed:', error)
+    return { delivered: false, error }
   }
 }

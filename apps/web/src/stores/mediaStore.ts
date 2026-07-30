@@ -2,6 +2,7 @@ import { create } from 'zustand';
 import { toast } from 'sonner';
 import type { MediaItem } from '@/types/mediaItem';
 import { authFetch } from '@/lib/api';
+import { shareRecord, unshareRecord, type ShareResult } from '@/lib/recordSharing';
 
 interface MediaState {
   items: MediaItem[];
@@ -12,6 +13,10 @@ interface MediaState {
   addItem: (item: Omit<MediaItem, 'id' | 'createdAt'>) => Promise<string>;
   updateItem: (id: string, updates: Partial<Omit<MediaItem, 'id' | 'createdAt'>>) => Promise<void>;
   removeItem: (id: string) => Promise<void>;
+  /** Grant read access to a colleague, by email. */
+  shareItem: (id: string, email: string) => Promise<ShareResult>;
+  /** Revoke one person's access. */
+  unshareItem: (id: string, userId: string) => Promise<ShareResult>;
 }
 
 export const useMediaStore = create<MediaState>()((set, get) => ({
@@ -89,5 +94,23 @@ export const useMediaStore = create<MediaState>()((set, get) => ({
       set({ items: previous, error: message });
       toast.error(message);
     }
+  },
+
+  // Both share calls return the whole updated record — the server recomputes
+  // `sharedWith` and the viewer flags, so we replace rather than patch.
+  shareItem: async (id, email) => {
+    const r = await shareRecord<MediaItem>('mediaItems', id, email);
+    if (r.ok && r.record) {
+      set((state) => ({ items: state.items.map((m) => (m.id === id ? r.record! : m)) }));
+    }
+    return r;
+  },
+
+  unshareItem: async (id, userId) => {
+    const r = await unshareRecord<MediaItem>('mediaItems', id, userId);
+    if (r.ok && r.record) {
+      set((state) => ({ items: state.items.map((m) => (m.id === id ? r.record! : m)) }));
+    }
+    return r;
   },
 }));

@@ -130,10 +130,11 @@ export interface StaffEntry { userId: string; displayName: string; email: string
 
 /** Staff picker candidates — reuses the v1 magazines directory (same app, staff-gated). */
 export const staffDirectory = () => authFetchRetry('/api/magazines/staff-directory').then(parse<StaffEntry[]>);
-/** `emailed` reports whether the deep-link share email actually went out. */
+/** `emailed` reports whether the deep-link share email actually went out;
+ *  `emailError` carries the concrete reason when it didn't. */
 export const addCollaborator = (id: string, body: { email: string; pageIds: string[] | 'all' }) =>
   authFetch(`${BASE}/issues/${id}/collaborators`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) }).then(
-    parse<{ issue: IssueMeta; emailed?: boolean }>,
+    parse<{ issue: IssueMeta; emailed?: boolean; emailError?: string }>,
   );
 export const removeCollaborator = (id: string, userId: string) =>
   authFetch(`${BASE}/issues/${id}/collaborators/${userId}`, { method: 'DELETE' }).then(parse<{ issue: IssueMeta }>);

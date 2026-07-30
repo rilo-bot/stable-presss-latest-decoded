@@ -24,7 +24,7 @@ import { loadDraft, useFormDraft } from '@/hooks/useFormDraft';
 import type { Article } from '@/types/article';
 import { TIER_ORDER, TIER_LABELS } from '@/rbac/entitlement';
 import type { SubscriptionTier } from '@/rbac/entitlement';
-import type { KanbanStatus } from '@/components/KanbanColumn';
+import type { ArticleStatus } from '@/types/article';
 import { can } from '@/lib/permissions';
 import { X, Check, Lock, Newspaper, BarChart2, Mic, RotateCcw } from 'lucide-react';
 import { toast } from 'sonner';
@@ -36,7 +36,7 @@ interface ArticleDraft {
   summary: string;
   author: string;
   category: string;
-  status: KanbanStatus;
+  status: ArticleStatus;
   readingTime: string;
   minTier: SubscriptionTier;
   linkedHorseIds: string[];
@@ -47,27 +47,26 @@ interface ArticleFormProps {
   open: boolean;
   onClose: () => void;
   editArticle?: Article | null;
-  defaultStatus?: KanbanStatus;
+  defaultStatus?: ArticleStatus;
 }
 
-// Full list — shown for editors/admins/publishers
-const ALL_STATUS_OPTIONS: { value: KanbanStatus; label: string }[] = [
+/**
+ * Full list — shown for editors/admins/publishers.
+ *
+ * Newsletter and Bulletin are gone from here: they were never workflow states,
+ * and picking one used to be the only way to say where a story went. That's the
+ * `channels` field now, edited below.
+ */
+const ALL_STATUS_OPTIONS: { value: ArticleStatus; label: string }[] = [
   { value: 'draft', label: 'Draft' },
   { value: 'submitted', label: 'Submitted' },
-  { value: 'editorial_review', label: 'Editorial Review' },
-  { value: 'revision', label: 'Revision Required' },
-  { value: 'legal_review', label: 'Legal Review' },
-  { value: 'compliance', label: 'Compliance Check' },
   { value: 'approved', label: 'Approved' },
-  { value: 'publisher_review', label: 'Publisher Review' },
-  { value: 'scheduled', label: 'Scheduled' },
+  { value: 'scheduled', label: 'Schedule Publish' },
   { value: 'published', label: 'Published' },
-  { value: 'newsletter', label: 'Newsletter' },
-  { value: 'bulletin', label: 'Bulletin' },
 ];
 
 // Contributors can only use Draft or Submitted
-const CONTRIBUTOR_STATUS_OPTIONS: { value: KanbanStatus; label: string }[] = [
+const CONTRIBUTOR_STATUS_OPTIONS: { value: ArticleStatus; label: string }[] = [
   { value: 'draft', label: 'Draft' },
   { value: 'submitted', label: 'Submit for Editorial Review' },
 ];
@@ -121,7 +120,7 @@ export function ArticleForm({
   const [summary, setSummary] = useState('');
   const [author, setAuthor] = useState('');
   const [category, setCategory] = useState('');
-  const [status, setStatus] = useState<KanbanStatus>(defaultStatus);
+  const [status, setStatus] = useState<ArticleStatus>(defaultStatus);
   const [readingTime, setReadingTime] = useState('');
   const [minTier, setMinTier] = useState<SubscriptionTier>('free');
   const [linkedHorseIds, setLinkedHorseIds] = useState<string[]>([]);
@@ -144,7 +143,7 @@ export function ArticleForm({
       setAuthor(editArticle.author);
       setCategory(editArticle.category ?? '');
       // If contributor editing, clamp status to allowed options
-      const resolvedStatus = (editArticle.status as KanbanStatus) ?? 'draft';
+      const resolvedStatus = (editArticle.status as ArticleStatus) ?? 'draft';
       if (isContributor) {
         const allowed = CONTRIBUTOR_STATUS_OPTIONS.map((o) => o.value);
         setStatus(allowed.includes(resolvedStatus) ? resolvedStatus : 'draft');

@@ -10,7 +10,7 @@ export default function EditorHubScreen() {
       setEditorTab={s.setEditorTab}
       articles={s.articles ?? []}
       buckets={s.buckets}
-      onAdvance={s.handleAdvance}
+      onAdvance={s.handleAdvanceTo}
       onEdit={s.handleEdit}
       onNewInColumn={s.handleNewInColumn}
       onOpenStudio={s.handleOpenStudio}

@@ -19,9 +19,11 @@ import { AnimatePresence, motion, useReducedMotion } from 'framer-motion';
 import { X, Send, Sparkles, Square, Maximize2, Minimize2, Mic, Volume2, VolumeX, Loader2, Paperclip } from 'lucide-react';
 
 import { apiUrl } from '@/lib/api';
+import { can } from '@/lib/permissions';
 import { useAuthStore } from '@/stores/authStore';
 import { useAgentUi } from '@/stores/agentUiStore';
 import { useEditorAgentUi } from '@/stores/editorAgentUiStore';
+import { useStoryStudioUi } from '@/stores/storyStudioUiStore';
 import { MarkdownMessage } from '@/components/MarkdownMessage';
 import { useVoiceChat } from '@/agent/voice/useVoiceChat';
 import { useAutoGrowTextarea } from '@/lib/useAutoGrowTextarea';
@@ -66,10 +68,23 @@ function describePage(pathname: string): PageContext {
     studio: 'party',
   };
   const root = seg[0] ?? '';
-  // The Magazine Builder (v2) lives under /production-system/magazine-v2[/:id].
-  if (root === 'newsroom' && seg[1] === 'magazine-v2') {
-    const ctx: PageContext = { path: pathname, title: 'Magazine Builder' };
-    if (seg[2]) ctx.entity = { type: 'magazine', id: seg[2] };
+  // Production System (the staff CMS) — one route per sidebar screen, plus the
+  // full-screen magazine editors underneath it.
+  if (root === 'production-system') {
+    const screenTitles: Record<string, string> = {
+      overview: 'Overview', workflow: 'Workflow Board', pipeline: 'Pipeline Map',
+      'all-stories': 'All Stories', 'editor-hub': 'Editor Hub', 'my-assets': 'My Media Assets',
+      compensation: 'My Compensation', horses: 'Horses Register', people: 'People Register',
+      'media-records': 'Media Records', 'racing-records': 'Racing Records', team: 'Team Members',
+      roles: 'Roles & Permissions', analytics: 'Analytics', settings: 'Settings',
+      'magazine-studio': 'Magazine Studio', magazine: 'Magazine Studio', 'magazine-v2': 'Magazine Builder',
+    };
+    const sub = seg[1] ?? '';
+    const ctx: PageContext = {
+      path: pathname,
+      title: sub && screenTitles[sub] ? `Production System — ${screenTitles[sub]}` : 'Production System',
+    };
+    if ((sub === 'magazine-v2' || sub === 'magazine') && seg[2]) ctx.entity = { type: 'magazine', id: seg[2] };
     return ctx;
   }
   const ctx: PageContext = { path: pathname, title: titleFor[root] ?? 'Stable Press' };
@@ -101,8 +116,8 @@ function contextStarters(pathname: string): string[] {
   if (root === 'bulletins') return ['What is in the latest bulletin?', 'Show me past editions'];
   if (root === 'dashboard') return ['What can I do here?', 'How do I claim a racing role?'];
   if (root === 'podcast') return ['What is the latest episode?'];
-  if (root === 'newsroom' && seg[1] === 'magazine-v2') return ['How do I build a magazine?', 'How do I publish this to Bulletins?'];
-  if (root === 'newsroom') return ['What can I do in the Newsroom?', 'How do I file a story?'];
+  if (root === 'production-system' && seg[1] === 'magazine-v2') return ['How do I build a magazine?', 'How do I publish this to Bulletins?'];
+  if (root === 'production-system') return ['File a story for me', 'What can I do here?'];
   return DEFAULT_STARTERS;
 }
 
@@ -117,8 +132,9 @@ function messageText(m: UIMessage): string {
 const FOREST = 'linear-gradient(180deg, var(--forest-light) 0%, var(--forest-deep) 100%)';
 const GOLD = 'hsl(var(--brand-accent))';
 
-// Map a navigateTo destination (+ optional entity id) to an in-app route.
-function navPathFor(to: string, id?: string): string | null {
+// Map a navigateTo destination (+ optional entity id / Production System
+// screen) to an in-app route.
+function navPathFor(to: string, id?: string, screen?: string): string | null {
   switch (to) {
     case 'home': return '/';
     case 'news': return '/news';
@@ -129,10 +145,16 @@ function navPathFor(to: string, id?: string): string | null {
     case 'tipping': return '/tipping';
     case 'podcast': return '/podcast';
     case 'dashboard': return '/dashboard';
-    case 'newsroom': return '/production-system';
+    case 'newsroom': // legacy alias — older prompts/threads may still emit it
+    case 'production-system': return screen ? `/production-system/${screen}` : '/production-system';
+    // The Story Studio drawer lives in the Production System shell; onToolCall
+    // opens it via its store after this navigation.
+    case 'story-studio': return '/production-system/workflow';
+    // Member AI studios (private editable pages with their own assistant).
+    case 'horse-studio': return id ? `/studio/horse/${id}` : '/dashboard';
+    case 'profile-studio': return id ? `/studio/${id}` : '/dashboard';
     case 'site-content': return '/site-content';
     case 'claims': return '/claims';
-    case 'staff': return '/staff';
     case 'login': return '/login';
     case 'signup': return '/signup';
     case 'horse': return id ? `/horses/${id}` : '/horses';
@@ -200,13 +222,30 @@ export function AgentWidget() {
     onToolCall: async ({ toolCall }) => {
       // navigateTo is the only client-executed tool; server tools resolve server-side.
       if (toolCall.toolName !== 'navigateTo') return;
-      const { to, id } = (toolCall.input ?? {}) as { to?: string; id?: string };
-      const path = to ? navPathFor(to, id) : null;
-      if (path) navigate(path);
+      const { to, id, screen } = (toolCall.input ?? {}) as { to?: string; id?: string; screen?: string };
+      // Opening the Story Studio drawer is gated the same way its button is —
+      // don't pop a drawer the user can't file from.
+      if (to === 'story-studio' && !can('content.draft.create')) {
+        addToolResultRef.current?.({
+          tool: 'navigateTo',
+          toolCallId: toolCall.toolCallId,
+          output: { ok: false, error: 'This account cannot create story drafts, so the Story Studio is unavailable — guide them instead.' },
+        });
+        return;
+      }
+      const path = to ? navPathFor(to, id, screen) : null;
+      if (path) {
+        navigate(path);
+        // The drawer mounts with the Production System shell; the flag applies
+        // as soon as the route renders.
+        if (to === 'story-studio') useStoryStudioUi.getState().setOpen(true);
+      }
       addToolResultRef.current?.({
         tool: 'navigateTo',
         toolCallId: toolCall.toolCallId,
-        output: path ? { ok: true, navigatedTo: path } : { ok: false, error: `Unknown destination "${to}"` },
+        output: path
+          ? { ok: true, navigatedTo: path, ...(to === 'story-studio' ? { opened: 'Story Studio' } : {}) }
+          : { ok: false, error: `Unknown destination "${to}"` },
       });
     },
   });

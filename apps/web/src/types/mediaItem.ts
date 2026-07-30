@@ -1,3 +1,5 @@
+import type { Shareable } from './sharing';
+
 export type MediaType = 'Article' | 'Photo' | 'Video' | 'Press Release' | 'Publication';
 
 export const MEDIA_TYPES: MediaType[] = [
@@ -8,7 +10,7 @@ export const MEDIA_TYPES: MediaType[] = [
   'Publication',
 ];
 
-export interface MediaItem {
+export interface MediaItem extends Shareable {
   id: string;
   createdAt: Date;
 

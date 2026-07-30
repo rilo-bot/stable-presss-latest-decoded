@@ -9,6 +9,24 @@ import type { Article, ArticleStatus } from '@/types/article';
  * `undefined` is dropped by JSON.stringify and the server would keep the old
  * value, whereas `null` is sent and persisted (the store does a `$set`/merge).
  */
+/**
+ * Read the server's reason off a failed response.
+ *
+ * The workflow is enforced server-side now, so a rejected move comes back as a
+ * 403/409 carrying a sentence worth showing ("You cannot approve this story.",
+ * "A story cannot go from draft to published."). Throwing a bare `HTTP 409`
+ * threw that away and left the user with a status code.
+ */
+async function failureMessage(res: Response, fallback: string): Promise<string> {
+  try {
+    const body = (await res.json()) as { error?: unknown };
+    if (typeof body.error === 'string' && body.error.trim()) return body.error;
+  } catch {
+    // Non-JSON body — fall through to the generic message.
+  }
+  return `${fallback} (HTTP ${res.status})`;
+}
+
 export type ArticleUpdate = Partial<Omit<Article, 'category' | 'readingTime' | 'imageUrl' | 'tags'>> & {
   category?: string | null;
   readingTime?: number | null;
@@ -69,7 +87,7 @@ export const useArticleStore = create<ArticleState>()((set, get) => ({
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(article),
       });
-      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      if (!res.ok) throw new Error(await failureMessage(res, 'Could not create the story'));
       const created = normalizeArticle(await res.json());
       set((state) => ({ articles: [...state.articles, created] }));
       return created;
@@ -157,7 +175,7 @@ export const useArticleStore = create<ArticleState>()((set, get) => ({
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ status }),
       });
-      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      if (!res.ok) throw new Error(await failureMessage(res, 'Could not move the story'));
       const updated = normalizeArticle(await res.json());
       set((state) => ({
         articles: state.articles.map((a) => (a.id === id ? updated : a)),

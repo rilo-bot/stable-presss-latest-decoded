@@ -1,7 +1,7 @@
 import { AlertCircle } from 'lucide-react';
 
-import { WORKFLOW_STAGES } from '@/components/KanbanColumn';
-import { WorkflowBoardView } from '../../newsroom/views/WorkflowBoardView';
+import { WORKFLOW_STAGES } from '@/lib/workflow';
+import { WorkflowBoard } from '../workflow/WorkflowBoard';
 import { usePS } from '../context';
 
 export default function WorkflowBoardScreen() {
@@ -26,20 +26,18 @@ export default function WorkflowBoardScreen() {
         </div>
       )}
 
-      <WorkflowBoardView
+      <WorkflowBoard
+        visibleStages={s.visibleStages}
+        buckets={s.buckets}
         isContributor={s.isContributor}
         myStories={s.myStories}
         totalStories={s.totalStories}
-        onNewInColumn={s.handleNewInColumn}
-        onOpenStudio={s.handleOpenStudio}
-        visibleStages={s.visibleStages}
-        activeColumn={s.activeColumn}
-        setActiveColumn={s.setActiveColumn}
-        buckets={s.buckets}
-        onAdvance={s.handleAdvance}
+        currentUserDisplayName={s.currentUser?.displayName ?? null}
+        onMove={s.handleMove}
         onEdit={s.handleEdit}
         onDelete={s.handleDelete}
-        currentUserDisplayName={s.currentUser?.displayName ?? null}
+        onNewInColumn={s.handleNewInColumn}
+        onOpenStudio={s.handleOpenStudio}
       />
     </>
   );

@@ -1,44 +1,40 @@
 // ---------------------------------------------------------------------------
 // Email delivery.
 //
-// Provider precedence: Resend → SendGrid → dev console.
+// Provider precedence: Resend (primary) → SMTP (fallback) → dev console.
 //
-// Resend is the intended provider. SendGrid stays wired because it is already
-// configured in deployed environments, so a missing RESEND_API_KEY degrades to
-// the working path instead of breaking sign-in. With neither configured we
-// DON'T send: the payload is logged and the caller surfaces a "Dev preview".
+// Resend is the intended provider (RESEND_API_KEY + RESEND_FROM_EMAIL). If Resend
+// is unconfigured, OR a Resend send fails at runtime, we fall back to a plain SMTP
+// server (SMTP_HOST/PORT/USER/PASS, from SMTP_FROM or the Resend from) so mail
+// still goes out. With neither configured we DON'T send: the payload is logged and
+// the caller surfaces the reason.
 //
 // Every template goes through `layout()` so a second email can never drift from
 // the first, and every send returns { delivered } rather than throwing on a
 // non-configured provider — callers decide whether undelivered is fatal.
 // ---------------------------------------------------------------------------
 
-import sgMail from '@sendgrid/mail'
 import { Resend } from 'resend'
+import nodemailer, { type Transporter } from 'nodemailer'
 
 const RESEND_API_KEY = (process.env.RESEND_API_KEY ?? '').trim()
-const SENDGRID_API_KEY = (process.env.SENDGRID_API_KEY ?? '').trim()
+const RESEND_FROM = (process.env.RESEND_FROM_EMAIL ?? '').trim()
 
-// RESEND_FROM_EMAIL wins; SENDGRID_FROM_EMAIL is accepted so an existing
-// deployment can switch provider by adding one variable, not two.
-const FROM_EMAIL = (
-  process.env.RESEND_FROM_EMAIL ??
-  process.env.SENDGRID_FROM_EMAIL ??
-  ''
-).trim()
+// SMTP fallback (used if Resend is unconfigured or a Resend send fails).
+const SMTP_HOST = (process.env.SMTP_HOST ?? '').trim()
+const SMTP_PORT = Number(process.env.SMTP_PORT ?? '') || 587
+const SMTP_USER = (process.env.SMTP_USER ?? '').trim()
+const SMTP_PASS = (process.env.SMTP_PASS ?? '').trim()
+// true → implicit TLS (port 465); false → STARTTLS (587). Defaults to true on 465.
+const SMTP_SECURE = /^(1|true|yes|on)$/i.test((process.env.SMTP_SECURE ?? '').trim()) || SMTP_PORT === 465
+const SMTP_FROM = (process.env.SMTP_FROM ?? RESEND_FROM).trim()
 
-type Provider = 'resend' | 'sendgrid' | 'none'
+const hasResend = !!RESEND_API_KEY && !!RESEND_FROM
+const hasSmtp = !!SMTP_HOST && !!SMTP_FROM
 
-function provider(): Provider {
-  if (!FROM_EMAIL) return 'none'
-  if (RESEND_API_KEY) return 'resend'
-  if (SENDGRID_API_KEY) return 'sendgrid'
-  return 'none'
-}
-
-/** True when a provider and a from-address are both present. */
+/** True when at least one provider (Resend or SMTP) can actually send. */
 export function isEmailConfigured(): boolean {
-  return provider() !== 'none'
+  return hasResend || hasSmtp
 }
 
 let _resend: Resend | null = null
@@ -47,13 +43,17 @@ function resendClient(): Resend {
   return _resend
 }
 
-let _sgConfigured = false
-function sendgridClient(): typeof sgMail {
-  if (!_sgConfigured) {
-    sgMail.setApiKey(SENDGRID_API_KEY)
-    _sgConfigured = true
+let _smtp: Transporter | null = null
+function smtpTransport(): Transporter {
+  if (!_smtp) {
+    _smtp = nodemailer.createTransport({
+      host: SMTP_HOST,
+      port: SMTP_PORT,
+      secure: SMTP_SECURE,
+      auth: SMTP_USER ? { user: SMTP_USER, pass: SMTP_PASS } : undefined,
+    })
   }
-  return sgMail
+  return _smtp
 }
 
 interface Message {
@@ -66,29 +66,37 @@ interface Message {
 }
 
 /**
- * Dispatch through whichever provider is configured.
- * Throws on a genuine provider failure; returns { delivered: false } only when
- * nothing is configured at all.
+ * Dispatch: Resend first, then SMTP. Throws on a genuine provider failure (after
+ * the fallback is exhausted); returns { delivered: false } only when NOTHING is
+ * configured at all.
  */
 async function send({ to, subject, text, html, kind }: Message): Promise<{ delivered: boolean }> {
-  const p = provider()
-
-  if (p === 'none') {
-    console.info(`[email] (dev) ${kind} → ${to} — no provider configured, not emailing`)
-    return { delivered: false }
+  // Primary: Resend.
+  if (hasResend) {
+    try {
+      // The SDK reports API errors in the response body rather than throwing, so
+      // an unchecked call silently "succeeds" on a rejected send.
+      const { error } = await resendClient().emails.send({ from: RESEND_FROM, to, subject, text, html })
+      if (error) throw new Error(`Resend refused the message: ${error.message ?? String(error)}`)
+      console.info(`[email] ${kind} sent to ${to} via resend`)
+      return { delivered: true }
+    } catch (err) {
+      // Resend failed. Fall back to SMTP if we have it; otherwise rethrow so the
+      // caller can surface the real reason (never swallow it).
+      if (!hasSmtp) throw err
+      console.warn(`[email] resend failed (${err instanceof Error ? err.message : String(err)}) — falling back to SMTP`)
+    }
   }
 
-  if (p === 'resend') {
-    // The SDK reports API errors in the response body rather than throwing, so
-    // an unchecked call silently "succeeds" on a rejected send.
-    const { error } = await resendClient().emails.send({ from: FROM_EMAIL, to, subject, text, html })
-    if (error) throw new Error(`Resend refused the message: ${error.message ?? String(error)}`)
-  } else {
-    await sendgridClient().send({ to, from: FROM_EMAIL, subject, text, html })
+  // Fallback (or primary, if Resend is unconfigured): SMTP.
+  if (hasSmtp) {
+    await smtpTransport().sendMail({ from: SMTP_FROM, to, subject, text, html })
+    console.info(`[email] ${kind} sent to ${to} via smtp`)
+    return { delivered: true }
   }
 
-  console.info(`[email] ${kind} sent to ${to} via ${p}`)
-  return { delivered: true }
+  console.info(`[email] (dev) ${kind} → ${to} — no provider configured, not emailing`)
+  return { delivered: false }
 }
 
 // ── Shared layout ───────────────────────────────────────────────────────────

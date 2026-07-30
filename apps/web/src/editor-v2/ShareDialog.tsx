@@ -43,16 +43,19 @@ export function ShareDialog({ onClose }: { onClose: () => void }) {
     }
     setBusy(true);
     try {
-      const { emailed } = await api.addCollaborator(issueId, { email: selectedEmail, pageIds });
+      const { emailed, emailError } = await api.addCollaborator(issueId, { email: selectedEmail, pageIds });
       await refreshIssue();
       const shared = selectedEmail;
       setSelectedEmail('');
       setPicked(new Set());
       setPageMode('all');
-      // The share is done either way — be explicit when no link was sent, so
-      // nobody waits on an email that isn't coming.
-      if (emailed === false) toast.warning(`${shared} was added, but we couldn't email them a link.`);
-      else toast.success(`${shared} was added and emailed a link to this magazine.`);
+      // The share is done either way — be explicit when no link was sent, and show
+      // WHY (provider rejection / not configured) so it's fixable, not a mystery.
+      if (emailed === false) {
+        toast.warning(`${shared} was added, but the email didn't send${emailError ? `: ${emailError}` : '.'}`, { duration: 8000 });
+      } else {
+        toast.success(`${shared} was added and emailed a link to this magazine.`);
+      }
     } catch (e) {
       toast.error(e instanceof Error ? e.message : 'Could not add collaborator.');
     } finally {

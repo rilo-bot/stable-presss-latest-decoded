@@ -1,4 +1,5 @@
-import { Plus, Search, Eye, Flag, CalendarDays } from 'lucide-react';
+import { useState } from 'react';
+import { Plus, Search, Eye, Flag, CalendarDays, Share2 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { EmptyState } from '@/components/EmptyState';
 import { cn } from '@/lib/utils';
@@ -6,6 +7,8 @@ import type { Horse } from '@/types/horse';
 import type { RacingEntry } from '@/types/racingEntry';
 import { RacingStatusBadge } from '../components/RacingStatusBadge';
 import { DeleteConfirmDialog } from '../components/DeleteConfirmDialog';
+import { RecordShareDialog } from '@/components/RecordShareDialog';
+import { useRacingEntryStore } from '@/stores/racingEntryStore';
 
 interface RacingProductionSystemProps {
   racingEntries: RacingEntry[];
@@ -40,8 +43,15 @@ export function RacingProductionSystem({
   setRacingDeleteTarget,
   confirmRacingDelete,
 }: RacingProductionSystemProps) {
+  const shareEntry = useRacingEntryStore((s) => s.shareEntry);
+  const unshareEntry = useRacingEntryStore((s) => s.unshareEntry);
+  const [shareTargetId, setShareTargetId] = useState<string | null>(null);
+
   const safeEntries = racingEntries ?? [];
   const safeHorses = horses ?? [];
+
+  // Resolved from the live list so the dialog reflects shares as they change.
+  const shareTarget = safeEntries.find((e) => e.id === shareTargetId) ?? null;
 
   return (
     <div className="space-y-5">
@@ -214,23 +224,41 @@ export function RacingProductionSystem({
                         )}
                       </td>
 
-                      {/* Actions */}
+                      {/* Actions — driven by the server's per-record flags. */}
                       <td className="px-4 py-3">
                         <div className="flex items-center gap-3">
-                          <button
-                            onClick={() => onOpenRacingForm(entry)}
-                            className="text-[12px] uppercase tracking-[0.08em] font-semibold text-primary hover:text-primary/80 transition-colors"
-                            aria-label={`Edit ${entry.race_name}`}
-                          >
-                            Edit
-                          </button>
-                          <button
-                            onClick={() => onRacingDelete(entry)}
-                            className="text-[12px] uppercase tracking-[0.08em] font-semibold text-destructive hover:text-destructive/80 transition-colors"
-                            aria-label={`Remove ${entry.race_name}`}
-                          >
-                            Remove
-                          </button>
+                          {entry.canEdit === false ? (
+                            <span className="text-[12px] uppercase tracking-[0.08em] font-semibold text-muted-foreground/60">
+                              View only
+                            </span>
+                          ) : (
+                            <>
+                              <button
+                                onClick={() => onOpenRacingForm(entry)}
+                                className="text-[12px] uppercase tracking-[0.08em] font-semibold text-primary hover:text-primary/80 transition-colors"
+                                aria-label={`Edit ${entry.race_name}`}
+                              >
+                                Edit
+                              </button>
+                              {entry.canShare !== false && (
+                                <button
+                                  onClick={() => setShareTargetId(entry.id)}
+                                  className="text-[12px] uppercase tracking-[0.08em] font-semibold text-muted-foreground hover:text-foreground transition-colors inline-flex items-center gap-1"
+                                  aria-label={`Share ${entry.race_name}`}
+                                >
+                                  <Share2 size={11} />
+                                  {(entry.sharedWith?.length ?? 0) > 0 ? entry.sharedWith!.length : 'Share'}
+                                </button>
+                              )}
+                              <button
+                                onClick={() => onRacingDelete(entry)}
+                                className="text-[12px] uppercase tracking-[0.08em] font-semibold text-destructive hover:text-destructive/80 transition-colors"
+                                aria-label={`Remove ${entry.race_name}`}
+                              >
+                                Remove
+                              </button>
+                            </>
+                          )}
                         </div>
                       </td>
                     </tr>
@@ -241,6 +269,17 @@ export function RacingProductionSystem({
           </div>
         </div>
       )}
+
+      {/* Share */}
+      <RecordShareDialog
+        open={!!shareTarget}
+        onClose={() => setShareTargetId(null)}
+        recordLabel="racing record"
+        ownerName={shareTarget?.createdByName}
+        sharedWith={shareTarget?.sharedWith ?? []}
+        onShare={(email) => shareEntry(shareTarget!.id, email)}
+        onUnshare={(userId) => unshareEntry(shareTarget!.id, userId)}
+      />
 
       {/* Delete confirm */}
       <DeleteConfirmDialog

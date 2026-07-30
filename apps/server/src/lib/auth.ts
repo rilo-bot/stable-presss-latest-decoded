@@ -108,6 +108,13 @@ export function optionalAuth(req: Request, _res: Response, next: NextFunction): 
  * Rejects with 401 if the token or user is invalid.
  */
 export async function attachAccount(req: Request, res: Response, next: NextFunction): Promise<void> {
+  // Idempotent: some routers sit behind an outer gate that already resolved the
+  // account (see horseScopedWriteGate). Re-resolving would cost a second user
+  // lookup on every write for no benefit.
+  if (req.account) {
+    next()
+    return
+  }
   const claims = claimsFromHeader(req)
   if (!claims) {
     res.status(401).json({ error: 'Authentication required' })

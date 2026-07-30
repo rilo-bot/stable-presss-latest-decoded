@@ -357,8 +357,8 @@ router.post('/:id/collaborators', async (req, res) => {
 
   // Deep-link email, first share only — re-saving a page assignment is not a
   // new share and shouldn't email them again. Never fatal; the share is done.
-  const emailed = alreadyShared
-    ? false
+  const share = alreadyShared
+    ? { delivered: false as boolean, error: undefined as string | undefined }
     : await notifyShared({
         to: acct.email,
         sharedBy: req.account!.displayName || req.account!.email,
@@ -368,7 +368,7 @@ router.post('/:id/collaborators', async (req, res) => {
       });
 
   const updated = await db.collection('magazines').findById(req.params.id);
-  res.status(201).json({ ...withViewer(updated!, uid), emailed });
+  res.status(201).json({ ...withViewer(updated!, uid), emailed: share.delivered, emailError: share.error });
 });
 
 // remove a collaborator — owner or editor only

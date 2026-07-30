@@ -1,3 +1,4 @@
+import { isLive } from '@/types/article';
 import { useMemo, useEffect, useState } from 'react'
 import { useParams, Navigate, Link, useNavigate } from 'react-router-dom';
 import { motion } from 'framer-motion';
@@ -149,7 +150,7 @@ export default function ArticleDetail() {
       .filter(
         (a) =>
           a.id !== id &&
-          (a.status === 'published' || a.status === 'newsletter' || a.status === 'bulletin') &&
+          isLive(a) &&
           a.category === article.category
       )
       .slice(0, 3);
@@ -192,10 +193,7 @@ export default function ArticleDetail() {
       })
     : null;
 
-  const isLive =
-    article.status === 'published' ||
-    article.status === 'newsletter' ||
-    article.status === 'bulletin';
+  const live = isLive(article);
 
   const paragraphs = splitIntoParagraphs(article.summary ?? '');
 
@@ -305,7 +303,7 @@ export default function ArticleDetail() {
                     </span>
                   </SelectableField>
                 )}
-                {isLive && (
+                {live && (
                   <span className="flex items-center gap-1.5 text-[9px] uppercase tracking-[0.14em] font-semibold text-primary-foreground/60">
                     <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 inline-block animate-pulse" />
                     Published
@@ -502,7 +500,7 @@ export default function ArticleDetail() {
             </div>
 
             {/* Status notice for unpublished articles */}
-            {!isLive && (
+            {!live && (
               <div className="mb-6 flex items-center gap-2 px-4 py-2.5 rounded-sm border border-primary/30 bg-primary/5 text-primary text-xs font-semibold uppercase tracking-[0.1em]">
                 <span className="w-2 h-2 rounded-full bg-primary/60 inline-block" />
                 {STATUS_LABELS[article.status] ?? article.status}

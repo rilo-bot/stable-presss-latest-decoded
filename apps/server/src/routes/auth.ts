@@ -109,7 +109,7 @@ router.post('/request-otp', async (req, res) => {
   // delivery when email isn't configured — that would let anyone sign in as any
   // account with a known code. Refuse instead of silently degrading.
   if (IS_PROD && !isEmailConfigured()) {
-    console.error('[auth] request-otp refused: PROD=true but email is not configured (SENDGRID_API_KEY / SENDGRID_FROM_EMAIL).');
+    console.error('[auth] request-otp refused: PROD=true but email is not configured (need RESEND_API_KEY + RESEND_FROM_EMAIL, or SMTP_HOST + SMTP_FROM).');
     res.status(503).json({ error: 'Sign-in is temporarily unavailable. Please try again later.' });
     return;
   }

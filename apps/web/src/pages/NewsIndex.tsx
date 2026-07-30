@@ -1,4 +1,5 @@
 import { useMemo, useState, useEffect } from 'react';
+import { isLive, isLiveOn } from '@/types/article';
 import { Link, useSearchParams } from 'react-router-dom';
 import { useArticleStore } from '@/stores/articleStore';
 import { ArticleSkeletonCard } from '@/components/SkeletonCard';
@@ -12,11 +13,7 @@ import {
   Mail,
 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
-import {
-  CATEGORIES,
-  SECTIONS,
-  isLive,
-} from './news-index/constants';
+import { CATEGORIES, SECTIONS } from './news-index/constants';
 import { ArticleGrid } from './news-index/ArticleGrid';
 
 // Re-exported for consumers that import CATEGORIES from this module.
@@ -49,7 +46,7 @@ export default function NewsIndex() {
 
   // All live articles (published + newsletter + bulletin)
   const liveArticles = useMemo(
-    () => (articles ?? []).filter((a) => isLive(a.status)),
+    () => (articles ?? []).filter(isLive),
     [articles]
   );
 
@@ -121,17 +118,19 @@ export default function NewsIndex() {
     currentSectionDef?.description ??
     'The full Stable Press editorial record — race reports, analysis, interviews, and paddock intelligence from the thoroughbred racing world.';
 
-  // Channel split for when no filters applied
+  // Channel split for when no filters applied. This was already a channel split
+  // in everything but name — it read three mutually exclusive *statuses*, which
+  // is why a story could never run in both the newsletter and on the site.
   const newsletterArticles = useMemo(
-    () => filteredArticles.filter((a) => a.status === 'newsletter'),
+    () => filteredArticles.filter((a) => isLiveOn(a, 'newsletter')),
     [filteredArticles]
   );
   const bulletinArticles = useMemo(
-    () => filteredArticles.filter((a) => a.status === 'bulletin'),
+    () => filteredArticles.filter((a) => isLiveOn(a, 'bulletin')),
     [filteredArticles]
   );
   const publishedOnly = useMemo(
-    () => filteredArticles.filter((a) => a.status === 'published'),
+    () => filteredArticles.filter((a) => isLiveOn(a, 'news')),
     [filteredArticles]
   );
 

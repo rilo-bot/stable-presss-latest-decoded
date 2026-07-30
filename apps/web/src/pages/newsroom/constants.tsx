@@ -4,7 +4,7 @@ import {
   Settings, Eye, ArrowRight, BookOpen, Mic, Star, Edit, DollarSign, Image,
   File, UserCheck, CalendarClock, FolderOpen, Inbox, Layers, Newspaper, Flag,
 } from 'lucide-react';
-import type { KanbanStatus } from '@/components/KanbanColumn';
+import type { ArticleStatus } from '@/types/article';
 import type { PartyRole } from '@/types/party';
 import type { MediaType } from '@/types/mediaItem';
 import type { can } from '@/lib/permissions';

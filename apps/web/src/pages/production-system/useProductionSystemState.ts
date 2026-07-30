@@ -14,17 +14,18 @@ import { useState, useMemo, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { toast } from 'sonner';
 
-import { WORKFLOW_STAGES } from '@/components/KanbanColumn';
-import type { KanbanStatus } from '@/components/KanbanColumn';
 import { articleToast } from '@/components/Toast';
 import { can, canEditArticle } from '@/lib/permissions';
 import { roleColor, roleSummary } from '@/lib/roleDisplay';
+import { WORKFLOW_STAGES, findMove } from '@/lib/workflow';
+import type { Move } from '@/lib/workflow';
 import { useArticleStore } from '@/stores/articleStore';
 import { useAuthStore } from '@/stores/authStore';
 import { useIssueStore } from '@/stores/issueStore';
 import { useMagazineStore } from '@/stores/magazineStore';
 import { useStaffStore } from '@/stores/staffStore';
 import { useStoryStudioUi } from '@/stores/storyStudioUiStore';
+import { ARTICLE_STATUSES } from '@/types/article';
 import type { Article, ArticleStatus } from '@/types/article';
 
 import { PS_BASE, SIDE_NAV, pathForModule } from '../newsroom/constants';
@@ -48,8 +49,8 @@ export function useProductionSystemState() {
   const [editArticle, setEditArticle] = useState<Article | null>(null);
   const [deleteTarget, setDeleteTarget] = useState<Article | null>(null);
   const [deleting, setDeleting] = useState(false);
-  const [defaultStatus, setDefaultStatus] = useState<KanbanStatus>('draft');
-  const [activeColumn, setActiveColumn] = useState<KanbanStatus>('draft');
+  const [defaultStatus, setDefaultStatus] = useState<ArticleStatus>('draft');
+  const [activeColumn, setActiveColumn] = useState<ArticleStatus>('draft');
   const [searchQuery, setSearchQuery] = useState('');
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
   const [editorTab, setEditorTab] = useState<EditorTab>('review-queue');
@@ -169,18 +170,18 @@ export function useProductionSystemState() {
   };
 
   const buckets = useMemo(() => {
-    const map: Record<KanbanStatus, Article[]> = {
-      draft: [], submitted: [], editorial_review: [], revision: [],
-      legal_review: [], compliance: [], approved: [], publisher_review: [],
-      scheduled: [], published: [], newsletter: [], bulletin: [],
-    };
+    const map = Object.fromEntries(
+      ARTICLE_STATUSES.map((s) => [s, [] as Article[]]),
+    ) as Record<ArticleStatus, Article[]>;
     const visibleArticles = isContributor
       ? (articles ?? []).filter((a) => a.author === currentUser?.displayName)
       : (articles ?? []);
     for (const article of visibleArticles) {
-      const s = article.status as KanbanStatus;
-      if (s in map) map[s].push(article);
-      else map['draft'].push(article);
+      // An unrecognised status falls into Draft so the story is at least
+      // reachable. The migration should mean this never fires — see
+      // apps/server/scripts/migrate-article-status.ts.
+      if (map[article.status]) map[article.status].push(article);
+      else map.draft.push(article);
     }
     return map;
   }, [articles, isContributor, currentUser?.displayName]);
@@ -197,18 +198,49 @@ export function useProductionSystemState() {
     [accessModules],
   );
 
-  const handleAdvance = (articleId: string, toStatus: KanbanStatus) => {
+  /**
+   * Move a story through the workflow.
+   *
+   * The server is the authority: it re-checks that the move is legal from where
+   * the story actually is and that the caller holds the move's permission, and
+   * the store surfaces its refusal. This function is the optimistic half.
+   */
+  const handleMove = (article: Article, move: Move, note?: string) => {
+    const sendingBack = move.back && move.to === 'draft';
+    if (sendingBack) {
+      void updateArticle(article.id, {
+        status: move.to,
+        changesRequested: true,
+        changesRequestedNote: note ?? '',
+      });
+      articleToast.advanced('Draft — changes requested');
+      return;
+    }
+
+    void setStatus(article.id, move.to);
+    if (move.to === 'published') articleToast.published();
+    else articleToast.advanced(WORKFLOW_STAGES.find((s) => s.status === move.to)?.label ?? move.to);
+  };
+
+  /**
+   * Move by id and destination, for callers that only hold those (the Editor
+   * Hub's queues). Resolves the move so the same legality and permission rules
+   * apply as from the board; an illegal destination is refused here rather than
+   * being sent for the server to reject.
+   */
+  const handleAdvanceTo = (articleId: string, toStatus: ArticleStatus) => {
     const article = (articles ?? []).find((a) => a.id === articleId);
     if (!article) return;
-    setStatus(articleId, toStatus as ArticleStatus);
-    const nextStage = WORKFLOW_STAGES.find((s) => s.status === toStatus);
-    if (toStatus === 'published') {
-      articleToast.published();
-    } else if (toStatus === 'revision') {
-      articleToast.advanced('Revision Required');
-    } else {
-      articleToast.advanced(nextStage?.label ?? toStatus);
+    const move = findMove(article.status, toStatus);
+    if (!move) {
+      toast.error(`A story cannot go from ${article.status} to ${toStatus}.`);
+      return;
     }
+    if (!can(move.permission)) {
+      toast.error(`You cannot ${move.label.toLowerCase()} this story.`);
+      return;
+    }
+    handleMove(article, move);
   };
 
   const handleEdit = (article: Article) => {
@@ -231,7 +263,7 @@ export function useProductionSystemState() {
     toast.success('Story deleted.');
   };
 
-  const handleNewInColumn = (status: KanbanStatus) => {
+  const handleNewInColumn = (status: ArticleStatus) => {
     if (!can('content.draft.create')) return;
     setEditArticle(null);
     setDefaultStatus(status);
@@ -260,8 +292,11 @@ export function useProductionSystemState() {
   const myStories = isContributor
     ? (articles ?? []).filter((a) => a.author === currentUser?.displayName).length
     : totalStories;
-  const pendingReview = buckets.editorial_review.length + buckets.submitted.length;
-  const publishedCount = buckets.published.length + buckets.newsletter.length + buckets.bulletin.length;
+  // One review queue now — the editorial/legal/compliance/publisher gates that
+  // used to be counted alongside Submitted are gone.
+  const pendingReview = buckets.submitted.length;
+  // "Published" is one status; newsletter and bulletin are channels of it.
+  const publishedCount = buckets.published.length;
   const scheduledCount = buckets.scheduled.length;
 
   const filteredArticles = useMemo(() => {
@@ -293,7 +328,7 @@ export function useProductionSystemState() {
     // article dialogs + handlers
     formOpen, editArticle, defaultStatus, deleteTarget, deleting,
     setDeleteTarget, handleFormClose, confirmDelete,
-    handleAdvance, handleEdit, handleDelete, handleNewInColumn, handleOpenStudio,
+    handleMove, handleAdvanceTo, handleEdit, handleDelete, handleNewInColumn, handleOpenStudio,
     // per-screen ui state that must survive a route change
     activeColumn, setActiveColumn, searchQuery, setSearchQuery,
     sidebarCollapsed, setSidebarCollapsed,

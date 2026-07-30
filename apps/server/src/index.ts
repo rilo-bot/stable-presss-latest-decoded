@@ -8,15 +8,18 @@ import { storage } from './lib/storage.js'
 const isProd = process.env.PROD === 'true'
 const hasMongoUri = !!process.env.MONGODB_URI
 const hasJwtSecret = !!process.env.JWT_SECRET
-const hasSendgrid = !!process.env.SENDGRID_API_KEY && !!process.env.SENDGRID_FROM_EMAIL
+const hasResend = !!process.env.RESEND_API_KEY && !!process.env.RESEND_FROM_EMAIL
+const hasSmtp = !!process.env.SMTP_HOST && !!(process.env.SMTP_FROM || process.env.RESEND_FROM_EMAIL)
+const hasEmail = hasResend || hasSmtp
+const emailLabel = [hasResend ? 'Resend' : '', hasSmtp ? 'SMTP fallback' : ''].filter(Boolean).join(' + ')
 console.log('[server] Environment:')
 console.log('  PROD (deployment tier):', isProd ? '✓ true' : '✗ false (dev/preview)')
 console.log('  MONGODB_URI:', hasMongoUri ? '✓ configured' : '✗ not set (server will refuse to start)')
 console.log('  JWT_SECRET:', hasJwtSecret ? '✓ configured' : '✗ not set (insecure dev secret)')
-console.log('  SENDGRID:', hasSendgrid ? '✓ configured (emails OTP)' : '✗ not set (dev: OTP via console + UI preview)')
+console.log('  EMAIL:', hasEmail ? `✓ ${emailLabel}` : '✗ not set (dev: OTP via console + UI preview)')
 console.log('  S3 UPLOADS:', storage.isConfigured() ? '✓ configured (presigned PUT)' : '✗ not set (uploads fall back to inline data URLs)')
-if (isProd && !hasSendgrid) {
-  console.warn('[server] ⚠ PROD=true but SendGrid is not configured — OTP codes will be exposed in API responses')
+if (isProd && !hasEmail) {
+  console.warn('[server] ⚠ PROD=true but no email provider (Resend/SMTP) is configured — OTP codes will be exposed in API responses')
 }
 
 // ── Crash guards ──
