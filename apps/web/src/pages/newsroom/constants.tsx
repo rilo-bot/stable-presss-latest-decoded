@@ -162,7 +162,6 @@ export function pathForModule(id: string): string {
 export type EditorTab =
   | 'review-queue'
   | 'assignments'
-  | 'approval-routing'
   | 'scheduling'
   | 'media-library'
   | 'horse-records';
@@ -189,13 +188,6 @@ export const EDITOR_TABS: EditorTabConfig[] = [
     icon: <UserCheck size={14} />,
     description: 'Content assignment & modification',
     permission: 'content.draft.edit_any',
-  },
-  {
-    id: 'approval-routing',
-    label: 'Approval Routing',
-    icon: <Layers size={14} />,
-    description: 'Approval workflow routing',
-    permission: 'content.approve',
   },
   {
     id: 'scheduling',

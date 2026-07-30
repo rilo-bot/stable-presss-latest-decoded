@@ -134,14 +134,7 @@ export default function ProductionSystemLayout() {
     ) : undefined;
 
   return (
-    // --radius is scoped here rather than changed globally: every card, button,
-    // input and badge inside the production system rounds up (the tokens derive
-    // rounded-sm/md/lg from it), while the public site keeps its sharper,
-    // print-inspired corners.
-    <div
-      className="flex min-h-screen bg-background"
-      style={{ '--radius': '0.75rem' } as React.CSSProperties}
-    >
+    <div className="flex min-h-screen bg-background">
       <ProductionSystemSidebar
         collapsed={state.sidebarCollapsed}
         setCollapsed={state.setSidebarCollapsed}

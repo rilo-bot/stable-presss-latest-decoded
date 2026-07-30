@@ -25,7 +25,7 @@ export function ProductionSystemTopBar({ title, actions, onOpenNav }: TopBarProp
     <header className="sticky top-0 z-30 flex h-14 items-center gap-3 border-b border-border/60 bg-background/95 px-4 backdrop-blur supports-[backdrop-filter]:bg-background/80 md:px-6">
       <button
         onClick={onOpenNav}
-        className="md:hidden -ml-1 rounded-lg p-2 text-muted-foreground transition-colors hover:bg-muted/60 hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+        className="md:hidden -ml-1 rounded-sm p-2 text-muted-foreground transition-colors hover:bg-muted/60 hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
         aria-label="Open navigation"
       >
         <Menu size={18} />

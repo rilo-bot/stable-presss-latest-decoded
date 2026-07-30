@@ -13,7 +13,7 @@ export default function WorkflowBoardScreen() {
       {/* Scope notice — shown whenever the user cannot see the whole board. */}
       {scoped && (
         <div
-          className="mb-5 flex items-start gap-2.5 rounded-lg border px-4 py-3 text-sm"
+          className="mb-5 flex items-start gap-2.5 rounded-sm border px-4 py-3 text-sm"
           style={{ borderColor: `${s.accentColor}40`, background: `${s.accentColor}08` }}
         >
           <AlertCircle size={14} style={{ color: s.accentColor }} className="mt-0.5 flex-shrink-0" />

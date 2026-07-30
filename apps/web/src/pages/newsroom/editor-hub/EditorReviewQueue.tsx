@@ -51,7 +51,7 @@ export function EditorReviewQueue({
           <div
             key={stat.label}
             className={cn(
-              'rounded-xl border p-3',
+              'rounded-sm border p-3',
               stat.urgent ? 'border-primary/30 bg-primary/5' : 'border-border/60 bg-card',
             )}
           >
@@ -83,7 +83,7 @@ export function EditorReviewQueue({
       </div>
 
       {/* ── The one queue ── */}
-      <div className="overflow-hidden rounded-xl border border-border/60 bg-card">
+      <div className="overflow-hidden rounded-sm border border-border/60 bg-card">
         <div className="flex items-center justify-between border-b border-border/40 bg-primary/5 px-4 py-3">
           <div className="flex items-center gap-2">
             <Inbox size={13} className="text-primary" />
@@ -129,7 +129,7 @@ export function EditorReviewQueue({
 
       {/* ── Handed back ── */}
       {sentBack.length > 0 && (
-        <div className="overflow-hidden rounded-xl border border-dashed border-border/60 bg-card">
+        <div className="overflow-hidden rounded-sm border border-dashed border-border/60 bg-card">
           <div className="flex items-center gap-2 border-b border-border/40 px-4 py-3">
             <RotateCcw size={13} style={{ color: 'hsl(var(--chart-3))' }} />
             <p
@@ -157,7 +157,7 @@ export function EditorReviewQueue({
                   </span>
                   <button
                     onClick={() => onEdit(article)}
-                    className="flex-shrink-0 rounded-lg px-2 py-1 text-[12px] font-semibold text-primary transition-colors hover:bg-primary/10 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                    className="flex-shrink-0 rounded-sm px-2 py-1 text-[12px] font-semibold text-primary transition-colors hover:bg-primary/10 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
                   >
                     Open
                   </button>

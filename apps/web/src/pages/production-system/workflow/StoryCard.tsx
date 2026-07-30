@@ -40,7 +40,7 @@ function Tag({ label, tone }: { label: string; tone: 'alert' | 'muted' }) {
   return (
     <span
       className={cn(
-        'inline-flex items-center gap-1 rounded-md px-1.5 py-0.5 text-[10.5px] font-semibold',
+        'inline-flex items-center gap-1 rounded-sm px-1.5 py-0.5 text-[10.5px] font-semibold',
         tone === 'alert'
           ? 'bg-[hsl(var(--chart-3)/0.15)] text-[hsl(var(--chart-3))]'
           : 'bg-muted text-muted-foreground',
@@ -97,7 +97,7 @@ export function StoryCard({
   const hasMenu = others.length > 0 || editable;
 
   return (
-    <article className="group rounded-2xl border border-border/60 bg-card p-3.5 shadow-sm transition-shadow hover:shadow-md focus-within:shadow-md">
+    <article className="group rounded-sm border border-border/60 bg-card p-3.5 shadow-sm transition-shadow hover:shadow-md focus-within:shadow-md">
       {/* Tag row. Real data only — the category the desk filed it under, plus a
           rejection flag when an editor has sent it back. */}
       <div className="flex items-start gap-2">
@@ -107,7 +107,7 @@ export function StoryCard({
           {extraChannels.map((c) => (
             <span
               key={c}
-              className="inline-flex rounded-md bg-primary/10 px-1.5 py-0.5 text-[10.5px] font-semibold text-primary"
+              className="inline-flex rounded-sm bg-primary/10 px-1.5 py-0.5 text-[10.5px] font-semibold text-primary"
             >
               {CHANNEL_LABEL[c] ?? c}
             </span>
@@ -121,7 +121,7 @@ export function StoryCard({
               aria-expanded={menuOpen}
               aria-haspopup="menu"
               className={cn(
-                'rounded-md p-0.5 text-muted-foreground transition-colors hover:bg-muted hover:text-foreground',
+                'rounded-sm p-0.5 text-muted-foreground transition-colors hover:bg-muted hover:text-foreground',
                 'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring',
                 'md:opacity-0 md:group-hover:opacity-100 md:group-focus-within:opacity-100',
                 menuOpen && 'md:opacity-100',
@@ -132,7 +132,7 @@ export function StoryCard({
             {menuOpen && (
               <div
                 role="menu"
-                className="absolute right-0 top-full z-20 mt-1 w-44 overflow-hidden rounded-xl border border-border bg-popover shadow-lg"
+                className="absolute right-0 top-full z-20 mt-1 w-44 overflow-hidden rounded-sm border border-border bg-popover shadow-lg"
               >
                 {others.map((move) => (
                   <button
@@ -221,7 +221,7 @@ export function StoryCard({
       {forward && canForward && (
         <button
           onClick={() => onMove(article, forward)}
-          className="mt-3 w-full rounded-lg bg-primary/10 py-1.5 text-[12.5px] font-semibold text-primary transition-colors hover:bg-primary hover:text-primary-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+          className="mt-3 w-full rounded-sm bg-primary/10 py-1.5 text-[12.5px] font-semibold text-primary transition-colors hover:bg-primary hover:text-primary-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
         >
           {forward.label}
         </button>

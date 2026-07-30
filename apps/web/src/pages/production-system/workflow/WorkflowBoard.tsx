@@ -157,7 +157,7 @@ function Column({
     >
       {/* Filled header: count, stage, and the add button. */}
       <div
-        className="flex items-center gap-2 rounded-xl px-3 py-2.5"
+        className="flex items-center gap-2 rounded-sm px-3 py-2.5"
         style={{ background: stage.accent, color: stage.onAccent }}
       >
         <span
@@ -172,7 +172,7 @@ function Column({
             onClick={() => onNewInColumn(stage.status)}
             aria-label={`New story in ${stage.label}`}
             title={`New story in ${stage.label}`}
-            className="flex-shrink-0 rounded-md p-0.5 transition-opacity hover:opacity-70 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+            className="flex-shrink-0 rounded-sm p-0.5 transition-opacity hover:opacity-70 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
           >
             <Plus size={16} />
           </button>
@@ -183,7 +183,7 @@ function Column({
 
       <div className="mt-2 flex flex-col gap-2.5">
         {articles.length === 0 && (
-          <p className="rounded-2xl border border-dashed border-border/60 px-3 py-8 text-center text-[12px] text-muted-foreground">
+          <p className="rounded-sm border border-dashed border-border/60 px-3 py-8 text-center text-[12px] text-muted-foreground">
             Nothing in {stage.label.toLowerCase()}
           </p>
         )}

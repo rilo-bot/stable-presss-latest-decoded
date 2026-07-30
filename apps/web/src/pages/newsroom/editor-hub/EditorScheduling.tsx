@@ -85,9 +85,9 @@ export function EditorScheduling({ articles, buckets, onAdvance, setEditorTab }:
             <EmptyState
               icon={CalendarClock}
               heading="Nothing ready to schedule yet."
-              description="Stories that have passed approval and publisher review will appear here."
-              ctaLabel="Go to Approval Routing"
-              onCta={() => setEditorTab('approval-routing')}
+              description="Approved stories appear here, ready to be booked in. Approve something in the review queue first."
+              ctaLabel="Go to Review Queue"
+              onCta={() => setEditorTab('review-queue')}
             />
           </div>
         ) : (

@@ -133,6 +133,7 @@ export function AiPanel() {
   useEffect(() => () => { for (const a of attsRef.current) if (a.imgUrl) URL.revokeObjectURL(a.imgUrl); }, []);
   const scrollRef = useRef<HTMLDivElement>(null);
   const fileRef = useRef<HTMLInputElement>(null);
+  const taRef = useRef<HTMLTextAreaElement>(null);
   const showTray = proposals.length > 0 && proposalsPageId === currentPageId;
 
   // Push-to-talk voice + read-aloud, shared with the app's other AI chats.
@@ -159,6 +160,16 @@ export function AiPanel() {
     prevFirstId.current = firstId;
     if (!prepended) el.scrollTo({ top: el.scrollHeight, behavior: 'smooth' });
   }, [chat, chatBusy, proposals.length]);
+
+  // Auto-grow the composer as you type (up to a cap, then it scrolls internally) so
+  // multi-line prompts are actually visible instead of hidden behind a 1-row box.
+  // Resets to one row when the input is cleared (e.g. after send).
+  useEffect(() => {
+    const ta = taRef.current;
+    if (!ta) return;
+    ta.style.height = 'auto';
+    ta.style.height = `${Math.min(ta.scrollHeight, 160)}px`;
+  }, [input]);
 
   // Stage newly picked/dropped files (multi-attach: an article + its graphs can
   // ride the same turn). Images get an object URL for the inline preview.
@@ -337,7 +348,7 @@ export function AiPanel() {
       </div>
 
       {tab === 'uploads' ? (
-        <div className="flex-1 space-y-1.5 overflow-y-auto px-3 py-3">
+        <div className="min-h-0 flex-1 space-y-1.5 overflow-y-auto px-3 py-3">
           {uploadsLoading && (
             <div className="flex items-center gap-1.5 text-[12px] text-white/40"><Loader2 size={12} className="animate-spin" /> loading uploads…</div>
           )}
@@ -368,8 +379,11 @@ export function AiPanel() {
         </div>
       ) : (
         <>
-      {/* Conversation */}
-      <div ref={scrollRef} className="flex-1 space-y-3 overflow-y-auto px-3 py-3">
+      {/* Conversation — min-h-0 is REQUIRED: without it this flex-1 item won't shrink
+          below its content, pushing the composer past the panel's clipped bottom edge
+          (the "input slides off the bottom" bug). With it, this scrolls and the
+          composer stays pinned and visible. */}
+      <div ref={scrollRef} className="min-h-0 flex-1 space-y-3 overflow-y-auto px-3 py-3">
         {chatHasMore && (
           <div className="flex justify-center">
             <button
@@ -464,8 +478,9 @@ export function AiPanel() {
         </div>
       )}
 
-      {/* Composer */}
-      <div className="border-t border-white/10 px-2.5 py-2">
+      {/* Composer — slightly darker surface + extra bottom padding lifts the input
+          off the screen edge and separates it from the scrolling conversation. */}
+      <div className="border-t border-white/10 bg-[#0b1220] px-3 pt-2.5 pb-3.5">
         {selectedId && (
           <div className="mb-1.5 flex items-center gap-1 text-[10px] text-white/45">
             <span className="h-1.5 w-1.5 rounded-full" style={{ background: 'var(--gold-bright)' }} /> focused on the selected element
@@ -514,6 +529,7 @@ export function AiPanel() {
             <Paperclip size={14} />
           </button>
           <textarea
+            ref={taRef}
             value={input}
             rows={1}
             onChange={(e) => setInput(e.target.value)}
@@ -530,7 +546,7 @@ export function AiPanel() {
               : atts.length > 0 ? 'e.g. “fill this page from the document and place the graphs”'
               : 'Ask the studio assistant…  (Shift+Enter for a new line)'
             }
-            className="flex-1 resize-none overflow-hidden rounded-2xl border border-white/15 bg-white/5 px-3 py-1.5 text-[12px] leading-snug text-white outline-none placeholder:text-white/30 focus:border-white/30 disabled:opacity-60"
+            className="max-h-40 min-h-[38px] flex-1 resize-none overflow-y-auto rounded-2xl border border-white/15 bg-white/5 px-3.5 py-2 text-[12.5px] leading-snug text-white outline-none transition-colors placeholder:text-white/30 focus:border-[var(--gold-bright)]/50 focus:bg-white/[0.07] disabled:opacity-60"
           />
           {/* Mic — v1 order (after the textarea), v1 icon logic: transcribing→spinner,
               recording→stop (■), idle→mic; hidden while a reply is generating. */}

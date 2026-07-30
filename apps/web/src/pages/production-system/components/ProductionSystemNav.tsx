@@ -95,7 +95,7 @@ function NavList({ visibleNav, collapsed, onNavigate, ...counts }: NavListProps)
                     onClick={onNavigate}
                     aria-current={active ? 'page' : undefined}
                     className={cn(
-                      'group flex w-full items-center gap-2.5 rounded-lg px-2.5 py-2 text-[13.5px] font-medium transition-colors',
+                      'group flex w-full items-center gap-2.5 rounded-sm px-2.5 py-2 text-[13.5px] font-medium transition-colors',
                       'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring',
                       collapsed && 'justify-center px-0',
                       active
@@ -110,7 +110,7 @@ function NavList({ visibleNav, collapsed, onNavigate, ...counts }: NavListProps)
                     {!collapsed && <span className="flex-1 truncate text-left">{item.label}</span>}
                     {!collapsed && item.badge && (
                       <span
-                        className="flex-shrink-0 rounded-md px-1.5 py-0.5 text-[10px] font-bold uppercase tracking-[0.08em]"
+                        className="flex-shrink-0 rounded-sm px-1.5 py-0.5 text-[10px] font-bold uppercase tracking-[0.08em]"
                         style={{ background: 'hsl(var(--brand-accent))', color: 'hsl(var(--brand-accent-foreground))' }}
                       >
                         {item.badge}
@@ -121,7 +121,7 @@ function NavList({ visibleNav, collapsed, onNavigate, ...counts }: NavListProps)
                     {!collapsed && badge !== null && (
                       <span
                         className={cn(
-                          'flex-shrink-0 rounded-md px-1.5 py-0.5 text-[11px] font-semibold tabular-nums',
+                          'flex-shrink-0 rounded-sm px-1.5 py-0.5 text-[11px] font-semibold tabular-nums',
                           active ? 'bg-primary/15 text-primary' : 'bg-muted text-muted-foreground/80',
                         )}
                       >
@@ -144,7 +144,7 @@ function BrandMark() {
   return (
     <span
       aria-hidden="true"
-      className="h-8 w-8 flex-shrink-0 rounded-lg"
+      className="h-8 w-8 flex-shrink-0 rounded-sm"
       style={{
         backgroundColor: 'hsl(var(--primary))',
         WebkitMaskImage: "url('/images/Stable_Press.png')",
@@ -214,7 +214,7 @@ function NavAccount({
   return (
     <div ref={ref} className="relative border-t border-border/50 p-2">
       {open && (
-        <div className="absolute bottom-full left-2 right-2 mb-1 overflow-hidden rounded-xl border border-border bg-popover shadow-lg">
+        <div className="absolute bottom-full left-2 right-2 mb-1 overflow-hidden rounded-sm border border-border bg-popover shadow-lg">
           <Link
             to="/"
             onClick={() => setOpen(false)}
@@ -239,7 +239,7 @@ function NavAccount({
         aria-haspopup="menu"
         aria-label="Account menu"
         className={cn(
-          'flex w-full items-center gap-2.5 rounded-xl border border-border/70 bg-card p-2 text-left transition-colors hover:bg-muted/50',
+          'flex w-full items-center gap-2.5 rounded-sm border border-border/70 bg-card p-2 text-left transition-colors hover:bg-muted/50',
           'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring',
           collapsed && 'justify-center border-transparent bg-transparent p-1',
         )}
@@ -301,7 +301,7 @@ export function ProductionSystemSidebar({
         {!collapsed && (
           <button
             onClick={() => setCollapsed(true)}
-            className="ml-auto rounded-lg p-1.5 text-muted-foreground transition-colors hover:bg-muted/60 hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+            className="ml-auto rounded-sm p-1.5 text-muted-foreground transition-colors hover:bg-muted/60 hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
             aria-label="Collapse sidebar"
             aria-expanded
             title="Collapse sidebar"
@@ -314,7 +314,7 @@ export function ProductionSystemSidebar({
       {collapsed && (
         <button
           onClick={() => setCollapsed(false)}
-          className="mx-auto mt-2 rounded-lg p-1.5 text-muted-foreground transition-colors hover:bg-muted/60 hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+          className="mx-auto mt-2 rounded-sm p-1.5 text-muted-foreground transition-colors hover:bg-muted/60 hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
           aria-label="Expand sidebar"
           aria-expanded={false}
           title="Expand sidebar"
@@ -380,7 +380,7 @@ export function ProductionSystemNavDrawer({
           <NavBrand collapsed={false} />
           <button
             onClick={onClose}
-            className="ml-auto rounded-lg p-1.5 text-muted-foreground transition-colors hover:bg-muted/60 hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+            className="ml-auto rounded-sm p-1.5 text-muted-foreground transition-colors hover:bg-muted/60 hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
             aria-label="Close navigation"
           >
             <X size={16} />

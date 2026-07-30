@@ -213,7 +213,6 @@ export const MODULE_CATALOGUE: ModuleMeta[] = [
   // Editor Hub tabs — gated the same way, one level down.
   { id: 'review-queue', label: 'Review Queue', section: 'Editor Hub', requiresPermission: 'content.editorial_review' },
   { id: 'assignments', label: 'Assignments', section: 'Editor Hub', requiresPermission: 'content.draft.edit_any' },
-  { id: 'approval-routing', label: 'Approval Routing', section: 'Editor Hub', requiresPermission: 'content.approve' },
   { id: 'scheduling', label: 'Scheduling', section: 'Editor Hub', requiresPermission: 'content.schedule' },
   { id: 'media-library', label: 'Media Library', section: 'Editor Hub', requiresPermission: 'media.manage_all' },
   { id: 'horse-records', label: 'Horse Records', section: 'Editor Hub', requiresPermission: 'media.manage_all' },
