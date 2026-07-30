@@ -41,6 +41,10 @@ interface StaffState {
   invite: (email: string, slug: string) => Promise<Result>;
   resendInvite: (id: string) => Promise<Result>;
   cancelInvite: (id: string) => Promise<Result>;
+  /** Re-send an existing member's "you have access" email. No token involved. */
+  resendAccess: (userId: string) => Promise<Result>;
+  /** Revoke every role. The account survives; they drop back to reader. */
+  removeMember: (userId: string) => Promise<Result>;
 }
 
 async function readError(res: Response, fallback: string): Promise<string> {
@@ -113,6 +117,28 @@ export const useStaffStore = create<StaffState>((set, get) => ({
     try {
       const res = await authFetch(`/api/staff/pending/${id}`, { method: 'DELETE' });
       if (!res.ok) return { ok: false, error: await readError(res, 'Could not cancel the invite.') };
+      await get().fetchStaff();
+      return { ok: true };
+    } catch {
+      return { ok: false, error: 'Network error. Please try again.' };
+    }
+  },
+
+  resendAccess: async (userId) => {
+    try {
+      const res = await authFetch(`/api/staff/member/${userId}/resend`, { method: 'POST' });
+      const data = await res.json().catch(() => null);
+      if (!res.ok) return { ok: false, error: data?.error ?? 'Could not send the email.' };
+      return { ok: true, emailed: data?.emailed !== false };
+    } catch {
+      return { ok: false, error: 'Network error. Please try again.' };
+    }
+  },
+
+  removeMember: async (userId) => {
+    try {
+      const res = await authFetch(`/api/staff/member/${userId}`, { method: 'DELETE' });
+      if (!res.ok) return { ok: false, error: await readError(res, 'Could not remove them.') };
       await get().fetchStaff();
       return { ok: true };
     } catch {

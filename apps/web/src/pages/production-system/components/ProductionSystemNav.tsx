@@ -161,21 +161,41 @@ function BrandMark() {
   );
 }
 
-function NavBrand({ collapsed }: { collapsed: boolean }) {
+/**
+ * The masthead in the rail. Clicking it leaves for the public site, the same
+ * convention the site's own masthead follows — so the logo behaves the way a
+ * logo is expected to, rather than being the one unclickable brand mark in the
+ * app.
+ */
+function NavBrand({ collapsed, onNavigate }: { collapsed: boolean; onNavigate?: () => void }) {
   return (
-    <div className={cn('flex min-w-0 items-center gap-2.5', collapsed && 'justify-center')}>
+    <Link
+      to="/"
+      onClick={onNavigate}
+      title="Go to the public site"
+      className={cn(
+        'group/brand flex min-w-0 items-center gap-2.5 rounded-sm transition-opacity hover:opacity-80',
+        'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring',
+        collapsed && 'justify-center',
+      )}
+    >
       <BrandMark />
       {!collapsed && (
         <span className="min-w-0">
           <span className="block truncate font-[family-name:var(--font-display)] text-[15px] font-bold leading-tight text-foreground">
             Stable Press
           </span>
-          <span className="block truncate text-[11px] leading-tight text-muted-foreground">
+          <span className="flex items-center gap-1 truncate text-[11px] leading-tight text-muted-foreground">
             Production System
+            <ExternalLink
+              size={9}
+              className="flex-shrink-0 opacity-0 transition-opacity group-hover/brand:opacity-100"
+              aria-hidden="true"
+            />
           </span>
         </span>
       )}
-    </div>
+    </Link>
   );
 }
 
@@ -377,7 +397,7 @@ export function ProductionSystemNavDrawer({
         aria-label="Production system navigation"
       >
         <div className="flex h-14 flex-shrink-0 items-center gap-2 border-b border-border/50 px-3">
-          <NavBrand collapsed={false} />
+          <NavBrand collapsed={false} onNavigate={onClose} />
           <button
             onClick={onClose}
             className="ml-auto rounded-sm p-1.5 text-muted-foreground transition-colors hover:bg-muted/60 hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"

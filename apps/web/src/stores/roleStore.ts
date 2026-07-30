@@ -80,6 +80,7 @@ interface RoleState {
   createRole: (draft: RoleDraft) => Promise<Result>;
   updateRole: (slug: string, draft: RoleDraft) => Promise<Result>;
   deleteRole: (slug: string) => Promise<Result>;
+  /** One role per person — this REPLACES whatever they held, it doesn't add. */
   assignRole: (slug: string, userId: string) => Promise<Result>;
   unassignRole: (slug: string, userId: string) => Promise<Result>;
 }

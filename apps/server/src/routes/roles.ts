@@ -23,6 +23,7 @@ import {
   bustRoleCache,
   getRoles,
   projectRole,
+  superadminHolderCount,
   type RoleDoc,
 } from '../lib/roleRegistry.js'
 import {
@@ -278,6 +279,13 @@ router.delete('/:slug', requireDefineRoles, async (req, res) => {
 })
 
 // ── Assign / unassign ────────────────────────────────────────────────────────
+//
+// ONE ROLE PER PERSON. Assigning REPLACES whatever they held rather than adding
+// to it: a union of roles meant the Team screen showed rows like
+// "Superadmin · Administrator" where the second chip granted nothing (superadmin
+// short-circuits every check), and answering "what can this person do?" required
+// mentally OR-ing several permission sets. The effective access is unchanged for
+// anyone holding a single role, which is everyone in practice.
 router.post('/:slug/assign', requireAssignRoles, async (req, res) => {
   const role = (await getRoles()).get(String(req.params.slug))
   if (!role) {
@@ -296,14 +304,24 @@ router.post('/:slug/assign', requireAssignRoles, async (req, res) => {
     return
   }
   const acct = withIdentityDefaults({ id: target._id, ...target })
-  if (acct.staffRoles.includes(role.slug)) {
+  const held = acct.staffRoles
+  if (held.length === 1 && held[0] === role.slug) {
     res.status(409).json({ error: 'That member already holds this role.' })
     return
   }
-  // $addToSet, not read-modify-write — two admins assigning at once must not
-  // clobber each other.
-  await db.collection('users').addToSet(userId, 'staffRoles', role.slug)
-  res.status(201).json({ ok: true })
+
+  // Replacing a role TAKES AWAY the old one, so the last-superadmin guard has to
+  // fire here too — not only on explicit removal. Without it, "change Mahin to
+  // Editor" would quietly delete the only superadmin.
+  if (held.includes(SUPERADMIN_SLUG) && role.slug !== SUPERADMIN_SLUG) {
+    if ((await superadminHolderCount()) <= 1) {
+      res.status(403).json({ error: 'Cannot change the last superadmin to another role.' })
+      return
+    }
+  }
+
+  await db.collection('users').updateOne(userId, { staffRoles: [role.slug] })
+  res.status(201).json({ ok: true, staffRoles: [role.slug] })
 })
 
 router.delete('/:slug/assign/:userId', requireAssignRoles, async (req, res) => {
@@ -320,15 +338,9 @@ router.delete('/:slug/assign/:userId', requireAssignRoles, async (req, res) => {
 
   // Never strip the last superadmin — that is unrecoverable without shell access
   // to re-run the SETUP_SECRET seed.
-  if (role.slug === SUPERADMIN_SLUG) {
-    const users = await db.collection('users').find()
-    const holders = users.filter(
-      (u) => Array.isArray(u.staffRoles) && u.staffRoles.includes(SUPERADMIN_SLUG),
-    )
-    if (holders.length <= 1) {
-      res.status(403).json({ error: 'Cannot remove the last superadmin.' })
-      return
-    }
+  if (role.slug === SUPERADMIN_SLUG && (await superadminHolderCount()) <= 1) {
+    res.status(403).json({ error: 'Cannot remove the last superadmin.' })
+    return
   }
 
   await db.collection('users').pullFrom(String(req.params.userId), 'staffRoles', role.slug)
