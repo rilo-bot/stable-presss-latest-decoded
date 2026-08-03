@@ -81,6 +81,19 @@ interface ComposerState {
   redo: () => void;
 
   saveNow: () => Promise<boolean>;
+  /**
+   * Take on the server's answer after a write this composer did NOT make through
+   * `saveNow` — publishing and unpublishing go through their own endpoint.
+   *
+   * Those endpoints move `updatedAt`, which is the concurrency baseline. Without
+   * adopting it the next autosave sends a baseline the server has already passed
+   * and gets a 409, which the UI reports as "someone else saved this post while
+   * you were editing" — wrong, and alarming, when they are the only editor.
+   *
+   * Keeps the LOCAL blocks and media for the same reason `saveNow` does: the
+   * author may have typed while the request was in flight.
+   */
+  adoptServerVersion: (saved: Blog) => void;
   /** Discard local edits and adopt the server's version, ending a conflict. */
   reloadFromServer: () => Promise<void>;
 }
@@ -462,6 +475,33 @@ export const useComposerStore = create<ComposerState>()((set, get) => {
         set({ saveState: 'error', saveError: err instanceof Error ? err.message : 'Could not save' });
         return false;
       }
+    },
+
+    adoptServerVersion: (saved) => {
+      const { blog, saveState } = get();
+      if (!blog || blog.id !== saved.id) return;
+      // An unresolved conflict is the one state not to touch — the author still
+      // has to choose whose version wins, and moving the baseline underneath
+      // that decision would quietly re-arm autosave against their wishes.
+      if (saveState === 'conflict') return;
+      set({
+        blog: {
+          ...blog,
+          status: saved.status,
+          publishedAt: saved.publishedAt,
+          publishAt: saved.publishAt,
+          slug: saved.slug,
+          slugHistory: saved.slugHistory,
+          readingTime: saved.readingTime,
+          updatedAt: saved.updatedAt,
+        },
+        baseUpdatedAt: saved.updatedAt,
+        saveError: null,
+        // Deliberately does NOT cancel a pending autosave: if the author typed
+        // during the round-trip those edits are still owed a save, and the timer
+        // will now fire against the CORRECT baseline.
+        saveState: saveState === 'dirty' ? 'dirty' : 'saved',
+      });
     },
 
     reloadFromServer: async () => {

@@ -69,7 +69,15 @@ interface BlogState {
 
   createBlog: (input: Partial<Blog>) => Promise<Blog | null>;
   saveBlog: (id: string, input: Partial<Blog> & { baseUpdatedAt?: string }) => Promise<Blog | null>;
-  setPublished: (id: string, published: boolean) => Promise<boolean>;
+  /**
+   * Publish or unpublish. Resolves to the SERVER'S updated post, not a boolean.
+   *
+   * The caller needs `updatedAt` back: this endpoint bumps it, and an open
+   * composer holds that value as its optimistic-concurrency baseline. Returning
+   * only true/false left the composer one version behind, so its next autosave
+   * 409'd and told the author someone else had edited the post.
+   */
+  setPublished: (id: string, published: boolean) => Promise<Blog | null>;
   removeBlog: (id: string) => Promise<boolean>;
 }
 
@@ -226,10 +234,10 @@ export const useBlogStore = create<BlogState>()((set, get) => ({
         items: s.items.map((i) => (i.id === id ? { ...i, status: blog.status, publishedAt: blog.publishedAt } : i)),
       }));
       toast.success(published ? 'Post published.' : 'Post moved back to draft.');
-      return true;
+      return blog;
     } catch (err) {
       toast.error(err instanceof Error ? err.message : 'Could not change the status');
-      return false;
+      return null;
     }
   },
 

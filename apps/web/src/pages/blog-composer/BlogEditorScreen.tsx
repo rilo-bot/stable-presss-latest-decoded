@@ -46,7 +46,6 @@ import { InlineText } from './InlineText';
 import { ToolsRail } from './ToolsRail';
 import { ImagePicker } from './ImagePicker';
 import { inputCls } from './controls';
-import type { Blog } from '@/types/blog';
 
 function SaveChip() {
   const { saveState, saveError } = useComposerStore();
@@ -141,8 +140,10 @@ export default function BlogEditorScreen() {
 
   const fetchOne = useBlogStore((s) => s.fetchOne);
   const setPublished = useBlogStore((s) => s.setPublished);
-  const { blog, load, close, saveState, saveNow, undo, redo, undoStack, redoStack, patchPost, select } =
-    useComposerStore();
+  const {
+    blog, load, close, saveState, saveNow, undo, redo, undoStack, redoStack, patchPost, select,
+    adoptServerVersion,
+  } = useComposerStore();
 
   const canPublish = useCan('blog.publish');
   const [loading, setLoading] = useState(true);
@@ -253,8 +254,13 @@ export default function BlogEditorScreen() {
       toast.error('Resolve the conflict before publishing.');
       return;
     }
-    const done = await setPublished(blog.id, !isPublished);
-    if (done) patchPost({ status: isPublished ? 'draft' : 'published' } as Partial<Blog>);
+    // Adopt the server's post-publish version rather than patching the status
+    // locally. `patchPost` would mark the post dirty and schedule an autosave
+    // against the baseline from BEFORE the publish endpoint bumped updatedAt —
+    // which came back as a 409 reported to the author as "someone else saved
+    // this post while you were editing".
+    const updated = await setPublished(blog.id, !isPublished);
+    if (updated) adoptServerVersion(updated);
   };
 
   return (
