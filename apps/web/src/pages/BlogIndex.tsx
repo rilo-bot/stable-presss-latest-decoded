@@ -1,9 +1,20 @@
 /**
  * Public blog index — /blog
  *
- * Server-paginated, unlike /news, which pulls every article into the browser
- * and filters in JS. Blog documents are far larger, so the list endpoint
- * returns card projections and this page asks for one page at a time.
+ * A list of published posts, newest first. One row each: a small thumbnail, the
+ * category and date, the headline, and a couple of lines of the opening.
+ *
+ * It was a featured-lead-plus-masonry grid, which is a magazine front page, not
+ * an index. A reader arriving here wants to see what has been written and pick
+ * one — a list does that in one column with no guessing about reading order.
+ *
+ * Server-paginated, unlike /news, which pulls every article into the browser and
+ * filters in JS. Blog documents are far larger, so the list endpoint returns
+ * card projections and this page asks for one page at a time.
+ *
+ * `status: 'published'` is pinned here and never taken from the URL: this is the
+ * public page, and staff accounts can otherwise see drafts in list results —
+ * which would put unfinished writing on a public index for anyone signed in.
  */
 import { useEffect, useMemo, useState } from 'react';
 import { Link, useSearchParams } from 'react-router-dom';
@@ -23,88 +34,82 @@ function formatDate(iso: string | null | undefined): string | null {
     : d.toLocaleDateString('en-AU', { day: 'numeric', month: 'long', year: 'numeric' });
 }
 
-function BlogCard({ post, featured }: { post: BlogSummary; featured?: boolean }) {
+function PostRow({ post }: { post: BlogSummary }) {
   const date = formatDate(post.publishedAt);
 
   return (
-    <Link
-      to={`/blog/${post.slug}`}
-      className={cn(
-        'group block overflow-hidden rounded-sm border border-border/60 bg-card',
-        'transition-all duration-200 hover:border-primary/30 hover:shadow-sm',
-      )}
-      aria-label={`Read: ${post.title}`}
-    >
-      {post.thumbnailUrl && (
-        <div className={cn('overflow-hidden', featured ? 'aspect-[16/9]' : 'aspect-[3/2]')}>
+    <li>
+      <Link
+        to={`/blog/${post.slug}`}
+        className="group flex gap-4 border-b border-border/50 py-5 transition-colors hover:bg-muted/30 sm:gap-6"
+        aria-label={`Read: ${post.title}`}
+      >
+        {/* Fixed-size thumbnail so every row is the same height and the titles
+            line up down the page. Hidden on the narrowest screens, where it
+            would take a third of the width from the headline. */}
+        {post.thumbnailUrl ? (
           <img
             src={post.thumbnailUrl}
             alt={post.thumbnailAlt ?? ''}
             crossOrigin="anonymous"
             loading="lazy"
-            className="h-full w-full object-cover transition-transform duration-500 group-hover:scale-105"
+            className="hidden h-20 w-28 flex-shrink-0 rounded-sm object-cover sm:block"
           />
-        </div>
-      )}
-      <div className={featured ? 'p-5' : 'p-4'}>
-        <div className="mb-2 flex items-center gap-2">
-          {post.category && (
-            <span
-              className="text-[10px] font-semibold uppercase tracking-[0.12em]"
-              style={{ color: 'hsl(var(--brand-accent))' }}
-            >
-              {post.category}
-            </span>
-          )}
-          <span className="flex items-center gap-1 text-[10px] text-muted-foreground">
-            <Clock size={10} />
-            {post.readingTime} min
+        ) : (
+          <span
+            className="hidden h-20 w-28 flex-shrink-0 items-center justify-center rounded-sm bg-muted/40 sm:flex"
+            aria-hidden="true"
+          >
+            <BookOpen size={18} className="text-muted-foreground/30" />
           </span>
-          {post.status === 'draft' && (
-            <span className="rounded-sm bg-muted px-1.5 py-0.5 text-[9px] font-bold uppercase tracking-[0.1em] text-muted-foreground">
-              Draft
-            </span>
-          )}
-        </div>
-
-        <h3
-          className={cn(
-            'mb-1.5 font-[family-name:var(--font-display)] font-bold leading-snug text-foreground',
-            'transition-opacity duration-140 group-hover:opacity-85',
-            featured ? 'text-xl line-clamp-2' : 'text-base line-clamp-2',
-          )}
-        >
-          {post.title}
-        </h3>
-
-        {post.excerpt && (
-          <p className={cn('mb-3 leading-relaxed text-muted-foreground', featured ? 'text-sm line-clamp-3' : 'text-xs line-clamp-2')}>
-            {post.excerpt}
-          </p>
         )}
 
-        <hr className="mb-3 border-border/50" />
-        <div className="flex items-center justify-between">
-          <span className="truncate text-[11px] uppercase tracking-[0.06em] text-muted-foreground">
-            {post.author?.name}
-          </span>
-          {date && <span className="flex-shrink-0 text-[11px] text-muted-foreground">{date}</span>}
+        <div className="min-w-0 flex-1">
+          <div className="mb-1 flex flex-wrap items-center gap-x-3 gap-y-1 text-[11px] text-muted-foreground">
+            {post.category && (
+              <span
+                className="font-semibold uppercase tracking-[0.12em]"
+                style={{ color: 'hsl(var(--brand-accent))' }}
+              >
+                {post.category}
+              </span>
+            )}
+            {date && <span>{date}</span>}
+            <span className="inline-flex items-center gap-1">
+              <Clock size={10} />
+              {post.readingTime} min read
+            </span>
+          </div>
+
+          <h2 className="font-[family-name:var(--font-display)] text-lg font-bold leading-snug text-foreground group-hover:text-primary md:text-xl">
+            {post.title}
+          </h2>
+
+          {post.excerpt && (
+            <p className="mt-1 line-clamp-2 text-sm leading-relaxed text-muted-foreground">{post.excerpt}</p>
+          )}
+
+          {post.author?.name && (
+            <p className="mt-1.5 text-[11px] uppercase tracking-[0.08em] text-muted-foreground/80">
+              {post.author.name}
+            </p>
+          )}
         </div>
-      </div>
-    </Link>
+      </Link>
+    </li>
   );
 }
 
-function CardSkeleton() {
+function RowSkeleton() {
   return (
-    <div className="overflow-hidden rounded-sm border border-border/60 bg-card">
-      <div className="aspect-[3/2] animate-pulse bg-muted/50" />
-      <div className="space-y-2 p-4">
-        <div className="h-2 w-20 animate-pulse rounded bg-muted/50" />
-        <div className="h-4 w-full animate-pulse rounded bg-muted/50" />
-        <div className="h-3 w-4/5 animate-pulse rounded bg-muted/50" />
+    <li className="flex gap-4 border-b border-border/50 py-5 sm:gap-6">
+      <div className="hidden h-20 w-28 flex-shrink-0 animate-pulse rounded-sm bg-muted/50 sm:block" />
+      <div className="min-w-0 flex-1 space-y-2">
+        <div className="h-2 w-24 animate-pulse rounded bg-muted/50" />
+        <div className="h-4 w-3/4 animate-pulse rounded bg-muted/50" />
+        <div className="h-3 w-full animate-pulse rounded bg-muted/50" />
       </div>
-    </div>
+    </li>
   );
 }
 
@@ -122,6 +127,7 @@ export default function BlogIndex() {
 
   const filters = useMemo<BlogListFilters>(
     () => ({
+      status: 'published',
       tag: tagParam ?? undefined,
       category: categoryParam ?? undefined,
       q: qParam ?? undefined,
@@ -141,33 +147,24 @@ export default function BlogIndex() {
     setSearchParams(next, { replace: true });
   };
 
-  const clearFilters = () => setSearchParams(new URLSearchParams(), { replace: true });
+  const clearFilters = () => {
+    setSearchInput('');
+    setSearchParams(new URLSearchParams(), { replace: true });
+  };
   const hasFilters = !!(tagParam || categoryParam || qParam);
 
-  const [lead, ...rest] = items;
-
   return (
-    <div className="mx-auto max-w-6xl px-4 py-10 md:py-14">
-      {/* Masthead */}
-      <header className="mb-8">
-        <p
-          className="mb-2 text-[11px] font-bold uppercase tracking-[0.18em]"
-          style={{ color: 'hsl(var(--brand-accent))' }}
-        >
-          Stable Press
-        </p>
-        <h1 className="font-[family-name:var(--font-display)] text-4xl font-bold leading-none text-foreground md:text-5xl">
+    <div className="mx-auto max-w-3xl px-4 py-10 md:py-14">
+      <header className="mb-6">
+        <h1 className="font-[family-name:var(--font-display)] text-3xl font-bold leading-none text-foreground md:text-4xl">
           The Blog
         </h1>
-        <div className="mt-4 h-px w-20" style={{ background: 'hsl(var(--brand-accent))' }} />
-        <p className="mt-4 max-w-xl text-sm leading-relaxed text-muted-foreground">
-          Longer-form writing from the yard, the ring and the road — diaries, deep dives and the
-          stories behind the form line.
-        </p>
+        <div className="mt-3 h-px w-16" style={{ background: 'hsl(var(--brand-accent))' }} />
       </header>
 
-      {/* Search + active filters */}
-      <div className="mb-8 flex flex-wrap items-center gap-3">
+      {/* Search, plus whatever filter the reader arrived with — tag and category
+          links on the posts themselves point back here. */}
+      <div className="mb-2 flex flex-wrap items-center gap-3">
         <form onSubmit={submitSearch} className="relative flex-1 sm:max-w-xs">
           <Search
             size={14}
@@ -205,7 +202,6 @@ export default function BlogIndex() {
         )}
       </div>
 
-      {/* Results */}
       {listError && (
         <div className="mb-6 rounded-sm border border-destructive/30 bg-destructive/5 px-4 py-3 text-sm text-destructive">
           {listError}
@@ -213,11 +209,11 @@ export default function BlogIndex() {
       )}
 
       {listLoading && items.length === 0 ? (
-        <div className="grid gap-5 sm:grid-cols-2 lg:grid-cols-3">
+        <ul className="border-t border-border/50">
           {Array.from({ length: 6 }, (_, i) => (
-            <CardSkeleton key={i} />
+            <RowSkeleton key={i} />
           ))}
-        </div>
+        </ul>
       ) : items.length === 0 ? (
         <EmptyState
           icon={BookOpen}
@@ -232,35 +228,14 @@ export default function BlogIndex() {
         />
       ) : (
         <>
-          {/* The newest post leads at double width, with the next two stacked
-              beside it. With nothing to sit alongside, the lead would otherwise
-              be a two-thirds card against a third of dead space — so on its own
-              it takes a centred single column instead. */}
-          {lead && (
-            <div className="mb-5 grid gap-5 lg:grid-cols-3">
-              <div className={rest.length > 0 ? 'lg:col-span-2' : 'mx-auto w-full max-w-2xl lg:col-span-3'}>
-                <BlogCard post={lead} featured />
-              </div>
-              {rest.slice(0, 2).length > 0 && (
-                <div className="grid gap-5 sm:grid-cols-2 lg:grid-cols-1">
-                  {rest.slice(0, 2).map((post) => (
-                    <BlogCard key={post.id} post={post} />
-                  ))}
-                </div>
-              )}
-            </div>
-          )}
-
-          {rest.length > 2 && (
-            <div className="grid gap-5 sm:grid-cols-2 lg:grid-cols-3">
-              {rest.slice(2).map((post) => (
-                <BlogCard key={post.id} post={post} />
-              ))}
-            </div>
-          )}
+          <ul className="border-t border-border/50">
+            {items.map((post) => (
+              <PostRow key={post.id} post={post} />
+            ))}
+          </ul>
 
           {hasMore && (
-            <div className="mt-10 flex justify-center">
+            <div className="mt-8 flex justify-center">
               <Button variant="outline" onClick={() => void loadMore(filters)} disabled={listLoading}>
                 {listLoading ? (
                   <>

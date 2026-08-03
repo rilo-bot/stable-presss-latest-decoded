@@ -376,8 +376,12 @@ export default function BlogEditorScreen() {
               Body
             </p>
             <div className="rounded-sm border border-border/60 bg-background">
-              {/* Sticky so the toolbar is still reachable a thousand words down. */}
-              <div className="sticky top-0 z-30 bg-background">
+              {/* Sticky so the toolbar is still reachable a thousand words down.
+                  `top-14` clears the newsroom's own pinned bar (56px) — at top-0
+                  the toolbar stuck to the viewport edge and sat completely
+                  behind that bar, which made it unreachable the moment you
+                  scrolled. */}
+              <div className="sticky top-14 z-30 bg-background">
                 <BodyToolbar onAddImage={() => setImageRequest((n) => n + 1)} />
               </div>
 

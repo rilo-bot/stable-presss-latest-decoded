@@ -150,9 +150,18 @@ export default function BlogPost() {
   const date = formatDate(current.publishedAt);
   const locked = !canViewContent(tier, current.minTier);
 
-  /** Two-column with a sticky cover — the default reading layout. */
-  const sideBySide = hasCover && treatment === 'side';
+  /**
+   * Image on the left, content scrolling on the right. This is THE reading
+   * layout: any post with a cover gets it unless the author explicitly asked for
+   * a full-width banner or no image at all.
+   *
+   * `hero-split` and `inset` are older stored values that used to mean "cover
+   * above the prose, single column". They render here as the side layout too —
+   * they were extra ways to end up with a layout nobody asked for, and the rail
+   * no longer offers them.
+   */
   const fullHero = hasCover && treatment === 'hero-full';
+  const sideBySide = hasCover && !fullHero;
 
   const coverFocal = current.cover?.focal;
   const coverStyle = coverFocal
@@ -309,28 +318,15 @@ export default function BlogPost() {
           </div>
         </header>
 
-        {/* ── Cover under the header, for the treatments that ask for it ── */}
-        {hasCover && (treatment === 'hero-split' || treatment === 'inset') && (
-          <figure className={cn('mt-10', treatment === 'inset' ? 'mx-auto max-w-lg' : 'mx-auto max-w-4xl')}>
-            <img
-              src={cover.url}
-              alt={cover.alt}
-              crossOrigin="anonymous"
-              className="w-full rounded-sm object-cover"
-              style={coverStyle}
-            />
-            {cover.caption && (
-              <figcaption className="mt-2 text-center text-xs text-muted-foreground">{cover.caption}</figcaption>
-            )}
-          </figure>
-        )}
-
         {/* ── The read ── */}
         {sideBySide ? (
           <div className="mt-12 grid gap-10 md:grid-cols-[minmax(0,5fr)_minmax(0,7fr)] lg:gap-14">
-            {/* `self-start` is what makes `sticky` do anything: a stretched grid
-                item is already as tall as the row, so it has no room to stick. */}
-            <div className="md:sticky md:top-24 md:self-start">
+            {/* Two things this needs to work, both easy to lose:
+                `self-start`, because a stretched grid item is already as tall as
+                its row and so has nowhere to stick; and a `top` that clears the
+                site header, which is ~125px at this breakpoint — at top-24 (96px)
+                the held image slid 29px underneath it. */}
+            <div className="md:sticky md:top-32 md:self-start">
               <figure className="overflow-hidden rounded-sm border border-border/60 bg-background p-2 shadow-sm md:p-3">
                 <div className="aspect-[4/5] w-full overflow-hidden rounded-sm">
                   <img

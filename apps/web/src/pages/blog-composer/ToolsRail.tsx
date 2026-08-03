@@ -409,6 +409,18 @@ const KIND_LABEL: Record<string, string> = {
 
 /* ── Post section ─────────────────────────────────────────── */
 
+/**
+ * Collapse the stored cover treatment onto the three the rail offers.
+ *
+ * `hero-split` and `inset` are retired values that the public page now renders
+ * as the side layout, so the rail must report them as that — otherwise a post
+ * carrying one shows no option selected at all.
+ */
+function foldTreatment(t: CoverTreatment | undefined): CoverTreatment {
+  if (t === 'hero-full' || t === 'none') return t;
+  return 'side';
+}
+
 function PostFields({ onPickCover }: { onPickCover: () => void }) {
   const { blog, patchPost } = useComposerStore();
   const [tagInput, setTagInput] = useState('');
@@ -435,14 +447,20 @@ function PostFields({ onPickCover }: { onPickCover: () => void }) {
             />
             <Seg
               ariaLabel="Cover treatment"
-              value={(blog.cover?.treatment ?? 'side') as CoverTreatment}
+              // Folded, not raw: a post stored as `inset`/`hero-split` renders
+              // as "Beside the text", so that is the button that must look
+              // pressed. Showing the raw value would leave nothing selected.
+              value={foldTreatment(blog.cover?.treatment)}
               onChange={(treatment) => patchPost({ cover: blog.cover ? { ...blog.cover, treatment } : undefined })}
+              // Three options, because there are only three things a cover can
+              // do on the page. `hero-split` and `inset` used to be here; both
+               // rendered as "image above the prose, single column", which was
+              // never what anyone picked them for. Posts still holding those
+              // values render as "Beside the text".
               options={[
                 { value: 'side', label: 'Beside the text' },
-                { value: 'hero-full', label: 'Full hero' },
-                { value: 'hero-split', label: 'Below title' },
-                { value: 'inset', label: 'Inset' },
-                { value: 'none', label: 'Hidden' },
+                { value: 'hero-full', label: 'Full-width banner' },
+                { value: 'none', label: 'Not on the page' },
               ]}
             />
             <div className="mt-2 flex gap-2">
