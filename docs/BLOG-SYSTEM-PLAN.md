@@ -247,20 +247,69 @@ blogs: { tags: 1, deletedAt: 1 }
 
 ```
 types/blog.ts                                    model, block union, type guards, isLive/coverOf helpers
-blog/blocks.ts                                   block factories + defaults (mirrors the server validator)
+blog/factories.ts                                block factories + defaults (mirrors the server validator)
 blog/placement.ts                                Placement → layout classes. ONE source, both surfaces.
+blog/sanitize.ts                                 client mirror of sanitizeBlogInline
 blog/BlogRenderer.tsx                            the render path — read-only and edit-aware
-blog/blocks/*.tsx                                one component per block kind (13 small files)
-stores/blogStore.ts                              zustand, modelled on articleStore
+blog/blocks/{Text,Media,Ref}Blocks.tsx           the 13 block renderers, grouped by family
+stores/blogStore.ts                              zustand — a page of card projections + one full post
 pages/BlogIndex.tsx                              public /blog — cards, tag/category filter, pagination
-pages/BlogPost.tsx                               public /blog/:slug — renderer + author card + related
-pages/blog-composer/BlogComposer.tsx             full-screen editor, route /production-system/blogs/:id
-pages/blog-composer/BlockList.tsx                reorder, insert-between, duplicate, delete
-pages/blog-composer/BlockInspector.tsx           per-block settings — placement controls live here
-pages/blog-composer/MediaTray.tsx                multi-upload, drag an asset into the flow
-pages/blog-composer/SettingsPanel.tsx            title, author, slug, tags, cover, SEO, publish toggle
-pages/production-system/screens/BlogsScreen.tsx  staff list / manage
+pages/BlogPost.tsx                               public /blog/:slug — renderer + author card + paywall
+pages/blog-composer/BlogListPane.tsx             the post rail (left)
+pages/blog-composer/BlogEditorPane.tsx           the editor (right) — one slim bar, one column
+pages/blog-composer/BlockCanvas.tsx              selection, reorder, inline text, slash menu, file drop
+pages/blog-composer/BlockToolbar.tsx             CONTEXTUAL per-block controls (placement lives here)
+pages/blog-composer/InsertMenu.tsx               + button and / command over one option list
+pages/blog-composer/ImagePicker.tsx              the media pool, on demand
+pages/blog-composer/InlineText.tsx               contentEditable with caret-safe seeding
+pages/blog-composer/SettingsPanel.tsx            post settings, opened as a sheet
+pages/blog-composer/composerStore.ts             draft state, undo, autosave, conflict
+pages/production-system/screens/BlogsScreen.tsx  the split-view shell
 ```
+
+### 5.1 Layout — cards → form → editor, revised 2026-08-03
+
+Two passes were rejected before this one, and the reasons are worth keeping:
+
+1. **Full-screen editor, three columns** (media tray · canvas · inspector) —
+   too heavy, and it took the page over.
+2. **Split view** (post rail · editor, contextual toolbar, no rail) — the rail
+   was too narrow to browse by, and putting controls on a floating toolbar
+   *and* in a settings sheet meant two places to look for one setting.
+
+The shape that stuck:
+
+- **Cards.** `/production-system/blogs` shows every post as a card with its
+  cover. A post is a visual thing, so covers tell you what you have faster than
+  a table of titles. Click one to edit it.
+- **A create form.** `/production-system/blogs/new` asks for title, standfirst,
+  cover, byline, category and summary — only the title is required, and all of it
+  is editable later. Dropping straight into a blank canvas meant the decisions
+  that shape a post got made last or never. The cover travels with the create
+  call, so the post opens with it already in place.
+- **The editor opens on the standard shape of a blog post**:
+  cover image → title → standfirst → body. Nothing to assemble from parts.
+  The cover is a real slot in the document, not a rail-only setting — it is the
+  first thing a reader sees, so it is the first thing an author sees.
+- **All tools on the right.** One rail, two sections: the selected block first
+  (that is what you are looking at when you reach for it), then the post —
+  cover treatment, category, tags, byline, excerpt, URL, access. There is no
+  floating toolbar; one home for controls, not two.
+- **Six block types up front**, the other five behind "More".
+- **`/` in an empty block** opens the same list, filterable, arrow keys + Enter.
+  Only when the block is empty — mid-sentence a slash has to stay a slash.
+- **Captions and quote attributions are edited in place**, where they appear.
+- **Images**: drop files anywhere on the canvas, or `+ → Image`. The pool is
+  unchanged underneath; it just surfaces as a picker instead of a column.
+
+All three routes sit *inside* the newsroom layout, so the sidebar never
+disappears and none of them is a page takeover. The magazine editors take the
+whole viewport because they lay out fixed print pages; a blog is one column of
+text.
+
+Trade-off accepted: the document pane is narrower than the viewport, so `wide`
+and `full-bleed` are true to the model but not to the published pixel width.
+"View" opens the real page in a new tab for that.
 
 Plus: `SIDE_NAV` entry (Content section), two public routes + one staff route in `App.tsx`, a NavBar link,
 and `'blog'` added to `UploadKind` in `lib/upload.ts`.

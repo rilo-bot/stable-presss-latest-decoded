@@ -22,7 +22,6 @@ import HorseDetail from '@/pages/HorseDetail';
 import HorseEditor from '@/pages/HorseEditor';
 import ArticleDetail from '@/pages/ArticleDetail';
 import MagazineStudio from '@/pages/MagazineStudio';
-import BlogComposer from '@/pages/blog-composer/BlogComposer';
 import MagazineV2Home from '@/editor-v2/MagazineV2Home';
 import MagazineEditorV2 from '@/editor-v2/MagazineEditorV2';
 import PremiumPreview from '@/pages/__PremiumPreview'; // TEMP — remove with its route
@@ -51,6 +50,9 @@ import WorkflowBoardScreen from '@/pages/production-system/screens/WorkflowBoard
 import PipelineMapScreen from '@/pages/production-system/screens/PipelineMapScreen';
 import AllStoriesScreen from '@/pages/production-system/screens/AllStoriesScreen';
 import BlogsScreen from '@/pages/production-system/screens/BlogsScreen';
+import BlogCreateForm from '@/pages/blog-composer/BlogCreateForm';
+import BlogEditorScreen from '@/pages/blog-composer/BlogEditorScreen';
+import InstantScreen from '@/pages/production-system/screens/InstantScreen';
 import EditorHubScreen from '@/pages/production-system/screens/EditorHubScreen';
 import MyAssetsScreen from '@/pages/production-system/screens/MyAssetsScreen';
 import CompensationScreen from '@/pages/production-system/screens/CompensationScreen';
@@ -294,7 +296,16 @@ export default function App() {
             <Route path="workflow" element={<WorkflowBoardScreen />} />
             <Route path="pipeline" element={<PipelineMapScreen />} />
             <Route path="all-stories" element={<AllStoriesScreen />} />
+            {/* Cards → create form → editor. All three sit INSIDE the layout
+                route, so the sidebar stays put and none of them takes the page
+                over. `new` before `:id` reads in the order you meet them. */}
             <Route path="blogs" element={<BlogsScreen />} />
+            <Route path="blogs/new" element={<BlogCreateForm />} />
+            <Route path="blogs/:id" element={<BlogEditorScreen />} />
+            {/* Instant — capture (photos + voice) → AI draft → a draft story or
+                post. Its own module rather than a mode of the story form: the
+                whole point is that it starts from a photograph. */}
+            <Route path="instant" element={<InstantScreen />} />
             <Route path="editor-hub" element={<EditorHubScreen />} />
             <Route path="my-assets" element={<MyAssetsScreen />} />
             <Route path="compensation" element={<CompensationScreen />} />
@@ -318,9 +329,6 @@ export default function App() {
               they sit outside the layout rather than inside it. */}
           <Route path="/production-system/magazine/:id" element={<MagazineStudio />} />
           <Route path="/production-system/magazine-v2/:id" element={<MagazineEditorV2 />} />
-          {/* Blog composer — full-screen for the same reason the magazine editors
-              are: the sidebar is noise while writing and the canvas needs width. */}
-          <Route path="/production-system/blogs/:id" element={<BlogComposer />} />
 
           {/* Staff-invite and magazine-share emails already in people's inboxes
               point at /newsroom, so the old path keeps resolving. */}

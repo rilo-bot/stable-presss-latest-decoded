@@ -30,6 +30,12 @@ interface InlineTextProps {
   /** Backspace in an empty block removes it. */
   onEmptyBackspace?: () => void;
   autoFocus?: boolean;
+  /**
+   * "/" typed in an EMPTY block opens the block menu. Only when empty: mid
+   * sentence a slash is just a slash, and hijacking it there would make dates
+   * and and/or impossible to type.
+   */
+  onSlash?: () => void;
 }
 
 export function InlineText({
@@ -42,6 +48,7 @@ export function InlineText({
   onEnter,
   onEmptyBackspace,
   autoFocus,
+  onSlash,
 }: InlineTextProps) {
   const ref = useRef<HTMLDivElement>(null);
   // What we last pushed to the parent, so an echo of our own value doesn't
@@ -99,6 +106,13 @@ export function InlineText({
         document.execCommand('insertText', false, text);
       }}
       onKeyDown={(e) => {
+        // Slash opens the block menu, but only in an empty block — mid-sentence a
+        // slash has to stay a slash.
+        if (e.key === '/' && onSlash && (ref.current?.textContent ?? '').length === 0) {
+          e.preventDefault();
+          onSlash();
+          return;
+        }
         if (e.key === 'Enter' && onEnter && !e.shiftKey) {
           e.preventDefault();
           emit();

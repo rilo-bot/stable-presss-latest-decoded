@@ -16,6 +16,7 @@
 import { create } from 'zustand';
 import { toast } from 'sonner';
 import { authFetch } from '@/lib/api';
+import { useBlogStore } from '@/stores/blogStore';
 import { uploadImage, uploadRawFile } from '@/lib/upload';
 import type { Block, Blog, BlogMedia, Placement } from '@/types/blog';
 import { blocksUsingMedia } from '@/types/blog';
@@ -408,6 +409,24 @@ export const useComposerStore = create<ComposerState>()((set, get) => {
             `${saved.droppedBlocks} block${saved.droppedBlocks === 1 ? '' : 's'} could not be saved.`,
           );
         }
+
+        // Keep the list rail in step. Without this the sidebar still reads
+        // "Untitled post" while the editor shows the real headline, which looks
+        // like the save didn't work.
+        useBlogStore.setState((s) => ({
+          items: s.items.map((i) =>
+            i.id === saved.id
+              ? {
+                  ...i,
+                  title: saved.title,
+                  status: saved.status,
+                  updatedAt: saved.updatedAt,
+                  readingTime: saved.readingTime,
+                  excerpt: saved.excerpt,
+                }
+              : i,
+          ),
+        }));
 
         // Take the server's derived fields (slug, excerpt, readingTime) but keep
         // the local blocks: the user may have typed while the request was in

@@ -351,11 +351,11 @@ router.post('/', async (req, res) => {
   const body = (req.body ?? {}) as Record<string, unknown>
   const account = req.account!
 
+  // A blank title is fine on a DRAFT — plenty of posts start as a paragraph with
+  // the headline decided last, and forcing a placeholder like "Untitled post"
+  // into the data means it has to be noticed and deleted later. The title is
+  // required to PUBLISH instead, which is where it actually matters.
   const title = str(body.title, 300).trim()
-  if (!title) {
-    res.status(400).json({ error: 'A title is required.' })
-    return
-  }
 
   const built = buildContent(body, account.displayName)
   const now = new Date().toISOString()
@@ -436,11 +436,9 @@ router.put('/:id', async (req, res) => {
     return
   }
 
+  // Blank is allowed here for the same reason it is on create — the gate is at
+  // publish time.
   const title = str(body.title, 300).trim()
-  if (!title) {
-    res.status(400).json({ error: 'A title is required.' })
-    return
-  }
 
   const built = buildContent(body, account.displayName)
   const now = new Date().toISOString()
@@ -492,6 +490,18 @@ router.put('/:id', async (req, res) => {
       })
       return
     }
+    // The same title/content gate as POST /:id/publish. Without it this route is
+    // simply a way around it.
+    if (body.status === 'published') {
+      if (!title) {
+        res.status(400).json({ error: 'Give the post a title before publishing it.' })
+        return
+      }
+      if (built.blocks.length === 0) {
+        res.status(400).json({ error: 'This post is empty — add something before publishing.' })
+        return
+      }
+    }
     update.status = body.status
     if (body.status === 'published' && !found.publishedAt) update.publishedAt = now
   }
@@ -529,6 +539,23 @@ router.post('/:id/publish', async (req, res) => {
   }
 
   const published = (req.body ?? {}).published !== false
+
+  // A title is required to go LIVE, not to exist. A published post with no
+  // headline has nothing to show on a card, in a share, or as a page title, and
+  // its slug would be a bare "post-N".
+  if (published) {
+    const title = typeof found.title === 'string' ? found.title.trim() : ''
+    if (!title) {
+      res.status(400).json({ error: 'Give the post a title before publishing it.' })
+      return
+    }
+    const hasContent = Array.isArray(found.blocks) && found.blocks.length > 0
+    if (!hasContent) {
+      res.status(400).json({ error: 'This post is empty — add something before publishing.' })
+      return
+    }
+  }
+
   const now = new Date().toISOString()
   const update: Record<string, unknown> = {
     status: published ? 'published' : 'draft',
