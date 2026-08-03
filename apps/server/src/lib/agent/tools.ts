@@ -473,17 +473,18 @@ export function buildTools(account?: AccountUser, authHeader?: string): ToolSet 
       description:
         "Navigate the reader to a page — or OPEN an AI studio — so they can do the thing they asked about. " +
         "Studios (each has its own built-in assistant): 'story-studio' opens the Story Studio drawer in the Production System (staff write & file a draft conversationally); " +
+        "'blog-studio' opens the Blog Studio drawer on the Blogs screen (staff write LONGFORM posts, and revise, publish or delete existing ones conversationally — use this for anything blog-shaped rather than story-shaped); " +
         (MAGAZINE_V2_ENABLED ? "'magazine-v2' is the Magazine Builder (staff; pass a magazine id to open its editor); " : '') +
         "'horse-studio' (pass the horse id) is a member's private editable horse page; 'profile-studio' (pass their party id — get it via myAccount) is a member's editable profile. " +
         "'production-system' is the staff CMS — pass `screen` to land on a specific screen. " +
-        "Pair navigation with a short note on what to do once there. Don't send a non-staff reader to a staff-only surface (production-system, story-studio" +
+        "Pair navigation with a short note on what to do once there. Don't send a non-staff reader to a staff-only surface (production-system, story-studio, blog-studio" +
         (MAGAZINE_V2_ENABLED ? ', magazine-v2' : '') +
         ", site-content, claims) — guide them instead; horse-studio/profile-studio only for records the member manages.",
       inputSchema: z.object({
         to: z
           .enum([
             'home', 'news', 'newsletter', 'bulletins', 'horses', 'parties', 'tipping', 'podcast',
-            'dashboard', 'production-system', 'story-studio', 'horse-studio', 'profile-studio',
+            'dashboard', 'production-system', 'story-studio', 'blog-studio', 'horse-studio', 'profile-studio',
             'site-content', 'claims', 'login', 'signup',
             'horse', 'party', 'article', 'bulletin', 'organisation',
             // The staff Magazine Builder home; with an id, that magazine's editor.

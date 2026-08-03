@@ -296,6 +296,13 @@ export function summariseCapabilities(account?: AccountUser): string {
     if (contentCan(account, 'content.draft.edit_any')) can.push('edit any story')
     if (isReviewer(account)) can.push('review stories')
     if (isPublisher(account)) can.push('publish & distribute stories')
+    // Blogs are a separate permission axis from stories (blog.* vs content.*), and
+    // were missing here entirely — so the assistant did not know the Blogs module
+    // existed and could not point anyone at it.
+    if (accountCan(account, 'blog.create')) can.push('write blog posts (longform, in the Blogs module)')
+    if (accountCan(account, 'blog.edit_any')) can.push('edit any blog post')
+    if (accountCan(account, 'blog.publish')) can.push('publish blog posts')
+    else if (accountCan(account, 'blog.create')) gated.push('publishing a blog post → an editor with blog publishing rights')
     if (admin) can.push('verify racing-role claims', 'manage the team')
     else gated.push('verifying claims & managing the team → administrator only')
   }

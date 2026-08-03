@@ -29,6 +29,7 @@ import {
   Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle,
 } from '@/components/ui/dialog';
 import { StoryStudioPanel } from '@/agent/story/StoryStudioPanel';
+import { BlogStudioPanel } from '@/agent/blog/BlogStudioPanel';
 import { can } from '@/lib/permissions';
 import { TemplateGallery } from '@/editor/TemplateGallery';
 import type { MagazineTemplate } from '@/editor/templates/galleryTemplates';
@@ -208,6 +209,11 @@ export default function ProductionSystemLayout() {
 
       {/* Story Studio AI drawer — writes & files a draft conversationally */}
       <StoryStudioPanel />
+
+      {/* Blog Studio AI drawer — writes longform posts, and revises, publishes or
+          deletes existing ones. Mounted here rather than on the Blogs screen so the
+          conversation survives navigating between the list and a post's editor. */}
+      <BlogStudioPanel />
 
       <HorseForm
         open={ps.horseFormOpen}

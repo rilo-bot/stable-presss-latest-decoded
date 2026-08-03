@@ -27,7 +27,7 @@ import { useEffect, useState } from 'react';
 import { Link, useNavigate, useParams } from 'react-router-dom';
 import { toast } from 'sonner';
 import {
-  AlertTriangle, ArrowLeft, Check, Eye, ImagePlus, Loader2, Redo2, Undo2,
+  AlertTriangle, ArrowLeft, Check, Eye, ImagePlus, Loader2, Redo2, Sparkles, Undo2,
 } from 'lucide-react';
 
 import { cn } from '@/lib/utils';
@@ -36,6 +36,7 @@ import { BLOG_GRID_CLASS, spanClass } from '@/blog/placement';
 import { useCan } from '@/lib/permissions';
 import { mediaById } from '@/types/blog';
 import { useBlogStore } from '@/stores/blogStore';
+import { useBlogStudioUi } from '@/stores/blogStudioUiStore';
 import { useHorseStore } from '@/stores/horseStore';
 import { usePartyStore } from '@/stores/partyStore';
 import { useArticleStore } from '@/stores/articleStore';
@@ -317,6 +318,30 @@ export default function BlogEditorScreen() {
             </button>
           </div>
 
+          {/* Opens the studio SCOPED to this post, so "rewrite the middle section"
+              needs no explanation of which post is meant. Flushes first: the
+              assistant reads the post from the server, so unsaved keystrokes would
+              otherwise be invisible to it. */}
+          <Button
+            size="sm"
+            variant="ghost"
+            className="h-8 gap-1.5 text-xs"
+            onClick={() => {
+              void (async () => {
+                if (useComposerStore.getState().saveState === 'dirty') await saveNow();
+                const current = useComposerStore.getState().blog;
+                if (!current) return;
+                useBlogStudioUi.getState().openForPost({
+                  id: current.id,
+                  title: current.title || 'Untitled post',
+                  status: current.status,
+                });
+              })();
+            }}
+          >
+            <Sparkles size={13} />
+            Studio AI
+          </Button>
           <Button size="sm" variant="ghost" className="h-8 gap-1.5 text-xs" asChild>
             <Link to={`/blog/${blog.slug}`} target="_blank" rel="noreferrer">
               <Eye size={13} />

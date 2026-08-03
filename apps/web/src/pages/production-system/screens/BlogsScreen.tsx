@@ -17,7 +17,7 @@
 import { useEffect, useState } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import {
-  BookOpen, Clock, LayoutGrid, List as ListIcon, Loader2, Plus, Search, Trash2,
+  BookOpen, Clock, LayoutGrid, List as ListIcon, Loader2, Plus, Search, Sparkles, Trash2,
 } from 'lucide-react';
 
 import { cn } from '@/lib/utils';
@@ -25,7 +25,9 @@ import { Button } from '@/components/ui/button';
 import { EmptyState } from '@/components/EmptyState';
 import { useCan } from '@/lib/permissions';
 import { useBlogStore, type BlogListFilters } from '@/stores/blogStore';
+import { useBlogStudioUi } from '@/stores/blogStudioUiStore';
 import type { BlogSummary } from '@/types/blog';
+import { NewPostChoice } from './NewPostChoice';
 
 type Tab = 'all' | 'draft' | 'published';
 type Layout = 'list' | 'cards';
@@ -234,6 +236,7 @@ export default function BlogsScreen() {
   const [layout, setLayout] = useState<Layout>(readLayout);
   /** The row mid-request, so its buttons can't be double-fired. */
   const [busyId, setBusyId] = useState<string | null>(null);
+  const [choiceOpen, setChoiceOpen] = useState(false);
 
   const chooseLayout = (next: Layout) => {
     setLayout(next);
@@ -290,13 +293,33 @@ export default function BlogsScreen() {
             {total > 0 && ` ${total} total.`}
           </p>
         </div>
+        {/* The studio is reachable WITHOUT pretending to create something — it also
+            lists, revises, publishes and deletes, and "New post" would be a lie
+            for three of those. */}
+        <Button
+          size="sm"
+          variant="outline"
+          className="gap-1.5"
+          onClick={() => useBlogStudioUi.getState().openDesk()}
+        >
+          <Sparkles size={14} />
+          <span className="hidden sm:inline">Blog Studio AI</span>
+          <span className="sm:hidden">AI</span>
+        </Button>
         {canCreate && (
-          <Button size="sm" className="gap-1.5" onClick={() => navigate('/production-system/blogs/new')}>
+          <Button size="sm" className="gap-1.5" onClick={() => setChoiceOpen(true)}>
             <Plus size={14} />
             New post
           </Button>
         )}
       </div>
+
+      <NewPostChoice
+        open={choiceOpen}
+        onClose={() => setChoiceOpen(false)}
+        onAI={() => { setChoiceOpen(false); useBlogStudioUi.getState().openDesk(); }}
+        onManual={() => { setChoiceOpen(false); navigate('/production-system/blogs/new'); }}
+      />
 
       <div className="mb-4 flex flex-wrap items-center gap-3 border-b border-border/50 pb-3">
         <div role="tablist" aria-label="Filter posts" className="flex gap-1">

@@ -10,7 +10,22 @@
 import { create } from 'zustand';
 import { toast } from 'sonner';
 import { authFetch, authFetchRetry } from '@/lib/api';
-import type { Blog, BlogSummary } from '@/types/blog';
+import type { Blog, BlogCover, BlogSummary } from '@/types/blog';
+
+/**
+ * What a save may send.
+ *
+ * `cover` and `thumbnailMediaId` accept an explicit `null`, which is not the same
+ * as omitting them: the API reads null as "clear this slot" and an absent key as
+ * "leave it". `Blog` types both as optional-undefined because that is what a
+ * loaded post looks like, so a plain `Partial<Blog>` cannot express the clear.
+ */
+export type BlogSaveInput = Omit<Partial<Blog>, 'cover' | 'thumbnailMediaId'> & {
+  cover?: BlogCover | null;
+  thumbnailMediaId?: string | null;
+  /** Optimistic-concurrency baseline — the `updatedAt` the server last returned. */
+  baseUpdatedAt?: string;
+};
 
 /** Read the server's reason off a failed response, mirroring articleStore. */
 async function failureMessage(res: Response, fallback: string): Promise<string> {
@@ -68,7 +83,7 @@ interface BlogState {
   clearCurrent: () => void;
 
   createBlog: (input: Partial<Blog>) => Promise<Blog | null>;
-  saveBlog: (id: string, input: Partial<Blog> & { baseUpdatedAt?: string }) => Promise<Blog | null>;
+  saveBlog: (id: string, input: BlogSaveInput) => Promise<Blog | null>;
   /**
    * Publish or unpublish. Resolves to the SERVER'S updated post, not a boolean.
    *

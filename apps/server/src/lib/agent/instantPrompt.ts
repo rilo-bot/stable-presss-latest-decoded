@@ -159,7 +159,11 @@ export const STORY_SYSTEM = [
  *    server-side fails the whole call; a flat optional-field object always
  *    validates and `cleanBody()` discards whatever doesn't belong to the kind.
  */
-const BodyItemSchema = z.object({
+// Exported because the Blog Studio's tools speak the same shape (see
+// lib/agent/blogTools.ts). Restating it there would let the two agents that write
+// blog bodies drift apart, and `cleanBody()` below is the only normaliser either
+// of them gets.
+export const BodyItemSchema = z.object({
   kind: z
     .enum(['paragraph', 'heading', 'list', 'quote'])
     .describe('What this item is. Most items are paragraphs.'),

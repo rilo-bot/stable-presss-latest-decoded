@@ -24,6 +24,7 @@ import { useAuthStore } from '@/stores/authStore';
 import { useAgentUi } from '@/stores/agentUiStore';
 import { useEditorAgentUi } from '@/stores/editorAgentUiStore';
 import { useStoryStudioUi } from '@/stores/storyStudioUiStore';
+import { useBlogStudioUi } from '@/stores/blogStudioUiStore';
 import { MarkdownMessage } from '@/components/MarkdownMessage';
 import { useVoiceChat } from '@/agent/voice/useVoiceChat';
 import { useAutoGrowTextarea } from '@/lib/useAutoGrowTextarea';
@@ -150,6 +151,9 @@ function navPathFor(to: string, id?: string, screen?: string): string | null {
     // The Story Studio drawer lives in the Production System shell; onToolCall
     // opens it via its store after this navigation.
     case 'story-studio': return '/production-system/workflow';
+    // Same arrangement for the Blog Studio: land on the Blogs screen, then its
+    // store opens the drawer once the route has rendered.
+    case 'blog-studio': return '/production-system/blogs';
     // Member AI studios (private editable pages with their own assistant).
     case 'horse-studio': return id ? `/studio/horse/${id}` : '/dashboard';
     case 'profile-studio': return id ? `/studio/${id}` : '/dashboard';
@@ -233,18 +237,32 @@ export function AgentWidget() {
         });
         return;
       }
+      if (to === 'blog-studio' && !can('blog.create')) {
+        addToolResultRef.current?.({
+          tool: 'navigateTo',
+          toolCallId: toolCall.toolCallId,
+          output: { ok: false, error: 'This account cannot create blog posts, so the Blog Studio is unavailable — guide them instead.' },
+        });
+        return;
+      }
       const path = to ? navPathFor(to, id, screen) : null;
       if (path) {
         navigate(path);
         // The drawer mounts with the Production System shell; the flag applies
         // as soon as the route renders.
         if (to === 'story-studio') useStoryStudioUi.getState().setOpen(true);
+        if (to === 'blog-studio') useBlogStudioUi.getState().openDesk();
       }
       addToolResultRef.current?.({
         tool: 'navigateTo',
         toolCallId: toolCall.toolCallId,
         output: path
-          ? { ok: true, navigatedTo: path, ...(to === 'story-studio' ? { opened: 'Story Studio' } : {}) }
+          ? {
+              ok: true,
+              navigatedTo: path,
+              ...(to === 'story-studio' ? { opened: 'Story Studio' } : {}),
+              ...(to === 'blog-studio' ? { opened: 'Blog Studio' } : {}),
+            }
           : { ok: false, error: `Unknown destination "${to}"` },
       });
     },
