@@ -19,7 +19,7 @@ import type { Request, Response, NextFunction } from 'express'
 import { db } from './db.js'
 import { attachAccount, attachAccountOptional } from './auth.js'
 import type { OrgRole } from './identity.js'
-import { authorisedHorseIds, manageablePartyIds } from './scope.js'
+import { writableHorseIds, manageablePartyIds } from './scope.js'
 import { accountCan, accountCanOpenModule, type AccountUser } from './effectiveAccess.js'
 import type { PermissionAction } from './permissionCatalogue.js'
 
@@ -121,7 +121,9 @@ export async function accountCanManageHorse(
   if (horse.createdByUserId && horse.createdByUserId === account.id) return true
   const horses = await db.collection('horses').find()
   const links = await db.collection('horsePartyLinks').find()
-  return authorisedHorseIds(account, { horses, links }).includes(horseId)
+  // WRITE scope: excludes horses reachable only through an org the account is a
+  // plain member of (docs/AUTH-RBAC-REVIEW.md H8).
+  return writableHorseIds(account, { horses, links }).includes(horseId)
 }
 
 /**
@@ -179,7 +181,7 @@ export function horseScopedWriteGate(opts: {
       // could move a record they legitimately own onto a horse they do not manage.
       // On horsePartyLinks that was severe rather than merely untidy — it re-pointed
       // the caller's OWN party at someone else's horse, and a current party↔horse
-      // link is exactly what authorisedHorseIds() reads, so the move granted write
+      // link is exactly what writableHorseIds() reads, so the move granted write
       // access to that horse and to every child record hanging off it.
       // See docs/AUTH-RBAC-REVIEW.md C1.
       if (!opts.idIsHorse && req.method === 'PUT') {
@@ -243,9 +245,20 @@ export function partyScopedWriteGate(req: Request, res: Response, next: NextFunc
   })
 }
 
-/** Editorial gate for /api/articles: create/edit_own(author match)/edit_any. */
+/**
+ * Editorial gate for /api/articles: create / edit_own / edit_any.
+ *
+ * GET attaches the account OPTIONALLY rather than being flatly public. It used
+ * to `return next()` with no account at all, which meant the handler had no way
+ * to tell a reader from an editor and so returned the entire collection —
+ * drafts, submitted copy and editors' notes — to anyone who asked. The handler
+ * decides visibility now (`canSeePipeline`), and it needs an account to do it.
+ */
 export function articlesWriteGate(req: Request, res: Response, next: NextFunction): void {
-  if (req.method === 'GET') return next()
+  if (req.method === 'GET') {
+    void attachAccountOptional(req, res, next)
+    return
+  }
   void attachAccount(req, res, async () => {
     const account = req.account!
     if (req.method === 'POST') {
@@ -256,15 +269,32 @@ export function articlesWriteGate(req: Request, res: Response, next: NextFunctio
       if (!contentCan(account, 'content.draft.edit_any')) return forbid(res, 'You cannot delete this story.')
       return next()
     }
-    // PUT — edit_any wins; otherwise edit_own requires the author to match.
+    // PUT — edit_any wins; otherwise edit_own requires ownership.
     if (contentCan(account, 'content.draft.edit_any')) return next()
     if (contentCan(account, 'content.draft.edit_own')) {
       const id = firstSegment(req)
       const doc = id ? await db.collection('articles').findById(id) : null
-      if (doc && doc.author === account.displayName) return next()
+      if (doc && ownsArticle(doc, account)) return next()
     }
     return forbid(res, 'You can only edit your own drafts.')
   })
+}
+
+/**
+ * Does this account own the story?
+ *
+ * `createdByUserId` is the real answer and is stamped on every story created
+ * since the field landed. The `author` fallback is for stories that predate it:
+ * ownership used to be `doc.author === account.displayName`, which breaks the
+ * moment two staff share a name or one is renamed, and the byline is free text
+ * for editors — it was never an identity claim. Blogs already do it this way.
+ */
+export function ownsArticle(doc: Record<string, unknown>, account: AccountUser | undefined): boolean {
+  if (!account) return false
+  if (typeof doc.createdByUserId === 'string' && doc.createdByUserId) {
+    return doc.createdByUserId === account.id
+  }
+  return typeof doc.author === 'string' && doc.author === account.displayName
 }
 
 /**

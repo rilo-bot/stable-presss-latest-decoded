@@ -1,30 +1,24 @@
-import { cn } from '@/lib/utils';
+import { stageMeta } from '@/lib/workflow';
+import type { ArticleStatus } from '@/types/article';
 
-/* ── Status badge ─────────────────────────────────────── */
-
-export function StatusBadge({ status }: { status: string }) {
-  const config: Record<string, { label: string; className: string; style?: React.CSSProperties }> = {
-    draft: { label: 'Draft', className: 'bg-muted text-muted-foreground' },
-    submitted: { label: 'Submitted', className: 'bg-primary/10 text-primary' },
-    editorial_review: { label: 'Editorial Review', className: 'bg-[hsl(var(--chart-2)/0.15)] text-[hsl(var(--chart-2))]' },
-    revision: { label: 'Revision', className: '', style: { background: 'rgba(232,160,32,0.15)', color: '#e8a020' } },
-    legal_review: { label: 'Legal Review', className: 'bg-[hsl(var(--chart-3)/0.15)] text-[hsl(var(--chart-3))]' },
-    compliance: { label: 'Compliance', className: 'bg-[hsl(var(--chart-4)/0.15)] text-[hsl(var(--chart-4))]' },
-    approved: { label: 'Approved', className: '', style: { background: 'rgba(93,168,84,0.15)', color: '#5da854' } },
-    publisher_review: { label: 'Publisher Review', className: 'bg-[hsl(var(--brand-accent)/0.15)] text-[hsl(var(--brand-accent))]' },
-    scheduled: { label: 'Scheduled', className: 'bg-primary/10 text-primary' },
-    published: { label: 'Published', className: 'bg-primary text-primary-foreground' },
-    newsletter: { label: 'Newsletter', className: 'bg-[hsl(var(--chart-1)/0.15)] text-[hsl(var(--chart-1))]' },
-    bulletin: { label: 'Bulletin', className: 'bg-primary/20 text-primary' },
-    archived: { label: 'Archived', className: 'bg-muted text-muted-foreground' },
-  };
-  const c = config[status] ?? config['draft'];
+/**
+ * A story's stage, as a pill.
+ *
+ * Label and colour come from `stageMeta` — the same table the kanban columns
+ * use. This file used to carry its own map of twelve statuses with its own
+ * colours, so Editorial Review, Legal Review, Compliance, Publisher Review,
+ * Revision, Newsletter, Bulletin and Archived all still had badge styling long
+ * after the workflow stopped being able to produce them, and the four surviving
+ * stages were coloured differently here than on the board.
+ */
+export function StatusBadge({ status }: { status: ArticleStatus }) {
+  const stage = stageMeta(status);
   return (
     <span
-      className={cn('text-[11px] uppercase tracking-[0.1em] font-bold px-2 py-0.5 rounded-sm whitespace-nowrap', c.className)}
-      style={c.style}
+      className="text-[11px] uppercase tracking-[0.1em] font-bold px-2 py-0.5 rounded-sm whitespace-nowrap"
+      style={{ background: stage.accent, color: stage.onAccent }}
     >
-      {c.label}
+      {stage.label}
     </span>
   );
 }

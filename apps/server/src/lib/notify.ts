@@ -8,7 +8,7 @@
 // ---------------------------------------------------------------------------
 
 import { db } from './db.js'
-import type { PartyClaim } from './identity.js'
+import { PARTY_MEMBERSHIPS } from './membership.js'
 
 export type NotificationType = 'horse_link' | 'claim_verified' | 'claim_rejected' | 'org_join'
 
@@ -36,11 +36,9 @@ export async function createNotification(n: NotificationInput): Promise<void> {
  * account(s) "behind" a party record, who should hear about changes to it.
  */
 export async function usersForParty(partyId: string): Promise<string[]> {
-  const users = await db.collection('users').find()
-  const ids: string[] = []
-  for (const u of users) {
-    const claims: PartyClaim[] = Array.isArray(u.partyClaims) ? u.partyClaims : []
-    if (claims.some((c) => c.partyId === partyId && c.status === 'verified')) ids.push(String(u._id))
-  }
-  return ids
+  // P2: one indexed lookup on {partyId, status}. Was a full users scan, run on
+  // EVERY horse-link write. A person may hold several roles on the same party, so
+  // de-duplicate — two verified rows (owner + jockey) are one recipient.
+  const rows = await db.collection(PARTY_MEMBERSHIPS).find({ partyId, status: 'verified' })
+  return [...new Set(rows.map((r) => String(r.userId)))]
 }

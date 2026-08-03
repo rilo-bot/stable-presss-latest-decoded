@@ -36,10 +36,7 @@ export type PermissionAction =
   | 'content.submit'
   | 'content.editorial_review'
   | 'content.send_revision'
-  | 'content.legal_review'
-  | 'content.compliance'
   | 'content.approve'
-  | 'content.publisher_review'
   | 'content.schedule'
   | 'content.publish'
   | 'content.newsletter'
@@ -130,12 +127,14 @@ export const PERMISSION_CATALOGUE: PermissionMeta[] = [
   { id: 'content.send_revision', label: 'Send back for revision', resource: 'Editorial', short: 'Send back', description: 'Return a story to its author.' },
   { id: 'content.approve', label: 'Approve content', resource: 'Editorial', short: 'Approve', description: 'Approve a story for publication.' },
 
-  // Legal
-  { id: 'content.legal_review', label: 'Legal review', resource: 'Legal & Compliance', short: 'Legal review', description: 'Move stories through legal review.' },
-  { id: 'content.compliance', label: 'Compliance', resource: 'Legal & Compliance', short: 'Compliance', description: 'Move stories into the compliance stage.' },
-
-  // Publishing
-  { id: 'content.publisher_review', label: 'Publisher review', resource: 'Publishing', short: 'Review', description: 'Run the publisher review stage.' },
+  // Publishing.
+  //
+  // `content.legal_review`, `content.compliance` and `content.publisher_review`
+  // were removed here. They were the per-department gates of the retired
+  // twelve-status workflow: grantable in the Roles console, listed under a
+  // "Legal & Compliance" heading, and checked by absolutely nothing — approval
+  // has been one step (`content.approve`) since the five stages landed. Roles
+  // still holding the retired ids simply no longer match a catalogue entry.
   { id: 'content.schedule', label: 'Schedule publication', resource: 'Publishing', short: 'Schedule', description: 'Set a future publish date.' },
   { id: 'content.publish', label: 'Publish', resource: 'Publishing', short: 'Publish', description: 'Push a story live.' },
   { id: 'content.newsletter', label: 'Send to newsletter', resource: 'Publishing', short: 'Newsletter', description: 'Distribute a story via newsletter.' },
@@ -213,6 +212,11 @@ export const MODULE_CATALOGUE: ModuleMeta[] = [
   { id: 'pipeline', label: 'Pipeline Map', section: 'Workspace' },
   { id: 'all-stories', label: 'All Stories', section: 'Content' },
   { id: 'blogs', label: 'Blogs', section: 'Content', requiresPermission: 'blog.create' },
+  // Instant carries NO requiresPermission on purpose: its two modes need
+  // different permissions (content.draft.create for a story, blog.create for a
+  // post) and a module row holds only one. The screen gates each mode itself, so
+  // a blog-only author still gets the surface. See docs/INSTANT-CAPTURE-PLAN.md §5.1.
+  { id: 'instant', label: 'Instant Capture', section: 'Content' },
   { id: 'magazine-v2', label: 'Magazine Builder', section: 'Content' },
   { id: 'editor-hub', label: 'Editor Hub', section: 'Content', requiresPermission: 'content.editorial_review' },
   { id: 'my-assets', label: 'My Media Assets', section: 'Content', requiresPermission: 'media.upload_own' },
@@ -226,6 +230,10 @@ export const MODULE_CATALOGUE: ModuleMeta[] = [
   // the surface on anything looser shows a console whose every call 403s.
   { id: 'roles', label: 'Roles & Permissions', section: 'Management', requiresPermission: 'roles.manage' },
   { id: 'analytics', label: 'Analytics', section: 'Management', requiresPermission: 'analytics.view' },
+  // Reader sentiment — same permission as Analytics; see SIDE_NAV for why it is a
+  // row of its own. Role rows written before this module existed need
+  // scripts/grant-emoji-analytics-module.ts (seedRoles is insert-only).
+  { id: 'emoji-analytics', label: 'Emoji Analytics', section: 'Management', requiresPermission: 'analytics.view' },
   { id: 'settings', label: 'Settings', section: 'Management', requiresPermission: 'settings.view' },
 
   // Editor Hub tabs — gated the same way, one level down.
@@ -263,9 +271,8 @@ export interface WorkflowStageMeta {
  * were never workflow stages at all — they were distribution, and now live in
  * the article's `channels`.
  *
- * Roles store stage ids in `workflowStages`. Rows still holding a retired id are
- * cleaned by `scripts/migrate-article-status.ts`; anything missed simply no
- * longer matches a stage and is ignored.
+ * Roles store stage ids in `workflowStages`. Retired ids are REMAPPED on read by
+ * `normaliseWorkflowStages` rather than by a migration — see the note there.
  */
 export const WORKFLOW_STAGE_CATALOGUE: WorkflowStageMeta[] = [
   { id: 'draft', label: 'Draft' },
@@ -282,6 +289,47 @@ export function isWorkflowStage(v: unknown): v is string {
 }
 
 export const ALL_WORKFLOW_STAGES: string[] = WORKFLOW_STAGE_CATALOGUE.map((s) => s.id)
+
+/**
+ * Retired stage id → the surviving stage that absorbed it.
+ *
+ * The four review gates became one approval step, `revision` became a flag on a
+ * Draft, and newsletter/bulletin turned out to be distribution rather than
+ * stages at all.
+ */
+const RETIRED_STAGES: Record<string, string> = {
+  editorial_review: 'submitted',
+  legal_review: 'submitted',
+  compliance: 'submitted',
+  publisher_review: 'approved',
+  revision: 'draft',
+  newsletter: 'published',
+  bulletin: 'published',
+  archived: 'published',
+}
+
+/**
+ * Resolve a role's `workflowStages` to current ids.
+ *
+ * Retired ids are REMAPPED, not dropped. Dropping them is what the reader here
+ * used to do (`.filter(isWorkflowStage)`), and for a role whose stages were ALL
+ * retired — the seeded `legal_reviewer`, for instance — that left an empty list,
+ * which the board turns into a kanban with no columns at all: a staff member with
+ * stories to work on looking at a blank screen.
+ *
+ * Done on read rather than by a migration script so there is nothing to remember
+ * to run, and nothing that behaves differently depending on whether someone did.
+ */
+export function normaliseWorkflowStages(raw: unknown): string[] {
+  if (!Array.isArray(raw)) return []
+  const out = new Set<string>()
+  for (const entry of raw) {
+    if (typeof entry !== 'string') continue
+    const id = isWorkflowStage(entry) ? entry : RETIRED_STAGES[entry]
+    if (id) out.add(id)
+  }
+  return WORKFLOW_STAGE_CATALOGUE.filter((s) => out.has(s.id)).map((s) => s.id)
+}
 
 // ── Built-in role matrix ────────────────────────────────────────────────────
 //
@@ -311,10 +359,7 @@ export const BUILTIN_ROLE_PERMISSIONS: Record<SeedRoleSlug, PermissionAction[]> 
     'content.submit',
     'content.editorial_review',
     'content.send_revision',
-    'content.legal_review',
-    'content.compliance',
     'content.approve',
-    'content.publisher_review',
     'content.schedule',
     'content.publish',
     'content.newsletter',

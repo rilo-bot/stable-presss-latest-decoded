@@ -52,7 +52,9 @@ router.use((req, res, next) => {
 
 // ── Roster: everyone holding at least one role, plus pending invites ─────────
 router.get('/', async (_req, res) => {
-  const users = await db.collection('users').find()
+  // P2: `staffRoleSlug != null` IS "is staff", and it is indexed — so the roster is
+  // one query over the staff population rather than a scan of every reader.
+  const users = await db.collection('users').find({ staffRoleSlug: { $ne: null } })
   const staff = users
     .map((u) => withIdentityDefaults({ id: u._id, ...u }))
     .filter((u) => u.staffRoles.length > 0)
@@ -130,7 +132,10 @@ router.post('/', async (req, res) => {
       res.status(403).json({ error: blocked })
       return
     }
-    await db.collection('users').updateOne(String(existing._id), { staffRoles: [role.slug] })
+    // P1 dual-write (docs/USER-MODEL-PLAN.md §8) — same $set as the array.
+    await db
+      .collection('users')
+      .updateOne(String(existing._id), { staffRoles: [role.slug], staffRoleSlug: role.slug })
 
     // The grant is the point; the email is a courtesy. A delivery failure must
     // not roll it back or read as failure — report it and let the UI say so.
@@ -279,7 +284,8 @@ router.delete('/member/:userId', async (req, res) => {
     return
   }
 
-  await db.collection('users').updateOne(userId, { staffRoles: [] })
+  // P1 dual-write: removal clears both axes together.
+  await db.collection('users').updateOne(userId, { staffRoles: [], staffRoleSlug: null })
   // Any invite still sitting for that address would silently re-grant on their
   // next sign-in, undoing the removal.
   const orphaned = await db.collection(INVITES).find({ email: acct.email })

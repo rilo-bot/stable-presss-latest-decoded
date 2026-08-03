@@ -17,8 +17,8 @@
 import { db } from '../db.js'
 import { MAGAZINE_V2_ENABLED } from '../magazineV2/config.js'
 import { canAccessNewsroom, isPlatformAdmin, contentCan } from '../rbac.js'
-import { accountCan, accountCanAny } from '../effectiveAccess.js'
-import { manageablePartyIds, authorisedHorseIds } from '../scope.js'
+import { accountCan } from '../effectiveAccess.js'
+import { manageablePartyIds, visibleHorseIds } from '../scope.js'
 import type { AccountUser } from '../identity.js'
 
 export type CapabilityCategory =
@@ -63,8 +63,7 @@ export interface CapabilityReport {
 const MAGAZINE_SURFACE = MAGAZINE_V2_ENABLED ? 'Magazine Builder' : 'Magazine Studio'
 
 const isPublisher = (a: AccountUser) => accountCan(a, 'content.publish')
-const isReviewer = (a: AccountUser) =>
-  accountCanAny(a, ['content.editorial_review', 'content.legal_review'])
+const isReviewer = (a: AccountUser) => accountCan(a, 'content.editorial_review')
 
 /** The capability list for a signed-in account. Pure: needs only the account + counts. */
 function buildCapabilities(
@@ -243,7 +242,7 @@ export async function getCapabilities(account?: AccountUser): Promise<Capability
   ])
   const manageableHorses = canAccessNewsroom(account)
     ? horses.length
-    : authorisedHorseIds(account, { horses, links }).length
+    : visibleHorseIds(account, { horses, links }).length
   const pendingClaims = account.partyClaims.filter((c) => c.status === 'pending').length
 
   return {

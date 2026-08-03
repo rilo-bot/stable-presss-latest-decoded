@@ -90,18 +90,48 @@ export function orgRoleIn(
 }
 
 /**
- * Horse ids the user has CURRENT authorised access to — the union of horses
- * linked to any verified party they hold and any organisation they belong to.
+ * Horse ids the user may SEE — horses linked to any party they hold, plus horses
+ * of ANY organisation they belong to (whatever their role in it), plus horses they
+ * created themselves.
+ *
+ * Mirrors `visibleHorseIds` in apps/server/src/lib/scope.ts.
  */
 export function authorisedHorseIds(
   user: AuthUser | null | undefined,
   data: ScopeData,
 ): string[] {
+  return horseIdsFor(user, data, (user?.orgMemberships ?? []).map((m) => m.orgId));
+}
+
+/**
+ * Horse ids the user may WRITE. Same as the visible set EXCEPT that an org grants
+ * reach only when the user OWNS or MANAGES it — a plain `org_member` may see the
+ * org's horses but not edit them (RBAC.md §4.3).
+ *
+ * Mirrors `writableHorseIds` in apps/server/src/lib/scope.ts. Read and write scope
+ * used to be one function on both sides, which over-granted on the server and made
+ * this client offer edit affordances that the server now (correctly) refuses.
+ */
+export function writableHorseIds(
+  user: AuthUser | null | undefined,
+  data: ScopeData,
+): string[] {
+  return horseIdsFor(
+    user,
+    data,
+    (user?.orgMemberships ?? [])
+      .filter((m) => m.orgRole === 'org_owner' || m.orgRole === 'org_manager')
+      .map((m) => m.orgId),
+  );
+}
+
+function horseIdsFor(
+  user: AuthUser | null | undefined,
+  data: ScopeData,
+  orgIds: string[],
+): string[] {
   if (!user) return [];
-  const partyIds = [
-    ...manageablePartyIds(user),
-    ...(user.orgMemberships ?? []).map((m) => m.orgId),
-  ];
+  const partyIds = [...manageablePartyIds(user), ...orgIds];
   const ids = new Set<string>();
   partyIds.forEach((pid) =>
     horsesLinkedToParty(pid, data, { currentOnly: true }).forEach((h) => ids.add(h)),
@@ -146,14 +176,20 @@ export function canViewAuthorisedRecord(
   return authorisedHorseIds(user, data).includes(horseId);
 }
 
-/** Can the user edit this horse's racing data? Staff (Production System) or a current linked party/org. */
+/**
+ * Can the user edit this horse's racing data? Staff (Production System), or a
+ * current linked party, or an org they own/manage.
+ *
+ * Uses the WRITE set — `authorisedHorseIds` (visibility) would show an Edit button
+ * to a plain org member whose PUT the server rejects.
+ */
 export function canManageHorse(
   user: AuthUser | null | undefined,
   horseId: string,
   data: ScopeData,
 ): boolean {
   if (isStaff(user)) return true;
-  return authorisedHorseIds(user, data).includes(horseId);
+  return writableHorseIds(user, data).includes(horseId);
 }
 
 /**

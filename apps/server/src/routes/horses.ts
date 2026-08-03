@@ -1,7 +1,7 @@
 import { Router } from 'express';
 import { db } from '../lib/db.js';
 import { canAccessNewsroom } from '../lib/rbac.js';
-import { authorisedHorseIds, manageablePartyIds } from '../lib/scope.js';
+import { visibleHorseIds, manageablePartyIds } from '../lib/scope.js';
 
 type WithMongoId = { _id: string; [key: string]: unknown };
 function project<T extends WithMongoId>(doc: T): Omit<T, '_id'> & { id: string } {
@@ -37,7 +37,7 @@ router.get('/', async (req, res) => {
   let allowed = new Set<string>();
   if (account) {
     const links = await db.collection('horsePartyLinks').find();
-    allowed = new Set(authorisedHorseIds(account, { horses: items, links }));
+    allowed = new Set(visibleHorseIds(account, { horses: items, links }));
   }
   const visible = items.filter(
     (h) =>

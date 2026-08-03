@@ -33,10 +33,10 @@ export type PermissionAction =
   | 'content.submit'                // Submit draft → editorial queue
   | 'content.editorial_review'      // Move into / out of editorial review
   | 'content.send_revision'         // Send article back for revision
-  | 'content.legal_review'          // Move into / out of legal review
-  | 'content.compliance'            // Move into compliance stage
   | 'content.approve'               // Approve content
-  | 'content.publisher_review'      // Publisher review stage
+  // `content.legal_review`, `content.compliance` and `content.publisher_review`
+  // were here. They were the per-department gates of the retired twelve-status
+  // workflow and nothing ever checked them — approval is one step now.
   | 'content.schedule'              // Schedule for publication
   | 'content.publish'               // Publish content
   | 'content.newsletter'            // Distribute via newsletter

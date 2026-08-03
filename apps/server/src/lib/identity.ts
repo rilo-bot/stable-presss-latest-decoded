@@ -40,6 +40,37 @@ export type Role = ReaderRole | PartyRole
 /** A slug into the `roles` collection. Any string; validity is a DB question. */
 export type RoleSlug = string
 
+/**
+ * The immutable, all-access role.
+ *
+ * Defined HERE rather than in roleRegistry.ts (which re-exports it, so no call
+ * site changed) because it is an identity fact, and `primaryStaffRole` below needs
+ * it. identity.ts has no runtime imports — keeping it a leaf module is what lets
+ * the staff-axis primitives live together instead of being duplicated.
+ */
+export const SUPERADMIN_SLUG = 'superadmin'
+
+/**
+ * WHICH ROLE WINS when collapsing a legacy `staffRoles[]` array to the single slug
+ * the model now stores (docs/USER-MODEL-PLAN.md §1.2).
+ *
+ * One definition, used by `withIdentityDefaults` (the read path), the live mirror,
+ * and the backfill script — so none of them can disagree about the same user.
+ * Duplicating this rule is precisely how the H4 superadmin-guard bug happened.
+ *
+ * `superadmin` wins outright: it short-circuits every permission check, so for
+ * anyone holding it the other entries already grant nothing. Otherwise the first
+ * entry wins — in practice everyone has at most one, because role assignment has
+ * always REPLACED rather than appended.
+ */
+export function primaryStaffRole(staffRoles: unknown): RoleSlug | null {
+  if (!Array.isArray(staffRoles) || staffRoles.length === 0) return null
+  const slugs = staffRoles.filter((r): r is string => typeof r === 'string' && r.length > 0)
+  if (slugs.length === 0) return null
+  if (slugs.includes(SUPERADMIN_SLUG)) return SUPERADMIN_SLUG
+  return slugs[0] ?? null
+}
+
 export const PARTY_ROLES: PartyRole[] = [
   'owner',
   'trainer',
@@ -103,8 +134,17 @@ export interface IdentityUser {
   subscriptionTier: SubscriptionTier
   partyClaims: PartyClaim[]
   orgMemberships: OrgMembership[]
-  /** DYNAMIC axis: slugs into the `roles` collection. */
+  /**
+   * DYNAMIC axis, as an array — kept for wire and call-site compatibility.
+   * Now always ONE element or ZERO, derived from `staffRoleSlug`.
+   */
   staffRoles: RoleSlug[]
+  /**
+   * DYNAMIC axis, canonical. Exactly one role slug, or null for a non-staff user.
+   * `staffRoleSlug != null` IS "is this person staff" — there is no separate flag.
+   * See docs/USER-MODEL-PLAN.md §3.1.
+   */
+  staffRoleSlug: RoleSlug | null
 }
 
 /**
@@ -125,10 +165,19 @@ export function withIdentityDefaults(raw: Record<string, any>): IdentityUser {
   let roles = rawRoles.filter(isStaticRole)
   if (!roles.includes('reader')) roles = ['reader', ...roles]
 
-  // Dynamic axis: role slugs, resolved against the `roles` collection.
-  const staff = Array.isArray(raw.staffRoles)
-    ? [...new Set(raw.staffRoles.filter((r: unknown): r is string => typeof r === 'string'))]
-    : []
+  // Dynamic axis: ONE role slug, resolved against the `roles` collection.
+  //
+  // `staffRoleSlug` is the canonical field. The fallback to the legacy array is
+  // DEFENSIVE, not routine: P1 backfilled every document and every write site
+  // mirrors, so the field should always be present. But reading the array through
+  // primaryStaffRole() rather than trusting `[0]` matters for the one dangerous
+  // case — a legacy doc holding ['editor','superadmin'] must not resolve to
+  // 'editor', which would silently demote a superadmin.
+  const slug =
+    typeof raw.staffRoleSlug === 'string' && raw.staffRoleSlug
+      ? raw.staffRoleSlug
+      : primaryStaffRole(raw.staffRoles)
+  const staff = slug ? [slug] : []
 
   const tier: SubscriptionTier =
     raw.subscriptionTier === 'standard' || raw.subscriptionTier === 'premium'
@@ -145,6 +194,7 @@ export function withIdentityDefaults(raw: Record<string, any>): IdentityUser {
     partyClaims: Array.isArray(raw.partyClaims) ? raw.partyClaims : [],
     orgMemberships: Array.isArray(raw.orgMemberships) ? raw.orgMemberships : [],
     staffRoles: staff,
+    staffRoleSlug: slug,
   }
 }
 
@@ -156,16 +206,29 @@ export function withIdentityDefaults(raw: Record<string, any>): IdentityUser {
  */
 export type { AccountUser } from './effectiveAccess.js'
 
-/** Persisted fields for a brand-new reader account (default state of every signup). */
+/**
+ * Persisted fields for a brand-new reader account (default state of every signup).
+ *
+ * `staffRoleSlug` is the new one-per-user staff axis (docs/USER-MODEL-PLAN.md §3.1).
+ * It is written from signup onward so no account is missing the field, but nothing
+ * READS it until P2 — `withIdentityDefaults` still resolves permissions from
+ * `staffRoles[]`. Explicit `null` rather than omitted, so the partial index and
+ * `find({ staffRoleSlug: slug })` behave predictably.
+ */
 export function newReaderFields(): Pick<
   IdentityUser,
   'roles' | 'subscriptionTier' | 'partyClaims' | 'orgMemberships' | 'staffRoles'
-> {
+> & { staffRoleSlug: null; status: 'active'; tokenVersion: number } {
   return {
     roles: ['reader'],
     subscriptionTier: 'free',
     partyClaims: [],
     orgMemberships: [],
     staffRoles: [],
+    staffRoleSlug: null,
+    status: 'active',
+    // Session generation. Bumping this on a user invalidates every token already
+    // issued to them — see lib/auth.ts isRevoked().
+    tokenVersion: 0,
   }
 }

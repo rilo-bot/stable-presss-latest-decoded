@@ -85,6 +85,18 @@ function mongoCollection(name: string) {
       const docs = await db.collection(name).find(finalQuery).toArray()
       return docs.map((d) => ({ ...d, _id: d._id.toString() })) as Doc[]
     },
+    /**
+     * Count matching live documents WITHOUT loading them.
+     *
+     * Exists because several call sites only wanted a number and were doing
+     * `(await find()).length` — which pulled every document in the collection into
+     * the API process to count it (docs/AUTH-RBAC-REVIEW.md, the ten scan sites).
+     * Same implicit `deletedAt: null` as find(), so counts and reads agree.
+     */
+    async count(query?: Record<string, unknown>): Promise<number> {
+      const db = await getMongoDb()
+      return db.collection(name).countDocuments({ ...(query ?? {}), deletedAt: null })
+    },
     // Run an aggregation pipeline. Unlike find(), this does NOT auto-inject the
     // `deletedAt: null` soft-delete filter — add a `$match` stage yourself when it
     // matters. Used for cheap server-side rollups (e.g. per-magazine page counts)

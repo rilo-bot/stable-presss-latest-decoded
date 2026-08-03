@@ -11,7 +11,10 @@ import type { SubscriptionTier } from '@/rbac/entitlement';
  * always was: a story can run on the site AND in the newsletter, something a
  * single status could never express.
  *
- * Legacy values are migrated by `apps/server/scripts/migrate-article-status.ts`.
+ * A story still stored under one of the retired twelve is folded into these five
+ * by the server, on read, the first time anyone lists stories — see
+ * `normaliseLegacyStatus` in `apps/server/src/lib/workflow.ts`. There is no
+ * migration to run.
  */
 export const ARTICLE_STATUSES = ['draft', 'submitted', 'approved', 'scheduled', 'published'] as const;
 export type ArticleStatus = (typeof ARTICLE_STATUSES)[number];

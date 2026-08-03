@@ -124,6 +124,7 @@ import agentStoryRouter from './routes/agentStory.js'
 import agentArticleRouter from './routes/agentArticle.js'
 import agentVoiceRouter from './routes/agentVoice.js'
 import agentComposeRouter from './routes/agentCompose.js'
+import agentInstantRouter from './routes/agentInstant.js'
 import newsroomRouter from './routes/newsroom.js'
 
 // Reads stay public (the public website needs them). Writes are gated by role:
@@ -195,6 +196,10 @@ app.use('/api/agent/story', jsonAgent, agentStoryRouter)    // Story Studio — 
 app.use('/api/agent/article', jsonAgent, agentArticleRouter) // Article Studio — edits one open article in place (client-executed tools)
 app.use('/api/agent/voice', jsonAgent, agentVoiceRouter)    // OpenAI STT/TTS for the concierge (key stays server-side)
 app.use('/api/agent/compose', jsonAgent, agentComposeRouter) // AI field-composer for form fields (✨ button)
+// Instant — capture-to-draft. Staff-only + rate-limited INSIDE the router (unlike
+// the older agent routes, which attach the account optionally): it is the most
+// expensive model surface here and there is still no token metering.
+app.use('/api/agent/instant', jsonAgent, agentInstantRouter)
 app.use('/api/agent', jsonAgent, agentRouter)
 // === end auto-mounted routers ===
 

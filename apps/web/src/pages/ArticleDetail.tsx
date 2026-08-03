@@ -555,41 +555,25 @@ export default function ArticleDetail() {
                   /* Premium gate — first paragraph above is the free teaser. */
                   <Paywall requiredTier={article.minTier ?? 'premium'} />
                 ) : (
-                  <>
-                    {/* Pull quote after first paragraph if we have enough */}
-                    {paragraphs.length >= 3 && (
-                      <div
-                        className="my-8 pl-5 border-l-[3px] py-2"
-                        style={{ borderColor: 'hsl(var(--brand-accent))' }}
+                  /* The rest of the story.
+                   *
+                   * There was a "pull quote" here: it took the story's SECOND
+                   * paragraph, wrapped it in quotation marks and attributed it to
+                   * the byline. Nothing in it was ever a quotation — readers were
+                   * shown words the author never said in quotes, and the
+                   * paragraph then vanished from the body copy where it belonged.
+                   */
+                  <div className="space-y-5">
+                    {paragraphs.slice(1).map((para, idx) => (
+                      <p
+                        key={idx}
+                        className="text-base text-foreground/85 leading-relaxed font-[family-name:var(--font-body,inherit)]"
+                        style={{ lineHeight: 1.78 }}
                       >
-                        <p
-                          className="font-[family-name:var(--font-display)] italic text-xl md:text-2xl font-semibold text-foreground/85 leading-snug"
-                          style={{ fontStyle: 'italic' }}
-                        >
-                          "{paragraphs[1]}"
-                        </p>
-                        <p
-                          className="mt-3 text-[10px] uppercase tracking-[0.14em] font-bold"
-                          style={{ color: 'hsl(var(--brand-accent))' }}
-                        >
-                          — {article.author}
-                        </p>
-                      </div>
-                    )}
-
-                    {/* Remaining body paragraphs */}
-                    <div className="space-y-5">
-                      {paragraphs.slice(paragraphs.length >= 3 ? 2 : 1).map((para, idx) => (
-                        <p
-                          key={idx}
-                          className="text-base text-foreground/85 leading-relaxed font-[family-name:var(--font-body,inherit)]"
-                          style={{ lineHeight: 1.78 }}
-                        >
-                          {para}
-                        </p>
-                      ))}
-                    </div>
-                  </>
+                        {para}
+                      </p>
+                    ))}
+                  </div>
                 )}
               </div>
               </SelectableField>

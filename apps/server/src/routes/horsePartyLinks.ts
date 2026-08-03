@@ -95,7 +95,7 @@ router.put('/:id', async (req, res) => {
   // WHICH HORSE a link points at is not an editable field. A link IS the
   // (horse, party) pair — changing the horse is a different relationship, so it
   // is a delete plus a create, not an edit. Allowing it re-pointed the caller's
-  // own party onto a horse they don't manage, which authorisedHorseIds() then
+  // own party onto a horse they don't manage, which writableHorseIds() then
   // read as write access to that horse (docs/AUTH-RBAC-REVIEW.md C1).
   //
   // No UI ever changes it: HorsePartyLinkPanel is scoped to one horse and echoes

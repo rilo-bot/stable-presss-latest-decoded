@@ -63,6 +63,7 @@ import RacingRecordsScreen from '@/pages/production-system/screens/RacingRecords
 import TeamScreen from '@/pages/production-system/screens/TeamScreen';
 import RolesScreen from '@/pages/production-system/screens/RolesScreen';
 import AnalyticsScreen from '@/pages/production-system/screens/AnalyticsScreen';
+import EmojiAnalyticsScreen from '@/pages/production-system/screens/EmojiAnalyticsScreen';
 import SettingsScreen from '@/pages/production-system/screens/SettingsScreen';
 import MagazineStudioScreen from '@/pages/production-system/screens/MagazineStudioScreen';
 
@@ -316,6 +317,9 @@ export default function App() {
             <Route path="team" element={<TeamScreen />} />
             <Route path="roles" element={<RolesScreen />} />
             <Route path="analytics" element={<AnalyticsScreen />} />
+            {/* Reader sentiment. Static sample data — the reaction feed it
+                describes doesn't exist yet; the screen says so on its face. */}
+            <Route path="emoji-analytics" element={<EmojiAnalyticsScreen />} />
             <Route path="settings" element={<SettingsScreen />} />
             <Route path="magazine-studio" element={<MagazineStudioScreen />} />
             {/* Magazine Builder v2 (free-form, AI-first) — behind the MAGAZINE_V2 server flag. */}

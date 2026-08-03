@@ -479,7 +479,34 @@ changes. `tsc --noEmit` clean.
    `roles` router previously checked only the holder count, so `team.manage` could demote a
    superadmin whenever a second existed.
 
-### P1 — Expand (zero risk, nothing reads the new shape)
+### P1 — Expand ✅ **DONE 2026-08-03** (backfilled on the `stable-press-local` test cluster)
+
+Shipped: [lib/membership.ts](../apps/server/src/lib/membership.ts) (new),
+[ensureIndexes.ts](../apps/server/src/lib/ensureIndexes.ts) (+11 indexes, 23/23 building),
+[scripts/migrate-user-model.ts](../apps/server/scripts/migrate-user-model.ts) (new),
+and mirror calls at all 14 write sites. `tsc --noEmit` clean.
+
+**Design change vs the plan: ONE reconciler instead of 14 bespoke dual-writes.** Every write
+site already computes the *complete* new array before calling `updateOne`, so
+`mirrorPartyMemberships(userId, claims)` / `mirrorOrgMemberships(userId, memberships)` take
+that final array and reconcile the collection to match (insert / update / soft-delete).
+One function to get right rather than fourteen, idempotent by construction, and the backfill
+script calls the **same** functions — so the migration and the live path cannot drift in how
+they map one user's arrays to rows. `staffRoleSlug` needed no reconciler at all: it is a
+field on the document already being written, so it folds into the same `$set` and cannot
+half-apply.
+
+Verified on real data (17 users → 13 partyMemberships, 1 orgMembership, 4 slugs):
+`--apply` twice → identical result (idempotent); `--check` → zero drift; soft-delete →
+re-add cycle succeeds against the partial unique index; and a synthetic case proved the
+headline requirement — **one user, one person-party, many static roles**, each with its own
+independently-changeable `status`, removable one at a time.
+
+Not exercised by real data: no current user holds more than one party role, and none held
+more than one staff role (so the lossy-collapse warning never fired). Both paths are
+structurally supported and covered by the synthetic test.
+
+<details><summary>Original P1 task list</summary>
 1. Create the two collections + every index in §3, plus §3.4.
 2. `scripts/migrate-user-model.ts` — backfill from the embedded arrays. Idempotent,
    re-runnable, reports counts, `--check` mode that reports disagreement. Verify against a
@@ -502,8 +529,44 @@ changes. `tsc --noEmit` clean.
    `updateMany({staffRoleSlug: slug}, {$set:{staffRoleSlug: null}})`.
 
 *Exit:* both shapes agree on every user. Reads still 100% old. Fully revertible.
+</details>
 
-### P2 — Move reads (one site at a time)
+**Production note:** the backfill has run against the test cluster only. Deploying P1 needs
+`npx tsx scripts/migrate-user-model.ts --check` on production first (it reports duplicate
+emails, which would stop the new unique index building) then `--apply`.
+
+### P2 — Move reads ✅ **DONE 2026-08-03**
+
+`tsc --noEmit` clean on **server and web**. Verified against real data: every one of the
+17 users resolves to identical memberships, permissions and derived roles from the edge
+collections as from the embedded arrays.
+
+**Exit criterion met: zero `collection('users').find()` anywhere in the codebase.**
+
+Also landed here, beyond the original list:
+- `users.staffRoleSlug` became the canonical staff axis. `SUPERADMIN_SLUG` and
+  `primaryStaffRole()` moved to identity.ts (a leaf module) so the read path, the live
+  mirror and the backfill share ONE rule — duplicating it is how H4 happened.
+  `staffRoles[]` survives as a one-or-zero shim, so nothing downstream changed.
+- `db.count()` added. Several sites only wanted a number and were doing
+  `(await find()).length`, i.e. loading a whole collection to count it.
+- `partyMemberships.claimId` — the original embedded claim id, so `findClaim()` is an
+  indexed lookup. **This was missed on the first pass**: the P1 backfill ran before the
+  field existed, so rows lacked it and the fallback silently substituted the row's `_id`
+  — an id `findClaim` could never resolve, which would have broken verify/reject. Caught
+  by the verification script, fixed by re-running the backfill, and the fallback now warns
+  loudly instead of failing quietly.
+- **H8 fixed** — `authorisedHorseIds` split into `visibleHorseIds` / `writableHorseIds`.
+  Write scope now requires `org_owner`/`org_manager`; a plain `org_member` sees the org's
+  horses and cannot edit them. Verified: member 1 visible / 0 writable, manager 1 / 1.
+  The **web mirror** (`rbac/can.ts`) was split identically and `canManageHorse` repointed
+  at the write set — otherwise the UI would offer an Edit button the server refuses.
+- **L5 fixed** — `tokenVersion` on the user doc plus a `v` claim in the JWT. Bumping the
+  field invalidates every existing session; `status: 'suspended'` also revokes. Tokens
+  issued before this carry no `v` and are treated as version 0, so the deploy logs nobody
+  out. `attachAccountOptional` degrades to anonymous rather than 401, per its contract.
+
+<details><summary>Original P2 task list</summary>
 1. `resolveAccount` reads `staffRoleSlug` off the user doc and hydrates the two membership
    axes from their collections (§4), shimming `staffRoles` to a one-or-zero array.
    **This is the keystone** — it lands the whole consumer table in §4 for free.
@@ -516,6 +579,14 @@ changes. `tsc --noEmit` clean.
 6. `tokenVersion` check in `attachAccount`.
 
 *Exit:* no `collection('users').find()` anywhere. Old arrays written but never read.
+</details>
+
+**P3 is now simpler than planned.** The owner confirmed there is no production data to
+preserve, so the expand/contract dance can collapse: the dual-write and the backfill exist
+only to protect existing rows. P3 can drop the embedded arrays outright and rewrite
+`routes/partyClaims.ts` + `routes/organisations.ts` to operate on the edge collections
+directly, instead of the read-modify-write-then-mirror they still do. `scripts/migrate-user-model.ts`
+stays useful as a **consistency checker** (`--check`) even once its `--apply` is redundant.
 
 ### P3 — Contract + new surfaces
 1. Stop dual-writing; drop `roles`, `staffRoles`, `partyClaims`, `orgMemberships` from

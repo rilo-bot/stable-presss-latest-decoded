@@ -14,7 +14,7 @@ export default function StepComplete({ message }: StepCompleteProps) {
   return (
     <>
       <div className="mb-8 text-center">
-        <span className="inline-flex h-12 w-12 items-center justify-center rounded-full bg-primary/8 text-primary mb-4">
+        <span className="inline-flex h-12 w-12 items-center justify-center rounded-full bg-primary/10 text-primary mb-4">
           <Check size={22} />
         </span>
         <h2 className="font-[family-name:var(--font-display)] text-2xl font-bold text-foreground mb-1">

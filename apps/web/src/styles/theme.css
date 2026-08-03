@@ -23,34 +23,133 @@
  * `hsl(var(--primary))` in Tailwind utilities.
  */
 
+/**
+ * SURFACE LADDER — see docs/THEME-DIRECTION.md
+ *
+ * Colour has a structural job here, not a mood:
+ *   GREEN  frames it    — chrome (sidebar, navbar) and the button that commits
+ *   WHITE  is the sheet — the page, the writing canvas, and anything floating
+ *   CREAM  is the boxes — cards, panels, tiles, rails: furniture ON the sheet
+ *   GOLD   points at it — rules, active markers, kickers. NEVER body ink.
+ *
+ * White is the dominant surface and cream is confined to the boxes. The earlier
+ * pass had this the other way round (cream page, white cards); it was correct in
+ * structure but left cream covering ~90% of every screen, which was the original
+ * complaint. Inverting keeps the warmth as an accent and reads cleaner.
+ *
+ * The surfaces are spaced in CIE L* (perceptually uniform lightness), NOT WCAG
+ * contrast ratio — ratios compress badly near white and report ~1.06 for a step
+ * that is plainly visible. Steps here: page->box 0.7, box->well 2.1,
+ * page->well 2.9. These are deliberately TINY: on a white page a tinted box has
+ * to stay light to stay warm (see --card), so --border defines the box and the
+ * fill only carries warmth. A surface that must stand alone with no border needs
+ * >=3 L*, which is why --muted (the well) is the one with a real step.
+ *
+ * Before any of this the whole ladder spanned 5.0 L* with --card just +2.4 above
+ * the page — under the just-noticeable threshold — and the code mostly painted
+ * `bg-muted/40`, which resolved to -1.05 L*. Every screen was one flat field.
+ */
 :root {
   /* Forest-Green / Gold / Warm-Cream palette (NZTROF ownership) */
-  --background: 45 33% 95%;          /* warm cream page */
+
+  /* ── Surfaces: WHITE page, CREAM boxes ─────────────────────────────────── */
+  /* PAGE — a warm white. The page, the writing canvas, and anything that floats
+     ABOVE the page (dialogs, dropdowns, floating toolbars), which separate by
+     shadow rather than by tint. White is now the dominant colour of the app;
+     cream is demoted from "everything" to "the boxes". */
+  --background: 44 60% 99.5%;        /* #fefefd  L*=99.7 */
+  --popover: 44 60% 99.5%;           /* floats — lifts by shadow, not by tint */
+  /* BOX — cream. Cards, panels, tiles, the top bar: furniture sitting IN the
+     page. Takes a border and NOT a drop shadow (a shadow under a panel darker
+     than its page reads as a mistake).
+     WHY SO LIGHT, AND SO SATURATED: a cream box on a white page goes muddy the
+     moment it is desaturated. What makes a tint read "warm cream" instead of
+     "dirty grey" is its yellow (Lab b*) RELATIVE to how far it drops below the
+     page — call it the warmth ratio. Below ~2.0 it reads grey. Iterations:
+       45 34% 93%  b* 4.7 / drop 4.8 = 1.0  -> "unwashed paper"
+       44 70% 96%  b* 5.5 / drop 2.0 = 2.7  -> still read dark on white
+       44 85% 98%  b* 3.3 / drop 0.7 = 4.5  -> warm white  (here)
+     The fill is now barely a step at all, and that is the point: --border does
+     the structural work of saying "this is a box", so the fill only has to carry
+     warmth. Push the lightness any further and the warmth goes with it. */
+  --card: 44 85% 98%;                /* #fefcf6  L*=99.0  b*=3.3 */
+  /* WELL — the one surface that still reads as a distinct plane on its own
+     (2.9 L* under the page). Nested inside a box: list panes, tool rails, table
+     headers, hover states. `bg-muted` maps here, so existing bg-muted panels
+     become a genuine third plane. Saturation climbs with the drop, same reason. */
+  --muted: 43 62% 95%;               /* #faf6ea  warmth 2.1 */
+  --surface-sunken: 43 62% 95%;      /* explicit alias — prefer this in new code */
+  --secondary: 43 62% 95%;
+
+  /* ── Ink ───────────────────────────────────────────────────────────────── */
   --foreground: 156 20% 13%;         /* dark green-black text */
-  --card: 48 45% 98%;                /* near-white warm surface */
   --card-foreground: 156 20% 13%;
-  --popover: 48 45% 98%;
   --popover-foreground: 156 20% 13%;
-  --primary: 152 36% 18%;            /* deep forest green */
-  --primary-foreground: 44 44% 95%;  /* cream on green */
-  --secondary: 45 24% 92%;
+  /* Was 150 8% 38% — lifted so it also clears 4.5:1 on the sunken plane (5.32). */
+  --muted-foreground: 150 10% 34%;
   --secondary-foreground: 156 18% 20%;
-  --muted: 45 22% 92%;
-  --muted-foreground: 150 8% 38%;
-  --accent: 150 24% 91%;             /* faint green tint */
-  --accent-foreground: 152 30% 20%;
-  --border: 44 18% 85%;
-  --input: 44 18% 85%;
+
+  /* ── Chrome ────────────────────────────────────────────────────────────── */
+  --primary: 152 36% 18%;            /* deep forest green */
+  --primary-foreground: 44 44% 95%;  /* cream on green (10.74:1) */
+  --accent: 150 22% 88%;             /* faint green tint — hover on light */
+  --accent-foreground: 152 32% 18%;
   --ring: 152 36% 28%;
   --brand: 152 36% 18%;
   --brand-foreground: 44 44% 95%;
+
+  /* ── Edges: split by job ───────────────────────────────────────────────── */
+  /* DECORATIVE — card edges and dividers, and the thing that actually says
+     "this is a box" now that the fills are near-white.
+     Saturation matters as much as lightness here. At 44 20% 70% this was a
+     khaki-tan line drawn around every card, and a tan outline reads "dirty" even
+     when the fill inside it is clean. Dropping saturation 20% -> 10% halves the
+     chroma (12.4 -> 5.8) so it reads as a warm grey, while lightness is only
+     nudged 70% -> 72% so definition is unchanged: 1.90:1 on the page either way. */
+  --border: 44 10% 72%;              /* #bfbbb0  chroma 5.8 */
+  --hair: 44 10% 72%;                /* alias, for intent at the call site */
+  /* CONTROL BOUNDARY — inputs, selects, outline buttons. Clears 3:1 on all
+     three surfaces (WCAG 1.4.11): a field's edge is the only thing telling you
+     the field is there. Was 44 18% 85% = 1.25:1, i.e. not perceivable. */
+  --input: 44 16% 45%;               /* #857b60 */
+  --edge: 44 16% 45%;
+
+  /* ── Gold: fill and ink are different colours ──────────────────────────── */
+  /* FILL / RULES ONLY — hairlines, --rule-gold, active pill on green (5.19:1).
+     As text on a light surface this is 2.06:1; use --brand-accent-ink instead. */
   --brand-accent: 42 64% 53%;        /* gold (#D4A843) */
   --brand-accent-foreground: 150 35% 12%;
-  --chart-1: 152 36% 30%;            /* green */
-  --chart-2: 42 64% 53%;             /* gold */
-  --chart-3: 4 60% 50%;
-  --chart-4: 200 40% 40%;
-  --chart-5: 270 40% 50%;
+  /* INK — gold as text. 6.19 on card / 5.51 on page / 4.95 on sunken. */
+  --brand-accent-ink: 38 64% 30%;    /* #7d5a1c */
+
+  /* ── States ────────────────────────────────────────────────────────────── */
+  /* Was the stock shadcn 0 84.2% 60.2%, which failed its OWN foreground at
+     3.59:1 — a known shadcn defect, inherited across 145 call sites. */
+  --destructive: 0 72% 42%;          /* #b81e1e */
+  --destructive-foreground: 0 0% 100%;
+  /* New. Previously success/warning had no token, so they were spelled with raw
+     emerald/green and amber/yellow/orange classes — three vocabularies each. */
+  --success: 152 48% 29%;            /* #266d4c */
+  --success-foreground: 0 0% 100%;
+  --warning: 32 74% 31%;             /* #8a5315 */
+  --warning-foreground: 0 0% 100%;
+
+  /* ── Categorical palette (named --chart-* for history) ─────────────────── */
+  /* There is no charting library in this app. These five are the CATEGORY
+     palette: role chips (trainer/jockey/breeder/agent), media types, status
+     badges, kanban accents — and they are used as TEXT far more than as fill,
+     e.g. `text-[hsl(var(--chart-2))]` at 11px. So all five are tuned to clear
+     4.5:1 on card, page AND sunken, and to stay >=dE 20 apart from each other
+     (worst pair 1<->4 at dE 32).
+     --chart-2 was previously byte-identical to --brand-accent, which meant the
+     gold FILL colour doubled as a category ink and failed at 2.19:1. It is now
+     a darker amber that passes as text; it lands close to --brand-accent-ink,
+     which is fine — the two never appear on the same element. */
+  --chart-1: 152 36% 30%;            /* #31684e  green   */
+  --chart-2: 36 62% 32%;             /* #845c1f  amber   */
+  --chart-3: 4 60% 44%;              /* #b4352d  red     */
+  --chart-4: 200 40% 37%;            /* #396b84  blue    */
+  --chart-5: 270 40% 48%;            /* #7a49ab  purple  */
 }
 
 .dark {

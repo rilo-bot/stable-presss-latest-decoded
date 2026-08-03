@@ -91,7 +91,7 @@ export function PhotoUpload({
           className={cn(
             'flex flex-col items-center justify-center gap-2 rounded-md border-2 border-dashed p-8 cursor-pointer transition-all',
             dragOver
-              ? 'border-primary bg-primary/8 scale-[1.01]'
+              ? 'border-primary bg-primary/10 scale-[1.01]'
               : photoError
               ? 'border-destructive bg-destructive/5 hover:border-destructive/70'
               : 'border-border/60 bg-muted/20 hover:border-primary/50 hover:bg-primary/5'

@@ -3,7 +3,7 @@ import {
   FileText, LayoutDashboard, CheckSquare, Shield, Send, Users, BarChart2,
   Settings, Eye, ArrowRight, BookOpen, Mic, Star, Edit, DollarSign, Image,
   File, UserCheck, CalendarClock, FolderOpen, Inbox, Layers, Newspaper, Flag,
-  PenLine,
+  PenLine, Zap, SmilePlus,
 } from 'lucide-react';
 import type { ArticleStatus } from '@/types/article';
 import type { PartyRole } from '@/types/party';
@@ -93,6 +93,11 @@ export const SIDE_NAV: SideNavItem[] = [
   { id: 'pipeline', label: 'Pipeline Map', icon: <ArrowRight size={15} />, section: 'Workspace', slug: 'pipeline' },
   { id: 'all-stories', label: 'All Stories', icon: <FileText size={15} />, section: 'Content', slug: 'all-stories' },
   { id: 'blogs', label: 'Blogs', icon: <PenLine size={15} />, section: 'Content', slug: 'blogs', requiresPermission: 'blog.create' },
+  /* No `requiresPermission`: Instant's two modes need different permissions
+     (content.draft.create for a story, blog.create for a post) and this row
+     holds one. The screen gates each mode itself, so a blog-only author still
+     gets the surface. Mirrors MODULE_CATALOGUE on the server. */
+  { id: 'instant', label: 'Instant', icon: <Zap size={15} />, section: 'Content', slug: 'instant', badge: 'New' },
   // { id: 'drafts', label: 'Drafts', icon: <FileText size={15} />, section: 'Content' },
   // { id: 'review', label: 'In Review', icon: <Eye size={15} />, section: 'Content' },
   // {
@@ -132,6 +137,11 @@ export const SIDE_NAV: SideNavItem[] = [
   { id: 'team', label: 'Team Members', icon: <Users size={15} />, section: 'Management', slug: 'team', requiresPermission: 'team.manage' },
   { id: 'roles', label: 'Roles & Permissions', icon: <Shield size={15} />, section: 'Management', slug: 'roles', requiresPermission: 'roles.manage' },
   { id: 'analytics', label: 'Analytics', icon: <BarChart2 size={15} />, section: 'Management', slug: 'analytics', requiresPermission: 'analytics.view' },
+  /* Its own row rather than a tab inside Analytics: reader sentiment is a
+     different question from production throughput, and it is the one screen an
+     editor opens to decide what to commission next. Same permission — a role
+     that can see the numbers can see all of them. */
+  { id: 'emoji-analytics', label: 'Emoji Analytics', icon: <SmilePlus size={15} />, section: 'Management', slug: 'emoji-analytics', requiresPermission: 'analytics.view' },
   { id: 'settings', label: 'Settings', icon: <Settings size={15} />, section: 'Management', slug: 'settings', requiresPermission: 'settings.view' },
 ];
 

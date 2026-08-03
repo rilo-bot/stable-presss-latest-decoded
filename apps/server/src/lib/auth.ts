@@ -29,6 +29,16 @@ const TOKEN_TTL = '7d'
 export interface TokenClaims {
   sub: string // user id
   email: string
+  /**
+   * Session generation. Compared against `users.tokenVersion` on every
+   * authenticated request, so bumping that field invalidates every token already
+   * issued for the account — the only way to sign someone out before the 7-day
+   * expiry (docs/AUTH-RBAC-REVIEW.md L5).
+   *
+   * Optional: tokens issued before this existed carry no `v`, and are treated as
+   * version 0 so nobody is logged out by the deploy itself.
+   */
+  v?: number
 }
 
 /** Cryptographically-random 6-digit code, zero-padded. */
@@ -125,9 +135,26 @@ export async function attachAccount(req: Request, res: Response, next: NextFunct
     res.status(401).json({ error: 'Account not found' })
     return
   }
+  if (isRevoked(claims, doc)) {
+    res.status(401).json({ error: 'Your session has ended. Please sign in again.' })
+    return
+  }
   req.user = claims
   req.account = await resolveAccount(withIdentityDefaults({ id: doc._id, ...doc }))
   next()
+}
+
+/**
+ * Has this token been invalidated by a session bump, or the account suspended?
+ *
+ * Both are read from the LIVE user document rather than the token, so revocation
+ * takes effect on the next request instead of the next login — the same reason the
+ * JWT carries no permission data.
+ */
+function isRevoked(claims: TokenClaims, doc: Record<string, unknown>): boolean {
+  if (doc.status === 'suspended') return true
+  const current = typeof doc.tokenVersion === 'number' ? doc.tokenVersion : 0
+  return (claims.v ?? 0) < current
 }
 
 /**
@@ -139,7 +166,9 @@ export async function attachAccountOptional(req: Request, _res: Response, next: 
   const claims = claimsFromHeader(req)
   if (claims) {
     const doc = await db.collection('users').findById(claims.sub)
-    if (doc) {
+    // A revoked or suspended session proceeds ANONYMOUSLY here rather than 401-ing —
+    // that is this middleware's contract — but it must not resolve to an account.
+    if (doc && !isRevoked(claims, doc)) {
       req.user = claims
       req.account = await resolveAccount(withIdentityDefaults({ id: doc._id, ...doc }))
     }

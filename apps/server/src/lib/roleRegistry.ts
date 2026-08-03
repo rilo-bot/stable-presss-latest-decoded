@@ -21,12 +21,19 @@ import { db } from './db.js'
 import {
   isModuleId,
   isPermissionAction,
-  isWorkflowStage,
+  normaliseWorkflowStages,
   type PermissionAction,
 } from './permissionCatalogue.js'
 
-/** The immutable, all-access role. Never resolved through the DB. */
-export const SUPERADMIN_SLUG = 'superadmin'
+/**
+ * The immutable, all-access role. Never resolved through the DB.
+ *
+ * Defined in identity.ts (a leaf module with no runtime imports) so the staff-axis
+ * primitives — the slug and `primaryStaffRole` — live in one place. Re-exported
+ * here because every existing call site imports it from the registry.
+ */
+export { SUPERADMIN_SLUG } from './identity.js'
+import { SUPERADMIN_SLUG } from './identity.js'
 
 /**
  * How many accounts currently hold superadmin.
@@ -37,9 +44,9 @@ export const SUPERADMIN_SLUG = 'superadmin'
  * SETUP_SECRET seed, so every one of those paths has to ask.
  */
 export async function superadminHolderCount(): Promise<number> {
-  const users = await db.collection('users').find()
-  return users.filter((u) => Array.isArray(u.staffRoles) && u.staffRoles.includes(SUPERADMIN_SLUG))
-    .length
+  // P2: one indexed count. Was a full users scan filtered in JS, and this runs on
+  // EVERY role mutation — the hottest of the ten scan sites relative to its cost.
+  return db.collection('users').count({ staffRoleSlug: SUPERADMIN_SLUG })
 }
 
 /**
@@ -144,9 +151,8 @@ export function projectRole(doc: Record<string, any>): RoleDoc {
     isImmutable: doc.isImmutable === true,
     permissions: Array.isArray(doc.permissions) ? doc.permissions.filter(isPermissionAction) : [],
     modules: Array.isArray(doc.modules) ? doc.modules.filter(isModuleId) : [],
-    workflowStages: Array.isArray(doc.workflowStages)
-      ? doc.workflowStages.filter(isWorkflowStage)
-      : [],
+    // Retired stage ids are remapped, not dropped — see normaliseWorkflowStages.
+    workflowStages: normaliseWorkflowStages(doc.workflowStages),
     createdBy: doc.createdBy ? String(doc.createdBy) : undefined,
     createdAt: String(doc.createdAt ?? ''),
     updatedAt: String(doc.updatedAt ?? ''),
