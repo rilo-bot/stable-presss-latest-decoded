@@ -150,6 +150,28 @@
     }
   }
 
+  /* ── Composer: floated block hosts ────────────────────────────────────────
+     A floated element is out of flow, so a wrapper around it collapses to zero
+     height. In the composer that wrapper carries the selection ring and the
+     hover target, which then drew as a thin line above the image and was almost
+     impossible to hover.
+
+     So the composer moves the float onto its own wrapper (`.blog-float-host`)
+     and this rule neutralises the one the renderer put on the figure. The
+     renderer is unchanged — it still emits exactly what the public page uses —
+     and the wrapper now hugs the image, so the ring and hit area are correct
+     while the text still wraps.
+
+     Descendant, not child: the selection wrapper sits between the host and the
+     figure, so `>` matches nothing. Two class selectors also outrank the
+     Tailwind utilities being overridden here, so no !important is needed. */
+  .blog-float-host .blog-float {
+    float: none;
+    width: 100%;
+    margin-left: 0;
+    margin-right: 0;
+  }
+
   /* Opening drop cap, matching the treatment ArticleDetail gives a story's
      first paragraph. ::first-letter rather than a wrapped <span> so it works on
      sanitized HTML we do not control the internals of. */

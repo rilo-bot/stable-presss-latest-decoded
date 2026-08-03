@@ -277,6 +277,12 @@ export interface Blog {
   slug: string;
   /** Previous slugs, so an old link still resolves after a rename. */
   slugHistory: string[];
+  /**
+   * Set once someone chooses a slug deliberately. Until then an unpublished
+   * post's slug follows its title — otherwise a post created as "Untitled post"
+   * keeps that slug forever and every draft lands on /blog/untitled-post-N.
+   */
+  slugLocked?: boolean;
 
   title: string;
   subtitle?: string;

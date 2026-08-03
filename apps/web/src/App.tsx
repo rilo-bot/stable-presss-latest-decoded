@@ -22,6 +22,7 @@ import HorseDetail from '@/pages/HorseDetail';
 import HorseEditor from '@/pages/HorseEditor';
 import ArticleDetail from '@/pages/ArticleDetail';
 import MagazineStudio from '@/pages/MagazineStudio';
+import BlogComposer from '@/pages/blog-composer/BlogComposer';
 import MagazineV2Home from '@/editor-v2/MagazineV2Home';
 import MagazineEditorV2 from '@/editor-v2/MagazineEditorV2';
 import PremiumPreview from '@/pages/__PremiumPreview'; // TEMP — remove with its route
@@ -49,6 +50,7 @@ import OverviewScreen from '@/pages/production-system/screens/OverviewScreen';
 import WorkflowBoardScreen from '@/pages/production-system/screens/WorkflowBoardScreen';
 import PipelineMapScreen from '@/pages/production-system/screens/PipelineMapScreen';
 import AllStoriesScreen from '@/pages/production-system/screens/AllStoriesScreen';
+import BlogsScreen from '@/pages/production-system/screens/BlogsScreen';
 import EditorHubScreen from '@/pages/production-system/screens/EditorHubScreen';
 import MyAssetsScreen from '@/pages/production-system/screens/MyAssetsScreen';
 import CompensationScreen from '@/pages/production-system/screens/CompensationScreen';
@@ -292,6 +294,7 @@ export default function App() {
             <Route path="workflow" element={<WorkflowBoardScreen />} />
             <Route path="pipeline" element={<PipelineMapScreen />} />
             <Route path="all-stories" element={<AllStoriesScreen />} />
+            <Route path="blogs" element={<BlogsScreen />} />
             <Route path="editor-hub" element={<EditorHubScreen />} />
             <Route path="my-assets" element={<MyAssetsScreen />} />
             <Route path="compensation" element={<CompensationScreen />} />
@@ -315,6 +318,9 @@ export default function App() {
               they sit outside the layout rather than inside it. */}
           <Route path="/production-system/magazine/:id" element={<MagazineStudio />} />
           <Route path="/production-system/magazine-v2/:id" element={<MagazineEditorV2 />} />
+          {/* Blog composer — full-screen for the same reason the magazine editors
+              are: the sidebar is noise while writing and the canvas needs width. */}
+          <Route path="/production-system/blogs/:id" element={<BlogComposer />} />
 
           {/* Staff-invite and magazine-share emails already in people's inboxes
               point at /newsroom, so the old path keeps resolving. */}

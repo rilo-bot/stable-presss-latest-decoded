@@ -3,6 +3,7 @@ import {
   FileText, LayoutDashboard, CheckSquare, Shield, Send, Users, BarChart2,
   Settings, Eye, ArrowRight, BookOpen, Mic, Star, Edit, DollarSign, Image,
   File, UserCheck, CalendarClock, FolderOpen, Inbox, Layers, Newspaper, Flag,
+  PenLine,
 } from 'lucide-react';
 import type { ArticleStatus } from '@/types/article';
 import type { PartyRole } from '@/types/party';
@@ -91,6 +92,7 @@ export const SIDE_NAV: SideNavItem[] = [
   { id: 'workflow', label: 'Workflow Board', icon: <LayoutDashboard size={15} />, section: 'Workspace', slug: 'workflow' },
   { id: 'pipeline', label: 'Pipeline Map', icon: <ArrowRight size={15} />, section: 'Workspace', slug: 'pipeline' },
   { id: 'all-stories', label: 'All Stories', icon: <FileText size={15} />, section: 'Content', slug: 'all-stories' },
+  { id: 'blogs', label: 'Blogs', icon: <PenLine size={15} />, section: 'Content', slug: 'blogs', requiresPermission: 'blog.create' },
   // { id: 'drafts', label: 'Drafts', icon: <FileText size={15} />, section: 'Content' },
   // { id: 'review', label: 'In Review', icon: <Eye size={15} />, section: 'Content' },
   // {

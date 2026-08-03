@@ -176,7 +176,14 @@ export function describePlacement(p: Placement): string {
   if (p.width === 'full-bleed') parts.push('Full bleed');
   else if (p.width === 'wide') parts.push('Wide');
   else parts.push('In column');
-  if (isFloating(p)) parts.push(`wrapped ${p.float} at ${p.floatWidth ?? '1/2'}`);
+  if (isFloating(p)) {
+    // Phrased by where the IMAGE sits and which way the text runs, matching the
+    // inspector's own button labels — "wrapped left" alongside a button reading
+    // "Wrap right" looked like one of the two was wrong.
+    const side = p.float === 'left' ? 'left' : 'right';
+    const textSide = p.float === 'left' ? 'right' : 'left';
+    parts.push(`image ${side} at ${p.floatWidth ?? '1/2'}, text down the ${textSide}`);
+  }
   if (p.aspect !== 'original') parts.push(p.aspect);
   return parts.join(' · ');
 }

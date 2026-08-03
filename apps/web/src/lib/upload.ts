@@ -17,7 +17,9 @@
  */
 import { apiUrl, authFetch } from '@/lib/api';
 
-export type UploadKind = 'party' | 'horse' | 'media' | 'evidence' | 'avatar' | 'podcast' | 'misc';
+/** Mirrors ALLOWED_KINDS in apps/server/src/routes/uploads.ts — an unlisted kind
+ *  is silently filed under `misc/` rather than rejected, so the two must agree. */
+export type UploadKind = 'party' | 'horse' | 'media' | 'evidence' | 'avatar' | 'podcast' | 'blog' | 'misc';
 
 export interface UploadResult {
   /** Public https URL (S3) or, in fallback mode, an inline data URL. */

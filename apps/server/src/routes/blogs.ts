@@ -359,7 +359,11 @@ router.post('/', async (req, res) => {
 
   const built = buildContent(body, account.displayName)
   const now = new Date().toISOString()
-  const slug = await uniqueSlug(optStr(body.slug, 120) ?? title)
+
+  // A slug supplied at creation is a deliberate choice and locks; one derived
+  // from the title stays free to follow later title edits (see the PUT handler).
+  const givenSlug = optStr(body.slug, 120)
+  const slug = await uniqueSlug(givenSlug ?? title)
 
   // Creating straight into `published` needs the publish permission — otherwise
   // "new post, status: published" walks straight past the gate. Exactly the hole
@@ -377,6 +381,7 @@ router.post('/', async (req, res) => {
     ...built.fields,
     slug,
     slugHistory: [],
+    slugLocked: !!givenSlug,
     blocks: built.blocks,
     media: built.media,
     status,
@@ -442,13 +447,39 @@ router.put('/:id', async (req, res) => {
   const update: Record<string, unknown> = { ...built.fields, blocks: built.blocks, media: built.media, updatedAt: now }
 
   // ── Slug ──
+  // ── Slug ──
+  //
   // A published post's slug is its public identity, so a change is recorded in
   // slugHistory and the old one keeps resolving.
+  //
+  // An UNPUBLISHED post's slug follows its title. Without that, a post created
+  // as "Untitled post" keeps that slug however many times it is retitled, and
+  // every draft ends up at /blog/untitled-post-N — the composer sends the slug
+  // it was given, so "unchanged" is indistinguishable from "intended" unless we
+  // decide it here.
+  //
+  // `slugLocked` is what stops that from overriding a deliberate choice: the
+  // first time a caller sends a slug that differs from the stored one, the slug
+  // is theirs and the title stops driving it.
   const wantedSlug = optStr(body.slug, 120)
-  if (wantedSlug && slugify(wantedSlug) !== found.slug) {
-    const next = await uniqueSlug(wantedSlug, req.params.id)
-    update.slug = next
-    update.slugHistory = nextSlugHistory(found.slugHistory, found.slug, next, !!found.publishedAt)
+  const explicitChange = !!wantedSlug && slugify(wantedSlug) !== found.slug
+  const locked = found.slugLocked === true || explicitChange
+
+  let nextSlug: string | undefined
+  if (explicitChange) {
+    nextSlug = await uniqueSlug(wantedSlug, req.params.id)
+    update.slugLocked = true
+  } else if (!locked && !found.publishedAt) {
+    const fromTitle = slugify(title)
+    // Only when it actually differs, or every autosave would re-run uniqueSlug.
+    if (fromTitle && fromTitle !== found.slug) {
+      nextSlug = await uniqueSlug(title, req.params.id)
+    }
+  }
+
+  if (nextSlug && nextSlug !== found.slug) {
+    update.slug = nextSlug
+    update.slugHistory = nextSlugHistory(found.slugHistory, found.slug, nextSlug, !!found.publishedAt)
   }
 
   // ── Status ──

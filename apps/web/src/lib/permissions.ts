@@ -42,6 +42,15 @@ export type PermissionAction =
   | 'content.newsletter'            // Distribute via newsletter
   | 'content.bulletin'              // Add to bulletin
 
+  // Blogs — a separate axis from Stories. Two states (draft/published), so there
+  // is no submit/approve/schedule here. Mirrors PERMISSION_CATALOGUE on the
+  // server; see docs/BLOG-SYSTEM-PLAN.md §4.2.
+  | 'blog.create'                   // Start a new blog post
+  | 'blog.edit_own'                 // Edit posts they created
+  | 'blog.edit_any'                 // Edit anyone's post
+  | 'blog.publish'                  // Put a post live, or take it down
+  | 'blog.delete'                   // Delete a post
+
   // Media
   | 'media.upload_own'              // Upload / manage personal media assets
   | 'media.manage_all'              // Manage all media assets
