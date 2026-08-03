@@ -29,6 +29,8 @@ import TippingRing from '@/pages/TippingRing';
 import PodcastHub from '@/pages/PodcastHub';
 import PodcastWorkflow from '@/pages/PodcastWorkflow';
 import NewsIndex from '@/pages/NewsIndex';
+import BlogIndex from '@/pages/BlogIndex';
+import BlogPost from '@/pages/BlogPost';
 import Newsletter from '@/pages/Newsletter';
 import Bulletins from '@/pages/Bulletins';
 import BulletinViewer from '@/pages/BulletinViewer';
@@ -165,6 +167,24 @@ export default function App() {
           element={
             <AppLayout>
               <NewsIndex />
+            </AppLayout>
+          }
+        />
+        {/* Blog. Public; a draft 404s for everyone but its author and staff,
+            which the API decides — the route itself is open. */}
+        <Route
+          path="/blog"
+          element={
+            <AppLayout>
+              <BlogIndex />
+            </AppLayout>
+          }
+        />
+        <Route
+          path="/blog/:slug"
+          element={
+            <AppLayout>
+              <BlogPost />
             </AppLayout>
           }
         />

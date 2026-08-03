@@ -93,4 +93,73 @@
   .slim-scroll::-webkit-scrollbar-thumb:hover {
     background-color: hsl(var(--muted-foreground) / 0.5);
   }
+
+  /* ── Blog body grid ──────────────────────────────────────────────────────
+     Three nested tracks, so a block can escape the reading measure without
+     negative-margin hacks:
+
+       full  |------------------------------------------|  edge to edge
+       wide     |----------------------------------|       past the text
+       text          |----------------------|                the measure
+
+     Written as real CSS rather than a Tailwind arbitrary value because the
+     class would otherwise have to be assembled at runtime, and Tailwind only
+     emits classes it can see as complete literals in the source.
+
+     minmax(0, …) on the gutters: a bare `1fr` has an `auto` minimum, so one
+     wide image or a long unbroken URL would push a track open and shove the
+     text column off centre.
+
+     The measure is `min(68ch, 100% - 2rem)` — a DEFINITE size, deliberately not
+     `minmax(0, 68ch)`. Grid distributes free space equally among growable
+     tracks, so with a growable measure the two 8rem gutters competed with it on
+     equal terms: at a 390px viewport the text column resolved to 119px and the
+     gutters took 119px each. A definite measure is sized first, and the gutters
+     then grow only into what is genuinely left over. */
+  .blog-grid {
+    display: grid;
+    grid-template-columns:
+      [full-start] minmax(1rem, 1fr)
+      [wide-start] minmax(0, 8rem)
+      [text-start] min(68ch, 100% - 2rem) [text-end]
+      minmax(0, 8rem) [wide-end]
+      minmax(1rem, 1fr) [full-end];
+  }
+  .blog-span-text { grid-column: text-start / text-end; }
+  .blog-span-wide { grid-column: wide-start / wide-end; }
+  .blog-span-full { grid-column: full-start / full-end; }
+
+  /* A floated block lives inside a paragraph flow, so the flow needs to
+     contain it — otherwise the float escapes its section and overlaps whatever
+     follows. */
+  .blog-flow::after {
+    content: '';
+    display: block;
+    clear: both;
+  }
+
+  /* Below the measure there is no room to wrap text beside an image, and a
+     half-width float on a phone leaves an unreadable ribbon of text. Floats
+     become full-width blocks. */
+  @media (max-width: 640px) {
+    .blog-float {
+      float: none !important;
+      width: 100% !important;
+      margin-left: 0 !important;
+      margin-right: 0 !important;
+    }
+  }
+
+  /* Opening drop cap, matching the treatment ArticleDetail gives a story's
+     first paragraph. ::first-letter rather than a wrapped <span> so it works on
+     sanitized HTML we do not control the internals of. */
+  .blog-dropcap::first-letter {
+    float: left;
+    font-family: var(--font-display);
+    font-weight: 700;
+    font-size: clamp(3.5rem, 7vw, 5rem);
+    line-height: 0.82;
+    margin: 0.1rem 0.5rem 0 0;
+    color: hsl(var(--brand-accent));
+  }
 }
