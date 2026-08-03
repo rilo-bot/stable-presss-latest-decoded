@@ -1,9 +1,9 @@
 /**
  * Public blog post — /blog/:slug
  *
- * Laid out as a broadsheet feature:
+ * ONE layout: the picture on the left, the writing on the right.
  *
- *   ← THE BLOG
+ *   Home › The Blog › Bloodstock
  *            ── CATEGORY ──
  *      A large centred headline
  *        an italic standfirst
@@ -16,25 +16,30 @@
  *   └────────┘   ◆ ◆ ◆
  *                tags · byline card · share
  *
- * Two things are load-bearing:
+ * Three things are load-bearing:
  *
- * The COVER COLUMN IS STICKY, so the photograph stays with the reader for the
- * whole piece instead of scrolling away in the first screenful. That is the
- * `side` treatment and it is the default; the other treatments (full-bleed hero,
- * below-the-header, inset, hidden) fall back to a single column.
+ * THERE IS NO TREATMENT BRANCH ANY MORE. This page used to read
+ * `cover.treatment` and pick between a full-bleed hero, a below-the-header
+ * banner, an inset image, a side column and nothing — five ways to lay out one
+ * photograph, four of which nobody chose deliberately. A post with a cover now
+ * gets the side layout; a post without one gets a single column. Stored
+ * treatment values are ignored rather than migrated, so nothing breaks.
  *
- * The BODY STILL RENDERS THROUGH `BlogRenderer` — the same component the editor
- * draws with, so what an author places is what a reader gets. This file only
- * supplies the chrome around it. In the two-column layout the renderer's grid
- * resolves its `wide` and `full-bleed` blocks against the text column rather
- * than the viewport, which is the honest reading of "full width" once the prose
- * has a photograph beside it.
+ * THE COVER IS NOT CROPPED. It renders at its natural aspect inside the sticky
+ * frame. It used to be forced to `aspect-[4/5]` while the editor previewed it at
+ * 16/9, so a landscape photograph — the normal case here — was centre-cropped to
+ * portrait and the author never saw it happen. Below `md` it is capped by height
+ * instead, or a tall cover would push the opening paragraph off the screen.
+ *
+ * THE BODY RENDERS THROUGH `BlogRenderer`, the same component the editor draws
+ * with, so what an author places is what a reader gets. This file only supplies
+ * the chrome around it.
  */
 import { useEffect, useState } from 'react';
 import { Link, Navigate, useParams } from 'react-router-dom';
-import { ArrowLeft, BookOpen, Check, Clock, Link2, Loader2 } from 'lucide-react';
+import { ArrowLeft, BookOpen, Check, ChevronRight, Clock, Link2, Loader2 } from 'lucide-react';
 
-import { cn } from '@/lib/utils';
+import { usePageMeta } from '@/lib/usePageMeta';
 import { BlogRenderer } from '@/blog/BlogRenderer';
 import { Paywall } from '@/components/Paywall';
 import { EmptyState } from '@/components/EmptyState';
@@ -118,6 +123,16 @@ export default function BlogPost() {
     if (current.blocks.some((b) => b.kind === 'articleRef')) void fetchArticles();
   }, [current, fetchHorses, fetchParties, fetchArticles]);
 
+  // Above the early returns, because hooks cannot be called conditionally. The
+  // post's own SEO overrides win where an author set them.
+  usePageMeta({
+    title: current?.seo?.metaTitle ?? current?.title ?? undefined,
+    description: current?.seo?.metaDescription ?? current?.excerpt ?? current?.subtitle,
+    // A draft is readable here only by its author and staff; it must never be
+    // indexed on the strength of one of them opening it.
+    noindex: current?.seo?.noindex === true || current?.status === 'draft',
+  });
+
   // A retired slug — the server told us where the post lives now. Replace so the
   // dead URL doesn't sit in the history stack.
   if (movedTo) return <Navigate to={`/blog/${movedTo}`} replace />;
@@ -145,28 +160,22 @@ export default function BlogPost() {
   }
 
   const cover = mediaById(current, current.cover?.mediaId);
-  const treatment = current.cover?.treatment ?? 'side';
-  const hasCover = !!cover && treatment !== 'none';
   const date = formatDate(current.publishedAt);
-  const locked = !canViewContent(tier, current.minTier);
 
   /**
-   * Image on the left, content scrolling on the right. This is THE reading
-   * layout: any post with a cover gets it unless the author explicitly asked for
-   * a full-width banner or no image at all.
-   *
-   * `hero-split` and `inset` are older stored values that used to mean "cover
-   * above the prose, single column". They render here as the side layout too —
-   * they were extra ways to end up with a layout nobody asked for, and the rail
-   * no longer offers them.
+   * Image left, writing right — whenever there is an image. No treatment branch
+   * and no second layout to keep in step; a post without a cover simply centres
+   * its single column.
    */
-  const fullHero = hasCover && treatment === 'hero-full';
-  const sideBySide = hasCover && !fullHero;
+  const sideBySide = !!cover;
 
-  const coverFocal = current.cover?.focal;
-  const coverStyle = coverFocal
-    ? { objectPosition: `${Math.round(coverFocal[0] * 100)}% ${Math.round(coverFocal[1] * 100)}%` }
-    : undefined;
+  /**
+   * `current.locked` is the SERVER'S answer — it now withholds the body of a
+   * post above the reader's tier instead of sending it and trusting this file to
+   * hide it. The local check stays as the fallback for a cached or
+   * staff-privileged payload that arrived ungated.
+   */
+  const locked = current.locked === true || !canViewContent(tier, current.minTier);
 
   const body = locked ? (
     <>
@@ -237,38 +246,31 @@ export default function BlogPost() {
 
   return (
     <article className="pb-20">
-      {/* ── Full-bleed hero, for the one treatment that wants it ── */}
-      {fullHero && (
-        <div className="relative h-[38vh] min-h-[240px] w-full overflow-hidden md:h-[50vh]">
-          <img
-            src={cover.url}
-            alt={cover.alt}
-            crossOrigin="anonymous"
-            className="h-full w-full object-cover"
-            style={coverStyle}
-          />
-          <div className="absolute inset-0 bg-gradient-to-t from-black/60 via-black/10 to-transparent" />
-        </div>
-      )}
-
       <div className="mx-auto w-full max-w-6xl px-4 md:px-8">
-        {/* Over a photograph the muted foreground colour fails contrast, so on
-            that one treatment the link goes white with a shadow instead. */}
-        <Link
-          to="/blog"
-          className={cn(
-            'inline-flex items-center gap-1.5 pt-8 text-[11px] font-bold uppercase tracking-[0.14em] transition-colors',
-            fullHero
-              ? 'relative -mt-14 text-white/90 [text-shadow:0_1px_3px_rgb(0_0_0_/_0.7)] hover:text-white'
-              : 'text-muted-foreground hover:text-foreground',
-          )}
+        {/* Breadcrumb, matching /news and /bulletins — this used to be a lone
+            "← The Blog" link, which told a reader where they could go but not
+            where they were. */}
+        <nav
+          aria-label="Breadcrumb"
+          className="flex items-center gap-2 pt-8 text-[10px] uppercase tracking-[0.14em] text-muted-foreground"
         >
-          <ArrowLeft size={13} />
-          The Blog
-        </Link>
+          <Link to="/" className="transition-colors hover:text-foreground">
+            Home
+          </Link>
+          <ChevronRight size={10} aria-hidden="true" />
+          <Link to="/blog" className="transition-colors hover:text-foreground">
+            The Blog
+          </Link>
+          {current.category && (
+            <>
+              <ChevronRight size={10} aria-hidden="true" />
+              <span className="truncate text-foreground/70">{current.category}</span>
+            </>
+          )}
+        </nav>
 
         {/* ── Masthead ── */}
-        <header className={cn('text-center', fullHero ? 'mt-10' : 'mt-8')}>
+        <header className="mt-8 text-center">
           {current.category && (
             <Hairlines>
               <p
@@ -293,7 +295,9 @@ export default function BlogPost() {
           {current.status === 'draft' && (
             <p className="mt-5 inline-flex items-center gap-2 rounded-sm border border-primary/30 bg-primary/5 px-3 py-1.5 text-[11px] font-semibold uppercase tracking-[0.1em] text-primary">
               <span className="inline-block h-1.5 w-1.5 rounded-full bg-primary/60" />
-              Draft — only visible to you
+              {/* "…only visible to you" was shown to every staff viewer, not just
+                  the author, so it was false for most of the people who saw it. */}
+              Draft — not published yet
             </p>
           )}
 
@@ -328,13 +332,23 @@ export default function BlogPost() {
                 the held image slid 29px underneath it. */}
             <div className="md:sticky md:top-32 md:self-start">
               <figure className="overflow-hidden rounded-sm border border-border/60 bg-background p-2 shadow-sm md:p-3">
-                <div className="aspect-[4/5] w-full overflow-hidden rounded-sm">
+                {/* NO forced aspect. The photograph keeps its own shape, so a
+                    landscape cover is not centre-cropped to portrait behind the
+                    author's back — which is what `aspect-[4/5]` was doing while
+                    the editor previewed the same image at 16/9.
+
+                    `max-h` + `object-cover` is the mobile guard: stacked above
+                    the prose, a tall portrait would otherwise fill the screen and
+                    push the opening paragraph out of sight. Above `md` it is a
+                    sidebar, so it is free to be as tall as it likes. */}
+                <div className="w-full overflow-hidden rounded-sm">
                   <img
                     src={cover.url}
                     alt={cover.alt}
                     crossOrigin="anonymous"
-                    className="h-full w-full object-cover"
-                    style={coverStyle}
+                    width={cover.width}
+                    height={cover.height}
+                    className="max-h-[46vh] w-full object-cover md:max-h-none md:object-contain"
                   />
                 </div>
                 {cover.caption && (

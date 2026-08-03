@@ -17,7 +17,7 @@ import type { NextFunction, Request, Response } from 'express'
 import { db } from '../lib/db.js'
 import { attachAccount } from '../lib/auth.js'
 import { withIdentityDefaults } from '../lib/identity.js'
-import { canManageRoles, canManageTeam } from '../lib/rbac.js'
+import { canManageRoles, canManageTeam, canViewTeam } from '../lib/rbac.js'
 import {
   SUPERADMIN_SLUG,
   bustRoleCache,
@@ -70,8 +70,16 @@ const requireAssignRoles = (req: Request, res: Response, next: NextFunction): vo
   next()
 }
 
+// READS are open to anyone who may see the Team screen: it renders each member's
+// role label and colour, so a `team.view` holder who could not GET this would see
+// a roster of blanks. Every mutating route below carries its own narrower gate
+// (`requireDefineRoles` / `requireAssignRoles`), so widening the read is safe.
 router.use((req, res, next) => {
-  if (!canManageRoles(req.account) && !canManageTeam(req.account)) {
+  const allowed =
+    canManageRoles(req.account) ||
+    canManageTeam(req.account) ||
+    (req.method === 'GET' && canViewTeam(req.account))
+  if (!allowed) {
     res.status(403).json({ error: 'You do not have permission to manage roles.' })
     return
   }

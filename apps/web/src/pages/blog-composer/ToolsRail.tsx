@@ -16,7 +16,7 @@ import { describePlacement } from '@/blog/placement';
 import { mediaById } from '@/types/blog';
 import { useComposerStore } from './composerStore';
 import { Field, RailSection, Seg, TextArea, TextInput, inputCls } from './controls';
-import type { Block, CoverTreatment, Placement } from '@/types/blog';
+import type { Block, Placement } from '@/types/blog';
 import type { SubscriptionTier } from '@/rbac/entitlement';
 import {
   AlignCenter, AlignLeft, AlignRight, Copy, ImageIcon, Maximize,
@@ -409,18 +409,6 @@ const KIND_LABEL: Record<string, string> = {
 
 /* ── Post section ─────────────────────────────────────────── */
 
-/**
- * Collapse the stored cover treatment onto the three the rail offers.
- *
- * `hero-split` and `inset` are retired values that the public page now renders
- * as the side layout, so the rail must report them as that — otherwise a post
- * carrying one shows no option selected at all.
- */
-function foldTreatment(t: CoverTreatment | undefined): CoverTreatment {
-  if (t === 'hero-full' || t === 'none') return t;
-  return 'side';
-}
-
 function PostFields({ onPickCover }: { onPickCover: () => void }) {
   const { blog, patchPost } = useComposerStore();
   const [tagInput, setTagInput] = useState('');
@@ -436,33 +424,24 @@ function PostFields({ onPickCover }: { onPickCover: () => void }) {
 
   return (
     <>
-      <Field label="Cover image" hint="Shown at the top of the post and on cards.">
+      <Field label="Cover image" hint="Shown beside the post, and on cards in the index.">
         {cover ? (
           <>
+            {/* Shown at its own aspect, because that is now how the reader gets
+                it. The 16/9 box that used to be here was a crop the public page
+                did not apply and a shape the sticky column never used, so the
+                preview was wrong in both directions at once. */}
             <img
               src={cover.url}
               alt=""
               crossOrigin="anonymous"
-              className="mb-2 aspect-[16/9] w-full rounded-sm border border-border/60 object-cover"
+              className="mb-2 w-full rounded-sm border border-border/60"
             />
-            <Seg
-              ariaLabel="Cover treatment"
-              // Folded, not raw: a post stored as `inset`/`hero-split` renders
-              // as "Beside the text", so that is the button that must look
-              // pressed. Showing the raw value would leave nothing selected.
-              value={foldTreatment(blog.cover?.treatment)}
-              onChange={(treatment) => patchPost({ cover: blog.cover ? { ...blog.cover, treatment } : undefined })}
-              // Three options, because there are only three things a cover can
-              // do on the page. `hero-split` and `inset` used to be here; both
-               // rendered as "image above the prose, single column", which was
-              // never what anyone picked them for. Posts still holding those
-              // values render as "Beside the text".
-              options={[
-                { value: 'side', label: 'Beside the text' },
-                { value: 'hero-full', label: 'Full-width banner' },
-                { value: 'none', label: 'Not on the page' },
-              ]}
-            />
+            {/* The treatment picker is gone. It offered five ways to place one
+                photograph — full-bleed hero, banner, inset, side column, hidden —
+                and the reader page now has one: image left, writing right. A
+                control whose only setting is its default is just a thing to
+                misread. Stored values are ignored, not migrated. */}
             <div className="mt-2 flex gap-2">
               <button type="button" onClick={onPickCover} className="text-[11px] text-primary underline">
                 Replace

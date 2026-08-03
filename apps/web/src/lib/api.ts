@@ -40,8 +40,16 @@ export async function authFetchRetry(path: string, init: RequestInit = {}, attem
   for (let attempt = 0; attempt < attempts; attempt++) {
     try {
       const res = await authFetch(path, init);
-      // Success, or a genuine client error we shouldn't retry — return as-is.
-      if (res.ok || (res.status >= 400 && res.status < 500 && res.status !== 429)) return res;
+      // Success, a redirect the caller has to read, or a genuine client error we
+      // shouldn't retry — return as-is.
+      //
+      // The 3xx case is load-bearing: `res.ok` is 200–299 only, so a 301 used to
+      // fall through to the retry branch, burn all three attempts and then THROW.
+      // /api/blogs/:slug answers 301 with the current slug when an old one is
+      // requested, so every link to a renamed post died in here instead of
+      // redirecting — which is the entire point of keeping a slug history.
+      if (res.ok || (res.status >= 300 && res.status < 400)) return res;
+      if (res.status >= 400 && res.status < 500 && res.status !== 429) return res;
       lastError = new Error(`HTTP ${res.status}`); // 5xx / 429 — worth retrying
     } catch (err) {
       lastError = err; // network/CORS failure — worth retrying

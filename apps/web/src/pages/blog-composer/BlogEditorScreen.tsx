@@ -104,16 +104,12 @@ function CoverSlot({ onPick }: { onPick: () => void }) {
     );
   }
 
-  const focal = blog.cover?.focal;
   return (
     <div className="group/cover relative mb-6 overflow-hidden rounded-sm">
-      <img
-        src={cover.url}
-        alt={cover.alt}
-        crossOrigin="anonymous"
-        className="aspect-[16/9] w-full object-cover"
-        style={focal ? { objectPosition: `${focal[0] * 100}% ${focal[1] * 100}%` } : undefined}
-      />
+      {/* Natural aspect, no crop — the reader page renders the cover the same way
+          now, and this box used to claim 16/9 while the public side column forced
+          4/5. Whichever way an author framed the shot, one of the two lied. */}
+      <img src={cover.url} alt={cover.alt} crossOrigin="anonymous" className="w-full" />
       <div className="absolute inset-x-0 bottom-0 flex justify-end gap-1.5 bg-gradient-to-t from-black/60 to-transparent p-2 opacity-0 transition-opacity group-hover/cover:opacity-100">
         <button
           type="button"

@@ -1,7 +1,12 @@
 import { Router, raw } from 'express'
+import type { NextFunction, Request, Response } from 'express'
 import crypto from 'crypto'
-import { requireAuth } from '../lib/auth.js'
+import { attachAccount, attachAccountOptional } from '../lib/auth.js'
+import { canVerifyClaims } from '../lib/rbac.js'
+import { accountCanAny } from '../lib/effectiveAccess.js'
+import { rateLimit } from '../lib/rateLimit.js'
 import { storage } from '../lib/storage.js'
+import type { PermissionAction } from '../lib/permissionCatalogue.js'
 
 const router = Router()
 
@@ -40,10 +45,65 @@ function safeName(name: string): string {
 
 const ALLOWED_KINDS = new Set(['party', 'horse', 'media', 'evidence', 'avatar', 'podcast', 'blog', 'misc'])
 
-function buildKey(kind: unknown, userId: string, fileName: unknown): string {
-  const folder = ALLOWED_KINDS.has(String(kind)) ? String(kind) : 'misc'
-  return `${folder}/${userId}/${crypto.randomUUID()}-${safeName(String(fileName ?? 'file'))}`
+/**
+ * WHAT EACH UPLOAD KIND REQUIRES.
+ *
+ * Uploading is not one power. Both endpoints below used to require nothing but a
+ * valid session, which meant `media.upload_own` and `media.manage_all` restricted
+ * nothing at all: any signed-in reader could mint a presigned S3 PUT URL or push
+ * 500 MB of video through `/direct`. See docs/CRM-MODULES-PERMISSIONS-REVIEW.md §4.1.
+ *
+ * An empty array means "any signed-in account", and that is deliberate for the
+ * four identity/self-service kinds — a member proving who they are, or managing a
+ * horse or party they already control, is not a newsroom media action and gating
+ * it on a staff permission would break the claim flow outright.
+ *
+ * Otherwise ANY of the listed permissions is enough. Several kinds list a second
+ * permission because the primary one is not held by the roles that legitimately
+ * do the work: the seeded `editor` may edit any episode but was never granted
+ * `podcast.audio.upload`, and a blog-only author role would hold `blog.create`
+ * without `media.upload_own`.
+ */
+const KIND_PERMISSIONS: Record<string, PermissionAction[]> = {
+  evidence: [], // proving your OWN identity — pre-verification, by definition
+  avatar: [],   // your own profile picture
+  party: [],    // member self-service on a party they manage
+  horse: [],    // member self-service on a horse they manage
+  media: ['media.upload_own', 'media.manage_all'],
+  blog: ['media.upload_own', 'blog.create'],
+  podcast: ['podcast.audio.upload', 'podcast.episode.edit_any'],
+  misc: ['media.upload_own'],
 }
+
+/** The requested kind, or 'misc' — which FAILS CLOSED (it needs a permission). */
+function kindOf(raw: unknown): string {
+  return ALLOWED_KINDS.has(String(raw)) ? String(raw) : 'misc'
+}
+
+/**
+ * Gate an upload on its kind. Runs after attachAccount, so `req.account` is the
+ * resolved account rather than raw token claims.
+ */
+function requireUploadKind(kindFrom: (req: Request) => unknown) {
+  return (req: Request, res: Response, next: NextFunction): void => {
+    const kind = kindOf(kindFrom(req))
+    const needed = KIND_PERMISSIONS[kind] ?? KIND_PERMISSIONS.misc!
+    if (needed.length === 0 || accountCanAny(req.account, needed)) {
+      next()
+      return
+    }
+    res.status(403).json({ error: `You do not have permission to upload ${kind} files.` })
+  }
+}
+
+function buildKey(kind: unknown, userId: string, fileName: unknown): string {
+  return `${kindOf(kind)}/${userId}/${crypto.randomUUID()}-${safeName(String(fileName ?? 'file'))}`
+}
+
+// Per-account ceiling. Generous enough for a magazine's worth of images in one
+// sitting, low enough that a runaway client or an abusive account cannot use the
+// bucket as free storage. GETs are not counted (see lib/rateLimit.ts).
+const uploadLimit = rateLimit('uploads', 120, 5 * 60_000)
 
 // Raw body parser for the proxied upload. 60 MB covers images, docs and short
 // audio/video; larger media should use the presigned /sign path + bucket CORS.
@@ -57,39 +117,50 @@ const rawUpload = raw({ type: () => true, limit: '60mb' })
  *
  * 501 (configured:false) when S3 isn't set up, so the client falls back to an
  * inline data URL and dev keeps working with no credentials.
+ *
+ * `requireUploadKind` runs BEFORE `rawUpload` on purpose: a caller who may not
+ * upload this kind is refused without the server first buffering 60 MB of body
+ * it is going to discard.
  */
-router.post('/direct', requireAuth, rawUpload, async (req, res) => {
-  if (!storage.isConfigured()) {
-    res.status(501).json({ error: 'Object storage is not configured on this server.', configured: false })
-    return
-  }
+router.post(
+  '/direct',
+  attachAccount,
+  uploadLimit,
+  requireUploadKind((req) => req.query.kind),
+  rawUpload,
+  async (req, res) => {
+    if (!storage.isConfigured()) {
+      res.status(501).json({ error: 'Object storage is not configured on this server.', configured: false })
+      return
+    }
 
-  const contentType = String(req.headers['content-type'] ?? '').split(';')[0]!.trim()
-  const maxBytes = maxBytesFor(contentType)
-  if (maxBytes === null) {
-    res.status(415).json({ error: `Unsupported file type: ${contentType || 'unknown'}` })
-    return
-  }
+    const contentType = String(req.headers['content-type'] ?? '').split(';')[0]!.trim()
+    const maxBytes = maxBytesFor(contentType)
+    if (maxBytes === null) {
+      res.status(415).json({ error: `Unsupported file type: ${contentType || 'unknown'}` })
+      return
+    }
 
-  const body = req.body as Buffer
-  if (!Buffer.isBuffer(body) || body.length === 0) {
-    res.status(400).json({ error: 'Empty upload body.' })
-    return
-  }
-  if (body.length > maxBytes) {
-    res.status(413).json({ error: `File is too large (max ${Math.round(maxBytes / MB)} MB for this type).` })
-    return
-  }
+    const body = req.body as Buffer
+    if (!Buffer.isBuffer(body) || body.length === 0) {
+      res.status(400).json({ error: 'Empty upload body.' })
+      return
+    }
+    if (body.length > maxBytes) {
+      res.status(413).json({ error: `File is too large (max ${Math.round(maxBytes / MB)} MB for this type).` })
+      return
+    }
 
-  const key = buildKey(req.query.kind, req.user!.sub, req.query.filename)
-  try {
-    await storage.uploadObject({ key, contentType, body })
-    res.json({ url: storage.publicUrl(key), key })
-  } catch (err) {
-    console.error('[uploads] direct upload failed:', err instanceof Error ? err.message : err)
-    res.status(500).json({ error: 'Could not store the file.' })
-  }
-})
+    const key = buildKey(req.query.kind, req.account!.id, req.query.filename)
+    try {
+      await storage.uploadObject({ key, contentType, body })
+      res.json({ url: storage.publicUrl(key), key })
+    } catch (err) {
+      console.error('[uploads] direct upload failed:', err instanceof Error ? err.message : err)
+      res.status(500).json({ error: 'Could not store the file.' })
+    }
+  },
+)
 
 /**
  * POST /api/uploads/sign
@@ -100,51 +171,85 @@ router.post('/direct', requireAuth, rawUpload, async (req, res) => {
  * 501 (configured:false) when S3 isn't set up, so the client falls back to an
  * inline data URL and dev keeps working with no credentials.
  */
-router.post('/sign', requireAuth, async (req, res) => {
-  if (!storage.isConfigured()) {
-    res.status(501).json({ error: 'Object storage is not configured on this server.', configured: false })
-    return
-  }
+router.post(
+  '/sign',
+  attachAccount,
+  uploadLimit,
+  requireUploadKind((req) => (req.body ?? {}).kind),
+  async (req, res) => {
+    if (!storage.isConfigured()) {
+      res.status(501).json({ error: 'Object storage is not configured on this server.', configured: false })
+      return
+    }
 
-  const { fileName, contentType, kind, size } = (req.body ?? {}) as {
-    fileName?: string; contentType?: string; kind?: string; size?: number
-  }
+    const { fileName, contentType, kind, size } = (req.body ?? {}) as {
+      fileName?: string; contentType?: string; kind?: string; size?: number
+    }
 
-  if (!contentType || typeof contentType !== 'string') {
-    res.status(400).json({ error: 'contentType is required' })
-    return
-  }
-  const maxBytes = maxBytesFor(contentType)
-  if (maxBytes === null) {
-    res.status(415).json({ error: `Unsupported file type: ${contentType}` })
-    return
-  }
-  if (typeof size === 'number' && size > maxBytes) {
-    res.status(413).json({ error: `File is too large (max ${Math.round(maxBytes / MB)} MB for this type).` })
-    return
-  }
+    if (!contentType || typeof contentType !== 'string') {
+      res.status(400).json({ error: 'contentType is required' })
+      return
+    }
+    const maxBytes = maxBytesFor(contentType)
+    if (maxBytes === null) {
+      res.status(415).json({ error: `Unsupported file type: ${contentType}` })
+      return
+    }
+    if (typeof size === 'number' && size > maxBytes) {
+      res.status(413).json({ error: `File is too large (max ${Math.round(maxBytes / MB)} MB for this type).` })
+      return
+    }
 
-  const folder = ALLOWED_KINDS.has(String(kind)) ? String(kind) : 'misc'
-  const userId = req.user!.sub
-  const key = `${folder}/${userId}/${crypto.randomUUID()}-${safeName(String(fileName ?? 'file'))}`
+    // Same helper as /direct, so the two endpoints cannot disagree about which
+    // folder a kind lands in — the folder is what the read gate below keys on.
+    const key = buildKey(kind, req.account!.id, fileName)
 
-  try {
-    const uploadUrl = await storage.presignPutUrl({ key, contentType, expiresIn: 300 })
-    res.json({ uploadUrl, publicUrl: storage.publicUrl(key), key })
-  } catch (err) {
-    console.error('[uploads] presign failed:', err instanceof Error ? err.message : err)
-    res.status(500).json({ error: 'Could not create upload URL.' })
-  }
-})
+    try {
+      const uploadUrl = await storage.presignPutUrl({ key, contentType, expiresIn: 300 })
+      res.json({ uploadUrl, publicUrl: storage.publicUrl(key), key })
+    } catch (err) {
+      console.error('[uploads] presign failed:', err instanceof Error ? err.message : err)
+      res.status(500).json({ error: 'Could not create upload URL.' })
+    }
+  },
+)
+
+/**
+ * Keys are `<kind>/<ownerUserId>/<uuid>-<name>`, so the folder and the uploader
+ * are both recoverable from the key itself — no database lookup needed to decide
+ * who may read it.
+ */
+function parseKey(key: string): { kind: string; ownerId: string } {
+  const [kind = '', ownerId = ''] = key.split('/')
+  return { kind, ownerId }
+}
+
+/**
+ * Kinds that are NOT public, and who may read them.
+ *
+ * `evidence` is a member's proof of identity — a passport scan, a training
+ * licence, a stable invoice. It was served to anyone who had the URL, on the
+ * reasoning that a UUID-prefixed key is unguessable (docs/AUTH-RBAC-REVIEW.md H7).
+ * Unguessable is not private: the URL is stored on the claim, travels through
+ * notification emails, and appears in any admin's browser history and in the
+ * referrer of anything they open next.
+ *
+ * Everything else stays public — party photos, horse images and blog media are
+ * rendered in `<img>` tags on the public website, and requiring a token there
+ * would simply break the site.
+ */
+const PRIVATE_KINDS = new Set(['evidence'])
 
 /**
  * GET /api/uploads/file/<key>
- * Public (so it works in <img> tags). Streams the object from S3 through this
- * API, so a fully PRIVATE bucket can still serve viewable assets — no public
- * policy and no bucket CORS needed (our global CORS makes it crossOrigin-safe).
- * Keys are UUID-prefixed and effectively unguessable. Cached a day in-browser.
+ * Streams the object from S3 through this API, so a fully PRIVATE bucket can
+ * still serve viewable assets — no public policy and no bucket CORS needed (our
+ * global CORS makes it crossOrigin-safe). Cached a day in-browser.
+ *
+ * The account is attached OPTIONALLY: public kinds must keep working for anonymous
+ * visitors, and only a private kind consults it.
  */
-router.get('/file/*', async (req, res) => {
+router.get('/file/*', attachAccountOptional, async (req, res) => {
   if (!storage.isConfigured()) {
     res.status(404).json({ error: 'Not found' })
     return
@@ -156,11 +261,27 @@ router.get('/file/*', async (req, res) => {
     res.status(400).json({ error: 'Missing key' })
     return
   }
+
+  const { kind, ownerId } = parseKey(key)
+  if (PRIVATE_KINDS.has(kind)) {
+    const account = req.account
+    const mayRead = !!account && (account.id === ownerId || canVerifyClaims(account))
+    if (!mayRead) {
+      // 404, not 403: a 403 confirms that an evidence file exists at this key.
+      res.status(404).json({ error: 'Not found' })
+      return
+    }
+    // Never let a shared cache or a proxy hold someone's identity documents.
+    res.setHeader('Cache-Control', 'private, no-store')
+  }
+
   try {
     const obj = await storage.getObject(key)
     if (obj.contentType) res.setHeader('Content-Type', obj.contentType)
     if (obj.contentLength != null) res.setHeader('Content-Length', String(obj.contentLength))
-    res.setHeader('Cache-Control', 'public, max-age=86400')
+    // Only public kinds get a shared-cacheable response; the private branch above
+    // already set `no-store` and must not be overwritten here.
+    if (!PRIVATE_KINDS.has(kind)) res.setHeader('Cache-Control', 'public, max-age=86400')
     obj.body.on('error', () => { if (!res.headersSent) res.status(502).end() })
     obj.body.pipe(res)
   } catch (err) {

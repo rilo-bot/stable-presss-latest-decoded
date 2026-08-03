@@ -15,7 +15,7 @@ import { Router } from 'express'
 import { db } from '../lib/db.js'
 import { attachAccount } from '../lib/auth.js'
 import { withIdentityDefaults } from '../lib/identity.js'
-import { canManageTeam } from '../lib/rbac.js'
+import { canManageTeam, canViewTeam } from '../lib/rbac.js'
 import {
   SUPERADMIN_SLUG,
   checkSuperadminLoss,
@@ -40,11 +40,23 @@ const WEB_PUBLIC_URL = (process.env.WEB_PUBLIC_URL ?? 'http://localhost:5173').r
 const router = Router()
 
 router.use(attachAccount)
-// The roster is `team.manage`, not `roles.manage` — inviting someone is a
-// different power from defining what a role may do. See routes/roles.ts.
+// Roster access is `team.*`, not `roles.manage` — inviting someone is a different
+// power from defining what a role may do. See routes/roles.ts.
+//
+// READ vs WRITE are split. The whole router used to require `team.manage`, which
+// left `team.view` ("See the staff roster") granting nothing at all: the seeded
+// editor role holds it and got a 403 from every endpoint here. GET now needs
+// `team.view`; everything that changes the roster still needs `team.manage`.
+// The `team` module in the catalogue is gated to match.
 router.use((req, res, next) => {
-  if (!canManageTeam(req.account)) {
-    res.status(403).json({ error: 'You do not have permission to manage the team.' })
+  const allowed = req.method === 'GET' ? canViewTeam(req.account) : canManageTeam(req.account)
+  if (!allowed) {
+    res.status(403).json({
+      error:
+        req.method === 'GET'
+          ? 'You do not have permission to view the team.'
+          : 'You do not have permission to manage the team.',
+    })
     return
   }
   next()

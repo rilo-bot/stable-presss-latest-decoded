@@ -127,7 +127,11 @@ export function useProductionSystemState() {
   // `isContributor` means "can only touch their own drafts".
   const isContributor = !can('content.draft.edit_any');
   const isEditor = can('content.editorial_review');
+  // READ and WRITE are separate powers on the roster. `team.view` alone opens the
+  // Team screen read-only; `team.manage` is what turns the controls on. Mirrors
+  // the split in routes/staff.ts, which gates GET on view and writes on manage.
   const canManageTeam = can('team.manage');
+  const canViewTeam = can('team.view') || canManageTeam;
   // Distinct from team.manage: /api/roles enforces roles.manage, so the console
   // must ask for the same thing the server does.
   const canManageRoles = can('roles.manage');
@@ -351,7 +355,7 @@ export function useProductionSystemState() {
   return {
     // identity / capability
     currentUser, roleLabel, accentColor, isContributor, isEditor,
-    canManageTeam, canManageRoles, visibleNav, accessModules,
+    canManageTeam, canViewTeam, canManageRoles, visibleNav, accessModules,
     // articles
     articles, buckets, filteredArticles, visibleStages,
     totalStories, myStories, pendingReview, publishedCount, scheduledCount,

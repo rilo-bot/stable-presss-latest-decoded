@@ -9,7 +9,8 @@ import {
   type PartyClaim,
   type PartyRole,
 } from '../lib/identity.js';
-import { isPlatformAdmin } from '../lib/rbac.js';
+import { canVerifyClaims, isPlatformAdmin } from '../lib/rbac.js';
+import { accountCan } from '../lib/effectiveAccess.js';
 import { createNotification } from '../lib/notify.js';
 import { PARTY_MEMBERSHIPS, mirrorPartyMemberships } from '../lib/membership.js';
 
@@ -59,6 +60,12 @@ async function verifiedOrgsForParty(partyId: string): Promise<string[]> {
  * single-admin install whose one admin is also a trainer — their claim could never
  * be verified by anyone. Provisional access already covers them while pending;
  * this is about who may flip the public trust signal.
+ *
+ * `claims.verify` — the narrower permission, split out so the queue can be staffed
+ * without granting platform administration — IS subject to the self-check. The
+ * exemption above rests on `platform.admin` being unrestrictable in practice; that
+ * argument does not extend to a records clerk, and separation of duty is worth more
+ * here than the convenience. Their own claim gets verified by an admin.
  */
 async function verifierTypeFor(
   account: AccountUser,
@@ -67,6 +74,7 @@ async function verifierTypeFor(
 ): Promise<'admin' | 'org' | null> {
   if (isPlatformAdmin(account)) return 'admin';
   if (claimantUserId === account.id) return null;
+  if (accountCan(account, 'claims.verify')) return 'admin';
   const orgs = await verifiedOrgsForParty(claim.partyId);
   const canOrg = account.orgMemberships.some(
     (m) => (m.orgRole === 'org_owner' || m.orgRole === 'org_manager') && orgs.includes(m.orgId),
@@ -163,11 +171,12 @@ router.post('/', async (req, res) => {
 });
 
 // ── Pending verification queue ────────────────────────────────────────────────
-// Admins see every pending claim; org owners/managers see claims for parties
-// linked to their org (Phase D). Regular users get an empty list here.
+// Platform admins and `claims.verify` holders see every pending claim; org
+// owners/managers see claims for parties linked to their org (Phase D). Regular
+// users get an empty list here.
 router.get('/pending', async (req, res) => {
   const account = req.account!;
-  const admin = isPlatformAdmin(account);
+  const admin = canVerifyClaims(account);
   const orgVerifier = account.orgMemberships.some(
     (m) => m.orgRole === 'org_owner' || m.orgRole === 'org_manager',
   );
@@ -193,15 +202,21 @@ router.get('/pending', async (req, res) => {
   const userById = new Map(claimants.filter(Boolean).map((u) => [String(u!._id), u!]));
   const partyById = new Map(parties.filter(Boolean).map((p) => [String(p!._id), p!]));
 
+  // Only `platform.admin` is exempt from the self-verify check in verifierTypeFor,
+  // so only a platform admin may be shown their own claim. A `claims.verify` holder
+  // sees the whole queue MINUS their own — otherwise the queue would list a row that
+  // 403s the moment they act on it.
+  const platformAdmin = isPlatformAdmin(account);
+
   const out: Array<Record<string, unknown>> = [];
   for (const r of pending) {
     const u = userById.get(String(r.userId));
     if (!u) continue; // claimant gone
+    // An org officer is not a verifier of themselves, and neither is a records clerk.
+    if (!platformAdmin && String(u._id) === account.id) continue;
     if (!admin) {
       // Same rules the verify route enforces, so the queue never lists a claim the
-      // viewer would be refused on. Notably it hides their OWN claim: an org
-      // officer is not a verifier of themselves.
-      if (String(u._id) === account.id) continue;
+      // viewer would be refused on.
       const orgs = await verifiedOrgsForParty(String(r.partyId));
       const canOrg = account.orgMemberships.some(
         (m) => (m.orgRole === 'org_owner' || m.orgRole === 'org_manager') && orgs.includes(m.orgId),

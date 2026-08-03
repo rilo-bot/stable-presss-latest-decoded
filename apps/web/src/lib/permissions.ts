@@ -57,23 +57,22 @@ export type PermissionAction =
 
   // Compensation
   | 'compensation.view_own'         // View own payout history
-  | 'compensation.view_all'         // View all contributors' payouts
-  | 'compensation.manage'           // Edit/approve payouts
 
-  // Workflow board visibility
-  | 'workflow.view_all_columns'     // See every Kanban column
-  | 'workflow.view_own_columns'     // See only role-scoped columns
+  // Workflow board visibility is the `workflowStages` axis on the role, NOT a
+  // permission — `workflow.view_all_columns` / `workflow.view_own_columns` were
+  // removed because nothing consulted them. See the RESERVED note in
+  // apps/server/src/lib/permissionCatalogue.ts.
 
   // Platform access — replace the old hardcoded role-family tests.
   | 'newsroom.access'               // Reach newsroom tooling (was: holds any staff role)
   | 'platform.admin'                // Platform-wide override (was: is administrator)
   | 'roles.manage'                  // Create roles, set permissions, assign them
+  | 'claims.verify'                 // Verify/reject party claims (split out of platform.admin)
 
   // Team & admin
-  | 'team.view'                     // View team member list
-  | 'team.manage'                   // Invite / remove team members
+  | 'team.view'                     // Read the staff roster (Team screen, read-only)
+  | 'team.manage'                   // Invite / remove team members, assign roles
   | 'settings.view'                 // View newsroom settings
-  | 'settings.manage'               // Edit newsroom settings
   | 'analytics.view'                // View analytics dashboard
 
   // ── Podcast workflow permissions ──────────────────────────────────────────

@@ -159,6 +159,43 @@ function normaliseSeo(v: unknown, poolIds: Set<string>): Record<string, unknown>
 
 const TIERS = ['free', 'standard', 'premium'] as const
 
+/** Does `have` reach `need`? Mirrors `tierAtLeast` in web/src/rbac/entitlement.ts. */
+function tierAtLeast(have: unknown, need: unknown): boolean {
+  const h = TIERS.indexOf(have as (typeof TIERS)[number])
+  const n = TIERS.indexOf(need as (typeof TIERS)[number])
+  return (h < 0 ? 0 : h) >= (n < 0 ? 0 : n)
+}
+
+/**
+ * Strip a paywalled post down to its free teaser.
+ *
+ * This has to happen on the SERVER. The reader page computes the same `locked`
+ * decision and renders a Paywall, but until this existed the response still
+ * carried every block and the whole media pool — so a premium post was readable
+ * in full from the network tab, or with one curl. A client cannot enforce a
+ * paywall over content it has already been handed.
+ *
+ * The teaser is the first paragraph, which is exactly what the page showed above
+ * the gate anyway, so the visible result is unchanged for a legitimate reader.
+ */
+function gateForTier(doc: Record<string, unknown>, tier: unknown): Record<string, unknown> {
+  const minTier = typeof doc.minTier === 'string' ? doc.minTier : 'free'
+  if (minTier === 'free' || tierAtLeast(tier, minTier)) return doc
+
+  const blocks = Array.isArray(doc.blocks) ? (doc.blocks as Block[]) : []
+  const teaser = blocks.filter((b) => b.kind === 'paragraph').slice(0, 1)
+
+  // The pool is trimmed to the cover, because the rest of it is a list of URLs
+  // for photographs belonging to text we just withheld. The cover stays: it is
+  // already public on every card in /blog, and the gated page still needs to look
+  // like the post it is asking you to buy.
+  const cover = (doc.cover ?? null) as { mediaId?: string } | null
+  const pool = Array.isArray(doc.media) ? (doc.media as BlogMedia[]) : []
+  const media = cover?.mediaId ? pool.filter((m) => m.id === cover.mediaId) : []
+
+  return { ...doc, blocks: teaser, media, locked: true }
+}
+
 // ── Shared write path ───────────────────────────────────────────────────────
 
 interface BuiltContent {
@@ -345,7 +382,11 @@ router.get('/:idOrSlug', async (req, res) => {
     return
   }
 
-  res.json({ ...project(doc), live: isLive(doc) })
+  // Staff and anyone who can edit posts read the whole document — the composer
+  // loads through this same endpoint and needs every block. Everyone else is
+  // subject to the post's own tier.
+  const full = { ...project(doc), live: isLive(doc) }
+  res.json(seeDrafts ? full : gateForTier(full, req.account?.subscriptionTier))
 })
 
 /** POST /api/blogs — create. */

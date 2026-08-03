@@ -105,7 +105,15 @@ export const useBlogStore = create<BlogState>()((set, get) => ({
   movedTo: null,
 
   fetchList: async (filters, page = 1) => {
-    set({ listLoading: true, listError: null });
+    // `items` is cleared, not left in place. It is ONE array shared by the public
+    // /blog index and the newsroom's Blogs screen, and this used to hold the
+    // previous caller's rows until the new request answered — so opening /blog
+    // from the newsroom painted that screen's list, DRAFT headlines included, on
+    // the public index. Clearing also means a filter change shows a skeleton
+    // rather than the old result set sitting there looking like the answer.
+    //
+    // `loadMore` is the append path and does not come through here.
+    set({ items: [], total: 0, hasMore: false, listLoading: true, listError: null });
     try {
       const res = await authFetchRetry(`/api/blogs?${queryFrom(filters, page)}`);
       if (!res.ok) throw new Error(await failureMessage(res, 'Could not load posts'));

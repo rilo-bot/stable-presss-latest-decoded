@@ -20,7 +20,7 @@ import { db } from './db.js'
 import { attachAccount, attachAccountOptional } from './auth.js'
 import type { OrgRole } from './identity.js'
 import { writableHorseIds, manageablePartyIds } from './scope.js'
-import { accountCan, accountCanOpenModule, type AccountUser } from './effectiveAccess.js'
+import { accountCan, accountCanAny, accountCanOpenModule, type AccountUser } from './effectiveAccess.js'
 import type { PermissionAction } from './permissionCatalogue.js'
 
 export { accountCan, accountCanOpenModule }
@@ -46,6 +46,27 @@ export function canAccessNewsroom(account: AccountUser | undefined): boolean {
  */
 export function isPlatformAdmin(account: AccountUser | undefined): boolean {
   return accountCan(account, 'platform.admin')
+}
+
+/**
+ * May the account verify or reject a party claim ANYWHERE on the platform?
+ *
+ * `claims.verify` was split out of `platform.admin` because the two are different
+ * jobs: working the verification queue is records work, while `platform.admin`
+ * also grants "manage every organisation, override any ownership". There was no
+ * way to staff the queue without handing over the whole platform.
+ *
+ * Defined HERE, not in routes/partyClaims.ts, because routes/uploads.ts needs the
+ * same answer to decide who may read a claim's evidence file. Two copies of a rule
+ * like this is exactly how the H4 superadmin-guard bug happened.
+ */
+export function canVerifyClaims(account: AccountUser | undefined): boolean {
+  return accountCanAny(account, ['platform.admin', 'claims.verify'])
+}
+
+/** May the account READ the staff roster? Writing it needs `team.manage`. */
+export function canViewTeam(account: AccountUser | undefined): boolean {
+  return accountCanAny(account, ['team.view', 'team.manage'])
 }
 
 /** The account's role within a given organisation, if any. */
