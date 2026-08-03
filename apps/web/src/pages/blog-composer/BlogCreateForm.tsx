@@ -112,7 +112,7 @@ export default function BlogCreateForm() {
       excerpt: excerpt.trim() || undefined,
       blocks: [paragraph()],
       media: cover ? [{ ...cover, kind: 'image' } as BlogMedia] : [],
-      cover: cover ? { mediaId: cover.id, treatment: 'hero-full' } : undefined,
+      cover: cover ? { mediaId: cover.id, treatment: 'side' } : undefined,
       tags: [],
     } as Partial<Blog>);
 

@@ -109,6 +109,98 @@ export const INSERTABLE_KINDS: Array<{
   { kind: 'code', label: 'Code', hint: 'Preformatted text', make: () => code() },
 ];
 
+/* ── Converting between text kinds ──────────────────────────────────────────
+ *
+ * The body toolbar's H2 / H3 / ¶ / list / quote buttons RETYPE the block under
+ * the caret rather than inserting a new one — that is what those buttons do in
+ * every editor people already know. Text has to survive the change, and the
+ * `id` has to survive it too: it keys the React tree and holds the selection,
+ * so minting a fresh one would tear down the field mid-edit and drop the caret.
+ */
+
+/** The text of a text-family block, as one string. Empty for everything else. */
+export function blockText(block: Block): string {
+  switch (block.kind) {
+    case 'paragraph':
+    case 'quote':
+    case 'callout':
+      return block.html;
+    case 'heading':
+      return block.text;
+    case 'code':
+      return block.text;
+    // Items join with a space rather than a newline: the target is usually a
+    // paragraph, where a newline would be invisible anyway.
+    case 'list':
+      return block.items.filter(Boolean).join(' ');
+    default:
+      return '';
+  }
+}
+
+/** Strip tags — for the kinds that store plain text (heading, code). */
+function stripTags(html: string): string {
+  return html
+    .replace(/<[^>]*>/g, '')
+    .replace(/&nbsp;/g, ' ')
+    .replace(/&amp;/g, '&')
+    .replace(/&lt;/g, '<')
+    .replace(/&gt;/g, '>')
+    .trim();
+}
+
+/** Kinds `convertBlock` can move between. */
+export const TEXT_KINDS = new Set<BlockKind>([
+  'paragraph',
+  'heading',
+  'list',
+  'quote',
+  'callout',
+  'code',
+]);
+
+/**
+ * Kinds whose text is stored as HTML, so inline marks (bold, italic, a link)
+ * mean something. `heading` and `code` store plain text — the sanitiser would
+ * strip any markup on save, so the toolbar greys those buttons out instead of
+ * letting someone apply formatting that silently disappears.
+ */
+export const RICH_TEXT_KINDS = new Set<BlockKind>(['paragraph', 'quote', 'callout', 'list']);
+
+export type TextKindTarget =
+  | { kind: 'paragraph' }
+  | { kind: 'heading'; level: 2 | 3 | 4 }
+  | { kind: 'list'; ordered: boolean }
+  | { kind: 'quote' }
+  | { kind: 'callout' }
+  | { kind: 'code' };
+
+/**
+ * Retype a text block, carrying its text across and KEEPING its id.
+ *
+ * Returns the block unchanged when it isn't a text kind (an image has no text
+ * to reinterpret), so the caller can hand any block over without checking.
+ */
+export function convertBlock(block: Block, to: TextKindTarget): Block {
+  const text = blockText(block);
+  if (!TEXT_KINDS.has(block.kind)) return block;
+
+  switch (to.kind) {
+    case 'paragraph':
+      return { id: block.id, kind: 'paragraph', html: text };
+    case 'heading':
+      return { id: block.id, kind: 'heading', level: to.level, text: stripTags(text) };
+    case 'list':
+      return { id: block.id, kind: 'list', ordered: to.ordered, items: [text] };
+    case 'quote':
+      return { id: block.id, kind: 'quote', html: text, style: 'pull' };
+    case 'callout':
+      return { id: block.id, kind: 'callout', tone: 'info', html: text };
+    case 'code':
+      return { id: block.id, kind: 'code', text: stripTags(text) };
+  }
+}
+
 /** Human label for a block, for the outline and the inspector header. */
 export function blockLabel(block: Block): string {
   switch (block.kind) {

@@ -269,10 +269,19 @@ export function BlockCanvas({
   horses,
   parties,
   articles,
+  imageRequest = 0,
 }: {
   horses: Array<{ id: string; name: string }>;
   parties: Array<{ id: string; name: string }>;
   articles: Array<{ id: string; name: string }>;
+  /**
+   * A counter the toolbar's Image button increments to ask for the picker.
+   *
+   * A counter rather than a boolean so pressing the button twice in a row opens
+   * it twice — with a boolean the second press would be indistinguishable from
+   * the first and nothing would happen.
+   */
+  imageRequest?: number;
 }) {
   const { blog, selectedId, select, moveBlockTo, insertBlock, addMedia } = useComposerStore();
 
@@ -291,6 +300,17 @@ export function BlockCanvas({
     if (blog.blocks.length > lastCount.current) justInserted.current = selectedId;
     lastCount.current = blog.blocks.length;
   }
+
+  // The toolbar's Image button lands the picture after the block being edited,
+  // or at the end when nothing is selected — the same place the slash menu and
+  // the hover `+` would put it.
+  useEffect(() => {
+    if (imageRequest === 0) return;
+    const state = useComposerStore.getState();
+    const blocks = state.blog?.blocks ?? [];
+    const found = state.selectedId ? blocks.findIndex((b) => b.id === state.selectedId) : -1;
+    setPickerFor(found < 0 ? blocks.length : found + 1);
+  }, [imageRequest]);
 
   if (!blog) return null;
   const count = blog.blocks.length;

@@ -435,9 +435,10 @@ function PostFields({ onPickCover }: { onPickCover: () => void }) {
             />
             <Seg
               ariaLabel="Cover treatment"
-              value={(blog.cover?.treatment ?? 'hero-full') as CoverTreatment}
+              value={(blog.cover?.treatment ?? 'side') as CoverTreatment}
               onChange={(treatment) => patchPost({ cover: blog.cover ? { ...blog.cover, treatment } : undefined })}
               options={[
+                { value: 'side', label: 'Beside the text' },
                 { value: 'hero-full', label: 'Full hero' },
                 { value: 'hero-split', label: 'Below title' },
                 { value: 'inset', label: 'Inset' },
@@ -572,7 +573,9 @@ export function ToolsRail({ refs, onPickCover }: { refs: RefOptions; onPickCover
   const block = blog?.blocks.find((b) => b.id === selectedId);
 
   return (
-    <div className="slim-scroll h-full overflow-y-auto">
+    // Sticky so the settings stay in view while the body scrolls past them —
+    // the reason the rail existed at all was having one place to look.
+    <div className="lg:sticky lg:top-4">
       {block ? (
         <RailSection title={KIND_LABEL[block.kind] ?? 'Block'}>
           <div className="mb-3 flex items-center gap-1">
@@ -609,15 +612,12 @@ export function ToolsRail({ refs, onPickCover }: { refs: RefOptions; onPickCover
             <SimpleBlockFields block={block} refs={refs} />
           )}
         </RailSection>
-      ) : (
-        <RailSection title="Block">
-          <p className="text-[11px] italic text-muted-foreground">
-            Click a block in the post to change how it looks.
-          </p>
-        </RailSection>
-      )}
+      ) : null}
+      {/* No empty "nothing selected" card: the toolbar above the body already
+          says what it will act on, so a second placeholder was just a box of
+          apology taking up the top of the column. */}
 
-      <RailSection title="Post">
+      <RailSection title="Post settings">
         <PostFields onPickCover={onPickCover} />
       </RailSection>
     </div>

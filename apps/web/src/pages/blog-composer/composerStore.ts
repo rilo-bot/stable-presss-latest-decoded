@@ -58,6 +58,15 @@ interface ComposerState {
 
   insertBlock: (block: Block, atIndex?: number) => void;
   updateBlock: (id: string, patch: Partial<Block>) => void;
+  /**
+   * Swap a block for a wholly different one, keeping its position.
+   *
+   * Distinct from `updateBlock`, which MERGES: retyping a heading into a
+   * paragraph by merging would leave the old `level`/`text` fields riding along
+   * on a block that no longer has them. Replacing is also structural, so unlike
+   * a text edit it does push an undo step.
+   */
+  replaceBlock: (id: string, block: Block) => void;
   updatePlacement: (id: string, patch: Partial<Placement>) => void;
   moveBlock: (id: string, delta: number) => void;
   moveBlockTo: (id: string, index: number) => void;
@@ -176,6 +185,9 @@ export const useComposerStore = create<ComposerState>()((set, get) => {
     // with one-character steps and make undo useless. Structural ops do.
     updateBlock: (id, patch) =>
       mutateBlocks((blocks) => blocks.map((b) => (b.id === id ? ({ ...b, ...patch } as Block) : b)), false),
+
+    replaceBlock: (id, block) =>
+      mutateBlocks((blocks) => blocks.map((b) => (b.id === id ? block : b))),
 
     updatePlacement: (id, patch) =>
       mutateBlocks(

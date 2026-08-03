@@ -31,14 +31,29 @@ export function Field({
   );
 }
 
-/** Section heading inside the rail. */
-export function RailSection({ title, children }: { title: string; children: React.ReactNode }) {
+/**
+ * A settings card beside the body.
+ *
+ * Was a flush section in a full-height rail with its own scrollbar. As a card in
+ * the page flow it matches the newsroom's other editors, and the page scrolls
+ * once instead of the rail and the document scrolling separately.
+ */
+export function RailSection({
+  title,
+  hint,
+  children,
+}: {
+  title: string;
+  hint?: string;
+  children: React.ReactNode;
+}) {
   return (
-    <section className="border-b border-border/50 px-3.5 py-3.5 last:border-b-0">
-      <p className="mb-3 font-[family-name:var(--font-display)] text-xs font-bold uppercase tracking-[0.1em] text-foreground">
+    <section className="mb-4 rounded-sm border border-border/60 bg-background p-4 last:mb-0">
+      <p className="font-[family-name:var(--font-display)] text-xs font-bold uppercase tracking-[0.1em] text-foreground">
         {title}
       </p>
-      {children}
+      {hint && <p className="mt-0.5 mb-3 text-[11px] leading-snug text-muted-foreground/70">{hint}</p>}
+      <div className={hint ? undefined : 'mt-3'}>{children}</div>
     </section>
   );
 }

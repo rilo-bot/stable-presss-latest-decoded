@@ -245,7 +245,19 @@ export function blockMediaIds(b: Block): string[] {
 
 // ── The post ────────────────────────────────────────────────────────────────
 
-export const COVER_TREATMENTS = ['hero-full', 'hero-split', 'inset', 'none'] as const;
+/**
+ * How the cover is presented on the public page.
+ *
+ *   side       — a framed portrait card in a sticky column beside the prose.
+ *                THE DEFAULT: it keeps the picture on screen for the whole read
+ *                and gives the text a comfortable measure without a full-width
+ *                photograph pushing the first paragraph below the fold.
+ *   hero-full  — full-bleed banner above the headline.
+ *   hero-split — full width, under the header.
+ *   inset      — a smaller centred image under the header.
+ *   none       — no cover on the page (it still fronts the card in lists).
+ */
+export const COVER_TREATMENTS = ['side', 'hero-full', 'hero-split', 'inset', 'none'] as const;
 export type CoverTreatment = (typeof COVER_TREATMENTS)[number];
 
 export interface BlogCover {

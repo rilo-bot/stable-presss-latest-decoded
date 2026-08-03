@@ -120,7 +120,9 @@ function normaliseAuthor(v: unknown, fallbackName: string): Record<string, unkno
   return author
 }
 
-const COVER_TREATMENTS = ['hero-full', 'hero-split', 'inset', 'none'] as const
+// Mirrors COVER_TREATMENTS in apps/web/src/types/blog.ts — see the doc comment
+// there for what each one looks like. `side` is the default and must stay first.
+const COVER_TREATMENTS = ['side', 'hero-full', 'hero-split', 'inset', 'none'] as const
 
 function normaliseCover(v: unknown, poolIds: Set<string>): Record<string, unknown> | undefined {
   if (!v || typeof v !== 'object') return undefined
@@ -129,7 +131,7 @@ function normaliseCover(v: unknown, poolIds: Set<string>): Record<string, unknow
   if (!mediaId || !poolIds.has(mediaId)) return undefined
   const treatment = (COVER_TREATMENTS as readonly unknown[]).includes(raw.treatment)
     ? (raw.treatment as string)
-    : 'hero-full'
+    : 'side'
   const cover: Record<string, unknown> = { mediaId, treatment }
   if (Array.isArray(raw.focal) && raw.focal.length === 2) {
     const [x, y] = raw.focal
