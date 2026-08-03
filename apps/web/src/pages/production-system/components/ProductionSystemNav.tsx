@@ -1,5 +1,5 @@
 /**
- * Production system navigation.
+ * Campaign Engine navigation.
  *
  * Two presentations of one nav list:
  *   - `ProductionSystemSidebar` — the desktop rail. Sticky, full viewport
@@ -186,7 +186,7 @@ function NavBrand({ collapsed, onNavigate }: { collapsed: boolean; onNavigate?: 
             Stable Press
           </span>
           <span className="flex items-center gap-1 truncate text-[11px] leading-tight text-muted-foreground">
-            Production System
+            Campaign Engine
             <ExternalLink
               size={9}
               className="flex-shrink-0 opacity-0 transition-opacity group-hover/brand:opacity-100"
@@ -394,7 +394,7 @@ export function ProductionSystemNavDrawer({
         className="relative flex h-full w-64 max-w-[82%] flex-col border-r border-border bg-card shadow-xl"
         role="dialog"
         aria-modal="true"
-        aria-label="Production system navigation"
+        aria-label="Campaign Engine navigation"
       >
         <div className="flex h-14 flex-shrink-0 items-center gap-2 border-b border-border/50 px-3">
           <NavBrand collapsed={false} onNavigate={onClose} />

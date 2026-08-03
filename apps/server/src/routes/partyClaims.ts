@@ -19,23 +19,54 @@ router.use(attachAccount);
 
 const genClaimId = () => 'claim-' + crypto.randomUUID();
 
-/** Org party-ids the given party is currently linked to. Phase D wires this up
- *  (managed parties + org members); until then it resolves to none, so only the
- *  admin verifier path is active. See RBAC.md §7. */
-async function orgsForParty(partyId: string): Promise<string[]> {
+/**
+ * Org party-ids the given party is linked to, RESTRICTED to organisations that
+ * have themselves been verified by staff.
+ *
+ * The previous version returned `party.managedByOrgId` unconditionally, and its
+ * comment claimed the org verifier path "resolves to none, so only the admin
+ * verifier path is active". That stopped being true the moment
+ * POST /api/organisations/:id/managed-parties shipped — it stamps managedByOrgId,
+ * which is the only input this function reads. The result was a complete bypass of
+ * claim verification in four self-service calls: create an organisation (you are
+ * its org_owner, no approval), mint a managed party under it, claim that party,
+ * then approve yourself. That minted a PUBLICLY "verified" racing identity with no
+ * staff involvement at all. See docs/AUTH-RBAC-REVIEW.md C2, RBAC.md §7.
+ *
+ * Organisations carry no verificationStatus yet (POST /api/organisations does not
+ * write one), so requiring 'verified' here closes the path completely and restores
+ * the behaviour the old comment described. When org verification is built, orgs
+ * that pass it light this path up without further change.
+ */
+async function verifiedOrgsForParty(partyId: string): Promise<string[]> {
   const party = await db.collection('parties').findById(partyId);
-  const ids: string[] = [];
-  if (party?.managedByOrgId) ids.push(String(party.managedByOrgId));
-  return ids;
+  if (!party?.managedByOrgId) return [];
+  const org = await db.collection('organisations').findById(String(party.managedByOrgId));
+  if (org?.verificationStatus !== 'verified') return [];
+  return [String(party.managedByOrgId)];
 }
 
-/** Which verifier path (if any) this account may use for a claim. */
+/**
+ * Which verifier path (if any) this account may use for a claim.
+ *
+ * NO SELF-VERIFICATION ON THE ORG PATH. `org_owner` is self-granted — anyone can
+ * create an organisation — so without this the claimant is also the verifier.
+ *
+ * `platform.admin` is deliberately NOT subject to that check. It would restrict
+ * nothing: an admin may already verify every claim on the platform, so they could
+ * route their own through a second account. Blocking it would only strand a
+ * single-admin install whose one admin is also a trainer — their claim could never
+ * be verified by anyone. Provisional access already covers them while pending;
+ * this is about who may flip the public trust signal.
+ */
 async function verifierTypeFor(
   account: AccountUser,
   claim: PartyClaim,
+  claimantUserId: string,
 ): Promise<'admin' | 'org' | null> {
   if (isPlatformAdmin(account)) return 'admin';
-  const orgs = await orgsForParty(claim.partyId);
+  if (claimantUserId === account.id) return null;
+  const orgs = await verifiedOrgsForParty(claim.partyId);
   const canOrg = account.orgMemberships.some(
     (m) => (m.orgRole === 'org_owner' || m.orgRole === 'org_manager') && orgs.includes(m.orgId),
   );
@@ -139,7 +170,11 @@ router.get('/pending', async (req, res) => {
     for (const c of claims) {
       if (c.status !== 'pending') continue;
       if (!admin) {
-        const orgs = await orgsForParty(c.partyId);
+        // Same rules the verify route enforces, so the queue never lists a claim
+        // the viewer would be refused on. Notably it hides their OWN claim: an
+        // org officer is not a verifier of themselves.
+        if (String(u._id) === account.id) continue;
+        const orgs = await verifiedOrgsForParty(c.partyId);
         const canOrg = account.orgMemberships.some(
           (m) => (m.orgRole === 'org_owner' || m.orgRole === 'org_manager') && orgs.includes(m.orgId),
         );
@@ -171,7 +206,7 @@ router.post('/:id/verify', async (req, res) => {
     res.status(409).json({ error: 'Claim is not pending.' });
     return;
   }
-  const verifierType = await verifierTypeFor(account, claim);
+  const verifierType = await verifierTypeFor(account, claim, String(found.user._id));
   if (!verifierType) {
     res.status(403).json({ error: 'Not authorised to verify this claim.' });
     return;
@@ -218,7 +253,7 @@ router.post('/:id/reject', async (req, res) => {
     res.status(409).json({ error: 'Claim is not pending.' });
     return;
   }
-  if (!(await verifierTypeFor(account, claim))) {
+  if (!(await verifierTypeFor(account, claim, String(found.user._id)))) {
     res.status(403).json({ error: 'Not authorised to reject this claim.' });
     return;
   }

@@ -169,8 +169,26 @@ export function horseScopedWriteGate(opts: {
         const rec = await db.collection(opts.collection).findById(id)
         horseId = rec?.horse_id ? String(rec.horse_id) : undefined
       }
-      if (horseId && (await accountCanManageHorse(account, horseId))) return next()
-      return forbid(res, 'You can only modify horses you manage.')
+      if (!horseId || !(await accountCanManageHorse(account, horseId))) {
+        return forbid(res, 'You can only modify horses you manage.')
+      }
+
+      // A body that RE-POINTS the record at a different horse has to be authorised
+      // for the DESTINATION as well. Checking only the pre-image was a horizontal
+      // privilege escalation: every handler here does `{ ...req.body }`, so a caller
+      // could move a record they legitimately own onto a horse they do not manage.
+      // On horsePartyLinks that was severe rather than merely untidy — it re-pointed
+      // the caller's OWN party at someone else's horse, and a current party↔horse
+      // link is exactly what authorisedHorseIds() reads, so the move granted write
+      // access to that horse and to every child record hanging off it.
+      // See docs/AUTH-RBAC-REVIEW.md C1.
+      if (!opts.idIsHorse && req.method === 'PUT') {
+        const target = typeof req.body?.horse_id === 'string' ? req.body.horse_id : undefined
+        if (target && target !== horseId && !(await accountCanManageHorse(account, target))) {
+          return forbid(res, 'You cannot move this record to a horse you do not manage.')
+        }
+      }
+      return next()
     })
   }
 }

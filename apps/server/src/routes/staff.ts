@@ -16,7 +16,12 @@ import { db } from '../lib/db.js'
 import { attachAccount } from '../lib/auth.js'
 import { withIdentityDefaults } from '../lib/identity.js'
 import { canManageTeam } from '../lib/rbac.js'
-import { SUPERADMIN_SLUG, getRoles, superadminHolderCount } from '../lib/roleRegistry.js'
+import {
+  SUPERADMIN_SLUG,
+  checkSuperadminLoss,
+  denyRoleGrant,
+  getRoles,
+} from '../lib/roleRegistry.js'
 import { isEmailConfigured, sendInviteEmail, sendRoleGrantedEmail } from '../lib/email.js'
 import {
   COLLECTION as INVITES,
@@ -96,6 +101,14 @@ router.post('/', async (req, res) => {
     res.status(403).json({ error: 'Only a superadmin can grant the superadmin role.' })
     return
   }
+  // Inviting yourself is the same escalation as assigning yourself — this route
+  // MOVES an existing member to the named role, so without the amplification
+  // check it was a second door to `administrator`. See routes/roles.ts.
+  const denied = denyRoleGrant(req.account!, role, email === req.account!.email.toLowerCase())
+  if (denied) {
+    res.status(403).json({ error: denied })
+    return
+  }
 
   // ── Already has an account: the role applies now, so there is nothing to
   // accept. Tell them it happened and point at the newsroom.
@@ -107,9 +120,14 @@ router.post('/', async (req, res) => {
       return
     }
     // One role per person — see routes/roles.ts. Inviting an existing member to
-    // a different role MOVES them to it rather than stacking a second one.
-    if (acct.staffRoles.includes(SUPERADMIN_SLUG) && (await superadminHolderCount()) <= 1) {
-      res.status(403).json({ error: 'Cannot change the last superadmin to another role.' })
+    // a different role MOVES them to it rather than stacking a second one, so the
+    // superadmin guard applies here as much as on an explicit removal.
+    const blocked = await checkSuperadminLoss(
+      req.account!,
+      acct.staffRoles.includes(SUPERADMIN_SLUG) && role.slug !== SUPERADMIN_SLUG,
+    )
+    if (blocked) {
+      res.status(403).json({ error: blocked })
       return
     }
     await db.collection('users').updateOne(String(existing._id), { staffRoles: [role.slug] })
@@ -248,13 +266,16 @@ router.delete('/member/:userId', async (req, res) => {
     res.status(403).json({ error: 'You cannot remove yourself from the team.' })
     return
   }
+  // Both rules that used to be spelled out here now live in one helper, so the
+  // roles router cannot drift from this one again (it had: it checked the holder
+  // count but not who was acting).
   const acct = withIdentityDefaults({ id: target._id, ...target })
-  if (acct.staffRoles.includes(SUPERADMIN_SLUG) && (await superadminHolderCount()) <= 1) {
-    res.status(403).json({ error: 'Cannot remove the last superadmin.' })
-    return
-  }
-  if (acct.staffRoles.includes(SUPERADMIN_SLUG) && !req.account!.isSuperAdmin) {
-    res.status(403).json({ error: 'Only a superadmin can remove another superadmin.' })
+  const blocked = await checkSuperadminLoss(
+    req.account!,
+    acct.staffRoles.includes(SUPERADMIN_SLUG),
+  )
+  if (blocked) {
+    res.status(403).json({ error: blocked })
     return
   }
 

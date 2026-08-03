@@ -42,6 +42,75 @@ export async function superadminHolderCount(): Promise<number> {
     .length
 }
 
+/**
+ * THE guard on handing out a role. Returns an error message, or null to allow.
+ *
+ * `team.manage` used to be sufficient on its own, which made it equivalent to
+ * superadmin in two steps: `administrator` is seeded with every permission in the
+ * catalogue, so a team manager could name their own account and become a full
+ * platform admin. Two rules close that (docs/AUTH-RBAC-REVIEW.md C3):
+ *
+ *   1. NO SELF-SERVICE. Changing your own role is not a roster action.
+ *   2. NO AMPLIFICATION. You cannot hand out access you do not hold yourself.
+ *      Rule 1 alone only stops the single-actor version — two colleagues who each
+ *      held `team.manage` could still promote each other.
+ *
+ * A superadmin is exempt from rule 2 (they hold every permission by definition)
+ * but NOT from rule 1: `superadmin` is the one role whose loss is unrecoverable,
+ * so even they change their own through another superadmin.
+ *
+ * `isSelf` is passed in rather than derived, because the two callers identify the
+ * target differently — routes/roles.ts by user id, routes/staff.ts by email.
+ * The actor is typed structurally so this file needs no import from
+ * effectiveAccess.ts, which imports THIS module (an AccountUser satisfies it).
+ */
+export function denyRoleGrant(
+  actor: { isSuperAdmin: boolean; permissions: ReadonlySet<PermissionAction> },
+  role: RoleDoc,
+  isSelf: boolean,
+): string | null {
+  if (isSelf) {
+    return 'You cannot change your own role. Ask another administrator to do it.'
+  }
+  if (actor.isSuperAdmin) return null
+  const missing = role.permissions.filter((p) => !actor.permissions.has(p))
+  if (missing.length > 0) {
+    return `You cannot grant "${role.label}" — it includes access you do not hold yourself.`
+  }
+  return null
+}
+
+/**
+ * THE guard for every path that can take `superadmin` away from someone.
+ *
+ * Both rules live here because they were previously copy-pasted across four
+ * routes and had already diverged: routes/staff.ts checked "only a superadmin may
+ * change another superadmin" AND the last-holder count, while
+ * routes/roles.ts checked only the count — so anyone holding `team.manage` could
+ * demote a superadmin as long as a second one existed. Two paths to one operation
+ * with two different rule sets is the classic shape of an access-control bug.
+ * See docs/AUTH-RBAC-REVIEW.md H4.
+ *
+ * `losesSuperadmin` is the caller's answer to "would this operation leave the
+ * target without the slug?" — computed at the call site because each route
+ * expresses the change differently (replace, pull, clear).
+ *
+ * Returns a user-facing error message, or null when the change is allowed.
+ */
+export async function checkSuperadminLoss(
+  actor: { isSuperAdmin: boolean },
+  losesSuperadmin: boolean,
+): Promise<string | null> {
+  if (!losesSuperadmin) return null
+  if (!actor.isSuperAdmin) return 'Only a superadmin can change another superadmin.'
+  // Reaching zero is unrecoverable without shell access to re-run the
+  // SETUP_SECRET seed, so this is checked even for a superadmin acting.
+  if ((await superadminHolderCount()) <= 1) {
+    return 'Cannot remove the last superadmin — the platform would be locked out.'
+  }
+  return null
+}
+
 export interface RoleDoc {
   id: string
   slug: string

@@ -21,9 +21,10 @@ import { canManageRoles, canManageTeam } from '../lib/rbac.js'
 import {
   SUPERADMIN_SLUG,
   bustRoleCache,
+  checkSuperadminLoss,
+  denyRoleGrant,
   getRoles,
   projectRole,
-  superadminHolderCount,
   type RoleDoc,
 } from '../lib/roleRegistry.js'
 import {
@@ -303,6 +304,11 @@ router.post('/:slug/assign', requireAssignRoles, async (req, res) => {
     res.status(404).json({ error: 'Team member not found.' })
     return
   }
+  const denied = denyRoleGrant(req.account!, role, userId === req.account!.id)
+  if (denied) {
+    res.status(403).json({ error: denied })
+    return
+  }
   const acct = withIdentityDefaults({ id: target._id, ...target })
   const held = acct.staffRoles
   if (held.length === 1 && held[0] === role.slug) {
@@ -310,14 +316,16 @@ router.post('/:slug/assign', requireAssignRoles, async (req, res) => {
     return
   }
 
-  // Replacing a role TAKES AWAY the old one, so the last-superadmin guard has to
-  // fire here too — not only on explicit removal. Without it, "change Mahin to
-  // Editor" would quietly delete the only superadmin.
-  if (held.includes(SUPERADMIN_SLUG) && role.slug !== SUPERADMIN_SLUG) {
-    if ((await superadminHolderCount()) <= 1) {
-      res.status(403).json({ error: 'Cannot change the last superadmin to another role.' })
-      return
-    }
+  // Replacing a role TAKES AWAY the old one, so the superadmin guard has to fire
+  // here too — not only on explicit removal. Without it, "change Mahin to Editor"
+  // would quietly delete the only superadmin.
+  const blocked = await checkSuperadminLoss(
+    req.account!,
+    held.includes(SUPERADMIN_SLUG) && role.slug !== SUPERADMIN_SLUG,
+  )
+  if (blocked) {
+    res.status(403).json({ error: blocked })
+    return
   }
 
   await db.collection('users').updateOne(userId, { staffRoles: [role.slug] })
@@ -330,20 +338,33 @@ router.delete('/:slug/assign/:userId', requireAssignRoles, async (req, res) => {
     res.status(404).json({ error: 'Role not found.' })
     return
   }
-  const target = await db.collection('users').findById(String(req.params.userId))
+  const userId = String(req.params.userId)
+  const target = await db.collection('users').findById(userId)
   if (!target) {
     res.status(404).json({ error: 'Team member not found.' })
     return
   }
-
-  // Never strip the last superadmin — that is unrecoverable without shell access
-  // to re-run the SETUP_SECRET seed.
-  if (role.slug === SUPERADMIN_SLUG && (await superadminHolderCount()) <= 1) {
-    res.status(403).json({ error: 'Cannot remove the last superadmin.' })
+  // Removing your own role is the same self-service problem as granting one: it
+  // is how you would drop a restriction you are subject to.
+  if (userId === req.account!.id) {
+    res.status(403).json({ error: 'You cannot change your own role. Ask another administrator.' })
     return
   }
 
-  await db.collection('users').pullFrom(String(req.params.userId), 'staffRoles', role.slug)
+  // Was a bare holder-count check, so anyone with `team.manage` could demote a
+  // superadmin whenever a second one existed — routes/staff.ts guarded that and
+  // this route did not. One helper now answers for every path.
+  const acct = withIdentityDefaults({ id: target._id, ...target })
+  const blocked = await checkSuperadminLoss(
+    req.account!,
+    role.slug === SUPERADMIN_SLUG && acct.staffRoles.includes(SUPERADMIN_SLUG),
+  )
+  if (blocked) {
+    res.status(403).json({ error: blocked })
+    return
+  }
+
+  await db.collection('users').pullFrom(userId, 'staffRoles', role.slug)
   res.json({ ok: true })
 })
 

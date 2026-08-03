@@ -92,6 +92,20 @@ router.put('/:id', async (req, res) => {
     updatedAt: now,
   };
   delete (updateData as { id?: unknown }).id;
+  // WHICH HORSE a link points at is not an editable field. A link IS the
+  // (horse, party) pair — changing the horse is a different relationship, so it
+  // is a delete plus a create, not an edit. Allowing it re-pointed the caller's
+  // own party onto a horse they don't manage, which authorisedHorseIds() then
+  // read as write access to that horse (docs/AUTH-RBAC-REVIEW.md C1).
+  //
+  // No UI ever changes it: HorsePartyLinkPanel is scoped to one horse and echoes
+  // that same id back, and useRoleConnections sends only the dates. `party_id`
+  // deliberately STAYS writable — re-pointing the party of a horse you already
+  // manage is a legitimate edit and grants the caller no new reach.
+  //
+  // horseScopedWriteGate also authorises the destination horse; this strip is the
+  // narrower guarantee that the field cannot move at all.
+  delete (updateData as { horse_id?: unknown }).horse_id;
   const found = await db.collection('horsePartyLinks').findById(req.params.id);
   if (!found) {
     res.status(404).json({ error: 'Not found' });
