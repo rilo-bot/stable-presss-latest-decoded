@@ -476,6 +476,71 @@ a real asset now and they may want it for a block.
 removed. (`editor/templates/helpers.ts` still holds `STOCK` for the Article Studio and the magazine templates
 — narrowing that is a separate job.)
 
+---
+
+## 13. Field coverage — what the model can set, and what nothing could
+
+### Only two fields are required, and only to publish
+
+`title` (non-empty) and at least one block. A **draft requires nothing at all** — deliberately, per
+`BLOG-SYSTEM-PLAN` §3.5: plenty of posts start as a paragraph with the headline decided last, and forcing a
+placeholder into the data means it has to be noticed and deleted later. The gate is at publish, where it
+matters.
+
+### The audit
+
+| Field | Server | Composer rail | Blog Studio |
+|---|---|---|---|
+| `title` | **required @publish** | editor body | ✓ |
+| `blocks` | **required @publish** | canvas | ✓ |
+| `subtitle` | optional | editor body | ✓ |
+| `excerpt` | derived from the opening if blank | ✓ | ✓ |
+| `media` | — | upload / picker | ✓ (stock + attached) |
+| `cover` | optional | ✓ | ✓ |
+| `category` | optional | ✓ | ✓ |
+| `tags` | optional | ✓ | ✓ |
+| `minTier` | defaults `free` | ✓ | ✓ |
+| `slug` | auto from title, locks on manual edit | ✓ | auto |
+| `author.name` | falls back to display name | ✓ | auto (signed-in member) |
+| `linkedHorseIds` / `linkedPartyIds` | optional | ✗ | ✓ (from the body's cards) |
+| `seo.metaTitle` / `metaDescription` | optional | ✗ | ✓ **(added — see below)** |
+| `readingTime` | computed on save | — | — |
+| `status` / `publishedAt` | own endpoint | buttons | ✓ |
+| `seo.noindex` / `canonicalUrl` | optional | ✗ | ✗ **deliberately** |
+| `seo.ogMediaId` | optional | ✗ | ✗ (no OG tags exist yet) |
+| `thumbnailMediaId` | optional | ✗ | ✗ (redundant — cards fall back to the cover) |
+| `author.bio` / `partyId` / `avatarUrl` | optional | ✗ | ✗ (should come from the account) |
+| `publishAt` | **never written by any path** | ✗ | ✗ (§M5) |
+
+### What was added
+
+**`metaTitle` + `metaDescription` on `createBlogDraft` and `updateBlogPost`.** These were the one real gap
+worth closing: `usePageMeta` **already consumes them** on the public post page, so nothing else had to change
+for them to take effect — and no UI anywhere could set them, which is half of `BLOG-FEATURE-REVIEW.md` M5.
+
+The assistant fills them in as part of filing rather than asking, because it has just written the piece and
+these are exactly the fields an author leaves blank forever. `mergeSeo` merges rather than replaces, so a
+`noindex` or `canonicalUrl` set by hand is never silently dropped by an AI edit; an explicit empty string
+clears a field and an absent key leaves it.
+
+**`noindex` and `canonicalUrl` are withheld on purpose.** One says "keep this out of search" and the other
+says "another URL is authoritative". Both are editorial decisions with consequences a model should not be
+guessing at, and the prompt says so explicitly.
+
+### What was deleted
+
+**`coAuthors`.** Declared in `types/blog.ts` and read by *nothing* — not `buildContent`, not the composer, not
+the reader page. A field the API silently discards is worse than an absent one because it looks supported. Gone;
+it can come back alongside an implementation if co-bylines are wanted.
+
+### Still unreachable, and worth a decision
+
+- **`thumbnailMediaId`** — no UI has ever set it, and `thumbnailOf()` falls back to the cover, so it only
+  matters if someone wants a *different* card image from the cover. Either expose it in the rail or drop it.
+- **`publishAt`** — still written by no path at all, while `isLive` and the list query both pay for it (M5).
+- **`author.bio` / `partyId`** — the byline card renders both. They should be derived from the writer's own
+  profile, not typed per post and certainly not invented by a model.
+
 ### Verification
 
 Both apps typecheck, the web app builds, `check:permissions` → 40 catalogue / **0 unenforced**. Still **not

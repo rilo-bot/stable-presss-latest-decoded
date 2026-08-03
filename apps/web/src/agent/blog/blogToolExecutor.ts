@@ -37,7 +37,7 @@ import {
   spliceBodyItems,
   type BodyItem,
 } from '@/blog/bodyItems';
-import type { Blog, BlogMedia } from '@/types/blog';
+import type { Blog, BlogMedia, BlogSeo } from '@/types/blog';
 import type { SubscriptionTier } from '@/rbac/entitlement';
 
 const CLIENT_TOOLS = new Set([
@@ -176,6 +176,33 @@ async function resolveRefs(items: BodyItem[]): Promise<{ items: BodyItem[]; drop
   return { items: kept, dropped };
 }
 
+/**
+ * Merge the two SEO fields the assistant may write into a post's existing `seo`.
+ *
+ * Merged rather than replaced, deliberately. `seo` also holds `canonicalUrl`,
+ * `ogMediaId` and `noindex` — an editorial decision, a picture, and a "keep this
+ * out of search" flag. None of those are the assistant's to guess at, and a
+ * wholesale replace would silently drop a `noindex` someone set on purpose.
+ *
+ * An explicit empty string clears a field; `undefined` (the key absent) leaves it.
+ */
+function mergeSeo(existing: BlogSeo | undefined, arg: Record<string, unknown>): BlogSeo | undefined {
+  if (arg.metaTitle === undefined && arg.metaDescription === undefined) return undefined;
+  const next: BlogSeo = { ...(existing ?? {}) };
+
+  if (arg.metaTitle !== undefined) {
+    const v = str(arg.metaTitle, 200);
+    if (v) next.metaTitle = v;
+    else delete next.metaTitle;
+  }
+  if (arg.metaDescription !== undefined) {
+    const v = str(arg.metaDescription, 400);
+    if (v) next.metaDescription = v;
+    else delete next.metaDescription;
+  }
+  return next;
+}
+
 /** The linked-record ids a body implies, for the post's own link fields. */
 function linksFrom(items: BodyItem[]): { linkedHorseIds: string[]; linkedPartyIds: string[] } {
   const horseIds = new Set<string>();
@@ -306,6 +333,8 @@ async function updatePost(arg: Record<string, unknown>): Promise<unknown> {
     const tier = str(arg.minTier, 20) as SubscriptionTier;
     if (TIERS.includes(tier)) patch.minTier = tier;
   }
+  const seo = mergeSeo(post.seo, arg);
+  if (seo) patch.seo = seo;
 
   if (Object.keys(patch).length === 0) return { ok: false, error: 'Nothing to change — no fields were given.' };
 
@@ -386,6 +415,10 @@ async function createDraft(arg: Record<string, unknown>): Promise<unknown> {
     category: str(arg.category, 80) || undefined,
     tags: strArray(arg.tags),
     minTier: TIERS.includes(tier) ? tier : 'free',
+    // Consumed immediately by `usePageMeta` on the public post page, so a post
+    // written here gets a real browser-tab title and search summary rather than
+    // the site's generic one.
+    ...(mergeSeo(undefined, arg) ? { seo: mergeSeo(undefined, arg) } : {}),
     blocks,
     media,
     // Whatever the piece embeds is also recorded on the post itself, so the record

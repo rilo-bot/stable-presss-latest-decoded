@@ -41,6 +41,7 @@ import { ArrowLeft, BookOpen, Check, ChevronRight, Clock, Link2, Loader2 } from 
 
 import { usePageMeta } from '@/lib/usePageMeta';
 import { BlogRenderer } from '@/blog/BlogRenderer';
+import { BlogReactions } from '@/blog/BlogReactions';
 import { Paywall } from '@/components/Paywall';
 import { EmptyState } from '@/components/EmptyState';
 import { useBlogStore } from '@/stores/blogStore';
@@ -388,6 +389,14 @@ export default function BlogPost() {
             </div>
           </div>
         )}
+
+        {/* Reactions sit OUTSIDE the two-column grid, so the scale gets the full
+            page width the way it does on the policy pages — seven tiles squeezed
+            into a 7/12 text column wrap to two rows and stop reading as a scale.
+            Hidden behind the paywall: asking someone how a piece sat with them
+            when they were only shown the first paragraph is a question they
+            cannot answer. */}
+        {!locked && <BlogReactions />}
       </div>
     </article>
   );

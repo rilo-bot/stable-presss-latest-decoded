@@ -302,7 +302,10 @@ export interface Blog {
   excerpt?: string;
 
   author: BlogAuthor;
-  coAuthors?: BlogAuthor[];
+  // `coAuthors?: BlogAuthor[]` was declared here and read by nothing — not the
+  // server's buildContent, not the composer, not the reader page. A field the API
+  // silently discards is worse than an absent one, because it looks supported.
+  // Removed; add it back alongside an implementation if co-bylines are wanted.
 
   blocks: Block[];
   media: BlogMedia[];

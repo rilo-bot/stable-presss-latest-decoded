@@ -20,38 +20,20 @@
  */
 
 // ── The emoji scale ─────────────────────────────────────────────────────────
+//
+// Now defined in `@/types/reactions` — this screen is no longer its only
+// consumer, since the public blog post carries a reaction bar that has to use the
+// same seven steps. Re-exported here so everything that already imports the scale
+// from this module keeps working.
+//
+// Counts in `ITEMS` are tuples in ASCENDING weight, i.e. the same order as
+// EMOJI_SCALE. See `EMOJI_TUPLE_ORDER`.
 
-export type EmojiKey =
-  | 'reallyHate' | 'hate' | 'dislike' | 'undecided' | 'sortOf' | 'like' | 'love';
+import { EMOJI_SCALE, STEP_FILL } from '@/types/reactions';
+import type { EmojiKey, EmojiStep, Side } from '@/types/reactions';
 
-/** Which side of the baseline a reaction sits on. */
-export type Side = 'for' | 'middle' | 'against';
-
-export interface EmojiStep {
-  key: EmojiKey;
-  emoji: string;
-  label: string;
-  /** −3…+3. Ordinal — the distance between steps is meant to be read. */
-  weight: -3 | -2 | -1 | 0 | 1 | 2 | 3;
-  side: Side;
-}
-
-/**
- * The seven-point scale, in scale order: most negative first. This is the order
- * it renders in — an ordinal scale read out of order stops being a scale.
- *
- * Counts in `ITEMS` are tuples in ASCENDING weight, i.e. the same order as this
- * array reversed. See `EMOJI_TUPLE_ORDER`.
- */
-export const EMOJI_SCALE: EmojiStep[] = [
-  { key: 'reallyHate', emoji: '🤬', label: 'Really hate it', weight: -3, side: 'against' },
-  { key: 'hate', emoji: '😠', label: 'Hate it', weight: -2, side: 'against' },
-  { key: 'dislike', emoji: '😕', label: "Don't like it", weight: -1, side: 'against' },
-  { key: 'undecided', emoji: '😐', label: 'Undecided', weight: 0, side: 'middle' },
-  { key: 'sortOf', emoji: '🙂', label: 'Sort of like it', weight: 1, side: 'for' },
-  { key: 'like', emoji: '😊', label: 'Like it', weight: 2, side: 'for' },
-  { key: 'love', emoji: '🤩', label: 'Love it', weight: 3, side: 'for' },
-];
+export { EMOJI_SCALE, STEP_FILL };
+export type { EmojiKey, EmojiStep, Side };
 
 /** Tuple order for `ReactionCounts` — ascending weight, −3 → +3. */
 export const EMOJI_TUPLE_ORDER: EmojiKey[] = [
@@ -132,16 +114,6 @@ export function bandFor(net: number): Band {
  * single hue at monotone lightness, so "stronger" reads as "darker" without
  * needing the label — but the label is there anyway.
  */
-export const STEP_FILL: Record<EmojiKey, string> = {
-  reallyHate: '#b84619',
-  hate: '#cd5c2f',
-  dislike: '#e37945',
-  undecided: '#b2afa9',
-  sortOf: '#2f7a58',
-  like: '#22603f',
-  love: '#174a32',
-};
-
 /**
  * The three sides, for the for/middle/against meters. The poles of the scale
  * would be too loud across a full-width bar, so these are the arms' mid steps.
