@@ -44,6 +44,15 @@ export type PermissionAction =
   | 'content.publish'
   | 'content.newsletter'
   | 'content.bulletin'
+  // Blogs — a separate axis from Stories on purpose. Publishing a blog is a
+  // different power from publishing a news story, and keeping them apart is
+  // what lets blogging be opened to member/guest authors later as a role
+  // change rather than a code change. See docs/BLOG-SYSTEM-PLAN.md §4.2.
+  | 'blog.create'
+  | 'blog.edit_own'
+  | 'blog.edit_any'
+  | 'blog.publish'
+  | 'blog.delete'
   // Media
   | 'media.upload_own'
   | 'media.manage_all'
@@ -132,6 +141,14 @@ export const PERMISSION_CATALOGUE: PermissionMeta[] = [
   { id: 'content.newsletter', label: 'Send to newsletter', resource: 'Publishing', short: 'Newsletter', description: 'Distribute a story via newsletter.' },
   { id: 'content.bulletin', label: 'Add to bulletin', resource: 'Publishing', short: 'Bulletin', description: 'Include a story in a bulletin issue.' },
 
+  // Blogs — two states (draft/published), so there is no submit/approve/schedule
+  // row here the way Stories has one.
+  { id: 'blog.create', label: 'Create blog posts', resource: 'Blogs', short: 'Create', description: 'Start a new blog post.' },
+  { id: 'blog.edit_own', label: 'Edit own blog posts', resource: 'Blogs', short: 'Edit own', description: 'Edit blog posts they authored.' },
+  { id: 'blog.edit_any', label: 'Edit any blog post', resource: 'Blogs', short: 'Edit any', description: 'Edit blog posts written by anyone.' },
+  { id: 'blog.publish', label: 'Publish blog posts', resource: 'Blogs', short: 'Publish', description: 'Put a blog post live, or take it back down.' },
+  { id: 'blog.delete', label: 'Delete blog posts', resource: 'Blogs', short: 'Delete', description: 'Delete a blog post.' },
+
   // Media
   { id: 'media.upload_own', label: 'Upload own media', resource: 'Media', short: 'Upload own', description: 'Upload and manage personal media assets.' },
   { id: 'media.manage_all', label: 'Manage all media', resource: 'Media', short: 'Manage all', description: 'Manage the full shared media library.' },
@@ -195,6 +212,7 @@ export const MODULE_CATALOGUE: ModuleMeta[] = [
   { id: 'workflow', label: 'Workflow Board', section: 'Workspace' },
   { id: 'pipeline', label: 'Pipeline Map', section: 'Workspace' },
   { id: 'all-stories', label: 'All Stories', section: 'Content' },
+  { id: 'blogs', label: 'Blogs', section: 'Content', requiresPermission: 'blog.create' },
   { id: 'magazine-v2', label: 'Magazine Builder', section: 'Content' },
   { id: 'editor-hub', label: 'Editor Hub', section: 'Content', requiresPermission: 'content.editorial_review' },
   { id: 'my-assets', label: 'My Media Assets', section: 'Content', requiresPermission: 'media.upload_own' },
@@ -277,6 +295,9 @@ export const BUILTIN_ROLE_PERMISSIONS: Record<SeedRoleSlug, PermissionAction[]> 
     'content.draft.create',
     'content.draft.edit_own',
     'content.submit',
+    // Blogs: may write, may not put live. Mirrors the story posture.
+    'blog.create',
+    'blog.edit_own',
     'media.upload_own',
     'compensation.view_own',
     'workflow.view_own_columns',
@@ -298,6 +319,11 @@ export const BUILTIN_ROLE_PERMISSIONS: Record<SeedRoleSlug, PermissionAction[]> 
     'content.publish',
     'content.newsletter',
     'content.bulletin',
+    'blog.create',
+    'blog.edit_own',
+    'blog.edit_any',
+    'blog.publish',
+    'blog.delete',
     'media.upload_own',
     'media.manage_all',
     'compensation.view_all',

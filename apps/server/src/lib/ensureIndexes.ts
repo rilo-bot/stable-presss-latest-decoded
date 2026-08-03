@@ -37,6 +37,24 @@ const INDEX_SPECS: IndexSpec[] = [
   { collection: COL.chat, keys: { magazineId: 1, deletedAt: 1, createdAt: -1 } },
   // Issue library list: served newest-first by updatedAt.
   { collection: COL.issues, keys: { deletedAt: 1, updatedAt: -1 } },
+  // Blogs. The public index sorts published posts newest-first, and the staff
+  // list sorts everything by last touched — both run through aggregate() with a
+  // $skip/$limit, so they must not scan.
+  { collection: 'blogs', keys: { deletedAt: 1, status: 1, publishedAt: -1 } },
+  { collection: 'blogs', keys: { deletedAt: 1, updatedAt: -1 } },
+  { collection: 'blogs', keys: { tags: 1, deletedAt: 1 } },
+  // Retired slugs still resolve (301), so this lookup is on the public read path.
+  { collection: 'blogs', keys: { slugHistory: 1, deletedAt: 1 } },
+  // A slug is a post's public identity — uniqueness is enforced in the database,
+  // not just by uniqueSlug(), because two concurrent creates would both pass an
+  // application-level check. PARTIAL on deletedAt:null for the same reason the
+  // roles index below is: deletes are soft, and a tombstone must not hold its
+  // slug hostage forever.
+  {
+    collection: 'blogs',
+    keys: { slug: 1 },
+    options: { unique: true, partialFilterExpression: { deletedAt: null } },
+  },
   // User lookup by email (collaborator-add and auth paths).
   { collection: 'users', keys: { email: 1, deletedAt: 1 } },
   // Invite links resolve by token hash on an unauthenticated route — the one

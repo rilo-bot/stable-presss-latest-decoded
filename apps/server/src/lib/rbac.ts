@@ -250,6 +250,72 @@ export function articlesWriteGate(req: Request, res: Response, next: NextFunctio
 }
 
 /**
+ * Gate for /api/blogs.
+ *
+ * GET attaches the account OPTIONALLY rather than being flatly public: the
+ * handler needs to know whether the caller may see drafts, and a post that is
+ * not live must 404 for everyone else. `articlesWriteGate` can skip that only
+ * because the articles list leaks unpublished stories to the public already —
+ * not a precedent worth copying.
+ *
+ * Ownership is by `createdByUserId`, NOT by matching a display name the way
+ * articles do (`doc.author === account.displayName`). That comparison breaks
+ * the moment two staff share a name or one renames themselves, and on a blog
+ * the byline is deliberately free text — an author may publish under a pen name
+ * — so it is not an identity claim at all.
+ */
+export function blogsWriteGate(req: Request, res: Response, next: NextFunction): void {
+  if (req.method === 'GET') {
+    void attachAccountOptional(req, res, next)
+    return
+  }
+  void attachAccount(req, res, async () => {
+    const account = req.account!
+
+    if (req.method === 'POST') {
+      // Sub-resources under an existing post (media registration, publish) are
+      // edits of that post, not creations — they must not pass on `blog.create`.
+      const segments = req.url.split('?')[0].split('/').filter(Boolean)
+      if (segments.length <= 1) {
+        if (!accountCan(account, 'blog.create')) return forbid(res, 'You cannot create blog posts.')
+        return next()
+      }
+      return blogEditGate(req, res, next, segments[0]!)
+    }
+
+    if (req.method === 'DELETE') {
+      const id = firstSegment(req)
+      // DELETE /:id/media/:mediaId edits the post; DELETE /:id removes it.
+      const isMediaDelete = req.url.split('?')[0].split('/').filter(Boolean).length > 1
+      if (isMediaDelete) return blogEditGate(req, res, next, id)
+      if (!accountCan(account, 'blog.delete')) return forbid(res, 'You cannot delete blog posts.')
+      return next()
+    }
+
+    // PUT / PATCH
+    return blogEditGate(req, res, next, firstSegment(req))
+  })
+}
+
+/** May the caller edit this specific post? edit_any wins; else they must own it. */
+async function blogEditGate(
+  req: Request,
+  res: Response,
+  next: NextFunction,
+  id: string | undefined,
+): Promise<void> {
+  const account = req.account!
+  if (accountCan(account, 'blog.edit_any')) return next()
+  if (accountCan(account, 'blog.edit_own')) {
+    const doc = id ? await db.collection('blogs').findById(id) : null
+    if (doc && doc.createdByUserId === account.id) return next()
+    // A missing doc falls through to 403 rather than 404 on purpose: telling an
+    // unauthorised caller which post ids exist is a probe they don't need.
+  }
+  forbid(res, 'You can only edit your own blog posts.')
+}
+
+/**
  * Gate for /api/reports: GET loads the account optionally (so the handler can
  * filter private records by visibility); writes are staff-only.
  */

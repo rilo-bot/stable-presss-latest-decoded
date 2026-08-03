@@ -61,6 +61,7 @@ app.use((req, res, next) => {
   if (
     req.path.startsWith('/api/issues') ||
     req.path.startsWith('/api/magazines') ||
+    req.path.startsWith('/api/blogs') ||
     req.path.startsWith('/api/agent')
   )
     return next()
@@ -84,7 +85,7 @@ app.get('/api/health', (_req, res) => {
 // --- Add your API routes below ---
 
 // === auto-mounted routers (backend planner) ===
-import { authedWriteGate, staffWriteGate, articlesWriteGate, horseScopedWriteGate, partyScopedWriteGate, issuesGate } from './lib/rbac.js'
+import { authedWriteGate, staffWriteGate, articlesWriteGate, blogsWriteGate, horseScopedWriteGate, partyScopedWriteGate, issuesGate } from './lib/rbac.js'
 import authRouter from './routes/auth.js'
 import adminRouter from './routes/admin.js'
 import staffRouter from './routes/staff.js'
@@ -96,6 +97,7 @@ import partyClaimsRouter from './routes/partyClaims.js'
 import organisationsRouter from './routes/organisations.js'
 import notificationsRouter from './routes/notifications.js'
 import articlesRouter from './routes/articles.js'
+import blogsRouter from './routes/blogs.js'
 import horsesRouter from './routes/horses.js'
 import horsePartyLinksRouter from './routes/horsePartyLinks.js'
 import partiesRouter from './routes/parties.js'
@@ -143,6 +145,12 @@ app.use('/api/organisations', organisationsRouter) // self-gated (attachAccount 
 app.use('/api/notifications', notificationsRouter)  // self-gated (attachAccount inside)
 app.use('/api/podcastEpisodes', podcastEpisodesRouter)
 app.use('/api/articles', articlesWriteGate, articlesRouter)
+// Blogs — block-based posts with their own media pool. Public read (live posts
+// only; the gate attaches the account optionally so staff also see drafts),
+// writes gated on the `blog.*` permission axis. A post carries its whole block
+// list and, in local dev with no S3, inline data-URL images, so it needs more
+// headroom than the global 2 MB cap — the global parser skips this prefix above.
+app.use('/api/blogs', express.json({ limit: '10mb' }), blogsWriteGate, blogsRouter)
 app.use('/api/horses', horseScopedWriteGate({ collection: 'horses', idIsHorse: true, optionalGet: true }), horsesRouter)
 app.use('/api/horsePartyLinks', horseScopedWriteGate({ collection: 'horsePartyLinks' }), horsePartyLinksRouter)
 app.use('/api/parties', partyScopedWriteGate, partiesRouter)

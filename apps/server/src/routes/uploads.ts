@@ -38,7 +38,7 @@ function safeName(name: string): string {
   return ext ? `${stem}.${ext}` : stem
 }
 
-const ALLOWED_KINDS = new Set(['party', 'horse', 'media', 'evidence', 'avatar', 'podcast', 'misc'])
+const ALLOWED_KINDS = new Set(['party', 'horse', 'media', 'evidence', 'avatar', 'podcast', 'blog', 'misc'])
 
 function buildKey(kind: unknown, userId: string, fileName: unknown): string {
   const folder = ALLOWED_KINDS.has(String(kind)) ? String(kind) : 'misc'
