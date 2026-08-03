@@ -1,77 +1,27 @@
 // ---------------------------------------------------------------------------
-// Magazine Builder v2 — stock-photo sourcing for AI generation.
+// Magazine Builder v2 — stock photos for AI generation.
 //
 // The generation art-director writes an image BRIEF per photo slot (draftPage);
-// this turns that brief into a real, stored photo. Ported from the campaign-hq
-// reference (worker/src/lib/stock.ts) and adapted to stable-press: reuses our
-// own S3 `storage` (proxied upload + publicUrl), the raw Mongo driver, and — with
-// no `sharp` dependency here — stores Pexels' already-web-ready JPEG bytes
-// directly rather than re-encoding.
+// this turns that brief into a real, stored MediaAsset.
+//
+// The SOURCING now lives in lib/stock.ts, shared with the Blog Studio. This file
+// keeps what is genuinely magazine-specific: the S3 key namespace and the
+// MediaAsset row. Everything above that — the Pexels key, the retry-once-on-429,
+// downloading the bytes so nothing is hotlinked, and carrying the photographer's
+// credit — is the shared module's job.
 //
 // Env-gated: no PEXELS_API_KEY (or no S3) ⇒ isStockConfigured() is false and the
 // generator degrades image slots to flat palette blocks instead of failing.
-// Every fetched photo becomes a real MediaAsset (S3 + DB) so it obeys the "no
-// invented/hotlinked image URL" invariant and can be reused/edited later.
 // ---------------------------------------------------------------------------
 
-import crypto from 'crypto';
 import { db } from '../db.js';
-import { storage } from '../storage.js';
+import { findAndStoreStockPhoto, isStockConfigured, type StockOrientation } from '../stock.js';
 import { COL } from './collections.js';
 
-const PROVIDER = (process.env.STOCK_PROVIDER ?? 'pexels').trim().toLowerCase();
-const PEXELS_API_KEY = (process.env.PEXELS_API_KEY ?? '').trim();
-
-/** True when we can both source (Pexels key) AND persist (S3) a photo. */
-export function isStockConfigured(): boolean {
-  return PROVIDER === 'pexels' && !!PEXELS_API_KEY && storage.isConfigured();
-}
-
-export type StockOrientation = 'portrait' | 'landscape' | 'square';
-
-interface PexelsPhoto {
-  alt?: string;
-  photographer?: string;
-  photographer_url?: string;
-  src?: Record<string, string>;
-}
-
-async function searchPhoto(
-  query: string,
-  orientation?: StockOrientation,
-  attempt = 0,
-): Promise<{ bytes: Buffer; contentType: string; alt: string; attribution: { author: string; url: string } } | null> {
-  if (!PEXELS_API_KEY) return null;
-  const q = query.trim().slice(0, 200);
-  if (!q) return null;
-  const params = new URLSearchParams({ query: q, per_page: '5' });
-  if (orientation) params.set('orientation', orientation);
-  const searchRes = await fetch(`https://api.pexels.com/v1/search?${params.toString()}`, {
-    headers: { Authorization: PEXELS_API_KEY },
-    signal: AbortSignal.timeout(12_000),
-  });
-  // One retry on rate-limit; then give up (the caller degrades to a colour block).
-  // Bounded so sustained 429s (exactly what happens at scale) can't recurse
-  // forever and hang the whole single-threaded job.
-  if (searchRes.status === 429) {
-    if (attempt >= 1) return null;
-    await new Promise((r) => setTimeout(r, 1500));
-    return searchPhoto(query, orientation, attempt + 1);
-  }
-  if (!searchRes.ok) return null;
-  const data = (await searchRes.json()) as { photos?: PexelsPhoto[] };
-  const photo = data.photos?.[0];
-  const src = photo?.src?.large2x || photo?.src?.large || photo?.src?.original;
-  if (!photo || !src) return null;
-  const imgRes = await fetch(src, { signal: AbortSignal.timeout(20_000) });
-  if (!imgRes.ok) return null;
-  return {
-    bytes: Buffer.from(await imgRes.arrayBuffer()),
-    contentType: imgRes.headers.get('content-type') || 'image/jpeg',
-    alt: (photo.alt ?? q).slice(0, 300),
-    attribution: { author: photo.photographer ?? '', url: photo.photographer_url ?? '' },
-  };
-}
+// Re-exported so the generator's existing imports from this module keep working —
+// it asks `isStockConfigured()` before planning a photo slot at all.
+export { isStockConfigured };
+export type { StockOrientation };
 
 /**
  * Search + store a stock photo as a MediaAsset. Returns the element-ready image
@@ -84,28 +34,25 @@ export async function fetchAndStoreStock(
 ): Promise<{ url: string; assetId: string; alt: string } | null> {
   if (!isStockConfigured()) return null;
   try {
-    const found = await searchPhoto(opts.query, opts.orientation);
-    if (!found) return null;
-    const ext = found.contentType.includes('png') ? 'png' : 'jpg';
-    const key = `public/magazinesV2/${ctx.magazineId}/${crypto.randomUUID()}-gen-p${ctx.pageIndex}.${ext}`;
-    await storage.uploadObject({ key, contentType: found.contentType, body: found.bytes });
-    const url = storage.publicUrl(key);
+    const stored = await findAndStoreStockPhoto(opts, `public/magazinesV2/${ctx.magazineId}`);
+    if (!stored) return null;
+
     const now = new Date().toISOString();
     const assetId = await db.collection(COL.media).insertOne({
       magazineId: ctx.magazineId,
       pageIndex: ctx.pageIndex,
-      key,
-      url,
-      contentType: found.contentType,
-      size: found.bytes.length,
-      alt: found.alt,
+      key: stored.key,
+      url: stored.url,
+      contentType: stored.contentType,
+      size: stored.bytes,
+      alt: stored.alt,
       kind: 'photo',
       source: 'stock',
-      attribution: found.attribution,
+      attribution: stored.attribution,
       createdAt: now,
       updatedAt: now,
     });
-    return { url, assetId: String(assetId), alt: found.alt };
+    return { url: stored.url, assetId: String(assetId), alt: stored.alt };
   } catch (err) {
     console.warn('[magazineV2] stock fetch failed:', err instanceof Error ? err.message : err);
     return null;

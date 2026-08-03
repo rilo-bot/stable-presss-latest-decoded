@@ -81,8 +81,14 @@ function blockForItem(item: BodyItem): Block {
       return b;
     }
     case 'paragraph':
-    default:
       return paragraph(escapeHtml(item.text));
+    default:
+      // A reference card. Unreachable from this module in practice — `cleanBody()`
+      // on the server strips ref items before an Instant draft ever gets here,
+      // because this agent has no search tools and could only guess at an id. The
+      // arm exists so the shared BodyItem union stays exhaustive; the Blog Studio's
+      // own `blockForItem` is what actually builds these.
+      return paragraph('');
   }
 }
 
@@ -148,6 +154,11 @@ export function buildBlogPayload(
   let nextPhoto = 0;
 
   fields.body.forEach((item, i) => {
+    // Reference cards belong to the Blog Studio, which can look an id up. The
+    // server already strips them from an Instant draft; skipping here too means a
+    // stale client cannot turn one into an empty block on the page.
+    if (item.kind === 'horseRef' || item.kind === 'partyRef' || item.kind === 'storyRef') return;
+
     // A photo reads best at a section break, so it goes BEFORE a heading rather
     // than after a paragraph — never before the opening item, which would put a
     // picture above the first line of the piece.
@@ -175,8 +186,12 @@ export function blogPlainText(fields: BlogFields): string {
           return item.items.map((p) => (p.lead ? `${p.lead}: ${p.text}` : p.text)).join('\n');
         case 'quote':
           return item.attribution ? `"${item.text}" — ${item.attribution}` : `"${item.text}"`;
-        default:
+        case 'paragraph':
+        case 'heading':
           return item.text;
+        default:
+          // A reference card contributes no prose to an excerpt or a word count.
+          return '';
       }
     })
     .filter(Boolean)

@@ -31,17 +31,31 @@ export interface BlogPostOption {
 }
 
 /**
- * A destructive action awaiting the user's click.
+ * What the user decided.
+ *
+ * `retry` exists for the cover card, which has three answers rather than two —
+ * keeping a photograph, wanting a different one, and wanting to choose their own
+ * are three different next moves for the assistant, and collapsing the last two
+ * into "cancel" would have it guess which.
+ */
+export type ConfirmOutcome = 'confirm' | 'retry' | 'cancel';
+
+/**
+ * An action awaiting the user's click.
  *
  * `resolve` is the tool call's own continuation: the executor parks it here and
  * awaits it, so the model is genuinely blocked until a human answers rather than
  * being told "done" and finding out later.
  */
 export interface PendingConfirm {
-  kind: 'delete' | 'overwrite-live';
+  kind: 'delete' | 'overwrite-live' | 'cover';
   title: string;
   detail: string;
-  resolve: (ok: boolean) => void;
+  /** Shown when the decision is about a picture — you cannot approve one unseen. */
+  imageUrl?: string;
+  /** Credit line for a stock photo, so the user can see whose work it is. */
+  credit?: string;
+  resolve: (outcome: ConfirmOutcome) => void;
 }
 
 interface BlogStudioUiState {
@@ -73,10 +87,10 @@ interface BlogStudioUiState {
   setAttachedImage: (url: string | null) => void;
   setPostList: (list: BlogPostOption[] | null) => void;
   setCreatedDraft: (id: string | null) => void;
-  /** Park a destructive action and hand back the promise the executor awaits. */
-  requestConfirm: (req: Omit<PendingConfirm, 'resolve'>) => Promise<boolean>;
+  /** Park an action and hand back the promise the executor awaits. */
+  requestConfirm: (req: Omit<PendingConfirm, 'resolve'>) => Promise<ConfirmOutcome>;
   /** Answer the parked action. */
-  answerConfirm: (ok: boolean) => void;
+  answerConfirm: (outcome: ConfirmOutcome) => void;
   /** Clear transient per-conversation state ("New chat" / after filing). */
   reset: () => void;
 }
@@ -106,26 +120,26 @@ export const useBlogStudioUi = create<BlogStudioUiState>((set, get) => ({
   setCreatedDraft: (createdDraftId) => set({ createdDraftId }),
 
   requestConfirm: (req) =>
-    new Promise<boolean>((resolve) => {
+    new Promise<ConfirmOutcome>((resolve) => {
       // Only one at a time. A second request while one is open declines itself
       // rather than replacing the card — which would leave the first tool call
       // awaiting a promise nothing can ever resolve.
       if (get().pendingConfirm) {
-        resolve(false);
+        resolve('cancel');
         return;
       }
       set({ pendingConfirm: { ...req, resolve } });
     }),
 
-  answerConfirm: (ok) => {
+  answerConfirm: (outcome) => {
     const pending = get().pendingConfirm;
     set({ pendingConfirm: null });
-    pending?.resolve(ok);
+    pending?.resolve(outcome);
   },
 
   reset: () => {
     // Anything still waiting is declined, so no tool call is left hanging.
-    get().pendingConfirm?.resolve(false);
+    get().pendingConfirm?.resolve('cancel');
     set({
       pendingPrompt: null,
       attachedImageUrl: null,

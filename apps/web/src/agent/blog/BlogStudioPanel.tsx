@@ -47,44 +47,94 @@ const POST_STARTERS = [
 ];
 
 /**
- * A destructive action waiting on a human.
+ * An action waiting on a human — a delete, an overwrite of live writing, or a
+ * cover the assistant has chosen.
  *
  * The tool call that raised this is parked on a promise until one of these buttons
- * is pressed, so the model cannot report success and be wrong.
+ * is pressed, so the model cannot report success and be wrong. The COVER case is
+ * why the card shows a picture: the assistant used to set a cover silently and the
+ * author found out what it had picked by opening the post. You cannot approve a
+ * photograph you have not seen, and "Try another" has to be as easy as accepting.
  */
 function ConfirmCard() {
   const pending = useBlogStudioUi((s) => s.pendingConfirm);
   const answer = useBlogStudioUi((s) => s.answerConfirm);
   if (!pending) return null;
 
+  const isCover = pending.kind === 'cover';
   const destructive = pending.kind === 'delete';
+
+  const heading = isCover
+    ? 'Use this as the cover?'
+    : destructive
+      ? 'Delete this post?'
+      : 'Overwrite what readers see?';
+
   return (
-    <div className="border-t border-amber-500/30 bg-amber-500/[0.07] px-3 py-2.5">
-      <div className="mb-1.5 flex items-start gap-2">
-        <AlertTriangle size={14} className="mt-0.5 flex-shrink-0 text-amber-400" />
+    <div
+      className={
+        'border-t px-3 py-2.5 ' +
+        (isCover ? 'border-white/10 bg-white/[0.04]' : 'border-amber-500/30 bg-amber-500/[0.07]')
+      }
+    >
+      <div className="mb-2 flex items-start gap-2">
+        {isCover ? (
+          <ImageIcon size={14} className="mt-0.5 flex-shrink-0" style={{ color: 'var(--gold-mid)' }} />
+        ) : (
+          <AlertTriangle size={14} className="mt-0.5 flex-shrink-0 text-amber-400" />
+        )}
         <div className="min-w-0">
-          <p className="text-[12px] font-bold text-white/90">
-            {destructive ? 'Delete this post?' : 'Overwrite what readers see?'}
-          </p>
+          <p className="text-[12px] font-bold text-white/90">{heading}</p>
           <p className="truncate text-[11px] text-white/60">{pending.title}</p>
-          <p className="mt-1 text-[11px] leading-relaxed text-white/50">{pending.detail}</p>
         </div>
       </div>
-      <div className="flex justify-end gap-2">
+
+      {pending.imageUrl && (
+        <figure className="mb-2">
+          <img
+            src={pending.imageUrl}
+            alt="Proposed cover"
+            crossOrigin="anonymous"
+            className="max-h-40 w-full rounded-sm border border-white/10 object-cover"
+          />
+          {pending.credit && (
+            <figcaption className="mt-1 text-[10px] text-white/40">{pending.credit}</figcaption>
+          )}
+        </figure>
+      )}
+
+      <p className="mb-2 text-[11px] leading-relaxed text-white/50">{pending.detail}</p>
+
+      <div className="flex flex-wrap justify-end gap-2">
+        {/* Three answers for a cover, because "not this one" splits into two
+            different next moves — search again, or let me pick my own — and the
+            assistant would otherwise have to guess which was meant. */}
+        {isCover && (
+          <button
+            onClick={() => answer('cancel')}
+            className="rounded-sm border border-white/15 px-2.5 py-1 text-[11px] font-semibold text-white/70 hover:bg-white/10"
+          >
+            I’ll choose my own
+          </button>
+        )}
         <button
-          onClick={() => answer(false)}
+          onClick={() => answer(isCover ? 'retry' : 'cancel')}
           className="rounded-sm border border-white/15 px-2.5 py-1 text-[11px] font-semibold text-white/70 hover:bg-white/10"
         >
-          Cancel
+          {isCover ? 'Try another' : 'Cancel'}
         </button>
         <button
-          onClick={() => answer(true)}
+          onClick={() => answer('confirm')}
           className={
             'rounded-sm px-2.5 py-1 text-[11px] font-bold ' +
-            (destructive ? 'bg-red-600 text-white hover:bg-red-500' : 'bg-amber-500 text-black hover:bg-amber-400')
+            (destructive
+              ? 'bg-red-600 text-white hover:bg-red-500'
+              : isCover
+                ? 'bg-emerald-600 text-white hover:bg-emerald-500'
+                : 'bg-amber-500 text-black hover:bg-amber-400')
           }
         >
-          {destructive ? 'Delete it' : 'Replace it'}
+          {destructive ? 'Delete it' : isCover ? 'Use it' : 'Replace it'}
         </button>
       </div>
     </div>

@@ -32,6 +32,7 @@ import {
   type BlogStatus,
 } from '../lib/blog/blocks.js'
 import { nextSlugHistory, slugify, uniqueSlug } from '../lib/blog/slug.js'
+import { getStockPhoto, isStockConfigured, storeStockPhoto } from '../lib/stock.js'
 
 const router = Router()
 
@@ -659,6 +660,86 @@ router.post('/:id/media', async (req, res) => {
     updatedAt: now,
   })
   res.status(201).json({ media: asset })
+})
+
+/**
+ * POST /api/blogs/:id/media/stock — source a stock photo into the pool.
+ *
+ * Takes a PROVIDER PHOTO ID, never a URL. That is what makes "never invent an
+ * image URL" enforceable rather than a request politely made of a language model:
+ * a fabricated id fails to resolve here and nothing is stored, whereas a
+ * fabricated URL would become a pool entry pointing at anything at all.
+ *
+ * The bytes are downloaded and put in our own bucket rather than hotlinked, and
+ * the photographer's credit travels into the asset — the renderer already shows a
+ * `credit` under an image.
+ *
+ * Gating: this is a POST with more than one path segment, so blogsWriteGate routes
+ * it through blogEditGate — editing this post, not creating one. Same rule as the
+ * upload-registration endpoint above.
+ */
+router.post('/:id/media/stock', async (req, res) => {
+  const found = await db.collection('blogs').findById(req.params.id)
+  if (!found) {
+    res.status(404).json({ error: 'Not found' })
+    return
+  }
+
+  if (!isStockConfigured()) {
+    // Said plainly, because the alternative is the caller quietly substituting
+    // something else and the author believing a search happened.
+    res.status(503).json({
+      error: 'Stock photo search is not set up on this server. Attach a photo directly instead.',
+      configured: false,
+    })
+    return
+  }
+
+  const body = (req.body ?? {}) as Record<string, unknown>
+  const photoId = optStr(body.photoId, 12)
+  if (!photoId) {
+    res.status(400).json({ error: 'A photoId is required.' })
+    return
+  }
+
+  const candidate = await getStockPhoto(photoId)
+  if (!candidate) {
+    res.status(404).json({ error: 'That photo id does not exist. Search again and use an id from the results.' })
+    return
+  }
+
+  const stored = await storeStockPhoto(candidate, `public/blogs/${req.params.id}`)
+  if (!stored) {
+    res.status(502).json({ error: 'The photo could not be downloaded. Please try another.' })
+    return
+  }
+
+  const pool = normaliseMedia(found.media)
+  const asset = normaliseMedia([
+    {
+      url: stored.url,
+      key: stored.key,
+      kind: 'image',
+      filename: 'stock.jpg',
+      contentType: stored.contentType,
+      bytes: stored.bytes,
+      width: stored.width,
+      height: stored.height,
+      // The provider's own description of the photo IS alt text — a description of
+      // the image written from the image. Better than an empty alt, and better
+      // than one the model guessed without seeing it.
+      alt: optStr(body.alt, 500) ?? stored.alt,
+      credit: stored.attribution.author ? `Photo: ${stored.attribution.author}` : undefined,
+      uploadedByUserId: req.account!.id,
+    },
+  ])[0]!
+
+  const now = new Date().toISOString()
+  await db.collection('blogs').updateOne(req.params.id, {
+    media: [...pool, asset],
+    updatedAt: now,
+  })
+  res.status(201).json({ media: asset, attribution: stored.attribution })
 })
 
 /** PATCH /api/blogs/:id/media/:mediaId — edit alt / caption / credit. */

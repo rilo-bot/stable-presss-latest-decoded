@@ -22,14 +22,18 @@
 
 import { toast } from 'sonner';
 
+import { authFetch } from '@/lib/api';
 import { useBlogStore, type BlogSaveInput } from '@/stores/blogStore';
 import { useBlogStudioUi, type BlogPostOption } from '@/stores/blogStudioUiStore';
 import { useAuthStore } from '@/stores/authStore';
-import { suggestImages } from '@/agent/article/articleToolExecutor';
+import { useHorseStore } from '@/stores/horseStore';
+import { usePartyStore } from '@/stores/partyStore';
+import { useArticleStore } from '@/stores/articleStore';
 import {
   blockForItem,
   blocksToBodyItems,
   describeVisuals,
+  isRefItem,
   spliceBodyItems,
   type BodyItem,
 } from '@/blog/bodyItems';
@@ -44,9 +48,10 @@ const CLIENT_TOOLS = new Set([
   'replaceBlogBody',
   'setBlogPublished',
   'deleteBlogPost',
-  'suggestBlogImages',
   'setBlogCover',
 ]);
+// `searchStockPhotos` is deliberately NOT here: it runs on the server, because the
+// stock provider's key must not reach the browser.
 
 export function isBlogClientTool(name: string): boolean {
   return CLIENT_TOOLS.has(name);
@@ -114,12 +119,72 @@ function toBodyItems(v: unknown): BodyItem[] {
       continue;
     }
 
+    if (item.kind === 'horseRef' || item.kind === 'partyRef' || item.kind === 'storyRef') {
+      const refId = str(item.refId, 64);
+      // Existence is checked separately, in resolveRefs — this only insists there
+      // is something to check.
+      if (refId) out.push({ kind: item.kind, refId });
+      continue;
+    }
+
     if (!text) continue;
     out.push({ kind: 'paragraph', text });
   }
 
   while (out.length > 0 && out[0]!.kind === 'heading') out.shift();
   return out;
+}
+
+/**
+ * Drop reference items whose record does not exist.
+ *
+ * This is the one validation the server genuinely cannot do for us.
+ * `normaliseBlocks` checks that a `horseId` is a *string* — not that the horse is
+ * real — so a hallucinated id would persist perfectly happily and render on the
+ * public page as "This horse record is no longer available". A dead card in the
+ * middle of a piece is worse than no card, so an id that does not resolve is
+ * removed here and reported back, and the assistant is told to say so.
+ *
+ * The stores are fetched first because the studio may be the first thing the user
+ * opened — an empty store would otherwise reject every id as unknown.
+ */
+async function resolveRefs(items: BodyItem[]): Promise<{ items: BodyItem[]; dropped: string[] }> {
+  const refs = items.filter(isRefItem);
+  if (refs.length === 0) return { items, dropped: [] };
+
+  await Promise.all([
+    refs.some((r) => r.kind === 'horseRef') ? useHorseStore.getState().fetchHorses() : Promise.resolve(),
+    refs.some((r) => r.kind === 'partyRef') ? usePartyStore.getState().fetchParties() : Promise.resolve(),
+    refs.some((r) => r.kind === 'storyRef') ? useArticleStore.getState().fetchArticles() : Promise.resolve(),
+  ]);
+
+  const horses = new Set(useHorseStore.getState().horses.map((h) => h.id));
+  const parties = new Set(usePartyStore.getState().parties.map((p) => p.id));
+  const articles = new Set(useArticleStore.getState().articles.map((a) => a.id));
+
+  const dropped: string[] = [];
+  const kept = items.filter((item) => {
+    if (!isRefItem(item)) return true;
+    const exists =
+      item.kind === 'horseRef' ? horses.has(item.refId)
+      : item.kind === 'partyRef' ? parties.has(item.refId)
+      : articles.has(item.refId);
+    if (!exists) dropped.push(`${item.kind}:${item.refId}`);
+    return exists;
+  });
+
+  return { items: kept, dropped };
+}
+
+/** The linked-record ids a body implies, for the post's own link fields. */
+function linksFrom(items: BodyItem[]): { linkedHorseIds: string[]; linkedPartyIds: string[] } {
+  const horseIds = new Set<string>();
+  const partyIds = new Set<string>();
+  for (const item of items) {
+    if (item.kind === 'horseRef') horseIds.add(item.refId);
+    if (item.kind === 'partyRef') partyIds.add(item.refId);
+  }
+  return { linkedHorseIds: [...horseIds], linkedPartyIds: [...partyIds] };
 }
 
 // ── Reads ────────────────────────────────────────────────────────────────────
@@ -252,7 +317,7 @@ async function replaceBody(arg: Record<string, unknown>): Promise<unknown> {
   const post = await load(str(arg.id, 64));
   if (!post) return { ok: false, error: 'That post could not be opened.' };
 
-  const items = toBodyItems(arg.body);
+  const { items, dropped } = await resolveRefs(toBodyItems(arg.body));
   if (items.length === 0) {
     return { ok: false, error: 'The new body was empty after validation — nothing was changed. Send the body as items with plain text.' };
   }
@@ -260,32 +325,37 @@ async function replaceBody(arg: Record<string, unknown>): Promise<unknown> {
   // Overwriting LIVE writing needs a human. A model that mishears "cut that bit"
   // as "cut the post" must not be able to rewrite a published piece on its own.
   if (post.status === 'published') {
-    const ok = await useBlogStudioUi.getState().requestConfirm({
+    const outcome = await useBlogStudioUi.getState().requestConfirm({
       kind: 'overwrite-live',
       title: post.title || 'Untitled post',
       detail: 'This post is live. Replacing its body will change what readers see straight away.',
     });
-    if (!ok) return { ok: false, cancelled: true, error: 'The user declined. Nothing was changed.' };
+    if (outcome !== 'confirm') return { ok: false, cancelled: true, error: 'The user declined. Nothing was changed.' };
   }
 
-  // Keeps images, galleries, embeds and cards, re-anchored to where they were.
+  // Keeps images, galleries and embeds, re-anchored to where they were. Reference
+  // cards are part of `items` now, so they move with the writing rather than being
+  // re-anchored as though they were photographs.
   const { blocks, movedVisuals } = spliceBodyItems(post.blocks, items);
 
-  const result = await saveFull(post, { blocks });
+  const result = await saveFull(post, { blocks, ...linksFrom(items) });
   if (!result.ok) return result;
   return {
     ok: true,
     items: items.length,
     movedVisuals,
+    ...(dropped.length > 0
+      ? { droppedRefs: dropped, note: `${dropped.length} record card(s) were dropped because those ids do not exist. Tell the user which, and search again for the right record rather than guessing.` }
+      : {}),
     ...(movedVisuals > 0
-      ? { note: `${movedVisuals} visual block(s) ended up at the end because the new body is shorter. Tell the user to check the photo positions.` }
+      ? { photoNote: `${movedVisuals} photo/gallery block(s) ended up at the end because the new body is shorter. Tell the user to check the photo positions.` }
       : {}),
   };
 }
 
 async function createDraft(arg: Record<string, unknown>): Promise<unknown> {
   const title = str(arg.title, 300);
-  const items = toBodyItems(arg.body);
+  const { items, dropped } = await resolveRefs(toBodyItems(arg.body));
   if (!title) return { ok: false, error: 'A title is required.' };
   if (items.length === 0) return { ok: false, error: 'The body was empty after validation. Send it as items with plain text.' };
 
@@ -318,6 +388,9 @@ async function createDraft(arg: Record<string, unknown>): Promise<unknown> {
     minTier: TIERS.includes(tier) ? tier : 'free',
     blocks,
     media,
+    // Whatever the piece embeds is also recorded on the post itself, so the record
+    // knows what it is about — these were saved empty on every AI post before.
+    ...linksFrom(items),
     ...(media[0] ? { cover: { mediaId: media[0].id, treatment: 'side' as const } } : {}),
     // The byline is the signed-in member, never asked for and never model-supplied.
     author: { name: useAuthStore.getState().currentUser?.displayName?.trim() || 'Staff' },
@@ -327,7 +400,14 @@ async function createDraft(arg: Record<string, unknown>): Promise<unknown> {
 
   if (!created) return { ok: false, error: 'Could not file the draft. You may not have permission to create posts.' };
   useBlogStudioUi.getState().setCreatedDraft(created.id);
-  return { ok: true, id: created.id, slug: created.slug };
+  return {
+    ok: true,
+    id: created.id,
+    slug: created.slug,
+    ...(dropped.length > 0
+      ? { droppedRefs: dropped, note: `${dropped.length} record card(s) were left out because those ids do not exist — search for the right record and add them to the post.` }
+      : {}),
+  };
 }
 
 async function setPublished(arg: Record<string, unknown>): Promise<unknown> {
@@ -354,7 +434,7 @@ async function deletePost(arg: Record<string, unknown>): Promise<unknown> {
   const post = await load(id);
   if (!post) return { ok: false, error: 'That post could not be opened.' };
 
-  const ok = await useBlogStudioUi.getState().requestConfirm({
+  const outcome = await useBlogStudioUi.getState().requestConfirm({
     kind: 'delete',
     title: post.title || 'Untitled post',
     detail:
@@ -362,7 +442,7 @@ async function deletePost(arg: Record<string, unknown>): Promise<unknown> {
         ? 'This post is LIVE. Deleting it removes it from the blog immediately.'
         : 'This draft will be removed from the Blogs list.',
   });
-  if (!ok) return { ok: false, cancelled: true, error: 'The user declined. The post was not deleted.' };
+  if (outcome !== 'confirm') return { ok: false, cancelled: true, error: 'The user declined. The post was not deleted.' };
 
   const done = await useBlogStore.getState().removeBlog(id);
   if (!done) return { ok: false, error: 'The delete was refused — you may not have permission to delete posts.' };
@@ -370,36 +450,76 @@ async function deletePost(arg: Record<string, unknown>): Promise<unknown> {
   return { ok: true };
 }
 
+/**
+ * Set a post's cover from a stock candidate — shown to the user first.
+ *
+ * The order here is the whole point of the rewrite. It used to take a URL from the
+ * model and save it silently, so the author found out what had been chosen by
+ * opening the post. Now:
+ *
+ *   1. the photo is sourced into the post's own media pool by the SERVER, which
+ *      resolves the provider id, downloads the bytes into our bucket and keeps the
+ *      photographer's credit — the browser never handles an image URL the model
+ *      supplied, so an invented one cannot become a stored asset;
+ *   2. the user SEES it and answers keep / another / their own;
+ *   3. only "keep" actually points the post's cover at it.
+ *
+ * A photo they rejected stays in the pool rather than being deleted — it is a real
+ * asset now, they may want it for a block, and silently binning something a person
+ * just looked at is its own small surprise.
+ */
 async function setCover(arg: Record<string, unknown>): Promise<unknown> {
-  const post = await load(str(arg.id, 64));
+  const postId = str(arg.id, 64);
+  const post = await load(postId);
   if (!post) return { ok: false, error: 'That post could not be opened.' };
 
-  const src = str(arg.src, 2000);
-  // Only http(s). The model is told never to invent URLs; this is what makes that
-  // more than a request.
-  if (!/^https?:\/\//i.test(src)) {
-    return { ok: false, error: 'That is not a usable image URL. Use one returned by suggestBlogImages.' };
+  const photoId = str(arg.photoId, 12);
+  if (!/^\d{1,12}$/.test(photoId)) {
+    return { ok: false, error: 'That is not a photo id from searchStockPhotos. Search again and use a candidate\'s `id`.' };
   }
 
-  const existing = post.media.find((m) => m.url === src);
-  const id = existing?.id ?? `cover-${Date.now().toString(36)}`;
-  const media: BlogMedia[] = existing
-    ? post.media
-    : [
-        ...post.media,
-        {
-          id,
-          url: src,
-          kind: 'image',
-          filename: 'cover.jpg',
-          contentType: 'image/jpeg',
-          alt: str(arg.alt, 500),
-          uploadedAt: new Date().toISOString(),
-        },
-      ];
+  // The server does the sourcing: it owns the provider key, and this endpoint is
+  // behind the same RBAC gate as every other write to this post.
+  const res = await authFetch(`/api/blogs/${postId}/media/stock`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ photoId, ...(str(arg.alt, 500) ? { alt: str(arg.alt, 500) } : {}) }),
+  });
+  if (!res.ok) {
+    const body = (await res.json().catch(() => ({}))) as { error?: string; configured?: boolean };
+    return {
+      ok: false,
+      ...(body.configured === false ? { configured: false } : {}),
+      error: body.error ?? `Could not source that photo (HTTP ${res.status}).`,
+    };
+  }
+  const { media: asset, attribution } = (await res.json()) as {
+    media: BlogMedia;
+    attribution?: { author?: string };
+  };
 
-  const result = await saveFull(post, { media, cover: { mediaId: id, treatment: 'side' } });
-  return result.ok ? { ok: true } : result;
+  const outcome = await useBlogStudioUi.getState().requestConfirm({
+    kind: 'cover',
+    title: post.title || 'Untitled post',
+    detail: 'This will be the post’s cover — beside the writing, and on its card in the blog index.',
+    imageUrl: asset.url,
+    ...(attribution?.author ? { credit: `Photo: ${attribution.author}` } : {}),
+  });
+
+  if (outcome === 'retry') {
+    return { ok: false, retry: true, error: 'The user wants a different photo. Search again with a different description and offer new options.' };
+  }
+  if (outcome === 'cancel') {
+    return { ok: false, cancelled: true, error: 'The user would rather choose their own photo — tell them to use the image button below the chat.' };
+  }
+
+  // Re-read: the media endpoint bumped updatedAt, so saving against the version we
+  // loaded before it would 409 against a baseline we ourselves invalidated.
+  const fresh = await load(postId);
+  if (!fresh) return { ok: false, error: 'The post could not be re-read after adding the photo.' };
+
+  const result = await saveFull(fresh, { cover: { mediaId: asset.id, treatment: 'side' } });
+  return result.ok ? { ok: true, alt: asset.alt } : result;
 }
 
 // ── Dispatch ─────────────────────────────────────────────────────────────────
@@ -422,10 +542,6 @@ export async function executeBlogTool(name: string, input: unknown): Promise<unk
       return setPublished(arg);
     case 'deleteBlogPost':
       return deletePost(arg);
-    case 'suggestBlogImages': {
-      const candidates = suggestImages(arg.query ? String(arg.query) : undefined);
-      return { candidates };
-    }
     case 'setBlogCover':
       return setCover(arg);
     default:

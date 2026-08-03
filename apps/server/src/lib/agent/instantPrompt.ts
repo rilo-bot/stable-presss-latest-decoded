@@ -165,7 +165,7 @@ export const STORY_SYSTEM = [
 // of them gets.
 export const BodyItemSchema = z.object({
   kind: z
-    .enum(['paragraph', 'heading', 'list', 'quote'])
+    .enum(['paragraph', 'heading', 'list', 'quote', 'horseRef', 'partyRef', 'storyRef'])
     .describe('What this item is. Most items are paragraphs.'),
   text: z
     .string()
@@ -192,6 +192,12 @@ export const BodyItemSchema = z.object({
     .optional()
     .describe('list only: the points, each optionally with a short bold lead-in label.'),
   attribution: z.string().optional().describe('quote only: who said it — ONLY if the sources name them.'),
+  refId: z
+    .string()
+    .optional()
+    .describe(
+      'horseRef / partyRef / storyRef ONLY: the id of the record to embed as a card, taken from a search tool result. NEVER invent one — an id that does not resolve renders as a dead card. Only the Blog Studio has the search tools to obtain these; leave it out otherwise.',
+    ),
 })
 
 export const BlogDraftSchema = z.object({

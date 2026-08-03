@@ -37,7 +37,10 @@ router.post('/chat', attachAccountOptional, async (req, res) => {
       model: getAgentModel(),
       system: buildBlogSystemPrompt(req.account, body.blogContext),
       messages: await convertToModelMessages(body.messages),
-      tools: buildBlogTools(),
+      // The account is passed so the borrowed record-lookup tools scope their
+      // reads to what this reader may see; the auth header goes with it for the
+      // ones that call back through our own API.
+      tools: buildBlogTools(req.account, req.headers.authorization),
       // 16 rather than the Story Studio's 12. A desk conversation legitimately
       // chains more tool steps — list, open, rewrite, publish is four before the
       // model has said anything — and hitting the ceiling mid-flow reads to the

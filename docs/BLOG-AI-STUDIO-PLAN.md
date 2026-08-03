@@ -1,7 +1,8 @@
 # Blog AI Studio — Implementation Plan
 
 **Date:** 2026-08-03 · **Branch:** `feature/blogs` · **Status: BUILT** — all four phases, signed off as
-recommended (two modes, confirm cards, the anchoring rule). See §10 for what shipped and how it was verified.
+recommended (two modes, confirm cards, the anchoring rule). See §10 for what shipped and how it was verified,
+§11 for the grounding + cover-image follow-ups (**also built**), and §12 for what those shipped.
 
 This is `BLOG-SYSTEM-PLAN.md` **P6 — AI**, which that document deferred as "separate plan". Nothing here
 contradicts it; §6's one architectural claim — *"the block model IS the AI interface … an agent emits a
@@ -312,3 +313,171 @@ instead.
 **Not opened in a browser.** There is no test runner in this repo, so the anchoring check above was run as a
 standalone script rather than committed as a unit test — worth adding if vitest ever lands. The chat flows
 themselves need `OPENROUTER_API_KEY` and a real session to exercise.
+
+---
+
+## 11. Grounding and cover images — **BUILT**
+
+Two gaps raised after the first build, specified here and then built. §11.3 records what shipped.
+
+### 11.1 The posts are not about *this* website
+
+**The problem.** The assistant writes competent thoroughbred-racing prose about nothing in particular. It has
+no access to the register, so a post about "the Widden draft" is invented atmosphere rather than a piece about
+the horses, trainers and sales actually on file — and it cannot link to any of them.
+
+The irony is that everything needed already exists and the studio uses none of it:
+
+| Already built | Used by the studio today |
+|---|---|
+| `horseCard` / `partyCard` / `articleRef` block kinds | **No** |
+| `RefBlocks.tsx`, which renders all three and degrades to a plain link when a record is deleted | No |
+| `linkedHorseIds` / `linkedPartyIds` on the post, validated by the server | **No — always saved empty** |
+| `searchHorses`, `getHorseDossier`, `searchParties`, `getParty`, `searchArticles`, `getArticle`, `listRaces` in `lib/agent/tools.ts` — server-executed, real DB reads, **already scoped per reader** (`visibleHorses(account)`, drafts only for staff) | No |
+
+`RefBlocks.tsx` even states the intent: *"These are what make a blog post part of the platform rather than a
+page of text that happens to live on it."*
+
+**The shape of the fix.**
+
+1. **Compose the lookup tools in, don't reimplement them.** `buildTools(account)` returns a `ToolSet`; pick
+   the seven read-only lookups out of it into the Blog Studio's set. They are already visibility-scoped, and a
+   second copy of "which horses may this account see" is a second copy that can be wrong.
+2. **Extend `BodyItem` with three reference kinds** — `horseRef` / `partyRef` / `storyRef`, each carrying only
+   an id. `blockForItem` maps them onto the existing block kinds via the existing factories, so the model
+   still never emits a `Block[]` and the §2 rule holds. This is the only invasive part: `BodyItem` is shared
+   with Instant Capture, so both `instantPrompt.ts`'s schema and `instant/types.ts` move together, and
+   `cleanBody()` learns to drop a ref with no id.
+3. **Set `linkedHorseIds` / `linkedPartyIds`** from whatever the post references, on create and on body
+   replace.
+4. **Prompt rules with teeth:** search the register before writing; build the piece around what is actually
+   there; never invent a horse, person, race or result; if the user names something not on file, say so and
+   offer the nearest match rather than writing around the gap.
+
+**Why it is not a one-liner:** `BodyItem` is a shared contract with a shipped feature, and reference blocks
+are the first `BodyItem` kind that carries an id the model could get wrong — an id that does not resolve
+renders as "This horse record is no longer available", which is worse than no card. `normaliseBlocks` cannot
+catch it either: it validates that `horseId` is a *string*, not that the horse exists. So step 2 needs the
+executor to verify every id against the store before it builds the block, and drop the ones that miss.
+
+### 11.2 Cover images — the AI cannot actually find one
+
+**The problem is bigger than it looks.** `suggestBlogImages` reuses `suggestImages` from the Article Studio,
+which searches nothing. It ranks a **hardcoded dictionary of 25 Pexels photo IDs** in
+`web/src/editor/templates/helpers.ts` by naive substring match **against the key name** — `raceFinish`,
+`ownersCelebrate`, `horseGallop`. Concretely:
+
+- Ask for "a yearling at Karaka" and no key contains "yearling" or "karaka", so every candidate scores zero,
+  the `some(score > 0)` branch fails, and it returns **the first six of the same generic list** it returns for
+  every other query. The keyword is decorative.
+- Those 25 photos are the entire visual vocabulary, shared across every article and now every blog post.
+- The URLs **hotlink `images.pexels.com`** — nothing is stored in our own bucket, so the post's cover depends
+  on a third party's CDN and its hotlinking policy.
+- No attribution is recorded, unlike the magazine path.
+- **Nothing shows the user the cover before it is applied.** `setBlogCover` writes it straight to the post; the
+  drawer's preview chip only ever shows a photo the *user* attached with the image button, never one the AI
+  chose. So the assistant says "I've set the cover" and the author finds out what it picked by opening the
+  post.
+
+**The primitive already exists.** `server/src/lib/magazineV2/stock.ts` → `fetchAndStoreStock()` does a live
+Pexels search, downloads the bytes, uploads them to S3, records `attribution: { author, url }`, supports an
+`orientation` hint, retries once on a 429 and **never throws** — the caller degrades instead. It is env-gated
+behind `isStockConfigured()` (`PEXELS_API_KEY` + S3).
+
+**The shape of the fix.**
+
+1. **Generalise `fetchAndStoreStock` out of `magazineV2`.** It is currently magazine-scoped: it takes
+   `{ magazineId, pageIndex }` and inserts into `COL.media`. Lift the search-and-store half into a shared
+   `lib/stock.ts` that returns `{ url, key, alt, attribution, width, height }` and lets the caller decide
+   where the record goes — the magazine keeps its own insert, the blog puts an entry in the post's media pool.
+2. **A real search tool.** `searchStockPhotos({ query, orientation })` returning several genuine candidates
+   with thumbnails, so the model can describe actual options instead of six fixed ones. Server-executed, so
+   the Pexels key stays server-side.
+3. **Show it, and say it is changeable.** The drawer gets a cover card for the AI's pick — the image, what it
+   searched for, and **Keep** / **Try another** / **I'll choose my own**. `setBlogCover` should not silently
+   apply; the same `requestConfirm` mechanism the destructive actions use already parks a tool call on a human
+   click, and this is the third good use of it. The post page also needs to be honest that a cover is
+   AI-chosen stock until someone confirms it.
+4. **Store attribution** in the media pool entry and surface it as the image credit, which the renderer
+   already displays.
+5. **Degrade honestly.** With no `PEXELS_API_KEY`, `isStockConfigured()` is false — the tool must say "stock
+   search isn't set up on this server, attach a photo with the image button instead" rather than falling back
+   to the 25-photo dictionary and pretending it searched.
+
+**Note on scope:** step 3 is the part the request was really about — *the AI should be able to find any image,
+and the user must see it and be able to change it.* Steps 1, 2 and 5 are what make step 3 worth showing;
+without them the card would just display one of the same six photos with more ceremony.
+
+---
+
+## 12. What shipped for §11
+
+### Grounding (§11.1)
+
+**The lookup tools are composed in, not reimplemented.** `buildBlogTools(account, authHeader)` spreads seven
+tools picked out of `buildTools(account)` — `searchHorses`, `getHorseDossier`, `searchParties`, `getParty`,
+`searchArticles`, `getArticle`, `listRaces`. They are server-executed and already scoped per reader, so the
+assistant reads the real register and cannot see records the signed-in user could not.
+
+**`BodyItem` gained three reference kinds** — `horseRef` / `partyRef` / `storyRef`, each carrying a `refId`.
+Because that type is a shared contract, five files moved together: `instantPrompt.ts` (the schema, plus a
+`refId` field), `instantDraft.ts` (`RawBodyItem` + `cleanBody`), `instant/types.ts`, `instant/buildBlocks.ts`,
+and `blog/bodyItems.ts`.
+
+**Instant Capture drops reference items outright.** It has no search tools, so any id it produced would be
+guessed, and a guessed id renders as "This horse record is no longer available". `cleanBody()` discards them
+before they leave the server and `buildBlogPayload` skips them again client-side — a stale client cannot turn
+one into an empty block on the page.
+
+**The Blog Studio verifies every `refId` against the loaded stores** (`resolveRefs`) and drops the misses,
+returning `droppedRefs` so the assistant has to tell the user which card was lost and search again. This is
+the one validation the server genuinely cannot do: `normaliseBlocks` checks that a `horseId` is a *string*,
+not that the horse exists.
+
+**`linkedHorseIds` / `linkedPartyIds` are now set** from whatever the body embeds, on create and on body
+replace. They were saved empty on every AI-written post before.
+
+**The three card kinds joined `TEXTUAL`** in `bodyItems.ts`, so a rewrite carries them with the writing
+instead of re-anchoring them as though they were photographs.
+
+**Prompt:** search before writing; say what you found before writing 900 words about the wrong thing; never
+invent a horse, person, stable, race, result, sale price or date; if the register has nothing relevant, say so
+rather than writing around the gap; embed the cards for what the prose is actually about; keep existing cards
+through a rewrite.
+
+### Cover images (§11.2)
+
+**`lib/stock.ts`** is the new shared sourcing module: `searchStockPhotos` (several candidates, stores
+nothing — the half the old code could not do, because it searched and immediately committed to the first
+hit), `getStockPhoto` (resolve one by provider id), `storeStockPhoto` (download into our bucket under a
+caller-chosen key prefix), and `findAndStoreStockPhoto` (the old unattended path). `magazineV2/stock.ts` now
+sits on it and keeps only its own key namespace and MediaAsset row; it re-exports `isStockConfigured` so the
+generator's imports are untouched.
+
+**`POST /api/blogs/:id/media/stock`** takes a **provider photo id, never a URL**. That is what makes "never
+invent an image URL" enforceable rather than politely requested: a fabricated id fails to resolve and nothing
+is stored, whereas a fabricated URL would have become a pool entry pointing anywhere. Being a POST with more
+than one path segment, `blogsWriteGate` routes it through `blogEditGate` — the same gate as every other write
+to that post. The photographer's name is stored as the asset's `credit`, which the renderer already displays.
+
+**`searchStockPhotos` is the one server-executed tool** in the studio's set, because the provider key must not
+reach the browser. It is read-only, so the "every write is client-executed" rule still holds. With no
+`PEXELS_API_KEY` it returns `configured: false` and the prompt requires the assistant to **say** stock search
+isn't set up — not to fall back to anything and imply it searched.
+
+**`setBlogCover` now shows the photo and waits.** The old version took a URL and saved it silently. Now the
+server sources the asset, the drawer renders it with its credit, and the user answers **Use it** / **Try
+another** / **I'll choose my own** — three outcomes, because "not this one" splits into two different next
+moves and the assistant would otherwise guess. `ConfirmOutcome` replaced the confirm mechanism's boolean.
+Only "Use it" points the cover at it; a rejected photo stays in the pool rather than being binned, since it is
+a real asset now and they may want it for a block.
+
+**The 25-photo dictionary is gone from the blog path.** `suggestBlogImages` and its `suggestImages` import are
+removed. (`editor/templates/helpers.ts` still holds `STOCK` for the Article Studio and the magazine templates
+— narrowing that is a separate job.)
+
+### Verification
+
+Both apps typecheck, the web app builds, `check:permissions` → 40 catalogue / **0 unenforced**. Still **not
+opened in a browser**, and the stock path additionally needs `PEXELS_API_KEY` + S3 to do anything but report
+itself unconfigured.

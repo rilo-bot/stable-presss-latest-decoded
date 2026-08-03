@@ -21,9 +21,45 @@
 
 import { tool, type ToolSet } from 'ai'
 import { z } from 'zod'
+import type { AccountUser } from '../identity.js'
 import { BodyItemSchema } from './instantPrompt.js'
+import { isStockConfigured, searchStockPhotos } from '../stock.js'
+import { buildTools } from './tools.js'
 
 const TIERS = ['free', 'standard', 'premium'] as const
+
+/**
+ * The record-lookup tools the Blog Studio borrows from the general agent.
+ *
+ * These are the whole reason a post can be about THIS website rather than about
+ * thoroughbred racing in general. They are server-executed against the real
+ * collections and already scoped per reader — `visibleHorses(account)`,
+ * `visibleParties(account)`, drafts only for staff — so borrowing them means the
+ * assistant writes from the actual register and cannot see records the signed-in
+ * user could not see themselves.
+ *
+ * Composed, not reimplemented: a second copy of "which horses may this account
+ * see" is a second copy that can be wrong, and this one is already right.
+ */
+const LOOKUP_TOOLS = [
+  'searchHorses',
+  'getHorseDossier',
+  'searchParties',
+  'getParty',
+  'searchArticles',
+  'getArticle',
+  'listRaces',
+] as const
+
+function groundingTools(account?: AccountUser, authHeader?: string): ToolSet {
+  const all = buildTools(account, authHeader)
+  const picked: ToolSet = {}
+  for (const name of LOOKUP_TOOLS) {
+    const found = all[name]
+    if (found) picked[name] = found
+  }
+  return picked
+}
 
 /** The body, as the model sees it both ways. Imported, not restated, so the two
  *  agents that speak this shape cannot drift apart. */
@@ -33,8 +69,11 @@ const BodySchema = z
     'The post body in reading order: paragraphs, plus headings and lists where they genuinely help. Plain text only — no markdown.',
   )
 
-export function buildBlogTools(): ToolSet {
+export function buildBlogTools(account?: AccountUser, authHeader?: string): ToolSet {
   return {
+    // Read the register first, write second — see LOOKUP_TOOLS above.
+    ...groundingTools(account, authHeader),
+
     listBlogPosts: tool({
       description:
         'List the blog posts on file, newest-edited first. Also shows the user a scrollable reference list on screen, so you can then talk about posts by name. Returns { posts: [{ id, title, slug, status, category, updatedAt }], total }.',
@@ -109,21 +148,56 @@ export function buildBlogTools(): ToolSet {
       }),
     }),
 
-    suggestBlogImages: tool({
+    // ── Cover photos ────────────────────────────────────────────────────────
+    //
+    // `searchStockPhotos` is the one SERVER-executed tool in this set, because the
+    // provider key must not reach the browser. It is read-only, so it does not
+    // weaken the "every write is client-executed" rule the rest of the file rests
+    // on. Applying a photo still goes through the gated REST endpoint.
+    searchStockPhotos: tool({
       description:
-        'Get a few on-brand stock photo candidates (name + url) matching a keyword, for a post\'s cover. Describe them to the user and let them choose, then call setBlogCover with one of the returned URLs. Never invent image URLs.',
+        'Search the stock photo library for cover candidates. Write a DESCRIPTIVE query of the photograph you want — "grey horse galloping on turf", "auctioneer at a yearling sale", "empty grandstand at dawn" — not a topic. Returns { configured, candidates: [{ id, alt, thumbUrl, photographer }] }. Describe two or three to the user in words and ask which they prefer, then call setBlogCover with that candidate\'s id. If `configured` is false, say stock search is not set up on this server and ask them to attach a photo with the image button instead — do NOT pretend to have searched.',
       inputSchema: z.object({
-        query: z.string().optional().describe('A keyword like "race finish", "paddock" or "yearling".'),
+        query: z.string().describe('A description of the photograph wanted, not the post\'s subject.'),
+        orientation: z
+          .enum(['landscape', 'portrait', 'square'])
+          .optional()
+          .describe('Shape hint. A blog cover sits beside the writing, so landscape usually reads best.'),
       }),
+      execute: async ({ query, orientation }) => {
+        if (!isStockConfigured()) {
+          return {
+            configured: false,
+            candidates: [],
+            note: 'Stock photo search is not configured on this server.',
+          }
+        }
+        const candidates = await searchStockPhotos(query, { orientation, count: 6 })
+        return {
+          configured: true,
+          count: candidates.length,
+          // The thumb URL travels so the browser can SHOW the options; the model is
+          // told to talk about them, not to hand a URL back.
+          candidates: candidates.map((c) => ({
+            id: c.id,
+            alt: c.alt,
+            thumbUrl: c.thumbUrl,
+            photographer: c.attribution.author,
+          })),
+        }
+      },
     }),
 
     setBlogCover: tool({
       description:
-        'Set a post\'s cover photo to a known/approved image URL — one returned by suggestBlogImages. The cover shows beside the writing on the post page and fronts the card in the index. Never invent URLs. Returns { ok }.',
+        'Set a post\'s cover to one of the candidates from searchStockPhotos, BY ITS ID. The photo is downloaded into our own library with its photographer credit — nothing is hotlinked. THE USER IS SHOWN THE PHOTO AND MUST APPROVE IT before it is applied, and they may ask for a different one, so report honestly what comes back: { ok } if they kept it, { retry: true } if they want another (search again with a different description), or { cancelled: true } if they would rather attach their own. Never pass a URL and never invent an id.',
       inputSchema: z.object({
         id: z.string().describe('The post id.'),
-        src: z.string().describe('The image URL, from suggestBlogImages.'),
-        alt: z.string().optional().describe('Alt text describing the photo, for readers who cannot see it.'),
+        photoId: z.string().describe('The candidate\'s `id` from searchStockPhotos.'),
+        alt: z
+          .string()
+          .optional()
+          .describe('Alt text, if you can improve on the library\'s own description of the photo.'),
       }),
     }),
   }

@@ -58,7 +58,15 @@ export type BodyItem =
   | { kind: 'paragraph'; text: string }
   | { kind: 'heading'; level: 2 | 3; text: string }
   | { kind: 'list'; ordered: boolean; items: { lead?: string; text: string }[] }
-  | { kind: 'quote'; text: string; attribution?: string };
+  | { kind: 'quote'; text: string; attribution?: string }
+  /**
+   * A record from this platform, embedded as a card. The Blog Studio's variant of
+   * this type (`@/blog/bodyItems`) carries these; Instant Capture never produces
+   * them — `cleanBody()` on the server drops them, because this agent has no way
+   * to look an id up and a guessed one renders as a dead card. Declared here only
+   * so the two mirrored copies stay one shape.
+   */
+  | { kind: 'horseRef' | 'partyRef' | 'storyRef'; refId: string };
 
 export interface BlogFields {
   title: string;

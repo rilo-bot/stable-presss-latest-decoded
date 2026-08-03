@@ -16,7 +16,7 @@
  * image, gallery, embed and horse card in the post would be DELETED by what the
  * user asked for as a copy-edit. See docs/BLOG-AI-STUDIO-PLAN.md §5.
  */
-import { heading, list, paragraph, quote } from '@/blog/factories';
+import { articleRef, heading, horseCard, list, paragraph, partyCard, quote } from '@/blog/factories';
 import { blogPlainText } from '@/blog/sanitize';
 import type { Block } from '@/types/blog';
 
@@ -33,10 +33,38 @@ export type BodyItem =
   | { kind: 'paragraph'; text: string }
   | { kind: 'heading'; level: 2 | 3; text: string }
   | { kind: 'list'; ordered: boolean; items: { lead?: string; text: string }[] }
-  | { kind: 'quote'; text: string; attribution?: string };
+  | { kind: 'quote'; text: string; attribution?: string }
+  /**
+   * A record from this platform, embedded as a card — the thing that makes a post
+   * part of the site rather than prose that happens to live on it.
+   *
+   * `refId` is the ONE field in this whole union that can be wrong in a way the
+   * server cannot catch: `normaliseBlocks` checks that a `horseId` is a *string*,
+   * not that the horse exists, so a hallucinated id persists happily and renders
+   * as "This horse record is no longer available". The executor therefore verifies
+   * every refId against the loaded stores before calling `blockForItem`, and drops
+   * the ones that miss. See blogToolExecutor.resolveRefs.
+   */
+  | { kind: 'horseRef' | 'partyRef' | 'storyRef'; refId: string };
 
-/** Block kinds that map onto a BodyItem. Everything else is a "visual". */
-const TEXTUAL = new Set<string>(['paragraph', 'heading', 'list', 'quote', 'callout']);
+/** The three reference kinds, as a guard. */
+export function isRefItem(
+  item: BodyItem,
+): item is Extract<BodyItem, { kind: 'horseRef' | 'partyRef' | 'storyRef' }> {
+  return item.kind === 'horseRef' || item.kind === 'partyRef' || item.kind === 'storyRef';
+}
+
+/**
+ * Block kinds that map onto a BodyItem — what the assistant may read and rewrite.
+ *
+ * The three cross-link cards are IN here now that `BodyItem` can express them, so
+ * a rewrite that keeps a horse card keeps it in place rather than having it
+ * re-anchored as though it were a photograph.
+ */
+const TEXTUAL = new Set<string>([
+  'paragraph', 'heading', 'list', 'quote', 'callout',
+  'horseCard', 'partyCard', 'articleRef',
+]);
 
 /** Is this block one the assistant can read and rewrite as a body item? */
 export function isTextualBlock(block: Block): boolean {
@@ -122,6 +150,15 @@ export function blocksToBodyItems(blocks: Block[]): BodyItem[] {
         out.push({ kind: 'quote', text, ...(attribution ? { attribution } : {}) });
         break;
       }
+      case 'horseCard':
+        out.push({ kind: 'horseRef', refId: block.horseId });
+        break;
+      case 'partyCard':
+        out.push({ kind: 'partyRef', refId: block.partyId });
+        break;
+      case 'articleRef':
+        out.push({ kind: 'storyRef', refId: block.articleId });
+        break;
       default:
         // A visual block. Skipped here, preserved by spliceBodyItems.
         break;
@@ -147,9 +184,20 @@ function pointHtml(point: { lead?: string; text: string }): string {
   return point.lead ? `<strong>${escapeHtml(point.lead)}:</strong> ${body}` : body;
 }
 
-/** One body item → one block, via the composer's own factories. */
+/**
+ * One body item → one block, via the composer's own factories.
+ *
+ * Reference items are trusted HERE, which is only safe because the executor has
+ * already checked each `refId` against the loaded store — see the note on the type.
+ */
 export function blockForItem(item: BodyItem): Block {
   switch (item.kind) {
+    case 'horseRef':
+      return horseCard(item.refId);
+    case 'partyRef':
+      return partyCard(item.refId);
+    case 'storyRef':
+      return articleRef(item.refId);
     case 'heading':
       return heading(item.level, item.text);
     case 'list': {

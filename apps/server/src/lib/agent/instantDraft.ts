@@ -169,12 +169,16 @@ export type BodyItem =
   | { kind: 'quote'; text: string; attribution?: string }
 
 type RawBodyItem = {
-  kind: 'paragraph' | 'heading' | 'list' | 'quote'
+  // The reference kinds belong to the Blog Studio, which has the search tools to
+  // obtain a real id. They are in the SHARED schema, so this agent could emit one;
+  // `cleanBody` drops them (see below).
+  kind: 'paragraph' | 'heading' | 'list' | 'quote' | 'horseRef' | 'partyRef' | 'storyRef'
   text?: string
   level?: 2 | 3
   ordered?: boolean
   items?: { lead?: string; text: string }[]
   attribution?: string
+  refId?: string
 }
 
 /**
@@ -193,6 +197,14 @@ function cleanBody(raw: RawBodyItem[] | undefined): BodyItem[] {
 
   for (const item of (raw ?? []).slice(0, MAX_BODY_ITEMS)) {
     const text = typeof item?.text === 'string' ? item.text.trim() : ''
+
+    // Reference cards are dropped OUTRIGHT here, not validated. They exist in the
+    // shared BodyItemSchema for the Blog Studio, which has search tools to look a
+    // record up; Instant Capture has none, so any id it produced would be guessed
+    // — and a guessed id renders on the page as "this record is no longer
+    // available". Silently discarding a card is much better than publishing a dead
+    // one, and this agent is never asked for them in the first place.
+    if (item?.kind === 'horseRef' || item?.kind === 'partyRef' || item?.kind === 'storyRef') continue
 
     if (item?.kind === 'heading') {
       if (!text) continue
