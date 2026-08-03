@@ -1,6 +1,6 @@
 import { Link } from 'react-router-dom';
 import { cn } from '@/lib/utils';
-import { ChevronDown, LoaderCircle } from 'lucide-react';
+import { ChevronDown, LoaderCircle, Star } from 'lucide-react';
 import { NAV_SECTIONS, type NavSection } from './config';
 
 interface DesktopMenuProps {
@@ -105,7 +105,7 @@ export function DesktopMenu({
                   : undefined
               }
             >
-              <LoaderCircle size={11} />
+              {/* <Star size={1} /> */}
               Studio
             </Link>
           )}
@@ -125,7 +125,7 @@ export function DesktopMenu({
                   : undefined
               }
             >
-              Production System
+              Campaign Engine
             </Link>
           )}
         </nav>

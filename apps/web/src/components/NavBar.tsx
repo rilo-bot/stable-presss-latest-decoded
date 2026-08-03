@@ -198,7 +198,7 @@ export function NavBar() {
                   to="/production-system"
                   className="opacity-60 hover:opacity-100 transition-opacity"
                 >
-                  Production System
+                  Campaign Engine
                 </Link>
                 <span className="h-3 w-px bg-primary-foreground/20" />
                 <Link

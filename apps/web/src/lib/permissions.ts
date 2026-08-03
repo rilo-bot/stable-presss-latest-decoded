@@ -33,14 +33,23 @@ export type PermissionAction =
   | 'content.submit'                // Submit draft → editorial queue
   | 'content.editorial_review'      // Move into / out of editorial review
   | 'content.send_revision'         // Send article back for revision
-  | 'content.legal_review'          // Move into / out of legal review
-  | 'content.compliance'            // Move into compliance stage
   | 'content.approve'               // Approve content
-  | 'content.publisher_review'      // Publisher review stage
+  // `content.legal_review`, `content.compliance` and `content.publisher_review`
+  // were here. They were the per-department gates of the retired twelve-status
+  // workflow and nothing ever checked them — approval is one step now.
   | 'content.schedule'              // Schedule for publication
   | 'content.publish'               // Publish content
   | 'content.newsletter'            // Distribute via newsletter
   | 'content.bulletin'              // Add to bulletin
+
+  // Blogs — a separate axis from Stories. Two states (draft/published), so there
+  // is no submit/approve/schedule here. Mirrors PERMISSION_CATALOGUE on the
+  // server; see docs/BLOG-SYSTEM-PLAN.md §4.2.
+  | 'blog.create'                   // Start a new blog post
+  | 'blog.edit_own'                 // Edit posts they created
+  | 'blog.edit_any'                 // Edit anyone's post
+  | 'blog.publish'                  // Put a post live, or take it down
+  | 'blog.delete'                   // Delete a post
 
   // Media
   | 'media.upload_own'              // Upload / manage personal media assets
@@ -48,23 +57,22 @@ export type PermissionAction =
 
   // Compensation
   | 'compensation.view_own'         // View own payout history
-  | 'compensation.view_all'         // View all contributors' payouts
-  | 'compensation.manage'           // Edit/approve payouts
 
-  // Workflow board visibility
-  | 'workflow.view_all_columns'     // See every Kanban column
-  | 'workflow.view_own_columns'     // See only role-scoped columns
+  // Workflow board visibility is the `workflowStages` axis on the role, NOT a
+  // permission — `workflow.view_all_columns` / `workflow.view_own_columns` were
+  // removed because nothing consulted them. See the RESERVED note in
+  // apps/server/src/lib/permissionCatalogue.ts.
 
   // Platform access — replace the old hardcoded role-family tests.
   | 'newsroom.access'               // Reach newsroom tooling (was: holds any staff role)
   | 'platform.admin'                // Platform-wide override (was: is administrator)
   | 'roles.manage'                  // Create roles, set permissions, assign them
+  | 'claims.verify'                 // Verify/reject party claims (split out of platform.admin)
 
   // Team & admin
-  | 'team.view'                     // View team member list
-  | 'team.manage'                   // Invite / remove team members
+  | 'team.view'                     // Read the staff roster (Team screen, read-only)
+  | 'team.manage'                   // Invite / remove team members, assign roles
   | 'settings.view'                 // View newsroom settings
-  | 'settings.manage'               // Edit newsroom settings
   | 'analytics.view'                // View analytics dashboard
 
   // ── Podcast workflow permissions ──────────────────────────────────────────

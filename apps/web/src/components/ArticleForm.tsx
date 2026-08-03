@@ -3,7 +3,6 @@ import { cn } from '@/lib/utils';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
-import { Textarea } from '@/components/ui/textarea';
 import { AiTextarea } from '@/agent/compose/AiTextarea';
 import { ImageUploader } from '@/components/horse-form/ImageUploader';
 import { Badge } from '@/components/ui/badge';
@@ -24,9 +23,11 @@ import { loadDraft, useFormDraft } from '@/hooks/useFormDraft';
 import type { Article } from '@/types/article';
 import { TIER_ORDER, TIER_LABELS } from '@/rbac/entitlement';
 import type { SubscriptionTier } from '@/rbac/entitlement';
-import type { ArticleStatus } from '@/types/article';
+import { ARTICLE_CHANNELS, articleChannels } from '@/types/article';
+import type { ArticleChannel, ArticleStatus } from '@/types/article';
+import { enterPermission, movesFrom, stageMeta } from '@/lib/workflow';
 import { can } from '@/lib/permissions';
-import { X, Check, Lock, Newspaper, BarChart2, Mic, RotateCcw } from 'lucide-react';
+import { X, Check, Lock, Newspaper, BarChart2, Mic, RotateCcw, Mail, Radio, Globe, Clock, Tag as TagIcon } from 'lucide-react';
 import { toast } from 'sonner';
 
 const ARTICLE_DRAFT_KEY = 'article';
@@ -41,6 +42,9 @@ interface ArticleDraft {
   minTier: SubscriptionTier;
   linkedHorseIds: string[];
   imageUrl: string;
+  channels: ArticleChannel[];
+  tags: string[];
+  scheduledFor: string;
 }
 
 interface ArticleFormProps {
@@ -51,25 +55,55 @@ interface ArticleFormProps {
 }
 
 /**
- * Full list — shown for editors/admins/publishers.
+ * The stages this user may put THIS story into, derived from the same two rules
+ * the server enforces (lib/workflow.ts):
  *
- * Newsletter and Bulletin are gone from here: they were never workflow states,
- * and picking one used to be the only way to say where a story went. That's the
- * `channels` field now, edited below.
+ *  - a new story may be created into any stage whose `enterPermission` the user
+ *    holds (plus Draft, which needs none);
+ *  - an existing story may only go where a legal move leads, and only if the
+ *    user holds that move's permission.
+ *
+ * This replaced two hardcoded lists — a five-entry one for editors and a
+ * two-entry one for contributors. Both offered stages the server would refuse:
+ * picking "Published" on a draft sent `status: 'published'`, got a 409 back
+ * ("a story cannot go from draft to published"), and the dialog said "Story
+ * updated" anyway.
  */
-const ALL_STATUS_OPTIONS: { value: ArticleStatus; label: string }[] = [
-  { value: 'draft', label: 'Draft' },
-  { value: 'submitted', label: 'Submitted' },
-  { value: 'approved', label: 'Approved' },
-  { value: 'scheduled', label: 'Schedule Publish' },
-  { value: 'published', label: 'Published' },
-];
+function stageChoices(editArticle: Article | null | undefined): { value: ArticleStatus; label: string }[] {
+  if (!editArticle) {
+    const creatable: ArticleStatus[] = ['draft', 'submitted', 'approved', 'scheduled', 'published'];
+    return creatable
+      .filter((s) => {
+        const needed = enterPermission(s);
+        return needed === null || can(needed);
+      })
+      .map((s) => ({ value: s, label: stageMeta(s).label }));
+  }
 
-// Contributors can only use Draft or Submitted
-const CONTRIBUTOR_STATUS_OPTIONS: { value: ArticleStatus; label: string }[] = [
-  { value: 'draft', label: 'Draft' },
-  { value: 'submitted', label: 'Submit for Editorial Review' },
-];
+  const here = editArticle.status;
+  return [
+    { value: here, label: `${stageMeta(here).label} (unchanged)` },
+    ...movesFrom(here)
+      .filter((m) => can(m.permission))
+      .map((m) => ({ value: m.to, label: m.label })),
+  ];
+}
+
+const CHANNEL_META: Record<ArticleChannel, { label: string; hint: string; icon: React.ReactNode }> = {
+  news: { label: 'News site', hint: 'Appears on the public news index', icon: <Globe size={12} /> },
+  newsletter: { label: 'Newsletter', hint: 'Carried on the newsletter page', icon: <Mail size={12} /> },
+  bulletin: { label: 'Bulletin', hint: 'Included in the bulletins page', icon: <Radio size={12} /> },
+};
+
+/** `datetime-local` wants `YYYY-MM-DDTHH:mm` in local time; the wire uses ISO. */
+function isoToLocalInput(iso: string | undefined): string {
+  if (!iso) return '';
+  const t = Date.parse(iso);
+  if (!Number.isFinite(t)) return '';
+  const d = new Date(t);
+  const pad = (n: number) => String(n).padStart(2, '0');
+  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`;
+}
 
 /* ── Category taxonomy — aligned with NewsIndex sections ── */
 
@@ -125,11 +159,20 @@ export function ArticleForm({
   const [minTier, setMinTier] = useState<SubscriptionTier>('free');
   const [linkedHorseIds, setLinkedHorseIds] = useState<string[]>([]);
   const [imageUrl, setImageUrl] = useState('');
+  const [channels, setChannels] = useState<ArticleChannel[]>(['news']);
+  const [tags, setTags] = useState<string[]>([]);
+  const [tagInput, setTagInput] = useState('');
+  const [scheduledFor, setScheduledFor] = useState('');
   const [saving, setSaving] = useState(false);
   const [draftRestored, setDraftRestored] = useState(false);
 
   const isContributor = !can('content.draft.edit_any');
-  const statusOptions = isContributor ? CONTRIBUTOR_STATUS_OPTIONS : ALL_STATUS_OPTIONS;
+  const statusOptions = stageChoices(editArticle);
+
+  // Which channels this user may put a story on. `news` needs no permission.
+  const allowedChannels = ARTICLE_CHANNELS.filter(
+    (c) => c === 'news' || can(c === 'newsletter' ? 'content.newsletter' : 'content.bulletin'),
+  );
 
   // Contributors always get their display name auto-filled as byline
   const authorLocked = isContributor;
@@ -137,29 +180,32 @@ export function ArticleForm({
   // Reset form when dialog opens or editArticle changes
   useEffect(() => {
     if (!open) return;
+    setTagInput('');
     if (editArticle) {
       setTitle(editArticle.title);
       setSummary(editArticle.summary);
       setAuthor(editArticle.author);
       setCategory(editArticle.category ?? '');
-      // If contributor editing, clamp status to allowed options
-      const resolvedStatus = (editArticle.status as ArticleStatus) ?? 'draft';
-      if (isContributor) {
-        const allowed = CONTRIBUTOR_STATUS_OPTIONS.map((o) => o.value);
-        setStatus(allowed.includes(resolvedStatus) ? resolvedStatus : 'draft');
-      } else {
-        setStatus(resolvedStatus);
-      }
+      // Editing opens on the story's CURRENT stage. Moving it is a separate,
+      // deliberate choice among the moves the user actually holds — clamping a
+      // stage the viewer can't set (what happened before) silently rewrote the
+      // story's position the moment they hit save.
+      setStatus(editArticle.status);
       setReadingTime(editArticle.readingTime?.toString() ?? '');
       setMinTier(editArticle.minTier ?? 'free');
       setLinkedHorseIds(editArticle.linkedHorseIds ?? []);
       setImageUrl(editArticle.imageUrl ?? '');
+      setChannels(articleChannels(editArticle));
+      setTags(editArticle.tags ?? []);
+      setScheduledFor(isoToLocalInput(editArticle.scheduledFor));
     } else {
       // New story: restore an in-progress draft if one was saved.
       const draft = loadDraft<ArticleDraft>(ARTICLE_DRAFT_KEY);
-      const clampedDefault = isContributor
-        ? (['draft', 'submitted'].includes(defaultStatus) ? defaultStatus : 'draft')
-        : defaultStatus;
+      // The column's `+` can open this on a stage the viewer may not create
+      // into; fall back to Draft rather than offering something the server
+      // would refuse.
+      const needed = enterPermission(defaultStatus);
+      const clampedDefault = needed === null || can(needed) ? defaultStatus : 'draft';
       setTitle(draft?.title ?? '');
       setSummary(draft?.summary ?? '');
       // Contributors are always attributed to their own account — never restore a byline for them.
@@ -170,6 +216,9 @@ export function ArticleForm({
       setMinTier(draft?.minTier ?? 'free');
       setLinkedHorseIds(draft?.linkedHorseIds ?? []);
       setImageUrl(draft?.imageUrl ?? '');
+      setChannels(draft?.channels ?? ['news']);
+      setTags(draft?.tags ?? []);
+      setScheduledFor(draft?.scheduledFor ?? '');
       setDraftRestored(!!draft);
     }
   }, [open, editArticle, defaultStatus, isContributor, currentUser?.displayName]);
@@ -179,6 +228,7 @@ export function ArticleForm({
     ARTICLE_DRAFT_KEY,
     {
       title, summary, author, category, status, readingTime, minTier, linkedHorseIds,
+      channels, tags, scheduledFor,
       // Skip transient data: URLs — they can blow the localStorage quota.
       imageUrl: imageUrl.startsWith('data:') ? '' : imageUrl,
     },
@@ -194,11 +244,16 @@ export function ArticleForm({
     setSummary('');
     setAuthor(isContributor ? (currentUser?.displayName ?? '') : '');
     setCategory('');
-    setStatus(isContributor ? (['draft', 'submitted'].includes(defaultStatus) ? defaultStatus : 'draft') : defaultStatus);
+    const needed = enterPermission(defaultStatus);
+    setStatus(needed === null || can(needed) ? defaultStatus : 'draft');
     setReadingTime('');
     setMinTier('free');
     setLinkedHorseIds([]);
     setImageUrl('');
+    setChannels(['news']);
+    setTags([]);
+    setTagInput('');
+    setScheduledFor('');
     setDraftRestored(false);
   };
 
@@ -208,6 +263,28 @@ export function ArticleForm({
     );
   };
 
+  const toggleChannel = (channel: ArticleChannel) => {
+    setChannels((prev) =>
+      prev.includes(channel) ? prev.filter((c) => c !== channel) : [...prev, channel]
+    );
+  };
+
+  const commitTag = () => {
+    const t = tagInput.trim();
+    if (!t) return;
+    setTags((prev) => (prev.includes(t) ? prev : [...prev, t]));
+    setTagInput('');
+  };
+
+  /**
+   * Save.
+   *
+   * Both store calls are AWAITED and their result checked. This used to fire
+   * them without awaiting and toast "Story updated" unconditionally, so every
+   * rejection the server raised — an illegal move, a channel the user may not
+   * publish to, a failed request — was reported to the user as a success while
+   * the store rolled the change back behind them.
+   */
   const handleSubmit = async () => {
     if (!title.trim()) {
       toast.error('A headline is required before going to press.');
@@ -217,34 +294,53 @@ export function ArticleForm({
       toast.error('Every story needs a byline. Please add an author.');
       return;
     }
+    if (channels.length === 0) {
+      toast.error('Pick at least one place for this story to run.');
+      return;
+    }
+    if (status === 'scheduled' && !scheduledFor) {
+      toast.error('Pick a date and time for this story to go live.');
+      return;
+    }
 
     setSaving(true);
     try {
+      // `publishedAt` is deliberately absent — the server stamps it when the
+      // story actually goes live. Sending it on every save is what reset a
+      // published story's date each time anyone edited it.
       const payload = {
         title: title.trim(),
         summary: summary.trim(),
         author: author.trim(),
         category: category || undefined,
-        status: status as Article['status'],
+        status,
         readingTime: readingTime ? parseInt(readingTime, 10) : undefined,
         minTier,
         linkedHorseIds,
-        publishedAt: status === 'published' ? new Date() : null,
+        channels,
+        tags,
         imageUrl: imageUrl.trim() || undefined,
+        ...(status === 'scheduled'
+          ? { scheduledFor: new Date(scheduledFor).toISOString() }
+          : {}),
       };
 
       if (editArticle) {
-        updateArticle(editArticle.id, payload);
+        const ok = await updateArticle(editArticle.id, payload);
+        // The store has already shown the server's reason. Keep the dialog open
+        // so the work survives and the user can adjust and retry.
+        if (!ok) return;
         toast.success('Story updated — the file has been revised.');
       } else {
-        addArticle(payload);
+        const created = await addArticle({ ...payload, publishedAt: null });
+        if (!created) return;
         clearDraft();
         setDraftRestored(false);
-        if (status === 'submitted') {
-          toast.success('Story submitted — it is now in the editorial queue.');
-        } else {
-          toast.success('Story filed — it sits in your draft queue.');
-        }
+        toast.success(
+          status === 'draft'
+            ? 'Story filed — it sits in your draft queue.'
+            : `Story filed as ${stageMeta(status).label}.`,
+        );
       }
       onClose();
     } finally {
@@ -328,16 +424,20 @@ export function ArticleForm({
               htmlFor="article-summary"
               className="text-[10px] uppercase tracking-[0.1em] font-semibold text-muted-foreground"
             >
-              Summary / Lead Paragraph
+              Story
             </Label>
+            <p className="text-[10px] text-muted-foreground/70 -mt-0.5">
+              The full copy, as readers will see it. Separate paragraphs with a blank line — the
+              first one becomes the teaser on cards and the news index.
+            </p>
             <AiTextarea
               id="article-summary"
               value={summary}
               onChange={(e) => setSummary(e.target.value)}
-              placeholder="The opening paragraph — the paragraph that earns the read."
-              rows={4}
-              className="resize-none leading-relaxed"
-              aiLabel="Summary / lead paragraph"
+              placeholder="Write the story. The opening paragraph is the one that earns the read."
+              rows={10}
+              className="leading-relaxed"
+              aiLabel="Story copy"
               aiKey="summary"
               entityKind="article"
               getContext={() => ({
@@ -522,7 +622,115 @@ export function ArticleForm({
             )}
           </div>
 
-          {/* Workflow Status — scoped by role */}
+          {/* Distribution channels — where a PUBLISHED story runs. Independent
+              of the stage: a story can carry the news site and the newsletter at
+              once, which a single status could never express. */}
+          <div className="space-y-2">
+            <Label className="text-[10px] uppercase tracking-[0.1em] font-semibold text-muted-foreground">
+              Where it runs
+            </Label>
+            <p className="text-[10px] text-muted-foreground/70 -mt-0.5">
+              Takes effect once the story is published. Pick as many as apply.
+            </p>
+            <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">
+              {allowedChannels.map((c) => {
+                const on = channels.includes(c);
+                const meta = CHANNEL_META[c];
+                return (
+                  <button
+                    key={c}
+                    type="button"
+                    onClick={() => toggleChannel(c)}
+                    aria-pressed={on}
+                    className={cn(
+                      'flex items-start gap-2 px-3 py-2 rounded-sm border text-left transition-colors',
+                      on
+                        ? 'border-primary/50 bg-primary/5'
+                        : 'border-border/60 hover:border-primary/30 hover:bg-muted/40'
+                    )}
+                  >
+                    <span
+                      className={cn(
+                        'mt-0.5 flex-shrink-0 w-4 h-4 rounded-sm border flex items-center justify-center transition-colors',
+                        on ? 'bg-primary border-primary' : 'border-border'
+                      )}
+                    >
+                      {on && <Check size={10} className="text-primary-foreground" />}
+                    </span>
+                    <span className="min-w-0">
+                      <span className="flex items-center gap-1.5 text-xs font-semibold text-foreground">
+                        <span className="text-muted-foreground">{meta.icon}</span>
+                        {meta.label}
+                      </span>
+                      <span className="block text-[10px] text-muted-foreground mt-0.5 leading-snug">
+                        {meta.hint}
+                      </span>
+                    </span>
+                  </button>
+                );
+              })}
+            </div>
+            {allowedChannels.length < ARTICLE_CHANNELS.length && (
+              <p className="text-[10px] text-muted-foreground/60">
+                Newsletter and bulletin distribution need their own permissions.
+              </p>
+            )}
+          </div>
+
+          {/* Tags */}
+          <div className="space-y-2">
+            <Label
+              htmlFor="article-tags"
+              className="text-[10px] uppercase tracking-[0.1em] font-semibold text-muted-foreground"
+            >
+              Tags
+            </Label>
+            <p className="text-[10px] text-muted-foreground/70 -mt-0.5">
+              Shown under the story as “Filed under”. Press Enter to add each one.
+            </p>
+            <div className="flex items-center gap-2">
+              <Input
+                id="article-tags"
+                value={tagInput}
+                onChange={(e) => setTagInput(e.target.value)}
+                onKeyDown={(e) => {
+                  if (e.key === 'Enter' || e.key === ',') {
+                    e.preventDefault();
+                    commitTag();
+                  }
+                }}
+                onBlur={commitTag}
+                placeholder="e.g. Melbourne Cup"
+              />
+              <Button type="button" variant="outline" size="sm" onClick={commitTag} disabled={!tagInput.trim()}>
+                Add
+              </Button>
+            </div>
+            {tags.length > 0 && (
+              <div className="flex flex-wrap gap-1.5">
+                {tags.map((t) => (
+                  <Badge
+                    key={t}
+                    variant="secondary"
+                    className="flex items-center gap-1 text-[10px] uppercase tracking-[0.06em]"
+                  >
+                    <TagIcon size={9} />
+                    {t}
+                    <button
+                      type="button"
+                      onClick={() => setTags((prev) => prev.filter((x) => x !== t))}
+                      aria-label={`Remove tag ${t}`}
+                      className="ml-0.5 hover:opacity-70 transition-opacity"
+                    >
+                      <X size={9} />
+                    </button>
+                  </Badge>
+                ))}
+              </div>
+            )}
+          </div>
+
+          {/* Workflow stage — only the moves this user may actually make */}
           <div className="space-y-2">
             <Label className="text-[10px] uppercase tracking-[0.1em] font-semibold text-muted-foreground flex items-center gap-1.5">
               Workflow Stage
@@ -530,15 +738,14 @@ export function ArticleForm({
                 <Lock size={10} className="text-muted-foreground/50" />
               )}
             </Label>
-            {isContributor && (
-              <p className="text-[10px] text-muted-foreground/70">
-                Save as a Draft to continue working, or Submit to place it in the editorial queue.
-              </p>
-            )}
-            <div className={cn(
-              'grid gap-2',
-              isContributor ? 'grid-cols-2' : 'grid-cols-2 sm:grid-cols-3'
-            )}>
+            <p className="text-[10px] text-muted-foreground/70">
+              {editArticle
+                ? `This story is at ${stageMeta(editArticle.status).label}. Only the moves you're cleared to make are offered.`
+                : isContributor
+                ? 'Save as a Draft to continue working, or Submit to place it in the editorial queue.'
+                : 'The stage this story starts in.'}
+            </p>
+            <div className="grid gap-2 grid-cols-2 sm:grid-cols-3">
               {statusOptions.map((opt) => (
                 <button
                   key={opt.value}
@@ -547,7 +754,7 @@ export function ArticleForm({
                   className={cn(
                     'flex items-center gap-2 px-3 py-2 rounded-sm border text-left transition-colors',
                     status === opt.value
-                      ? 'border-primary bg-primary/8 text-primary'
+                      ? 'border-primary bg-primary/10 text-primary'
                       : 'border-border/60 text-muted-foreground hover:border-primary/30 hover:text-foreground'
                   )}
                 >
@@ -560,6 +767,31 @@ export function ArticleForm({
                 </button>
               ))}
             </div>
+
+            {/* The publish slot. Required to sit in Scheduled — the stage did
+                nothing at all before, because nothing ever set a date. */}
+            {status === 'scheduled' && (
+              <div className="mt-3 space-y-1.5 rounded-sm border border-border/60 bg-muted/30 p-3">
+                <Label
+                  htmlFor="article-scheduledfor"
+                  className="text-[10px] uppercase tracking-[0.1em] font-semibold text-muted-foreground flex items-center gap-1.5"
+                >
+                  <Clock size={11} />
+                  Goes live at
+                </Label>
+                <Input
+                  id="article-scheduledfor"
+                  type="datetime-local"
+                  value={scheduledFor}
+                  onChange={(e) => setScheduledFor(e.target.value)}
+                  className="max-w-[260px]"
+                />
+                <p className="text-[10px] text-muted-foreground/70">
+                  The story publishes itself at this time — no one needs to come back and press
+                  anything.
+                </p>
+              </div>
+            )}
           </div>
 
           {/* Linked Horses */}
@@ -653,9 +885,9 @@ export function ArticleForm({
               ? 'Filing…'
               : editArticle
               ? 'Save Revision'
-              : status === 'submitted'
-              ? 'Submit Story'
-              : 'Save Draft'}
+              : status === 'draft'
+              ? 'Save Draft'
+              : `File as ${stageMeta(status).label}`}
           </Button>
         </DialogFooter>
       </DialogContent>

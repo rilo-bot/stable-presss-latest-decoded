@@ -29,6 +29,8 @@ import TippingRing from '@/pages/TippingRing';
 import PodcastHub from '@/pages/PodcastHub';
 import PodcastWorkflow from '@/pages/PodcastWorkflow';
 import NewsIndex from '@/pages/NewsIndex';
+import BlogIndex from '@/pages/BlogIndex';
+import BlogPost from '@/pages/BlogPost';
 import Newsletter from '@/pages/Newsletter';
 import Bulletins from '@/pages/Bulletins';
 import BulletinViewer from '@/pages/BulletinViewer';
@@ -47,6 +49,10 @@ import OverviewScreen from '@/pages/production-system/screens/OverviewScreen';
 import WorkflowBoardScreen from '@/pages/production-system/screens/WorkflowBoardScreen';
 import PipelineMapScreen from '@/pages/production-system/screens/PipelineMapScreen';
 import AllStoriesScreen from '@/pages/production-system/screens/AllStoriesScreen';
+import BlogsScreen from '@/pages/production-system/screens/BlogsScreen';
+import BlogCreateForm from '@/pages/blog-composer/BlogCreateForm';
+import BlogEditorScreen from '@/pages/blog-composer/BlogEditorScreen';
+import InstantScreen from '@/pages/production-system/screens/InstantScreen';
 import EditorHubScreen from '@/pages/production-system/screens/EditorHubScreen';
 import MyAssetsScreen from '@/pages/production-system/screens/MyAssetsScreen';
 import CompensationScreen from '@/pages/production-system/screens/CompensationScreen';
@@ -57,6 +63,7 @@ import RacingRecordsScreen from '@/pages/production-system/screens/RacingRecords
 import TeamScreen from '@/pages/production-system/screens/TeamScreen';
 import RolesScreen from '@/pages/production-system/screens/RolesScreen';
 import AnalyticsScreen from '@/pages/production-system/screens/AnalyticsScreen';
+import EmojiAnalyticsScreen from '@/pages/production-system/screens/EmojiAnalyticsScreen';
 import SettingsScreen from '@/pages/production-system/screens/SettingsScreen';
 import MagazineStudioScreen from '@/pages/production-system/screens/MagazineStudioScreen';
 
@@ -168,6 +175,24 @@ export default function App() {
             </AppLayout>
           }
         />
+        {/* Blog. Public; a draft 404s for everyone but its author and staff,
+            which the API decides — the route itself is open. */}
+        <Route
+          path="/blog"
+          element={
+            <AppLayout>
+              <BlogIndex />
+            </AppLayout>
+          }
+        />
+        <Route
+          path="/blog/:slug"
+          element={
+            <AppLayout>
+              <BlogPost />
+            </AppLayout>
+          }
+        />
         <Route
           path="/newsletter"
           element={
@@ -272,6 +297,16 @@ export default function App() {
             <Route path="workflow" element={<WorkflowBoardScreen />} />
             <Route path="pipeline" element={<PipelineMapScreen />} />
             <Route path="all-stories" element={<AllStoriesScreen />} />
+            {/* Cards → create form → editor. All three sit INSIDE the layout
+                route, so the sidebar stays put and none of them takes the page
+                over. `new` before `:id` reads in the order you meet them. */}
+            <Route path="blogs" element={<BlogsScreen />} />
+            <Route path="blogs/new" element={<BlogCreateForm />} />
+            <Route path="blogs/:id" element={<BlogEditorScreen />} />
+            {/* Instant — capture (photos + voice) → AI draft → a draft story or
+                post. Its own module rather than a mode of the story form: the
+                whole point is that it starts from a photograph. */}
+            <Route path="instant" element={<InstantScreen />} />
             <Route path="editor-hub" element={<EditorHubScreen />} />
             <Route path="my-assets" element={<MyAssetsScreen />} />
             <Route path="compensation" element={<CompensationScreen />} />
@@ -282,6 +317,9 @@ export default function App() {
             <Route path="team" element={<TeamScreen />} />
             <Route path="roles" element={<RolesScreen />} />
             <Route path="analytics" element={<AnalyticsScreen />} />
+            {/* Reader sentiment. Static sample data — the reaction feed it
+                describes doesn't exist yet; the screen says so on its face. */}
+            <Route path="emoji-analytics" element={<EmojiAnalyticsScreen />} />
             <Route path="settings" element={<SettingsScreen />} />
             <Route path="magazine-studio" element={<MagazineStudioScreen />} />
             {/* Magazine Builder v2 (free-form, AI-first) — behind the MAGAZINE_V2 server flag. */}

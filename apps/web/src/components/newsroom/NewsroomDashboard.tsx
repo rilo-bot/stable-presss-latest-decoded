@@ -53,10 +53,19 @@ function authHeaders(): HeadersInit {
   return token ? { Authorization: `Bearer ${token}`, 'content-type': 'application/json' } : { 'content-type': 'application/json' };
 }
 
-function StatCard({ icon, value, label, tone }: { icon: React.ReactNode; value: number; label: string; tone?: string }) {
+/**
+ * `tone` is accepted and ignored on purpose.
+ *
+ * The six tiles used to be tinted chart-2/3/4/5/brand-accent — six hues for six
+ * counts of identical importance, which reads as a rainbow and implies a
+ * grouping none of them share. Colour is for state, not identity; the icon and
+ * label already say which tile is which. Kept in the signature so the six call
+ * sites don't all need editing, and so a future genuine state tone has a home.
+ */
+function StatCard({ icon, value, label }: { icon: React.ReactNode; value: number; label: string; tone?: string }) {
   return (
-    <div className="flex items-center gap-3 rounded-sm border border-border/60 bg-card px-3 py-2.5">
-      <span className="flex h-8 w-8 items-center justify-center rounded-sm bg-muted/40" style={{ color: tone ?? 'hsl(var(--primary))' }}>{icon}</span>
+    <div className="flex items-center gap-3 rounded-sm border border-border bg-card px-3 py-2.5">
+      <span className="flex h-8 w-8 items-center justify-center rounded-sm bg-primary/10 text-primary">{icon}</span>
       <div className="leading-tight">
         <div className="text-lg font-bold tabular-nums text-foreground">{value}</div>
         <div className="text-[12px] uppercase tracking-[0.08em] text-muted-foreground">{label}</div>
@@ -127,10 +136,14 @@ export function NewsroomDashboard({ onNavigate }: { onNavigate: (where: string) 
 
   return (
     <div className="mb-8 space-y-5">
-      {/* AI Studio brief */}
-      <div className="rounded-md border border-[hsl(var(--brand-accent)/0.35)] bg-gradient-to-br from-[hsl(var(--brand-accent)/0.07)] to-transparent p-4">
+      {/* AI Studio brief. A cream box with a gold left rule — an editorial
+          device that actually reads — rather than the old 7%-gold gradient,
+          which resolved to within ~1 L* of the page and just looked like a
+          smudge. The eyebrow uses the gold INK token: the fill it used before
+          was 2.19:1 here, on the most prominent label of the screen. */}
+      <div className="rounded-sm border border-border border-l-[3px] border-l-brand-accent bg-card p-4">
         <div className="mb-1.5 flex items-center justify-between gap-2">
-          <span className="flex items-center gap-1.5 text-[13px] font-bold uppercase tracking-[0.1em]" style={{ color: 'hsl(var(--brand-accent))' }}>
+          <span className="flex items-center gap-1.5 text-[13px] font-bold uppercase tracking-[0.1em] text-brand-accent-ink">
             <Sparkles size={13} /> Today’s Studio Brief
           </span>
           <button
@@ -170,15 +183,18 @@ export function NewsroomDashboard({ onNavigate }: { onNavigate: (where: string) 
       <div>
         <h3 className="mb-2 flex items-center gap-2 font-[family-name:var(--font-display)] text-base font-bold text-foreground">
           Needs your attention
+          {/* White on gold is 2.1:1. The gold token's own foreground is the dark
+              green-black that pairs with it (6.79:1) — the inline `color: white`
+              was overriding exactly the value that already worked. */}
           {summary.needsAttention.length > 0 && (
-            <span className="flex h-5 min-w-5 items-center justify-center rounded-full bg-[hsl(var(--brand-accent))] px-1.5 text-[13px] font-bold text-[hsl(var(--brand-accent-foreground,0_0%_100%))]" style={{ color: 'white' }}>
+            <span className="flex h-5 min-w-5 items-center justify-center rounded-full bg-brand-accent px-1.5 text-[13px] font-bold text-brand-accent-foreground">
               {summary.needsAttention.length}
             </span>
           )}
         </h3>
         {summary.needsAttention.length === 0 ? (
           <div className="flex items-center gap-2 rounded-sm border border-border/60 bg-card px-4 py-3 text-sm text-muted-foreground">
-            <CheckCircle2 size={15} className="text-[hsl(var(--chart-2))]" /> Nothing waiting on you right now. Nicely done.
+            <CheckCircle2 size={15} className="text-success" /> Nothing waiting on you right now. Nicely done.
           </div>
         ) : (
           <div className="grid gap-2 sm:grid-cols-2 lg:grid-cols-3">
@@ -189,7 +205,9 @@ export function NewsroomDashboard({ onNavigate }: { onNavigate: (where: string) 
                 className="group flex items-center justify-between gap-3 rounded-sm border border-border/60 bg-card px-3 py-2.5 text-left transition-colors hover:border-primary/40 hover:bg-muted/30"
               >
                 <span className="flex items-center gap-2.5">
-                  <span className="flex h-7 min-w-7 items-center justify-center rounded-sm bg-[hsl(var(--brand-accent)/0.12)] px-1.5 text-sm font-bold tabular-nums" style={{ color: 'hsl(var(--brand-accent))' }}>{n.count}</span>
+                  {/* Gold as ink, so --brand-accent-ink (5.9:1 on this tint) —
+                      --brand-accent itself is a fill and reads 2.19:1 as text. */}
+                  <span className="flex h-7 min-w-7 items-center justify-center rounded-sm bg-brand-accent/15 px-1.5 text-sm font-bold tabular-nums text-brand-accent-ink">{n.count}</span>
                   <span className="text-sm text-foreground">{n.label}</span>
                 </span>
                 <ArrowRight size={15} className="text-muted-foreground transition-transform group-hover:translate-x-0.5 group-hover:text-primary" />
@@ -210,7 +228,7 @@ export function NewsroomDashboard({ onNavigate }: { onNavigate: (where: string) 
                 <button
                   onClick={() => askAgent(`In the Production System: ${c.label.toLowerCase()}. Walk me through it and do what you can for me.`)}
                   title="Ask the Stablehand to help with this"
-                  className="flex h-7 w-7 items-center justify-center rounded-sm border border-border/60 text-muted-foreground hover:bg-muted hover:text-[hsl(var(--brand-accent))]"
+                  className="flex h-7 w-7 items-center justify-center rounded-sm border border-border text-muted-foreground hover:bg-muted hover:text-brand-accent-ink"
                 >
                   <Wand2 size={13} />
                 </button>

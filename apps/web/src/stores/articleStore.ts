@@ -54,9 +54,17 @@ interface ArticleState {
   addArticle: (article: Omit<Article, 'id' | 'createdAt'>) => Promise<Article | null>;
   /** Resolves `true` if the save reached the server, `false` if it failed (and was rolled back). */
   updateArticle: (id: string, updates: ArticleUpdate) => Promise<boolean>;
-  removeArticle: (id: string) => Promise<void>;
-  publishArticle: (id: string) => Promise<void>;
-  setStatus: (id: string, status: ArticleStatus) => Promise<void>;
+  /** Resolves `true` if the delete stuck, `false` if it failed (and was restored). */
+  removeArticle: (id: string) => Promise<boolean>;
+  /**
+   * Move a story to another stage. Resolves `false` when the server refuses the
+   * move, so callers can hold their confirmation toast until it lands.
+   *
+   * `publishArticle` used to sit alongside this — a second, hand-rolled copy of
+   * the same PUT that also sent `publishedAt`, which the server now owns. It had
+   * no callers.
+   */
+  setStatus: (id: string, status: ArticleStatus) => Promise<boolean>;
 }
 
 export const useArticleStore = create<ArticleState>()((set, get) => ({
@@ -110,7 +118,10 @@ export const useArticleStore = create<ArticleState>()((set, get) => ({
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(updates),
       });
-      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      // Same treatment as setStatus: a rejected save carries a sentence worth
+      // reading ("You cannot publish to the newsletter."), and `HTTP 403` is not
+      // it.
+      if (!res.ok) throw new Error(await failureMessage(res, 'Could not save the story'));
       const updated = normalizeArticle(await res.json());
       set((state) => ({
         articles: state.articles.map((a) => (a.id === id ? updated : a)),
@@ -131,36 +142,13 @@ export const useArticleStore = create<ArticleState>()((set, get) => ({
       const res = await authFetch(`/api/articles/${id}`, {
         method: 'DELETE',
       });
-      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      if (!res.ok) throw new Error(await failureMessage(res, 'Could not delete the story'));
+      return true;
     } catch (err) {
       const message = err instanceof Error ? err.message : 'Failed to delete article';
       set({ articles: previous, error: message });
-      toast.error(`Could not delete the article — restoring it`);
-    }
-  },
-
-  publishArticle: async (id) => {
-    const previous = get().articles;
-    set({
-      articles: previous.map((a) =>
-        a.id === id ? { ...a, status: 'published', publishedAt: new Date() } : a
-      ),
-    });
-    try {
-      const res = await authFetch(`/api/articles/${id}`, {
-        method: 'PUT',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ status: 'published', publishedAt: new Date() }),
-      });
-      if (!res.ok) throw new Error(`HTTP ${res.status}`);
-      const updated = normalizeArticle(await res.json());
-      set((state) => ({
-        articles: state.articles.map((a) => (a.id === id ? updated : a)),
-      }));
-    } catch (err) {
-      const message = err instanceof Error ? err.message : 'Failed to publish article';
-      set({ articles: previous, error: message });
       toast.error(message);
+      return false;
     }
   },
 
@@ -180,10 +168,12 @@ export const useArticleStore = create<ArticleState>()((set, get) => ({
       set((state) => ({
         articles: state.articles.map((a) => (a.id === id ? updated : a)),
       }));
+      return true;
     } catch (err) {
       const message = err instanceof Error ? err.message : 'Failed to set article status';
       set({ articles: previous, error: message });
       toast.error(message);
+      return false;
     }
   },
 }));

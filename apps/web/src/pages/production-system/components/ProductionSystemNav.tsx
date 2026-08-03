@@ -1,5 +1,5 @@
 /**
- * Production system navigation.
+ * Campaign Engine navigation.
  *
  * Two presentations of one nav list:
  *   - `ProductionSystemSidebar` — the desktop rail. Sticky, full viewport
@@ -78,8 +78,13 @@ function NavList({ visibleNav, collapsed, onNavigate, ...counts }: NavListProps)
         if (items.length === 0) return null;
         return (
           <div key={section} className="mb-4 last:mb-0">
+            {/* Section label. The AA floor for cream-on-forest is /56, and this
+                was /45 — a pleasantly recessive 3.50:1, i.e. a fail at 11px.
+                /60 (4.97:1) is the nearest value that passes AND exists: the
+                opacity scale is multiples of 5, so a bare /62 is not generated
+                at all and the label would silently inherit full-brightness cream. */}
             {!collapsed && (
-              <p className="mb-1 px-2.5 text-[11px] font-semibold uppercase tracking-[0.12em] text-muted-foreground/60">
+              <p className="mb-1 px-2.5 text-[11px] font-semibold uppercase tracking-[0.12em] text-primary-foreground/60">
                 {section}
               </p>
             )}
@@ -98,13 +103,17 @@ function NavList({ visibleNav, collapsed, onNavigate, ...counts }: NavListProps)
                       'group flex w-full items-center gap-2.5 rounded-sm px-2.5 py-2 text-[13.5px] font-medium transition-colors',
                       'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring',
                       collapsed && 'justify-center px-0',
+                      // Green chrome: the rail is --primary, so states are spelled
+                      // in primary-foreground alpha, not in light-surface tokens.
+                      // /70 is the inactive weight (6.15:1); the floor for AA on
+                      // this green is /62. Active is the gold accent (5.19:1).
                       active
-                        ? 'bg-primary/10 text-primary'
-                        : 'text-muted-foreground hover:bg-muted/60 hover:text-foreground',
+                        ? 'bg-primary-foreground/10 text-[hsl(var(--brand-accent))]'
+                        : 'text-primary-foreground/70 hover:bg-primary-foreground/10 hover:text-primary-foreground',
                     )}
                     title={collapsed ? item.label : undefined}
                   >
-                    <span className={cn('flex-shrink-0', active ? 'text-primary' : 'text-muted-foreground/80')}>
+                    <span className={cn('flex-shrink-0', active ? 'text-[hsl(var(--brand-accent))]' : 'text-primary-foreground/60')}>
                       {item.icon}
                     </span>
                     {!collapsed && <span className="flex-1 truncate text-left">{item.label}</span>}
@@ -122,7 +131,9 @@ function NavList({ visibleNav, collapsed, onNavigate, ...counts }: NavListProps)
                       <span
                         className={cn(
                           'flex-shrink-0 rounded-sm px-1.5 py-0.5 text-[11px] font-semibold tabular-nums',
-                          active ? 'bg-primary/15 text-primary' : 'bg-muted text-muted-foreground/80',
+                          active
+                            ? 'bg-primary-foreground/15 text-primary-foreground'
+                            : 'bg-primary-foreground/10 text-primary-foreground/70',
                         )}
                       >
                         {badge}
@@ -146,7 +157,9 @@ function BrandMark() {
       aria-hidden="true"
       className="h-8 w-8 flex-shrink-0 rounded-sm"
       style={{
-        backgroundColor: 'hsl(var(--primary))',
+        // Gold, as the comment above always said — it was --primary, which is now
+        // the rail's own background and would render the mark invisible.
+        backgroundColor: 'hsl(var(--brand-accent))',
         WebkitMaskImage: "url('/images/Stable_Press.png')",
         maskImage: "url('/images/Stable_Press.png')",
         WebkitMaskSize: '22px',
@@ -155,7 +168,6 @@ function BrandMark() {
         maskRepeat: 'no-repeat',
         WebkitMaskPosition: 'center',
         maskPosition: 'center',
-        boxShadow: 'inset 0 0 0 1px hsl(var(--border))',
       }}
     />
   );
@@ -182,11 +194,11 @@ function NavBrand({ collapsed, onNavigate }: { collapsed: boolean; onNavigate?: 
       <BrandMark />
       {!collapsed && (
         <span className="min-w-0">
-          <span className="block truncate font-[family-name:var(--font-display)] text-[15px] font-bold leading-tight text-foreground">
+          <span className="block truncate font-[family-name:var(--font-display)] text-[15px] font-bold leading-tight text-primary-foreground">
             Stable Press
           </span>
-          <span className="flex items-center gap-1 truncate text-[11px] leading-tight text-muted-foreground">
-            Production System
+          <span className="flex items-center gap-1 truncate text-[11px] leading-tight text-primary-foreground/60">
+            Campaign Engine
             <ExternalLink
               size={9}
               className="flex-shrink-0 opacity-0 transition-opacity group-hover/brand:opacity-100"
@@ -232,7 +244,7 @@ function NavAccount({
   const roleText = assignedRoles.length ? roleSummary(assignedRoles) : 'No role assigned';
 
   return (
-    <div ref={ref} className="relative border-t border-border/50 p-2">
+    <div ref={ref} className="relative border-t border-primary-foreground/10 p-2">
       {open && (
         <div className="absolute bottom-full left-2 right-2 mb-1 overflow-hidden rounded-sm border border-border bg-popover shadow-lg">
           <Link
@@ -259,8 +271,8 @@ function NavAccount({
         aria-haspopup="menu"
         aria-label="Account menu"
         className={cn(
-          'flex w-full items-center gap-2.5 rounded-sm border border-border/70 bg-card p-2 text-left transition-colors hover:bg-muted/50',
-          'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring',
+          'flex w-full items-center gap-2.5 rounded-sm border border-primary-foreground/15 bg-primary-foreground/5 p-2 text-left transition-colors hover:bg-primary-foreground/10',
+          'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary-foreground/60',
           collapsed && 'justify-center border-transparent bg-transparent p-1',
         )}
         title={collapsed ? `${currentUser.displayName} — ${roleText}` : undefined}
@@ -274,14 +286,14 @@ function NavAccount({
         {!collapsed && (
           <>
             <span className="min-w-0 flex-1">
-              <span className="block truncate text-[13px] font-semibold leading-tight text-foreground">
+              <span className="block truncate text-[13px] font-semibold leading-tight text-primary-foreground">
                 {currentUser.displayName}
               </span>
-              <span className="block truncate text-[11px] leading-tight text-muted-foreground">
+              <span className="block truncate text-[11px] leading-tight text-primary-foreground/60">
                 {roleText}
               </span>
             </span>
-            <ChevronsUpDown size={14} className="flex-shrink-0 text-muted-foreground/70" />
+            <ChevronsUpDown size={14} className="flex-shrink-0 text-primary-foreground/60" />
           </>
         )}
       </button>
@@ -306,14 +318,18 @@ export function ProductionSystemSidebar({
       className={cn(
         // sticky + h-screen: the rail owns its own scroll, so the nav never
         // scrolls away with the page body.
-        'sticky top-0 hidden h-screen flex-shrink-0 flex-col border-r border-border/60 bg-card md:flex',
+        // GREEN CHROME — see docs/THEME-DIRECTION.md. Navigation is the frame
+        // around the work, so the rail is --primary, matching NavBar.tsx on the
+        // public site. It was bg-card, which put cream chrome around cream
+        // content and left the screen with no figure/ground at all.
+        'sticky top-0 hidden h-screen flex-shrink-0 flex-col border-r border-primary-foreground/10 bg-primary text-primary-foreground md:flex',
         'transition-[width] duration-200',
         collapsed ? 'w-[68px]' : 'w-60',
       )}
     >
       <div
         className={cn(
-          'flex h-14 flex-shrink-0 items-center gap-2 border-b border-border/50 px-3',
+          'flex h-14 flex-shrink-0 items-center gap-2 border-b border-primary-foreground/10 px-3',
           collapsed && 'justify-center px-0',
         )}
       >
@@ -321,7 +337,7 @@ export function ProductionSystemSidebar({
         {!collapsed && (
           <button
             onClick={() => setCollapsed(true)}
-            className="ml-auto rounded-sm p-1.5 text-muted-foreground transition-colors hover:bg-muted/60 hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+            className="ml-auto rounded-sm p-1.5 text-primary-foreground/60 transition-colors hover:bg-primary-foreground/10 hover:text-primary-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary-foreground/60"
             aria-label="Collapse sidebar"
             aria-expanded
             title="Collapse sidebar"
@@ -334,7 +350,7 @@ export function ProductionSystemSidebar({
       {collapsed && (
         <button
           onClick={() => setCollapsed(false)}
-          className="mx-auto mt-2 rounded-sm p-1.5 text-muted-foreground transition-colors hover:bg-muted/60 hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+          className="mx-auto mt-2 rounded-sm p-1.5 text-primary-foreground/60 transition-colors hover:bg-primary-foreground/10 hover:text-primary-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary-foreground/60"
           aria-label="Expand sidebar"
           aria-expanded={false}
           title="Expand sidebar"
@@ -391,16 +407,16 @@ export function ProductionSystemNavDrawer({
     <div className="fixed inset-0 z-50 flex md:hidden">
       <div className="absolute inset-0 bg-foreground/40" onClick={onClose} aria-hidden="true" />
       <div
-        className="relative flex h-full w-64 max-w-[82%] flex-col border-r border-border bg-card shadow-xl"
+        className="relative flex h-full w-64 max-w-[82%] flex-col border-r border-primary-foreground/10 bg-primary text-primary-foreground shadow-xl"
         role="dialog"
         aria-modal="true"
-        aria-label="Production system navigation"
+        aria-label="Campaign Engine navigation"
       >
-        <div className="flex h-14 flex-shrink-0 items-center gap-2 border-b border-border/50 px-3">
+        <div className="flex h-14 flex-shrink-0 items-center gap-2 border-b border-primary-foreground/10 px-3">
           <NavBrand collapsed={false} onNavigate={onClose} />
           <button
             onClick={onClose}
-            className="ml-auto rounded-sm p-1.5 text-muted-foreground transition-colors hover:bg-muted/60 hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+            className="ml-auto rounded-sm p-1.5 text-primary-foreground/60 transition-colors hover:bg-primary-foreground/10 hover:text-primary-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary-foreground/60"
             aria-label="Close navigation"
           >
             <X size={16} />

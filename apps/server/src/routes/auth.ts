@@ -6,6 +6,7 @@ import { withIdentityDefaults, newReaderFields } from '../lib/identity.js';
 import { resolveAccount, toClientUser } from '../lib/effectiveAccess.js';
 import { getRoles } from '../lib/roleRegistry.js';
 import { COLLECTION as INVITES, isExpired } from '../lib/invites.js';
+import { staffRoleSlugFor } from '../lib/membership.js';
 
 type WithMongoId = { _id: string; [key: string]: unknown };
 function project<T extends WithMongoId>(doc: T): Omit<T, '_id'> & { id: string } {
@@ -226,7 +227,12 @@ router.post('/verify-otp', async (req, res) => {
       if (isExpired(g)) continue;
       if (typeof g.role === 'string' && known.has(g.role)) merged.add(g.role);
     }
-    await db.collection('users').updateOne(String(finalDoc._id), { staffRoles: [...merged] });
+    // P1 dual-write: `staffRoleSlug` is a field on this same document, so it goes
+    // in the SAME $set as the array — it cannot half-apply.
+    await db.collection('users').updateOne(String(finalDoc._id), {
+      staffRoles: [...merged],
+      staffRoleSlug: staffRoleSlugFor([...merged]),
+    });
     await Promise.all(grants.map((g) => db.collection(INVITES).deleteOne(g._id)));
     const refreshed = await db.collection('users').findById(finalDoc._id);
     if (refreshed) finalDoc = refreshed;
@@ -237,7 +243,13 @@ router.post('/verify-otp', async (req, res) => {
   // authorization input is read live on each request, so a role edit takes
   // effect immediately rather than at the next login.
   const identity = withIdentityDefaults(project(finalDoc));
-  const token = signToken({ sub: identity.id, email: identity.email });
+  // `v` pins the token to the account's current session generation, so bumping
+  // users.tokenVersion signs every existing session out (see lib/auth.ts isRevoked).
+  const token = signToken({
+    sub: identity.id,
+    email: identity.email,
+    v: typeof finalDoc.tokenVersion === 'number' ? finalDoc.tokenVersion : 0,
+  });
   res.json({ token, user: toClientUser(await resolveAccount(identity)) });
 });
 

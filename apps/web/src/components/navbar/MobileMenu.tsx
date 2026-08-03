@@ -44,7 +44,7 @@ export function MobileMenu({
           className={cn(
             'flex items-center gap-2.5 px-3 py-2.5 rounded-sm text-sm font-medium transition-colors border-l-2',
             pathname === '/news'
-              ? 'bg-primary/8 text-primary'
+              ? 'bg-primary/10 text-primary'
               : 'text-muted-foreground hover:text-foreground hover:bg-muted/50 border-transparent'
           )}
           style={
@@ -129,7 +129,7 @@ export function MobileMenu({
             className={cn(
               'flex items-center gap-2.5 px-3 py-2.5 rounded-sm text-sm font-medium transition-colors border-l-2',
               pathname === item.to
-                ? 'bg-primary/8 text-primary'
+                ? 'bg-primary/10 text-primary'
                 : 'text-muted-foreground hover:text-foreground hover:bg-muted/50 border-transparent'
             )}
             style={
@@ -172,7 +172,7 @@ export function MobileMenu({
             className={cn(
               'flex items-center gap-2.5 px-3 py-2.5 rounded-sm text-sm font-medium transition-colors border-l-2',
               pathname === '/podcast/workflow'
-                ? 'bg-primary/8 text-primary'
+                ? 'bg-primary/10 text-primary'
                 : 'text-muted-foreground hover:text-foreground hover:bg-muted/50 border-transparent'
             )}
             style={
@@ -193,7 +193,7 @@ export function MobileMenu({
             className={cn(
               'flex items-center gap-2.5 px-3 py-2.5 rounded-sm text-sm font-medium transition-colors border-l-2',
               pathname === '/production-system'
-                ? 'bg-primary/8 text-primary'
+                ? 'bg-primary/10 text-primary'
                 : 'text-muted-foreground hover:text-foreground hover:bg-muted/50 border-transparent'
             )}
             style={

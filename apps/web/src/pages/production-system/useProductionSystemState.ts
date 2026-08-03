@@ -127,7 +127,11 @@ export function useProductionSystemState() {
   // `isContributor` means "can only touch their own drafts".
   const isContributor = !can('content.draft.edit_any');
   const isEditor = can('content.editorial_review');
+  // READ and WRITE are separate powers on the roster. `team.view` alone opens the
+  // Team screen read-only; `team.manage` is what turns the controls on. Mirrors
+  // the split in routes/staff.ts, which gates GET on view and writes on manage.
   const canManageTeam = can('team.manage');
+  const canViewTeam = can('team.view') || canManageTeam;
   // Distinct from team.manage: /api/roles enforces roles.manage, so the console
   // must ask for the same thing the server does.
   const canManageRoles = can('roles.manage');
@@ -178,8 +182,9 @@ export function useProductionSystemState() {
       : (articles ?? []);
     for (const article of visibleArticles) {
       // An unrecognised status falls into Draft so the story is at least
-      // reachable. The migration should mean this never fires — see
-      // apps/server/scripts/migrate-article-status.ts.
+      // reachable. The server repairs legacy statuses on read
+      // (`normaliseLegacyStatus`), so this is a belt-and-braces guard for the
+      // first render after a story arrives, not the actual fix.
       if (map[article.status]) map[article.status].push(article);
       else map.draft.push(article);
     }
@@ -202,22 +207,49 @@ export function useProductionSystemState() {
    * Move a story through the workflow.
    *
    * The server is the authority: it re-checks that the move is legal from where
-   * the story actually is and that the caller holds the move's permission, and
-   * the store surfaces its refusal. This function is the optimistic half.
+   * the story actually is and that the caller holds the move's permission. The
+   * confirmation toast now waits for that answer rather than being fired
+   * optimistically — a refused move used to show both an error toast from the
+   * store and a "moved to X" success toast from here.
    */
-  const handleMove = (article: Article, move: Move, note?: string) => {
+  const handleMove = async (
+    article: Article,
+    move: Move,
+    opts?: { note?: string; scheduledFor?: string },
+  ) => {
     const sendingBack = move.back && move.to === 'draft';
     if (sendingBack) {
-      void updateArticle(article.id, {
+      const ok = await updateArticle(article.id, {
         status: move.to,
-        changesRequested: true,
-        changesRequestedNote: note ?? '',
+        changesRequestedNote: opts?.note ?? '',
       });
-      articleToast.advanced('Draft — changes requested');
+      if (ok) articleToast.advanced('Draft — changes requested');
       return;
     }
 
-    void setStatus(article.id, move.to);
+    // Scheduling carries its slot in the same write, so the story never sits in
+    // Scheduled without a date for the server to act on.
+    if (move.to === 'scheduled') {
+      if (!opts?.scheduledFor) {
+        toast.error('Pick a date and time for this story to go live.');
+        return;
+      }
+      const ok = await updateArticle(article.id, {
+        status: move.to,
+        scheduledFor: opts.scheduledFor,
+      });
+      if (ok) {
+        articleToast.advanced(
+          `Scheduled for ${new Date(opts.scheduledFor).toLocaleString('en-AU', {
+            day: 'numeric', month: 'short', hour: 'numeric', minute: '2-digit',
+          })}`,
+        );
+      }
+      return;
+    }
+
+    const ok = await setStatus(article.id, move.to);
+    if (!ok) return;
     if (move.to === 'published') articleToast.published();
     else articleToast.advanced(WORKFLOW_STAGES.find((s) => s.status === move.to)?.label ?? move.to);
   };
@@ -228,7 +260,7 @@ export function useProductionSystemState() {
    * apply as from the board; an illegal destination is refused here rather than
    * being sent for the server to reject.
    */
-  const handleAdvanceTo = (articleId: string, toStatus: ArticleStatus) => {
+  const handleAdvanceTo = (articleId: string, toStatus: ArticleStatus, scheduledFor?: string) => {
     const article = (articles ?? []).find((a) => a.id === articleId);
     if (!article) return;
     const move = findMove(article.status, toStatus);
@@ -240,7 +272,7 @@ export function useProductionSystemState() {
       toast.error(`You cannot ${move.label.toLowerCase()} this story.`);
       return;
     }
-    handleMove(article, move);
+    void handleMove(article, move, { scheduledFor });
   };
 
   const handleEdit = (article: Article) => {
@@ -257,8 +289,11 @@ export function useProductionSystemState() {
   const confirmDelete = async () => {
     if (!deleteTarget) return;
     setDeleting(true);
-    await removeArticle(deleteTarget.id);
+    const ok = await removeArticle(deleteTarget.id);
     setDeleting(false);
+    // Only claim it happened if it did — the store restores the row and explains
+    // itself on failure.
+    if (!ok) return;
     setDeleteTarget(null);
     toast.success('Story deleted.');
   };
@@ -320,7 +355,7 @@ export function useProductionSystemState() {
   return {
     // identity / capability
     currentUser, roleLabel, accentColor, isContributor, isEditor,
-    canManageTeam, canManageRoles, visibleNav, accessModules,
+    canManageTeam, canViewTeam, canManageRoles, visibleNav, accessModules,
     // articles
     articles, buckets, filteredArticles, visibleStages,
     totalStories, myStories, pendingReview, publishedCount, scheduledCount,

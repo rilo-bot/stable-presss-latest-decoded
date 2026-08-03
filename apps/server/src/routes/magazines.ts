@@ -133,7 +133,10 @@ router.get('/', async (req, res) => {
 // staff directory — candidates for the Share dialog (any staff caller).
 // Declared before '/:id' so the literal path isn't captured as a magazine id.
 router.get('/staff-directory', async (_req, res) => {
-  const users = await db.collection('users').find();
+  // P2: candidates are the staff population, fetched via the indexed field. This
+  // was every user on the platform, and `identitiesWith` then resolved permissions
+  // per row — so the fan-out was over the whole user base, not just staff.
+  const users = await db.collection('users').find({ staffRoleSlug: { $ne: null } });
   // Only the fields the Share picker needs — no staff-role enumeration.
   const candidates = users.map((u) => withIdentityDefaults({ id: u._id, ...u }));
   const staff = (await identitiesWith(candidates, 'newsroom.access'))

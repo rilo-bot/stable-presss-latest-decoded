@@ -37,8 +37,78 @@ const INDEX_SPECS: IndexSpec[] = [
   { collection: COL.chat, keys: { magazineId: 1, deletedAt: 1, createdAt: -1 } },
   // Issue library list: served newest-first by updatedAt.
   { collection: COL.issues, keys: { deletedAt: 1, updatedAt: -1 } },
+  // Blogs. The public index sorts published posts newest-first, and the staff
+  // list sorts everything by last touched — both run through aggregate() with a
+  // $skip/$limit, so they must not scan.
+  { collection: 'blogs', keys: { deletedAt: 1, status: 1, publishedAt: -1 } },
+  { collection: 'blogs', keys: { deletedAt: 1, updatedAt: -1 } },
+  { collection: 'blogs', keys: { tags: 1, deletedAt: 1 } },
+  // Retired slugs still resolve (301), so this lookup is on the public read path.
+  { collection: 'blogs', keys: { slugHistory: 1, deletedAt: 1 } },
+  // A slug is a post's public identity — uniqueness is enforced in the database,
+  // not just by uniqueSlug(), because two concurrent creates would both pass an
+  // application-level check. PARTIAL on deletedAt:null for the same reason the
+  // roles index below is: deletes are soft, and a tombstone must not hold its
+  // slug hostage forever.
+  {
+    collection: 'blogs',
+    keys: { slug: 1 },
+    options: { unique: true, partialFilterExpression: { deletedAt: null } },
+  },
   // User lookup by email (collaborator-add and auth paths).
-  { collection: 'users', keys: { email: 1, deletedAt: 1 } },
+  //
+  // UNIQUE, for exactly the reason the blogs.slug index above is: signup checks
+  // for an existing address at the application level (routes/auth.ts), and two
+  // concurrent signups for the same address would both pass it. Duplicate users
+  // make `find({ email })[0]` arbitrary, so sign-in, invite-apply and org
+  // member-add could each pick a different row for one person.
+  // Partial on deletedAt:null because deletes are soft.
+  //
+  // If the collection ALREADY holds duplicates this build fails — ensureIndexes
+  // runs under Promise.allSettled, so it logs and the other indexes still apply.
+  // `scripts/migrate-user-model.ts --check` reports duplicate emails so they can
+  // be merged first. See docs/AUTH-RBAC-REVIEW.md M6.
+  {
+    collection: 'users',
+    keys: { email: 1 },
+    options: { unique: true, partialFilterExpression: { deletedAt: null } },
+  },
+  // The staff axis is a scalar field on the user (docs/USER-MODEL-PLAN.md §1.2), so
+  // the roster, assignee counts, superadmin-holder count and "is this person staff"
+  // are all one indexed lookup instead of the full-collection scans they are today.
+  { collection: 'users', keys: { staffRoleSlug: 1, deletedAt: 1 } },
+  // Sign-in reads the newest OTP for an address on an UNAUTHENTICATED, unthrottled
+  // endpoint, and `deleteOne` is a soft delete — so this collection only grows and
+  // every request scanned all of it. See docs/AUTH-RBAC-REVIEW.md M7.
+  { collection: 'otps', keys: { email: 1, deletedAt: 1, createdAt: -1 } },
+  // ── Membership edges (docs/USER-MODEL-PLAN.md §3) ──
+  // Unique keys are PARTIAL on deletedAt:null: the reconciler in lib/membership.ts
+  // soft-deletes rows that leave the user document, and a tombstone must not stop
+  // the same (user, party, role) being re-created later.
+  {
+    collection: 'partyMemberships',
+    keys: { userId: 1, partyId: 1, role: 1 },
+    options: { unique: true, partialFilterExpression: { deletedAt: null } },
+  },
+  // The verification queue: filter by status, oldest first, PAGINATED — which the
+  // embedded array could not support at all.
+  { collection: 'partyMemberships', keys: { status: 1, deletedAt: 1, createdAt: 1 } },
+  // Verify/reject resolve by the original embedded claim id, which is what the web
+  // app sends. Not unique: a soft-deleted row keeps its claimId, and re-adding the
+  // same claim is legal.
+  { collection: 'partyMemberships', keys: { claimId: 1, deletedAt: 1 } },
+  // "Who is behind this party" (lib/notify.ts usersForParty, on every horse-link write).
+  { collection: 'partyMemberships', keys: { partyId: 1, status: 1, deletedAt: 1 } },
+  // Scope resolution, on every authenticated request once P2 lands.
+  { collection: 'partyMemberships', keys: { userId: 1, status: 1, deletedAt: 1 } },
+  {
+    collection: 'orgMemberships',
+    keys: { userId: 1, orgId: 1 },
+    options: { unique: true, partialFilterExpression: { deletedAt: null } },
+  },
+  // One org's member list (routes/organisations.ts, currently a full users scan).
+  { collection: 'orgMemberships', keys: { orgId: 1, deletedAt: 1 } },
+  { collection: 'orgMemberships', keys: { userId: 1, deletedAt: 1 } },
   // Invite links resolve by token hash on an unauthenticated route — the one
   // lookup an anonymous caller can trigger, so it must not scan.
   { collection: 'pendingStaffGrants', keys: { tokenHash: 1 } },

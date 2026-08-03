@@ -34,7 +34,9 @@ export default function Bulletins() {
   const categoryParam = searchParams.get('category') ?? null;
 
   const [search, setSearch] = useState('');
-  const [loading, setLoading] = useState(true);
+  // The real fetch state, not a 600ms timer that ran whether or not the stories
+  // had arrived.
+  const loading = useArticleStore((s) => !s.loaded && !s.error);
 
   // Published magazine issues (server-persisted bulletin builder output). The
   // list endpoint already returns non-unpublished issues sorted newest-first.
@@ -43,11 +45,6 @@ export default function Bulletins() {
   useEffect(() => {
     fetchIssues();
   }, [fetchIssues]);
-
-  useEffect(() => {
-    const t = setTimeout(() => setLoading(false), 600);
-    return () => clearTimeout(t);
-  }, []);
 
   // Production System bulletin articles
   const { source, hasCmsArticles, sections, heroItem } = useArticleGroups(

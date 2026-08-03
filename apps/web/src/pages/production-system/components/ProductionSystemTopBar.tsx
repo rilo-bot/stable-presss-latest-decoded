@@ -21,8 +21,11 @@ interface TopBarProps {
  * place its main action sits.
  */
 export function ProductionSystemTopBar({ title, actions, onOpenNav }: TopBarProps) {
+  // Raised white, not bg-background: with the rail now green, the top bar belongs
+  // to the work side of the frame, and a bar the same colour as the page it
+  // floats over has no edge of its own.
   return (
-    <header className="sticky top-0 z-30 flex h-14 items-center gap-3 border-b border-border/60 bg-background/95 px-4 backdrop-blur supports-[backdrop-filter]:bg-background/80 md:px-6">
+    <header className="sticky top-0 z-30 flex h-14 items-center gap-3 border-b border-border bg-card/95 px-4 backdrop-blur supports-[backdrop-filter]:bg-card/80 md:px-6">
       <button
         onClick={onOpenNav}
         className="md:hidden -ml-1 rounded-sm p-2 text-muted-foreground transition-colors hover:bg-muted/60 hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"

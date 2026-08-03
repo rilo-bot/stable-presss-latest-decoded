@@ -5,6 +5,7 @@ import {
   Tv,
   BookOpen,
   HelpCircle,
+  PenLine,
   Star,
   Mail,
 } from 'lucide-react';
@@ -157,6 +158,11 @@ export const NAV_SECTIONS: NavSection[] = [
         description: 'Get the bulletin delivered',
       },
     ],
+  },
+  {
+    label: 'Blog',
+    to: '/blog',
+    icon: <PenLine size={14} />,
   },
   {
     label: 'Tipping Ring',

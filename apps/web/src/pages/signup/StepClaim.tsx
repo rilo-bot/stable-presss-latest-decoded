@@ -54,7 +54,7 @@ export default function StepClaim({
                 className={cn(
                   'flex items-center justify-between gap-2 px-3 py-2 rounded-md border text-sm transition-colors',
                   selectedRoles.includes(role)
-                    ? 'border-primary bg-primary/8 text-primary font-semibold'
+                    ? 'border-primary bg-primary/10 text-primary font-semibold'
                     : 'border-input hover:border-primary/50 text-foreground',
                 )}
               >

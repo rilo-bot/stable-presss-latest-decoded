@@ -6,6 +6,7 @@ import { Button } from '@/components/ui/button';
 import {
   Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle,
 } from '@/components/ui/dialog';
+import { Input } from '@/components/ui/input';
 import { Textarea } from '@/components/ui/textarea';
 import { can } from '@/lib/permissions';
 import { cn } from '@/lib/utils';
@@ -15,6 +16,21 @@ import type { Article, ArticleStatus } from '@/types/article';
 
 import { StoryCard } from './StoryCard';
 
+/** `datetime-local` wants `YYYY-MM-DDTHH:mm` in local time; the wire uses ISO. */
+function isoToLocalInput(iso: string | undefined): string {
+  if (!iso) return '';
+  const t = Date.parse(iso);
+  if (!Number.isFinite(t)) return '';
+  const d = new Date(t);
+  const pad = (n: number) => String(n).padStart(2, '0');
+  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`;
+}
+
+/** An hour from now, as a sensible default slot. */
+function defaultSlot(): string {
+  return isoToLocalInput(new Date(Date.now() + 60 * 60 * 1000).toISOString());
+}
+
 interface WorkflowBoardProps {
   /** Stages this role may see — a subset of WORKFLOW_STAGES, in order. */
   visibleStages: StageMeta[];
@@ -23,7 +39,7 @@ interface WorkflowBoardProps {
   myStories: number;
   totalStories: number;
   currentUserDisplayName: string | null;
-  onMove: (article: Article, move: Move, note?: string) => void;
+  onMove: (article: Article, move: Move, opts?: { note?: string; scheduledFor?: string }) => void;
   onEdit: (article: Article) => void;
   onDelete: (article: Article) => void;
   onNewInColumn: (status: ArticleStatus) => void;
@@ -44,6 +60,8 @@ export function WorkflowBoard({
 }: WorkflowBoardProps) {
   const [pendingBack, setPendingBack] = useState<{ article: Article; move: Move } | null>(null);
   const [note, setNote] = useState('');
+  const [pendingSchedule, setPendingSchedule] = useState<{ article: Article; move: Move } | null>(null);
+  const [slot, setSlot] = useState('');
 
   const displayCount = isContributor ? myStories : totalStories;
 
@@ -55,14 +73,31 @@ export function WorkflowBoard({
       setNote(article.changesRequestedNote ?? '');
       return;
     }
+    // Scheduling needs a slot. The button used to move the story into Scheduled
+    // with no date at all, which is why nothing ever came back out of that
+    // column on its own.
+    if (move.to === 'scheduled') {
+      setPendingSchedule({ article, move });
+      setSlot(isoToLocalInput(article.scheduledFor) || defaultSlot());
+      return;
+    }
     onMove(article, move);
   };
 
   const confirmBack = () => {
     if (!pendingBack) return;
-    onMove(pendingBack.article, pendingBack.move, note.trim() || undefined);
+    onMove(pendingBack.article, pendingBack.move, { note: note.trim() || undefined });
     setPendingBack(null);
     setNote('');
+  };
+
+  const confirmSchedule = () => {
+    if (!pendingSchedule || !slot) return;
+    onMove(pendingSchedule.article, pendingSchedule.move, {
+      scheduledFor: new Date(slot).toISOString(),
+    });
+    setPendingSchedule(null);
+    setSlot('');
   };
 
   if (displayCount === 0) {
@@ -75,6 +110,19 @@ export function WorkflowBoard({
         onCta={() => onNewInColumn('draft')}
         secondaryCtaLabel="Story Studio AI"
         onSecondaryCta={onOpenStudio}
+      />
+    );
+  }
+
+  // Stories to show but no columns to show them in: the viewer's roles grant no
+  // workflow stages. Rendering the board anyway gave them an empty strip of page
+  // with no explanation.
+  if (visibleStages.length === 0) {
+    return (
+      <EmptyState
+        icon={PenLine}
+        heading="Your role doesn't include any board stages yet."
+        description="The story board shows one column per workflow stage, and none are enabled for your role. An administrator can turn them on under Roles."
       />
     );
   }
@@ -124,6 +172,33 @@ export function WorkflowBoard({
               Cancel
             </Button>
             <Button onClick={confirmBack}>Send back</Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      <Dialog
+        open={pendingSchedule !== null}
+        onOpenChange={(open) => { if (!open) { setPendingSchedule(null); setSlot(''); } }}
+      >
+        <DialogContent className="sm:max-w-md">
+          <DialogHeader>
+            <DialogTitle>When should this go live?</DialogTitle>
+            <DialogDescription>
+              “{pendingSchedule?.article.title}” publishes itself at this time. Nobody needs to come
+              back and press anything.
+            </DialogDescription>
+          </DialogHeader>
+          <Input
+            type="datetime-local"
+            value={slot}
+            onChange={(e) => setSlot(e.target.value)}
+            aria-label="Publish date and time"
+          />
+          <DialogFooter>
+            <Button variant="outline" onClick={() => { setPendingSchedule(null); setSlot(''); }}>
+              Cancel
+            </Button>
+            <Button onClick={confirmSchedule} disabled={!slot}>Schedule</Button>
           </DialogFooter>
         </DialogContent>
       </Dialog>

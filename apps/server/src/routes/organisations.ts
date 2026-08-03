@@ -3,6 +3,7 @@ import { db } from '../lib/db.js';
 import { attachAccount } from '../lib/auth.js';
 import { withIdentityDefaults, PARTY_ROLES, type OrgRole } from '../lib/identity.js';
 import { isPlatformAdmin, orgRoleIn, canManageOrg, isOrgOwner } from '../lib/rbac.js';
+import { ORG_MEMBERSHIPS, mirrorOrgMemberships } from '../lib/membership.js';
 
 type WithMongoId = { _id: string; [key: string]: unknown };
 function project<T extends WithMongoId>(doc: T): Omit<T, '_id'> & { id: string } {
@@ -38,9 +39,10 @@ router.post('/', async (req, res) => {
 
   const userDoc = await db.collection('users').findById(account.id);
   const memberships = Array.isArray(userDoc?.orgMemberships) ? userDoc!.orgMemberships : [];
-  await db.collection('users').updateOne(account.id, {
-    orgMemberships: [...memberships, { orgId, orgRole: 'org_owner' }],
-  });
+  const nextMemberships = [...memberships, { orgId, orgRole: 'org_owner' as OrgRole }];
+  await db.collection('users').updateOne(account.id, { orgMemberships: nextMemberships });
+  // P1 dual-write (docs/USER-MODEL-PLAN.md §8).
+  await mirrorOrgMemberships(account.id, nextMemberships);
 
   const org = await db.collection('organisations').findById(orgId);
   const fresh = await db.collection('users').findById(account.id);
@@ -75,14 +77,20 @@ router.get('/:id', async (req, res) => {
     return;
   }
 
-  const users = await db.collection('users').find();
-  const members = users
-    .filter((u) => Array.isArray(u.orgMemberships) && u.orgMemberships.some((m: { orgId: string }) => m.orgId === orgId))
-    .map((u) => ({
-      userId: String(u._id),
-      displayName: u.displayName,
-      email: u.email,
-      orgRole: u.orgMemberships.find((m: { orgId: string }) => m.orgId === orgId)?.orgRole as OrgRole,
+  // P2: one indexed lookup on {orgId} plus a fetch per member, instead of loading
+  // every user on the platform to find one org's members.
+  const memberRows = await db.collection(ORG_MEMBERSHIPS).find({ orgId });
+  const memberDocs = await Promise.all(
+    memberRows.map((r) => db.collection('users').findById(String(r.userId))),
+  );
+  const members = memberRows
+    .map((r, i) => ({ row: r, user: memberDocs[i] }))
+    .filter((x) => x.user)
+    .map((x) => ({
+      userId: String(x.user!._id),
+      displayName: x.user!.displayName,
+      email: x.user!.email,
+      orgRole: x.row.orgRole as OrgRole,
     }));
 
   const parties = await db.collection('parties').find();
@@ -127,9 +135,9 @@ router.post('/:id/members', async (req, res) => {
     res.status(409).json({ error: 'That person is already a member.' });
     return;
   }
-  await db.collection('users').updateOne(target._id, {
-    orgMemberships: [...memberships, { orgId, orgRole }],
-  });
+  const nextMemberships = [...memberships, { orgId, orgRole }];
+  await db.collection('users').updateOne(target._id, { orgMemberships: nextMemberships });
+  await mirrorOrgMemberships(String(target._id), nextMemberships); // P1 dual-write
   res.status(201).json({
     ok: true,
     member: { userId: String(target._id), displayName: target.displayName, email: target.email, orgRole },
@@ -157,6 +165,8 @@ router.delete('/:id/members/:userId', async (req, res) => {
     (m: { orgId: string }) => m.orgId !== orgId,
   );
   await db.collection('users').updateOne(req.params.userId, { orgMemberships: memberships });
+  // P1 dual-write — the reconciler soft-deletes the row that just left the array.
+  await mirrorOrgMemberships(String(req.params.userId), memberships);
   res.json({ ok: true });
 });
 

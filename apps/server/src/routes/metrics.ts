@@ -16,19 +16,17 @@ const PUBLISHED_STATUSES = ['published', 'newsletter', 'bulletin'];
 
 // GET /api/metrics — site-wide counts derived from live data.
 router.get('/', async (_req, res) => {
-  const [users, articles, tips, tipperProfiles] = await Promise.all([
-    db.collection('users').find(),
-    db.collection('articles').find(),
-    db.collection('tips').find(),
-    db.collection('tipperProfiles').find(),
+  // P2: counts, not fetches. This is a PUBLIC, uncached endpoint that was pulling
+  // every user, article, tip and tipper profile into the API process just to read
+  // four `.length` values — the worst per-request cost of the ten scan sites.
+  const [activeMembers, articlesPublished, tipsPlaced, leaderboardLeaders] = await Promise.all([
+    db.collection('users').count(),
+    db.collection('articles').count({ status: { $in: PUBLISHED_STATUSES } }),
+    db.collection('tips').count(),
+    db.collection('tipperProfiles').count(),
   ]);
 
-  res.json({
-    activeMembers: users.length,
-    articlesPublished: articles.filter((a) => PUBLISHED_STATUSES.includes(String(a.status))).length,
-    tipsPlaced: tips.length,
-    leaderboardLeaders: tipperProfiles.length,
-  });
+  res.json({ activeMembers, articlesPublished, tipsPlaced, leaderboardLeaders });
 });
 
 export default router;

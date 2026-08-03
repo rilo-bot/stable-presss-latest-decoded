@@ -17,13 +17,14 @@ import type { NextFunction, Request, Response } from 'express'
 import { db } from '../lib/db.js'
 import { attachAccount } from '../lib/auth.js'
 import { withIdentityDefaults } from '../lib/identity.js'
-import { canManageRoles, canManageTeam } from '../lib/rbac.js'
+import { canManageRoles, canManageTeam, canViewTeam } from '../lib/rbac.js'
 import {
   SUPERADMIN_SLUG,
   bustRoleCache,
+  checkSuperadminLoss,
+  denyRoleGrant,
   getRoles,
   projectRole,
-  superadminHolderCount,
   type RoleDoc,
 } from '../lib/roleRegistry.js'
 import {
@@ -36,6 +37,7 @@ import {
   type PermissionAction,
 } from '../lib/permissionCatalogue.js'
 import type { AccountUser } from '../lib/effectiveAccess.js'
+import { clearStaffRoleSlug, staffRoleSlugFor } from '../lib/membership.js'
 
 const router = Router()
 
@@ -68,8 +70,16 @@ const requireAssignRoles = (req: Request, res: Response, next: NextFunction): vo
   next()
 }
 
+// READS are open to anyone who may see the Team screen: it renders each member's
+// role label and colour, so a `team.view` holder who could not GET this would see
+// a roster of blanks. Every mutating route below carries its own narrower gate
+// (`requireDefineRoles` / `requireAssignRoles`), so widening the read is safe.
 router.use((req, res, next) => {
-  if (!canManageRoles(req.account) && !canManageTeam(req.account)) {
+  const allowed =
+    canManageRoles(req.account) ||
+    canManageTeam(req.account) ||
+    (req.method === 'GET' && canViewTeam(req.account))
+  if (!allowed) {
     res.status(403).json({ error: 'You do not have permission to manage roles.' })
     return
   }
@@ -114,12 +124,13 @@ function readRoleBody(body: unknown): RoleBody | { error: string } {
 
 /** How many users hold each role slug. */
 async function assigneeCounts(): Promise<Map<string, number>> {
-  const users = await db.collection('users').find()
+  // P2: only the staff population, via the indexed field — was every user on the
+  // platform. One role per person now, so this is a straight tally.
+  const staff = await db.collection('users').find({ staffRoleSlug: { $ne: null } })
   const counts = new Map<string, number>()
-  for (const u of users) {
-    for (const slug of Array.isArray(u.staffRoles) ? u.staffRoles : []) {
-      counts.set(String(slug), (counts.get(String(slug)) ?? 0) + 1)
-    }
+  for (const u of staff) {
+    const slug = String(u.staffRoleSlug)
+    counts.set(slug, (counts.get(slug) ?? 0) + 1)
   }
   return counts
 }
@@ -128,9 +139,11 @@ async function assigneeCounts(): Promise<Map<string, number>> {
  * Would this change strip the acting user's own ability to manage roles?
  * A superadmin is exempt — they can never lock themselves out.
  *
- * Checks the union across their OTHER roles too. Testing only the role being
- * edited rejected a perfectly safe edit whenever someone held two roles that
- * both granted roles.manage — dropping it from one still leaves the other.
+ * The old version also checked "do any of their OTHER roles still grant
+ * roles.manage". That branch is now unreachable by construction: a person holds
+ * exactly one staff role (docs/USER-MODEL-PLAN.md §1), so if they hold the role
+ * being edited there is no other role to fall back on. Simplified rather than kept,
+ * because dead defensive code reads as a live guarantee.
  */
 function wouldSelfLockOut(
   actor: AccountUser,
@@ -138,12 +151,8 @@ function wouldSelfLockOut(
   nextPermissions: PermissionAction[],
 ): boolean {
   if (actor.isSuperAdmin) return false
-  if (!actor.staffRoles.includes(slug)) return false
-  if (nextPermissions.includes('roles.manage')) return false
-  const stillGranted = actor.roleDocs.some(
-    (r) => r.slug !== slug && r.permissions.includes('roles.manage'),
-  )
-  return !stillGranted
+  if (actor.staffRoleSlug !== slug) return false
+  return !nextPermissions.includes('roles.manage')
 }
 
 // ── Catalogue the admin UI renders checkboxes from ───────────────────────────
@@ -273,6 +282,9 @@ router.delete('/:slug', requireDefineRoles, async (req, res) => {
   // Drop every reference first — a deleted role still listed on user docs would
   // resolve to nothing and silently shrink someone's access.
   const unassigned = await db.collection('users').pullFromAll('staffRoles', current.slug)
+  // P1 dual-write: the same cleanup for the scalar axis, or holders would keep a
+  // slug pointing at a role that no longer exists.
+  await clearStaffRoleSlug(current.slug)
   await db.collection('roles').deleteOne(current.id)
   bustRoleCache()
   res.json({ ok: true, unassigned })
@@ -303,6 +315,11 @@ router.post('/:slug/assign', requireAssignRoles, async (req, res) => {
     res.status(404).json({ error: 'Team member not found.' })
     return
   }
+  const denied = denyRoleGrant(req.account!, role, userId === req.account!.id)
+  if (denied) {
+    res.status(403).json({ error: denied })
+    return
+  }
   const acct = withIdentityDefaults({ id: target._id, ...target })
   const held = acct.staffRoles
   if (held.length === 1 && held[0] === role.slug) {
@@ -310,17 +327,22 @@ router.post('/:slug/assign', requireAssignRoles, async (req, res) => {
     return
   }
 
-  // Replacing a role TAKES AWAY the old one, so the last-superadmin guard has to
-  // fire here too — not only on explicit removal. Without it, "change Mahin to
-  // Editor" would quietly delete the only superadmin.
-  if (held.includes(SUPERADMIN_SLUG) && role.slug !== SUPERADMIN_SLUG) {
-    if ((await superadminHolderCount()) <= 1) {
-      res.status(403).json({ error: 'Cannot change the last superadmin to another role.' })
-      return
-    }
+  // Replacing a role TAKES AWAY the old one, so the superadmin guard has to fire
+  // here too — not only on explicit removal. Without it, "change Mahin to Editor"
+  // would quietly delete the only superadmin.
+  const blocked = await checkSuperadminLoss(
+    req.account!,
+    held.includes(SUPERADMIN_SLUG) && role.slug !== SUPERADMIN_SLUG,
+  )
+  if (blocked) {
+    res.status(403).json({ error: blocked })
+    return
   }
 
-  await db.collection('users').updateOne(userId, { staffRoles: [role.slug] })
+  // P1 dual-write — same $set as the array, so the two cannot diverge.
+  await db
+    .collection('users')
+    .updateOne(userId, { staffRoles: [role.slug], staffRoleSlug: role.slug })
   res.status(201).json({ ok: true, staffRoles: [role.slug] })
 })
 
@@ -330,20 +352,39 @@ router.delete('/:slug/assign/:userId', requireAssignRoles, async (req, res) => {
     res.status(404).json({ error: 'Role not found.' })
     return
   }
-  const target = await db.collection('users').findById(String(req.params.userId))
+  const userId = String(req.params.userId)
+  const target = await db.collection('users').findById(userId)
   if (!target) {
     res.status(404).json({ error: 'Team member not found.' })
     return
   }
-
-  // Never strip the last superadmin — that is unrecoverable without shell access
-  // to re-run the SETUP_SECRET seed.
-  if (role.slug === SUPERADMIN_SLUG && (await superadminHolderCount()) <= 1) {
-    res.status(403).json({ error: 'Cannot remove the last superadmin.' })
+  // Removing your own role is the same self-service problem as granting one: it
+  // is how you would drop a restriction you are subject to.
+  if (userId === req.account!.id) {
+    res.status(403).json({ error: 'You cannot change your own role. Ask another administrator.' })
     return
   }
 
-  await db.collection('users').pullFrom(String(req.params.userId), 'staffRoles', role.slug)
+  // Was a bare holder-count check, so anyone with `team.manage` could demote a
+  // superadmin whenever a second one existed — routes/staff.ts guarded that and
+  // this route did not. One helper now answers for every path.
+  const acct = withIdentityDefaults({ id: target._id, ...target })
+  const blocked = await checkSuperadminLoss(
+    req.account!,
+    role.slug === SUPERADMIN_SLUG && acct.staffRoles.includes(SUPERADMIN_SLUG),
+  )
+  if (blocked) {
+    res.status(403).json({ error: blocked })
+    return
+  }
+
+  await db.collection('users').pullFrom(userId, 'staffRoles', role.slug)
+  // P1 dual-write. Clear the scalar only when it is the role being pulled —
+  // someone holding a different one keeps it.
+  const acctSlug = staffRoleSlugFor(acct.staffRoles)
+  if (acctSlug === role.slug) {
+    await db.collection('users').updateOne(userId, { staffRoleSlug: null })
+  }
   res.json({ ok: true })
 })
 

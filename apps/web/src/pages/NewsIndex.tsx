@@ -37,12 +37,10 @@ export default function NewsIndex() {
   const sectionParam = searchParams.get('section') ?? null;
 
   const [search, setSearch] = useState('');
-  const [loading, setLoading] = useState(true);
-
-  useEffect(() => {
-    const t = setTimeout(() => setLoading(false), 500);
-    return () => clearTimeout(t);
-  }, []);
+  // The real thing, not a timer. This was `setTimeout(() => setLoading(false),
+  // 500)` — a fixed half-second of skeletons unrelated to whether the stories
+  // had arrived, so a slow request showed an empty page and a fast one stalled.
+  const loading = useArticleStore((s) => !s.loaded && !s.error);
 
   // All live articles (published + newsletter + bulletin)
   const liveArticles = useMemo(
@@ -278,8 +276,16 @@ export default function NewsIndex() {
       {/* ── Main body ─────────────────────────────────── */}
       <div className="max-w-7xl mx-auto px-4 md:px-8 py-10">
 
-        {/* When no user-published articles, show editorial showcase + CTA */}
-        {liveArticles.length === 0 && !search ? (
+        {/* Loading is checked FIRST. It used to come after the empty-state
+            branch, so every visitor saw "no dispatches have been filed" for the
+            half-second before the stories arrived. */}
+        {loading ? (
+          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-5">
+            {[0, 1, 2, 3, 4, 5].map((i) => (
+              <ArticleSkeletonCard key={i} />
+            ))}
+          </div>
+        ) : liveArticles.length === 0 && !search ? (
           <div className="space-y-12">
             {/* CTA prompt */}
             <div className="border border-dashed border-primary/30 rounded-sm p-8 text-center bg-primary/5">
@@ -304,13 +310,6 @@ export default function NewsIndex() {
                 </Button>
               </div>
             </div>
-          </div>
-        ) : loading ? (
-          /* Skeleton */
-          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-5">
-            {[0, 1, 2, 3, 4, 5].map((i) => (
-              <ArticleSkeletonCard key={i} />
-            ))}
           </div>
         ) : filteredArticles.length === 0 ? (
           /* Empty search/filter result */

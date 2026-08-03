@@ -89,7 +89,7 @@ function primaryRole(held: string[]): string | undefined {
 }
 
 function MemberRow({
-  user, roles, bySlug, busy, isSelf, onAssign, onResend, onRemove,
+  user, roles, bySlug, busy, isSelf, readOnly, onAssign, onResend, onRemove,
 }: {
   user: StaffUser;
   roles: RoleRecord[];
@@ -97,6 +97,13 @@ function MemberRow({
   busy: boolean;
   /** You can't remove yourself — the server refuses, so don't offer it. */
   isSelf: boolean;
+  /**
+   * `team.view` without `team.manage`: the roster is readable, nothing is
+   * actionable. The role pill becomes a label rather than a disabled <select>,
+   * because a greyed-out control reads as "temporarily unavailable" when the
+   * truth is "not yours to change".
+   */
+  readOnly: boolean;
   onAssign: (userId: string, slug: string) => void;
   onResend: (user: StaffUser) => void;
   onRemove: (user: StaffUser) => void;
@@ -131,38 +138,48 @@ function MemberRow({
             }
           >
             {current ? roleIcon(role?.icon, 11) : null}
-            <select
-              value={current ?? ''}
-              disabled={busy}
-              onChange={(e) => onAssign(user.userId, e.target.value)}
-              className="bg-transparent border-0 text-[12px] font-semibold pr-0.5 cursor-pointer focus:outline-none disabled:cursor-wait"
-              style={{ color: current ? color : undefined }}
-              aria-label={`Role for ${name}`}
-            >
-              {!current && <option value="">No role — no access</option>}
-              {roles.map((r) => (
-                <option key={r.slug} value={r.slug} className="text-foreground bg-background">
-                  {r.label}
-                </option>
-              ))}
-            </select>
+            {readOnly ? (
+              <span className="pr-1" style={{ color: current ? color : undefined }}>
+                {role?.label ?? (current ?? 'No role — no access')}
+              </span>
+            ) : (
+              <select
+                value={current ?? ''}
+                disabled={busy}
+                onChange={(e) => onAssign(user.userId, e.target.value)}
+                className="bg-transparent border-0 text-[12px] font-semibold pr-0.5 cursor-pointer focus:outline-none disabled:cursor-wait"
+                style={{ color: current ? color : undefined }}
+                aria-label={`Role for ${name}`}
+              >
+                {!current && <option value="">No role — no access</option>}
+                {roles.map((r) => (
+                  <option key={r.slug} value={r.slug} className="text-foreground bg-background">
+                    {r.label}
+                  </option>
+                ))}
+              </select>
+            )}
           </span>
 
-          <button
-            onClick={() => onResend(user)}
-            disabled={busy || !current}
-            className="text-[12px] font-semibold text-primary hover:underline flex items-center gap-1 disabled:opacity-40 disabled:no-underline"
-          >
-            <Send size={11} /> Resend email
-          </button>
-          {!isSelf && (
-            <button
-              onClick={() => onRemove(user)}
-              disabled={busy}
-              className="text-[12px] font-semibold text-muted-foreground hover:text-destructive transition-colors flex items-center gap-1 disabled:opacity-40"
-            >
-              <X size={11} /> Remove
-            </button>
+          {!readOnly && (
+            <>
+              <button
+                onClick={() => onResend(user)}
+                disabled={busy || !current}
+                className="text-[12px] font-semibold text-primary hover:underline flex items-center gap-1 disabled:opacity-40 disabled:no-underline"
+              >
+                <Send size={11} /> Resend email
+              </button>
+              {!isSelf && (
+                <button
+                  onClick={() => onRemove(user)}
+                  disabled={busy}
+                  className="text-[12px] font-semibold text-muted-foreground hover:text-destructive transition-colors flex items-center gap-1 disabled:opacity-40"
+                >
+                  <X size={11} /> Remove
+                </button>
+              )}
+            </>
           )}
         </div>
 
@@ -171,7 +188,7 @@ function MemberRow({
             <AlertTriangle size={11} className="flex-shrink-0 mt-0.5" />
             <span>
               Also holds {extras.map((s) => bySlug(s)?.label ?? s).join(', ')} from before roles
-              became single — choosing a role above clears it.
+              became single{readOnly ? '.' : ' — choosing a role above clears it.'}
             </span>
           </p>
         )}
@@ -181,11 +198,13 @@ function MemberRow({
 }
 
 function InvitedRow({
-  invite, role, busy, onResend, onCancel,
+  invite, role, busy, readOnly, onResend, onCancel,
 }: {
   invite: PendingGrant;
   role: RoleRecord | undefined;
   busy: boolean;
+  /** `team.view` only — the invitation is visible, resend/cancel are not offered. */
+  readOnly: boolean;
   onResend: (id: string) => void;
   onCancel: (id: string) => void;
 }) {
@@ -220,6 +239,8 @@ function InvitedRow({
           <RolePill role={role} slug={invite.role} />
           <span className="text-[12px] text-muted-foreground/60 italic">applies on sign-in</span>
 
+          {!readOnly && (
+          <>
           {/* Resend mints a NEW token — the previous link stops working. */}
           <button
             onClick={() => onResend(invite.id)}
@@ -234,6 +255,8 @@ function InvitedRow({
           >
             Cancel
           </button>
+          </>
+          )}
         </div>
       </div>
     </li>
@@ -241,6 +264,12 @@ function InvitedRow({
 }
 
 interface TeamManagementViewProps {
+  /**
+   * May the viewer READ the roster (`team.view`)? The `team` module is gated on
+   * this, so anyone who reaches this screen has it — but the prop is explicit
+   * rather than assumed, so a future entry point cannot bypass the check.
+   */
+  canViewTeam: boolean;
   canManageTeam: boolean;
   teamStaff: StaffUser[];
   teamPending: PendingGrant[];
@@ -256,6 +285,7 @@ interface TeamManagementViewProps {
 }
 
 export function TeamManagementView({
+  canViewTeam,
   canManageTeam,
   teamStaff,
   teamPending,
@@ -352,15 +382,18 @@ export function TeamManagementView({
     else toast.error(r.error ?? 'Could not change the role.');
   };
 
-  if (!canManageTeam) {
+  if (!canViewTeam) {
     return (
       <EmptyState
         icon={Lock}
         heading="Permission required"
-        description="You need the “Manage roles” permission to invite team members and change what they can do."
+        description="You need the “View team” permission to see the staff roster."
       />
     );
   }
+
+  // team.view without team.manage: the roster reads, nothing acts.
+  const readOnly = !canManageTeam;
 
   return (
     <div className="space-y-5">
@@ -377,7 +410,9 @@ export function TeamManagementView({
               .join(' · ')}
       </p>
 
-      {/* Invite */}
+      {/* Invite — hidden entirely without team.manage. Showing a form whose
+          submit the server refuses is worse than not showing it. */}
+      {!readOnly && (
       <div className="border border-dashed border-border/60 rounded-sm p-4 space-y-3 bg-card">
         <p className="text-[12px] uppercase tracking-[0.12em] font-bold text-muted-foreground">
           Invite someone (by email)
@@ -433,6 +468,7 @@ export function TeamManagementView({
           </p>
         )}
       </div>
+      )}
 
       {/* Roster — members and invitations in one list */}
       {teamLoading && rows.length === 0 ? (
@@ -441,7 +477,11 @@ export function TeamManagementView({
         <EmptyState
           icon={Users}
           heading="No one on the team yet."
-          description="Invite someone using the form above and give them a role."
+          description={
+            readOnly
+              ? 'No one holds a staff role yet.'
+              : 'Invite someone using the form above and give them a role.'
+          }
         />
       ) : (
         <div className="border border-border/60 rounded-sm overflow-hidden bg-card">
@@ -460,6 +500,7 @@ export function TeamManagementView({
                   bySlug={bySlug}
                   busy={roleBusy === row.user.userId}
                   isSelf={row.user.userId === myId}
+                  readOnly={readOnly}
                   onAssign={onAssign}
                   onResend={onResendAccess}
                   onRemove={setConfirmRemove}
@@ -470,6 +511,7 @@ export function TeamManagementView({
                   invite={row.invite}
                   role={bySlug(row.invite.role)}
                   busy={inviteBusy === row.invite.id}
+                  readOnly={readOnly}
                   onResend={onResend}
                   onCancel={onCancelInvite}
                 />

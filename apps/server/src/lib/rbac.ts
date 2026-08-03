@@ -19,8 +19,8 @@ import type { Request, Response, NextFunction } from 'express'
 import { db } from './db.js'
 import { attachAccount, attachAccountOptional } from './auth.js'
 import type { OrgRole } from './identity.js'
-import { authorisedHorseIds, manageablePartyIds } from './scope.js'
-import { accountCan, accountCanOpenModule, type AccountUser } from './effectiveAccess.js'
+import { writableHorseIds, manageablePartyIds } from './scope.js'
+import { accountCan, accountCanAny, accountCanOpenModule, type AccountUser } from './effectiveAccess.js'
 import type { PermissionAction } from './permissionCatalogue.js'
 
 export { accountCan, accountCanOpenModule }
@@ -46,6 +46,27 @@ export function canAccessNewsroom(account: AccountUser | undefined): boolean {
  */
 export function isPlatformAdmin(account: AccountUser | undefined): boolean {
   return accountCan(account, 'platform.admin')
+}
+
+/**
+ * May the account verify or reject a party claim ANYWHERE on the platform?
+ *
+ * `claims.verify` was split out of `platform.admin` because the two are different
+ * jobs: working the verification queue is records work, while `platform.admin`
+ * also grants "manage every organisation, override any ownership". There was no
+ * way to staff the queue without handing over the whole platform.
+ *
+ * Defined HERE, not in routes/partyClaims.ts, because routes/uploads.ts needs the
+ * same answer to decide who may read a claim's evidence file. Two copies of a rule
+ * like this is exactly how the H4 superadmin-guard bug happened.
+ */
+export function canVerifyClaims(account: AccountUser | undefined): boolean {
+  return accountCanAny(account, ['platform.admin', 'claims.verify'])
+}
+
+/** May the account READ the staff roster? Writing it needs `team.manage`. */
+export function canViewTeam(account: AccountUser | undefined): boolean {
+  return accountCanAny(account, ['team.view', 'team.manage'])
 }
 
 /** The account's role within a given organisation, if any. */
@@ -121,7 +142,9 @@ export async function accountCanManageHorse(
   if (horse.createdByUserId && horse.createdByUserId === account.id) return true
   const horses = await db.collection('horses').find()
   const links = await db.collection('horsePartyLinks').find()
-  return authorisedHorseIds(account, { horses, links }).includes(horseId)
+  // WRITE scope: excludes horses reachable only through an org the account is a
+  // plain member of (docs/AUTH-RBAC-REVIEW.md H8).
+  return writableHorseIds(account, { horses, links }).includes(horseId)
 }
 
 /**
@@ -169,8 +192,26 @@ export function horseScopedWriteGate(opts: {
         const rec = await db.collection(opts.collection).findById(id)
         horseId = rec?.horse_id ? String(rec.horse_id) : undefined
       }
-      if (horseId && (await accountCanManageHorse(account, horseId))) return next()
-      return forbid(res, 'You can only modify horses you manage.')
+      if (!horseId || !(await accountCanManageHorse(account, horseId))) {
+        return forbid(res, 'You can only modify horses you manage.')
+      }
+
+      // A body that RE-POINTS the record at a different horse has to be authorised
+      // for the DESTINATION as well. Checking only the pre-image was a horizontal
+      // privilege escalation: every handler here does `{ ...req.body }`, so a caller
+      // could move a record they legitimately own onto a horse they do not manage.
+      // On horsePartyLinks that was severe rather than merely untidy — it re-pointed
+      // the caller's OWN party at someone else's horse, and a current party↔horse
+      // link is exactly what writableHorseIds() reads, so the move granted write
+      // access to that horse and to every child record hanging off it.
+      // See docs/AUTH-RBAC-REVIEW.md C1.
+      if (!opts.idIsHorse && req.method === 'PUT') {
+        const target = typeof req.body?.horse_id === 'string' ? req.body.horse_id : undefined
+        if (target && target !== horseId && !(await accountCanManageHorse(account, target))) {
+          return forbid(res, 'You cannot move this record to a horse you do not manage.')
+        }
+      }
+      return next()
     })
   }
 }
@@ -225,9 +266,20 @@ export function partyScopedWriteGate(req: Request, res: Response, next: NextFunc
   })
 }
 
-/** Editorial gate for /api/articles: create/edit_own(author match)/edit_any. */
+/**
+ * Editorial gate for /api/articles: create / edit_own / edit_any.
+ *
+ * GET attaches the account OPTIONALLY rather than being flatly public. It used
+ * to `return next()` with no account at all, which meant the handler had no way
+ * to tell a reader from an editor and so returned the entire collection —
+ * drafts, submitted copy and editors' notes — to anyone who asked. The handler
+ * decides visibility now (`canSeePipeline`), and it needs an account to do it.
+ */
 export function articlesWriteGate(req: Request, res: Response, next: NextFunction): void {
-  if (req.method === 'GET') return next()
+  if (req.method === 'GET') {
+    void attachAccountOptional(req, res, next)
+    return
+  }
   void attachAccount(req, res, async () => {
     const account = req.account!
     if (req.method === 'POST') {
@@ -238,15 +290,98 @@ export function articlesWriteGate(req: Request, res: Response, next: NextFunctio
       if (!contentCan(account, 'content.draft.edit_any')) return forbid(res, 'You cannot delete this story.')
       return next()
     }
-    // PUT — edit_any wins; otherwise edit_own requires the author to match.
+    // PUT — edit_any wins; otherwise edit_own requires ownership.
     if (contentCan(account, 'content.draft.edit_any')) return next()
     if (contentCan(account, 'content.draft.edit_own')) {
       const id = firstSegment(req)
       const doc = id ? await db.collection('articles').findById(id) : null
-      if (doc && doc.author === account.displayName) return next()
+      if (doc && ownsArticle(doc, account)) return next()
     }
     return forbid(res, 'You can only edit your own drafts.')
   })
+}
+
+/**
+ * Does this account own the story?
+ *
+ * `createdByUserId` is the real answer and is stamped on every story created
+ * since the field landed. The `author` fallback is for stories that predate it:
+ * ownership used to be `doc.author === account.displayName`, which breaks the
+ * moment two staff share a name or one is renamed, and the byline is free text
+ * for editors — it was never an identity claim. Blogs already do it this way.
+ */
+export function ownsArticle(doc: Record<string, unknown>, account: AccountUser | undefined): boolean {
+  if (!account) return false
+  if (typeof doc.createdByUserId === 'string' && doc.createdByUserId) {
+    return doc.createdByUserId === account.id
+  }
+  return typeof doc.author === 'string' && doc.author === account.displayName
+}
+
+/**
+ * Gate for /api/blogs.
+ *
+ * GET attaches the account OPTIONALLY rather than being flatly public: the
+ * handler needs to know whether the caller may see drafts, and a post that is
+ * not live must 404 for everyone else. `articlesWriteGate` can skip that only
+ * because the articles list leaks unpublished stories to the public already —
+ * not a precedent worth copying.
+ *
+ * Ownership is by `createdByUserId`, NOT by matching a display name the way
+ * articles do (`doc.author === account.displayName`). That comparison breaks
+ * the moment two staff share a name or one renames themselves, and on a blog
+ * the byline is deliberately free text — an author may publish under a pen name
+ * — so it is not an identity claim at all.
+ */
+export function blogsWriteGate(req: Request, res: Response, next: NextFunction): void {
+  if (req.method === 'GET') {
+    void attachAccountOptional(req, res, next)
+    return
+  }
+  void attachAccount(req, res, async () => {
+    const account = req.account!
+
+    if (req.method === 'POST') {
+      // Sub-resources under an existing post (media registration, publish) are
+      // edits of that post, not creations — they must not pass on `blog.create`.
+      const segments = req.url.split('?')[0].split('/').filter(Boolean)
+      if (segments.length <= 1) {
+        if (!accountCan(account, 'blog.create')) return forbid(res, 'You cannot create blog posts.')
+        return next()
+      }
+      return blogEditGate(req, res, next, segments[0]!)
+    }
+
+    if (req.method === 'DELETE') {
+      const id = firstSegment(req)
+      // DELETE /:id/media/:mediaId edits the post; DELETE /:id removes it.
+      const isMediaDelete = req.url.split('?')[0].split('/').filter(Boolean).length > 1
+      if (isMediaDelete) return blogEditGate(req, res, next, id)
+      if (!accountCan(account, 'blog.delete')) return forbid(res, 'You cannot delete blog posts.')
+      return next()
+    }
+
+    // PUT / PATCH
+    return blogEditGate(req, res, next, firstSegment(req))
+  })
+}
+
+/** May the caller edit this specific post? edit_any wins; else they must own it. */
+async function blogEditGate(
+  req: Request,
+  res: Response,
+  next: NextFunction,
+  id: string | undefined,
+): Promise<void> {
+  const account = req.account!
+  if (accountCan(account, 'blog.edit_any')) return next()
+  if (accountCan(account, 'blog.edit_own')) {
+    const doc = id ? await db.collection('blogs').findById(id) : null
+    if (doc && doc.createdByUserId === account.id) return next()
+    // A missing doc falls through to 403 rather than 404 on purpose: telling an
+    // unauthorised caller which post ids exist is a probe they don't need.
+  }
+  forbid(res, 'You can only edit your own blog posts.')
 }
 
 /**

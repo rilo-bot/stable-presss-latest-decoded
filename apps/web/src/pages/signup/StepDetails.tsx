@@ -142,7 +142,7 @@ export default function StepDetails({
                 className={cn(
                   'flex items-start gap-3 px-3 py-2.5 rounded-md border text-left transition-colors',
                   accountType === opt.value
-                    ? 'border-primary bg-primary/8'
+                    ? 'border-primary bg-primary/10'
                     : 'border-input hover:border-primary/50',
                 )}
               >

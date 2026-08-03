@@ -8,14 +8,19 @@ export default function TeamScreen() {
 
   // The roster is only fetched when this screen is open — it used to be an
   // `activeNav === 'team'` effect in the parent page.
+  //
+  // Keyed on canVIEWteam, not canMANAGEteam: the screen is now readable with
+  // `team.view` alone, and gating the fetch on `manage` would have left a
+  // read-only viewer looking at a permanently empty roster.
   useEffect(() => {
-    if (s.canManageTeam) void s.fetchTeam();
+    if (s.canViewTeam) void s.fetchTeam();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [s.canManageTeam, s.fetchTeam]);
+  }, [s.canViewTeam, s.fetchTeam]);
 
   return (
     <>
       <TeamManagementView
+        canViewTeam={s.canViewTeam}
         canManageTeam={s.canManageTeam}
         teamStaff={s.teamStaff}
         teamPending={s.teamPending}

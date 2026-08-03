@@ -109,7 +109,7 @@ export function PartyPicker({
                   onClick={() => toggle(p.id)}
                   className={cn(
                     'w-full flex items-center gap-2.5 px-3 py-2 text-left text-sm hover:bg-primary/5 transition-colors',
-                    isSelected && 'bg-primary/8'
+                    isSelected && 'bg-primary/10'
                   )}
                   role="option"
                   aria-selected={isSelected}

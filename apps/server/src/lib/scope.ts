@@ -84,19 +84,50 @@ export function manageablePartyIds(account: ScopedAccount): string[] {
     .map((c: PartyClaim) => c.partyId)
 }
 
-/**
- * Horse ids the account currently has authorised access to — the union of horses
- * linked to any manageable party claim they hold and any organisation they belong
- * to. Current links only (a past relationship grants no write access).
- */
-export function authorisedHorseIds(account: ScopedAccount, data: ScopeData): string[] {
-  const partyIds = [
-    ...manageablePartyIds(account),
-    ...account.orgMemberships.map((m: OrgMembership) => m.orgId),
-  ]
+/** Org ids the account may ACT for. Read access is wider — see below. */
+function writableOrgIds(account: ScopedAccount): string[] {
+  return account.orgMemberships
+    .filter((m: OrgMembership) => m.orgRole === 'org_owner' || m.orgRole === 'org_manager')
+    .map((m: OrgMembership) => m.orgId)
+}
+
+/** Every org the account belongs to, whatever their role in it. */
+function allOrgIds(account: ScopedAccount): string[] {
+  return account.orgMemberships.map((m: OrgMembership) => m.orgId)
+}
+
+function horsesFor(partyIds: string[], data: ScopeData): string[] {
   const ids = new Set<string>()
   for (const pid of partyIds) {
     for (const hid of horsesLinkedToParty(pid, data, true)) ids.add(hid)
   }
   return [...ids]
+}
+
+/**
+ * Horse ids the account may WRITE — the union of horses currently linked to a
+ * manageable party claim they hold, or to an organisation they OWN OR MANAGE.
+ * Current links only: a past relationship grants no write access.
+ *
+ * READ AND WRITE SCOPE ARE DIFFERENT, and conflating them was a real over-grant.
+ * The previous single `authorisedHorseIds` fed BOTH the visibility filter and
+ * `accountCanManageHorse`, and mapped EVERY `orgMemberships` entry to a party id
+ * without consulting `orgRole` — so a plain `org_member` could edit every horse the
+ * org was linked to, plus its sales, reports, media and racing entries. RBAC.md §4.3
+ * says org_member "Cannot edit org-wide data" and §6 that access is "their org role
+ * × the org's scope"; the role half was being dropped.
+ * See docs/AUTH-RBAC-REVIEW.md H8.
+ */
+export function writableHorseIds(account: ScopedAccount, data: ScopeData): string[] {
+  return horsesFor([...manageablePartyIds(account), ...writableOrgIds(account)], data)
+}
+
+/**
+ * Horse ids the account may SEE — same as writable, plus horses reachable through
+ * an org they are merely a MEMBER of. Being in an organisation is what gets you
+ * visibility of its horses; your role in it is what decides whether you can change
+ * them.
+ */
+export function visibleHorseIds(account: ScopedAccount, data: ScopeData): string[] {
+  return horsesFor([...manageablePartyIds(account), ...allOrgIds(account)], data)
 }

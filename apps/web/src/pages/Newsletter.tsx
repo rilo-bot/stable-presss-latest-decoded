@@ -34,12 +34,9 @@ export default function Newsletter() {
   const categoryParam = searchParams.get('category') ?? null;
 
   const [search, setSearch] = useState('');
-  const [loading, setLoading] = useState(true);
-
-  useEffect(() => {
-    const t = setTimeout(() => setLoading(false), 600);
-    return () => clearTimeout(t);
-  }, []);
+  // The real fetch state, not a 600ms timer that ran whether or not the stories
+  // had arrived.
+  const loading = useArticleStore((s) => !s.loaded && !s.error);
 
   // Production System articles — newsletter status ONLY (bulletin articles go to /bulletins)
   const { source, hasCmsArticles, sections, heroItem } = useArticleGroups(

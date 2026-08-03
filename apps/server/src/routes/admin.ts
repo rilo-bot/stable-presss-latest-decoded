@@ -51,6 +51,13 @@ router.post('/seed', async (req, res) => {
     if (!acct.staffRoles.includes(SUPERADMIN_SLUG)) {
       await db.collection('users').addToSet(String(existing._id), 'staffRoles', SUPERADMIN_SLUG);
     }
+    // P1 dual-write (docs/USER-MODEL-PLAN.md §8). Unconditional, so a user who
+    // already had the slug in the array but predates the field still gets it.
+    // `addToSet` above may leave several entries; superadmin is the winner either
+    // way — primaryStaffRole() encodes that, and the same function backfills.
+    await db
+      .collection('users')
+      .updateOne(String(existing._id), { staffRoleSlug: SUPERADMIN_SLUG });
     const fresh = await db.collection('users').findById(existing._id);
     res.json({ user: withIdentityDefaults({ id: fresh!._id, ...fresh }), created: false });
     return;
@@ -62,6 +69,7 @@ router.post('/seed', async (req, res) => {
     createdAt: new Date().toISOString(),
     ...newReaderFields(),
     staffRoles: [SUPERADMIN_SLUG],
+    staffRoleSlug: SUPERADMIN_SLUG, // P1 dual-write; overrides newReaderFields()'s null
   });
   const doc = await db.collection('users').findById(id);
   res.status(201).json({ user: withIdentityDefaults({ id: doc!._id, ...doc }), created: true });

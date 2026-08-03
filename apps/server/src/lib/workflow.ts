@@ -94,6 +94,46 @@ export function channelPermission(channel: ArticleChannel): PermissionAction | n
 }
 
 /**
+ * A story stored under one of the twelve retired statuses, expressed in the five.
+ *
+ * `newsletter` and `bulletin` were LIVE states the public site keyed off, so they
+ * fold to `published` and carry their old status across as a distribution
+ * channel — that is what they always were. The review gates fold back to
+ * `submitted` (the one approval step now covers them), `revision` returns to
+ * Draft with the flag that replaced it, and `archived` goes back to Draft
+ * because there is no longer a stage that means "was live, isn't now".
+ *
+ * Resolved on read and PERSISTED (see publishDueStories in routes/articles.ts)
+ * rather than by a migration script, so there is nothing to remember to run and
+ * no window in which a legacy story is invisible to the public site.
+ */
+export function normaliseLegacyStatus(
+  raw: unknown,
+): { status: ArticleStatus; channel?: ArticleChannel; changesRequested?: boolean } | null {
+  if (isArticleStatus(raw)) return null
+  switch (raw) {
+    case 'editorial_review':
+    case 'legal_review':
+    case 'compliance':
+      return { status: 'submitted' }
+    case 'publisher_review':
+      return { status: 'approved' }
+    case 'revision':
+      return { status: 'draft', changesRequested: true }
+    case 'newsletter':
+      return { status: 'published', channel: 'newsletter' }
+    case 'bulletin':
+      return { status: 'published', channel: 'bulletin' }
+    case 'archived':
+      return { status: 'draft' }
+    default:
+      // An id nobody recognises: Draft is the safe home — reachable by staff,
+      // invisible to the public.
+      return { status: 'draft' }
+  }
+}
+
+/**
  * Normalise a `channels` value off the wire: drop unknown entries, de-duplicate,
  * and treat empty as absent so the reader's `['news']` default applies.
  */

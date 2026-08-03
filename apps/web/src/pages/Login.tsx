@@ -284,7 +284,7 @@ export default function Login() {
                   sign in.
                 </p>
                 {otpPreview && (
-                  <div className="mt-3 px-3 py-2 rounded bg-primary/8 border border-primary/20 flex items-center gap-2">
+                  <div className="mt-3 px-3 py-2 rounded bg-primary/10 border border-primary/20 flex items-center gap-2">
                     <span className="text-[10px] uppercase tracking-[0.12em] text-primary/70 font-semibold">
                       Dev preview
                     </span>

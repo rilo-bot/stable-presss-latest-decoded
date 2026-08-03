@@ -18,7 +18,8 @@ import { canAccessNewsroom, isPlatformAdmin } from '../lib/rbac.js'
 import { accountCan } from '../lib/effectiveAccess.js'
 import { getCapabilities } from '../lib/agent/capabilities.js'
 import { getAgentModel, isAgentConfigured } from '../lib/agent/provider.js'
-import type { AccountUser, PartyClaim } from '../lib/identity.js'
+import { PARTY_MEMBERSHIPS } from '../lib/membership.js'
+import type { AccountUser } from '../lib/identity.js'
 
 const router = Router()
 router.use(attachAccount)
@@ -72,13 +73,10 @@ async function buildNewsroomSummary(account: AccountUser) {
 
   // Pending racing-role claims this account may verify (admins see all; org
   // verification is layered separately — non-admins get 0 here for now).
+  // P2: one indexed count. Was a full users scan on EVERY dashboard load.
   let pendingClaims = 0
   if (isPlatformAdmin(account)) {
-    const users = await db.collection('users').find()
-    for (const u of users) {
-      const claims: PartyClaim[] = Array.isArray(u.partyClaims) ? u.partyClaims : []
-      pendingClaims += claims.filter((c) => c.status === 'pending').length
-    }
+    pendingClaims = await db.collection(PARTY_MEMBERSHIPS).count({ status: 'pending' })
   }
 
   // ── "Needs your attention" — only what THIS role acts on, only when non-zero ──

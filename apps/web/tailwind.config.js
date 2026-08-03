@@ -15,6 +15,23 @@ module.exports = {
         ring: 'hsl(var(--ring))',
         background: 'hsl(var(--background))',
         foreground: 'hsl(var(--foreground))',
+        /* Surface ladder — see docs/THEME-DIRECTION.md.
+           `surface` is the SUNKEN plane (wells, list panes, rails). The page is
+           `background` and the raised work surface is `card`. Anything that
+           floats above the page is `bg-card`, never `bg-muted`. */
+        surface: 'hsl(var(--surface-sunken))',
+        /* Edges split by job: `hair` is decorative (card edges, dividers),
+           `edge` is a control boundary and clears 3:1 (inputs, selects). */
+        hair: 'hsl(var(--hair))',
+        edge: 'hsl(var(--edge))',
+        success: {
+          DEFAULT: 'hsl(var(--success))',
+          foreground: 'hsl(var(--success-foreground))',
+        },
+        warning: {
+          DEFAULT: 'hsl(var(--warning))',
+          foreground: 'hsl(var(--warning-foreground))',
+        },
         primary: {
           DEFAULT: 'hsl(var(--primary))',
           foreground: 'hsl(var(--primary-foreground))',
@@ -46,8 +63,11 @@ module.exports = {
         brand: {
           DEFAULT: 'hsl(var(--brand))',
           foreground: 'hsl(var(--brand-foreground))',
+          /* FILLS AND RULES ONLY — 2.19:1 as text on card. For gold text use
+             `text-brand-accent-ink`. */
           accent: 'hsl(var(--brand-accent))',
           'accent-foreground': 'hsl(var(--brand-accent-foreground))',
+          'accent-ink': 'hsl(var(--brand-accent-ink))',
         },
         chart: {
           1: 'hsl(var(--chart-1))',

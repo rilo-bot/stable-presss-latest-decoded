@@ -1,13 +1,12 @@
 import {
-  AlertCircle, Edit, ChevronRight, BookOpen, ArrowRight, File, Flag,
-  FileText, Eye, Clock, TrendingUp, PenLine,
+  AlertCircle, Edit, BookOpen, ArrowRight, File, Flag,
+  FileText, Eye, Clock, TrendingUp, PenLine, Zap,
 } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
 import { NewsroomDashboard } from '@/components/newsroom/NewsroomDashboard';
-import { Button } from '@/components/ui/button';
 import { EmptyState } from '@/components/EmptyState';
 import { cn } from '@/lib/utils';
-import { can, canEditArticle, visibleWorkflowStages } from '@/lib/permissions';
+import { can, canAny, canEditArticle, visibleWorkflowStages } from '@/lib/permissions';
 import { WORKFLOW_STAGES } from '@/lib/workflow';
 import type { ArticleStatus } from '@/types/article';
 import type { Article } from '@/types/article';
@@ -16,6 +15,67 @@ import type { RacingEntry } from '@/types/racingEntry';
 
 import { StatusBadge } from '../components/StatusBadge';
 import { MAGAZINE_TEMPLATES } from '@/editor/templates/galleryTemplates';
+
+/**
+ * One shortcut card, used for every module entry point on this screen.
+ *
+ * These were five hand-written full-width bands, each tinted a different hue
+ * (primary, primary, brand-accent, chart-3, chart-1) at 5% alpha. That failed
+ * twice over: the hues carried no meaning — Media Records was red for no
+ * reason — and at 5% on cream they all resolved to within ~1 L* of the page, so
+ * the screen paid the cost of five colours and got the separation of none.
+ *
+ * Now: one white raised surface, one accent, differentiated by icon and label
+ * only. Colour is reserved for state (the `alert` flag), never for identity.
+ */
+function ShortcutCard({
+  icon, title, meta, badge, badgeTone = 'neutral', action, onClick,
+}: {
+  icon: React.ReactNode;
+  title: string;
+  meta?: string;
+  badge?: string;
+  badgeTone?: 'neutral' | 'new';
+  action: string;
+  onClick: () => void;
+}) {
+  return (
+    <button
+      onClick={onClick}
+      className={cn(
+        'group flex w-full items-center gap-3 rounded-sm border border-border bg-card p-3.5 text-left',
+        'transition-colors hover:bg-muted/70',
+        'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2',
+      )}
+    >
+      <span className="flex h-8 w-8 flex-shrink-0 items-center justify-center rounded-sm bg-primary/10 text-primary">
+        {icon}
+      </span>
+      <span className="min-w-0 flex-1">
+        <span className="flex flex-wrap items-center gap-1.5">
+          <span className="text-sm font-semibold text-foreground">{title}</span>
+          {badge && (
+            <span
+              className={cn(
+                'rounded-sm px-1.5 py-0.5 text-[10px] font-bold uppercase tracking-[0.08em]',
+                badgeTone === 'new'
+                  ? 'bg-brand-accent text-brand-accent-foreground'
+                  : 'bg-muted text-muted-foreground',
+              )}
+            >
+              {badge}
+            </span>
+          )}
+        </span>
+        {meta && <span className="mt-0.5 block truncate text-[12px] text-muted-foreground">{meta}</span>}
+      </span>
+      <span className="flex flex-shrink-0 items-center gap-1 text-[12px] font-medium text-primary">
+        {action}
+        <ArrowRight size={12} className="transition-transform group-hover:translate-x-0.5" />
+      </span>
+    </button>
+  );
+}
 
 interface OverviewViewProps {
   isContributor: boolean;
@@ -77,132 +137,91 @@ export function OverviewView({
         </div>
       )}
 
-      {can('content.editorial_review') && (
-        <div
-          className="flex flex-wrap items-center justify-between gap-3 px-4 py-3 rounded-sm border"
-          style={{ borderColor: 'hsl(var(--primary) / 0.25)', background: 'hsl(var(--primary) / 0.05)' }}
-        >
-          <div className="flex items-center gap-2">
-            <Edit size={14} className="text-primary" />
-            <span className="text-sm font-semibold text-foreground">Editor Hub</span>
-            {pendingReview > 0 && (
-              <span
-                className="text-[11px] font-bold px-1.5 py-0.5 rounded-full"
-                style={{ background: 'hsl(var(--brand-accent))', color: 'hsl(var(--brand-accent-foreground))' }}
-              >
-                {pendingReview} awaiting action
-              </span>
-            )}
-          </div>
-          <Button
-            size="sm"
-            variant="outline"
-            className="text-sm gap-1.5 border-primary/30 text-primary hover:bg-primary/10"
-            onClick={() => onNavigate('editor-hub')}
-          >
-            Open Editor Hub
-            <ChevronRight size={11} />
-          </Button>
-        </div>
-      )}
+      {/* Module shortcuts — one uniform card each, in a grid rather than five
+          full-width bands stacked down the page. See ShortcutCard above for why
+          the per-band tints are gone.
+          Built as a filtered ARRAY rather than five inline `&&` blocks so the
+          layout can react to how many cards this role actually sees. With a bare
+          two-column grid an odd count strands the last card beside an empty half
+          — which is exactly what it looked like. The last card of an odd set
+          spans the full width instead. */}
+      {(() => {
+        const shortcuts = [
+          can('content.editorial_review') && {
+            key: 'editor-hub',
+            icon: <Edit size={15} />,
+            title: 'Editor Hub',
+            meta: 'Review, revise and move stories through the pipeline',
+            badge: pendingReview > 0 ? `${pendingReview} awaiting action` : undefined,
+            action: 'Open',
+            nav: 'editor-hub',
+          },
+          // Instant — the one entry point that starts from a photo rather than a
+          // blank form, so it belongs where someone lands, not only in the rail.
+          canAny(['content.draft.create', 'blog.create']) && {
+            key: 'instant',
+            icon: <Zap size={15} />,
+            title: 'Instant',
+            meta: 'Snap a photo or talk it through, and review the draft it writes',
+            badge: 'New',
+            badgeTone: 'new' as const,
+            action: 'Capture',
+            nav: 'instant',
+          },
+          {
+            key: 'bulletins',
+            icon: <BookOpen size={15} />,
+            title: 'Bulletin Templates',
+            meta: `${MAGAZINE_TEMPLATES.length} ${MAGAZINE_TEMPLATES.length === 1 ? 'template' : 'templates'} ready to use`,
+            badge: 'New',
+            badgeTone: 'new' as const,
+            action: 'Open studio',
+            nav: 'bulletin-templates',
+          },
+          can('content.draft.create') && {
+            key: 'media',
+            icon: <File size={15} />,
+            title: 'Media Records',
+            meta: 'Articles, photos, videos & press releases',
+            badge: (mediaItems ?? []).length > 0 ? `${(mediaItems ?? []).length} records` : undefined,
+            action: 'Manage',
+            nav: 'media-production-system',
+          },
+          can('content.draft.create') && {
+            key: 'racing',
+            icon: <Flag size={15} />,
+            title: 'Racing Data',
+            meta: 'Race entries, results & performance',
+            badge: (racingEntries ?? []).length > 0 ? `${(racingEntries ?? []).length} records` : undefined,
+            action: 'Manage',
+            nav: 'racing-production-system',
+          },
+        ].filter(Boolean) as Array<{
+          key: string; icon: React.ReactNode; title: string; meta: string;
+          badge?: string; badgeTone?: 'new'; action: string; nav: string;
+        }>;
 
-      {/* Bulletin Templates shortcut */}
-      <div
-        className="flex flex-wrap items-center justify-between gap-3 px-4 py-3 rounded-sm border"
-        style={{ borderColor: 'hsl(var(--brand-accent) / 0.3)', background: 'hsl(var(--brand-accent) / 0.05)' }}
-      >
-        <div className="flex items-center gap-2">
-          <BookOpen size={14} style={{ color: 'hsl(var(--brand-accent))' }} />
-          <span className="text-sm font-semibold text-foreground">Bulletin Templates</span>
-          <span
-            className="text-[10px] font-bold px-1.5 py-0.5 rounded-full uppercase tracking-[0.1em]"
-            style={{ background: 'hsl(var(--brand-accent))', color: 'hsl(var(--brand-accent-foreground))' }}
-          >
-            New
-          </span>
-          <span className="text-[13px] text-muted-foreground hidden sm:inline">
-            — {MAGAZINE_TEMPLATES.length} {MAGAZINE_TEMPLATES.length === 1 ? 'template' : 'templates'} ready to use
-          </span>
-        </div>
-        <Button
-          size="sm"
-          variant="outline"
-          className="text-sm gap-1.5"
-          style={{ borderColor: 'hsl(var(--brand-accent) / 0.4)', color: 'hsl(var(--brand-accent))' }}
-          onClick={() => onNavigate('bulletin-templates')}
-        >
-          Open Studio
-          <ArrowRight size={11} />
-        </Button>
-      </div>
+        if (shortcuts.length === 0) return null;
+        const odd = shortcuts.length % 2 === 1;
 
-      {/* Media Records shortcut */}
-      {can('content.draft.create') && (
-        <div
-          className="flex flex-wrap items-center justify-between gap-3 px-4 py-3 rounded-sm border"
-          style={{ borderColor: 'hsl(var(--chart-3) / 0.3)', background: 'hsl(var(--chart-3) / 0.05)' }}
-        >
-          <div className="flex items-center gap-2">
-            <File size={14} style={{ color: 'hsl(var(--chart-3))' }} />
-            <span className="text-sm font-semibold text-foreground">Media Records Production System</span>
-            {(mediaItems ?? []).length > 0 && (
-              <span
-                className="text-[11px] font-bold px-1.5 py-0.5 rounded-full"
-                style={{ background: 'hsl(var(--chart-3) / 0.15)', color: 'hsl(var(--chart-3))' }}
-              >
-                {(mediaItems ?? []).length} records
-              </span>
-            )}
-            <span className="text-[13px] text-muted-foreground hidden sm:inline">
-              — articles, photos, videos &amp; press releases
-            </span>
+        return (
+          <div className="grid gap-3 lg:grid-cols-2">
+            {shortcuts.map((sc, i) => (
+              <div key={sc.key} className={cn(odd && i === shortcuts.length - 1 && 'lg:col-span-2')}>
+                <ShortcutCard
+                  icon={sc.icon}
+                  title={sc.title}
+                  meta={sc.meta}
+                  badge={sc.badge}
+                  badgeTone={sc.badgeTone ?? 'neutral'}
+                  action={sc.action}
+                  onClick={() => onNavigate(sc.nav)}
+                />
+              </div>
+            ))}
           </div>
-          <Button
-            size="sm"
-            variant="outline"
-            className="text-sm gap-1.5"
-            style={{ borderColor: 'hsl(var(--chart-3) / 0.4)', color: 'hsl(var(--chart-3))' }}
-            onClick={() => onNavigate('media-production-system')}
-          >
-            Manage Media
-            <ArrowRight size={11} />
-          </Button>
-        </div>
-      )}
-
-      {/* Racing Data shortcut */}
-      {can('content.draft.create') && (
-        <div
-          className="flex flex-wrap items-center justify-between gap-3 px-4 py-3 rounded-sm border"
-          style={{ borderColor: 'hsl(var(--chart-1) / 0.3)', background: 'hsl(var(--chart-1) / 0.05)' }}
-        >
-          <div className="flex items-center gap-2">
-            <Flag size={14} style={{ color: 'hsl(var(--chart-1))' }} />
-            <span className="text-sm font-semibold text-foreground">Racing Data Production System</span>
-            {(racingEntries ?? []).length > 0 && (
-              <span
-                className="text-[11px] font-bold px-1.5 py-0.5 rounded-full"
-                style={{ background: 'hsl(var(--chart-1) / 0.15)', color: 'hsl(var(--chart-1))' }}
-              >
-                {(racingEntries ?? []).length} records
-              </span>
-            )}
-            <span className="text-[13px] text-muted-foreground hidden sm:inline">
-              — race entries, results &amp; performance
-            </span>
-          </div>
-          <Button
-            size="sm"
-            variant="outline"
-            className="text-sm gap-1.5"
-            style={{ borderColor: 'hsl(var(--chart-1) / 0.4)', color: 'hsl(var(--chart-1))' }}
-            onClick={() => onNavigate('racing-production-system')}
-          >
-            Manage Racing
-            <ArrowRight size={11} />
-          </Button>
-        </div>
-      )}
+        );
+      })()}
 
       <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
         {[

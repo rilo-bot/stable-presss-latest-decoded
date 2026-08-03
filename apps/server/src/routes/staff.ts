@@ -15,8 +15,13 @@ import { Router } from 'express'
 import { db } from '../lib/db.js'
 import { attachAccount } from '../lib/auth.js'
 import { withIdentityDefaults } from '../lib/identity.js'
-import { canManageTeam } from '../lib/rbac.js'
-import { SUPERADMIN_SLUG, getRoles, superadminHolderCount } from '../lib/roleRegistry.js'
+import { canManageTeam, canViewTeam } from '../lib/rbac.js'
+import {
+  SUPERADMIN_SLUG,
+  checkSuperadminLoss,
+  denyRoleGrant,
+  getRoles,
+} from '../lib/roleRegistry.js'
 import { isEmailConfigured, sendInviteEmail, sendRoleGrantedEmail } from '../lib/email.js'
 import {
   COLLECTION as INVITES,
@@ -35,11 +40,23 @@ const WEB_PUBLIC_URL = (process.env.WEB_PUBLIC_URL ?? 'http://localhost:5173').r
 const router = Router()
 
 router.use(attachAccount)
-// The roster is `team.manage`, not `roles.manage` — inviting someone is a
-// different power from defining what a role may do. See routes/roles.ts.
+// Roster access is `team.*`, not `roles.manage` — inviting someone is a different
+// power from defining what a role may do. See routes/roles.ts.
+//
+// READ vs WRITE are split. The whole router used to require `team.manage`, which
+// left `team.view` ("See the staff roster") granting nothing at all: the seeded
+// editor role holds it and got a 403 from every endpoint here. GET now needs
+// `team.view`; everything that changes the roster still needs `team.manage`.
+// The `team` module in the catalogue is gated to match.
 router.use((req, res, next) => {
-  if (!canManageTeam(req.account)) {
-    res.status(403).json({ error: 'You do not have permission to manage the team.' })
+  const allowed = req.method === 'GET' ? canViewTeam(req.account) : canManageTeam(req.account)
+  if (!allowed) {
+    res.status(403).json({
+      error:
+        req.method === 'GET'
+          ? 'You do not have permission to view the team.'
+          : 'You do not have permission to manage the team.',
+    })
     return
   }
   next()
@@ -47,7 +64,9 @@ router.use((req, res, next) => {
 
 // ── Roster: everyone holding at least one role, plus pending invites ─────────
 router.get('/', async (_req, res) => {
-  const users = await db.collection('users').find()
+  // P2: `staffRoleSlug != null` IS "is staff", and it is indexed — so the roster is
+  // one query over the staff population rather than a scan of every reader.
+  const users = await db.collection('users').find({ staffRoleSlug: { $ne: null } })
   const staff = users
     .map((u) => withIdentityDefaults({ id: u._id, ...u }))
     .filter((u) => u.staffRoles.length > 0)
@@ -96,6 +115,14 @@ router.post('/', async (req, res) => {
     res.status(403).json({ error: 'Only a superadmin can grant the superadmin role.' })
     return
   }
+  // Inviting yourself is the same escalation as assigning yourself — this route
+  // MOVES an existing member to the named role, so without the amplification
+  // check it was a second door to `administrator`. See routes/roles.ts.
+  const denied = denyRoleGrant(req.account!, role, email === req.account!.email.toLowerCase())
+  if (denied) {
+    res.status(403).json({ error: denied })
+    return
+  }
 
   // ── Already has an account: the role applies now, so there is nothing to
   // accept. Tell them it happened and point at the newsroom.
@@ -107,12 +134,20 @@ router.post('/', async (req, res) => {
       return
     }
     // One role per person — see routes/roles.ts. Inviting an existing member to
-    // a different role MOVES them to it rather than stacking a second one.
-    if (acct.staffRoles.includes(SUPERADMIN_SLUG) && (await superadminHolderCount()) <= 1) {
-      res.status(403).json({ error: 'Cannot change the last superadmin to another role.' })
+    // a different role MOVES them to it rather than stacking a second one, so the
+    // superadmin guard applies here as much as on an explicit removal.
+    const blocked = await checkSuperadminLoss(
+      req.account!,
+      acct.staffRoles.includes(SUPERADMIN_SLUG) && role.slug !== SUPERADMIN_SLUG,
+    )
+    if (blocked) {
+      res.status(403).json({ error: blocked })
       return
     }
-    await db.collection('users').updateOne(String(existing._id), { staffRoles: [role.slug] })
+    // P1 dual-write (docs/USER-MODEL-PLAN.md §8) — same $set as the array.
+    await db
+      .collection('users')
+      .updateOne(String(existing._id), { staffRoles: [role.slug], staffRoleSlug: role.slug })
 
     // The grant is the point; the email is a courtesy. A delivery failure must
     // not roll it back or read as failure — report it and let the UI say so.
@@ -248,17 +283,21 @@ router.delete('/member/:userId', async (req, res) => {
     res.status(403).json({ error: 'You cannot remove yourself from the team.' })
     return
   }
+  // Both rules that used to be spelled out here now live in one helper, so the
+  // roles router cannot drift from this one again (it had: it checked the holder
+  // count but not who was acting).
   const acct = withIdentityDefaults({ id: target._id, ...target })
-  if (acct.staffRoles.includes(SUPERADMIN_SLUG) && (await superadminHolderCount()) <= 1) {
-    res.status(403).json({ error: 'Cannot remove the last superadmin.' })
-    return
-  }
-  if (acct.staffRoles.includes(SUPERADMIN_SLUG) && !req.account!.isSuperAdmin) {
-    res.status(403).json({ error: 'Only a superadmin can remove another superadmin.' })
+  const blocked = await checkSuperadminLoss(
+    req.account!,
+    acct.staffRoles.includes(SUPERADMIN_SLUG),
+  )
+  if (blocked) {
+    res.status(403).json({ error: blocked })
     return
   }
 
-  await db.collection('users').updateOne(userId, { staffRoles: [] })
+  // P1 dual-write: removal clears both axes together.
+  await db.collection('users').updateOne(userId, { staffRoles: [], staffRoleSlug: null })
   // Any invite still sitting for that address would silently re-grant on their
   // next sign-in, undoing the removal.
   const orphaned = await db.collection(INVITES).find({ email: acct.email })

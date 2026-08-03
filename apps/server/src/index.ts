@@ -61,6 +61,7 @@ app.use((req, res, next) => {
   if (
     req.path.startsWith('/api/issues') ||
     req.path.startsWith('/api/magazines') ||
+    req.path.startsWith('/api/blogs') ||
     req.path.startsWith('/api/agent')
   )
     return next()
@@ -84,7 +85,7 @@ app.get('/api/health', (_req, res) => {
 // --- Add your API routes below ---
 
 // === auto-mounted routers (backend planner) ===
-import { authedWriteGate, staffWriteGate, articlesWriteGate, horseScopedWriteGate, partyScopedWriteGate, issuesGate } from './lib/rbac.js'
+import { authedWriteGate, staffWriteGate, articlesWriteGate, blogsWriteGate, horseScopedWriteGate, partyScopedWriteGate, issuesGate } from './lib/rbac.js'
 import authRouter from './routes/auth.js'
 import adminRouter from './routes/admin.js'
 import staffRouter from './routes/staff.js'
@@ -96,6 +97,7 @@ import partyClaimsRouter from './routes/partyClaims.js'
 import organisationsRouter from './routes/organisations.js'
 import notificationsRouter from './routes/notifications.js'
 import articlesRouter from './routes/articles.js'
+import blogsRouter from './routes/blogs.js'
 import horsesRouter from './routes/horses.js'
 import horsePartyLinksRouter from './routes/horsePartyLinks.js'
 import partiesRouter from './routes/parties.js'
@@ -119,9 +121,11 @@ import agentRouter from './routes/agent.js'
 import agentEditorRouter from './routes/agentEditor.js'
 import agentProfileRouter from './routes/agentProfile.js'
 import agentStoryRouter from './routes/agentStory.js'
+import agentBlogRouter from './routes/agentBlog.js'
 import agentArticleRouter from './routes/agentArticle.js'
 import agentVoiceRouter from './routes/agentVoice.js'
 import agentComposeRouter from './routes/agentCompose.js'
+import agentInstantRouter from './routes/agentInstant.js'
 import newsroomRouter from './routes/newsroom.js'
 
 // Reads stay public (the public website needs them). Writes are gated by role:
@@ -143,6 +147,12 @@ app.use('/api/organisations', organisationsRouter) // self-gated (attachAccount 
 app.use('/api/notifications', notificationsRouter)  // self-gated (attachAccount inside)
 app.use('/api/podcastEpisodes', podcastEpisodesRouter)
 app.use('/api/articles', articlesWriteGate, articlesRouter)
+// Blogs — block-based posts with their own media pool. Public read (live posts
+// only; the gate attaches the account optionally so staff also see drafts),
+// writes gated on the `blog.*` permission axis. A post carries its whole block
+// list and, in local dev with no S3, inline data-URL images, so it needs more
+// headroom than the global 2 MB cap — the global parser skips this prefix above.
+app.use('/api/blogs', express.json({ limit: '10mb' }), blogsWriteGate, blogsRouter)
 app.use('/api/horses', horseScopedWriteGate({ collection: 'horses', idIsHorse: true, optionalGet: true }), horsesRouter)
 app.use('/api/horsePartyLinks', horseScopedWriteGate({ collection: 'horsePartyLinks' }), horsePartyLinksRouter)
 app.use('/api/parties', partyScopedWriteGate, partiesRouter)
@@ -184,9 +194,16 @@ app.use('/api/newsroom', newsroomRouter)
 app.use('/api/agent/editor', jsonAgent, agentEditorRouter)  // in-editor Studio Assistant (client-executed editor tools)
 app.use('/api/agent/profile', jsonAgent, agentProfileRouter) // in-profile Stable Studio assistant (client-executed, staged proposals)
 app.use('/api/agent/story', jsonAgent, agentStoryRouter)    // Story Studio — writes & files a story draft (client-executed tools)
+// Blog Studio — writes, revises, publishes and deletes blog posts. Every tool is
+// client-executed, so all writes go back through /api/blogs and its RBAC gate.
+app.use('/api/agent/blog', jsonAgent, agentBlogRouter)
 app.use('/api/agent/article', jsonAgent, agentArticleRouter) // Article Studio — edits one open article in place (client-executed tools)
 app.use('/api/agent/voice', jsonAgent, agentVoiceRouter)    // OpenAI STT/TTS for the concierge (key stays server-side)
 app.use('/api/agent/compose', jsonAgent, agentComposeRouter) // AI field-composer for form fields (✨ button)
+// Instant — capture-to-draft. Staff-only + rate-limited INSIDE the router (unlike
+// the older agent routes, which attach the account optionally): it is the most
+// expensive model surface here and there is still no token metering.
+app.use('/api/agent/instant', jsonAgent, agentInstantRouter)
 app.use('/api/agent', jsonAgent, agentRouter)
 // === end auto-mounted routers ===
 
