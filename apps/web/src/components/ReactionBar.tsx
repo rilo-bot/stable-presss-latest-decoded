@@ -1,40 +1,46 @@
 /**
- * The reader reaction bar at the foot of a blog post.
+ * The reader reaction bar. ONE component, four surfaces.
  *
- * ── THIS IS A FRONT-END PREVIEW. NOTHING IS RECORDED. ──
+ * This replaces `blog/BlogReactions`, which was a front-end preview that
+ * recorded nothing — every count was a zero on purpose, and the copy said so.
+ * It is real now: a pick is stored against your account through
+ * `/api/reactions`, one per reader per thing, and it survives a reload. The
+ * honesty rule that shaped the preview still holds, it just points the other
+ * way — the numbers here are counts of PEOPLE, because the identity is an
+ * account rather than a device, so nothing needs a "this counts reactions, not
+ * readers" caveat.
  *
- * There is no `reactions` collection, no endpoint and no storage behind this — not
- * even localStorage. A pick lives in component state and is gone on reload or on
- * navigating to another post. That is the whole intended scope for now.
+ * ── Counts appear AFTER you pick ──
  *
- * Which makes the copy the load-bearing part of this file. A row of emoji with
- * numbers under them IS a claim about what other readers thought, and the repo has
- * been here before: `docs/FAKE-DATA-REMOVED.md` records a sweep that pulled
- * invented follower counts, subscriber stats and issue numbers out of the app
- * chrome for exactly this reason. So:
- *
- *   • every count starts at ZERO. No seeded "1.2k readers loved it".
- *   • the only number that can ever move is the one you clicked, to 1.
- *   • the panel says, on screen, that it is not saved yet.
- *
- * An honest zero is worth more than a plausible number, because a plausible number
- * is a lie that someone eventually makes a decision on.
+ * Before you answer you see the size of the room ("412 readers have had their
+ * say") and no breakdown. A visible tally is a nudge: seven numbers under seven
+ * emoji tell you what the popular answer is before you have given your own, and
+ * the whole value of this scale is that it is not a popularity poll. Once you
+ * have picked, the split is yours to see.
  *
  * The seven-point scale comes from `@/types/reactions`, shared with the staff
- * Emoji Analytics screen — that screen is the design for the system this bar would
- * feed, so the two must not fork.
+ * Emoji Analytics screen — that screen ranks on these very rows, so the two must
+ * never fork.
  *
  * ── One bar, several places ──
  *
- * A post with parts draws one of these per part plus one for the post as a whole,
- * so every element id is derived from `idPrefix` and each bar keeps its own state.
- * The `compact` variant only changes the dressing: the zero counts, the
- * one-per-reader rule and the "nothing is recorded" line hold everywhere, because
- * a smaller scale is not a less honest one.
+ * A post with parts draws one of these per part plus one for the post as a
+ * whole. Every element id derives from `idPrefix`, and each bar addresses its
+ * own target: a duplicated id would point every `aria-labelledby` at the first
+ * heading, so a screen reader would announce every scale as belonging to the
+ * post overall — precisely the thing per-part scales exist to distinguish.
  */
-import { useRef, useState } from 'react';
+import { useRef } from 'react';
+import { Link } from 'react-router-dom';
 
 import { cn } from '@/lib/utils';
+import { useAuthStore } from '@/stores/authStore';
+import {
+  emptyCounts,
+  reactionKey,
+  useReactionStore,
+  type ReactionTargetType,
+} from '@/stores/reactionStore';
 import { EMOJI_SCALE, STEP_FILL, type EmojiKey } from '@/types/reactions';
 
 /** Hairline rules either side of a centred label. Matches the post's masthead. */
@@ -48,41 +54,59 @@ function Hairlines({ children }: { children: React.ReactNode }) {
   );
 }
 
-export interface BlogReactionsProps {
+export interface ReactionBarProps {
+  targetType: ReactionTargetType;
+  targetId: string;
   /**
-   * Unique per bar on the page. A post with parts draws SEVERAL of these, and a
-   * duplicated element id would point every `aria-labelledby` at the first
-   * heading — so a screen reader would announce every scale as belonging to the
-   * post as a whole, which is precisely the thing the per-part scales exist to
-   * distinguish.
+   * For a `blogPart`, the id of the post it sits on. The server stores it so a
+   * post and all of its parts come back in one query, and re-checks that the
+   * part is really on that post before recording anything.
    */
+  parentId?: string;
+  /** Unique per bar on the page — see the note above about `aria-labelledby`. */
   idPrefix?: string;
   heading?: string;
-  /** The line under the heading. Must keep saying that nothing is recorded. */
+  /** The line under the heading. */
   note?: string;
   /**
-   * `compact` is the per-part bar: no display heading, in a bordered card, sized
-   * to sit under a section rather than to close the page.
+   * `compact` is the per-part bar: smaller, in a bordered card, sized to sit
+   * under a section rather than to close the page.
    */
   variant?: 'full' | 'compact';
 }
 
-export function BlogReactions({
-  idPrefix = 'blog-reactions',
+export function ReactionBar({
+  targetType,
+  targetId,
+  parentId,
+  idPrefix = 'reactions',
   heading = 'How did this one sit with you?',
-  note = 'One reaction per reader. This is a preview — nothing is recorded yet, and your pick clears when you reload the page.',
+  note = 'One reaction per reader. You can change it any time.',
   variant = 'full',
-}: BlogReactionsProps = {}) {
-  const [picked, setPicked] = useState<EmojiKey | null>(null);
+}: ReactionBarProps) {
+  const key = reactionKey(targetType, targetId);
+  const data = useReactionStore((s) => s.byKey[key]) ?? emptyCounts(targetType, targetId);
+  const busy = useReactionStore((s) => s.pending[key]) ?? false;
+  const error = useReactionStore((s) => s.errors[key]) ?? null;
+  const react = useReactionStore((s) => s.react);
+  const clearReaction = useReactionStore((s) => s.clear);
+  const signedIn = useAuthStore((s) => Boolean(s.currentUser));
+
   const tileRefs = useRef<(HTMLButtonElement | null)[]>([]);
   const headingId = `${idPrefix}-heading`;
   const compact = variant === 'compact';
+  const picked = data.mine;
+  // D1: the breakdown is the reward for answering, not the prompt.
+  const showCounts = picked !== null;
 
   /**
-   * Arrow-key movement, because this is a radio group and a keyboard user expects
-   * to arrow along a scale rather than Tab through seven separate stops. Moving
-   * the focus also SELECTS, which is standard radio behaviour and right here: the
-   * options are an ordinal scale, so landing on one is choosing it.
+   * Arrow-key movement, because this is a radio group and a keyboard user
+   * expects to arrow along a scale rather than Tab through seven separate stops.
+   * Moving the focus also SELECTS — standard radio behaviour, and right here,
+   * since the options are an ordinal scale so landing on one is choosing it.
+   *
+   * A signed-out reader still gets the movement; the write is what is refused,
+   * and it is refused with a sentence rather than a dead control.
    */
   const onKeyDown = (e: React.KeyboardEvent, index: number) => {
     const delta =
@@ -94,8 +118,16 @@ export function BlogReactions({
     if (!delta) return;
     e.preventDefault();
     const next = Math.min(EMOJI_SCALE.length - 1, Math.max(0, index + delta));
-    setPicked(EMOJI_SCALE[next]!.key);
     tileRefs.current[next]?.focus();
+    if (signedIn) void react(targetType, targetId, EMOJI_SCALE[next]!.key, parentId);
+  };
+
+  const pick = (emoji: EmojiKey) => {
+    if (!signedIn || busy) return;
+    // Tapping your current pick again takes it back, which is the only way off a
+    // one-per-reader control once you are on it.
+    if (emoji === picked) void clearReaction(targetType, targetId);
+    else void react(targetType, targetId, emoji, parentId);
   };
 
   return (
@@ -112,7 +144,9 @@ export function BlogReactions({
           <Hairlines>
             <p
               className="shrink-0 text-[11px] font-bold uppercase tracking-[0.14em]"
-              style={{ color: 'hsl(var(--brand-accent))' }}
+              // --brand-accent-ink is the gold darkened for TEXT; the raw accent
+              // is a 2.06:1 fill colour and fails as type (docs/THEME-REVIEW.md).
+              style={{ color: 'hsl(var(--brand-accent-ink))' }}
             >
               Have your say
             </p>
@@ -130,9 +164,6 @@ export function BlogReactions({
           {heading}
         </h2>
 
-        {/* Says plainly that it goes nowhere. A reader who picks an emoji has
-            given you something; letting them believe it was counted when it was
-            not is the part that would actually be rude. */}
         <p
           className={cn(
             'mx-auto leading-relaxed text-muted-foreground',
@@ -149,6 +180,7 @@ export function BlogReactions({
         className={cn(
           'mx-auto grid grid-cols-4 gap-2 sm:grid-cols-7 sm:gap-3',
           compact ? 'mt-5 max-w-3xl' : 'mt-8 max-w-4xl',
+          busy && 'opacity-70',
         )}
       >
         {EMOJI_SCALE.map((step, i) => {
@@ -165,7 +197,7 @@ export function BlogReactions({
               // Roving tabindex: the group is ONE tab stop. Before a pick, the
               // first tile takes it so the group is reachable at all.
               tabIndex={isPicked || (!picked && i === 0) ? 0 : -1}
-              onClick={() => setPicked(step.key)}
+              onClick={() => pick(step.key)}
               onKeyDown={(e) => onKeyDown(e, i)}
               className={cn(
                 'flex flex-col items-center gap-2 rounded-sm border bg-card px-2 transition-all',
@@ -205,25 +237,39 @@ export function BlogReactions({
               >
                 {step.label}
               </span>
-              {/* Zero until you click, and only ever your own click. */}
+              {/* Hidden until you have answered — a tally you can see is a tally
+                  you are answering against. The slot is held either way so the
+                  tiles do not jump height when the numbers arrive. */}
               <span
                 className={cn(
                   'font-[family-name:var(--font-display)] font-bold tabular-nums',
                   compact ? 'text-sm' : 'text-base',
                   isPicked ? 'text-foreground' : 'text-muted-foreground/60',
+                  !showCounts && 'invisible',
                 )}
+                aria-hidden={!showCounts}
               >
-                {isPicked ? 1 : 0}
+                {data.counts[step.key]}
               </span>
             </button>
           );
         })}
       </div>
 
-      {/* Confirms the pick in words, not just as a ring — and keeps a way back to
-          no answer, since a misclick on a one-per-reader control otherwise sticks. */}
+      {/* One line under the bar: what you picked, or what to do about not being
+          able to pick, or what went wrong. */}
       <div aria-live="polite" className={cn('text-center', compact ? 'mt-4 text-xs' : 'mt-5 text-sm')}>
-        {picked ? (
+        {error ? (
+          <p className="text-destructive">{error}</p>
+        ) : !signedIn ? (
+          <p className="text-muted-foreground">
+            <Link to="/login" className="font-semibold text-primary underline underline-offset-2 hover:opacity-80">
+              Sign in
+            </Link>{' '}
+            to have your say.
+            {data.total > 0 && ` ${readerLine(data.total)} so far.`}
+          </p>
+        ) : picked ? (
           <p className="text-muted-foreground">
             You picked{' '}
             <span className="font-semibold text-foreground">
@@ -232,16 +278,24 @@ export function BlogReactions({
             .{' '}
             <button
               type="button"
-              onClick={() => setPicked(null)}
-              className="font-semibold text-primary underline underline-offset-2 hover:opacity-80"
+              disabled={busy}
+              onClick={() => void clearReaction(targetType, targetId)}
+              className="font-semibold text-primary underline underline-offset-2 hover:opacity-80 disabled:opacity-50"
             >
               Clear
             </button>
           </p>
         ) : (
-          <p className="text-muted-foreground/70">Pick the one that fits.</p>
+          <p className="text-muted-foreground/70">
+            {data.total > 0 ? `${readerLine(data.total)}. Add yours.` : 'Be the first to have your say.'}
+          </p>
         )}
       </div>
     </section>
   );
+}
+
+/** "1 reader has" / "412 readers have" — a count of people, not of reactions. */
+function readerLine(total: number): string {
+  return total === 1 ? '1 reader has had their say' : `${total.toLocaleString()} readers have had their say`;
 }

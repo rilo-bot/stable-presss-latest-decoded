@@ -7,8 +7,10 @@ import { Toaster } from 'sonner';
 
 import { NavBar } from '@/components/NavBar';
 import { AgentWidget } from '@/components/AgentWidget';
+import { PublicSection } from '@/components/PublicSection';
 import { RequireAuth, RequireStaff, RequirePermission } from '@/rbac/guards';
 import { useAuthStore } from '@/stores/authStore';
+import { useSiteSettingsStore } from '@/stores/siteSettingsStore';
 import { useHorseStore } from '@/stores/horseStore';
 import { usePartyStore } from '@/stores/partyStore';
 import { useHorsePartyLinkStore } from '@/stores/horsePartyLinkStore';
@@ -136,6 +138,14 @@ export default function App() {
     void useAuthStore.getState().verifySession();
   }, []);
 
+  // Website Customisation — which of the six public sections the site shows.
+  // Fetched once at app load, unauthenticated: the navbar and the route guards
+  // both need it before anyone signs in. The store seeds itself from a
+  // localStorage cache first, so this call corrects rather than blocks.
+  useEffect(() => {
+    void useSiteSettingsStore.getState().fetchSiteSettings();
+  }, []);
+
   // When the signed-in identity changes (login / logout / dropped session),
   // force-reload user-scoped data with the new token. Without this the horse /
   // party / link stores keep the first (often logged-out) result and a member's
@@ -163,12 +173,19 @@ export default function App() {
             </AppLayout>
           }
         />
+        {/* The six public sections each sit behind their Website Customisation
+            switch (Campaign Engine → Settings). A switched-off section is gone
+            from the navbar AND redirects home from here, so an old link cannot
+            walk around the setting. Nothing is unpublished — see
+            components/PublicSection.tsx. */}
         <Route
           path="/news"
           element={
-            <AppLayout>
-              <NewsIndex />
-            </AppLayout>
+            <PublicSection section="news">
+              <AppLayout>
+                <NewsIndex />
+              </AppLayout>
+            </PublicSection>
           }
         />
         {/* Blog. Public; a draft 404s for everyone but its author and staff,
@@ -176,57 +193,74 @@ export default function App() {
         <Route
           path="/blog"
           element={
-            <AppLayout>
-              <BlogIndex />
-            </AppLayout>
+            <PublicSection section="blog">
+              <AppLayout>
+                <BlogIndex />
+              </AppLayout>
+            </PublicSection>
           }
         />
         <Route
           path="/blog/:slug"
           element={
-            <AppLayout>
-              <BlogPost />
-            </AppLayout>
+            <PublicSection section="blog">
+              <AppLayout>
+                <BlogPost />
+              </AppLayout>
+            </PublicSection>
           }
         />
         <Route
           path="/bulletins"
           element={
-            <AppLayout>
-              <Bulletins />
-            </AppLayout>
+            <PublicSection section="bulletins">
+              <AppLayout>
+                <Bulletins />
+              </AppLayout>
+            </PublicSection>
           }
         />
         <Route
           path="/bulletins/:id"
           element={
-            <AppLayout>
-              <BulletinViewer />
-            </AppLayout>
+            <PublicSection section="bulletins">
+              <AppLayout>
+                <BulletinViewer />
+              </AppLayout>
+            </PublicSection>
           }
         />
         <Route
           path="/horses"
           element={
-            <AppLayout>
-              <HorseProfiles />
-            </AppLayout>
+            <PublicSection section="horses">
+              <AppLayout>
+                <HorseProfiles />
+              </AppLayout>
+            </PublicSection>
           }
         />
         <Route
           path="/horses/:id"
           element={
-            <AppLayout>
-              <HorseDetail />
-            </AppLayout>
+            <PublicSection section="horses">
+              <AppLayout>
+                <HorseDetail />
+              </AppLayout>
+            </PublicSection>
           }
         />
+        {/* A story's own page. Goes with News: it is the destination every
+            headline on /news links to, so leaving it up would hide the index and
+            keep every story reachable. */}
         <Route
           path="/articles/:id"
           element={
-            <AppLayout>
-              <ArticleDetail />
-            </AppLayout>
+            <PublicSection section="news">
+              <AppLayout>
+                <ArticleDetail />
+              </AppLayout>
+            </PublicSection>
           }
         />
         <Route
@@ -240,25 +274,31 @@ export default function App() {
         <Route
           path="/podcast"
           element={
-            <AppLayout>
-              <PodcastHub />
-            </AppLayout>
+            <PublicSection section="podcast">
+              <AppLayout>
+                <PodcastHub />
+              </AppLayout>
+            </PublicSection>
           }
         />
         <Route
           path="/parties"
           element={
-            <AppLayout>
-              <Parties />
-            </AppLayout>
+            <PublicSection section="directory">
+              <AppLayout>
+                <Parties />
+              </AppLayout>
+            </PublicSection>
           }
         />
         <Route
           path="/parties/:id"
           element={
-            <AppLayout>
-              <PartyDetail />
-            </AppLayout>
+            <PublicSection section="directory">
+              <AppLayout>
+                <PartyDetail />
+              </AppLayout>
+            </PublicSection>
           }
         />
 

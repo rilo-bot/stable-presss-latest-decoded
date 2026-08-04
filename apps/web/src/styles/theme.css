@@ -174,6 +174,11 @@
   --brand-foreground: 44 44% 95%;
   --brand-accent: 42 66% 58%;
   --brand-accent-foreground: 150 35% 10%;
+  /* The ink INVERTS on dark. On a light surface it is a darkened gold because the
+     raw accent reads at 2.06:1 as type; on a dark surface that same darkened gold
+     would be the unreadable one, so here the ink IS the accent. Without this the
+     token inherited the light value and every use of it went nearly invisible. */
+  --brand-accent-ink: 42 66% 62%;
   --chart-1: 150 36% 44%;
   --chart-2: 40 70% 62%;
   --chart-3: 4 70% 62%;

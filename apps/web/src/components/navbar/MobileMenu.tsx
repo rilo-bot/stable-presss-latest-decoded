@@ -13,6 +13,8 @@ import {
   Star,
 } from 'lucide-react';
 import type { AuthUser } from '@/stores/authStore';
+import { useSiteSettingsStore } from '@/stores/siteSettingsStore';
+import type { PublicNavKey } from '@/types/siteSettings';
 
 interface MobileMenuProps {
   currentUser: AuthUser | null;
@@ -31,10 +33,18 @@ export function MobileMenu({
   setMobileOpen,
   handleLogout,
 }: MobileMenuProps) {
+  // Website Customisation, same six switches the desktop bar reads. This menu
+  // re-lists its items rather than importing NAV_SECTIONS (it groups the News
+  // categories differently), so it has to apply the switches itself — a section
+  // hidden on desktop and still tappable here would be the worst of both.
+  const publicNav = useSiteSettingsStore((s) => s.publicNav);
+  const shows = (key: PublicNavKey) => publicNav[key] !== false;
+
   return (
     <div className="md:hidden border-t border-border/60 bg-card">
       <div className="px-4 py-4 space-y-0.5">
         {/* All Editorial */}
+        {shows('news') && (
         <Link
           to="/news"
           onClick={() => setMobileOpen(false)}
@@ -53,8 +63,11 @@ export function MobileMenu({
           <Newspaper size={14} />
           All News & Editorial
         </Link>
+        )}
 
-        {/* Section links for mobile */}
+        {/* Section links for mobile — all three groups are cuts of /news, so they
+            go with it when News is switched off. */}
+        {shows('news') && (
         <div className="pl-3 space-y-0.5">
           <p className="text-[11px] uppercase tracking-[0.1em] font-bold text-muted-foreground/70 px-3 pt-2 pb-1">
             News
@@ -110,17 +123,20 @@ export function MobileMenu({
             </Link>
           ))}
         </div>
+        )}
 
         {/* Top-level nav items — mirrors NAV_SECTIONS on desktop.
             + Blog and Directory, which were both missing here.
             − Tipping Ring, out of the nav until the ring launches. */}
-        {[
-          { label: 'Blog', to: '/blog', icon: <PenLine size={14} /> },
-          { label: 'Horses', to: '/horses', icon: <Star size={14} /> },
-          { label: 'Directory', to: '/parties', icon: <Users size={14} /> },
-          { label: 'Podcast', to: '/podcast', icon: <Tv size={14} /> },
-          { label: 'Bulletins', to: '/bulletins', icon: <BookOpen size={14} /> },
-        ].map((item) => (
+        {([
+          { key: 'blog', label: 'Blog', to: '/blog', icon: <PenLine size={14} /> },
+          { key: 'horses', label: 'Horses', to: '/horses', icon: <Star size={14} /> },
+          { key: 'directory', label: 'Directory', to: '/parties', icon: <Users size={14} /> },
+          { key: 'podcast', label: 'Podcast', to: '/podcast', icon: <Tv size={14} /> },
+          { key: 'bulletins', label: 'Bulletins', to: '/bulletins', icon: <BookOpen size={14} /> },
+        ] satisfies { key: PublicNavKey; label: string; to: string; icon: React.ReactNode }[])
+          .filter((item) => shows(item.key))
+          .map((item) => (
           <Link
             key={item.label}
             to={item.to}

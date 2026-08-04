@@ -235,6 +235,25 @@ function collection(name: string) {
 }
 
 /**
+ * The raw driver collection, with NO soft-delete filter and NO id normalisation.
+ *
+ * An escape hatch with exactly ONE legitimate user today: `lib/reactions.ts`.
+ * Reactions carry a UNIQUE index on (targetType, targetId, userId) — that index
+ * IS the "one reaction per reader" rule — and a soft-deleted row still occupies
+ * its key. So a reader who clears a reaction and picks again would collide with
+ * their own tombstone. Reactions therefore HARD-delete, which the wrapper above
+ * deliberately cannot do.
+ *
+ * Do not reach for this to avoid `deletedAt`. Everything else in the app is
+ * recoverable on purpose; a reaction is a single field a reader can re-enter in
+ * one click, so there is nothing to recover.
+ */
+export async function rawCollection(name: string) {
+  const database = await getMongoDb()
+  return database.collection(name)
+}
+
+/**
  * Always true — the backend is MongoDB-only. Retained so existing health-check
  * and migration callers keep working without change.
  */

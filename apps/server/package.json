@@ -8,6 +8,7 @@
     "start": "node dist/index.js",
     "check:permissions": "tsx scripts/check-permission-enforcement.ts",
     "sync:roles": "tsx scripts/sync-role-catalogue.ts",
+    "grant:superadmin": "tsx scripts/grant-superadmin.ts",
     "sweep:orphans": "tsx scripts/sweep-orphan-objects.ts"
   },
   "dependencies": {

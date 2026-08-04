@@ -35,6 +35,7 @@ import { ArrowRight, Clock, Play, Zap } from 'lucide-react';
 import type { Article } from '@/types/article';
 import type { BreakingNewsItem } from '@/types/breakingNews';
 import type { SiteMetrics } from '@/stores/metricsStore';
+import { useSiteSettingsStore } from '@/stores/siteSettingsStore';
 
 interface MetricCard {
   label: string;
@@ -373,10 +374,18 @@ function HeroByline({
   );
 }
 
-/** The two buttons. Gold commits; the second is a quiet outline. */
+/**
+ * The two buttons. Gold commits; the second is a quiet outline.
+ *
+ * Either can be switched off from Settings → Website Customisation: both point
+ * into a public section, and a hero CTA that redirects straight back to the
+ * homepage is worse than one button.
+ */
 function HeroActions({ articleId, onDark }: { articleId?: string; onDark?: boolean }) {
+  const publicNav = useSiteSettingsStore((s) => s.publicNav);
   return (
     <div className="flex flex-wrap items-center gap-3 mb-7">
+      {publicNav.news !== false && (
       <Link
         to={articleId ? `/articles/${articleId}` : '/news'}
         className="inline-flex items-center gap-2 px-6 py-3 text-sm font-semibold rounded-sm transition-opacity hover:opacity-90"
@@ -387,6 +396,8 @@ function HeroActions({ articleId, onDark }: { articleId?: string; onDark?: boole
       >
         {articleId ? 'Read the full story' : 'Browse the desk'} <ArrowRight size={15} />
       </Link>
+      )}
+      {publicNav.podcast !== false && (
       <Link
         to="/podcast"
         className={
@@ -397,6 +408,7 @@ function HeroActions({ articleId, onDark }: { articleId?: string; onDark?: boole
       >
         <Play size={14} /> Listen now
       </Link>
+      )}
     </div>
   );
 }

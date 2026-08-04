@@ -126,6 +126,29 @@ const INDEX_SPECS: IndexSpec[] = [
     keys: { slug: 1 },
     options: { unique: true, partialFilterExpression: { deletedAt: null } },
   },
+  // ── Reactions (docs/REACTIONS-PLAN.md) ──
+  // NOTE: none of these carry `deletedAt`, unlike every index above. Reactions
+  // are the one collection that opts OUT of the soft-delete convention and go
+  // through lib/reactions.ts + rawCollection() instead of db.collection().
+  //
+  // This index is not an optimisation — it IS the "one reaction per reader"
+  // rule. Enforced application-side only, two taps in flight at once would each
+  // pass the check and write a row, and every count the dashboard prints would
+  // silently stop being a count of people. Plain UNIQUE with no partial filter,
+  // precisely because clearing a reaction REMOVES the row rather than stamping
+  // it — a tombstone would hold the key and block the reader's next pick.
+  {
+    collection: 'reactions',
+    keys: { targetType: 1, targetId: 1, userId: 1 },
+    options: { unique: true },
+  },
+  // The count aggregation for one target.
+  { collection: 'reactions', keys: { targetType: 1, targetId: 1 } },
+  // Every part of a post in ONE query instead of N+1 — a post may carry up to
+  // 20 parts, each its own reaction target.
+  { collection: 'reactions', keys: { parentId: 1 } },
+  // The analytics date window.
+  { collection: 'reactions', keys: { createdAt: -1 } },
 ]
 
 /** The name MongoDB derives for an index when none is given. */

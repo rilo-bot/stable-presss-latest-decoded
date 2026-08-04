@@ -18,6 +18,8 @@ import { usePageMeta } from '@/lib/usePageMeta';
 // The same category taxonomy /news filters on, so the front page's
 // "Analysis & Interviews" section and that page's section tabs agree.
 import { CATEGORIES } from './news-index/constants';
+import { useSiteSettingsStore } from '@/stores/siteSettingsStore';
+import type { PublicNavKey } from '@/types/siteSettings';
 import { LandingHero } from './landing/LandingHero';
 import { LandingFeaturedArticles } from './landing/LandingFeaturedArticles';
 import { LandingBlog } from './landing/LandingBlog';
@@ -199,6 +201,10 @@ export default function Landing() {
     navigate(email ? `/signup?email=${encodeURIComponent(email)}` : '/signup');
   };
 
+  // Website Customisation — the same six switches the navbar reads.
+  const publicNav = useSiteSettingsStore((s) => s.publicNav);
+  const shows = (key: PublicNavKey) => publicNav[key] !== false;
+
   return (
     <div className="min-h-screen bg-background">
 
@@ -225,16 +231,22 @@ export default function Landing() {
               isStaff={isStaff(currentUser)}
             />
 
+            {/* Each block below is one public section, so each goes with its
+                Website Customisation switch. Leaving a block up for a section an
+                admin has switched off would fill the front page with links that
+                redirect straight back to it. (LandingFeaturedArticles above holds
+                two sections — News and Horses — and reads the switches itself.) */}
+
             {/* NEW. /blog had no presence on the front page at all — it existed
                 only as a nav item, so a reader arriving at the front door could not
                 learn the longform writing was there. */}
-            <LandingBlog posts={latestBlogs} />
+            {shows('blog') && <LandingBlog posts={latestBlogs} />}
 
-            <LandingBulletins publishedIssues={publishedIssues} />
+            {shows('bulletins') && <LandingBulletins publishedIssues={publishedIssues} />}
 
             {/* NEW, and the front page's way into /parties — which was a public
                 route in no navigation menu on either breakpoint. */}
-            <LandingDirectory parties={parties ?? []} />
+            {shows('directory') && <LandingDirectory parties={parties ?? []} />}
           </div>
 
           {/* ── RIGHT: Sidebar ── */}
@@ -245,7 +257,7 @@ export default function Landing() {
             handleSubscribe={handleSubscribe}
             sidebarArticles={sidebarArticles}
             sponsors={sponsors}
-            podcastSlot={<LandingPodcast liveEpisodes={liveEpisodes} />}
+            podcastSlot={shows('podcast') ? <LandingPodcast liveEpisodes={liveEpisodes} /> : null}
           />
         </div>
       </div>

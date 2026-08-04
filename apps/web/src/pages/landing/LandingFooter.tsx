@@ -1,6 +1,8 @@
 import { Link } from 'react-router-dom';
 import { Button } from '@/components/ui/button';
 import type { Sponsor } from '@/types/sponsor';
+import { useSiteSettingsStore } from '@/stores/siteSettingsStore';
+import type { PublicNavKey } from '@/types/siteSettings';
 
 interface LandingFooterProps {
   hasUser: boolean;
@@ -9,6 +11,11 @@ interface LandingFooterProps {
 }
 
 export function LandingFooter({ hasUser, isStaff, sponsors }: LandingFooterProps) {
+  // Reads the switches itself rather than taking a prop: the section lists live
+  // inside this component and Landing.tsx cannot filter them from outside.
+  const publicNav = useSiteSettingsStore((s) => s.publicNav);
+  const shows = (key: PublicNavKey) => publicNav[key] !== false;
+
   return (
     <>
       {/* ── Full-width Subscription Band ────────────────── */}
@@ -43,14 +50,16 @@ export function LandingFooter({ hasUser, isStaff, sponsors }: LandingFooterProps
               >
                 <Link to="/signup">Start Your Membership</Link>
               </Button>
-              <Button
-                size="lg"
-                variant="outline"
-                asChild
-                className="text-sm border-primary-foreground/30 text-primary-foreground bg-transparent hover:bg-primary-foreground/10"
-              >
-                <Link to="/news">Browse the Editorial</Link>
-              </Button>
+              {shows('news') && (
+                <Button
+                  size="lg"
+                  variant="outline"
+                  asChild
+                  className="text-sm border-primary-foreground/30 text-primary-foreground bg-transparent hover:bg-primary-foreground/10"
+                >
+                  <Link to="/news">Browse the Editorial</Link>
+                </Button>
+              )}
             </div>
           </div>
         </section>
@@ -79,14 +88,17 @@ export function LandingFooter({ hasUser, isStaff, sponsors }: LandingFooterProps
                 Sections
               </h4>
               <ul className="space-y-2">
+                {/* Filtered by Website Customisation — a link to a section an
+                    admin has switched off would land on a route that redirects
+                    straight back here. */}
                 {[
-                  { to: '/news', label: 'News & Race Reports' },
-                  { to: '/news?section=analysis', label: 'Analysis & Form' },
-                  { to: '/news?section=interviews', label: 'Interviews' },
-                  { to: '/horses', label: 'Horse Profiles' },
-                  { to: '/podcast', label: 'Podcast Hub' },
-                  { to: '/bulletins', label: 'Print Bulletins' },
-                ].map((item) => (
+                  { to: '/news', label: 'News & Race Reports', section: 'news' as const },
+                  { to: '/news?section=analysis', label: 'Analysis & Form', section: 'news' as const },
+                  { to: '/news?section=interviews', label: 'Interviews', section: 'news' as const },
+                  { to: '/horses', label: 'Horse Profiles', section: 'horses' as const },
+                  { to: '/podcast', label: 'Podcast Hub', section: 'podcast' as const },
+                  { to: '/bulletins', label: 'Print Bulletins', section: 'bulletins' as const },
+                ].filter((item) => shows(item.section)).map((item) => (
                   <li key={item.label}>
                     <Link
                       to={item.to}
@@ -107,7 +119,7 @@ export function LandingFooter({ hasUser, isStaff, sponsors }: LandingFooterProps
                 {[
                   { to: '/tipping', label: 'Tipping Ring' },
                   { to: '/tipping', label: 'Leaderboard' },
-                  { to: '/bulletins', label: 'Print Bulletins' },
+                  ...(shows('bulletins') ? [{ to: '/bulletins', label: 'Print Bulletins' }] : []),
                   ...(isStaff ? [{ to: '/production-system', label: 'Production System' }] : []),
                 ].map((item) => (
                   <li key={item.label}>

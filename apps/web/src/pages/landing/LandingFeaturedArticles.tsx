@@ -9,6 +9,7 @@ import type { Article } from '@/types/article';
 import type { Horse } from '@/types/horse';
 import type { HorseConnections } from '@/lib/horseConnections';
 import { SectionHead } from './SectionHead';
+import { useSiteSettingsStore } from '@/stores/siteSettingsStore';
 
 interface LandingFeaturedArticlesProps {
   articlesLoading: boolean;
@@ -28,11 +29,20 @@ export function LandingFeaturedArticles({
   horseConn,
   isStaff,
 }: LandingFeaturedArticlesProps) {
+  // TWO sections in one component — News and Horses — so the switches are read
+  // here rather than passed down: Landing.tsx cannot drop one half of a fragment.
+  const publicNav = useSiteSettingsStore((s) => s.publicNav);
+
   return (
     <>
       {/* ── Latest ───
           Was "Latest Dispatches". Accurate either way — these ARE
           `published.slice(1,4)`, the newest stories after the lead. */}
+      {/* Both story blocks belong to News — "Analysis & Interviews" is a
+          `?section=` cut of /news, not a surface of its own — so one switch
+          governs the pair. */}
+      {publicNav.news !== false && (
+      <>
       <section>
         <SectionHead title="Latest" to="/news" linkLabel="All stories" />
 
@@ -161,12 +171,15 @@ export function LandingFeaturedArticles({
           </p>
         )}
       </section>
+      </>
+      )}
 
       {/* ── Horse profiles strip ───
           "Form the Stables" → "From the Stables". The old name read as a promise of
           FORM — ratings, recent runs — which these rows do not carry; they show a
           name and its trainer and jockey. (It may also simply have been a typo for
           "From".) */}
+      {publicNav.horses !== false && (
       <section>
         <SectionHead title="From the Stables" to="/horses" linkLabel="All profiles" />
 
@@ -225,6 +238,7 @@ export function LandingFeaturedArticles({
           )}
         </div>
       </section>
+      )}
     </>
   );
 }

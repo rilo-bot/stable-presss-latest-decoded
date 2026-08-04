@@ -115,6 +115,7 @@ import issuesRouter from './routes/issues.js'
 import magazinesV2Router from './routes/magazinesV2.js'
 import sponsorsRouter from './routes/sponsors.js'
 import breakingNewsRouter from './routes/breakingNews.js'
+import siteSettingsRouter from './routes/siteSettings.js'
 import metricsRouter from './routes/metrics.js'
 import agentRouter from './routes/agent.js'
 import agentEditorRouter from './routes/agentEditor.js'
@@ -126,6 +127,7 @@ import agentVoiceRouter from './routes/agentVoice.js'
 import agentComposeRouter from './routes/agentCompose.js'
 import agentInstantRouter from './routes/agentInstant.js'
 import newsroomRouter from './routes/newsroom.js'
+import reactionsRouter from './routes/reactions.js'
 
 // Reads stay public (the public website needs them). Writes are gated by role:
 //   - articles  → editorial matrix (create / edit_own w/ author match / edit_any)
@@ -180,8 +182,17 @@ app.use('/api/magazinesV2', express.json({ limit: '30mb' }), magazinesV2Router)
 // Public landing-page content: read is public, writes are staff-only.
 app.use('/api/sponsors', staffWriteGate, sponsorsRouter)
 app.use('/api/breakingNews', staffWriteGate, breakingNewsRouter)
+// Website customisation — which of the six public sections the site shows.
+// Read is public (the navbar renders it for signed-out readers); the write gates
+// itself on `settings.manage` inside the router, so no gate is applied here.
+app.use('/api/site-settings', siteSettingsRouter)
 // Computed site metrics — public, read-only (no writes).
 app.use('/api/metrics', metricsRouter)
+// Reader reactions on blogs, blog parts, stories and bulletin issues. Self-gated
+// inside the router: counts are public, writes need an account and are rate
+// limited, and "reactable = readable" is re-derived from the target's own record
+// rather than trusted from the client. See docs/REACTIONS-PLAN.md.
+app.use('/api/reactions', reactionsRouter)
 // Production System dashboard — staff-only, role-scoped summary + AI brief.
 app.use('/api/newsroom', newsroomRouter)
 // AI concierge ("the Stablehand"). Read-only tools, RBAC-scoped to the caller

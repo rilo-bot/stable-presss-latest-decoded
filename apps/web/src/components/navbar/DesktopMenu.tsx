@@ -15,7 +15,8 @@
 import { Link } from 'react-router-dom';
 import { cn } from '@/lib/utils';
 import { ChevronDown } from 'lucide-react';
-import { NAV_SECTIONS, type NavSection } from './config';
+import { visibleNavSections, type NavSection } from './config';
+import { useSiteSettingsStore } from '@/stores/siteSettingsStore';
 
 interface DesktopMenuProps {
   activeDropdown: string | null;
@@ -41,12 +42,17 @@ export function DesktopMenu({
   staff,
   pathname,
 }: DesktopMenuProps) {
+  // Which of the six an admin has switched on. Subscribed, so flipping a switch
+  // in Settings updates this header without a reload.
+  const publicNav = useSiteSettingsStore((s) => s.publicNav);
+  const sections = visibleNavSections(publicNav);
+
   return (
     <div className="hidden md:block border-t border-primary-foreground/10">
       {/* Edge to edge — no `max-w-7xl mx-auto` container, here or on the row above. */}
       <div className="px-6 md:px-10 lg:px-16">
         <nav className="flex items-center overflow-x-auto" aria-label="Section navigation">
-          {NAV_SECTIONS.map((section) => {
+          {sections.map((section) => {
             const isActive = isSectionActive(section);
 
             return (

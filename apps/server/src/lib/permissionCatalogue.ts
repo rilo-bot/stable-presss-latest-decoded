@@ -67,6 +67,9 @@ export type PermissionAction =
   | 'team.view'
   | 'team.manage'
   | 'settings.view'
+  // Re-added with the endpoint that enforces it: PUT /api/site-settings/public-nav.
+  // See the RESERVED block below for why it was gone.
+  | 'settings.manage'
   | 'analytics.view'
   // Podcast
   | 'podcast.manage'
@@ -204,6 +207,10 @@ export const PERMISSION_CATALOGUE: PermissionMeta[] = [
   { id: 'team.view', label: 'View team', resource: 'Team & Settings', short: 'View team', description: 'See the staff roster.' },
   { id: 'team.manage', label: 'Manage team & roles', resource: 'Team & Settings', short: 'Manage team', description: 'Invite staff, create roles, assign permissions.' },
   { id: 'settings.view', label: 'View settings', resource: 'Team & Settings', short: 'View settings', description: 'Open newsroom settings.' },
+  // The Settings screen is no longer static text: Website Customisation writes
+  // which of the six public sections the site shows. `settings.view` opens the
+  // screen and shows the switches; this is what lets you move one.
+  { id: 'settings.manage', label: 'Change website settings', resource: 'Team & Settings', short: 'Change settings', description: 'Show or hide public sections of the website (News, Blog, Horses, Directory, Podcast, Bulletins).' },
   { id: 'analytics.view', label: 'View analytics', resource: 'Team & Settings', short: 'Analytics', description: 'Open the analytics dashboard.' },
 ]
 
@@ -216,7 +223,6 @@ export const PERMISSION_CATALOGUE: PermissionMeta[] = [
 //
 //   compensation.view_all   no all-contributors view exists
 //   compensation.manage     no payouts endpoint; the screen reads from `articles`
-//   settings.manage         no settings endpoint; the screen is static text
 //   workflow.view_all_columns   superseded by the `workflowStages` axis
 //   workflow.view_own_columns   superseded by the `workflowStages` axis
 //   content.newsletter      the `channels` axis is gone; see below
@@ -244,6 +250,11 @@ export const PERMISSION_CATALOGUE: PermissionMeta[] = [
 // ahead of it. scripts/check-permission-enforcement.ts fails the build if a
 // catalogue id is referenced nowhere, which is what keeps this list from growing
 // back. See docs/CRM-MODULES-PERMISSIONS-REVIEW.md §4.3–4.4.
+//
+// `settings.manage` LEFT this list and is grantable again, by exactly that rule:
+// routes/siteSettings.ts now enforces it on PUT /api/site-settings/public-nav,
+// which is what the Website Customisation switches write. It was here for the
+// right reason — the Settings screen used to be four rows of static text.
 
 const ACTION_IDS = new Set<string>(PERMISSION_CATALOGUE.map((p) => p.id))
 

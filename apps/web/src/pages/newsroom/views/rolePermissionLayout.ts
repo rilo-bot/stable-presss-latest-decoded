@@ -161,7 +161,12 @@ export const ROLE_LAYOUT: SectionSpec[] = [
       { module: 'roles', actions: ['roles.manage'] },
       { module: 'analytics', actions: ['analytics.view'] },
       { module: 'emoji-analytics', note: 'Uses the same Analytics permission as the screen above.' },
-      { module: 'settings', actions: ['settings.view'] },
+      {
+        module: 'settings',
+        actions: ['settings.view', 'settings.manage'],
+        note:
+          '“Change settings” is what shows or hides the six public sections of the website (News, Blog, Horses, Directory, Podcast, Bulletins). It hides them from readers — it does not unpublish anything.',
+      },
     ],
   },
 

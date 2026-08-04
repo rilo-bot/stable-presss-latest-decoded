@@ -42,7 +42,7 @@ import { ArrowLeft, BookOpen, Check, ChevronRight, Clock, Link2, Loader2 } from 
 import { usePageMeta } from '@/lib/usePageMeta';
 import { BLOG_GRID_CLASS, spanClass } from '@/blog/placement';
 import { BlogRenderer } from '@/blog/BlogRenderer';
-import { BlogReactions } from '@/blog/BlogReactions';
+import { ReactionBar } from '@/components/ReactionBar';
 import { Paywall } from '@/components/Paywall';
 import { EmptyState } from '@/components/EmptyState';
 import { useBlogStore } from '@/stores/blogStore';
@@ -50,6 +50,7 @@ import { useAuthStore } from '@/stores/authStore';
 import { useHorseStore } from '@/stores/horseStore';
 import { usePartyStore } from '@/stores/partyStore';
 import { useArticleStore } from '@/stores/articleStore';
+import { useReactionStore } from '@/stores/reactionStore';
 import { canViewContent } from '@/rbac/entitlement';
 import { allBlocks, mediaById, partHasContent, type BlogMedia, type BlogPart } from '@/types/blog';
 
@@ -106,18 +107,21 @@ function ShareButton() {
  * its own reaction scale.
  *
  * The scale is the reason a part is a part rather than a heading inside the body —
- * a reader answers this section, not the whole piece, and the copy says so. It
- * carries no counts from anywhere else: like the post-level bar, this is a
- * front-end preview, so every number starts at zero (see BlogReactions).
+ * a reader answers this section, not the whole piece, and the copy says so. A
+ * part is its OWN reaction target (`blogPart`, keyed on the part's uuid), with
+ * `postId` travelling as the parent so the server can return the post and every
+ * part's counts in one query rather than one per bar.
  */
 function PartSection({
   part,
   index,
   media,
+  postId,
 }: {
   part: BlogPart;
   index: number;
   media: BlogMedia[];
+  postId: string;
 }) {
   // A part may legitimately have writing and no title, so the section is labelled
   // by its heading only when there IS one — `aria-labelledby` pointing at an
@@ -163,11 +167,14 @@ function PartSection({
           the text column plus its shoulders, which is exactly this case. */}
       <div className={BLOG_GRID_CLASS}>
         <div className={spanClass('wide')}>
-          <BlogReactions
+          <ReactionBar
             variant="compact"
+            targetType="blogPart"
+            targetId={part.id}
+            parentId={postId}
             idPrefix={`part-${part.id}-reactions`}
             heading={`Your take on part ${index + 1}`}
-            note="This part is reacted to separately — your pick here counts for this section only. It is a preview, so nothing is recorded yet."
+            note="This part is reacted to separately — your pick here counts for this section only."
           />
         </div>
       </div>
@@ -179,6 +186,8 @@ export default function BlogPost() {
   const { slug } = useParams<{ slug: string }>();
   const { current, currentLoading, currentError, movedTo, fetchOne, clearCurrent } = useBlogStore();
   const tier = useAuthStore((s) => s.currentUser?.subscriptionTier);
+  const viewerId = useAuthStore((s) => s.currentUser?.id);
+  const loadReactions = useReactionStore((s) => s.load);
 
   // The cross-link blocks (horseCard / partyCard / articleRef) read from these
   // stores. Kick the fetches here rather than inside each card, so N cards on a
@@ -191,6 +200,13 @@ export default function BlogPost() {
     if (slug) void fetchOne(slug);
     return () => clearCurrent();
   }, [slug, fetchOne, clearCurrent]);
+
+  // Every reaction bar on the page in ONE request: the post's own counts and, via
+  // `withParts`, each part's. Re-runs when the signed-in account changes, because
+  // `mine` — which pick is yours — belongs to the account, not the browser.
+  useEffect(() => {
+    if (current?.id && !current.locked) void loadReactions('blog', current.id, true);
+  }, [current?.id, current?.locked, viewerId, loadReactions]);
 
   useEffect(() => {
     if (!current) return;
@@ -482,20 +498,23 @@ export default function BlogPost() {
             disappearance. */}
         {!locked &&
           visibleParts.map((part, i) => (
-            <PartSection key={part.id} part={part} index={i} media={current.media} />
+            <PartSection key={part.id} part={part} index={i} media={current.media} postId={current.id} />
           ))}
 
         {/* Hidden behind the paywall: asking someone how a piece sat with them
             when they were only shown the first paragraph is a question they
             cannot answer. */}
         {!locked && (
-          <BlogReactions
+          <ReactionBar
+            targetType="blog"
+            targetId={current.id}
+            idPrefix="post-reactions"
             // Named for what it covers, so it can't be mistaken for one more part
             // once a post has several scales on it.
             {...(hasParts
               ? {
                   heading: 'How did the post as a whole sit with you?',
-                  note: 'One reaction per reader, on the piece overall — the parts above are rated separately. This is a preview: nothing is recorded yet, and your pick clears when you reload the page.',
+                  note: 'One reaction per reader, on the piece overall — the parts above are rated separately.',
                 }
               : {})}
           />

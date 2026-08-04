@@ -78,6 +78,7 @@ export type PermissionAction =
   | 'team.view'                     // Read the staff roster (Team screen, read-only)
   | 'team.manage'                   // Invite / remove team members, assign roles
   | 'settings.view'                 // View newsroom settings
+  | 'settings.manage'               // Show/hide public sections (Website Customisation)
   | 'analytics.view'                // View analytics dashboard
 
   // ── Podcast workflow permissions ──────────────────────────────────────────
