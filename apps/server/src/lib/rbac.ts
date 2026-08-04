@@ -18,7 +18,7 @@
 import type { Request, Response, NextFunction } from 'express'
 import { db } from './db.js'
 import { attachAccount, attachAccountOptional } from './auth.js'
-import type { OrgRole } from './identity.js'
+import { isStaffIdentity, type OrgRole } from './identity.js'
 import { writableHorseIds, manageablePartyIds } from './scope.js'
 import { accountCan, accountCanAny, accountCanOpenModule, type AccountUser } from './effectiveAccess.js'
 import type { PermissionAction } from './permissionCatalogue.js'
@@ -33,11 +33,20 @@ type ContentAction =
 
 /**
  * May the account use newsroom tooling and see unverified/private records?
- * This is what `isStaff()` meant. It is now a grantable permission, so a role
- * can have data access without the newsroom, or the reverse.
+ *
+ * HOLDING A STAFF ROLE IS THE TEST — see `isStaffIdentity`. Being on the team is
+ * what grants Campaign Engine access; the role decides what you find inside it.
+ *
+ * This was `accountCan(account, 'newsroom.access')`, a grantable checkbox. That
+ * made all 24 module checkboxes silently conditional on one unrelated-looking box
+ * in another row, so the obvious way to build a "magazine only" role produced one
+ * that could not sign in. `newsroom.access` is no longer in the catalogue and no
+ * role can hold it; it survives only as the flag `toClientUser` emits so the
+ * browser's `RequireStaff` keeps asking one question.
  */
 export function canAccessNewsroom(account: AccountUser | undefined): boolean {
-  return accountCan(account, 'newsroom.access')
+  if (!account) return false
+  return account.isSuperAdmin || isStaffIdentity(account)
 }
 
 /**

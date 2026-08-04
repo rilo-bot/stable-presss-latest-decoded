@@ -1,11 +1,22 @@
+import { useState } from 'react';
+import { ImageOff } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import type { Horse } from '@/types/horse';
 import { useNavigate } from 'react-router-dom';
 import { usePartyStore } from '@/stores/partyStore';
 import { connectionResolver } from '@/lib/horseConnections';
 
-const FALLBACK_IMAGE =
-  'https://images.pexels.com/photos/11341144/pexels-photo-11341144.jpeg?auto=compress&cs=tinysrgb&h=350';
+/* No fallback photograph.
+ *
+ * This card used to hotlink one Pexels photo of an anonymous thoroughbred and
+ * substitute it whenever a horse had no image of its own — with `alt` set to
+ * THAT horse's name. So a grid of ten photo-less horses was ten distinct names
+ * over ten copies of the same animal, presented as a record. On a site whose
+ * whole claim is the accuracy of the record, a stand-in photograph is a lie the
+ * reader cannot detect.
+ *
+ * A horse with no photograph now shows an empty frame, and a broken URL falls
+ * back to the same frame rather than to a different horse. */
 
 interface HorseCardProps {
   horse: Horse;
@@ -16,7 +27,10 @@ export function HorseCard({ horse, className }: HorseCardProps) {
   const navigate = useNavigate();
   const parties = usePartyStore((s) => s.parties);
   const conn = connectionResolver(parties)(horse);
-  const imageSrc = horse.imageUrl?.trim() ? horse.imageUrl : FALLBACK_IMAGE;
+  const imageSrc = horse.imageUrl?.trim() ? horse.imageUrl : null;
+  // Set when the real photo fails to load, so the frame replaces it.
+  const [imageFailed, setImageFailed] = useState(false);
+  const showImage = imageSrc !== null && !imageFailed;
 
   return (
     <article
@@ -36,19 +50,27 @@ export function HorseCard({ horse, className }: HorseCardProps) {
     >
       {/* ── Hero image zone ─────────────────────────────── */}
       <div className="relative w-full h-44 overflow-hidden bg-muted/40">
-        <img
-          src={imageSrc}
-          alt={`${horse.name} — thoroughbred racehorse`}
-          crossOrigin="anonymous"
-          className={cn(
-            'w-full h-full object-cover transition-transform duration-300 ease-out',
-            'group-hover:scale-[1.03] motion-reduce:transform-none'
-          )}
-          onError={(e) => {
-            const t = e.currentTarget;
-            if (t.src !== FALLBACK_IMAGE) t.src = FALLBACK_IMAGE;
-          }}
-        />
+        {showImage ? (
+          <img
+            src={imageSrc}
+            alt={`${horse.name} — thoroughbred racehorse`}
+            crossOrigin="anonymous"
+            className={cn(
+              'w-full h-full object-cover transition-transform duration-300 ease-out',
+              'group-hover:scale-[1.03] motion-reduce:transform-none'
+            )}
+            onError={() => setImageFailed(true)}
+          />
+        ) : (
+          /* No photograph on record. Says so, rather than showing another horse. */
+          <div
+            className="w-full h-full flex flex-col items-center justify-center gap-1.5 text-muted-foreground/40"
+            aria-hidden="true"
+          >
+            <ImageOff size={22} strokeWidth={1.5} />
+            <span className="text-[11px] tracking-[0.06em]">No photograph on record</span>
+          </div>
+        )}
 
         {/* Gradient scrim so text overlays stay legible */}
         <div className="absolute inset-0 bg-gradient-to-t from-[hsl(var(--background)/0.82)] via-transparent to-transparent" />

@@ -272,7 +272,7 @@ export default function Signup() {
               'Longform race reports from our correspondents at every major track',
               'Comprehensive horse profiles with pedigree notes and trainer insight',
               'Expert tipping with a community leaderboard',
-              'The Gallop Podcast — conversations with the people who know the game',
+              'The Stable Press Podcast — conversations with the people who know the game',
             ].map((item) => (
               <li key={item} className="flex items-start gap-3">
                 <span className="w-1.5 h-1.5 rounded-full bg-[hsl(var(--brand-accent))] mt-1.5 flex-shrink-0" />

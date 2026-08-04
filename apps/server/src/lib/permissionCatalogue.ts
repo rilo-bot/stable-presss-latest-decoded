@@ -53,7 +53,12 @@ export type PermissionAction =
   | 'media.manage_all'
   // Compensation
   | 'compensation.view_own'
-  // Platform access
+  // Platform access.
+  //
+  // `newsroom.access` is IMPLICIT, not grantable — it is absent from
+  // PERMISSION_CATALOGUE on purpose (see the note there). It keeps its place in
+  // this union only because `toClientUser` emits it as a derived flag for the
+  // browser's RequireStaff guard.
   | 'newsroom.access'
   | 'platform.admin'
   | 'roles.manage'
@@ -102,10 +107,25 @@ export interface PermissionMeta {
  * resource, one checkbox per action within it.
  */
 export const PERMISSION_CATALOGUE: PermissionMeta[] = [
-  // Platform access — these three replace the old hardcoded role-family tests.
-  // `newsroom.access` is what `isStaff()` used to mean; `platform.admin` is what
-  // `isAdmin()` used to mean. First row because they gate everything below.
-  { id: 'newsroom.access', label: 'Access the newsroom', resource: 'Platform Access', short: 'Newsroom', description: 'Sign in to newsroom tooling and see unverified/private records.' },
+  // Platform access.
+  //
+  // `newsroom.access` WAS the first entry here and is deliberately gone. It is not
+  // reserved-because-unenforced like the block further down — it is enforced on
+  // every staff route. It is gone because it is now IMPLICIT: holding a staff role
+  // IS newsroom access (`isStaffIdentity` in identity.ts, read by
+  // `canAccessNewsroom`). Anyone added to the team from the Production System can
+  // open the Campaign Engine; their role decides what they find inside.
+  //
+  // As a grantable checkbox it was a trap. It sat in this row looking like one
+  // capability among many while actually being the precondition for all 24 module
+  // checkboxes, so the obvious way to build a "magazine only" role — tick Magazine
+  // Builder, save — produced a role that could not sign in, with nothing anywhere
+  // saying why. See docs/RBAC-UI-REVIEW.md.
+  //
+  // The id still exists in `PermissionAction` because `toClientUser` emits it as a
+  // derived flag for the browser's `RequireStaff`. It is NOT in this array, so
+  // `isPermissionAction` rejects it and `projectRole` strips it from any role row
+  // that still carries it — a role cannot grant it even by writing to the API.
   { id: 'platform.admin', label: 'Platform administration', resource: 'Platform Access', short: 'Administration', description: 'Verify claims, manage every organisation, override ownership.' },
   { id: 'roles.manage', label: 'Manage roles', resource: 'Platform Access', short: 'Manage roles', description: 'Create roles, set their permissions, and assign them.' },
   // Split OUT of platform.admin. Verifying a racing identity is a records job;
@@ -259,6 +279,13 @@ export const MODULE_CATALOGUE: ModuleMeta[] = [
   // a blog-only author still gets the surface. See docs/INSTANT-CAPTURE-PLAN.md §5.1.
   { id: 'instant', label: 'Instant Capture', section: 'Content' },
   { id: 'magazine-v2', label: 'Magazine Builder', section: 'Content' },
+  // Podcast production. `podcast.read_all` rather than one of the producing
+  // powers: this row decides which BUILT-IN roles get the surface (see
+  // builtinModulesFor) and "can see episodes that aren't live" is the honest
+  // prerequisite for opening the screen at all — it is what GET / keys on. The
+  // screen needs any of four powers to do anything, and a module row holds one,
+  // so it gates the rest itself. Same posture as `instant`.
+  { id: 'podcast', label: 'Podcast', section: 'Content', requiresPermission: 'podcast.read_all' },
   { id: 'editor-hub', label: 'Editor Hub', section: 'Content', requiresPermission: 'content.editorial_review' },
   { id: 'my-assets', label: 'My Media Assets', section: 'Content', requiresPermission: 'media.upload_own' },
   { id: 'compensation', label: 'My Compensation', section: 'Content', requiresPermission: 'compensation.view_own' },
@@ -384,8 +411,9 @@ export function normaliseWorkflowStages(raw: unknown): string[] {
 // from the web copy, which was the fuller of the two.
 
 export const BUILTIN_ROLE_PERMISSIONS: Record<SeedRoleSlug, PermissionAction[]> = {
+  // `newsroom.access` is absent from every role here: holding a staff role IS
+  // newsroom access now, so listing it would be a no-op that `projectRole` strips.
   contributor: [
-    'newsroom.access',
     'content.draft.create',
     'content.draft.edit_own',
     'content.submit',
@@ -397,7 +425,6 @@ export const BUILTIN_ROLE_PERMISSIONS: Record<SeedRoleSlug, PermissionAction[]> 
   ],
 
   editor: [
-    'newsroom.access',
     'content.draft.create',
     'content.draft.edit_own',
     'content.draft.edit_any',

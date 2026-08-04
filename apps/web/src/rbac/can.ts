@@ -19,11 +19,12 @@ import type { OrgRole } from './roles';
 /**
  * True if the user can reach newsroom tooling.
  *
- * Was "holds any staff role", tested against a hardcoded slug list. Roles are
- * database rows now, so this is the `newsroom.access` permission — which means
- * it only ever answers for the SIGNED-IN user (permissions are resolved onto
- * the active session). The `user` argument is kept so the ~15 call sites read
- * naturally and still short-circuit when signed out.
+ * "Holds any staff role" again — but read off the session rather than a hardcoded
+ * slug list, because roles are database rows. The server emits `newsroom.access`
+ * for exactly the accounts holding a staff role, so this asks the same question it
+ * always did. It only ever answers for the SIGNED-IN user (permissions are
+ * resolved onto the active session); the `user` argument is kept so the ~15 call
+ * sites read naturally and still short-circuit when signed out.
  */
 export function isStaff(user: AuthUser | null | undefined): boolean {
   return !!user && staffCan('newsroom.access');

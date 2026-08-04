@@ -28,7 +28,7 @@ import { safePublicImageUrl } from '../lib/magazineV2/url.js';
 import { roleOnMagazine, isOwner, canEditPage, editablePageIds, collaboratorsOf, type V2Collaborator } from '../lib/magazineV2/access.js';
 import { notifyShared } from '../lib/notifyShare.js';
 import { magazinePath } from '../lib/invites.js';
-import { withIdentityDefaults, type IdentityUser } from '../lib/identity.js';
+import { isStaffIdentity, withIdentityDefaults, type IdentityUser } from '../lib/identity.js';
 import { identityCan } from '../lib/effectiveAccess.js';
 import { normalizeElements, normalizeElementPatch } from '../lib/magazineV2/writePipeline.js';
 import { MAX_ELEMENTS_PER_PAGE, type MagazineElement } from '../lib/magazineV2/model.js';
@@ -1104,7 +1104,7 @@ router.post('/issues/:id/collaborators', async (req, res) => {
     return;
   }
   const acct = withIdentityDefaults({ id: existing._id, ...existing });
-  if (!(await identityCan(acct, 'newsroom.access'))) {
+  if (!isStaffIdentity(acct)) {
     res.status(400).json({ error: 'That person is not a staff member, so they cannot be added.' });
     return;
   }

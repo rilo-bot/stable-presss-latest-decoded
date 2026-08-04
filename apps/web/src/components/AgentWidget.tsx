@@ -50,7 +50,7 @@ function describePage(pathname: string): PageContext {
     horses: 'Horse Register',
     articles: 'Article',
     tipping: 'Tipping Ring',
-    podcast: 'The Gallop Podcast',
+    podcast: 'The Stable Press Podcast',
     parties: 'Industry Directory',
     dashboard: 'Your Dashboard',
     orgs: 'Organisation',

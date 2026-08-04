@@ -3,6 +3,8 @@ import { useNavigate, Link } from 'react-router-dom';
 import { useHorseStore } from '@/stores/horseStore';
 import { usePartyStore } from '@/stores/partyStore';
 import { useFollowStore } from '@/stores/followStore';
+import { useAuthStore } from '@/stores/authStore';
+import { isStaff } from '@/rbac/can';
 import { connectionResolver } from '@/lib/horseConnections';
 import { HorseCard } from '@/components/HorseCard';
 import { HorseSkeletonCard } from '@/components/SkeletonCard';
@@ -25,13 +27,17 @@ export default function HorseProfiles() {
   const parties = usePartyStore((s) => s.parties);
   const navigate = useNavigate();
   const [query, setQuery] = useState('');
-  const [loading, setLoading] = useState(true);
+  const staff = isStaff(useAuthStore((s) => s.currentUser));
 
-  // Brief skeleton shimmer phase
-  useEffect(() => {
-    const t = setTimeout(() => setLoading(false), 600);
-    return () => clearTimeout(t);
-  }, []);
+  // Real fetch state, not a timer.
+  //
+  // This was `setTimeout(() => setLoading(false), 600)` — a fixed 600ms of
+  // skeletons with no relation to whether the horses had arrived. Two ways to be
+  // wrong, and it hit both: a fast response sat behind the shimmer, and a
+  // response slower than 600ms dropped the reader onto "The stables await their
+  // first resident" — an empty register, on a populated database. Same fix as
+  // /news and the landing hero, whose comments name this bug.
+  const loading = useHorseStore((s) => !s.loaded && !s.error);
 
   const followedIds = useFollowStore((s) => s.followedHorseIds);
 
@@ -155,12 +161,18 @@ export default function HorseProfiles() {
         </div>
       ) : safeHorses.length === 0 ? (
         /* Empty stables — no horses added via Production System yet */
+        /* The newsroom CTA is staff-only — /production-system is RequireStaff and
+           redirects a reader home. A reader is told what the page is for instead. */
         <EmptyState
-          icon={Plus}
+          icon={staff ? Plus : Search}
           heading="The stables await their first resident."
-          description="No thoroughbred profiles have been entered yet. Editors can add horses through the Newsroom Production System to begin building the stable record."
-          ctaLabel="Go to Newsroom"
-          onCta={() => navigate('/production-system')}
+          description={
+            staff
+              ? 'No thoroughbred profiles have been entered yet. Add horses through the Newsroom Production System to begin building the stable record.'
+              : 'No thoroughbred profiles have been published yet. Pedigree, connections and form will appear here as the register is built.'
+          }
+          ctaLabel={staff ? 'Go to Newsroom' : 'Read the blog'}
+          onCta={() => navigate(staff ? '/production-system' : '/blog')}
           size="lg"
         />
       ) : filtered.length === 0 ? (

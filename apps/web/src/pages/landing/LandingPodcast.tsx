@@ -18,7 +18,7 @@ export function LandingPodcast({ liveEpisodes }: LandingPodcastProps) {
             style={{ color: 'hsl(var(--brand-accent))' }}
           />
           <span
-            className="text-[9px] uppercase tracking-[0.2em] font-bold"
+            className="text-[11px] uppercase tracking-[0.12em] font-bold"
             style={{ color: 'hsl(var(--brand-accent))' }}
           >
             The Stable Press Podcast
@@ -52,15 +52,15 @@ export function LandingPodcast({ liveEpisodes }: LandingPodcastProps) {
                   </div>
                   <div className="min-w-0">
                     <p
-                      className="text-[9px] uppercase tracking-[0.1em] mb-0.5 font-semibold"
+                      className="text-[11px] uppercase tracking-[0.08em] mb-0.5 font-semibold"
                       style={{ color: 'hsl(var(--brand-accent))' }}
                     >
                       Ep. {ep.episodeNumber} · {fmtMinutes(ep.durationSeconds)} · {fmtShortDate(ep.publishedAt)}
                     </p>
-                    <h4 className="text-[11px] font-semibold text-primary-foreground leading-snug line-clamp-2 group-hover:opacity-80 transition-opacity">
+                    <h4 className="text-[13px] font-semibold text-primary-foreground leading-snug line-clamp-2 group-hover:opacity-80 transition-opacity">
                       {ep.title}
                     </h4>
-                    <p className="text-[10px] text-primary-foreground/50 mt-0.5">
+                    <p className="text-[12px] text-primary-foreground/60 mt-0.5">
                       {ep.guests[0]?.name ?? ep.host}
                     </p>
                   </div>
@@ -69,7 +69,7 @@ export function LandingPodcast({ liveEpisodes }: LandingPodcastProps) {
             ))}
           </div>
         ) : (
-          <p className="text-[11px] text-primary-foreground/50 py-3">
+          <p className="text-[13px] text-primary-foreground/60 py-3">
             No episodes published yet.
           </p>
         )}
@@ -77,7 +77,7 @@ export function LandingPodcast({ liveEpisodes }: LandingPodcastProps) {
       <div className="border-t border-primary-foreground/10 px-5 py-2.5">
         <Link
           to="/podcast"
-          className="flex items-center justify-between text-[10px] text-primary-foreground/50 hover:text-primary-foreground transition-colors uppercase tracking-[0.1em] font-semibold"
+          className="flex items-center justify-between text-[12px] text-primary-foreground/70 hover:text-primary-foreground transition-colors font-semibold"
         >
           <span>All episodes</span>
           <ArrowRight size={11} />

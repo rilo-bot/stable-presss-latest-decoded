@@ -72,7 +72,12 @@ function NavList({ visibleNav, collapsed, onNavigate, ...counts }: NavListProps)
   const { pathname } = useLocation();
 
   return (
-    <nav className="slim-scroll flex-1 overflow-y-auto px-2 py-3">
+    // px-3 rather than px-2: with the rows themselves also on px-3, the labels
+    // clear the rail's edges by 24px instead of 16px, which is what stops a full
+    // green rail reading as a wall of text pressed against its own border.
+    // The rail widens to match (see ProductionSystemSidebar) so nothing truncates
+    // that didn't before.
+    <nav className="slim-scroll flex-1 overflow-y-auto px-3 py-3">
       {SECTIONS.map((section) => {
         const items = visibleNav.filter((i) => i.section === section);
         if (items.length === 0) return null;
@@ -84,7 +89,7 @@ function NavList({ visibleNav, collapsed, onNavigate, ...counts }: NavListProps)
                 opacity scale is multiples of 5, so a bare /62 is not generated
                 at all and the label would silently inherit full-brightness cream. */}
             {!collapsed && (
-              <p className="mb-1 px-2.5 text-[11px] font-semibold uppercase tracking-[0.12em] text-primary-foreground/60">
+              <p className="mb-1.5 px-3 text-[11px] font-semibold uppercase tracking-[0.12em] text-primary-foreground/60">
                 {section}
               </p>
             )}
@@ -100,7 +105,7 @@ function NavList({ visibleNav, collapsed, onNavigate, ...counts }: NavListProps)
                     onClick={onNavigate}
                     aria-current={active ? 'page' : undefined}
                     className={cn(
-                      'group flex w-full items-center gap-2.5 rounded-sm px-2.5 py-2 text-[13.5px] font-medium transition-colors',
+                      'group flex w-full items-center gap-2.5 rounded-sm px-3 py-2 text-[13.5px] font-medium transition-colors',
                       'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring',
                       collapsed && 'justify-center px-0',
                       // Green chrome: the rail is --primary, so states are spelled
@@ -244,9 +249,11 @@ function NavAccount({
   const roleText = assignedRoles.length ? roleSummary(assignedRoles) : 'No role assigned';
 
   return (
-    <div ref={ref} className="relative border-t border-primary-foreground/10 p-2">
+    // px-3 to sit on the same left edge as the nav rows above it, rather than
+    // 4px inboard of them.
+    <div ref={ref} className="relative border-t border-primary-foreground/10 px-3 py-2.5">
       {open && (
-        <div className="absolute bottom-full left-2 right-2 mb-1 overflow-hidden rounded-sm border border-border bg-popover shadow-lg">
+        <div className="absolute bottom-full left-3 right-3 mb-1 overflow-hidden rounded-sm border border-border bg-popover shadow-lg">
           <Link
             to="/"
             onClick={() => setOpen(false)}
@@ -324,12 +331,14 @@ export function ProductionSystemSidebar({
         // content and left the screen with no figure/ground at all.
         'sticky top-0 hidden h-screen flex-shrink-0 flex-col border-r border-primary-foreground/10 bg-primary text-primary-foreground md:flex',
         'transition-[width] duration-200',
-        collapsed ? 'w-[68px]' : 'w-60',
+        // w-64, up from w-60: the rows gained 8px of horizontal padding, so the
+        // rail takes the 16px back rather than taking it out of the labels.
+        collapsed ? 'w-[68px]' : 'w-64',
       )}
     >
       <div
         className={cn(
-          'flex h-14 flex-shrink-0 items-center gap-2 border-b border-primary-foreground/10 px-3',
+          'flex h-14 flex-shrink-0 items-center gap-2 border-b border-primary-foreground/10 px-4',
           collapsed && 'justify-center px-0',
         )}
       >
@@ -407,12 +416,15 @@ export function ProductionSystemNavDrawer({
     <div className="fixed inset-0 z-50 flex md:hidden">
       <div className="absolute inset-0 bg-foreground/40" onClick={onClose} aria-hidden="true" />
       <div
-        className="relative flex h-full w-64 max-w-[82%] flex-col border-r border-primary-foreground/10 bg-primary text-primary-foreground shadow-xl"
+        // Same width bump as the desktop rail, so the drawer's rows get the same
+        // 24px edge gap instead of eating it out of the labels on the narrowest
+        // viewport, where truncation actually bites.
+        className="relative flex h-full w-[17rem] max-w-[85%] flex-col border-r border-primary-foreground/10 bg-primary text-primary-foreground shadow-xl"
         role="dialog"
         aria-modal="true"
         aria-label="Campaign Engine navigation"
       >
-        <div className="flex h-14 flex-shrink-0 items-center gap-2 border-b border-primary-foreground/10 px-3">
+        <div className="flex h-14 flex-shrink-0 items-center gap-2 border-b border-primary-foreground/10 px-4">
           <NavBrand collapsed={false} onNavigate={onClose} />
           <button
             onClick={onClose}

@@ -40,6 +40,17 @@ export interface NeedItem {
   id: string
   label: string
   count: number
+  /**
+   * The module id that holds this work. MUST be a live entry in the client's
+   * SIDE_NAV (or the 'claims' route), because the dashboard turns it into a link.
+   *
+   * Three of these pointed at screens that had been deleted — 'review' and
+   * 'drafts' (SIDE_NAV rows removed when the 12-status workflow collapsed to 5
+   * stages) and 'bulletin-templates' (the v1 Magazine Studio) — so four of the
+   * seven items were links that dumped the user back on the Overview. The client
+   * now aliases the old tokens defensively as well, in
+   * pages/production-system/overview/navTargets.ts.
+   */
   where: string
 }
 
@@ -83,7 +94,7 @@ async function buildNewsroomSummary(account: AccountUser) {
   const needs: NeedItem[] = []
   if (canReview(account)) {
     const c = countStatus('submitted')
-    if (c) needs.push({ id: 'review-stories', label: 'Stories awaiting your review', count: c, where: 'review' })
+    if (c) needs.push({ id: 'review-stories', label: 'Stories awaiting your review', count: c, where: 'editor-hub' })
   }
   // The separate legal / compliance queues are gone: approval is one step now,
   // so anyone who can review sees the same Submitted queue above.
@@ -96,14 +107,16 @@ async function buildNewsroomSummary(account: AccountUser) {
     (a) => a.status === 'draft' && a.changesRequested,
   ).length
   if (myChangesRequested) {
-    needs.push({ id: 'my-revisions', label: 'Your stories need changes', count: myChangesRequested, where: 'drafts' })
+    // Both of these land on the board's Draft column — a sent-back story and a
+    // work-in-progress draft are the same status.
+    needs.push({ id: 'my-revisions', label: 'Your stories need changes', count: myChangesRequested, where: 'workflow' })
   }
   const myDrafts = countMine('draft')
-  if (myDrafts) needs.push({ id: 'my-drafts', label: 'Your drafts in progress', count: myDrafts, where: 'drafts' })
+  if (myDrafts) needs.push({ id: 'my-drafts', label: 'Your drafts in progress', count: myDrafts, where: 'workflow' })
   if (pendingClaims) needs.push({ id: 'verify-claims', label: 'Racing-role claims to verify', count: pendingClaims, where: 'claims' })
   if (unverifiedHorses) needs.push({ id: 'verify-horses', label: 'Unverified horses to review', count: unverifiedHorses, where: 'horses' })
   if (unverifiedParties) needs.push({ id: 'verify-parties', label: 'Unverified parties to review', count: unverifiedParties, where: 'parties' })
-  if (issuesInProgress) needs.push({ id: 'finish-bulletins', label: 'Bulletins in progress', count: issuesInProgress, where: 'bulletin-templates' })
+  if (issuesInProgress) needs.push({ id: 'finish-bulletins', label: 'Bulletins in progress', count: issuesInProgress, where: 'magazine-v2' })
 
   return {
     generatedFor: {

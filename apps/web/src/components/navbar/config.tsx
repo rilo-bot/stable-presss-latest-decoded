@@ -1,13 +1,10 @@
 import {
   Newspaper,
-  BarChart2,
-  Mic,
   Tv,
   BookOpen,
-  HelpCircle,
   PenLine,
   Star,
-  Mail,
+  Users,
 } from 'lucide-react';
 
 export interface SubItem {
@@ -23,12 +20,35 @@ export interface NavSection {
   sub?: SubItem[];
 }
 
+/**
+ * SIX sections, one per destination.
+ *
+ * There were eight, and three of them — News, Analysis and Interviews — were the
+ * SAME PAGE. Each loaded /news with a different `?section=`, so one page occupied
+ * three of the eight tab slots and the nav implied three surfaces that do not
+ * exist. They are now the three groups inside `News ▾`, which is what a dropdown
+ * is for, and each group heads its own categories.
+ *
+ * Also changed:
+ *   + Directory  /parties was PUBLIC and in no menu at all, desktop or mobile —
+ *                reachable only by typing the URL.
+ *   − Tipping    the ring is not launching with the site. The route still works;
+ *                it is simply no longer advertised. Restore this entry to bring
+ *                it back — nothing else was removed.
+ */
 export const NAV_SECTIONS: NavSection[] = [
   {
+    // Stories: filed through the five-stage desk, categorised, dated. The blog is
+    // a separate surface below — see the standfirsts on both pages.
     label: 'News',
-    to: '/news?section=news',
+    to: '/news',
     icon: <Newspaper size={14} />,
     sub: [
+      {
+        label: 'All News',
+        to: '/news?section=news',
+        description: 'Race reports, industry news, dispatches',
+      },
       {
         label: 'Race Reports',
         to: '/news?category=race-reports',
@@ -44,51 +64,22 @@ export const NAV_SECTIONS: NavSection[] = [
         to: '/news?category=morning-edition',
         description: "Today's stables dispatch",
       },
-    ],
-  },
-  {
-    label: 'Analysis',
-    to: '/news?section=analysis',
-    icon: <BarChart2 size={14} />,
-    sub: [
       {
-        label: 'Form Guide',
-        to: '/news?category=form-guide',
-        description: 'Deep-dive speed and class ratings',
+        label: 'Analysis',
+        to: '/news?section=analysis',
+        description: 'Form guides, track notes, bloodstock',
       },
       {
-        label: 'Track Notes',
-        to: '/news?category=track-notes',
-        description: 'Going reports and configurations',
-      },
-      {
-        label: 'Bloodstock',
-        to: '/news?category=bloodstock',
-        description: 'Pedigree and breeding analysis',
+        label: 'Interviews',
+        to: '/news?section=interviews',
+        description: 'Trainers, jockeys and owners',
       },
     ],
   },
   {
-    label: 'Interviews',
-    to: '/news?section=interviews',
-    icon: <Mic size={14} />,
-    sub: [
-      {
-        label: 'Trainer Profiles',
-        to: '/news?category=trainer-profiles',
-        description: 'In-depth trainer conversations',
-      },
-      {
-        label: 'Jockey Desk',
-        to: '/news?category=jockey-desk',
-        description: 'Rider perspectives and form',
-      },
-      {
-        label: 'Owner Stories',
-        to: '/news?category=owner-stories',
-        description: 'The people behind the horses',
-      },
-    ],
+    label: 'Blog',
+    to: '/blog',
+    icon: <PenLine size={14} />,
   },
   {
     label: 'Horses',
@@ -96,7 +87,12 @@ export const NAV_SECTIONS: NavSection[] = [
     icon: <Star size={14} />,
   },
   {
-    label: 'Podcasts',
+    label: 'Directory',
+    to: '/parties',
+    icon: <Users size={14} />,
+  },
+  {
+    label: 'Podcast',
     to: '/podcast',
     icon: <Tv size={14} />,
   },
@@ -124,14 +120,9 @@ export const NAV_SECTIONS: NavSection[] = [
       },
     ],
   },
-  {
-    label: 'Blog',
-    to: '/blog',
-    icon: <PenLine size={14} />,
-  },
-  {
-    label: 'Tipping Ring',
-    to: '/tipping',
-    icon: <HelpCircle size={14} />,
-  },
+  // "Blog" moved up to sit beside News — the two editorial surfaces belong next to
+  // each other, not with Blog at the far end past Bulletins.
+  //
+  // "Tipping Ring" was here. /tipping still works and is still linked from the
+  // footer; it is out of the nav and off the landing page until the ring launches.
 ];

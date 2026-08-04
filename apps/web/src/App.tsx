@@ -2,7 +2,7 @@ import '@/styles/theme.css';
 import '@/styles/brand.css';
 
 import { useEffect, useRef } from 'react';
-import { Routes, Route, useLocation } from 'react-router-dom';
+import { Navigate, Routes, Route, useLocation } from 'react-router-dom';
 import { Toaster } from 'sonner';
 
 import { NavBar } from '@/components/NavBar';
@@ -25,7 +25,6 @@ import MagazineV2Home from '@/editor-v2/MagazineV2Home';
 import MagazineEditorV2 from '@/editor-v2/MagazineEditorV2';
 import TippingRing from '@/pages/TippingRing';
 import PodcastHub from '@/pages/PodcastHub';
-import PodcastWorkflow from '@/pages/PodcastWorkflow';
 import NewsIndex from '@/pages/NewsIndex';
 import BlogIndex from '@/pages/BlogIndex';
 import BlogPost from '@/pages/BlogPost';
@@ -50,6 +49,7 @@ import BlogsScreen from '@/pages/production-system/screens/BlogsScreen';
 import BlogCreateForm from '@/pages/blog-composer/BlogCreateForm';
 import BlogEditorScreen from '@/pages/blog-composer/BlogEditorScreen';
 import InstantScreen from '@/pages/production-system/screens/InstantScreen';
+import PodcastScreen from '@/pages/production-system/screens/PodcastScreen';
 import EditorHubScreen from '@/pages/production-system/screens/EditorHubScreen';
 import MyAssetsScreen from '@/pages/production-system/screens/MyAssetsScreen';
 import CompensationScreen from '@/pages/production-system/screens/CompensationScreen';
@@ -294,6 +294,10 @@ export default function App() {
                 post. Its own module rather than a mode of the story form: the
                 whole point is that it starts from a photograph. */}
             <Route path="instant" element={<InstantScreen />} />
+            {/* Podcast — episode production. Was /podcast/workflow, a standalone
+                page in the public site's chrome; that path still resolves, as a
+                redirect below. */}
+            <Route path="podcast" element={<PodcastScreen />} />
             <Route path="editor-hub" element={<EditorHubScreen />} />
             <Route path="my-assets" element={<MyAssetsScreen />} />
             <Route path="compensation" element={<CompensationScreen />} />
@@ -324,13 +328,12 @@ export default function App() {
               point at /newsroom, so the old path keeps resolving. */}
           <Route path="/newsroom/*" element={<NewsroomRedirect />} />
 
+          {/* Podcast production moved INTO the Campaign Engine. Kept as a
+              redirect rather than deleted: this path is in bookmarks and in the
+              account dropdown of any tab still open on an old bundle. */}
           <Route
             path="/podcast/workflow"
-            element={
-              <AppLayout>
-                <PodcastWorkflow />
-              </AppLayout>
-            }
+            element={<Navigate to="/production-system/podcast" replace />}
           />
           <Route
             path="/site-content"

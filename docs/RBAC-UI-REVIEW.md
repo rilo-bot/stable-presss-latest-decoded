@@ -118,7 +118,7 @@ Navigation with exactly the same authority as Actions.
 Five phases. 1–3 are the rebuild the complaint is about; 4 is safety; 5 is the
 assignment side.
 
-### Phase 1 — the list becomes a list
+### Phase 1 — the list becomes a list ✅ DONE 2026-08-04
 
 Collapsed accordion row per role:
 
@@ -138,7 +138,7 @@ Collapsed accordion row per role:
   surfaces every role that can.
 - Order: immutable, then system, then custom (already how the API sorts).
 
-### Phase 2 — the expanded read view shows only what is granted
+### Phase 2 — the expanded read view shows only what is granted ✅ DONE 2026-08-04
 
 Three labelled groups, chips not checkboxes, nothing unchecked rendered:
 
@@ -209,3 +209,183 @@ picker.
 Phases 1 and 2 are self-contained and deliver the whole "list, click to expand"
 ask without touching the editor. Phase 3 is the larger piece. Phase 4 wants to
 land alongside the C1 fix in the companion review.
+
+---
+
+## Status — Phases 1 & 2 shipped 2026-08-04
+
+`RolesPermissionsView.tsx` rewritten. Typecheck + web build green;
+**not yet opened in a browser.**
+
+Closed by this change:
+
+| # | Finding | How |
+|---|---|---|
+| S1 | List is not a list | Accordion, collapsed by default, one row per role |
+| S2 | Three axes flattened into 15 identical rows | Read view has three named groups (Can do / Can open / Board columns), each sub-grouped and labelled |
+| S3 | Podcast dominates every card | Its 13 actions are one labelled sub-row inside "Can do", and only when the role holds them |
+| S4 | Read mode = 67 checkboxes | Read view renders granted items only, as chips |
+| A1 | `disabled` inputs unreachable by keyboard | Read view has no inputs at all |
+| A2 | `opacity-45` unchecked labels | Removed; unchecked labels in edit mode are `text-muted-foreground`, checked are `text-foreground` |
+| A3 | Description is `title`-only | *Partly.* Read-view chips carry the full `label` ("Publish blog posts") rather than the terse `short` ("Publish"), so meaning no longer depends on hover. Inline descriptions in the editor remain Phase 3. |
+| E1 | Unsaved work discarded silently | `isDirty()` compares the draft to the saved role across all three axes; Cancel confirms |
+| E2 | Other cards silently lose their buttons | Edit/Delete stay visible but disabled, with a `title` saying why; other rows can still be expanded for reading while one is being edited |
+| E3 | No search | Searches role name **and everything it grants** — "publish" finds every role that can, and matched rows auto-open |
+| E5 | `window.confirm` for delete | Real `Dialog`, naming the role and warning that its holders lose newsroom access |
+| E6 | Icon picker unlabelled | `aria-label="Icon <name>"` + `aria-pressed`; colour swatches too |
+| H-a | Escalation permissions look ordinary | Warning callout naming each risk the role carries |
+| H-c | Screens axis overclaims | Caption: "Which screens appear in the Campaign Engine" |
+| H-d | Unreachable empty state | Replaced with a no-search-results state, which *is* reachable |
+
+Still open, all Phase 3+: **E4** (no diff / no reset-to-default), **H-b** (mark
+ungrantable permissions — waits on C1), and the editor still flips the open row in
+place rather than opening a sheet. Tap targets on the icon picker are labelled but
+still 13px.
+
+---
+
+## The editor rebuild — shipped 2026-08-04 (supersedes Phase 3's shape)
+
+Reported from real use: *"I just want to give the magazine builder, and I gave it
+and it's not showing the Campaign Engine access."*
+
+### The trap, which was a real defect and not just ugliness
+
+Ticking the **Magazine Builder module** and saving produces a role that **cannot
+open the Campaign Engine at all.** Entry is gated on the `newsroom.access`
+*action* (`RequireStaff` → `RequirePermission`, [guards.tsx](../apps/web/src/rbac/guards.tsx)),
+which sat in the "Platform Access" row — a different one of the fifteen
+identical-looking rows, with nothing anywhere indicating it was a prerequisite for
+the other 24 checkboxes. Every module tick was silently conditional on it.
+
+So the flat grid did not merely make the job unpleasant, it made a broken role the
+*likely* outcome of the most obvious action.
+
+### The fix: `newsroom.access` is no longer grantable at all
+
+The first attempt auto-added the permission whenever a screen was ticked. That was
+replaced, on the user's direction, by removing the concept:
+
+> *"The users added from the Production System will always be staff and can have
+> Production System access, but then as per provided access in the ROLE."*
+
+**Holding a staff role IS Campaign Engine access.** `canAccessNewsroom` is now
+`isSuperAdmin || isStaffIdentity(account)` — `staffRoleSlug !== null` — and
+`newsroom.access` is gone from `PERMISSION_CATALOGUE` and from every
+`BUILTIN_ROLE_PERMISSIONS` entry. `isPermissionAction` rejects it, so `projectRole`
+strips it from any role row that still holds it: no role can grant it even by
+writing straight to the API. It survives as a union member only because
+`toClientUser` emits it as a **derived flag** for staff, so the browser's
+`RequireStaff` keeps asking one question rather than learning a second test for the
+same fact.
+
+Catalogue is 38 → 37 permissions, still zero unenforced.
+
+A prerequisite you have to remember to imply is still a prerequisite; deleting it
+is what actually closes the trap. Deliberately given up: a role can no longer hold
+data access *without* newsroom entry, which docs/DYNAMIC-RBAC-PLAN.md §2 allowed.
+Nobody wanted it and it was the mechanism of the bug.
+
+One new state this creates, now handled: a staff member whose role grants **no
+modules** signs in successfully and finds an empty sidebar. `ProductionSystemIndex`
+used to `<Navigate to="/">`, which reads exactly like being logged out — the one
+thing they know is untrue. It now says "Nothing assigned yet" and explains that an
+administrator adds screens from Roles & Permissions. The editor warns about the same
+thing up front.
+
+### Screens collapse too — the second pass
+
+The first sidebar-shaped version still rendered **every** screen's actions inline.
+Reported back as *"still so complex"*, and correctly: that put roughly the same
+sixty checkboxes on screen as the flat grid it replaced, only in a better order.
+
+Each screen is now **one line, folded shut**:
+
+```
+WORKSPACE
+  ☐ Overview
+  ☑ Workflow Board                       6/6 actions · 5/5 columns  ▸
+  ☐ Pipeline Map
+
+CONTENT
+  ☑ All Stories                                     2/3 actions  ▾
+    ─────────────────────────────────────────────────────────────
+      Select all
+      ☑ Create drafts              ☐ Edit any story
+        Start a new story draft.     Edit stories written by anyone.
+      ☑ Edit own drafts
+        Edit stories they authored.
+  ☐ Blogs                                           0/5 actions  ▸
+  ☑ Magazine Builder
+```
+
+- **Most screens have no actions at all** — Overview, Pipeline Map, Magazine
+  Builder, the four registers, Emoji Analytics — so they collapse to exactly one
+  checkbox and one word, with no expander.
+- The count on the right (`2/3 actions · 5/5 columns`) doubles as the expander, so
+  the collapsed row still says how much is switched on inside.
+- Two separate hit targets doing two different things: the **label** toggles the
+  grant, the **count** opens the detail. A checkbox nested inside an expander would
+  be invalid markup and would fight the label click.
+- Several screens can be open at once — configuring Stories and then Blogs is one
+  continuous job, and forcing the first shut to see the second costs clicks.
+- The Platform block (two checkboxes) is **pinned open**; a collapsed row hiding
+  two items is a click for nothing.
+
+### Nothing is dimmed to indicate state
+
+Also reported: *"no need to show the dim texts, the checkbox is there for showing
+perm."* Correct, and it was the root of **A2**. Every label is now full-strength
+`text-foreground` whether ticked or not, and the `opacity-60` that used to grey out
+a switched-off screen's actions is gone. The checkbox is the state.
+
+The only muted text left is a permission's `description`, which is secondary
+*information* rather than a state cue — and it is now only on screen for the one
+or two screens actually opened, which is what made keeping it affordable. Checkbox
+targets went 14px → 16px at the same time.
+
+### The layout is the sidebar
+
+New file [rolePermissionLayout.ts](../apps/web/src/pages/newsroom/views/rolePermissionLayout.ts)
+declares the editor's shape as sections mirroring `MODULE_CATALOGUE.section` — the
+order of the rail — with each screen's actions nested underneath it:
+
+```
+PLATFORM  Everyone on the team can open the Campaign Engine — that comes with
+          being staff, not from a checkbox. These two are extra powers on top.
+  ⚠ Platform administration        ☐ Verify party claims
+
+CONTENT
+  ┌ ☐ All Stories ─────────────────────── Select all ┐
+  │    ☐ Create drafts          ☐ Edit any story     │
+  │      Start a new story draft.                    │
+  └──────────────────────────────────────────────────┘
+  ┌ ☑ Magazine Builder ──────────────────────────────┐
+  │  Has no permissions of its own yet — anyone who  │
+  │  can open it can publish to public Bulletins.    │
+  └──────────────────────────────────────────────────┘
+```
+
+- **No prerequisite to teach** — see above; entry comes with being staff. The
+  editor instead warns when a role grants no screens at all, which is now the only
+  way to leave someone stranded.
+- **Actions belong to a screen**, so "give them the magazine builder" is one row.
+- **Descriptions render inline** under each action instead of in a `title`,
+  closing **A3** properly. This is what the column layout bought.
+- **Board columns live under Workflow Board**; **Editor Hub tabs** under Editor Hub.
+- **Dependencies are stated** where the catalogue creates one the UI cannot
+  enforce: Instant Capture's two modes, the four Stables registers needing
+  "Create", Emoji Analytics sharing the Analytics permission.
+- **Magazine Builder is labelled as having no permissions of its own** — H2 in the
+  companion review, told honestly rather than papered over.
+- **Podcast's 13 actions** and `media.manage_all` move to an "Outside the Campaign
+  Engine" section, since they have no sidebar screen. Podcast no longer occupies a
+  third of the visual weight of every role.
+- **Nothing can silently vanish.** `unmappedIds()` collects any catalogue id the
+  layout fails to mention into a trailing "Not yet grouped" section. Verified: all
+  38 permissions and all 24 modules are placed.
+
+One judgement call worth recording: actions under a screen that is switched off are
+**dimmed, not disabled** — a role can legitimately hold an action without the
+screen, because the server enforces actions while modules only decide what appears
+in the rail.

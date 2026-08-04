@@ -3,7 +3,6 @@ import { Link } from 'react-router-dom';
 import { useIssueStore } from '@/stores/issueStore';
 import { BookOpen, ChevronRight } from 'lucide-react';
 import { Button } from '@/components/ui/button';
-import VenueMap from '@/pages/bulletins/VenueMap';
 
 /**
  * /bulletins — the newsstand.
@@ -45,13 +44,11 @@ export default function Bulletins() {
         className="relative w-full overflow-hidden"
         style={{ background: 'hsl(150 34% 9%)' }}
       >
-        <img
-          src="https://images.pexels.com/photos/11341144/pexels-photo-11341144.jpeg?auto=compress&cs=tinysrgb&h=400&w=940"
-          alt="Print bulletin editorial"
-          crossOrigin="anonymous"
-          className="absolute inset-0 w-full h-full object-cover opacity-40"
-        />
-        {/* Dark editorial scrim — keeps copy legible over the photo */}
+        {/* A hotlinked Pexels crowd photo sat here at 40% opacity behind a scrim —
+            third-party stock, inline in the JSX, presented as this publication's
+            own masthead imagery. At 40% under a 0.92→0.28 gradient it contributed
+            almost nothing but the request. The broadsheet column rules below are
+            the masthead's texture; they are ours and they cost nothing. */}
         <div
           className="absolute inset-0"
           style={{
@@ -247,8 +244,14 @@ export default function Bulletins() {
         )}
       </div>
 
-      {/* ── Race Venue Map ───────────────────────────── */}
-      <VenueMap />
+      {/* A "Race Venues" band sat here: five hardcoded racecourses (Flemington,
+          Randwick, Eagle Farm, Morphettville, Ascot) under the label "Featured in
+          this edition", on a page that knows nothing about which venues an edition
+          covers. Deleted along with pages/bulletins/ — that directory held only
+          the venue constant plus a SECTION_ICONS / SECTION_IMAGES pair (three more
+          hotlinked Pexels URLs) left dead when the article-driven half of this
+          page was removed. A venue strip here has to be built from the venues an
+          issue actually names. */}
 
       {/* ── Subscribe band ───────────────────────────── */}
       <div

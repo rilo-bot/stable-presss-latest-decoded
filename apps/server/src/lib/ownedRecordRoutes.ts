@@ -12,8 +12,7 @@
 import { Router } from 'express'
 import { db } from './db.js'
 import { attachAccount } from './auth.js'
-import { withIdentityDefaults } from './identity.js'
-import { identityCan } from './effectiveAccess.js'
+import { isStaffIdentity, withIdentityDefaults } from './identity.js'
 import {
   canManageRecord,
   canViewRecord,
@@ -167,8 +166,10 @@ export function ownedRecordRouter(opts: OwnedRecordOptions): Router {
     }
     const identity = withIdentityDefaults({ id: target._id, ...target })
     // Sharing cannot be a back door into the newsroom — the recipient must
-    // already be allowed in.
-    if (!(await identityCan(identity, 'newsroom.access'))) {
+    // already be allowed in. Synchronous now: newsroom access is "holds a staff
+    // role", a field on the document already fetched, so there is no registry
+    // lookup to await.
+    if (!isStaffIdentity(identity)) {
       res.status(400).json({ error: 'That person does not have newsroom access, so they cannot be added.' })
       return
     }

@@ -13,7 +13,9 @@ import { Label } from '@/components/ui/label';
 import { cn } from '@/lib/utils';
 
 import { WORKFLOW_STAGES } from './constants';
+import { canDeleteEpisode } from './helpers';
 import { OverviewTab, GuestsTab, DistributionTab, ReviewTab } from './detail-tabs';
+import { DeleteEpisodeDialog } from './DeleteEpisodeDialog';
 import { AudioUploader } from './uploaders';
 
 // ── Episode Detail Panel ──────────────────────────────────────────────────────
@@ -52,6 +54,8 @@ export function EpisodeDetailPanel({
   const [reviewNote, setReviewNote] = useState(liveEpisode.reviewNotes ?? '');
   const [descEdit, setDescEdit] = useState(liveEpisode.description ?? '');
   const [tab, setTab] = useState<'overview' | 'guests' | 'distribution' | 'review'>('overview');
+  const [confirmingDelete, setConfirmingDelete] = useState(false);
+  const [deleting, setDeleting] = useState(false);
 
   const isOwn = canEditEpisode(liveEpisode.producedBy, currentUser?.displayName);
   const canAdvanceToAudio = can('podcast.audio.upload') && liveEpisode.status === 'draft' && isOwn;
@@ -60,7 +64,11 @@ export function EpisodeDetailPanel({
   const canAdvanceToScheduled = can('podcast.episode.schedule') && liveEpisode.status === 'description_written' && isOwn;
   const canSubmitReview = can('podcast.episode.submit_review') && liveEpisode.status === 'scheduled' && isOwn;
   const canApprove = can('podcast.episode.approve') && liveEpisode.status === 'in_review';
-  const canDelete = can('podcast.episode.delete') && liveEpisode.status !== 'published' && isOwn;
+  // Shared with the card on the Podcast screen, and it mirrors the route's own
+  // three clauses — the local version here missed `podcast.manage`, so an admin
+  // whose role held the umbrella but neither edit power was refused a button the
+  // server would have honoured.
+  const canDelete = canDeleteEpisode(liveEpisode, currentUser?.displayName);
 
   const handleAddGuest = () => {
     if (!guestForm.name.trim()) {
@@ -112,9 +120,19 @@ export function EpisodeDetailPanel({
     updateEpisode(liveEpisode.id, { coverUrl: url });
   };
 
-  const handleDelete = () => {
-    deleteEpisode(liveEpisode.id);
-    toast.success('Episode deleted.');
+  // Ask first. This used to delete on the single click, then announce success
+  // whatever the server said — including when it refused, which left the episode
+  // on screen under a toast claiming it was gone.
+  const confirmDelete = async () => {
+    setDeleting(true);
+    const ok = await deleteEpisode(liveEpisode.id);
+    setDeleting(false);
+    // Closed either way — on refusal the store has already surfaced the reason
+    // and put the episode back. Before `onClose()` so the dialog doesn't sit over
+    // the drawer's exit animation.
+    setConfirmingDelete(false);
+    if (!ok) return;
+    toast.success(`“${liveEpisode.title}” deleted.`);
     onClose();
   };
 
@@ -355,7 +373,7 @@ export function EpisodeDetailPanel({
               onCoverChange={handleCoverChange}
               renderNextStep={renderNextStep}
               canDelete={canDelete}
-              handleDelete={handleDelete}
+              handleDelete={() => setConfirmingDelete(true)}
             />
           )}
 
@@ -401,6 +419,13 @@ export function EpisodeDetailPanel({
           )}
         </div>
       </motion.div>
+
+      <DeleteEpisodeDialog
+        episode={confirmingDelete ? liveEpisode : null}
+        deleting={deleting}
+        onCancel={() => setConfirmingDelete(false)}
+        onConfirm={confirmDelete}
+      />
     </div>
   );
 }

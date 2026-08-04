@@ -1,18 +1,31 @@
+/**
+ * The front page's right-hand rail.
+ *
+ * THREE blocks, from seven. It carried, in order: a membership CTA with an email
+ * form, the podcast card, "Also in this edition", an "Editorial Desk" card, a
+ * "Tipping Ring" card, the sponsor list, and "Your Tipping Record" — and three of
+ * those were CTAs competing with the membership form directly above them, plus two
+ * more CTAs elsewhere on the page. Six ways to be asked to subscribe on one screen
+ * is not six chances to convert; it is a page with no primary action.
+ *
+ * What survives: the membership form (the only one that captures an email), the
+ * podcast card (real episodes), "Also today" (real stories), and the sponsors
+ * (real, and they are paying to be there).
+ *
+ * Removed:
+ *   · "The Editorial Desk" — static copy whose two buttons went to /news and
+ *     /bulletins, both of which are in the nav and the footer already.
+ *   · "Tipping Ring" — the ring is not launching with the site.
+ *   · "Your Tipping Record" — same.
+ */
 import type { ReactNode } from 'react';
 import { Link } from 'react-router-dom';
-import { ArrowRight, Check, Newspaper, Star, TrendingUp, Users } from 'lucide-react';
+import { Check, Star } from 'lucide-react';
 import { ArticleCard } from '@/components/ArticleCard';
 import { Button } from '@/components/ui/button';
 import { cn } from '@/lib/utils';
 import type { Article } from '@/types/article';
 import type { Sponsor } from '@/types/sponsor';
-import type { TipperProfile } from '@/types/tip';
-
-interface MyTipping {
-  profile: TipperProfile;
-  rank: number;
-  total: number;
-}
 
 interface LandingSidebarProps {
   hasUser: boolean;
@@ -21,7 +34,6 @@ interface LandingSidebarProps {
   handleSubscribe: (e: React.FormEvent) => void;
   sidebarArticles: Article[];
   sponsors: Sponsor[];
-  myTipping: MyTipping | null;
   podcastSlot: ReactNode;
 }
 
@@ -32,7 +44,6 @@ export function LandingSidebar({
   handleSubscribe,
   sidebarArticles,
   sponsors,
-  myTipping,
   podcastSlot,
 }: LandingSidebarProps) {
   return (
@@ -49,10 +60,10 @@ export function LandingSidebar({
             style={{ background: 'hsl(var(--brand-accent) / 0.07)' }}
           >
             <div className="flex items-center gap-2 mb-3">
-              <Star size={14} style={{ color: 'hsl(var(--brand-accent))' }} />
+              <Star size={14} style={{ color: 'hsl(var(--brand-accent-ink))' }} />
               <span
-                className="text-[9px] uppercase tracking-[0.2em] font-bold"
-                style={{ color: 'hsl(var(--brand-accent))' }}
+                className="text-[11px] uppercase tracking-[0.12em] font-bold"
+                style={{ color: 'hsl(var(--brand-accent-ink))' }}
               >
                 Membership
               </span>
@@ -76,7 +87,7 @@ export function LandingSidebar({
                   key={benefit}
                   className="flex items-center gap-2 text-xs text-foreground/80"
                 >
-                  <Check size={11} style={{ color: 'hsl(var(--brand-accent))' }} />
+                  <Check size={11} style={{ color: 'hsl(var(--brand-accent-ink))' }} />
                   {benefit}
                 </li>
               ))}
@@ -101,12 +112,12 @@ export function LandingSidebar({
             </form>
           </div>
           <div className="px-5 py-2 border-t border-border/40 flex items-center justify-center gap-1">
-            <span className="text-[9px] text-muted-foreground">
+            <span className="text-[12px] text-muted-foreground">
               Already a member?
             </span>
             <Link
               to="/login"
-              className="text-[9px] font-semibold text-primary hover:underline"
+              className="text-[12px] font-semibold text-primary hover:underline"
             >
               Sign in
             </Link>
@@ -121,7 +132,7 @@ export function LandingSidebar({
       {sidebarArticles.length > 0 && (
         <div>
           <div className="flex items-center gap-3 mb-4">
-            <h3 className="text-[9px] uppercase tracking-[0.2em] font-bold text-muted-foreground whitespace-nowrap">
+            <h3 className="text-[11px] uppercase tracking-[0.12em] font-bold text-muted-foreground whitespace-nowrap">
               Also in this edition
             </h3>
             <div className="flex-1 h-px bg-border/50" />
@@ -138,102 +149,25 @@ export function LandingSidebar({
         </div>
       )}
 
-      {/* Editorial quick-access.
-          Was "This Week's Newsletter", pointing at /newsletter — a page that
-          listed stories carrying a `newsletter` distribution channel. That axis is
-          gone (a published story is news) and the page with it, so this card now
-          sends the reader to the desk it was really describing: every story,
-          sorted by category, which is exactly what /news is. */}
-      <div
-        className="border rounded-sm p-5"
-        style={{
-          borderColor: 'hsl(var(--chart-1) / 0.35)',
-          background: 'hsl(var(--chart-1) / 0.04)',
-        }}
-      >
-        <div className="flex items-center gap-2 mb-3">
-          <Newspaper
-            size={14}
-            style={{ color: 'hsl(var(--chart-1))' }}
-          />
-          <span
-            className="text-[9px] uppercase tracking-[0.2em] font-bold"
-            style={{ color: 'hsl(var(--chart-1))' }}
-          >
-            The Editorial Desk
-          </span>
-        </div>
-        <p className="font-[family-name:var(--font-display)] text-sm font-bold text-foreground mb-1.5 leading-snug">
-          Every story, sorted by category — read it your way.
-        </p>
-        <p className="text-xs text-muted-foreground leading-relaxed mb-4">
-          Race Reports, Form Guides, Trainer Profiles, and Bloodstock analysis — all in one beautifully laid out reading experience.
-        </p>
-        <div className="flex gap-2">
-          <Button
-            size="sm"
-            asChild
-            className="flex-1 bg-primary text-primary-foreground hover:bg-primary/90 text-xs font-semibold"
-          >
-            <Link to="/news">Browse Editorial</Link>
-          </Button>
-          <Button
-            size="sm"
-            variant="outline"
-            asChild
-            className="text-xs"
-          >
-            <Link to="/bulletins">Bulletins</Link>
-          </Button>
-        </div>
-      </div>
+      {/* Two CTA cards sat here — "The Editorial Desk" (static copy, buttons to
+          /news and /bulletins) and "Tipping Ring" — directly beneath the membership
+          form above. Both are gone; see the note at the top of this file. */}
 
-      {/* Tipping Ring CTA */}
-      <div
-        className="border rounded-sm p-5"
-        style={{
-          borderColor: 'hsl(var(--brand-accent) / 0.35)',
-          background: 'hsl(var(--brand-accent) / 0.04)',
-        }}
-      >
-        <div className="flex items-center gap-2 mb-3">
-          <TrendingUp
-            size={14}
-            style={{ color: 'hsl(var(--brand-accent))' }}
-          />
-          <span
-            className="text-[9px] uppercase tracking-[0.2em] font-bold"
-            style={{ color: 'hsl(var(--brand-accent))' }}
-          >
-            Tipping Ring
-          </span>
-        </div>
-        <p className="font-[family-name:var(--font-display)] text-sm font-bold text-foreground mb-1.5 leading-snug">
-          Back your selections against the field.
-        </p>
-        <p className="text-xs text-muted-foreground leading-relaxed mb-4">
-          Track your tipping record, follow the global leaderboard, and
-          earn your stripes as a form student.
-        </p>
-        <Button
-          size="sm"
-          asChild
-          className="w-full bg-primary text-primary-foreground hover:bg-primary/90 text-xs font-semibold"
-        >
-          <Link to="/tipping">Enter the Ring</Link>
-        </Button>
-      </div>
-
-      {/* Sponsors */}
+      {/* Sponsors.
+          Type floor raised throughout: the sponsor initial was 9px, the category
+          8px, the enquiries line 9px. All gold text here now uses
+          `--brand-accent-ink` — `--brand-accent` is a FILL, and it is 2.06:1 as
+          text on this surface (docs/THEME-DIRECTION.md). The initial keeps the
+          plain accent because there it IS a fill, behind ink. */}
       <div>
         <div className="flex items-center gap-3 mb-4">
-          <h3 className="text-[9px] uppercase tracking-[0.2em] font-bold text-muted-foreground whitespace-nowrap">
+          <h3 className="text-[11px] uppercase tracking-[0.1em] font-bold text-muted-foreground whitespace-nowrap">
             Partners &amp; Sponsors
           </h3>
           <div className="flex-1 h-px bg-border/50" />
         </div>
         {sponsors.length === 0 ? (
-          <p className="text-[10px] text-muted-foreground/70 italic">
+          <p className="text-[12px] text-muted-foreground italic">
             No sponsors listed yet.
           </p>
         ) : (
@@ -247,77 +181,45 @@ export function LandingSidebar({
               )}
             >
               <div
-                className="flex-shrink-0 w-10 h-10 rounded-sm flex items-center justify-center text-[9px] font-bold uppercase tracking-wider"
+                className="flex-shrink-0 w-10 h-10 rounded-sm flex items-center justify-center text-[13px] font-bold uppercase"
                 style={{
-                  background: 'hsl(var(--brand-accent) / 0.12)',
-                  color: 'hsl(var(--brand-accent))',
+                  background: 'hsl(var(--brand-accent) / 0.14)',
+                  color: 'hsl(var(--brand-accent-ink))',
                 }}
               >
                 {sponsor.name.charAt(0)}
               </div>
               <div className="min-w-0">
-                <div className="flex items-center gap-1.5 mb-0.5">
+                {sponsor.category && (
                   <span
-                    className="text-[8px] uppercase tracking-[0.14em] font-bold"
-                    style={{ color: 'hsl(var(--brand-accent))' }}
+                    className="block text-[11px] uppercase tracking-[0.1em] font-bold mb-0.5"
+                    style={{ color: 'hsl(var(--brand-accent-ink))' }}
                   >
                     {sponsor.category}
                   </span>
-                </div>
-                <p className="text-xs font-semibold text-foreground">
+                )}
+                <p className="text-sm font-semibold text-foreground">
                   {sponsor.name}
                 </p>
-                <p className="text-[10px] text-muted-foreground mt-0.5">
-                  {sponsor.tagline}
-                </p>
+                {sponsor.tagline && (
+                  <p className="text-[12px] text-muted-foreground mt-0.5">
+                    {sponsor.tagline}
+                  </p>
+                )}
               </div>
             </div>
           ))}
         </div>
         )}
-        <p className="mt-3 text-[9px] text-muted-foreground uppercase tracking-[0.1em] text-center">
+        <p className="mt-3 text-[11px] text-muted-foreground text-center">
           Sponsor enquiries:{' '}
-          <span className="text-foreground">press@stablepress.com.au</span>
+          <span className="text-foreground font-medium">press@stablepress.com.au</span>
         </p>
       </div>
 
-      {/* Member Engagement — real tipping record, shown only once the member has one */}
-      {hasUser && myTipping && (
-        <div className="border border-primary/20 rounded-sm p-5 bg-primary/5">
-          <div className="flex items-center gap-2 mb-3">
-            <Users size={14} className="text-primary" />
-            <span className="text-[9px] uppercase tracking-[0.2em] font-bold text-primary">
-              Your Tipping Record
-            </span>
-          </div>
-          <div className="grid grid-cols-2 gap-3">
-            {[
-              { label: 'Coin balance', value: myTipping.profile.coinBalance.toLocaleString() },
-              { label: 'Tips placed', value: myTipping.profile.tipsPlaced.toLocaleString() },
-              { label: 'Rank', value: `${myTipping.rank} / ${myTipping.total}` },
-              { label: 'Total won', value: myTipping.profile.totalWon.toLocaleString() },
-            ].map((stat) => (
-              <div
-                key={stat.label}
-                className="text-center py-2 rounded-sm bg-background"
-              >
-                <span className="block font-[family-name:var(--font-display)] text-lg font-bold text-primary tabular-nums">
-                  {stat.value}
-                </span>
-                <span className="block text-[10px] text-muted-foreground mt-0.5">
-                  {stat.label}
-                </span>
-              </div>
-            ))}
-          </div>
-          <Link
-            to="/tipping"
-            className="mt-3 block text-center text-[10px] uppercase tracking-[0.1em] font-semibold text-primary hover:text-primary/80 transition-colors"
-          >
-            View your full record <ArrowRight size={10} className="inline" />
-          </Link>
-        </div>
-      )}
+      {/* "Your Tipping Record" — a four-stat tile of the signed-in member's own
+          balance, rank and winnings — was the seventh block. Out with the rest of
+          the tipping surface. */}
     </aside>
   );
 }

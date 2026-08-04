@@ -116,6 +116,12 @@ export const SIDE_NAV: SideNavItem[] = [
     slug: 'magazine-v2',
     href: `${PS_BASE}/magazine-v2`,
   },
+  /* Podcast lived at /podcast/workflow inside the PUBLIC site chrome — the last
+     staff surface outside the Campaign Engine, reachable only from a link in the
+     account dropdown. `requiresPermission` here is decorative (the rail filters
+     on the module list); the server's MODULE_CATALOGUE row is what decides which
+     built-in roles get it. */
+  { id: 'podcast', label: 'Podcast', icon: <Mic size={15} />, section: 'Content', slug: 'podcast', requiresPermission: 'podcast.read_all' },
   {
     id: 'editor-hub',
     label: 'Editor Hub',

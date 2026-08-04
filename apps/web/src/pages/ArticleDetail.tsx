@@ -27,7 +27,7 @@ import { canViewPremium } from '@/rbac/can';
 import { canEditArticle } from '@/lib/permissions';
 import { Paywall } from '@/components/Paywall';
 import { AskAgentButton } from '@/components/AskAgentButton';
-import { STATUS_LABELS, splitIntoParagraphs, DEFAULT_HERO } from './article-detail/helpers';
+import { STATUS_LABELS, splitIntoParagraphs } from './article-detail/helpers';
 import { Sidebar } from './article-detail/Sidebar';
 import { RelatedPanel } from './article-detail/RelatedPanel';
 import { InlineEdit } from './article-detail/InlineEdit';
@@ -176,7 +176,10 @@ export default function ArticleDetail() {
     return <Navigate to="/news" replace />;
   }
 
-  const heroImage = article.imageUrl ?? DEFAULT_HERO;
+  // `null` when the story carries no photograph — the hero renders the green
+  // masthead surface rather than substituting stock imagery. Empty strings count
+  // as absent; `??` alone let `imageUrl: ''` through as a broken <img>.
+  const heroImage = article.imageUrl?.trim() ? article.imageUrl : null;
 
   const formattedDate = article.publishedAt
     ? new Date(article.publishedAt).toLocaleDateString('en-AU', {
@@ -243,16 +246,28 @@ export default function ArticleDetail() {
       {/* ── Full-bleed Hero ───────────────────────────── */}
       <div className="relative w-full h-[60vh] min-h-[400px] max-h-[680px] overflow-hidden">
         <SelectableField fieldId="heroImage" label="Hero image" className="absolute inset-0">
-          <img
-            src={heroImage}
-            alt={article.title}
-            crossOrigin="anonymous"
-            className="absolute inset-0 w-full h-full object-cover object-center"
-          />
+          {heroImage ? (
+            <img
+              src={heroImage}
+              alt={article.title}
+              crossOrigin="anonymous"
+              className="absolute inset-0 w-full h-full object-cover object-center"
+            />
+          ) : (
+            /* No photograph on this story. The green masthead surface, not a
+               stock photo of someone else's horse. */
+            <div className="absolute inset-0 bg-primary" />
+          )}
         </SelectableField>
-        {/* Multi-stop scrim: bottom-to-top opacity for text legibility */}
-        <div className="absolute inset-0 bg-gradient-to-t from-foreground/95 via-foreground/50 to-foreground/10" />
-        <div className="absolute inset-0 bg-gradient-to-r from-foreground/20 via-transparent to-transparent" />
+        {/* Multi-stop scrim: bottom-to-top opacity for text legibility. Only over
+            a photograph — on the flat green fallback it would just muddy the
+            surface the headline already reads cleanly against. */}
+        {heroImage && (
+          <>
+            <div className="absolute inset-0 bg-gradient-to-t from-foreground/95 via-foreground/50 to-foreground/10" />
+            <div className="absolute inset-0 bg-gradient-to-r from-foreground/20 via-transparent to-transparent" />
+          </>
+        )}
 
         {/* Breadcrumb nav over hero */}
         <div className="absolute top-0 left-0 right-0 px-4 md:px-10 pt-5">

@@ -455,7 +455,7 @@ export function buildTools(account?: AccountUser, authHeader?: string): ToolSet 
     }),
 
     listPodcasts: tool({
-      description: 'Published episodes of The Gallop Podcast. (Staff also see in-production episodes.)',
+      description: 'Published episodes of The Stable Press Podcast. (Staff also see in-production episodes.)',
       inputSchema: z.object({ limit: z.number().optional() }),
       execute: async ({ limit }) => {
         let eps = await db.collection('podcastEpisodes').find()

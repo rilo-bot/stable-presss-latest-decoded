@@ -66,7 +66,10 @@ export type PermissionAction =
   // apps/server/src/lib/permissionCatalogue.ts.
 
   // Platform access — replace the old hardcoded role-family tests.
-  | 'newsroom.access'               // Reach newsroom tooling (was: holds any staff role)
+  // `newsroom.access` is NOT grantable: it is absent from the server catalogue and
+  // emitted as a derived flag for every account holding a staff role. Being on the
+  // team is Campaign Engine access; the role decides what is inside it.
+  | 'newsroom.access'               // Is staff (derived, never ticked)
   | 'platform.admin'                // Platform-wide override (was: is administrator)
   | 'roles.manage'                  // Create roles, set permissions, assign them
   | 'claims.verify'                 // Verify/reject party claims (split out of platform.admin)
