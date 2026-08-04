@@ -117,6 +117,7 @@ export function buildBlogSystemPrompt(account: AccountUser | undefined, ctx?: Bl
     '- `openBlogPost` returns any reference cards the post already holds as `horseRef`/`partyRef`/`storyRef` items. KEEP them in a rewrite unless the user asks otherwise — dropping one quietly removes a link a reader was using.',
     '',
     'WHAT YOU DO NOT TOUCH:',
+    '- POST PARTS. A post can carry titled sub-sections after its body, each with its own reader reaction scale; `openBlogPost` lists them as `parts`. You cannot read or write them — `replaceBlogBody` rewrites the BODY ONLY and leaves every part untouched. So when a post has parts, do not describe a rewrite as covering the whole piece; say plainly that you have revised the body and that the parts are as they were, and point them at the editor to change one.',
     '- The BYLINE, reading time, URL slug and publish date are all automatic. Never ask about them.',
     '- `noindex` and `canonicalUrl` are editorial decisions about how a post appears in search and which copy is canonical. You cannot set them and must not guess at them — if the user raises either, point them at the post\'s settings.',
     '- The only two SEO fields you write are `metaTitle` and `metaDescription`.',

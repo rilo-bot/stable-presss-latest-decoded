@@ -100,57 +100,22 @@ export const NAV_SECTIONS: NavSection[] = [
     to: '/podcast',
     icon: <Tv size={14} />,
   },
-  {
-    label: 'Newsletter',
-    to: '/newsletter',
-    icon: <Mail size={14} />,
-    sub: [
-      {
-        label: 'All Editions',
-        to: '/newsletter',
-        description: 'Full newsletter archive',
-      },
-      {
-        label: 'Race Reports',
-        to: '/newsletter?category=race-reports',
-        description: 'Race results and analysis',
-      },
-      {
-        label: 'Form Guide',
-        to: '/newsletter?category=form-guide',
-        description: 'Sectional and speed data',
-      },
-      {
-        label: 'Trainer Profiles',
-        to: '/newsletter?category=trainer-profiles',
-        description: 'In-depth trainer conversations',
-      },
-    ],
-  },
+  // A "Newsletter" section sat here, pointing at /newsletter and at four
+  // ?category= cuts of it. Both are gone: the page listed stories carrying a
+  // `newsletter` distribution channel, and that axis was removed — a published
+  // story is news. Every category cut it offered exists under /news.
   {
     label: 'Bulletins',
     to: '/bulletins',
     icon: <BookOpen size={14} />,
+    // No ?category= sub-links. /bulletins is the magazine newsstand now and does
+    // not read a category param — those four rows navigated to a filter that
+    // silently did nothing.
     sub: [
       {
         label: 'All Editions',
         to: '/bulletins',
-        description: 'Full fortnightly bulletin archive',
-      },
-      {
-        label: 'Bloodstock',
-        to: '/bulletins?category=bloodstock',
-        description: 'Pedigree and breeding intelligence',
-      },
-      {
-        label: 'Trainer Profiles',
-        to: '/bulletins?category=trainer-profiles',
-        description: 'Longform trainer conversations',
-      },
-      {
-        label: 'Form Analysis',
-        to: '/bulletins?category=form-guide',
-        description: 'Deep sectional and class analysis',
+        description: 'Every published bulletin edition',
       },
       {
         label: 'Subscribe',

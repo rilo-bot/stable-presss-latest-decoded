@@ -97,47 +97,48 @@ function requireUploadKind(kindFrom: (req: Request) => unknown) {
 }
 
 /**
- * Kinds that are NOT public, and who may read them.
+ * Kinds whose LEGACY objects sit outside `public/` and are gated by the GET route
+ * below.
  *
- * `evidence` is a member's proof of identity — a passport scan, a training
- * licence, a stable invoice. It was served to anyone who had the URL, on the
- * reasoning that a UUID-prefixed key is unguessable (docs/AUTH-RBAC-REVIEW.md H7).
- * Unguessable is not private: the URL is stored on the claim, travels through
- * notification emails, and appears in any admin's browser history and in the
- * referrer of anything they open next.
+ * ⚠️ READ THIS BEFORE ADDING A KIND HERE — it no longer makes new uploads private.
  *
- * Everything else is public — party photos, horse images and blog media are
- * rendered in `<img>` tags on the public website, and requiring a token there
- * would simply break the site.
+ * Every new upload now lands under `public/` (see buildKey), by an explicit
+ * project decision: one prefix, every asset served straight from the bucket, no
+ * per-kind exceptions. The bucket policy grants anonymous `s3:GetObject` on
+ * `public/*`, so a new `evidence` object IS readable by anyone who has its URL,
+ * and `publicUrl()` hands out the direct bucket URL rather than a proxied one — so
+ * the gate below is not even on the path a client uses.
  *
- * This drives BOTH ends: which prefix a new object is written under (buildKey)
- * and who may read one back (the GET route). Adding a kind here is therefore
- * enough to make it private for everything uploaded from then on.
+ * What this set still does, and why it stays:
+ *   • It protects the evidence objects already stored OUTSIDE `public/`, which the
+ *     bucket policy cannot reach and which are only readable through this API.
+ *     Those are real identity documents; dropping the gate would expose them.
+ *   • It keeps the proxied route honest for any key that does reach it.
+ *
+ * If identity documents need to be private again, this set is not the lever — the
+ * lever is buildKey, which has to stop prefixing `public/` for those kinds.
  */
 const PRIVATE_KINDS = new Set(['evidence'])
 
 /**
- * Where an object lands, and therefore whether the bucket will serve it.
+ * Where an object lands. ALWAYS under `public/`, for every kind.
  *
- * The bucket has ACLs DISABLED, so the `public-read` ACL the uploader asks for is
- * rejected and silently dropped (see storage.uploadObject). What actually grants
- * public read is the bucket POLICY, which covers `public/*` and nothing else.
- * That convention already existed — every magazine image is written to
- * `public/magazinesV2/…` for exactly this reason — but the generic upload route
- * never joined it, so party, horse, blog and media files sat outside `public/`
- * and could only ever be read back through this API.
+ * What grants public read is the bucket POLICY on `public/*` — not an ACL, which
+ * this bucket refuses outright (Object Ownership is BucketOwnerEnforced and
+ * BlockPublicAcls is on). The magazine paths already wrote everything to
+ * `public/magazinesV2/…` for exactly this reason; this is the same rule applied to
+ * every upload in the product, so there is one prefix and no kind that quietly
+ * behaves differently.
  *
- * So: public kinds go under `public/<kind>/<userId>/…` and are directly
- * fetchable; PRIVATE_KINDS deliberately stay outside it, where the bucket policy
- * cannot reach them and the read gate below is the only way in.
+ * The consequence is deliberate and worth stating plainly: `evidence` — passport
+ * scans, training licences — is public-by-URL from here on. See PRIVATE_KINDS.
  *
- * Existing objects keep their old keys and keep working — the proxy still serves
- * anything, so nothing needs migrating.
+ * Existing objects keep their old keys and keep working: the proxy route still
+ * serves any key, so nothing needs migrating.
  */
 function buildKey(kind: unknown, userId: string, fileName: unknown): string {
   const k = kindOf(kind)
-  const tail = `${k}/${userId}/${crypto.randomUUID()}-${safeName(String(fileName ?? 'file'))}`
-  return PRIVATE_KINDS.has(k) ? tail : `public/${tail}`
+  return `${storage.PUBLIC_PREFIX}${k}/${userId}/${crypto.randomUUID()}-${safeName(String(fileName ?? 'file'))}`
 }
 
 // Per-account ceiling. Generous enough for a magazine's worth of images in one
@@ -251,6 +252,78 @@ router.post(
       console.error('[uploads] presign failed:', err instanceof Error ? err.message : err)
       res.status(500).json({ error: 'Could not create upload URL.' })
     }
+  },
+)
+
+/**
+ * POST /api/uploads/confirm
+ * Body: { key } — the key from a previous /sign response, after the browser has
+ *       PUT the bytes to S3.
+ * Returns: { url, key, contentType, size } read from S3 itself.
+ *
+ * WHY THIS EXISTS. A presigned PUT cannot enforce a size limit: the signature
+ * covers the key and the Content-Type, but S3 has no content-length ceiling to
+ * check against (that needs a POST policy with content-length-range, which the
+ * browser upload path here does not use). So the `size` the client declares at
+ * /sign is advisory, and until this endpoint existed NOTHING ever looked at what
+ * actually landed — any signed-in account could PUT an object of any size, and the
+ * four self-service kinds need no permission at all.
+ *
+ * Magazine v2 already did it this way (`headObject` after the PUT, never trust the
+ * client's numbers); this brings the generic path to the same standard.
+ *
+ * An object that fails the check is DELETED before we answer, so a rejected upload
+ * does not leave the bytes sitting in the bucket it was refused from.
+ */
+router.post(
+  '/confirm',
+  attachAccount,
+  uploadLimit,
+  requireUploadKind((req) => parseKey(String((req.body ?? {}).key ?? '')).kind),
+  async (req, res) => {
+    if (!storage.isConfigured()) {
+      res.status(501).json({ error: 'Object storage is not configured on this server.', configured: false })
+      return
+    }
+
+    const key = typeof req.body?.key === 'string' ? req.body.key : ''
+    const { kind, ownerId } = parseKey(key)
+    // The uploader is IN the key, so confirming someone else's upload is refused
+    // without a database lookup. Belt and braces: /sign only ever mints keys under
+    // the caller's own id, so a mismatch means a hand-rolled request.
+    if (!key || !ALLOWED_KINDS.has(kind) || ownerId !== req.account!.id) {
+      res.status(400).json({ error: 'Invalid upload key.' })
+      return
+    }
+
+    let head: { contentLength: number; contentType: string }
+    try {
+      head = await storage.headObject(key)
+    } catch {
+      res.status(400).json({ error: 'Upload not found — please try uploading again.' })
+      return
+    }
+
+    // Read the type and size off S3, not off the request. Both caps are the same
+    // ones /sign and /direct apply, so the three endpoints cannot disagree.
+    const maxBytes = maxBytesFor(head.contentType)
+    if (maxBytes === null) {
+      await storage.deleteObject(key)
+      res.status(415).json({ error: `Unsupported file type: ${head.contentType || 'unknown'}` })
+      return
+    }
+    if (head.contentLength <= 0) {
+      await storage.deleteObject(key)
+      res.status(400).json({ error: 'That upload is empty.' })
+      return
+    }
+    if (head.contentLength > maxBytes) {
+      await storage.deleteObject(key)
+      res.status(413).json({ error: `File is too large (max ${Math.round(maxBytes / MB)} MB for this type).` })
+      return
+    }
+
+    res.json({ url: storage.publicUrl(key), key, contentType: head.contentType, size: head.contentLength })
   },
 )
 

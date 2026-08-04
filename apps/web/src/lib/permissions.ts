@@ -37,10 +37,12 @@ export type PermissionAction =
   // `content.legal_review`, `content.compliance` and `content.publisher_review`
   // were here. They were the per-department gates of the retired twelve-status
   // workflow and nothing ever checked them — approval is one step now.
+  // `content.newsletter` and `content.bulletin` were here too. They gated the
+  // `channels` axis, which is gone: a published story is news. /bulletins is the
+  // magazine newsstand, and the /newsletter page went with the axis — nothing in
+  // the app sends email beyond sign-in OTPs.
   | 'content.schedule'              // Schedule for publication
   | 'content.publish'               // Publish content
-  | 'content.newsletter'            // Distribute via newsletter
-  | 'content.bulletin'              // Add to bulletin
 
   // Blogs — a separate axis from Stories. Two states (draft/published), so there
   // is no submit/approve/schedule here. Mirrors PERMISSION_CATALOGUE on the

@@ -180,7 +180,12 @@ export async function storeStockPhoto(
     const contentType = imgRes.headers.get('content-type') || 'image/jpeg';
     const ext = contentType.includes('png') ? 'png' : 'jpg';
 
-    const key = `${keyPrefix.replace(/\/+$/, '')}/${crypto.randomUUID()}-stock.${ext}`;
+    // The only key here whose folder comes from the CALLER, so normalise rather
+    // than trust: force it under `public/` (the project rule, and what
+    // storage.uploadObject enforces) instead of letting a caller's typo become a
+    // proxied-forever object.
+    const folder = keyPrefix.replace(/^\/+|\/+$/g, '');
+    const key = `${folder.startsWith('public/') ? folder : `public/${folder}`}/${crypto.randomUUID()}-stock.${ext}`;
     await storage.uploadObject({ key, contentType, body: bytes });
 
     return {

@@ -122,6 +122,11 @@ export interface VerifyResult {
   error?: string;
 }
 
+export interface AcceptInviteResult extends VerifyResult {
+  /** Where the invite pointed, if anywhere — e.g. a shared magazine. */
+  redirectTo?: string;
+}
+
 interface AuthState {
   currentUser: AuthUser | null;
   token: string | null;
@@ -136,6 +141,13 @@ interface AuthState {
   ) => Promise<OtpRequestResult>;
   /** Step 2 — Verify the code; on success stores the user + JWT. */
   verifyOtp: (email: string, code: string) => Promise<VerifyResult>;
+  /**
+   * Redeem a team-invite link. One call replaces the whole OTP round trip: the
+   * server creates the account if it is new, applies the invited role, and
+   * returns a session in the same shape `verifyOtp` gets. `displayName` is
+   * required only for an address with no account yet.
+   */
+  acceptInvite: (token: string, displayName?: string) => Promise<AcceptInviteResult>;
   /** Validate a persisted token against the server; clears session on 401. */
   verifySession: () => Promise<void>;
   /** Set the current user's subscription tier (entitlement axis). */
@@ -196,6 +208,22 @@ export const useAuthStore = create<AuthState>()(
             return { ok: true };
           }
           return { ok: false, error: data?.error ?? 'Verification failed. Please try again.' };
+        } catch {
+          return { ok: false, error: 'Network error. Please check your connection and try again.' };
+        }
+      },
+
+      acceptInvite: async (token, displayName) => {
+        try {
+          const { data } = await postJson(
+            `/api/invites/${encodeURIComponent(token)}/accept`,
+            displayName ? { displayName } : {},
+          );
+          if (data?.token && data?.user) {
+            set({ currentUser: hydrateUser(data.user), token: data.token as string });
+            return { ok: true, redirectTo: data.redirectTo };
+          }
+          return { ok: false, error: data?.error ?? 'Could not accept the invitation. Please try again.' };
         } catch {
           return { ok: false, error: 'Network error. Please check your connection and try again.' };
         }

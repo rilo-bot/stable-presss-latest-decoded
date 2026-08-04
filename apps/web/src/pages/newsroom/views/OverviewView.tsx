@@ -14,7 +14,6 @@ import type { MediaItem } from '@/types/mediaItem';
 import type { RacingEntry } from '@/types/racingEntry';
 
 import { StatusBadge } from '../components/StatusBadge';
-import { MAGAZINE_TEMPLATES } from '@/editor/templates/galleryTemplates';
 
 /**
  * One shortcut card, used for every module entry point on this screen.
@@ -169,14 +168,16 @@ export function OverviewView({
             nav: 'instant',
           },
           {
+            // Was "Bulletin Templates", captioned with a count of the v1 template
+            // builder's starter gallery. There is no gallery now: the Builder starts
+            // from blank, from a brief, from an uploaded PDF, or from another
+            // magazine's layout.
             key: 'bulletins',
             icon: <BookOpen size={15} />,
-            title: 'Bulletin Templates',
-            meta: `${MAGAZINE_TEMPLATES.length} ${MAGAZINE_TEMPLATES.length === 1 ? 'template' : 'templates'} ready to use`,
-            badge: 'New',
-            badgeTone: 'new' as const,
-            action: 'Open studio',
-            nav: 'bulletin-templates',
+            title: 'Magazine Builder',
+            meta: 'Build a bulletin from a brief, a PDF, or another edition’s layout',
+            action: 'Open builder',
+            nav: 'magazine-v2',
           },
           can('content.draft.create') && {
             key: 'media',

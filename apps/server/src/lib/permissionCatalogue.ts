@@ -39,8 +39,6 @@ export type PermissionAction =
   | 'content.approve'
   | 'content.schedule'
   | 'content.publish'
-  | 'content.newsletter'
-  | 'content.bulletin'
   // Blogs — a separate axis from Stories on purpose. Publishing a blog is a
   // different power from publishing a news story, and keeping them apart is
   // what lets blogging be opened to member/guest authors later as a role
@@ -135,10 +133,11 @@ export const PERMISSION_CATALOGUE: PermissionMeta[] = [
   // "Legal & Compliance" heading, and checked by absolutely nothing — approval
   // has been one step (`content.approve`) since the five stages landed. Roles
   // still holding the retired ids simply no longer match a catalogue entry.
+  // `content.newsletter` and `content.bulletin` were removed here — see the
+  // RESERVED block below. Publishing a story is one action now: it goes live on
+  // /news under its category.
   { id: 'content.schedule', label: 'Schedule publication', resource: 'Publishing', short: 'Schedule', description: 'Set a future publish date.' },
   { id: 'content.publish', label: 'Publish', resource: 'Publishing', short: 'Publish', description: 'Push a story live.' },
-  { id: 'content.newsletter', label: 'Send to newsletter', resource: 'Publishing', short: 'Newsletter', description: 'Distribute a story via newsletter.' },
-  { id: 'content.bulletin', label: 'Add to bulletin', resource: 'Publishing', short: 'Bulletin', description: 'Include a story in a bulletin issue.' },
 
   // Blogs — two states (draft/published), so there is no submit/approve/schedule
   // row here the way Stories has one.
@@ -200,6 +199,26 @@ export const PERMISSION_CATALOGUE: PermissionMeta[] = [
 //   settings.manage         no settings endpoint; the screen is static text
 //   workflow.view_all_columns   superseded by the `workflowStages` axis
 //   workflow.view_own_columns   superseded by the `workflowStages` axis
+//   content.newsletter      the `channels` axis is gone; see below
+//   content.bulletin        the `channels` axis is gone; see below
+//
+// The last two are a different kind of removal from the rest, and worth spelling
+// out. They DID gate something: `vetChannels` in routes/articles.ts refused a
+// write that put a story on the newsletter or bulletin channel without them. The
+// channels themselves are what went away.
+//
+//   `bulletin` had nowhere to land. /bulletins is the magazine newsstand — both
+//   builders freeze their pages into `issues` — and the bulletin-story list below
+//   it only ever rendered when no issue had been published at all.
+//
+//   `newsletter` gated distribution by a newsletter that does not exist. Nothing
+//   in this codebase sends email except sign-in OTPs, so an editor could hold
+//   "Distribute a story via newsletter" and no such distribution could occur. The
+//   /newsletter page it fed was deleted with the axis.
+//
+// A story is news now: published means live on /news under its category. Roles
+// still holding either id simply no longer match a catalogue entry, which is what
+// scripts/sync-role-catalogue.ts is for.
 //
 // RE-ADD any of these in the same commit as the endpoint that enforces it — never
 // ahead of it. scripts/check-permission-enforcement.ts fails the build if a
@@ -388,8 +407,6 @@ export const BUILTIN_ROLE_PERMISSIONS: Record<SeedRoleSlug, PermissionAction[]> 
     'content.approve',
     'content.schedule',
     'content.publish',
-    'content.newsletter',
-    'content.bulletin',
     'blog.create',
     'blog.edit_own',
     'blog.edit_any',

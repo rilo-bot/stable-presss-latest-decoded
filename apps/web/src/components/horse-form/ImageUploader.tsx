@@ -74,6 +74,13 @@ export function ImageUploader({
   };
 
   const isDataUrl = value?.startsWith('data:');
+  // Reset whenever the URL changes so a previously-failed image can succeed on retry.
+  const [loadFailed, setLoadFailed] = useState(false);
+  const lastValue = useRef(value);
+  if (lastValue.current !== value) {
+    lastValue.current = value;
+    if (loadFailed) setLoadFailed(false);
+  }
 
   return (
     <div className="space-y-3">
@@ -175,16 +182,29 @@ export function ImageUploader({
       {/* Preview */}
       {value && (
         <div className="relative rounded-sm overflow-hidden border border-border/40 bg-muted/20">
-          <img
-            src={value}
-            alt={`${label} preview`}
-            crossOrigin="anonymous"
-            className="w-full h-40 object-cover"
-            onError={() => {
-              toast.error('Could not load the image. Check the URL and try again.');
-              onChange('');
-            }}
-          />
+          {loadFailed ? (
+            /* A preview that won't render is NOT a reason to discard the URL. This
+               used to call onChange('') on error, which threw away a perfectly good
+               stored image whenever the browser declined to display it — an ad
+               blocker, an offline moment, or a host that sends no CORS headers (the
+               crossOrigin below makes the fetch a CORS request). The value stays;
+               the failure is reported instead. */
+            <div className="flex h-40 w-full flex-col items-center justify-center gap-1.5 px-4 text-center">
+              <AlertTriangle size={16} className="text-[hsl(var(--brand-accent))]" />
+              <p className="text-[11px] font-semibold text-foreground">This image didn’t load</p>
+              <p className="text-[10px] text-muted-foreground">
+                It is still saved. Check the link is a direct image URL, or upload a file instead.
+              </p>
+            </div>
+          ) : (
+            <img
+              src={value}
+              alt={`${label} preview`}
+              crossOrigin="anonymous"
+              className="w-full h-40 object-cover"
+              onError={() => setLoadFailed(true)}
+            />
+          )}
           <div className="absolute inset-0 bg-gradient-to-t from-foreground/30 via-transparent to-transparent" />
           <div className="absolute bottom-2 left-3 right-3 flex items-center justify-between">
             <div className="flex items-center gap-1.5">

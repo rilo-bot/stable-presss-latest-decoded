@@ -87,11 +87,14 @@ export function LandingFeaturedArticles({
             Featured Analysis &amp; Interviews
           </h2>
           <div className="flex-1 h-px bg-border/50" />
+          {/* Was a /newsletter link. That page listed stories on a
+              `newsletter` distribution channel; the axis is gone, so this points at
+              the section these featured pieces actually live in. */}
           <Link
-            to="/newsletter"
+            to="/news?section=analysis"
             className="flex items-center gap-1 text-[10px] uppercase tracking-[0.1em] font-semibold text-muted-foreground hover:text-foreground transition-colors flex-shrink-0"
           >
-            Newsletter <Mail size={11} />
+            All analysis <ArrowRight size={11} />
           </Link>
         </div>
 

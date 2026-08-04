@@ -118,7 +118,6 @@ export function MobileMenu({
         {[
           { label: 'Horses', to: '/horses', icon: <Star size={14} /> },
           { label: 'Podcasts', to: '/podcast', icon: <Tv size={14} /> },
-          { label: 'Newsletter', to: '/newsletter', icon: <Mail size={14} /> },
           { label: 'Bulletins', to: '/bulletins', icon: <BookOpen size={14} /> },
           { label: 'Tipping Ring', to: '/tipping', icon: <HelpCircle size={14} /> },
         ].map((item) => (

@@ -60,7 +60,7 @@ const jsonAgent = express.json({ limit: '30mb' })
 app.use((req, res, next) => {
   if (
     req.path.startsWith('/api/issues') ||
-    req.path.startsWith('/api/magazines') ||
+    req.path.startsWith('/api/magazinesV2') ||
     req.path.startsWith('/api/blogs') ||
     req.path.startsWith('/api/agent')
   )
@@ -112,7 +112,6 @@ import tipperProfilesRouter from './routes/tipperProfiles.js'
 import tippingRouter from './routes/tipping.js'
 import uploadsRouter from './routes/uploads.js'
 import issuesRouter from './routes/issues.js'
-import magazinesRouter from './routes/magazines.js'
 import magazinesV2Router from './routes/magazinesV2.js'
 import sponsorsRouter from './routes/sponsors.js'
 import breakingNewsRouter from './routes/breakingNews.js'
@@ -171,15 +170,12 @@ app.use('/api/uploads', uploadsRouter)         // presigned S3 PUT URLs (auth in
 // images are inline data URLs, so it needs more headroom than the global 2 MB
 // body cap (in deployment, page images are S3 URLs and bodies stay small).
 app.use('/api/issues', express.json({ limit: '30mb' }), issuesGate, issuesRouter)
-// Magazine DRAFTS — staff-only, server-persisted so multiple staff can collaborate.
-// Self-gated (attachAccount + staff + per-magazine access checks inside the route).
-app.use('/api/magazines', express.json({ limit: '30mb' }), magazinesRouter)
 // Magazine Builder v2 (free-form element model) — self-gated inside the router
 // (feature flag → staff → per-magazine owner/collaborator → write rate limit).
 // Behind MAGAZINE_V2; invisible (404) until enabled. Large body cap because a
 // page's element payload can carry inline data-URL images in local dev. The
-// global JSON parser already skips the '/api/magazines' prefix, so this mount's
-// own parser is what runs. See docs/MAGAZINE-BUILDER-V2.md.
+// global JSON parser skips the '/api/magazinesV2' prefix, so this mount's own
+// parser is what runs. See docs/MAGAZINE-BUILDER-V2.md.
 app.use('/api/magazinesV2', express.json({ limit: '30mb' }), magazinesV2Router)
 // Public landing-page content: read is public, writes are staff-only.
 app.use('/api/sponsors', staffWriteGate, sponsorsRouter)

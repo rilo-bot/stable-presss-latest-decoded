@@ -21,17 +21,14 @@ import HorseProfiles from '@/pages/HorseProfiles';
 import HorseDetail from '@/pages/HorseDetail';
 import HorseEditor from '@/pages/HorseEditor';
 import ArticleDetail from '@/pages/ArticleDetail';
-import MagazineStudio from '@/pages/MagazineStudio';
 import MagazineV2Home from '@/editor-v2/MagazineV2Home';
 import MagazineEditorV2 from '@/editor-v2/MagazineEditorV2';
-import PremiumPreview from '@/pages/__PremiumPreview'; // TEMP — remove with its route
 import TippingRing from '@/pages/TippingRing';
 import PodcastHub from '@/pages/PodcastHub';
 import PodcastWorkflow from '@/pages/PodcastWorkflow';
 import NewsIndex from '@/pages/NewsIndex';
 import BlogIndex from '@/pages/BlogIndex';
 import BlogPost from '@/pages/BlogPost';
-import Newsletter from '@/pages/Newsletter';
 import Bulletins from '@/pages/Bulletins';
 import BulletinViewer from '@/pages/BulletinViewer';
 import Parties from '@/pages/Parties';
@@ -65,7 +62,6 @@ import RolesScreen from '@/pages/production-system/screens/RolesScreen';
 import AnalyticsScreen from '@/pages/production-system/screens/AnalyticsScreen';
 import EmojiAnalyticsScreen from '@/pages/production-system/screens/EmojiAnalyticsScreen';
 import SettingsScreen from '@/pages/production-system/screens/SettingsScreen';
-import MagazineStudioScreen from '@/pages/production-system/screens/MagazineStudioScreen';
 
 /* Inject Google Fonts for vintage skeuomorphic horse dashboard */
 function useVintageFonts() {
@@ -194,14 +190,6 @@ export default function App() {
           }
         />
         <Route
-          path="/newsletter"
-          element={
-            <AppLayout>
-              <Newsletter />
-            </AppLayout>
-          }
-        />
-        <Route
           path="/bulletins"
           element={
             <AppLayout>
@@ -278,10 +266,9 @@ export default function App() {
         <Route path="/login" element={<Login />} />
         <Route path="/signup" element={<Signup />} />
         {/* Team invite link. Public by necessity — the recipient has no account
-            yet. The token only carries context; joining still needs the OTP. */}
+            yet. One click on the page redeems the token and signs them in; the
+            token is single-use. See apps/server/src/lib/invites.ts. */}
         <Route path="/invite/:token" element={<InviteAccept />} />
-        {/* TEMP preview route for visual QA — remove */}
-        <Route path="/__preview/premium" element={<PremiumPreview />} />
 
         {/* Staff-only routes — readers/parties are redirected home */}
         <Route element={<RequireStaff />}>
@@ -321,17 +308,16 @@ export default function App() {
                 describes doesn't exist yet; the screen says so on its face. */}
             <Route path="emoji-analytics" element={<EmojiAnalyticsScreen />} />
             <Route path="settings" element={<SettingsScreen />} />
-            <Route path="magazine-studio" element={<MagazineStudioScreen />} />
-            {/* Magazine Builder v2 (free-form, AI-first) — behind the MAGAZINE_V2 server flag. */}
+            {/* Magazine Builder — behind the MAGAZINE_V2 server flag. */}
             <Route path="magazine-v2" element={<MagazineV2Home />} />
             {/* An unrecognised sub-path would otherwise render the shell around
                 an empty <main>. Send it to whichever screen the user has. */}
             <Route path="*" element={<ProductionSystemIndex />} />
           </Route>
 
-          {/* Full-screen magazine editors — deep-linkable, no chrome at all, so
-              they sit outside the layout rather than inside it. */}
-          <Route path="/production-system/magazine/:id" element={<MagazineStudio />} />
+          {/* The full-screen magazine editor — deep-linkable, no chrome at all, so
+              it sits outside the layout rather than inside it. (A second editor was
+              mounted at /magazine/:id for the retired v1 template builder.) */}
           <Route path="/production-system/magazine-v2/:id" element={<MagazineEditorV2 />} />
 
           {/* Staff-invite and magazine-share emails already in people's inboxes

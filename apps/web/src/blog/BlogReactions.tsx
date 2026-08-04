@@ -23,6 +23,14 @@
  * The seven-point scale comes from `@/types/reactions`, shared with the staff
  * Emoji Analytics screen — that screen is the design for the system this bar would
  * feed, so the two must not fork.
+ *
+ * ── One bar, several places ──
+ *
+ * A post with parts draws one of these per part plus one for the post as a whole,
+ * so every element id is derived from `idPrefix` and each bar keeps its own state.
+ * The `compact` variant only changes the dressing: the zero counts, the
+ * one-per-reader rule and the "nothing is recorded" line hold everywhere, because
+ * a smaller scale is not a less honest one.
  */
 import { useRef, useState } from 'react';
 
@@ -40,9 +48,35 @@ function Hairlines({ children }: { children: React.ReactNode }) {
   );
 }
 
-export function BlogReactions() {
+export interface BlogReactionsProps {
+  /**
+   * Unique per bar on the page. A post with parts draws SEVERAL of these, and a
+   * duplicated element id would point every `aria-labelledby` at the first
+   * heading — so a screen reader would announce every scale as belonging to the
+   * post as a whole, which is precisely the thing the per-part scales exist to
+   * distinguish.
+   */
+  idPrefix?: string;
+  heading?: string;
+  /** The line under the heading. Must keep saying that nothing is recorded. */
+  note?: string;
+  /**
+   * `compact` is the per-part bar: no display heading, in a bordered card, sized
+   * to sit under a section rather than to close the page.
+   */
+  variant?: 'full' | 'compact';
+}
+
+export function BlogReactions({
+  idPrefix = 'blog-reactions',
+  heading = 'How did this one sit with you?',
+  note = 'One reaction per reader. This is a preview — nothing is recorded yet, and your pick clears when you reload the page.',
+  variant = 'full',
+}: BlogReactionsProps = {}) {
   const [picked, setPicked] = useState<EmojiKey | null>(null);
   const tileRefs = useRef<(HTMLButtonElement | null)[]>([]);
+  const headingId = `${idPrefix}-heading`;
+  const compact = variant === 'compact';
 
   /**
    * Arrow-key movement, because this is a radio group and a keyboard user expects
@@ -65,37 +99,57 @@ export function BlogReactions() {
   };
 
   return (
-    <section className="mt-14 border-t border-border/50 pt-10" aria-labelledby="blog-reactions-heading">
+    <section
+      className={cn(
+        compact
+          ? 'mt-6 rounded-sm border border-border/60 bg-card px-4 py-5 sm:px-5'
+          : 'mt-14 border-t border-border/50 pt-10',
+      )}
+      aria-labelledby={headingId}
+    >
       <header className="text-center">
-        <Hairlines>
-          <p
-            className="shrink-0 text-[11px] font-bold uppercase tracking-[0.14em]"
-            style={{ color: 'hsl(var(--brand-accent))' }}
-          >
-            Have your say
-          </p>
-        </Hairlines>
+        {!compact && (
+          <Hairlines>
+            <p
+              className="shrink-0 text-[11px] font-bold uppercase tracking-[0.14em]"
+              style={{ color: 'hsl(var(--brand-accent))' }}
+            >
+              Have your say
+            </p>
+          </Hairlines>
+        )}
 
         <h2
-          id="blog-reactions-heading"
-          className="mx-auto mt-5 max-w-2xl font-[family-name:var(--font-display)] text-2xl font-bold leading-tight text-foreground md:text-3xl"
+          id={headingId}
+          className={
+            compact
+              ? 'text-[11px] font-bold uppercase tracking-[0.12em] text-foreground/80'
+              : 'mx-auto mt-5 max-w-2xl font-[family-name:var(--font-display)] text-2xl font-bold leading-tight text-foreground md:text-3xl'
+          }
         >
-          How did this one sit with you?
+          {heading}
         </h2>
 
         {/* Says plainly that it goes nowhere. A reader who picks an emoji has
             given you something; letting them believe it was counted when it was
             not is the part that would actually be rude. */}
-        <p className="mx-auto mt-3 max-w-xl text-sm leading-relaxed text-muted-foreground">
-          One reaction per reader. This is a preview — nothing is recorded yet, and your pick clears when you
-          reload the page.
+        <p
+          className={cn(
+            'mx-auto leading-relaxed text-muted-foreground',
+            compact ? 'mt-2 max-w-lg text-xs' : 'mt-3 max-w-xl text-sm',
+          )}
+        >
+          {note}
         </p>
       </header>
 
       <div
         role="radiogroup"
-        aria-labelledby="blog-reactions-heading"
-        className="mx-auto mt-8 grid max-w-4xl grid-cols-4 gap-2 sm:grid-cols-7 sm:gap-3"
+        aria-labelledby={headingId}
+        className={cn(
+          'mx-auto grid grid-cols-4 gap-2 sm:grid-cols-7 sm:gap-3',
+          compact ? 'mt-5 max-w-3xl' : 'mt-8 max-w-4xl',
+        )}
       >
         {EMOJI_SCALE.map((step, i) => {
           const isPicked = picked === step.key;
@@ -114,7 +168,8 @@ export function BlogReactions() {
               onClick={() => setPicked(step.key)}
               onKeyDown={(e) => onKeyDown(e, i)}
               className={cn(
-                'flex flex-col items-center gap-2 rounded-sm border bg-card px-2 py-4 transition-all',
+                'flex flex-col items-center gap-2 rounded-sm border bg-card px-2 transition-all',
+                compact ? 'py-2.5' : 'py-4',
                 'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring',
                 isPicked
                   ? 'border-transparent shadow-sm ring-2'
@@ -136,7 +191,10 @@ export function BlogReactions() {
                   : undefined
               }
             >
-              <span className="text-2xl leading-none md:text-[28px]" aria-hidden="true">
+              <span
+                className={cn('leading-none', compact ? 'text-xl' : 'text-2xl md:text-[28px]')}
+                aria-hidden="true"
+              >
                 {step.emoji}
               </span>
               <span
@@ -150,7 +208,8 @@ export function BlogReactions() {
               {/* Zero until you click, and only ever your own click. */}
               <span
                 className={cn(
-                  'font-[family-name:var(--font-display)] text-base font-bold tabular-nums',
+                  'font-[family-name:var(--font-display)] font-bold tabular-nums',
+                  compact ? 'text-sm' : 'text-base',
                   isPicked ? 'text-foreground' : 'text-muted-foreground/60',
                 )}
               >
@@ -163,7 +222,7 @@ export function BlogReactions() {
 
       {/* Confirms the pick in words, not just as a ring — and keeps a way back to
           no answer, since a misclick on a one-per-reader control otherwise sticks. */}
-      <div aria-live="polite" className="mt-5 text-center text-sm">
+      <div aria-live="polite" className={cn('text-center', compact ? 'mt-4 text-xs' : 'mt-5 text-sm')}>
         {picked ? (
           <p className="text-muted-foreground">
             You picked{' '}

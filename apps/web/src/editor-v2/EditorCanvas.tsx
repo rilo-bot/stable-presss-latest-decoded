@@ -13,7 +13,7 @@
 
 import React, { useEffect, useRef, useState, type CSSProperties } from 'react';
 import { Wand2, WandSparkles, Loader2 } from 'lucide-react';
-import { sanitizeRichText } from '@/editor/lib/sanitize';
+import { sanitizeRichText } from '@/lib/htmlInline';
 import { useEditorStore } from './store';
 import { IssuePageCanvas } from './IssuePageCanvas';
 import { pctRect, clampRect } from './geometry';

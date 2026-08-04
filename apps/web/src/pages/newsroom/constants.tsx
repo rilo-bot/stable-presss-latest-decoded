@@ -146,15 +146,15 @@ export const SIDE_NAV: SideNavItem[] = [
 ];
 
 /**
- * Magazine Studio is reached from Overview rather than the sidebar, so it has
- * no SIDE_NAV row — but it still needs a slug and a page title.
+ * Module id for a URL slug, or undefined if the slug isn't a known screen.
+ *
+ * `MAGAZINE_STUDIO_SLUG` / `MAGAZINE_STUDIO_MODULE` used to be special-cased here:
+ * the v1 Magazine Studio was reached from Overview rather than the sidebar, so it
+ * had a slug and a module id but no SIDE_NAV row. That builder is gone, and the
+ * Magazine Builder has a real sidebar row, so every screen is now findable in one
+ * place.
  */
-export const MAGAZINE_STUDIO_SLUG = 'magazine-studio';
-export const MAGAZINE_STUDIO_MODULE = 'bulletin-templates';
-
-/** Module id for a URL slug, or undefined if the slug isn't a known screen. */
 export function moduleForSlug(slug: string): string | undefined {
-  if (slug === MAGAZINE_STUDIO_SLUG) return MAGAZINE_STUDIO_MODULE;
   return SIDE_NAV.find((i) => i.slug === slug)?.id;
 }
 
@@ -164,7 +164,6 @@ export function moduleForSlug(slug: string): string | undefined {
  * Compensation empty state, the dashboard cards).
  */
 export function pathForModule(id: string): string {
-  if (id === MAGAZINE_STUDIO_MODULE) return `${PS_BASE}/${MAGAZINE_STUDIO_SLUG}`;
   const item = SIDE_NAV.find((i) => i.id === id);
   return item ? navPath(item) : PS_BASE;
 }

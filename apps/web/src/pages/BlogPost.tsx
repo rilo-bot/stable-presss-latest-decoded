@@ -40,6 +40,7 @@ import { Link, Navigate, useParams } from 'react-router-dom';
 import { ArrowLeft, BookOpen, Check, ChevronRight, Clock, Link2, Loader2 } from 'lucide-react';
 
 import { usePageMeta } from '@/lib/usePageMeta';
+import { BLOG_GRID_CLASS, spanClass } from '@/blog/placement';
 import { BlogRenderer } from '@/blog/BlogRenderer';
 import { BlogReactions } from '@/blog/BlogReactions';
 import { Paywall } from '@/components/Paywall';
@@ -50,7 +51,7 @@ import { useHorseStore } from '@/stores/horseStore';
 import { usePartyStore } from '@/stores/partyStore';
 import { useArticleStore } from '@/stores/articleStore';
 import { canViewContent } from '@/rbac/entitlement';
-import { mediaById } from '@/types/blog';
+import { allBlocks, mediaById, partHasContent, type BlogMedia, type BlogPart } from '@/types/blog';
 
 function formatDate(iso: string | null | undefined): string | null {
   if (!iso) return null;
@@ -100,6 +101,80 @@ function ShareButton() {
   );
 }
 
+/**
+ * One part of the post: a numbered section masthead, the part's own writing, and
+ * its own reaction scale.
+ *
+ * The scale is the reason a part is a part rather than a heading inside the body —
+ * a reader answers this section, not the whole piece, and the copy says so. It
+ * carries no counts from anywhere else: like the post-level bar, this is a
+ * front-end preview, so every number starts at zero (see BlogReactions).
+ */
+function PartSection({
+  part,
+  index,
+  media,
+}: {
+  part: BlogPart;
+  index: number;
+  media: BlogMedia[];
+}) {
+  // A part may legitimately have writing and no title, so the section is labelled
+  // by its heading only when there IS one — `aria-labelledby` pointing at an
+  // element that was never rendered leaves the section with no name at all.
+  const titled = part.title.trim().length > 0;
+
+  return (
+    <section
+      className="mt-14"
+      {...(titled ? { 'aria-labelledby': `part-${part.id}-title` } : { 'aria-label': `Part ${index + 1}` })}
+    >
+      {/* Run the masthead through the body's grid so its left edge lands on the
+          same line as the prose underneath, which is laid out by the same grid. */}
+      <div className={BLOG_GRID_CLASS}>
+        <div className={spanClass('text')}>
+          <div className="flex items-center gap-3">
+            <p
+              className="shrink-0 text-[11px] font-bold uppercase tracking-[0.14em]"
+              style={{ color: 'hsl(var(--brand-accent))' }}
+            >
+              Part {index + 1}
+            </p>
+            <span className="h-px flex-1 bg-border" aria-hidden="true" />
+          </div>
+          {titled && (
+            <h2
+              id={`part-${part.id}-title`}
+              className="mt-3 font-[family-name:var(--font-display)] text-2xl font-bold leading-tight tracking-tight text-foreground md:text-3xl"
+            >
+              {part.title}
+            </h2>
+          )}
+        </div>
+      </div>
+
+      {/* No drop cap — that belongs to the opening of the post, not to every
+          section of it. */}
+      <BlogRenderer blocks={part.blocks} media={media} dropCap={false} className="mt-4" />
+
+      {/* On the grid's `wide` track, not the full page: a card the width of the
+          whole layout floats free of the section it belongs to, while the text
+          measure alone is too narrow for seven tiles and their labels. `wide` is
+          the text column plus its shoulders, which is exactly this case. */}
+      <div className={BLOG_GRID_CLASS}>
+        <div className={spanClass('wide')}>
+          <BlogReactions
+            variant="compact"
+            idPrefix={`part-${part.id}-reactions`}
+            heading={`Your take on part ${index + 1}`}
+            note="This part is reacted to separately — your pick here counts for this section only. It is a preview, so nothing is recorded yet."
+          />
+        </div>
+      </div>
+    </section>
+  );
+}
+
 export default function BlogPost() {
   const { slug } = useParams<{ slug: string }>();
   const { current, currentLoading, currentError, movedTo, fetchOne, clearCurrent } = useBlogStore();
@@ -119,9 +194,12 @@ export default function BlogPost() {
 
   useEffect(() => {
     if (!current) return;
-    if (current.blocks.some((b) => b.kind === 'horseCard')) void fetchHorses();
-    if (current.blocks.some((b) => b.kind === 'partyCard')) void fetchParties();
-    if (current.blocks.some((b) => b.kind === 'articleRef')) void fetchArticles();
+    // The whole post, parts included — a horse card that only appears inside a
+    // part would otherwise render with no horses loaded and show nothing.
+    const blocks = allBlocks(current);
+    if (blocks.some((b) => b.kind === 'horseCard')) void fetchHorses();
+    if (blocks.some((b) => b.kind === 'partyCard')) void fetchParties();
+    if (blocks.some((b) => b.kind === 'articleRef')) void fetchArticles();
   }, [current, fetchHorses, fetchParties, fetchArticles]);
 
   // Above the early returns, because hooks cannot be called conditionally. The
@@ -169,6 +247,10 @@ export default function BlogPost() {
    * its single column.
    */
   const sideBySide = !!cover;
+
+  /** Only parts with something in them are shown, so this is the honest count. */
+  const visibleParts = (current.parts ?? []).filter(partHasContent);
+  const hasParts = visibleParts.length > 0;
 
   /**
    * `current.locked` is the SERVER'S answer — it now withholds the body of a
@@ -390,13 +472,34 @@ export default function BlogPost() {
           </div>
         )}
 
-        {/* Reactions sit OUTSIDE the two-column grid, so the scale gets the full
-            page width the way it does on the policy pages — seven tiles squeezed
-            into a 7/12 text column wrap to two rows and stop reading as a scale.
-            Hidden behind the paywall: asking someone how a piece sat with them
+        {/* Parts, then the post-level scale. Both sit OUTSIDE the two-column grid,
+            so a scale gets the full page width the way it does on the policy pages
+            — seven tiles squeezed into a 7/12 text column wrap to two rows and
+            stop reading as a scale. Parts are full width for the same reason.
+
+            An empty part is skipped rather than printing a bare "Part 3" over an
+            empty scale; the editor says so on the card, so it is never a silent
+            disappearance. */}
+        {!locked &&
+          visibleParts.map((part, i) => (
+            <PartSection key={part.id} part={part} index={i} media={current.media} />
+          ))}
+
+        {/* Hidden behind the paywall: asking someone how a piece sat with them
             when they were only shown the first paragraph is a question they
             cannot answer. */}
-        {!locked && <BlogReactions />}
+        {!locked && (
+          <BlogReactions
+            // Named for what it covers, so it can't be mistaken for one more part
+            // once a post has several scales on it.
+            {...(hasParts
+              ? {
+                  heading: 'How did the post as a whole sit with you?',
+                  note: 'One reaction per reader, on the piece overall — the parts above are rated separately. This is a preview: nothing is recorded yet, and your pick clears when you reload the page.',
+                }
+              : {})}
+          />
+        )}
       </div>
     </article>
   );

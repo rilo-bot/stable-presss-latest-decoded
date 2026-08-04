@@ -65,9 +65,6 @@ export function NavBar() {
     if (section.to.startsWith('/news')) {
       return pathname === '/news';
     }
-    if (section.to === '/newsletter') {
-      return pathname === '/newsletter';
-    }
     if (section.to === '/bulletins') {
       return pathname === '/bulletins';
     }

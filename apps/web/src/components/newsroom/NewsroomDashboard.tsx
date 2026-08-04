@@ -42,7 +42,7 @@ const CAP_NAV: Record<string, string> = {
   'edit-any-story': 'all-stories',
   'review-story': 'review',
   'publish-story': 'workflow',
-  'manage-bulletins': 'bulletin-templates',
+  'manage-bulletins': 'magazine-v2',
   'manage-racing-data': 'horses',
   'verify-claims': 'claims',
   'manage-team': 'team',

@@ -1,6 +1,6 @@
 import type { ReactNode } from 'react';
 import { Link } from 'react-router-dom';
-import { ArrowRight, Check, Mail, Star, TrendingUp, Users } from 'lucide-react';
+import { ArrowRight, Check, Newspaper, Star, TrendingUp, Users } from 'lucide-react';
 import { ArticleCard } from '@/components/ArticleCard';
 import { Button } from '@/components/ui/button';
 import { cn } from '@/lib/utils';
@@ -138,7 +138,12 @@ export function LandingSidebar({
         </div>
       )}
 
-      {/* Newsletter quick-access */}
+      {/* Editorial quick-access.
+          Was "This Week's Newsletter", pointing at /newsletter — a page that
+          listed stories carrying a `newsletter` distribution channel. That axis is
+          gone (a published story is news) and the page with it, so this card now
+          sends the reader to the desk it was really describing: every story,
+          sorted by category, which is exactly what /news is. */}
       <div
         className="border rounded-sm p-5"
         style={{
@@ -147,7 +152,7 @@ export function LandingSidebar({
         }}
       >
         <div className="flex items-center gap-2 mb-3">
-          <Mail
+          <Newspaper
             size={14}
             style={{ color: 'hsl(var(--chart-1))' }}
           />
@@ -155,7 +160,7 @@ export function LandingSidebar({
             className="text-[9px] uppercase tracking-[0.2em] font-bold"
             style={{ color: 'hsl(var(--chart-1))' }}
           >
-            This Week's Newsletter
+            The Editorial Desk
           </span>
         </div>
         <p className="font-[family-name:var(--font-display)] text-sm font-bold text-foreground mb-1.5 leading-snug">
@@ -170,7 +175,7 @@ export function LandingSidebar({
             asChild
             className="flex-1 bg-primary text-primary-foreground hover:bg-primary/90 text-xs font-semibold"
           >
-            <Link to="/newsletter">Read Newsletter</Link>
+            <Link to="/news">Browse Editorial</Link>
           </Button>
           <Button
             size="sm"

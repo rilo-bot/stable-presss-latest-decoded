@@ -1,19 +1,24 @@
 // ---------------------------------------------------------------------------
 // /invite/:token — the page an invite email links to.
 //
-// The token is NOT a way in. It carries context (which email, which role) so
-// this page can greet someone properly and pre-fill their address; the actual
-// sign-in is the normal OTP flow, which requires control of the mailbox. So a
-// forwarded link shows the reader a nice page and nothing more.
+// ONE CLICK. The page reads the invite for context (who invited them, which
+// role), then a single Continue button redeems it: the account is created if it
+// is new, the role is applied, and they land in the Campaign Engine already
+// signed in. There is no second email and no code to type — receiving the link
+// IS the proof of mailbox control, which is all the OTP ever established here.
 //
-// The role itself is applied server-side by the pending-grant path at first
-// sign-in — there is no "accept" call. That means someone who ignores the link
-// and signs up normally still lands in the right role.
+// Redemption is deliberately behind that button rather than firing on mount.
+// Mail security products open links in a headless browser to scan them; they do
+// not click buttons. Auto-redeeming would let a scanner burn the recipient's
+// one-time token and leave them with a dead link.
+//
+// Someone who ignores the link and signs up normally still lands in the right
+// role — the pending-grant path in routes/auth.ts applies it at first sign-in.
 // ---------------------------------------------------------------------------
 
 import { useEffect, useState } from 'react';
 import { useNavigate, useParams, Link } from 'react-router-dom';
-import { AlertCircle, ArrowRight, Loader2, MailCheck } from 'lucide-react';
+import { AlertCircle, ArrowRight, Loader2 } from 'lucide-react';
 import { apiUrl } from '@/lib/api';
 import { useAuthStore } from '@/stores/authStore';
 import { Button } from '@/components/ui/button';
@@ -41,24 +46,20 @@ interface Invite {
   role: InviteRole;
 }
 
-type Stage = 'loading' | 'invalid' | 'intro' | 'otp';
+type Stage = 'loading' | 'invalid' | 'intro';
 
 export default function InviteAccept() {
   const { token = '' } = useParams();
   const navigate = useNavigate();
 
-  const requestLoginOtp = useAuthStore((s) => s.requestLoginOtp);
-  const requestSignupOtp = useAuthStore((s) => s.requestSignupOtp);
-  const verifyOtp = useAuthStore((s) => s.verifyOtp);
+  const acceptInvite = useAuthStore((s) => s.acceptInvite);
 
   const [stage, setStage] = useState<Stage>('loading');
   const [invite, setInvite] = useState<Invite | null>(null);
   const [loadError, setLoadError] = useState('');
   const [displayName, setDisplayName] = useState('');
-  const [code, setCode] = useState('');
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
-  const [devCode, setDevCode] = useState<string | undefined>();
 
   useEffect(() => {
     let cancelled = false;
@@ -86,51 +87,37 @@ export default function InviteAccept() {
     };
   }, [token]);
 
-  const sendCode = async () => {
-    if (!invite) return;
+  const accept = async () => {
+    if (!invite || busy) return;
     if (!invite.hasAccount && !displayName.trim()) {
       setError('Please enter your name.');
       return;
     }
     setBusy(true);
     setError('');
-    const result = invite.hasAccount
-      ? await requestLoginOtp(invite.email)
-      : await requestSignupOtp(invite.email, displayName.trim());
-    setBusy(false);
+    const result = await acceptInvite(token, invite.hasAccount ? undefined : displayName.trim());
     if (!result.ok) {
-      setError(result.error ?? 'Could not send a code. Please try again.');
+      setBusy(false);
+      setError(result.error ?? 'Could not accept the invitation. Please try again.');
       return;
     }
-    setDevCode(result.devCode);
-    setStage('otp');
-  };
-
-  const submitCode = async () => {
-    if (!invite) return;
-    setBusy(true);
-    setError('');
-    const result = await verifyOtp(invite.email, code);
-    setBusy(false);
-    if (!result.ok) {
-      setError(result.error ?? 'Verification failed. Please try again.');
-      return;
-    }
+    // Stay `busy` through the navigation — the button must not flick back to
+    // "Continue" on a page that is already signed in and leaving.
     toast.success(`Welcome to Stable Press — you're set up as ${invite.role.label}.`);
-    // Land them wherever the invite pointed (a shared magazine, say) rather
-    // than the newsroom home. Re-validated client-side even though the server
-    // already sanitized it — this drives a navigation.
-    navigate(safeRedirect(invite.redirectTo, '/production-system'), { replace: true });
+    // The server sanitized this; re-validated here because it drives navigation.
+    navigate(safeRedirect(result.redirectTo ?? invite.redirectTo, '/production-system'), {
+      replace: true,
+    });
   };
 
-  // ── Invalid / expired ──────────────────────────────────────────────────────
+  // ── Invalid / expired / already used ───────────────────────────────────────
   if (stage === 'invalid') {
     return (
       <Shell>
-        <div className="flex items-start gap-3 mb-6">
-          <AlertCircle size={20} className="text-destructive flex-shrink-0 mt-0.5" />
+        <div className="mb-6 flex items-start gap-3">
+          <AlertCircle size={20} className="mt-0.5 flex-shrink-0 text-destructive" />
           <div>
-            <h1 className="font-[family-name:var(--font-display)] text-2xl font-bold text-foreground mb-1.5">
+            <h1 className="mb-1.5 font-[family-name:var(--font-display)] text-2xl font-bold text-foreground">
               This invitation isn't valid
             </h1>
             <p className="text-sm text-muted-foreground">{loadError}</p>
@@ -139,7 +126,7 @@ export default function InviteAccept() {
         <p className="text-sm text-muted-foreground">
           Invitation links expire, and each one can only be used once. Ask whoever invited you to
           send a new one — or{' '}
-          <Link to="/login" className="text-primary font-medium hover:underline">
+          <Link to="/login" className="font-medium text-primary hover:underline">
             sign in
           </Link>{' '}
           if you already have an account.
@@ -151,7 +138,7 @@ export default function InviteAccept() {
   if (stage === 'loading' || !invite) {
     return (
       <Shell>
-        <p className="flex items-center gap-2 text-sm text-muted-foreground py-6">
+        <p className="flex items-center gap-2 py-6 text-sm text-muted-foreground">
           <Loader2 size={15} className="animate-spin" /> Checking your invitation…
         </p>
       </Shell>
@@ -160,82 +147,15 @@ export default function InviteAccept() {
 
   const accent = invite.role.color || 'hsl(var(--primary))';
 
-  // ── OTP step ───────────────────────────────────────────────────────────────
-  if (stage === 'otp') {
-    return (
-      <Shell>
-        <button
-          type="button"
-          onClick={() => { setStage('intro'); setCode(''); setError(''); }}
-          className="flex items-center gap-1.5 text-[12px] text-muted-foreground hover:text-foreground transition-colors mb-5"
-        >
-          <ArrowRight size={12} className="rotate-180" /> Back
-        </button>
-
-        <h1 className="font-[family-name:var(--font-display)] text-2xl font-bold text-foreground mb-2">
-          Check your email
-        </h1>
-        <p className="text-sm text-muted-foreground mb-6">
-          We sent a 6-digit code to <span className="font-medium text-foreground">{invite.email}</span>.
-          Enter it to finish joining as {invite.role.label}.
-        </p>
-
-        {devCode && (
-          <p className="text-[12px] text-muted-foreground bg-muted/40 border border-border/60 rounded-sm px-3 py-2 mb-4">
-            Dev preview — your code is <span className="font-mono font-bold">{devCode}</span>
-          </p>
-        )}
-
-        <div className="space-y-1.5 mb-5">
-          <Label htmlFor="invite-code" className="text-[12px] uppercase tracking-[0.1em] text-muted-foreground font-semibold">
-            Verification code
-          </Label>
-          <Input
-            id="invite-code"
-            value={code}
-            onChange={(e) => setCode(e.target.value.replace(/\D/g, '').slice(0, 6))}
-            onKeyDown={(e) => e.key === 'Enter' && code.length === 6 && void submitCode()}
-            inputMode="numeric"
-            autoComplete="one-time-code"
-            placeholder="000000"
-            className="text-center text-2xl font-mono tracking-[0.4em]"
-            autoFocus
-          />
-        </div>
-
-        {error && (
-          <p className="flex items-start gap-2 text-sm text-destructive mb-4">
-            <AlertCircle size={14} className="flex-shrink-0 mt-0.5" /> {error}
-          </p>
-        )}
-
-        <Button onClick={submitCode} disabled={busy || code.length !== 6} className="w-full gap-2">
-          {busy ? <Loader2 size={15} className="animate-spin" /> : null}
-          {busy ? 'Verifying…' : 'Join the newsroom'}
-        </Button>
-
-        <button
-          type="button"
-          onClick={sendCode}
-          disabled={busy}
-          className="w-full text-[12px] text-muted-foreground hover:text-foreground transition-colors mt-3"
-        >
-          Didn't get it? Send another code
-        </button>
-      </Shell>
-    );
-  }
-
-  // ── Intro ──────────────────────────────────────────────────────────────────
   return (
     <Shell>
-      <p className="text-[12px] uppercase tracking-[0.14em] font-bold text-muted-foreground mb-2">
+      <p className="mb-2 text-[12px] font-bold uppercase tracking-[0.14em] text-muted-foreground">
         You've been invited
       </p>
-      <h1 className="font-[family-name:var(--font-display)] text-3xl font-bold text-foreground mb-3">
+      <h1 className="mb-3 font-[family-name:var(--font-display)] text-3xl font-bold text-foreground">
         Join the Stable Press newsroom
       </h1>
-      <p className="text-sm text-muted-foreground mb-6">
+      <p className="mb-6 text-sm text-muted-foreground">
         {invite.invitedByName ? (
           <>
             <span className="font-medium text-foreground">{invite.invitedByName}</span> invited{' '}
@@ -248,30 +168,33 @@ export default function InviteAccept() {
 
       {/* The role they're getting */}
       <div
-        className="flex items-start gap-3 p-4 rounded-sm border mb-6"
+        className="mb-6 flex items-start gap-3 rounded-sm border p-4"
         style={{ borderColor: `${accent}40`, background: `${accent}0a` }}
       >
-        <span style={{ color: accent }} className="flex-shrink-0 mt-0.5">
+        <span style={{ color: accent }} className="mt-0.5 flex-shrink-0">
           {roleIcon(invite.role.icon, 18)}
         </span>
         <div className="min-w-0">
           <p className="text-sm font-semibold text-foreground">{invite.role.label}</p>
           {invite.role.description && (
-            <p className="text-sm text-muted-foreground mt-0.5">{invite.role.description}</p>
+            <p className="mt-0.5 text-sm text-muted-foreground">{invite.role.description}</p>
           )}
         </div>
       </div>
 
       {!invite.hasAccount && (
-        <div className="space-y-1.5 mb-5">
-          <Label htmlFor="invite-name" className="text-[12px] uppercase tracking-[0.1em] text-muted-foreground font-semibold">
+        <div className="mb-5 space-y-1.5">
+          <Label
+            htmlFor="invite-name"
+            className="text-[12px] font-semibold uppercase tracking-[0.1em] text-muted-foreground"
+          >
             Your name
           </Label>
           <Input
             id="invite-name"
             value={displayName}
             onChange={(e) => setDisplayName(e.target.value)}
-            onKeyDown={(e) => e.key === 'Enter' && void sendCode()}
+            onKeyDown={(e) => e.key === 'Enter' && void accept()}
             placeholder="Jane Fitzgerald"
             maxLength={80}
             autoFocus
@@ -283,19 +206,19 @@ export default function InviteAccept() {
       )}
 
       {error && (
-        <p className="flex items-start gap-2 text-sm text-destructive mb-4">
-          <AlertCircle size={14} className="flex-shrink-0 mt-0.5" /> {error}
+        <p className="mb-4 flex items-start gap-2 text-sm text-destructive">
+          <AlertCircle size={14} className="mt-0.5 flex-shrink-0" /> {error}
         </p>
       )}
 
-      <Button onClick={sendCode} disabled={busy} className="w-full gap-2">
-        {busy ? <Loader2 size={15} className="animate-spin" /> : <MailCheck size={15} />}
-        {busy ? 'Sending…' : 'Accept invitation'}
+      <Button onClick={accept} disabled={busy} className="w-full gap-2">
+        {busy ? <Loader2 size={15} className="animate-spin" /> : null}
+        {busy ? 'Setting you up…' : invite.hasAccount ? `Continue as ${invite.email}` : 'Join the newsroom'}
         {!busy && <ArrowRight size={15} />}
       </Button>
 
-      <p className="text-[12px] text-muted-foreground/70 mt-3 text-center">
-        We'll email a one-time code to {invite.email} to confirm it's you.
+      <p className="mt-3 text-center text-[12px] text-muted-foreground/70">
+        No password needed — this link is your way in, and it works once.
       </p>
     </Shell>
   );
@@ -303,8 +226,8 @@ export default function InviteAccept() {
 
 function Shell({ children }: { children: React.ReactNode }) {
   return (
-    <div className="min-h-screen flex items-center justify-center px-4 py-12 bg-background">
-      <div className="w-full max-w-md border border-border/60 rounded-sm bg-card p-7">{children}</div>
+    <div className="flex min-h-screen items-center justify-center bg-background px-4 py-12">
+      <div className="w-full max-w-md rounded-sm border border-border/60 bg-card p-7">{children}</div>
     </div>
   );
 }

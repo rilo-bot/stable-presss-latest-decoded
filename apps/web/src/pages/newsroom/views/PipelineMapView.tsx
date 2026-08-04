@@ -7,34 +7,20 @@
  * stages (editorial_review, legal_review, compliance, publisher_review,
  * newsletter, bulletin …) and read `buckets` keys that no longer exist.
  */
-import { ChevronRight, CornerUpLeft, Globe, Mail, Megaphone } from 'lucide-react';
-import type { ReactNode } from 'react';
+import { ChevronRight, CornerUpLeft } from 'lucide-react';
 
 import { cn } from '@/lib/utils';
 import { WORKFLOW_STAGES, movesFrom } from '@/lib/workflow';
-import { articleChannels } from '@/types/article';
-import type { Article, ArticleChannel, ArticleStatus } from '@/types/article';
+import type { Article, ArticleStatus } from '@/types/article';
 
 interface PipelineMapViewProps {
   buckets: Record<ArticleStatus, Article[]>;
 }
 
-const CHANNELS: { id: ArticleChannel; label: string; icon: ReactNode }[] = [
-  { id: 'news', label: 'Website + App', icon: <Globe size={13} /> },
-  { id: 'newsletter', label: 'Newsletter', icon: <Mail size={13} /> },
-  { id: 'bulletin', label: 'Bulletin', icon: <Megaphone size={13} /> },
-];
-
 export function PipelineMapView({ buckets }: PipelineMapViewProps) {
   // Tolerate a partial map rather than crashing the screen: a status with no
   // bucket simply reads as zero.
   const count = (status: ArticleStatus) => buckets?.[status]?.length ?? 0;
-
-  const published = buckets?.published ?? [];
-  const channelCounts = CHANNELS.map((c) => ({
-    ...c,
-    count: published.filter((a) => articleChannels(a).includes(c.id)).length,
-  }));
 
   return (
     <div className="space-y-6">
@@ -113,30 +99,11 @@ export function PipelineMapView({ buckets }: PipelineMapViewProps) {
         })}
       </div>
 
-      <div className="pt-2">
-        <div className="flex items-center gap-3 mb-3">
-          <h4 className="font-[family-name:var(--font-display)] text-[13px] font-bold uppercase tracking-[0.1em] text-foreground">
-            Distribution
-          </h4>
-          <div className="flex-1 h-px bg-border/50" />
-          <span className="text-[11px] text-muted-foreground">
-            Channels of a published story — a story can run on more than one
-          </span>
-        </div>
-        <div className="grid gap-2 sm:grid-cols-3">
-          {channelCounts.map((c) => (
-            <div
-              key={c.id}
-              className="flex items-center gap-2.5 px-4 py-3 rounded-sm border border-border/60 bg-card"
-              style={{ boxShadow: 'inset 3px 0 0 hsl(var(--primary))' }}
-            >
-              <span className="text-primary">{c.icon}</span>
-              <span className="text-[13px] font-medium text-foreground flex-1">{c.label}</span>
-              <span className="text-[13px] font-bold tabular-nums text-primary">{c.count}</span>
-            </div>
-          ))}
-        </div>
-      </div>
+      {/* A "Distribution" row sat here: three tiles counting how many published
+          stories ran on the news site, the newsletter and the bulletin. The
+          `channels` axis is gone — a published story is news — so all three tiles
+          would have shown the same number, which is the least useful thing a
+          dashboard can do. The stage counts above already say how many are live. */}
     </div>
   );
 }

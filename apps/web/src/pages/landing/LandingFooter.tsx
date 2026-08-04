@@ -49,7 +49,7 @@ export function LandingFooter({ hasUser, isStaff, sponsors }: LandingFooterProps
                 asChild
                 className="text-sm border-primary-foreground/30 text-primary-foreground bg-transparent hover:bg-primary-foreground/10"
               >
-                <Link to="/newsletter">Browse the Newsletter</Link>
+                <Link to="/news">Browse the Editorial</Link>
               </Button>
             </div>
           </div>
@@ -85,7 +85,6 @@ export function LandingFooter({ hasUser, isStaff, sponsors }: LandingFooterProps
                   { to: '/news?section=interviews', label: 'Interviews' },
                   { to: '/horses', label: 'Horse Profiles' },
                   { to: '/podcast', label: 'Podcast Hub' },
-                  { to: '/newsletter', label: 'Newsletter' },
                   { to: '/bulletins', label: 'Print Bulletins' },
                 ].map((item) => (
                   <li key={item.label}>
@@ -108,7 +107,6 @@ export function LandingFooter({ hasUser, isStaff, sponsors }: LandingFooterProps
                 {[
                   { to: '/tipping', label: 'Tipping Ring' },
                   { to: '/tipping', label: 'Leaderboard' },
-                  { to: '/newsletter', label: 'Newsletter' },
                   { to: '/bulletins', label: 'Print Bulletins' },
                   ...(isStaff ? [{ to: '/production-system', label: 'Production System' }] : []),
                 ].map((item) => (

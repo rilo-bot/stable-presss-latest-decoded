@@ -12,6 +12,7 @@
 import { tool, type ToolSet } from 'ai'
 import { z } from 'zod'
 import { db } from '../db.js'
+import { articleTeaser, tierAllows } from '../paywall.js'
 import { canAccessNewsroom } from '../rbac.js'
 import { visibleHorseIds, manageablePartyIds, horsesLinkedToParty } from '../scope.js'
 import type { AccountUser } from '../identity.js'
@@ -99,6 +100,21 @@ const SELF_BASE = `http://127.0.0.1:${SELF_PORT}`
 
 export function buildTools(account?: AccountUser, authHeader?: string): ToolSet {
   const staff = canAccessNewsroom(account)
+
+  // ── The premium paywall, for the two tools that read a story body ─────────
+  //
+  // These tools `execute` on the SERVER — unlike the Studio tools, which are
+  // declared without `execute` and run through the browser against the same
+  // gated REST endpoints a human hits. That difference is why they need the
+  // paywall spelled out here: nothing else is standing between them and the
+  // collection, so `searchArticles` and `getArticle` used to hand a free-tier
+  // reader the whole of a premium story for the asking. See lib/paywall.ts.
+
+  /** May this reader have the full body of `a`? Staff always may. */
+  const readerMayRead = (a: Doc) => staff || tierAllows(account?.subscriptionTier, a.minTier)
+
+  /** The body of `a` as this reader is entitled to see it. */
+  const bodyFor = (a: Doc) => (readerMayRead(a) ? a.summary : articleTeaser(a.summary))
 
   // Call one of our own endpoints AS the current user. The route's gate decides
   // if it is allowed — the agent never bypasses a permission check.
@@ -332,6 +348,9 @@ export function buildTools(account?: AccountUser, authHeader?: string): ToolSet 
       execute: async ({ query, category, limit }) => {
         let articles = await db.collection('articles').find()
         if (!staff) articles = articles.filter(isLiveArticle)
+        // Matching against the FULL body on purpose, even where the body is
+        // paywalled: a reader may search for a phrase inside a premium story and
+        // be told the story exists. What comes back is still only the teaser.
         if (query) articles = articles.filter((a) => matches(a.title, query) || matches(a.summary, query) || (Array.isArray(a.tags) && a.tags.some((t: string) => matches(t, query))))
         if (category) articles = articles.filter((a) => matches(a.category, category))
         return {
@@ -339,7 +358,8 @@ export function buildTools(account?: AccountUser, authHeader?: string): ToolSet 
           articles: articles.slice(0, clamp(limit, 10, 25)).map((a) => ({
             id: idOf(a),
             title: a.title,
-            summary: a.summary,
+            summary: bodyFor(a),
+            locked: !readerMayRead(a) || undefined,
             author: a.author,
             category: a.category,
             status: a.status,
@@ -351,7 +371,8 @@ export function buildTools(account?: AccountUser, authHeader?: string): ToolSet 
     }),
 
     getArticle: tool({
-      description: 'A single article by id (summary + metadata). Returns notFound if it is not published and the reader is not staff.',
+      description:
+        'A single article by id (body + metadata). Returns notFound if it is not published and the reader is not staff. A premium story the reader is not subscribed to comes back with `locked: true` and only its opening paragraph — tell them it is subscriber-only rather than guessing at the rest.',
       inputSchema: z.object({ articleId: z.string() }),
       execute: async ({ articleId }) => {
         const a = await db.collection('articles').findById(articleId)
@@ -359,7 +380,9 @@ export function buildTools(account?: AccountUser, authHeader?: string): ToolSet 
         return {
           id: idOf(a),
           title: a.title,
-          summary: a.summary,
+          summary: bodyFor(a),
+          locked: !readerMayRead(a) || undefined,
+          minTier: a.minTier,
           author: a.author,
           category: a.category,
           status: a.status,
@@ -483,7 +506,10 @@ export function buildTools(account?: AccountUser, authHeader?: string): ToolSet 
       inputSchema: z.object({
         to: z
           .enum([
-            'home', 'news', 'newsletter', 'bulletins', 'horses', 'parties', 'tipping', 'podcast',
+            // No 'newsletter': /newsletter was removed with the story `channels`
+            // axis, and offering the model a destination that 404s is worse than
+            // not offering it — it would navigate a reader off the site.
+            'home', 'news', 'bulletins', 'horses', 'parties', 'tipping', 'podcast',
             'dashboard', 'production-system', 'story-studio', 'blog-studio', 'horse-studio', 'profile-studio',
             'site-content', 'claims', 'login', 'signup',
             'horse', 'party', 'article', 'bulletin', 'organisation',
@@ -496,7 +522,9 @@ export function buildTools(account?: AccountUser, authHeader?: string): ToolSet 
           .enum([
             'overview', 'workflow', 'pipeline', 'all-stories', 'editor-hub', 'my-assets',
             'compensation', 'horses', 'people', 'media-records', 'racing-records',
-            'team', 'roles', 'analytics', 'settings', 'magazine-studio',
+            // No 'magazine-studio': that screen was the retired v1 template
+            // builder. The Magazine Builder is reached with to:'magazine-v2'.
+            'team', 'roles', 'analytics', 'settings',
           ])
           .optional()
           .describe("Production System screen (only with to:'production-system'): workflow = the story Kanban, all-stories = every story, editor-hub = review/assignments/scheduling, horses/people/media-records/racing-records = the racing-data registers, team/roles = staff & permissions (admin)."),

@@ -11,7 +11,7 @@ import { toast } from 'sonner';
 
 import { MarkdownMessage } from '@/components/MarkdownMessage';
 import { useProfileAgentUi, type Proposal } from '@/stores/profileAgentUiStore';
-import { useEditorAgentUi } from '@/stores/editorAgentUiStore';
+import { useStudioChrome } from '@/stores/studioChromeStore';
 import { PARTY_ROLE_LABELS } from '@/types/party';
 import { useProfileChatSession, messageText } from './useProfileChatSession';
 import { profileBoxDef } from './profileStudioFields';
@@ -104,8 +104,8 @@ export function ProfileAgentPanel() {
 
   // While open, hide the global Stablehand launcher (shared editor suppress flag).
   useEffect(() => {
-    useEditorAgentUi.getState().setSuppressGlobal(open);
-    return () => useEditorAgentUi.getState().setSuppressGlobal(false);
+    useStudioChrome.getState().setSuppressGlobal(open);
+    return () => useStudioChrome.getState().setSuppressGlobal(false);
   }, [open]);
 
   useEffect(() => {

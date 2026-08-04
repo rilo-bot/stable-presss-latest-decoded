@@ -1,5 +1,5 @@
 import { Link } from 'react-router-dom';
-import { ArrowRight, ChevronRight, Mail } from 'lucide-react';
+import { ArrowRight, BookOpen, ChevronRight } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import type { IssueSummary } from '@/types/magazine';
 
@@ -103,22 +103,27 @@ export function LandingBulletins({ publishedIssues }: LandingBulletinsProps) {
         </div>
       )}
 
-      {/* Newsletter/Subscription prompt */}
+      {/* Subscription prompt.
+          Was "Newsletter & Print Bulletin", claiming "weekly editorial dispatches
+          and the fortnightly print bulletin". Neither cadence is scheduled by
+          anything, and the newsletter it offered to browse no longer exists — the
+          `newsletter` story channel was removed. It pitches the bulletin, which is
+          a real artefact: published magazine issues in the newsstand. */}
       <div
         className="mt-5 border border-dashed rounded-sm p-4 flex flex-col sm:flex-row items-center gap-4"
         style={{ borderColor: 'hsl(var(--brand-accent) / 0.4)' }}
       >
-        <Mail
+        <BookOpen
           size={20}
           style={{ color: 'hsl(var(--brand-accent))' }}
           className="flex-shrink-0"
         />
         <div className="flex-1 text-center sm:text-left">
           <p className="text-sm font-semibold text-foreground">
-            Newsletter &amp; Print Bulletin — delivered to subscribers.
+            The Print Bulletin — delivered to subscribers.
           </p>
           <p className="text-xs text-muted-foreground mt-0.5">
-            Weekly editorial dispatches and the fortnightly print bulletin, organised by category.
+            Longform editions of the Stable Press bulletin, alongside the daily editorial desk.
           </p>
         </div>
         <div className="flex items-center gap-2 flex-shrink-0">
@@ -128,7 +133,7 @@ export function LandingBulletins({ publishedIssues }: LandingBulletinsProps) {
             asChild
             className="text-xs"
           >
-            <Link to="/newsletter">Browse Newsletter</Link>
+            <Link to="/news">Browse Editorial</Link>
           </Button>
           <Button
             size="sm"

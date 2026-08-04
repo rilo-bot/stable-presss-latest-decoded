@@ -1,33 +1,32 @@
 /**
  * Emoji analytics — the sample dataset and everything derived from it.
  *
- * SAMPLE DATA, NOT LIVE. There is no reaction system in Stable Press yet: no
- * `reactions` collection, no endpoint, nothing on the public site that records a
- * reader's emoji. This screen is the design for the one we intend to build, so
- * the numbers below are invented — the page says so, in the header badge and
- * again under every panel that would need located data.
+ * ── SAMPLE DATA, NOT LIVE ──
  *
- * ONE SOURCE OF TRUTH. Every figure on the screen (totals, percentages, the
- * category cut, the content-type cut, the leaderboard, the audience segments)
- * is DERIVED from `ITEMS` — a list of published pieces, each carrying one count
- * per emoji. Hand-writing the summary numbers instead is how a mock ends up
- * claiming 4 reactions in one tile and 50% of them in another: the panels
- * disagree and the design can't be trusted. Here, changing one item's counts
- * moves every panel that depends on it, consistently.
+ * There is no `reactions` collection, no endpoint, and no reaction bar wired to
+ * storage. This module invents a plausible one so the page can be designed, and
+ * the page says so on its face. See docs/EMOJI-ANALYTICS-PLAN.md.
  *
- * When the real endpoint lands, `deriveDashboard()` is the shape it should
- * return; only `ITEMS` gets replaced.
+ * TWO RULES SHAPE THIS FILE, both about the day the real endpoint lands:
+ *
+ * 1. THE SAMPLE IS REACTION-LEVEL, NOT ITEM-LEVEL — one row per reaction, the
+ *    shape `reactions` will store. Seven counts per item could never answer a
+ *    question about who reacted, or when.
+ *
+ * 2. `deriveDashboard()` IS THE API CONTRACT. It aggregates a flat reaction list
+ *    the way the Mongo pipeline will and returns what the endpoint should
+ *    return. Swapping sample for real is a source change; no component moves.
+ *
+ * The generator is DETERMINISTIC (a seeded PRNG, never Math.random) so the page
+ * does not reshuffle itself between renders.
+ *
+ * SCOPE: stories, blogs and bulletins. Podcasts and magazine issues are out —
+ * they are not where reactions are being collected first.
+ *
+ * NOT MODELLED, because the platform does not collect it: views, dwell time,
+ * referrers, geography, devices, and comments. There is no comments collection
+ * anywhere in Stable Press.
  */
-
-// ── The emoji scale ─────────────────────────────────────────────────────────
-//
-// Now defined in `@/types/reactions` — this screen is no longer its only
-// consumer, since the public blog post carries a reaction bar that has to use the
-// same seven steps. Re-exported here so everything that already imports the scale
-// from this module keeps working.
-//
-// Counts in `ITEMS` are tuples in ASCENDING weight, i.e. the same order as
-// EMOJI_SCALE. See `EMOJI_TUPLE_ORDER`.
 
 import { EMOJI_SCALE, STEP_FILL } from '@/types/reactions';
 import type { EmojiKey, EmojiStep, Side } from '@/types/reactions';
@@ -35,89 +34,68 @@ import type { EmojiKey, EmojiStep, Side } from '@/types/reactions';
 export { EMOJI_SCALE, STEP_FILL };
 export type { EmojiKey, EmojiStep, Side };
 
-/** Tuple order for `ReactionCounts` — ascending weight, −3 → +3. */
-export const EMOJI_TUPLE_ORDER: EmojiKey[] = [
+/** Ascending weight, −3 → +3. The order everything iterates in. */
+export const EMOJI_KEYS: EmojiKey[] = [
   'reallyHate', 'hate', 'dislike', 'undecided', 'sortOf', 'like', 'love',
 ];
 
-/** One count per emoji, in `EMOJI_TUPLE_ORDER`. */
-export type ReactionCounts = [number, number, number, number, number, number, number];
+const STEP_BY_KEY = new Map(EMOJI_SCALE.map((s) => [s.key, s]));
+export function stepFor(key: EmojiKey): EmojiStep {
+  return STEP_BY_KEY.get(key)!;
+}
 
-// ── The colour scale ────────────────────────────────────────────────────────
+// ── Colour ──────────────────────────────────────────────────────────────────
 //
 // A DIVERGING scale: two opposed hues either side of a neutral midpoint, which
-// is what polarity data takes (magnitude would take one hue, identity would take
-// the categorical slots). Green is the brand's own; the opposing arm is an
+// is what polarity data takes. Green is the brand's own; the opposing arm is an
 // orange-vermilion rather than the theme's --destructive red, because dark green
-// and dark red COLLAPSE under protanopia — as two tiles side by side in the same
-// grid they measure ΔE 5.1 (OKLab ×100), i.e. the two poles of the scale become
-// the same colour for a protan reader.
+// and dark red COLLAPSE under protanopia.
 //
-// The steps below were searched against the Machado–Oliveira–Fernandes (2009)
-// simulation at full severity until all ten pairs clear ΔE 9.2 under BOTH
-// protanopia and deuteranopia (target is 8), the worst pair clears 15.3 under
-// normal vision, each arm passes the ordinal-ramp checks on its own (monotone
-// lightness, ΔL ≥ 0.06, light end ≥ 2:1 on cream), and every fill has an ink
-// that clears 4.5:1 on it for labels set inside the mark.
+// MEASURED, not asserted (dataviz validator, against the real card #fefcf6):
+//   • the for-arm  #2f7a58 → #22603f → #174a32 passes every ordinal check
+//     (monotone lightness, ΔL ≥ 0.06, single hue within 4°)
+//   • the against-arm #e37945 → #cd5c2f → #b84619 likewise (hue spread 6°)
+//   • worst all-pairs band separation under protanopia: ΔE 9.2 — passes
+//   • worst all-pairs under NORMAL vision: ΔE 14.4, for Cool ↔ Rejected. Below
+//     the 15 floor, so those two must ALWAYS carry their label. `BandChip` is
+//     the only way a band fill is ever drawn, and it always does.
+//   • `split` sits at 2.13:1 and `cool` at 2.89:1 against the card — under 3:1,
+//     so every value on this page is directly labelled rather than left to hue.
 //
-// Two fills sit below 3:1 against the cream card — `split` at 2.06:1 and `cool`
-// at 2.79:1 — which is allowed only where the value is legible another way:
-// every mark on this screen carries its band name and its signed number, and the
-// ranking list is the full table view of the grid. Don't reuse these two
-// anywhere that relief isn't present.
+// This is the page's ONLY colour language. Content type and category are carried
+// by position and label, never by a second palette.
 //
-// Local hex constants rather than CSS tokens on purpose: theme.css is written by
-// the design pipeline (its own header says so), and this scale is one screen's
-// vocabulary, not a fourth brand colour. Light mode only — the app's dark mode
-// is unwired config today, and a diverging ramp must be re-stepped for a dark
-// surface, never flipped.
+// Light mode only: the app's dark mode is unwired config, and a diverging ramp
+// must be RE-STEPPED for a dark surface, never flipped.
 
 export interface Band {
   id: 'loved' | 'warm' | 'split' | 'cool' | 'rejected';
   /** Plain-words label. Always rendered next to the fill — never colour alone. */
   label: string;
-  /** What it means, for the legend. */
-  hint: string;
   fill: string;
-  /** Ink that clears 4.5:1 on `fill`, for a label set inside the mark. */
-  ink: string;
 }
 
 export const BANDS: Band[] = [
-  { id: 'loved', label: 'Loved', hint: 'net +50 or better', fill: '#174a32', ink: '#ffffff' },
-  { id: 'warm', label: 'Warm', hint: 'net +20 to +49', fill: '#2f7a58', ink: '#ffffff' },
-  { id: 'split', label: 'Split', hint: 'net −19 to +19', fill: '#b2afa9', ink: '#101a15' },
-  { id: 'cool', label: 'Cool', hint: 'net −20 to −49', fill: '#e37945', ink: '#2c1206' },
-  { id: 'rejected', label: 'Rejected', hint: 'net −50 or worse', fill: '#b84619', ink: '#ffffff' },
+  { id: 'loved', label: 'Loved', fill: '#174a32' },
+  { id: 'warm', label: 'Warm', fill: '#2f7a58' },
+  { id: 'split', label: 'Split', fill: '#b2afa9' },
+  { id: 'cool', label: 'Cool', fill: '#e37945' },
+  { id: 'rejected', label: 'Rejected', fill: '#b84619' },
 ];
 
 const BAND_BY_ID = new Map(BANDS.map((b) => [b.id, b]));
 
 /**
- * Which band a net score falls in.
- *
- * The thresholds are wide on purpose. People who bother to react to a racing
- * story mostly liked it, so nets cluster high: a +25 cut put seven of nine
- * categories in the same band and the grid read as one flat green field, which
- * is the failure mode of any classed scale — bands that don't separate the data
- * aren't telling you anything.
+ * Which band a net score falls in. Thresholds are wide on purpose: people who
+ * bother to react mostly liked it, so nets cluster high, and a tighter cut puts
+ * everything in one band — the failure mode of any classed scale.
  */
 export function bandFor(net: number): Band {
   const id = net >= 50 ? 'loved' : net >= 20 ? 'warm' : net >= -19 ? 'split' : net >= -49 ? 'cool' : 'rejected';
   return BAND_BY_ID.get(id)!;
 }
 
-/**
- * Fill for one step of the scale — the seven emoji rows.
- *
- * Three steps per arm plus the neutral midpoint. Within an arm the steps are a
- * single hue at monotone lightness, so "stronger" reads as "darker" without
- * needing the label — but the label is there anyway.
- */
-/**
- * The three sides, for the for/middle/against meters. The poles of the scale
- * would be too loud across a full-width bar, so these are the arms' mid steps.
- */
+/** The three sides, for the for/middle/against bar — the arms' mid steps. */
 export const SIDE_FILL: Record<Side, string> = {
   for: '#2f7a58',
   middle: '#b2afa9',
@@ -127,136 +105,239 @@ export const SIDE_FILL: Record<Side, string> = {
 /** The unfilled part of any bar: a light step of the page's own cream. */
 export const TRACK_FILL = '#eae1cd';
 
-// ── The taxonomy ────────────────────────────────────────────────────────────
-
-/**
- * Mirrors CATEGORIES in pages/news-index/constants.tsx (keys are the contract,
- * also enumerated server-side in lib/newsCategories.ts). Restated here rather
- * than imported so the sample dataset stays a standalone file with no app
- * dependencies — it is the one thing on this screen that gets thrown away when
- * the real endpoint lands.
- */
-export interface CategoryMeta {
-  key: string;
-  label: string;
-  section: 'news' | 'analysis' | 'interviews';
-}
-
-export const CATEGORIES: CategoryMeta[] = [
-  { key: 'race-reports', label: 'Race Reports', section: 'news' },
-  { key: 'industry-news', label: 'Industry News', section: 'news' },
-  { key: 'morning-edition', label: 'Morning Edition', section: 'news' },
-  { key: 'form-guide', label: 'Form Guide', section: 'analysis' },
-  { key: 'track-notes', label: 'Track Notes', section: 'analysis' },
-  { key: 'bloodstock', label: 'Bloodstock', section: 'analysis' },
-  { key: 'trainer-profiles', label: 'Trainer Profiles', section: 'interviews' },
-  { key: 'jockey-desk', label: 'Jockey Desk', section: 'interviews' },
-  { key: 'owner-stories', label: 'Owner Stories', section: 'interviews' },
-];
-
-export const SECTION_LABELS: Record<CategoryMeta['section'], string> = {
-  news: 'News',
-  analysis: 'Analysis',
-  interviews: 'Interviews',
-};
-
 // ── Content types ───────────────────────────────────────────────────────────
 
-export type ContentType = 'blog' | 'article' | 'bulletin' | 'podcast' | 'magazine';
+/**
+ * The four things a reader can react to, as this platform actually models them.
+ *
+ * Two of these were wrong in an earlier draft and are worth writing down:
+ *
+ * BULLETINS ARE MAGAZINES. `/bulletins` is the newsstand, and its own file says
+ * "This page is MAGAZINES, and only magazines" — a published issue is a frozen
+ * snapshot of magazine pages in the `issues` collection, and both builders (v1
+ * `magazines`, v2 `magazinesV2`) freeze into it. A bulletin is NOT an article
+ * wearing a `bulletin` channel; that axis is gone, and the server now silently
+ * drops a `channels` key on write.
+ *
+ * BLOG PARTS ARE THEIR OWN TARGET. `BlogPart` — a "sub-blog" — is a titled
+ * section of a post with a STABLE id, and the published page already renders a
+ * reaction scale for each part as well as one for the post overall. So a post
+ * and its parts are separate reaction targets, and the part id is what a stored
+ * reaction is keyed to. Counting only whole posts would throw away the finer of
+ * the two signals the reader page already asks for.
+ */
+export type ContentType = 'story' | 'blog' | 'blogPart' | 'bulletin';
 
 export interface ContentTypeMeta {
   id: ContentType;
   label: string;
   /** Plural noun for the "N published" line. */
   unit: string;
-  /** Where the module lives, for the "open it" link. */
-  href?: string;
+  href: string;
 }
 
-/**
- * Blogs lead, because blogs are what this newsroom publishes most deliberately —
- * and because a post is the unit a reader reacts to hardest.
- */
 export const CONTENT_TYPES: ContentTypeMeta[] = [
+  { id: 'story', label: 'Stories', unit: 'stories', href: '/production-system/all-stories' },
   { id: 'blog', label: 'Blogs', unit: 'posts', href: '/production-system/blogs' },
-  { id: 'article', label: 'News & stories', unit: 'stories', href: '/production-system/all-stories' },
-  { id: 'bulletin', label: 'Bulletins', unit: 'bulletins' },
-  { id: 'podcast', label: 'Podcasts', unit: 'episodes' },
-  { id: 'magazine', label: 'Magazine issues', unit: 'issues', href: '/production-system/magazine-v2' },
+  { id: 'blogPart', label: 'Blog parts', unit: 'parts', href: '/production-system/blogs' },
+  { id: 'bulletin', label: 'Bulletins', unit: 'issues', href: '/production-system/magazine-v2' },
 ];
 
-// ── The sample dataset ──────────────────────────────────────────────────────
+const TYPE_LABEL = new Map(CONTENT_TYPES.map((t) => [t.id, t.label]));
+export function typeLabel(id: ContentType): string {
+  return TYPE_LABEL.get(id) ?? id;
+}
+
+// ── The published catalogue ─────────────────────────────────────────────────
 
 export interface Item {
   id: string;
   title: string;
   type: ContentType;
-  /** Blogs and stories carry one; bulletins, podcasts and issues don't. */
+  /** Display label, not a key — this page does no category maths. */
   category?: string;
-  /** Counts in EMOJI_TUPLE_ORDER: 🤬 😠 😕 😐 🙂 😊 🤩 */
-  r: ReactionCounts;
-  comments: number;
+  /** For a blog part: the post it belongs to. A part is never read alone. */
+  parentTitle?: string;
   publishedAt: string;
+  /**
+   * The seven-step shape this piece pulls, ascending weight. A relative weight,
+   * not a count — the generator samples from it.
+   */
+  mood: [number, number, number, number, number, number, number];
+  /** Roughly how many reactions it earns. */
+  pull: number;
 }
+
+/** Moods, written as shapes rather than numbers pulled from the air. */
+const ADORED: Item['mood'] = [0, 1, 2, 5, 18, 30, 30];
+const RESPECTED: Item['mood'] = [1, 2, 5, 10, 24, 26, 14];
+const SOLID: Item['mood'] = [2, 4, 9, 12, 22, 22, 12];
+const DIVISIVE: Item['mood'] = [22, 14, 8, 6, 8, 14, 24];
+const COOL: Item['mood'] = [10, 18, 26, 14, 12, 8, 4];
+const REJECTED: Item['mood'] = [26, 24, 20, 10, 8, 6, 3];
+const QUIET: Item['mood'] = [4, 7, 13, 38, 20, 12, 6];
 
 export const ITEMS: Item[] = [
   // ── Blogs ──
-  { id: 'b1', title: 'Inside the Karaka barn that never sleeps', type: 'blog', category: 'trainer-profiles', r: [3, 6, 11, 16, 42, 63, 61], comments: 34, publishedAt: '2026-07-28' },
-  { id: 'b2', title: 'The clock does not lie: reading Te Rapa sectionals', type: 'blog', category: 'form-guide', r: [10, 18, 33, 25, 40, 50, 29], comments: 41, publishedAt: '2026-07-24' },
-  { id: 'b3', title: 'What a $1.2m yearling tells you about the shed', type: 'blog', category: 'bloodstock', r: [5, 8, 15, 23, 51, 77, 75], comments: 57, publishedAt: '2026-07-21' },
-  { id: 'b4', title: 'Riding heavy: five jockeys on the winter grind', type: 'blog', category: 'jockey-desk', r: [18, 32, 60, 29, 38, 32, 15], comments: 62, publishedAt: '2026-07-17' },
-  { id: 'b5', title: 'The syndicate that bought a horse for the story', type: 'blog', category: 'owner-stories', r: [2, 5, 9, 16, 42, 63, 61], comments: 29, publishedAt: '2026-07-14' },
-  { id: 'b6', title: "Ellerslie's new drainage, one year on", type: 'blog', category: 'track-notes', r: [13, 23, 44, 23, 40, 35, 17], comments: 38, publishedAt: '2026-07-09' },
-  { id: 'b7', title: 'Nobody wants to talk about the whip rule', type: 'blog', category: 'industry-news', r: [63, 75, 78, 27, 23, 20, 10], comments: 184, publishedAt: '2026-07-03' },
-  { id: 'b8', title: 'A morning with the Awapuni track crew', type: 'blog', category: 'morning-edition', r: [5, 10, 19, 23, 45, 55, 32], comments: 22, publishedAt: '2026-06-27' },
+  { id: 'b1', title: 'Inside the Karaka barn that never sleeps', type: 'blog', category: 'Trainer Profiles', publishedAt: '2026-07-28', mood: ADORED, pull: 402 },
+  { id: 'b2', title: 'The clock does not lie: reading Te Rapa sectionals', type: 'blog', category: 'Form Guide', publishedAt: '2026-07-24', mood: SOLID, pull: 305 },
+  { id: 'b3', title: 'What a $1.2m yearling tells you about the shed', type: 'blog', category: 'Bloodstock', publishedAt: '2026-07-21', mood: ADORED, pull: 354 },
+  { id: 'b4', title: 'Riding heavy: five jockeys on the winter grind', type: 'blog', category: 'Jockey Desk', publishedAt: '2026-07-17', mood: COOL, pull: 324 },
+  { id: 'b5', title: 'The syndicate that bought a horse for the story', type: 'blog', category: 'Owner Stories', publishedAt: '2026-07-14', mood: RESPECTED, pull: 268 },
+  { id: 'b6', title: "Ellerslie's new drainage, one year on", type: 'blog', category: 'Track Notes', publishedAt: '2026-07-09', mood: QUIET, pull: 195 },
+  { id: 'b7', title: 'Nobody wants to talk about the whip rule', type: 'blog', category: 'Industry News', publishedAt: '2026-07-03', mood: DIVISIVE, pull: 612 },
+  { id: 'b8', title: 'A morning with the Awapuni track crew', type: 'blog', category: 'Morning Edition', publishedAt: '2026-06-27', mood: RESPECTED, pull: 221 },
 
-  // ── News & stories ──
-  { id: 'a1', title: 'Group One at Trentham: the run home in full', type: 'article', category: 'race-reports', r: [10, 19, 36, 31, 64, 79, 45], comments: 46, publishedAt: '2026-07-27' },
-  { id: 'a2', title: 'Stewards fine trainer over late scratching', type: 'article', category: 'industry-news', r: [49, 60, 61, 20, 15, 13, 6], comments: 97, publishedAt: '2026-07-23' },
-  { id: 'a3', title: 'Saturday form: the five that matter', type: 'article', category: 'form-guide', r: [12, 21, 40, 26, 42, 51, 29], comments: 31, publishedAt: '2026-07-19' },
-  { id: 'a4', title: 'Waikato sale tops $18m as buyers return', type: 'article', category: 'bloodstock', r: [5, 9, 18, 22, 48, 73, 71], comments: 25, publishedAt: '2026-07-16' },
-  { id: 'a5', title: 'Rider suspended after Hastings incident', type: 'article', category: 'jockey-desk', r: [38, 46, 47, 27, 30, 26, 12], comments: 88, publishedAt: '2026-07-12' },
-  { id: 'a6', title: 'Track rated heavy 11 at Riccarton', type: 'article', category: 'track-notes', r: [13, 23, 43, 26, 31, 27, 13], comments: 19, publishedAt: '2026-07-08' },
-  { id: 'a7', title: 'Morning Edition: Wednesday scratchings', type: 'article', category: 'morning-edition', r: [6, 11, 20, 21, 35, 43, 25], comments: 11, publishedAt: '2026-07-01' },
-  { id: 'a8', title: 'Riccarton: a length and a half, and a protest', type: 'article', category: 'race-reports', r: [14, 25, 47, 26, 46, 39, 19], comments: 53, publishedAt: '2026-06-24' },
+  // ── Stories ──
+  { id: 's1', title: 'Group One at Trentham: the run home in full', type: 'story', category: 'Race Reports', publishedAt: '2026-07-27', mood: ADORED, pull: 448 },
+  { id: 's2', title: 'Stewards fine trainer over late scratching', type: 'story', category: 'Industry News', publishedAt: '2026-07-23', mood: REJECTED, pull: 386 },
+  { id: 's3', title: 'Saturday form: the five that matter', type: 'story', category: 'Form Guide', publishedAt: '2026-07-19', mood: SOLID, pull: 331 },
+  { id: 's4', title: 'Waikato sale tops $18m as buyers return', type: 'story', category: 'Bloodstock', publishedAt: '2026-07-16', mood: ADORED, pull: 362 },
+  { id: 's5', title: 'Rider suspended after Hastings incident', type: 'story', category: 'Jockey Desk', publishedAt: '2026-07-12', mood: DIVISIVE, pull: 401 },
+  { id: 's6', title: 'Track rated heavy 11 at Riccarton', type: 'story', category: 'Track Notes', publishedAt: '2026-07-08', mood: QUIET, pull: 176 },
+  { id: 's7', title: 'Riccarton: a length and a half, and a protest', type: 'story', category: 'Race Reports', publishedAt: '2026-06-24', mood: COOL, pull: 296 },
+  { id: 's8', title: 'Prize money lifted for provincial meetings', type: 'story', category: 'Industry News', publishedAt: '2026-06-12', mood: RESPECTED, pull: 268 },
 
-  // ── Bulletins ──
-  { id: 'u1', title: 'Weekly Bulletin — Spring Carnival preview', type: 'bulletin', r: [3, 4, 8, 15, 33, 40, 23], comments: 8, publishedAt: '2026-07-26' },
-  { id: 'u2', title: 'Weekly Bulletin — Sales week wrap', type: 'bulletin', r: [2, 5, 9, 13, 25, 31, 18], comments: 5, publishedAt: '2026-07-12' },
+  // ── Blog parts (sub-blogs) ──
+  // Each is a titled section of the post above it, carrying its own reaction
+  // scale on the published page. A part can outscore its own post — that is the
+  // whole reason the reader page asks twice.
+  { id: 'b7p1', title: 'What the rule actually says', type: 'blogPart', parentTitle: 'Nobody wants to talk about the whip rule', publishedAt: '2026-07-03', mood: RESPECTED, pull: 188 },
+  { id: 'b7p2', title: 'The riders’ case', type: 'blogPart', parentTitle: 'Nobody wants to talk about the whip rule', publishedAt: '2026-07-03', mood: DIVISIVE, pull: 214 },
+  { id: 'b7p3', title: 'Where I think this lands', type: 'blogPart', parentTitle: 'Nobody wants to talk about the whip rule', publishedAt: '2026-07-03', mood: REJECTED, pull: 171 },
+  { id: 'b1p1', title: 'Four in the morning', type: 'blogPart', parentTitle: 'Inside the Karaka barn that never sleeps', publishedAt: '2026-07-28', mood: ADORED, pull: 164 },
+  { id: 'b1p2', title: 'The staffing problem nobody solves', type: 'blogPart', parentTitle: 'Inside the Karaka barn that never sleeps', publishedAt: '2026-07-28', mood: SOLID, pull: 121 },
+  { id: 'b3p1', title: 'Reading the catalogue page', type: 'blogPart', parentTitle: 'What a $1.2m yearling tells you about the shed', publishedAt: '2026-07-21', mood: ADORED, pull: 143 },
+  { id: 'b3p2', title: 'What the buyers were really bidding on', type: 'blogPart', parentTitle: 'What a $1.2m yearling tells you about the shed', publishedAt: '2026-07-21', mood: RESPECTED, pull: 118 },
+  { id: 'b4p1', title: 'Making weight in July', type: 'blogPart', parentTitle: 'Riding heavy: five jockeys on the winter grind', publishedAt: '2026-07-17', mood: COOL, pull: 136 },
 
-  // ── Podcasts ──
-  { id: 'p1', title: 'The Furlong Post — Ep. 14: the whip debate', type: 'podcast', r: [24, 29, 29, 24, 34, 29, 14], comments: 64, publishedAt: '2026-07-20' },
-  { id: 'p2', title: 'The Furlong Post — Ep. 15: buying at Karaka', type: 'podcast', r: [3, 6, 11, 14, 27, 42, 41], comments: 27, publishedAt: '2026-07-06' },
+  // ── Bulletins — published magazine issues (v1 and v2 both freeze into these) ──
+  { id: 'i1', title: 'Stable Press Quarterly — Spring 2026', type: 'bulletin', publishedAt: '2026-07-26', mood: ADORED, pull: 229 },
+  { id: 'i2', title: 'Karaka Sales Special — 2026', type: 'bulletin', publishedAt: '2026-07-12', mood: RESPECTED, pull: 188 },
+  { id: 'i3', title: 'Stable Press Quarterly — Winter 2026', type: 'bulletin', publishedAt: '2026-06-28', mood: SOLID, pull: 142 },
 
-  // ── Magazine ──
-  { id: 'm1', title: 'Stable Press Quarterly — Spring 2026', type: 'magazine', r: [5, 8, 15, 21, 47, 58, 33], comments: 16, publishedAt: '2026-07-04' },
+  // Published in the last few days. These exist so the page has to cope with
+  // what it meets on day one: pieces with too few reactions to say anything
+  // about. Counted, shown, and kept out of every ranking by the floor.
+  { id: 's9', title: 'Ruakākā twilight meeting moved to Sunday', type: 'story', category: 'Morning Edition', publishedAt: '2026-08-02', mood: SOLID, pull: 21 },
+  { id: 'b9', title: 'Why we are changing how we cover stewards', type: 'blog', category: 'Industry News', publishedAt: '2026-08-01', mood: DIVISIVE, pull: 34 },
+  { id: 'i4', title: 'Spring Carnival Preview — 2026', type: 'bulletin', publishedAt: '2026-08-03', mood: SOLID, pull: 0 },
 ];
 
-// ── Derivation ──────────────────────────────────────────────────────────────
+// ── The generator ───────────────────────────────────────────────────────────
+
+/** mulberry32 — small, fast, deterministic. */
+function rng(seed: number): () => number {
+  let a = seed >>> 0;
+  return () => {
+    a = (a + 0x6d2b79f5) >>> 0;
+    let t = Math.imul(a ^ (a >>> 15), 1 | a);
+    t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t;
+    return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+  };
+}
+
+function hash(s: string): number {
+  let h = 2166136261;
+  for (let i = 0; i < s.length; i++) {
+    h ^= s.charCodeAt(i);
+    h = Math.imul(h, 16777619);
+  }
+  return h >>> 0;
+}
+
+/** Pick an index from a weight vector. */
+function pick(weights: number[], r: number): number {
+  const total = weights.reduce((a, b) => a + b, 0);
+  let acc = 0;
+  const target = r * total;
+  for (let i = 0; i < weights.length; i++) {
+    acc += weights[i]!;
+    if (target < acc) return i;
+  }
+  return weights.length - 1;
+}
+
+/**
+ * One reaction — the shape `reactions` will store.
+ *
+ * `readerId` is what makes "one reaction per reader per item" enforceable, and
+ * what lets the page report readers separately from reactions. In the real
+ * store it is a user id or a signed device cookie, backed by a unique index.
+ */
+export interface Reaction {
+  itemId: string;
+  readerId: string;
+  emoji: EmojiKey;
+  /** −3 … +3, so aggregation never has to look the step up. */
+  weight: number;
+  /** ISO date. Reactions arrive AFTER publication, on a decaying tail. */
+  reactedAt: string;
+}
+
+const READER_POOL = 2400;
+const DAY = 86_400_000;
+const TODAY = Date.parse('2026-08-04');
+
+/** Most reactions land in the first two days, with a long thin tail after. */
+function arrivalOffsetDays(r: number): number {
+  return Math.round(-Math.log(1 - r * 0.985) * 3.2);
+}
+
+function buildReactions(): Reaction[] {
+  const out: Reaction[] = [];
+
+  for (const item of ITEMS) {
+    const r = rng(hash(item.id));
+    const publishedMs = Date.parse(item.publishedAt);
+    // One reaction per reader per item — the unique index, honoured here.
+    const used = new Set<number>();
+
+    for (let i = 0; i < item.pull; i++) {
+      let idx = Math.floor(r() * READER_POOL);
+      let guard = 0;
+      while (used.has(idx) && guard++ < 8) idx = Math.floor(r() * READER_POOL);
+      if (used.has(idx)) continue;
+      used.add(idx);
+
+      const stepIndex = pick(item.mood, r());
+      const at = publishedMs + arrivalOffsetDays(r()) * DAY;
+      if (at > TODAY) continue; // nothing arrives from the future
+
+      out.push({
+        itemId: item.id,
+        readerId: `r${idx}`,
+        emoji: EMOJI_KEYS[stepIndex]!,
+        weight: stepIndex - 3,
+        reactedAt: new Date(at).toISOString().slice(0, 10),
+      });
+    }
+  }
+
+  return out;
+}
+
+export const REACTIONS: Reaction[] = buildReactions();
+
+// ── Aggregation ─────────────────────────────────────────────────────────────
 
 export interface Split {
   reactions: number;
-  forCount: number;
-  middleCount: number;
-  againstCount: number;
-  /** Rounded percentages that sum to exactly 100 (or all 0 when there's nothing). */
+  /** Rounded percentages that sum to exactly 100 (or all 0 when empty). */
   forPct: number;
   middlePct: number;
   againstPct: number;
-  /** forPct − againstPct, in points. The single number that ranks anything here. */
+  /** forPct − againstPct, in points. The single number that ranks anything. */
   net: number;
+  /** Per-emoji counts, ascending weight. */
+  counts: number[];
 }
 
-const SIDE_OF: Side[] = EMOJI_TUPLE_ORDER.map(
-  (k) => EMOJI_SCALE.find((s) => s.key === k)!.side,
-);
+const SIDE_OF: Side[] = EMOJI_KEYS.map((k) => stepFor(k).side);
 
 /**
- * Percentages that add up.
- *
- * Rounding each share independently gives 33/33/33 or 50/50/1 — the panels then
- * show a 101% bar. This gives the largest remainder the rounding slack, so the
- * three always sum to 100 and the meter always fills exactly.
+ * Percentages that add up. Rounding each share independently gives 33/33/33 or
+ * 50/50/1 and the bar then draws 101%. Largest remainder gets the slack.
  */
 function pcts(parts: number[], total: number): number[] {
   if (total <= 0) return parts.map(() => 0);
@@ -275,31 +356,70 @@ function pcts(parts: number[], total: number): number[] {
   return out;
 }
 
-export function splitOf(counts: ReactionCounts[]): Split {
-  const sum: number[] = [0, 0, 0, 0, 0, 0, 0];
-  for (const c of counts) for (let i = 0; i < 7; i++) sum[i] += c[i];
+const EMPTY_SPLIT: Split = {
+  reactions: 0, forPct: 0, middlePct: 0, againstPct: 0, net: 0,
+  counts: [0, 0, 0, 0, 0, 0, 0],
+};
+
+export function splitOf(rs: Reaction[]): Split {
+  if (rs.length === 0) return EMPTY_SPLIT;
+
+  const counts = [0, 0, 0, 0, 0, 0, 0];
+  for (const r of rs) counts[r.weight + 3]! += 1;
 
   let forCount = 0;
   let middleCount = 0;
   let againstCount = 0;
   for (let i = 0; i < 7; i++) {
-    if (SIDE_OF[i] === 'for') forCount += sum[i];
-    else if (SIDE_OF[i] === 'middle') middleCount += sum[i];
-    else againstCount += sum[i];
+    if (SIDE_OF[i] === 'for') forCount += counts[i]!;
+    else if (SIDE_OF[i] === 'middle') middleCount += counts[i]!;
+    else againstCount += counts[i]!;
   }
-  const reactions = forCount + middleCount + againstCount;
-  const [forPct, middlePct, againstPct] = pcts([forCount, middleCount, againstCount], reactions);
-  return { reactions, forCount, middleCount, againstCount, forPct, middlePct, againstPct, net: forPct - againstPct };
+  const [forPct, middlePct, againstPct] = pcts([forCount, middleCount, againstCount], rs.length);
+
+  return {
+    reactions: rs.length,
+    forPct: forPct!, middlePct: middlePct!, againstPct: againstPct!,
+    net: forPct! - againstPct!,
+    counts,
+  };
 }
 
-/** Per-emoji totals across a set of items. */
-export function tally(items: Item[]): Record<EmojiKey, number> {
-  const out = {} as Record<EmojiKey, number>;
-  for (const k of EMOJI_TUPLE_ORDER) out[k] = 0;
-  for (const it of items) {
-    EMOJI_TUPLE_ORDER.forEach((k, i) => { out[k] += it.r[i]; });
-  }
-  return out;
+// ── The dashboard ───────────────────────────────────────────────────────────
+
+export interface Filters {
+  /** ISO dates, inclusive. */
+  from: string;
+  to: string;
+  /** Empty = every type. */
+  types: ContentType[];
+}
+
+export const DATE_RANGES = [
+  { id: '30', label: 'Last 30 days', days: 30 },
+  { id: '90', label: 'Last 90 days', days: 90 },
+  { id: 'all', label: 'All time', days: 3650 },
+] as const;
+export type DateRangeId = (typeof DATE_RANGES)[number]['id'];
+
+export function rangeFor(id: DateRangeId): { from: string; to: string } {
+  const days = DATE_RANGES.find((r) => r.id === id)!.days;
+  return {
+    from: new Date(TODAY - days * DAY).toISOString().slice(0, 10),
+    to: new Date(TODAY).toISOString().slice(0, 10),
+  };
+}
+
+export interface ItemStat {
+  item: Item;
+  split: Split;
+  band: Band;
+}
+
+export interface TypeStat extends ContentTypeMeta {
+  published: number;
+  split: Split;
+  band: Band;
 }
 
 export interface EmojiRow extends EmojiStep {
@@ -308,145 +428,86 @@ export interface EmojiRow extends EmojiStep {
   fill: string;
 }
 
-export interface CategoryStat extends CategoryMeta {
-  items: Item[];
-  published: number;
-  split: Split;
-  band: Band;
-  /** Its share of all reactions — how much weight to give the net. */
-  volumeShare: number;
-  topItem?: Item;
-}
-
-export interface ContentTypeStat extends ContentTypeMeta {
-  published: number;
-  split: Split;
-  band: Band;
-  topItem?: Item;
-}
-
-export interface LeaderRow {
-  item: Item;
-  split: Split;
-  band: Band;
-}
-
-export interface Segment {
-  id: string;
-  label: string;
-  hint: string;
-  keys: EmojiKey[];
-  count: number;
-  pct: number;
-  fill: string;
-}
-
+/** What the endpoint returns. Three analytics, so three things plus the totals. */
 export interface Dashboard {
   overall: Split;
-  published: number;
+  reactions: number;
+  reactors: number;
+  coverage: { reacted: number; published: number };
   emojiRows: EmojiRow[];
-  /** Most-used reaction across everything. */
   topEmoji: EmojiRow;
-  categories: CategoryStat[];
-  /** Categories with at least one published item, best net first. */
-  rankedCategories: CategoryStat[];
-  contentTypes: ContentTypeStat[];
-  /** Blogs only, best net first — the leaderboard. */
-  blogLeaders: LeaderRow[];
-  segments: Segment[];
-  moodVerdict: { headline: string; detail: string };
+  items: ItemStat[];
+  byType: TypeStat[];
+  moodVerdict: string;
 }
 
-const SEGMENT_DEFS: Array<Omit<Segment, 'count' | 'pct'>> = [
-  { id: 'loyalists', label: 'Loyalists', hint: 'Love what you publish — your base', keys: ['love'], fill: STEP_FILL.love },
-  { id: 'friendly', label: 'Friendly', hint: 'Like it — winnable, not yet yours', keys: ['like', 'sortOf'], fill: STEP_FILL.sortOf },
-  { id: 'undecided', label: 'Undecided', hint: 'On the fence — could go either way', keys: ['undecided'], fill: STEP_FILL.undecided },
-  { id: 'sceptics', label: 'Sceptics', hint: 'Doubtful — need convincing', keys: ['dislike'], fill: STEP_FILL.dislike },
-  { id: 'opponents', label: 'Opponents', hint: 'Firmly against what you ran', keys: ['hate', 'reallyHate'], fill: STEP_FILL.reallyHate },
-];
-
-/** Best net first; ties broken by volume, so a 1-reaction fluke can't lead. */
-function byNet<T extends { split: Split }>(a: T, b: T): number {
-  return b.split.net - a.split.net || b.split.reactions - a.split.reactions;
+function moodVerdict(overall: Split): string {
+  if (overall.reactions === 0) return 'No reactions yet';
+  const { net } = overall;
+  if (net >= 40) return 'Readers are with you';
+  if (net >= 15) return 'Readers are warm';
+  if (net > 5) return 'Leaning your way';
+  if (net >= -5) return 'Opinion is split';
+  if (net > -15) return 'Leaning against you';
+  return 'Readers are cold on this';
 }
 
-function moodVerdict(overall: Split): { headline: string; detail: string } {
-  const { forPct, againstPct, net } = overall;
-  const detail = `${forPct}% for · ${againstPct}% against`;
-  if (net >= 40) return { headline: 'Readers are with you', detail };
-  if (net >= 15) return { headline: 'Readers are warm', detail };
-  if (net > 5) return { headline: 'Leaning your way', detail };
-  if (net >= -5) return { headline: 'Opinion is split', detail };
-  if (net > -15) return { headline: 'Leaning against you', detail };
-  return { headline: 'Readers are cold on this', detail };
-}
+export function deriveDashboard(
+  filters: Filters,
+  allReactions: Reaction[] = REACTIONS,
+  allItems: Item[] = ITEMS,
+): Dashboard {
+  const typeSet = new Set(filters.types);
+  const itemsInScope = allItems.filter(
+    (i) => (typeSet.size === 0 || typeSet.has(i.type)) && i.publishedAt <= filters.to,
+  );
+  const scopeIds = new Set(itemsInScope.map((i) => i.id));
 
-export function deriveDashboard(items: Item[] = ITEMS): Dashboard {
-  const overall = splitOf(items.map((i) => i.r));
-  const counts = tally(items);
-  const pctByIndex = pcts(EMOJI_TUPLE_ORDER.map((k) => counts[k]), overall.reactions);
-  const pctByKey = {} as Record<EmojiKey, number>;
-  EMOJI_TUPLE_ORDER.forEach((k, i) => { pctByKey[k] = pctByIndex[i]; });
+  const rs = allReactions.filter(
+    (r) => scopeIds.has(r.itemId) && r.reactedAt >= filters.from && r.reactedAt <= filters.to,
+  );
 
-  const emojiRows: EmojiRow[] = EMOJI_SCALE.map((step) => ({
-    ...step,
-    count: counts[step.key],
-    pct: pctByKey[step.key],
-    fill: STEP_FILL[step.key],
-  }));
+  const overall = splitOf(rs);
 
-  const topEmoji = [...emojiRows].sort((a, b) => b.count - a.count)[0];
+  const byItemId = new Map<string, Reaction[]>();
+  for (const r of rs) {
+    const list = byItemId.get(r.itemId);
+    if (list) list.push(r);
+    else byItemId.set(r.itemId, [r]);
+  }
 
-  const categories: CategoryStat[] = CATEGORIES.map((meta) => {
-    const own = items.filter((i) => i.category === meta.key);
-    const split = splitOf(own.map((i) => i.r));
-    const ranked = own
-      .map((item) => ({ item, split: splitOf([item.r]) }))
-      .sort(byNet);
-    return {
-      ...meta,
-      items: own,
-      published: own.length,
-      split,
-      band: bandFor(split.net),
-      volumeShare: overall.reactions > 0 ? split.reactions / overall.reactions : 0,
-      topItem: ranked[0]?.item,
-    };
-  });
-
-  const contentTypes: ContentTypeStat[] = CONTENT_TYPES.map((meta) => {
-    const own = items.filter((i) => i.type === meta.id);
-    const split = splitOf(own.map((i) => i.r));
-    const ranked = own
-      .map((item) => ({ item, split: splitOf([item.r]) }))
-      .sort(byNet);
-    return { ...meta, published: own.length, split, band: bandFor(split.net), topItem: ranked[0]?.item };
-  });
-
-  const blogLeaders: LeaderRow[] = items
-    .filter((i) => i.type === 'blog')
+  const items: ItemStat[] = itemsInScope
     .map((item) => {
-      const split = splitOf([item.r]);
+      const split = splitOf(byItemId.get(item.id) ?? []);
       return { item, split, band: bandFor(split.net) };
     })
-    .sort(byNet);
+    .filter((s) => s.split.reactions > 0);
 
-  const segments: Segment[] = (() => {
-    const raw = SEGMENT_DEFS.map((d) => d.keys.reduce((n, k) => n + counts[k], 0));
-    const shares = pcts(raw, overall.reactions);
-    return SEGMENT_DEFS.map((d, i) => ({ ...d, count: raw[i], pct: shares[i] }));
-  })();
+  const shares = pcts(overall.counts, overall.reactions);
+  const emojiRows: EmojiRow[] = EMOJI_SCALE.map((step) => {
+    const i = EMOJI_KEYS.indexOf(step.key);
+    return { ...step, count: overall.counts[i]!, pct: shares[i]!, fill: STEP_FILL[step.key] };
+  });
 
+  const byType: TypeStat[] = CONTENT_TYPES.map((meta) => {
+    const own = itemsInScope.filter((i) => i.type === meta.id);
+    const ownIds = new Set(own.map((i) => i.id));
+    const split = splitOf(rs.filter((r) => ownIds.has(r.itemId)));
+    return { ...meta, published: own.length, split, band: bandFor(split.net) };
+  });
+
+  // Coverage counts everything published up to `to`, NOT only what was published
+  // inside the window: a June post can still be earning reactions in August, and
+  // excluding it would flatter the number.
   return {
     overall,
-    published: items.length,
+    reactions: rs.length,
+    reactors: new Set(rs.map((r) => r.readerId)).size,
+    coverage: { reacted: items.length, published: itemsInScope.length },
     emojiRows,
-    topEmoji,
-    categories,
-    rankedCategories: categories.filter((c) => c.published > 0).sort(byNet),
-    contentTypes,
-    blogLeaders,
-    segments,
+    topEmoji: [...emojiRows].sort((a, b) => b.count - a.count)[0]!,
+    items,
+    byType,
     moodVerdict: moodVerdict(overall),
   };
 }
@@ -463,4 +524,9 @@ export function signed(n: number): string {
 export function compact(n: number): string {
   if (n >= 10_000) return `${(n / 1000).toFixed(1)}K`;
   return n.toLocaleString('en-NZ');
+}
+
+/** 28 Jul — dates here are always short and always present. */
+export function shortDate(iso: string): string {
+  return new Date(iso).toLocaleDateString('en-NZ', { day: 'numeric', month: 'short' });
 }

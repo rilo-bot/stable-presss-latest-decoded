@@ -22,7 +22,7 @@ import { apiUrl } from '@/lib/api';
 import { can } from '@/lib/permissions';
 import { useAuthStore } from '@/stores/authStore';
 import { useAgentUi } from '@/stores/agentUiStore';
-import { useEditorAgentUi } from '@/stores/editorAgentUiStore';
+import { useStudioChrome } from '@/stores/studioChromeStore';
 import { useStoryStudioUi } from '@/stores/storyStudioUiStore';
 import { useBlogStudioUi } from '@/stores/blogStudioUiStore';
 import { MarkdownMessage } from '@/components/MarkdownMessage';
@@ -46,7 +46,6 @@ function describePage(pathname: string): PageContext {
   const titleFor: Record<string, string> = {
     '': 'Home',
     news: 'The News',
-    newsletter: 'Newsletter',
     bulletins: 'Print Bulletins',
     horses: 'Horse Register',
     articles: 'Article',
@@ -78,14 +77,14 @@ function describePage(pathname: string): PageContext {
       compensation: 'My Compensation', horses: 'Horses Register', people: 'People Register',
       'media-records': 'Media Records', 'racing-records': 'Racing Records', team: 'Team Members',
       roles: 'Roles & Permissions', analytics: 'Analytics', settings: 'Settings',
-      'magazine-studio': 'Magazine Studio', magazine: 'Magazine Studio', 'magazine-v2': 'Magazine Builder',
+      'magazine-v2': 'Magazine Builder',
     };
     const sub = seg[1] ?? '';
     const ctx: PageContext = {
       path: pathname,
       title: sub && screenTitles[sub] ? `Production System — ${screenTitles[sub]}` : 'Production System',
     };
-    if ((sub === 'magazine-v2' || sub === 'magazine') && seg[2]) ctx.entity = { type: 'magazine', id: seg[2] };
+    if (sub === 'magazine-v2' && seg[2]) ctx.entity = { type: 'magazine', id: seg[2] };
     return ctx;
   }
   const ctx: PageContext = { path: pathname, title: titleFor[root] ?? 'Stable Press' };
@@ -139,7 +138,6 @@ function navPathFor(to: string, id?: string, screen?: string): string | null {
   switch (to) {
     case 'home': return '/';
     case 'news': return '/news';
-    case 'newsletter': return '/newsletter';
     case 'bulletins': return '/bulletins';
     case 'horses': return '/horses';
     case 'parties': return '/parties';
@@ -178,7 +176,7 @@ export function AgentWidget() {
   const toggle = useAgentUi((s) => s.toggle);
   const pendingPrompt = useAgentUi((s) => s.pendingPrompt);
   // Hidden while the magazine editor is open (it has its own Studio Assistant).
-  const suppressGlobal = useEditorAgentUi((s) => s.suppressGlobal);
+  const suppressGlobal = useStudioChrome((s) => s.suppressGlobal);
 
   const [expanded, setExpanded] = useState(false);
   const [input, setInput] = useState('');

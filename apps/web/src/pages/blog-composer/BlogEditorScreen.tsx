@@ -43,6 +43,7 @@ import { useArticleStore } from '@/stores/articleStore';
 import { useComposerStore } from './composerStore';
 import { BlockCanvas } from './BlockCanvas';
 import { BodyToolbar } from './BodyToolbar';
+import { PartsEditor } from './PartsEditor';
 import { InlineText } from './InlineText';
 import { ToolsRail } from './ToolsRail';
 import { ImagePicker } from './ImagePicker';
@@ -447,6 +448,17 @@ export default function BlogEditorScreen() {
               </div>
             </div>
           </div>
+
+          {/* Parts sit under the body, in the order a reader meets them — not in
+              the settings rail, where they would read as configuration rather
+              than as more of the post.
+
+              OUTSIDE the body box on purpose: a sticky element is pinned only
+              within its own parent, so the body's toolbar releases at the end of
+              the body and each part card's toolbar takes over inside its own
+              card. Nested in one box they would both be pinned to the same
+              offset and sit on top of each other. */}
+          <PartsEditor refs={refs} />
         </div>
 
         <div className="min-w-0">

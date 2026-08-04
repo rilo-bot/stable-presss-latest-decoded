@@ -22,14 +22,13 @@
 import { Router } from 'express';
 import { db } from '../lib/db.js';
 import { accountCan } from '../lib/effectiveAccess.js';
+import { gateArticleForTier, TIERS } from '../lib/paywall.js';
 import { canAccessNewsroom } from '../lib/rbac.js';
 import {
   ARTICLE_STATUSES,
-  channelPermission,
   enterPermission,
   findMove,
   isArticleStatus,
-  normaliseChannels,
   normaliseLegacyStatus,
 } from '../lib/workflow.js';
 import type { ArticleStatus } from '../lib/workflow.js';
@@ -66,10 +65,15 @@ function canSeePipeline(account: Account): boolean {
  * Deliberately absent: `assignmentNote` and `changesRequestedNote` (internal
  * editorial correspondence), `changesRequested`, `scheduledFor`,
  * `createdByUserId` and `updatedAt`.
+ *
+ * `summary` — the whole story body — is HERE, and being on this list is not the
+ * same as being free to read: a premium story's body is cut down to its teaser by
+ * `gateArticleForTier` (lib/paywall.ts) on the way out. The whitelist answers
+ * "which fields", the tier gate answers "how much of this one".
  */
 const PUBLIC_FIELDS = [
   'id', 'title', 'summary', 'author', 'publishedAt', 'linkedHorseIds', 'status',
-  'imageUrl', 'category', 'readingTime', 'tags', 'createdAt', 'minTier', 'channels',
+  'imageUrl', 'category', 'readingTime', 'tags', 'createdAt', 'minTier',
 ] as const;
 
 function publicView(doc: Record<string, unknown>): Record<string, unknown> {
@@ -144,12 +148,6 @@ async function reconcileStories(): Promise<void> {
     const update: Record<string, unknown> = { status: mapped.status, updatedAt: iso };
     if (mapped.changesRequested) update.changesRequested = true;
     if (mapped.status === 'published' && !doc.publishedAt) update.publishedAt = doc.createdAt ?? iso;
-    if (mapped.channel) {
-      const existing = normaliseChannels(doc.channels) ?? [];
-      update.channels = existing.includes(mapped.channel)
-        ? existing
-        : [...existing, mapped.channel];
-    }
     // `?? null` so a document with NO status field is matched explicitly rather
     // than relying on how the driver serialises `undefined`. `$nin` above matches
     // a missing field too, and such a row belongs in Draft like any other
@@ -159,8 +157,6 @@ async function reconcileStories(): Promise<void> {
 }
 
 // ── Body coercion ───────────────────────────────────────────────────────────
-
-const TIERS = ['free', 'standard', 'premium'] as const;
 
 function str(v: unknown, max: number): string {
   return typeof v === 'string' ? v.slice(0, max) : '';
@@ -212,25 +208,6 @@ function readBody(raw: unknown): Record<string, unknown> {
 }
 
 /**
- * Vet the channels on a write. A story may only go out on a channel the caller
- * is allowed to publish to. Returns `[]` for an explicitly emptied list, which
- * the reader's `['news']` default then covers.
- */
-function vetChannels(
-  raw: unknown,
-  account: Account,
-): { ok: true; channels: string[] } | { ok: false; error: string } {
-  const channels = normaliseChannels(raw) ?? [];
-  for (const channel of channels) {
-    const needed = channelPermission(channel);
-    if (needed && !accountCan(account, needed)) {
-      return { ok: false, error: `You cannot publish to the ${channel}.` };
-    }
-  }
-  return { ok: true, channels };
-}
-
-/**
  * Read a publish slot off the wire. A story cannot enter Scheduled without one:
  * that was the whole reason Scheduled did nothing — the stage existed, the field
  * existed, and no caller ever set it.
@@ -249,6 +226,11 @@ function readSlot(raw: unknown): { ok: true; at: string } | { ok: false; error: 
  * List. Public callers get live stories in a public projection; anyone who works
  * on stories gets the full pipeline. It used to return every non-deleted
  * document, unfiltered and unauthenticated, to everybody.
+ *
+ * This is also the ONLY read path for a single story — there is no
+ * `GET /:id`, so `/articles/:id` resolves out of this list client-side. Which
+ * means the tier gate applied here is the one that protects the reader page too;
+ * there is no second endpoint that could disagree with it.
  */
 router.get('/', async (req, res) => {
   await reconcileStories();
@@ -261,7 +243,13 @@ router.get('/', async (req, res) => {
     res.json(sorted);
     return;
   }
-  res.json(sorted.filter((d) => d.status === 'published').map(publicView));
+  // Live stories only, in the public projection, each cut to what this reader's
+  // subscription tier entitles them to.
+  res.json(
+    sorted
+      .filter((d) => d.status === 'published')
+      .map((d) => gateArticleForTier(publicView(d), req.account?.subscriptionTier)),
+  );
 });
 
 // create
@@ -287,17 +275,10 @@ router.post('/', async (req, res) => {
     return;
   }
 
-  const vetted = vetChannels(body.channels, req.account);
-  if (!vetted.ok) {
-    res.status(403).json({ error: vetted.error });
-    return;
-  }
-
   const now = new Date().toISOString();
   const doc: Record<string, unknown> = {
     ...fields,
     status,
-    channels: vetted.channels,
     changesRequested: false,
     publishedAt: status === 'published' ? now : null,
     createdByUserId: req.account?.id ?? null,
@@ -406,15 +387,8 @@ router.put('/:id', async (req, res) => {
     updateData.scheduledFor = '';
   }
 
-  // ── Channels ──
-  if (body.channels !== undefined) {
-    const vetted = vetChannels(body.channels, req.account);
-    if (!vetted.ok) {
-      res.status(403).json({ error: vetted.error });
-      return;
-    }
-    updateData.channels = vetted.channels;
-  }
+  // A `channels` key on the body is silently dropped: `readBody` does not accept
+  // it, so a stale client still sending one gets a normal save rather than a 400.
 
   await db.collection('articles').updateOne(req.params.id, updateData);
   const updated = await db.collection('articles').findById(req.params.id);

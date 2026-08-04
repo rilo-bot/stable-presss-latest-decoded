@@ -25,7 +25,7 @@ import { toast } from 'sonner';
 
 import { MarkdownMessage } from '@/components/MarkdownMessage';
 import { useBlogStudioUi } from '@/stores/blogStudioUiStore';
-import { useEditorAgentUi } from '@/stores/editorAgentUiStore';
+import { useStudioChrome } from '@/stores/studioChromeStore';
 import { uploadImage } from '@/lib/upload';
 import { useBlogChatSession, messageText } from './useBlogChatSession';
 import { useVoiceChat } from '@/agent/voice/useVoiceChat';
@@ -168,8 +168,8 @@ export function BlogStudioPanel() {
 
   // While open, hide the global Stablehand launcher (shared editor suppress flag).
   useEffect(() => {
-    useEditorAgentUi.getState().setSuppressGlobal(open);
-    return () => useEditorAgentUi.getState().setSuppressGlobal(false);
+    useStudioChrome.getState().setSuppressGlobal(open);
+    return () => useStudioChrome.getState().setSuppressGlobal(false);
   }, [open]);
 
   // A suggestion chip / seeded idea queued a prompt — send it once.

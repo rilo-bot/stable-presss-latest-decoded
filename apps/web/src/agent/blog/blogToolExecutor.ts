@@ -271,6 +271,14 @@ async function openPost(arg: Record<string, unknown>): Promise<unknown> {
     body: blocksToBodyItems(post.blocks),
     // Named so the model knows they exist, are preserved, and are not its to edit.
     visuals: describeVisuals(post.blocks),
+    // Same reason as `visuals`. `replaceBlogBody` rewrites the BODY, and a post
+    // can carry titled parts after it — listing them is what stops the assistant
+    // reporting a full rewrite of a post it had only half read.
+    parts: (post.parts ?? []).map((p, i) => ({
+      part: i + 1,
+      title: p.title || '(untitled)',
+      editable: false,
+    })),
     hasCover: !!post.cover,
   };
 }
@@ -297,6 +305,11 @@ async function saveFull(post: Blog, patch: BlogSaveInput): Promise<{ ok: boolean
     linkedHorseIds: post.linkedHorseIds,
     linkedPartyIds: post.linkedPartyIds,
     blocks: post.blocks,
+    // Carried through untouched. The model never sees or edits parts, so this is
+    // purely so a copy-edit of the body doesn't take the post's sub-sections with
+    // it. The server also treats an absent `parts` as "leave them", which makes
+    // this belt and braces rather than the only guard.
+    parts: post.parts,
     media: post.media,
     cover: post.cover ?? null,
     thumbnailMediaId: post.thumbnailMediaId ?? null,

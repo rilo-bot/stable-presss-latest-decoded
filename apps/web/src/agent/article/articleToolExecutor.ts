@@ -9,7 +9,7 @@
 
 import { useArticleStore, type ArticleUpdate } from '@/stores/articleStore';
 import { useArticleStudioUi } from '@/stores/articleStudioUiStore';
-import { STOCK } from '@/editor/templates/helpers';
+import { STOCK } from '@/lib/stockImages';
 import type { Article } from '@/types/article';
 
 const CLIENT_TOOLS = new Set([

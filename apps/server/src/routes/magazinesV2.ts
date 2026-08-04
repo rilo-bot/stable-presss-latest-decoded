@@ -472,7 +472,11 @@ router.post('/issues/upload', async (req, res) => {
   // Key extension follows the mime so the worker can tell PDF/DOCX/image apart.
   // Persist the key up front so confirm-upload reads it back (never reconstructs
   // a hardcoded 'source.pdf', which broke DOCX/image imports).
-  const key = `magazinesV2/${id}/source.${sourceExtForMime(contentType)}`;
+  //
+  // Under `public/` like every other upload in the product — one prefix, no
+  // per-path exceptions. Note what that means here: the imported source file is
+  // readable by anyone with its URL, where previously only this API could fetch it.
+  const key = `${storage.PUBLIC_PREFIX}magazinesV2/${id}/source.${sourceExtForMime(contentType)}`;
   await db.collection(COL.issues).updateOne(id, {
     sourceFile: { key, url: '', originalName: filename.slice(0, 200), mimeType: contentType, size: 0, pageCount: 0 },
     updatedAt: now,
@@ -496,6 +500,11 @@ router.post('/issues/:id/confirm-upload', async (req, res) => {
   }
   // The key (with its correct extension) was persisted at /issues/upload — use
   // it rather than reconstructing 'source.pdf' (which mis-keyed DOCX/images).
+  //
+  // The fallback stays on the OLD un-prefixed key on purpose: it only ever fires
+  // for issues created before the key was persisted, and those objects really are
+  // at `magazinesV2/<id>/source.pdf`. Moving it to `public/` would point it at an
+  // object that was never written there.
   const key = (doc.sourceFile as { key?: string } | undefined)?.key || `magazinesV2/${doc._id}/source.pdf`;
   let head: { contentLength: number; contentType: string };
   try {

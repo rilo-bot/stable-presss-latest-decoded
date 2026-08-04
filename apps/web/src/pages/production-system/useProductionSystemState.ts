@@ -22,7 +22,6 @@ import type { Move } from '@/lib/workflow';
 import { useArticleStore } from '@/stores/articleStore';
 import { useAuthStore } from '@/stores/authStore';
 import { useIssueStore } from '@/stores/issueStore';
-import { useMagazineStore } from '@/stores/magazineStore';
 import { useStaffStore } from '@/stores/staffStore';
 import { useStoryStudioUi } from '@/stores/storyStudioUiStore';
 import { ARTICLE_STATUSES } from '@/types/article';
@@ -56,15 +55,6 @@ export function useProductionSystemState() {
   const [editorTab, setEditorTab] = useState<EditorTab>('review-queue');
   const [assignDialogArticle, setAssignDialogArticle] = useState<Article | null>(null);
   const [assignNote, setAssignNote] = useState('');
-  const [galleryOpen, setGalleryOpen] = useState(false);
-
-  // Magazines / published editions.
-  const magazines = useMagazineStore((s) => s.summaries);
-  const createMagazine = useMagazineStore((s) => s.createMagazine);
-  const deleteMagazine = useMagazineStore((s) => s.deleteMagazine);
-  const loadMagazine = useMagazineStore((s) => s.loadMagazine);
-  const fetchMagazines = useMagazineStore((s) => s.fetchMagazines);
-  const buildIssuePayload = useMagazineStore((s) => s.buildIssuePayload);
 
   // Load the newsroom's stories on mount. The store guards against duplicate
   // fetches, so this is a no-op if a public page already populated it — but it's
@@ -73,34 +63,21 @@ export function useProductionSystemState() {
   useEffect(() => {
     fetchArticles();
   }, [fetchArticles]);
-  useEffect(() => {
-    fetchMagazines();
-  }, [fetchMagazines]);
 
+  // Published bulletin editions, for the Overview counts. READ ONLY.
+  //
+  // The v1 magazine builder's whole draft surface used to live here too —
+  // `magazines`, `createMagazine`, `deleteMagazine`, `loadMagazine`,
+  // `buildIssuePayload`, a `galleryOpen` flag for the template picker, and three
+  // edition handlers (`handleUpdateEdition` / `handleUnpublishEdition` /
+  // `handleDeleteEdition`) that republished a snapshot by re-uploading the local
+  // draft. The Magazine Builder owns all of that now: it manages its own drafts on
+  // its own screen and publishes server-side, so nothing here needs to write.
   const magIssues = useIssueStore((s) => s.issues);
   const fetchIssues = useIssueStore((s) => s.fetchIssues);
-  const republishIssue = useIssueStore((s) => s.republish);
-  const unpublishIssue = useIssueStore((s) => s.unpublish);
-  const removeIssue = useIssueStore((s) => s.deleteIssue);
   useEffect(() => {
     fetchIssues({ includeUnpublished: true });
   }, [fetchIssues]);
-
-  const handleUpdateEdition = async (magId: string, issue: { id: string; scope: 'full' | 'selected' }) => {
-    // Pull the latest draft into cache so the snapshot reflects current content.
-    await loadMagazine(magId);
-    const payload = buildIssuePayload(magId, issue.scope) ?? undefined;
-    if (await republishIssue(issue.id, payload)) {
-      toast.success(payload ? 'Edition updated from the current draft.' : 'Edition republished.');
-    }
-  };
-  const handleUnpublishEdition = async (id: string) => {
-    if (await unpublishIssue(id)) toast.success('Edition hidden from the public Bulletins page.');
-  };
-  const handleDeleteEdition = async (id: string) => {
-    if (!window.confirm('Delete this published edition permanently? This cannot be undone.')) return;
-    if (await removeIssue(id)) toast.success('Edition deleted.');
-  };
 
   // Team management. Role grant/revoke goes through the roles API (slugs); this
   // store keeps the roster and the invite-by-email flow.
@@ -348,10 +325,6 @@ export function useProductionSystemState() {
     );
   }, [articles, searchQuery, isContributor, currentUser?.displayName]);
 
-  // "New Magazine" opens the template gallery; picking one assembles its pages
-  // and drops into the same builder route.
-  const handleNewMagazine = () => setGalleryOpen(true);
-
   return {
     // identity / capability
     currentUser, roleLabel, accentColor, isContributor, isEditor,
@@ -370,9 +343,7 @@ export function useProductionSystemState() {
     editorTab, setEditorTab,
     assignDialogArticle, setAssignDialogArticle, assignNote, setAssignNote,
     // magazines
-    magazines, magIssues, galleryOpen, setGalleryOpen,
-    createMagazine, deleteMagazine, handleNewMagazine,
-    handleUpdateEdition, handleUnpublishEdition, handleDeleteEdition,
+    magIssues,
     // team
     teamStaff, teamPending, teamLoading, fetchTeam,
     teamEmail, setTeamEmail, teamRole, setTeamRole, teamBusy,

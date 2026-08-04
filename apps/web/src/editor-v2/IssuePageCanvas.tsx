@@ -13,8 +13,8 @@
 // ---------------------------------------------------------------------------
 
 import type { CSSProperties } from 'react';
-import { sanitizeRichText } from '@/editor/lib/sanitize';
-import { resolveIcon } from '@/editor/templates/iconRegistry';
+import { sanitizeRichText } from '@/lib/htmlInline';
+import { resolveIcon } from '@/lib/iconRegistry';
 import type { IssuePageData, MagazineElement } from './model';
 import { pctRect, fontSizeCqw } from './geometry';
 import { QrBlock } from './QrBlock';

@@ -198,7 +198,13 @@ export default function ArticleDetail() {
   const paragraphs = splitIntoParagraphs(article.summary ?? '');
 
   // Premium gate (entitlement axis) — independent of roles. Defaults to free/ungated.
-  const locked = !canViewPremium(currentUser, article.minTier);
+  //
+  // `article.locked` is the server saying it already cut the body down to its
+  // teaser (lib/paywall.ts); the local check is the same decision made from the
+  // same two inputs. EITHER is enough to show the gate, so the two can never
+  // combine into a truncated story rendered as if it were whole — which is what
+  // a bare client-side check would have produced if the tiers ever disagreed.
+  const locked = article.locked === true || !canViewPremium(currentUser, article.minTier);
 
   return (
     <div className="min-h-screen bg-background">

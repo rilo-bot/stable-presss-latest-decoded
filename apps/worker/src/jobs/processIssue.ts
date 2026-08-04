@@ -157,7 +157,11 @@ async function processImageIssue(issue: Doc, src: { key?: string; mimeType?: str
 
   const raw = await storage.downloadObject(src.key!);
   const stored = await toStoredImportImage(raw);
-  const key = `magazinesV2/${issueId}/${crypto.randomUUID()}-source.${stored.ext}`;
+  // Under `public/` like every other upload, so the bucket serves the page image
+  // directly. It was the one write in the magazine pipeline that wasn't: the key
+  // sat outside `public/`, which made publicUrl() hand back an /api/uploads/file
+  // proxy URL and pushed every view of an imported image page through the API.
+  const key = `${storage.PUBLIC_PREFIX}magazinesV2/${issueId}/${crypto.randomUUID()}-source.${stored.ext}`;
   await storage.uploadObject({ key, contentType: stored.contentType, body: stored.buffer });
   const url = storage.publicUrl(key);
 

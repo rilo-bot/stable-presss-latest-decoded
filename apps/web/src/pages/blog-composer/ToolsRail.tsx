@@ -13,7 +13,7 @@
 import { useState } from 'react';
 import { cn } from '@/lib/utils';
 import { describePlacement } from '@/blog/placement';
-import { mediaById } from '@/types/blog';
+import { allBlocks, findBlock, mediaById } from '@/types/blog';
 import { useComposerStore } from './composerStore';
 import { Field, RailSection, Seg, TextArea, TextInput, inputCls } from './controls';
 import type { Block, Placement } from '@/types/blog';
@@ -550,8 +550,13 @@ function PostFields({ onPickCover }: { onPickCover: () => void }) {
         />
       </Field>
 
+      {/* Counts the WHOLE post. `blog.blocks.length` alone described only the
+          writing above the first part, while the reading time beside it already
+          counted everything — so the line disagreed with itself. */}
       <p className="mt-1 text-[11px] text-muted-foreground/70">
-        {blog.readingTime} min read · {blog.blocks.length} blocks · {blog.media.length} images
+        {blog.readingTime} min read · {allBlocks(blog).length} blocks · {blog.media.length} images
+        {(blog.parts?.length ?? 0) > 0 &&
+          ` · ${blog.parts!.length} part${blog.parts!.length === 1 ? '' : 's'}`}
       </p>
     </>
   );
@@ -567,7 +572,10 @@ export interface RefOptions {
 
 export function ToolsRail({ refs, onPickCover }: { refs: RefOptions; onPickCover: () => void }) {
   const { blog, selectedId, select, duplicate, removeBlock } = useComposerStore();
-  const block = blog?.blocks.find((b) => b.id === selectedId);
+  // Anywhere in the post, parts included. Searching only `blog.blocks` meant
+  // selecting a picture inside a part showed no settings for it at all — the
+  // panel simply didn't appear, which reads as the rail being broken.
+  const block = blog ? findBlock(blog, selectedId) : undefined;
 
   return (
     // Sticky so the settings stay in view while the body scrolls past them —

@@ -1,51 +1,80 @@
 /**
- * Public read-only magazine viewer (/bulletins/:id). Fetches a published issue
- * from the server and renders its pages using the exact same locked page-template
- * components as the editor, with editing disabled — so readers everywhere see the
- * magazine with its real design. Issues are self-contained (images referenced by
- * URL inside the page content), so no access to the editor's draft store is needed.
+ * Public read-only magazine viewer (/bulletins/:id).
+ *
+ * Renders a published issue with `IssuePageCanvas` — the SAME canvas the Magazine
+ * Builder editor and the Puppeteer PDF export use, so what a reader sees, what the
+ * designer built, and what prints are one renderer with no drift.
+ *
+ * An issue is self-contained: every image is referenced by URL inside the frozen
+ * element payload, so the reader needs no access to the draft.
+ *
+ * A second renderer used to live here for v1 template issues — a
+ * `PAGE_COMPONENTS[page.pageType]` lookup inside an `EditorProvider`, chosen off
+ * the issue's `builder` discriminator. The v1 template builder is gone, and so is
+ * that branch.
  */
 
-import { useEffect, useRef, useState, useMemo } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { useParams, useNavigate, Link } from 'react-router-dom';
 import { useIssueStore } from '@/stores/issueStore';
-import { useEditorFonts } from '@/editor/fonts/useEditorFonts';
-import { EditorProvider } from '@/editor/EditorContext';
-import { PAGE_COMPONENTS } from '@/editor/templates/registry';
-import { PAGE_W, PAGE_H } from '@/editor/templates/parts';
+import { useEditorFonts } from '@/lib/fonts/useEditorFonts';
 import { IssuePageCanvas } from '@/editor-v2/IssuePageCanvas';
 import type { IssuePageData } from '@/editor-v2/model';
-import type { MagazinePage } from '@/types/magazine';
 import { apiUrl } from '@/lib/api';
 import { useAuthStore } from '@/stores/authStore';
 import { ArrowLeft, BookOpen, Download, Loader2 } from 'lucide-react';
 import { toast } from 'sonner';
 
-function ReadonlyPage({ page, maxWidth }: { page: MagazinePage; maxWidth: number }) {
-  const Comp = PAGE_COMPONENTS[page.pageType];
-  const ctx = useMemo(() => ({ mode: 'view' as const, viewContent: page.content }), [page.content]);
-  const scale = Math.min(1, maxWidth / PAGE_W);
-  return (
-    <div
-      style={{ width: PAGE_W * scale, height: PAGE_H * scale }}
-      className="bulletin-print-page shadow-[0_10px_40px_rgba(0,0,0,0.18)] ring-1 ring-black/10"
-    >
-      <div style={{ width: PAGE_W, height: PAGE_H, transform: `scale(${scale})`, transformOrigin: 'top left' }}>
-        <EditorProvider value={ctx}>
-          <Comp />
-        </EditorProvider>
-      </div>
-    </div>
-  );
+/**
+ * Fallback page dims when an issue somehow carries none — the canonical generated
+ * page (US Letter portrait at 150 DPI), matching PAGE_W/PAGE_H in the server's
+ * magazineV2 config. Uploaded pages carry whatever size the extractor produced, so
+ * NOTHING here may assume a fixed sheet.
+ */
+const FALLBACK_W = 1275;
+const FALLBACK_H = 1650;
+
+/**
+ * DPI the page pixels are measured at. Generated pages are US Letter at 150 DPI
+ * (1275×1650), and the PDF extractor rasterises uploads at the same 150
+ * (`RENDER_DPI` in apps/worker/src/lib/pdf.ts), so one constant converts either
+ * kind of page to a physical size.
+ *
+ * This matters because a browser treats a bare `px` as a CSS pixel — 1/96 inch —
+ * so printing a 1275px-wide box lands on a 13.3-inch sheet. Divide by 150 instead
+ * and it lands on the 8.5 inches the page was designed as.
+ */
+const RASTER_DPI = 150;
+
+/** A page's own pixel box, defaulting only if the snapshot is missing dims. */
+function pageBox(page: IssuePageData | undefined): { w: number; h: number } {
+  return {
+    w: Number(page?.width) > 0 ? Number(page!.width) : FALLBACK_W,
+    h: Number(page?.height) > 0 ? Number(page!.height) : FALLBACK_H,
+  };
 }
 
-// Magazine Builder v2 pages are free-form (absolute-positioned elements in the
-// page's own canonical dims). The v2 canvas is width-responsive via container
-// queries, so we just give the wrapper a width and its height resolves from the
-// page aspect — the same renderer the v2 editor and PDF use, so zero drift.
-function ReadonlyV2Page({ page, maxWidth }: { page: IssuePageData; maxWidth: number }) {
+/** The page's PHYSICAL size, for `@page` and the print box. */
+function pageInches(page: IssuePageData | undefined): { w: string; h: string } {
+  const box = pageBox(page);
+  return { w: `${(box.w / RASTER_DPI).toFixed(4)}in`, h: `${(box.h / RASTER_DPI).toFixed(4)}in` };
+}
+
+// Pages are free-form: absolutely-positioned elements in the page's own canonical
+// dims. The canvas is width-responsive via container queries, so on screen the
+// wrapper only needs a width and its height resolves from the page's aspect.
+//
+// In PRINT it needs both, from THIS page — see the @media print block below for
+// why a shared constant was wrong.
+function ReadonlyPage({ page, maxWidth }: { page: IssuePageData; maxWidth: number }) {
+  const inches = pageInches(page);
   return (
-    <div className="bulletin-print-page shadow-[0_10px_40px_rgba(0,0,0,0.18)] ring-1 ring-black/10" style={{ width: maxWidth }}>
+    <div
+      className="bulletin-print-page shadow-[0_10px_40px_rgba(0,0,0,0.18)] ring-1 ring-black/10"
+      // `--page-w/h` are consumed only inside @media print; on screen the explicit
+      // width governs and the canvas resolves its own height from the page aspect.
+      style={{ width: maxWidth, ['--page-w' as string]: inches.w, ['--page-h' as string]: inches.h }}
+    >
       <IssuePageCanvas page={page} />
     </div>
   );
@@ -75,7 +104,10 @@ export default function BulletinViewer() {
   }, [id, fetchIssue]);
 
   const containerRef = useRef<HTMLDivElement>(null);
-  const [maxWidth, setMaxWidth] = useState(PAGE_W);
+  // Never scale a page UP past its own canonical width — that would enlarge the
+  // raster of an uploaded page. Seeded from the fallback and clamped to the real
+  // first page once the issue arrives.
+  const [maxWidth, setMaxWidth] = useState(FALLBACK_W);
 
   // PDF export: the server renders this very route in headless Chromium and
   // streams back a real A4 PDF (see GET /api/issues/:id/pdf). We just fetch it
@@ -115,12 +147,15 @@ export default function BulletinViewer() {
   useEffect(() => {
     const el = containerRef.current;
     if (!el) return;
-    const measure = () => setMaxWidth(Math.min(PAGE_W, el.clientWidth - 4));
+    const cap = pageBox(issue?.pages?.[0]).w;
+    const measure = () => setMaxWidth(Math.min(cap, el.clientWidth - 4));
     measure();
     const ro = new ResizeObserver(measure);
     ro.observe(el);
     return () => ro.disconnect();
-  }, [status]);
+    // `cap` comes from the first page, so re-measure when the issue itself arrives
+    // — not only on a status change, which is when this last read a constant.
+  }, [status, issue?.pages]);
 
   // Signal print-readiness for the server-side renderer: wait for the issue to
   // be rendered, web fonts to load, and every page image to finish.
@@ -185,12 +220,35 @@ export default function BulletinViewer() {
           screen chrome and scaling removed. These are what the "Download PDF" button
           uses — the server prints this exact route in headless Chromium — and they
           also apply to native browser print (Ctrl+P). */}
+      {/*
+        Print sizing comes from EACH PAGE's own box, in INCHES (the `--page-w/h`
+        custom properties set by ReadonlyPage), with `@page` sized to match.
+
+        Two bugs were fixed here, and they compounded:
+
+        1. WRONG ASPECT. This was a pair of hard-coded constants — 794×1123, the v1
+           template builder's A4-at-96dpi page — applied to every page of every
+           issue, beside `@page { size: A4 portrait }`. Exactly right for v1, wrong
+           for everything this builder makes: a generated page is 1275×1650 (US
+           Letter at 150 DPI, aspect 0.773) and an uploaded page is whatever the
+           extractor rasterised. Forcing 0.773 into 0.707 left dead sheet under
+           every page, and `overflow: hidden` clipped whatever an upload put there.
+
+        2. WRONG PHYSICAL SIZE. Sizing the box in `px` is not the fix on its own: a
+           browser reads bare px as CSS px (1/96in), so a 1275px page prints on a
+           13.3-inch sheet — right shape, unusable paper. Dividing by the 150 DPI
+           the pixels were measured at gives the 8.5×11in the page was designed as.
+
+        The element positions inside the canvas are percentages and its font sizes
+        are `cqw`, so both scale with the container — sizing it in inches rescales
+        the whole page cleanly rather than reflowing it.
+      */}
       <style>{`
         @media print {
-          @page { size: A4 portrait; margin: 0; }
+          @page { size: var(--page-w, 8.5in) var(--page-h, 11in); margin: 0; }
           html, body { background: #fff !important; }
           .bulletin-print-container { max-width: none !important; margin: 0 !important; padding: 0 !important; gap: 0 !important; display: block !important; }
-          .bulletin-print-page { width: ${PAGE_W}px !important; height: ${PAGE_H}px !important; box-shadow: none !important; overflow: hidden !important; }
+          .bulletin-print-page { width: var(--page-w) !important; height: var(--page-h) !important; box-shadow: none !important; overflow: hidden !important; }
           .bulletin-print-page > div { transform: none !important; }
           .bulletin-print-page:not(:last-child) { break-after: page; page-break-after: always; }
         }
@@ -221,13 +279,11 @@ export default function BulletinViewer() {
         </div>
       </div>
 
-      {/* Pages — v2 uses the free-form canvas; v1 uses the template renderer. */}
+      {/* Pages — one renderer, shared with the editor and the PDF export. */}
       <div ref={containerRef} className="bulletin-print-container mx-auto flex max-w-[820px] flex-col items-center gap-6 px-3 py-8">
-        {issue.builder === 'v2'
-          ? (issue.pages as unknown as IssuePageData[]).map((p) => (
-              <ReadonlyV2Page key={p.index} page={p} maxWidth={maxWidth} />
-            ))
-          : issue.pages.map((p) => <ReadonlyPage key={p.id} page={p} maxWidth={maxWidth} />)}
+        {issue.pages.map((p) => (
+          <ReadonlyPage key={p.index} page={p} maxWidth={maxWidth} />
+        ))}
       </div>
     </div>
   );

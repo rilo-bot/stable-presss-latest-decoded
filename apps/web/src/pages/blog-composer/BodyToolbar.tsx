@@ -29,7 +29,7 @@ import {
 
 import { cn } from '@/lib/utils';
 import { RICH_TEXT_KINDS, TEXT_KINDS, convertBlock } from '@/blog/factories';
-import { useComposerStore } from './composerStore';
+import { useComposerStore, type ContainerId } from './composerStore';
 import type { TextKindTarget } from '@/blog/factories';
 import type { Block } from '@/types/blog';
 
@@ -93,7 +93,21 @@ function Sep() {
   return <span className="mx-1 h-4 w-px flex-shrink-0 bg-border/70" aria-hidden="true" />;
 }
 
-export function BodyToolbar({ onAddImage }: { onAddImage: () => void }) {
+export function BodyToolbar({
+  onAddImage,
+  containerId = null,
+}: {
+  onAddImage: () => void;
+  /**
+   * Which writing surface this strip governs: the post body (`null`) or one part.
+   *
+   * There is a toolbar per surface, and the selection is a single block id for the
+   * whole post — so a toolbar that ignored this would light up whenever ANY block
+   * were selected, and pressing H2 in part two's toolbar would retype a paragraph
+   * in the body. Scoping it means only the strip above the caret is live.
+   */
+  containerId?: ContainerId;
+}) {
   const { blog, selectedId, replaceBlock } = useComposerStore();
   const [marks, setMarks] = useState({ bold: false, italic: false, underline: false });
 
@@ -106,7 +120,12 @@ export function BodyToolbar({ onAddImage }: { onAddImage: () => void }) {
     return () => document.removeEventListener('selectionchange', onSel);
   }, []);
 
-  const selected: Block | undefined = blog?.blocks.find((b) => b.id === selectedId);
+  // Only a block in THIS container counts as selected here.
+  const ownBlocks: Block[] =
+    containerId === null
+      ? blog?.blocks ?? []
+      : blog?.parts?.find((p) => p.id === containerId)?.blocks ?? [];
+  const selected: Block | undefined = ownBlocks.find((b) => b.id === selectedId);
 
   const exec = useCallback((command: string, value?: string) => {
     try {
