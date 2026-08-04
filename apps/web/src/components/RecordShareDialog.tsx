@@ -62,7 +62,7 @@ export function RecordShareDialog({
     let cancelled = false;
     void (async () => {
       try {
-        const res = await authFetch('/api/magazines/staff-directory');
+        const res = await authFetch('/api/staff/directory');
         if (!res.ok) return;
         const list = (await res.json()) as StaffOption[];
         if (!cancelled) setDirectory(Array.isArray(list) ? list : []);

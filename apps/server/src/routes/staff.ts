@@ -15,7 +15,7 @@ import { Router } from 'express'
 import { db } from '../lib/db.js'
 import { attachAccount } from '../lib/auth.js'
 import { withIdentityDefaults } from '../lib/identity.js'
-import { canManageTeam, canViewTeam } from '../lib/rbac.js'
+import { canAccessNewsroom, canManageTeam, canViewTeam } from '../lib/rbac.js'
 import {
   SUPERADMIN_SLUG,
   checkSuperadminLoss,
@@ -40,6 +40,36 @@ const WEB_PUBLIC_URL = (process.env.WEB_PUBLIC_URL ?? 'http://localhost:5173').r
 const router = Router()
 
 router.use(attachAccount)
+
+// ── Share pickers: who can I share something with? ───────────────────────────
+// Registered BEFORE the `team.*` gate below on purpose. This is not roster
+// administration — it is the name/email list a share dialog needs to offer
+// colleagues, so the only question is "are you staff". Gating it behind
+// `team.view` would leave a contributor unable to share their own magazine.
+//
+// It returns the three fields a picker renders and NOTHING else — no role
+// slugs, no invite state, no permission enumeration.
+//
+// This replaces `GET /api/magazines/staff-directory`, which disappeared with the
+// v1 magazines router; both share dialogs kept calling that dead path and, with
+// their fetch errors swallowed, rendered an empty picker as "everyone already
+// has access".
+router.get('/directory', async (req, res) => {
+  if (!canAccessNewsroom(req.account)) {
+    res.status(403).json({ error: 'Staff access required.' })
+    return
+  }
+  // `staffRoleSlug != null` IS "is staff" and it is indexed, so this reads the
+  // staff population rather than scanning every reader.
+  const users = await db.collection('users').find({ staffRoleSlug: { $ne: null } })
+  const staff = users
+    .map((u) => withIdentityDefaults({ id: u._id, ...u }))
+    .filter((u) => u.staffRoleSlug !== null)
+    .map((u) => ({ userId: u.id, displayName: u.displayName, email: u.email }))
+    .sort((a, b) => (a.displayName || a.email).localeCompare(b.displayName || b.email))
+  res.json(staff)
+})
+
 // Roster access is `team.*`, not `roles.manage` — inviting someone is a different
 // power from defining what a role may do. See routes/roles.ts.
 //

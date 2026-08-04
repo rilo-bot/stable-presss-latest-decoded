@@ -17,14 +17,36 @@ export function ShareDialog({ onClose }: { onClose: () => void }) {
   const refreshIssue = useEditorStore((s) => s.refreshIssue);
 
   const [directory, setDirectory] = useState<StaffEntry[]>([]);
+  // The picker used to swallow its fetch error and fall through to "everyone
+  // already has access" — which was a lie whenever the request simply failed.
+  // Load state is tracked so an empty list can say WHY it's empty.
+  const [loadState, setLoadState] = useState<'loading' | 'ready' | 'error'>('loading');
+  const [loadError, setLoadError] = useState('');
+  const [reloadKey, setReloadKey] = useState(0);
   const [selectedEmail, setSelectedEmail] = useState('');
   const [pageMode, setPageMode] = useState<'all' | 'pick'>('all');
   const [picked, setPicked] = useState<Set<string>>(new Set());
   const [busy, setBusy] = useState(false);
 
   useEffect(() => {
-    api.staffDirectory().then(setDirectory).catch(() => {});
-  }, []);
+    let cancelled = false;
+    setLoadState('loading');
+    api
+      .staffDirectory()
+      .then((list) => {
+        if (cancelled) return;
+        setDirectory(Array.isArray(list) ? list : []);
+        setLoadState('ready');
+      })
+      .catch((e) => {
+        if (cancelled) return;
+        setLoadError(e instanceof Error ? e.message : 'Could not load the staff list.');
+        setLoadState('error');
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [reloadKey]);
 
   const collaborators = issue?.collaborators ?? [];
 
@@ -121,8 +143,26 @@ export function ShareDialog({ onClose }: { onClose: () => void }) {
 
           {/* Invite */}
           <p className="mb-1.5 text-[10px] font-bold uppercase tracking-[0.12em] text-white/40">Invite a staff member</p>
-          {candidates.length === 0 ? (
-            <p className="text-xs text-white/45">All staff members already have access to this magazine.</p>
+          {loadState === 'loading' ? (
+            <p className="flex items-center gap-1.5 text-xs text-white/45">
+              <Loader2 size={12} className="animate-spin" /> Loading staff…
+            </p>
+          ) : loadState === 'error' ? (
+            <div className="text-xs text-white/60">
+              <p className="text-red-300">Couldn&apos;t load the staff list{loadError ? ` — ${loadError}` : '.'}</p>
+              <button
+                onClick={() => setReloadKey((k) => k + 1)}
+                className="mt-1.5 rounded-sm border border-white/15 px-2 py-1 text-[11px] text-white/70 hover:bg-white/10"
+              >
+                Try again
+              </button>
+            </div>
+          ) : candidates.length === 0 ? (
+            <p className="text-xs text-white/45">
+              {directory.length <= 1
+                ? "You're the only staff member on the team — invite colleagues from Team settings first."
+                : 'Every staff member already has access to this magazine.'}
+            </p>
           ) : (
             <>
               <select
