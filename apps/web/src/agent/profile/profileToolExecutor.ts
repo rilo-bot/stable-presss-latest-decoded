@@ -10,7 +10,7 @@ import { useHorseStore } from '@/stores/horseStore';
 import { usePartyStore } from '@/stores/partyStore';
 import { useHorsePartyLinkStore } from '@/stores/horsePartyLinkStore';
 import { ROLE_BINDINGS } from '@/lib/profile/roleMap';
-import { STOCK } from '@/editor/templates/helpers';
+import { STOCK } from '@/lib/stockImages';
 import { useProfileAgentUi } from '@/stores/profileAgentUiStore';
 import type { Horse } from '@/types/horse';
 import type { Party } from '@/types/party';

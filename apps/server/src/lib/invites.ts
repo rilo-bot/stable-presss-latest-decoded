@@ -11,12 +11,22 @@
 // its SHA-256 hash is, exactly like an OTP. A database leak therefore cannot be
 // replayed into an account, and nobody with database access can mint a session.
 //
-// The token is NOT a credential on its own. It carries the invite CONTEXT
-// (which email, which role) to a friendly page; the recipient still has to
-// prove they own the mailbox via the normal OTP flow before anything is
-// granted. So a forwarded or leaked link cannot be redeemed by whoever finds
-// it, and the role is applied by the existing pendingStaffGrants path at
-// sign-in rather than by clicking a link.
+// THE TOKEN IS A CREDENTIAL. It was not always: the flow used to email a link
+// that only carried context, then email a SECOND message with a 6-digit code to
+// prove the recipient owned the mailbox. That was two emails and four steps to
+// join a newsroom you had been invited to, and the code established the same
+// fact the link already had — it was sent to that address and nowhere else. So
+// `POST /api/invites/:token/accept` now redeems directly (routes/invites.ts).
+//
+// What holds that up:
+//   - 32 bytes of entropy, so the token is neither guessable nor enumerable
+//   - SINGLE USE. Redemption deletes every invite row for the address, so a
+//     forwarded link is spent and a sibling invite cannot change the role after
+//     the fact.
+//   - the 14-day expiry below is now a real bound on a live credential, not a
+//     cosmetic one — shorten it here if that window ever feels too wide.
+//   - redemption requires a user action on the page, never a bare page load;
+//     see the note in routes/invites.ts on mail scanners.
 // ---------------------------------------------------------------------------
 
 import crypto from 'crypto'

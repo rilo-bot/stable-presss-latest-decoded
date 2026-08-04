@@ -1,6 +1,6 @@
 import { useState, useMemo, useEffect } from 'react'
 import { useNavigate } from 'react-router-dom';
-import { Plus, Search, User, Edit, Trash, Users, MapPin, Globe, CalendarDays, ExternalLink } from 'lucide-react';
+import { Plus, Search, User, Edit, Trash, Users, MapPin, Globe, CalendarDays } from 'lucide-react';
 import { motion } from 'framer-motion';
 import { toast } from 'sonner';
 import { cn } from '@/lib/utils';
@@ -16,6 +16,8 @@ import {
 } from '@/components/ui/dialog';
 import { PartyForm } from '@/components/PartyForm';
 import { usePartyStore } from '@/stores/partyStore';
+import { useAuthStore } from '@/stores/authStore';
+import { isStaff, canManageParty } from '@/rbac/can';
 import type { Party, PartyRole } from '@/types/party';
 import { PARTY_ROLE_LABELS } from '@/types/party';
 
@@ -31,7 +33,7 @@ const ROLE_COLORS: Record<PartyRole, string> = {
 };
 
 /* ── Party card ─────────────────────────────────── */
-function PartyCard({ party, onEdit, onDelete, onOpen }: { party: Party; onEdit: () => void; onDelete: () => void; onOpen: () => void }) {
+function PartyCard({ party, onEdit, onDelete, onOpen, canManage }: { party: Party; onEdit: () => void; onDelete: () => void; onOpen: () => void; canManage: boolean }) {
   const currentYear = new Date().getFullYear();
   const yearsActive = party.started_year ? currentYear - party.started_year : null;
 
@@ -51,23 +53,32 @@ function PartyCard({ party, onEdit, onDelete, onOpen }: { party: Party; onEdit: 
             <User size={36} strokeWidth={1.25} />
           </div>
         )}
-        {/* Action buttons (visible on hover) */}
-        <div className="absolute top-2 right-2 flex gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
-          <button
-            onClick={(e) => { e.stopPropagation(); onEdit(); }}
-            aria-label={`Edit ${party.name}`}
-            className="h-7 w-7 rounded-full bg-card/90 text-foreground flex items-center justify-center shadow hover:bg-primary hover:text-primary-foreground transition-colors"
-          >
-            <Edit size={13} />
-          </button>
-          <button
-            onClick={(e) => { e.stopPropagation(); onDelete(); }}
-            aria-label={`Delete ${party.name}`}
-            className="h-7 w-7 rounded-full bg-card/90 text-foreground flex items-center justify-center shadow hover:bg-destructive hover:text-destructive-foreground transition-colors"
-          >
-            <Trash size={13} />
-          </button>
-        </div>
+        {/* Action buttons (visible on hover).
+            /parties is a PUBLIC route, and these rendered unconditionally: an
+            anonymous visitor hovering a card got an edit pencil and a delete bin,
+            and clicking the bin produced a dialog reading "This will permanently
+            remove X from Stable Press. This action cannot be undone." — before a
+            silent 403 from partyScopedWriteGate. `canManageParty` is the browser
+            mirror of that gate, so the buttons now appear exactly when the write
+            would be allowed. */}
+        {canManage && (
+          <div className="absolute top-2 right-2 flex gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
+            <button
+              onClick={(e) => { e.stopPropagation(); onEdit(); }}
+              aria-label={`Edit ${party.name}`}
+              className="h-7 w-7 rounded-full bg-card/90 text-foreground flex items-center justify-center shadow hover:bg-primary hover:text-primary-foreground transition-colors"
+            >
+              <Edit size={13} />
+            </button>
+            <button
+              onClick={(e) => { e.stopPropagation(); onDelete(); }}
+              aria-label={`Delete ${party.name}`}
+              className="h-7 w-7 rounded-full bg-card/90 text-foreground flex items-center justify-center shadow hover:bg-destructive hover:text-destructive-foreground transition-colors"
+            >
+              <Trash size={13} />
+            </button>
+          </div>
+        )}
       </div>
 
       {/* Card body */}
@@ -174,85 +185,17 @@ const FILTER_ROLES: Array<{ value: PartyRole | 'all'; label: string }> = [
   { value: 'personnel', label: 'Personnel' },
 ];
 
-/* ── Google Map section ──────────────────────────── */
-function PartiesMapSection() {
-  return (
-    <div className="mt-14 mb-2">
-      {/* Section header */}
-      <div className="flex items-center justify-between mb-4">
-        <div className="flex items-center gap-2.5">
-          <div className="w-8 h-8 rounded-md bg-primary/10 flex items-center justify-center flex-shrink-0">
-            <MapPin size={15} className="text-primary" />
-          </div>
-          <div>
-            <h2 className="font-[family-name:var(--font-display)] text-lg font-bold text-foreground leading-tight">
-              Parties Map
-            </h2>
-            <p className="text-[11px] text-muted-foreground mt-0.5">
-              Explore the global racing community
-            </p>
-          </div>
-        </div>
-        <a
-          href="https://www.google.com/maps"
-          target="_blank"
-          rel="noopener noreferrer"
-          className="flex items-center gap-1.5 text-[11px] uppercase tracking-[0.08em] font-semibold text-muted-foreground hover:text-primary transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring rounded"
-          aria-label="Open Google Maps"
-        >
-          <ExternalLink size={12} />
-          Open in Maps
-        </a>
-      </div>
-
-      {/* Map embed */}
-      <div className="rounded-md border border-border/60 overflow-hidden shadow-sm">
-        {/* Brand stripe at top */}
-        <div className="h-1 w-full bg-primary" />
-
-        <div className="relative">
-          {/* Overlay badge */}
-          <div className="absolute top-3 left-3 z-10 pointer-events-none">
-            <div className="px-3 py-1.5 bg-card/95 backdrop-blur-sm border border-border rounded-sm shadow-sm flex items-center gap-2">
-              <MapPin size={12} className="text-primary flex-shrink-0" />
-              <span className="font-[family-name:var(--font-display)] text-xs font-bold text-foreground">
-                Racing Connections — Worldwide
-              </span>
-            </div>
-          </div>
-
-          <iframe
-            title="Stable Press — Parties Map"
-            src="https://maps.google.com/maps?q=thoroughbred+racing&t=m&z=3&ie=UTF8&iwloc=B&output=embed"
-            width="100%"
-            height="480"
-            loading="lazy"
-            referrerPolicy="no-referrer-when-downgrade"
-            className="block border-0 w-full"
-            style={{ height: '480px' }}
-            aria-label="Google Map showing global racing locations"
-          />
-        </div>
-
-        {/* Footer */}
-        <div className="px-4 py-3 bg-muted/20 border-t border-border/60 flex items-center justify-between gap-3">
-          <p className="text-[11px] text-muted-foreground leading-relaxed">
-            Track where your owners, trainers, jockeys and breeders are based across the globe.
-          </p>
-          <a
-            href="https://www.google.com/maps"
-            target="_blank"
-            rel="noopener noreferrer"
-            className="flex-shrink-0 flex items-center gap-1.5 text-[10px] uppercase tracking-[0.1em] font-semibold text-primary hover:text-primary/80 transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring rounded"
-          >
-            <ExternalLink size={10} />
-            Full Map
-          </a>
-        </div>
-      </div>
-    </div>
-  );
-}
+/* Removed: PartiesMapSection.
+ *
+ * A Google Maps iframe whose entire query was `q=thoroughbred+racing&z=3` — a
+ * generic keyword search of the whole world. It was badged "Racing Connections
+ * — Worldwide" and footed with "Track where your owners, trainers, jockeys and
+ * breeders are based across the globe." It plotted none of them, and could not:
+ * no party id, coordinate or location ever reached it.
+ *
+ * `party.base_location` is real and is already shown on every card. A map of our
+ * people has to be built from that field (geocoded, with a pin per party); until
+ * it is, an embed that looks like one is worse than no map at all. */
 
 /* ── Page ─────────────────────────────────────── */
 export default function Parties() {
@@ -266,6 +209,10 @@ export default function Parties() {
   const parties = usePartyStore((s) => s.parties);
   const removeParty = usePartyStore((s) => s.removeParty);
   const navigate = useNavigate();
+  // Mirrors the server's partyScopedWriteGate so the UI only offers writes that
+  // would be accepted. This page is public — see the note on PartyCard.
+  const currentUser = useAuthStore((s) => s.currentUser);
+  const staff = isStaff(currentUser);
 
   const [query, setQuery] = useState('');
   const [roleFilter, setRoleFilter] = useState<PartyRole | 'all'>('all');
@@ -335,10 +282,15 @@ export default function Parties() {
                 {safeParties.length === 1 ? 'party' : 'parties'} registered
               </span>
             )}
-            <Button onClick={handleAddClick} size="sm" className="gap-1.5">
-              <Plus size={14} />
-              Add Party
-            </Button>
+            {/* Adding a party is staff work; the server only accepts it from a
+                staff account. Offering it to every visitor was a button that
+                could not succeed. */}
+            {staff && (
+              <Button onClick={handleAddClick} size="sm" className="gap-1.5">
+                <Plus size={14} />
+                Add Party
+              </Button>
+            )}
           </div>
         </div>
         <div className="h-px bg-border/60 mt-1 mb-6" />
@@ -393,12 +345,16 @@ export default function Parties() {
           </h2>
           <div className="h-px w-12 mx-auto mb-4" style={{ background: 'hsl(var(--brand-accent))' }} />
           <p className="text-sm text-muted-foreground max-w-sm leading-relaxed italic font-[family-name:var(--font-display)] mb-6">
-            Add owners, trainers, jockeys and other racing connections to build your industry directory.
+            {staff
+              ? 'Add owners, trainers, jockeys and other racing connections to build your industry directory.'
+              : 'Owners, trainers, jockeys and breeders will appear here as the industry directory is built.'}
           </p>
-          <Button onClick={handleAddClick} className="gap-2">
-            <Plus size={15} />
-            Add Your First Party
-          </Button>
+          {staff && (
+            <Button onClick={handleAddClick} className="gap-2">
+              <Plus size={15} />
+              Add Your First Party
+            </Button>
+          )}
         </div>
       ) : filtered.length === 0 ? (
         /* No search results */
@@ -443,15 +399,13 @@ export default function Parties() {
                   onEdit={() => openEdit(party)}
                   onDelete={() => openDelete(party)}
                   onOpen={() => navigate(`/parties/${party.id}`)}
+                  canManage={canManageParty(currentUser, party.id)}
                 />
               </motion.div>
             ))}
           </div>
         </>
       )}
-
-      {/* ── Google Map ── */}
-      <PartiesMapSection />
 
       {/* ── Forms & dialogs ── */}
       <PartyForm

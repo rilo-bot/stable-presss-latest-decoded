@@ -1,5 +1,5 @@
 import { motion } from 'framer-motion';
-import { Users, Calendar, ChevronRight, Clock } from 'lucide-react';
+import { Users, Calendar, ChevronRight, Clock, Trash2 } from 'lucide-react';
 
 import type { EpisodeStatus, DistributionChannel, PodcastEpisode } from '@/types/podcast';
 import { cn } from '@/lib/utils';
@@ -52,9 +52,16 @@ export function StatusPill({ status }: { status: EpisodeStatus }) {
 export function EpisodeCard({
   episode,
   onOpen,
+  onDelete,
 }: {
   episode: PodcastEpisode;
   onOpen: (ep: PodcastEpisode) => void;
+  /**
+   * Omitted when this account cannot delete this episode — the button is absent
+   * rather than disabled, because "you produced it and it isn't live yet" is not
+   * something a tooltip usefully explains. See `canDeleteEpisode`.
+   */
+  onDelete?: (ep: PodcastEpisode) => void;
 }) {
   const guests = episode.guests ?? [];
   const distributionChannels = episode.distributionChannels ?? [];
@@ -123,8 +130,27 @@ export function EpisodeCard({
         )}
 
         <div className="mt-3 flex items-center justify-between">
-          <span className="text-[10px] text-muted-foreground">{episode.host}</span>
-          <ChevronRight size={12} className="text-muted-foreground group-hover:text-primary transition-colors" />
+          <span className="truncate text-[10px] text-muted-foreground">{episode.host}</span>
+          <div className="flex flex-shrink-0 items-center gap-0.5">
+            {onDelete && (
+              <button
+                type="button"
+                aria-label={`Delete ${episode.title || 'this episode'}`}
+                title="Delete episode"
+                // The whole card opens the drawer, so this has to stop the click
+                // from reaching it — otherwise deleting also opens what you just
+                // asked to delete.
+                onClick={(e) => {
+                  e.stopPropagation();
+                  onDelete(episode);
+                }}
+                className="rounded-sm p-1 text-muted-foreground transition-colors hover:bg-destructive/10 hover:text-destructive"
+              >
+                <Trash2 size={12} />
+              </button>
+            )}
+            <ChevronRight size={12} className="text-muted-foreground transition-colors group-hover:text-primary" />
+          </div>
         </div>
       </div>
     </motion.div>

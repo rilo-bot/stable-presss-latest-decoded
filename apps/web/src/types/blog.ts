@@ -243,6 +243,60 @@ export function blockMediaIds(b: Block): string[] {
   return [];
 }
 
+// ── Parts ───────────────────────────────────────────────────────────────────
+
+/**
+ * A titled sub-section of a post — a "sub-blog".
+ *
+ * Mirrors `BlogPart` in the server's blocks.ts. A part is a heading and a body,
+ * and deliberately NOT a nested post: no cover, no slug, no status, no byline.
+ *
+ * What earns it a type rather than being a `heading` block followed by
+ * paragraphs is that a part is the unit a READER answers — each one carries its
+ * own reaction scale on the published page. So it needs an identity that
+ * survives editing: reorder a part or rewrite its prose and `id` stays put,
+ * which is what a stored reaction would be keyed to once reactions have a
+ * collection (docs/EMOJI-ANALYTICS-PLAN.md).
+ *
+ * The body is `Block[]`, the same shape as the post's own, so parts render
+ * through `BlogRenderer` and validate through `normaliseBlocks` against the same
+ * media pool. Nothing about them is a second content model.
+ */
+export interface BlogPart {
+  id: string;
+  title: string;
+  blocks: Block[];
+}
+
+/** Every block inside every part, in order. */
+export function partsBlocks(parts: BlogPart[] | undefined): Block[] {
+  if (!parts) return [];
+  return parts.flatMap((p) => p.blocks);
+}
+
+/**
+ * Does this part have anything in it?
+ *
+ * "Add part" makes an empty card on purpose, and it is kept through saves — the
+ * alternative is the server deleting a new section a second after the author
+ * added it, before they typed the title. So emptiness is answered here, at the
+ * two places it matters: the reader page skips an empty part rather than
+ * printing a bare "Part 3" over an empty reaction scale, and the editor card
+ * says the same thing in words so it is never a surprise.
+ *
+ * A divider is not substance — a part holding only a rule is still empty.
+ */
+export function partHasContent(part: BlogPart): boolean {
+  if (part.title.trim()) return true;
+  return part.blocks.some((b) => {
+    if (b.kind === 'divider') return false;
+    if (blockMediaIds(b).length > 0) return true;
+    if (b.kind === 'embed' || b.kind === 'horseCard' || b.kind === 'partyCard' || b.kind === 'articleRef') return true;
+    // Tags are stripped because "<p></p>" and "<br>" are both empty prose.
+    return blockText(b).replace(/<[^>]*>/g, '').trim().length > 0;
+  });
+}
+
 // ── The post ────────────────────────────────────────────────────────────────
 
 /**
@@ -308,6 +362,11 @@ export interface Blog {
   // Removed; add it back alongside an implementation if co-bylines are wanted.
 
   blocks: Block[];
+  /**
+   * Titled sub-sections, shown after the body, each with its own reaction scale.
+   * Optional and usually absent — a post is a body until someone adds a part.
+   */
+  parts?: BlogPart[];
   media: BlogMedia[];
 
   cover?: BlogCover;
@@ -397,4 +456,22 @@ export function thumbnailOf(blog: Pick<Blog, 'media' | 'thumbnailMediaId' | 'cov
 /** Which blocks reference a given asset — powers the "still in use" delete guard. */
 export function blocksUsingMedia(blocks: Block[], mediaId: string): Block[] {
   return blocks.filter((b) => blockMediaIds(b).includes(mediaId));
+}
+
+/**
+ * Every block in the post, body first and then each part in order.
+ *
+ * Use this — not `blog.blocks` — for anything that asks a question about the
+ * whole document: which assets are in use, whether a cross-link card needs its
+ * store fetched, how much there is to read. `blog.blocks` alone answers those
+ * questions about only the part of the post above the first sub-heading.
+ */
+export function allBlocks(blog: Pick<Blog, 'blocks' | 'parts'>): Block[] {
+  return [...blog.blocks, ...partsBlocks(blog.parts)];
+}
+
+/** A block anywhere in the post — body or any part. */
+export function findBlock(blog: Pick<Blog, 'blocks' | 'parts'>, id: string | null): Block | undefined {
+  if (!id) return undefined;
+  return allBlocks(blog).find((b) => b.id === id);
 }

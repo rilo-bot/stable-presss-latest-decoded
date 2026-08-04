@@ -23,6 +23,10 @@ export function splitIntoParagraphs(text: string): string[] {
   return groups.filter(Boolean);
 }
 
-/* Default fallback hero when the article has no image */
-export const DEFAULT_HERO =
-  'https://images.pexels.com/photos/11341108/pexels-photo-11341108.jpeg?auto=compress&cs=tinysrgb&h=650&w=940';
+/* Removed: DEFAULT_HERO, a hotlinked Pexels photograph shown above any story
+ * with no image of its own — third-party stock presented as this story's
+ * picture, at the very top of the page, on the reader's first impression.
+ *
+ * A story without a photograph now gets the green masthead surface instead. The
+ * headline is the thing that matters and it reads better on flat green than over
+ * a stranger's photo. See the `heroImage` branch in ArticleDetail.tsx. */

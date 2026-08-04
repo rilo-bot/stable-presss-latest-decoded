@@ -3,7 +3,7 @@ import {
   FileText, LayoutDashboard, CheckSquare, Shield, Send, Users, BarChart2,
   Settings, Eye, ArrowRight, BookOpen, Mic, Star, Edit, DollarSign, Image,
   File, UserCheck, CalendarClock, FolderOpen, Inbox, Layers, Newspaper, Flag,
-  PenLine, Zap, SmilePlus,
+  PenLine, Zap, SmilePlus, MessageSquare,
 } from 'lucide-react';
 import type { ArticleStatus } from '@/types/article';
 import type { PartyRole } from '@/types/party';
@@ -116,6 +116,12 @@ export const SIDE_NAV: SideNavItem[] = [
     slug: 'magazine-v2',
     href: `${PS_BASE}/magazine-v2`,
   },
+  /* Podcast lived at /podcast/workflow inside the PUBLIC site chrome — the last
+     staff surface outside the Campaign Engine, reachable only from a link in the
+     account dropdown. `requiresPermission` here is decorative (the rail filters
+     on the module list); the server's MODULE_CATALOGUE row is what decides which
+     built-in roles get it. */
+  { id: 'podcast', label: 'Podcast', icon: <Mic size={15} />, section: 'Content', slug: 'podcast', requiresPermission: 'podcast.read_all' },
   {
     id: 'editor-hub',
     label: 'Editor Hub',
@@ -125,6 +131,13 @@ export const SIDE_NAV: SideNavItem[] = [
     requiresPermission: 'content.editorial_review',
     editorOnly: true,
   },
+  /* The comment desk. In `Content` rather than `Management` because it is a queue
+     somebody works through, next to the stories and posts the comments are on —
+     not a report an editor reads once a week. `requiresPermission` here is
+     decorative (the rail filters on the module list); MODULE_CATALOGUE's
+     `comment-moderation` row is what decides which built-in roles get it, and
+     roles written before it existed need scripts/grant-comments-module.ts. */
+  { id: 'comment-moderation', label: 'Comments', icon: <MessageSquare size={15} />, section: 'Content', slug: 'comments', requiresPermission: 'comments.moderate' },
   { id: 'my-assets', label: 'My Media Assets', icon: <Image size={15} />, section: 'Content', slug: 'my-assets', requiresPermission: 'media.upload_own' },
   { id: 'compensation', label: 'My Compensation', icon: <DollarSign size={15} />, section: 'Content', slug: 'compensation', requiresPermission: 'compensation.view_own' },
   /* One naming rule across the four registers: name what the register holds.
@@ -146,15 +159,15 @@ export const SIDE_NAV: SideNavItem[] = [
 ];
 
 /**
- * Magazine Studio is reached from Overview rather than the sidebar, so it has
- * no SIDE_NAV row — but it still needs a slug and a page title.
+ * Module id for a URL slug, or undefined if the slug isn't a known screen.
+ *
+ * `MAGAZINE_STUDIO_SLUG` / `MAGAZINE_STUDIO_MODULE` used to be special-cased here:
+ * the v1 Magazine Studio was reached from Overview rather than the sidebar, so it
+ * had a slug and a module id but no SIDE_NAV row. That builder is gone, and the
+ * Magazine Builder has a real sidebar row, so every screen is now findable in one
+ * place.
  */
-export const MAGAZINE_STUDIO_SLUG = 'magazine-studio';
-export const MAGAZINE_STUDIO_MODULE = 'bulletin-templates';
-
-/** Module id for a URL slug, or undefined if the slug isn't a known screen. */
 export function moduleForSlug(slug: string): string | undefined {
-  if (slug === MAGAZINE_STUDIO_SLUG) return MAGAZINE_STUDIO_MODULE;
   return SIDE_NAV.find((i) => i.slug === slug)?.id;
 }
 
@@ -164,7 +177,6 @@ export function moduleForSlug(slug: string): string | undefined {
  * Compensation empty state, the dashboard cards).
  */
 export function pathForModule(id: string): string {
-  if (id === MAGAZINE_STUDIO_MODULE) return `${PS_BASE}/${MAGAZINE_STUDIO_SLUG}`;
   const item = SIDE_NAV.find((i) => i.id === id);
   return item ? navPath(item) : PS_BASE;
 }

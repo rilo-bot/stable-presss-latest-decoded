@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { Link, useNavigate, useLocation } from 'react-router-dom';
 import { cn } from '@/lib/utils';
 import { useAuthStore } from '@/stores/authStore';
@@ -9,7 +9,7 @@ import { toast } from 'sonner';
 import { type NavSection } from './navbar/config';
 import { DesktopMenu } from './navbar/DesktopMenu';
 import { MobileMenu } from './navbar/MobileMenu';
-import { UserMenu } from './navbar/UserMenu';
+import { UserMenu, type AccountLink } from './navbar/UserMenu';
 
 export function NavBar() {
   const [mobileOpen, setMobileOpen] = useState(false);
@@ -32,12 +32,28 @@ export function NavBar() {
     setCollapsed(isDossier);
   }, [location.pathname, isDossier]);
 
-  // Publish the real header height so viewport-fit pages (ProfileScaffold reads
-  // `--navbar-h`) size against the collapsed strip rather than the full chrome.
+  // Publish the real header height so viewport-fit pages (ProfileScaffold) and
+  // sticky sub-bars (/news pins its category bar to `--navbar-h`) size against the
+  // header that is actually on screen.
+  //
+  // MEASURED, not hardcoded. This was the literal string '112px' — the sum of
+  // three rows, maintained by hand. Removing the masthead strip made it wrong, and
+  // it would go wrong again the next time anyone changed a padding value. A
+  // ResizeObserver on the header keeps it true through the collapse toggle, the
+  // responsive breakpoints, and any future row change.
+  const headerRef = useRef<HTMLElement>(null);
   useEffect(() => {
+    const el = headerRef.current;
+    if (!el) return;
     const root = document.documentElement;
-    root.style.setProperty('--navbar-h', collapsed ? '36px' : '112px');
+    const publish = () => {
+      root.style.setProperty('--navbar-h', `${Math.round(el.getBoundingClientRect().height)}px`);
+    };
+    publish();
+    const ro = new ResizeObserver(publish);
+    ro.observe(el);
     return () => {
+      ro.disconnect();
       root.style.removeProperty('--navbar-h');
     };
   }, [collapsed]);
@@ -46,11 +62,31 @@ export function NavBar() {
   const accountLabel = staff ? 'Staff' : 'Member';
   const myPartyId = primaryPartyId(currentUser);
 
-  const showPodcastWorkflow =
-    can('podcast.manage') ||
-    can('podcast.episode.create') ||
-    can('podcast.episode.approve') ||
-    can('podcast.episode.edit_any');
+  // The account dropdown's contents.
+  //
+  // These were separate 10px links strung across the deleted masthead strip, on
+  // the PUBLIC site header, so a reader met up to nine account and staff links
+  // before a single headline. Same permission checks, same destinations; one click
+  // away rather than always on screen. See navbar/UserMenu.tsx.
+  //
+  // THE CAMPAIGN ENGINE IS NOT HERE. It keeps its position at the right-hand end
+  // of the section row (navbar/DesktopMenu.tsx) — which is also why it must not be
+  // repeated here: appearing in the strip AND the section row was one of the
+  // duplications that made the old three-row header confusing. Podcast production
+  // was the second such link; it is a screen inside the Campaign Engine now.
+  const accountLinks: AccountLink[] = currentUser
+    ? [
+        { label: 'Dashboard', to: '/dashboard' },
+        ...(myPartyId ? [{ label: 'My Profile', to: `/parties/${myPartyId}` }] : []),
+        ...(currentUser.orgMemberships && currentUser.orgMemberships.length > 0
+          ? [{ label: 'My Organisation', to: `/orgs/${currentUser.orgMemberships[0].orgId}` }]
+          : []),
+        ...(staff ? [{ label: 'Site Content', to: '/site-content', staff: true }] : []),
+        ...(can('platform.admin')
+          ? [{ label: 'Verify Claims', to: '/claims', staff: true }]
+          : []),
+      ]
+    : [];
 
   const handleLogout = () => {
     logout();
@@ -64,9 +100,6 @@ export function NavBar() {
     const pathname = location.pathname;
     if (section.to.startsWith('/news')) {
       return pathname === '/news';
-    }
-    if (section.to === '/newsletter') {
-      return pathname === '/newsletter';
     }
     if (section.to === '/bulletins') {
       return pathname === '/bulletins';
@@ -82,10 +115,11 @@ export function NavBar() {
   if (collapsed) {
     return (
       <header
+        ref={headerRef}
         className="sticky top-0 z-50 bg-primary text-primary-foreground border-b print:hidden"
         style={{ borderColor: 'hsl(var(--brand-accent) / 0.22)' }}
       >
-        <div className="max-w-7xl mx-auto px-4 md:px-8">
+        <div className="px-4 md:px-12">
           <div className="flex items-center justify-between h-9">
             <Link
               to="/"
@@ -128,140 +162,37 @@ export function NavBar() {
 
   return (
     <header
+      ref={headerRef}
       className="sticky top-0 z-50 bg-primary text-primary-foreground border-b print:hidden"
       style={{ borderColor: 'hsl(var(--brand-accent) / 0.22)' }}
     >
-      {/* ── Masthead strip ── */}
-      <div className="border-b border-primary-foreground/10">
-        <div className="max-w-7xl mx-auto px-4 md:px-8 py-1.5 flex items-center justify-between">
-          <div className="flex items-center gap-4 text-[10px] uppercase tracking-[0.12em]">
-            <span className="opacity-60 hidden sm:block">The Thoroughbred Racing Record</span>
-            <span className="h-3 w-px bg-primary-foreground/20 hidden sm:block" />
-            <span
-              className="font-semibold"
-              style={{ color: 'hsl(var(--brand-accent))' }}
-            >
-              {new Date().toLocaleDateString('en-AU', {
-                weekday: 'long',
-                year: 'numeric',
-                month: 'long',
-                day: 'numeric',
-              })}
-            </span>
-          </div>
-          <div className="flex items-center gap-3 text-[10px] uppercase tracking-[0.1em]">
-            {!currentUser && (
-              <Link
-                to="/signup"
-                className="opacity-70 hover:opacity-100 transition-opacity font-semibold"
-                style={{ color: 'hsl(var(--brand-accent))' }}
-              >
-                Subscribe
-              </Link>
-            )}
-            {currentUser && (
-              <Link
-                to="/dashboard"
-                className="opacity-70 hover:opacity-100 transition-opacity font-semibold"
-                style={{ color: 'hsl(var(--brand-accent))' }}
-              >
-                Dashboard
-              </Link>
-            )}
-            {currentUser && myPartyId && (
-              <>
-                <span className="h-3 w-px bg-primary-foreground/20" />
-                <Link
-                  to={`/parties/${myPartyId}`}
-                  className="opacity-70 hover:opacity-100 transition-opacity font-semibold"
-                  style={{ color: 'hsl(var(--brand-accent))' }}
-                >
-                  My Profile
-                </Link>
-              </>
-            )}
-            {currentUser?.orgMemberships && currentUser.orgMemberships.length > 0 && (
-              <>
-                <span className="h-3 w-px bg-primary-foreground/20" />
-                <Link
-                  to={`/orgs/${currentUser.orgMemberships[0].orgId}`}
-                  className="opacity-70 hover:opacity-100 transition-opacity"
-                >
-                  My Organisation
-                </Link>
-              </>
-            )}
-            {staff && (
-              <>
-                <span className="h-3 w-px bg-primary-foreground/20" />
-                <Link
-                  to="/production-system"
-                  className="opacity-60 hover:opacity-100 transition-opacity"
-                >
-                  Campaign Engine
-                </Link>
-                <span className="h-3 w-px bg-primary-foreground/20" />
-                <Link
-                  to="/site-content"
-                  className={cn(
-                    'transition-opacity',
-                    location.pathname === '/site-content' ? 'opacity-100' : 'opacity-60 hover:opacity-100'
-                  )}
-                >
-                  Site Content
-                </Link>
-              </>
-            )}
-            {can('platform.admin') && (
-              <>
-                <span className="h-3 w-px bg-primary-foreground/20" />
-                <Link
-                  to="/claims"
-                  className={cn(
-                    'transition-opacity font-semibold',
-                    location.pathname === '/claims' ? 'opacity-100' : 'opacity-60 hover:opacity-100'
-                  )}
-                  style={{ color: 'hsl(var(--brand-accent))' }}
-                >
-                  Verify Claims
-                </Link>
-              </>
-            )}
-            {showPodcastWorkflow && (
-              <>
-                <span className="h-3 w-px bg-primary-foreground/20" />
-                <Link
-                  to="/podcast/workflow"
-                  className={cn(
-                    'transition-opacity font-semibold',
-                    location.pathname === '/podcast/workflow'
-                      ? 'opacity-100'
-                      : 'opacity-60 hover:opacity-100'
-                  )}
-                  style={{ color: 'hsl(var(--brand-accent))' }}
-                >
-                  Podcast Studio
-                </Link>
-              </>
-            )}
-          </div>
-        </div>
-      </div>
+      {/* THE MASTHEAD STRIP IS GONE — the header is TWO rows, not three.
+          A third row sat above this one and held two things. On the left, a
+          print-broadsheet strapline and today's date; neither told a reader
+          anything, so both were dropped rather than relocated. On the right, a
+          stack of up to seven role-conditional links at 10px: Subscribe,
+          Dashboard, My Profile, My Organisation, Campaign Engine, Site Content,
+          Verify Claims, Podcast Studio — so the PUBLIC site header offered nine
+          account and staff links before a reader reached a headline. Three of them
+          already appeared elsewhere in this same header (Subscribe as a gold button
+          one row down; Campaign Engine and Podcast Studio in the section row). The
+          personal ones are in the account dropdown now (navbar/UserMenu.tsx); the
+          Campaign Engine keeps its place in the section row below. */}
 
-      {/* ── Wordmark row ── */}
-      <div className="max-w-7xl mx-auto px-4 md:px-8">
-        <div className="flex items-center justify-between h-14">
+      {/* ── Row 1: wordmark, then the account chip ── */}
+      <div className="px-6 md:px-10 lg:px-16">
+        <div className="flex items-center h-14 gap-4">
           {/* Wordmark */}
           <Link
             to="/"
-            className="flex items-center gap-2.5 group"
+            className="flex items-center gap-2.5 group flex-shrink-0"
             aria-label="Stable Press — home"
           >
             {/* Brand mark, recoloured to brand gold via a mask so the green
                 artwork reads on the dark-green bar (transparent PNG → gold shape). */}
             <span
               aria-hidden="true"
-              className="h-12 w-12 flex-shrink-0 group-hover:opacity-90 transition-opacity"
+              className="h-10 w-10 flex-shrink-0 group-hover:opacity-90 transition-opacity"
               style={{
                 backgroundColor: 'hsl(var(--brand-accent))',
                 WebkitMaskImage: "url('/images/Stable_Press.png')",
@@ -275,11 +206,11 @@ export function NavBar() {
               }}
             />
             <span className="flex flex-col leading-none">
-              <span className="font-[family-name:var(--font-display)] text-xl font-bold tracking-tight text-primary-foreground group-hover:text-[hsl(var(--brand-accent))] transition-colors duration-150 leading-none">
+              <span className="font-[family-name:var(--font-display)] text-lg font-bold tracking-tight text-primary-foreground group-hover:text-[hsl(var(--brand-accent))] transition-colors duration-150 leading-none">
                 Stable Press
               </span>
               <span
-                className="text-[9px] uppercase tracking-[0.22em] mt-0.5"
+                className="text-[10px] uppercase tracking-[0.16em] mt-0.5 opacity-80"
                 style={{ color: 'hsl(var(--brand-accent))' }}
               >
                 NZTROF Ownership
@@ -287,21 +218,28 @@ export function NavBar() {
             </span>
           </Link>
 
-          {/* Desktop auth strip */}
-          <UserMenu
-            currentUser={currentUser}
-            accountLabel={accountLabel}
-            handleLogout={handleLogout}
-          />
+          {/* No strapline and no date line. Both came off the deleted masthead
+              strip and were briefly moved here; they say nothing a reader needs and
+              the wordmark already carries the identity. */}
 
-          {/* Mobile hamburger */}
-          <button
-            className="md:hidden p-2 rounded-md text-primary-foreground/80 hover:text-primary-foreground transition-colors"
-            onClick={() => setMobileOpen((v) => !v)}
-            aria-label={mobileOpen ? 'Close menu' : 'Open menu'}
-          >
-            {mobileOpen ? <X size={20} /> : <Menu size={20} />}
-          </button>
+          <div className="ml-auto flex items-center gap-2">
+            {/* Account — one chip, opening one dropdown */}
+            <UserMenu
+              currentUser={currentUser}
+              accountLabel={accountLabel}
+              handleLogout={handleLogout}
+              accountLinks={accountLinks}
+            />
+
+            {/* Mobile hamburger */}
+            <button
+              className="md:hidden p-2 rounded-md text-primary-foreground/80 hover:text-primary-foreground transition-colors"
+              onClick={() => setMobileOpen((v) => !v)}
+              aria-label={mobileOpen ? 'Close menu' : 'Open menu'}
+            >
+              {mobileOpen ? <X size={20} /> : <Menu size={20} />}
+            </button>
+          </div>
         </div>
       </div>
 
@@ -310,7 +248,6 @@ export function NavBar() {
         activeDropdown={activeDropdown}
         setActiveDropdown={setActiveDropdown}
         isSectionActive={isSectionActive}
-        showPodcastWorkflow={showPodcastWorkflow}
         staff={staff}
         pathname={location.pathname}
       />
@@ -334,7 +271,6 @@ export function NavBar() {
         <MobileMenu
           currentUser={currentUser}
           accountLabel={accountLabel}
-          showPodcastWorkflow={showPodcastWorkflow}
           staff={staff}
           pathname={location.pathname}
           setMobileOpen={setMobileOpen}

@@ -16,7 +16,7 @@ import { motion, useReducedMotion } from 'framer-motion';
 import { Sparkles, Send, Square, ArrowRight, X, Check, Undo2, MessageCircle, UserPlus, PenLine, SkipForward, Mic, Volume2, VolumeX, Loader2 } from 'lucide-react';
 import { MarkdownMessage } from '@/components/MarkdownMessage';
 import { useProfileAgentUi, type Proposal } from '@/stores/profileAgentUiStore';
-import { useEditorAgentUi } from '@/stores/editorAgentUiStore';
+import { useStudioChrome } from '@/stores/studioChromeStore';
 import { PARTY_ROLE_LABELS } from '@/types/party';
 import { useProfileChatSession, messageText } from '@/agent/profile/useProfileChatSession';
 import { useVoiceChat } from '@/agent/voice/useVoiceChat';
@@ -96,8 +96,8 @@ export function OnboardingGuide({ steps, name, onShowMe, onAskStep, onSkipStep, 
 
   // Suppress the global Stablehand widget while the guide is on screen (one character).
   useEffect(() => {
-    useEditorAgentUi.getState().setSuppressGlobal(true);
-    return () => useEditorAgentUi.getState().setSuppressGlobal(false);
+    useStudioChrome.getState().setSuppressGlobal(true);
+    return () => useStudioChrome.getState().setSuppressGlobal(false);
   }, []);
 
   // Auto-send a queued prompt (from "Ask" / suggestion) once the chat is open.

@@ -18,9 +18,9 @@ import { toast } from 'sonner';
 import { authFetch } from '@/lib/api';
 import { useBlogStore } from '@/stores/blogStore';
 import { uploadImage, uploadRawFile } from '@/lib/upload';
-import type { Block, Blog, BlogMedia, Placement } from '@/types/blog';
-import { blocksUsingMedia } from '@/types/blog';
-import { duplicateBlock } from '@/blog/factories';
+import type { Block, Blog, BlogMedia, BlogPart, Placement } from '@/types/blog';
+import { allBlocks, blocksUsingMedia } from '@/types/blog';
+import { duplicateBlock, newBlockId, paragraph } from '@/blog/factories';
 
 const AUTOSAVE_MS = 1500;
 /** How many steps of history to keep. Deep enough to undo a bad paste, bounded
@@ -29,8 +29,23 @@ const UNDO_LIMIT = 50;
 
 export type SaveState = 'idle' | 'dirty' | 'saving' | 'saved' | 'error' | 'conflict';
 
+/**
+ * Which block list an edit applies to: the post body (`null`) or one part, by
+ * part id.
+ *
+ * Every id-based operation resolves this itself, so callers editing a block only
+ * ever pass the block's id, exactly as before parts existed. Only inserting
+ * needs to be told, because a new block has no id to look up yet.
+ *
+ * `null` and `undefined` are NOT interchangeable here: `null` is the body,
+ * `undefined` means "no container holds that block". Read the guards with that in
+ * mind — a truthiness test would treat the body as missing.
+ */
+export type ContainerId = string | null;
+
 interface Snapshot {
   blocks: Block[];
+  parts: BlogPart[];
   media: BlogMedia[];
 }
 
@@ -39,6 +54,16 @@ interface ComposerState {
   /** The `updatedAt` the server last confirmed — the concurrency baseline. */
   baseUpdatedAt: string | null;
   selectedId: string | null;
+  /**
+   * The non-block input the author has aimed the assistant at — a registry field
+   * id like `excerpt` or `part:<id>.title` (see agent/blog/blogFields.ts).
+   *
+   * It lives HERE, next to the block selection, because the two are ONE
+   * selection: whatever "this" means, it means one thing. `select` and
+   * `selectField` each clear the other, so the body toolbar and the studio can
+   * never disagree about what the author is pointing at.
+   */
+  selectedFieldId: string | null;
   saveState: SaveState;
   saveError: string | null;
   /** Right pane: the selected block's settings, or the post's own settings. */
@@ -51,12 +76,27 @@ interface ComposerState {
   load: (blog: Blog) => void;
   close: () => void;
   select: (id: string | null) => void;
+  /** Aim the assistant at one input. Clears any block selection — see `selectedFieldId`. */
+  selectField: (field: string | null) => void;
   setPane: (pane: 'block' | 'post') => void;
 
   /** Patch post-level fields (title, slug, tags, cover, seo…). */
   patchPost: (patch: Partial<Blog>) => void;
 
-  insertBlock: (block: Block, atIndex?: number) => void;
+  /** Insert into the body, or into a part when `container` is a part id. */
+  insertBlock: (block: Block, atIndex?: number, container?: ContainerId) => void;
+  /**
+   * Insert SEVERAL blocks as ONE step.
+   *
+   * Not a loop over `insertBlock`: that would push an undo step and arm an
+   * autosave per block, so undoing an assistant's five-paragraph insertion would
+   * take five presses of Ctrl+Z and leave the author in the middle of it.
+   */
+  insertBlocks: (blocks: Block[], atIndex?: number, container?: ContainerId) => void;
+  /** Swap one block for several (or none) — the AI's "rewrite this" in one step. */
+  replaceBlockWith: (id: string, blocks: Block[]) => void;
+  /** Replace the whole main body in one step (a whole-post AI rewrite). */
+  setBodyBlocks: (blocks: Block[]) => void;
   updateBlock: (id: string, patch: Partial<Block>) => void;
   /**
    * Swap a block for a wholly different one, keeping its position.
@@ -73,7 +113,31 @@ interface ComposerState {
   duplicate: (id: string) => void;
   removeBlock: (id: string) => void;
 
+  /**
+   * Parts — the post's titled sub-sections.
+   *
+   * `addPart` starts with one empty paragraph so there is something to type into
+   * immediately, and returns the new part's id so the caller can put the caret in
+   * its title field.
+   */
+  addPart: (init?: { title?: string; blocks?: Block[] }) => string | null;
+  updatePart: (partId: string, patch: { title?: string }) => void;
+  /** Replace a part's whole body in one step (the assistant writing a section). */
+  setPartBlocks: (partId: string, blocks: Block[]) => void;
+  movePart: (partId: string, delta: number) => void;
+  removePart: (partId: string) => void;
+
   addMedia: (file: File) => Promise<BlogMedia | null>;
+  /**
+   * Take on an asset some OTHER caller registered against this post — the studio
+   * sourcing a stock photo through `POST /:id/media/stock`.
+   *
+   * That endpoint writes to the document and moves `updatedAt`, so without this the
+   * composer would hold a pool missing the new photo and a baseline the server has
+   * already passed: the next autosave 409s and the author is told someone else
+   * edited their post. Clearing `baseUpdatedAt` is the same trick `addMedia` uses.
+   */
+  adoptExternalMedia: (asset: BlogMedia) => void;
   patchMedia: (mediaId: string, patch: Partial<BlogMedia>) => void;
   removeMedia: (mediaId: string) => Promise<void>;
 
@@ -130,7 +194,9 @@ export const useComposerStore = create<ComposerState>()((set, get) => {
   const pushHistory = () => {
     const { blog, undoStack } = get();
     if (!blog) return;
-    const snap: Snapshot = { blocks: blog.blocks, media: blog.media };
+    // Parts travel in the snapshot too, or undo after "remove part" would restore
+    // the body and leave the part gone — a half-undo, which is worse than none.
+    const snap: Snapshot = { blocks: blog.blocks, parts: blog.parts ?? [], media: blog.media };
     set({
       undoStack: [...undoStack.slice(-(UNDO_LIMIT - 1)), snap],
       // Any new edit invalidates the redo branch, as in every editor.
@@ -138,11 +204,59 @@ export const useComposerStore = create<ComposerState>()((set, get) => {
     });
   };
 
-  const mutateBlocks = (fn: (blocks: Block[]) => Block[], history = true) => {
+  /** Which list holds this block — the body, a part, or nothing at all. */
+  const containerOf = (id: string): ContainerId | undefined => {
+    const { blog } = get();
+    if (!blog) return undefined;
+    if (blog.blocks.some((b) => b.id === id)) return null;
+    return (blog.parts ?? []).find((p) => p.blocks.some((b) => b.id === id))?.id;
+  };
+
+  /** Apply `fn` to one container's block list. */
+  const mutateIn = (container: ContainerId, fn: (blocks: Block[]) => Block[], history = true) => {
+    const { blog } = get();
+    if (!blog) return;
+    if (container !== null && !(blog.parts ?? []).some((p) => p.id === container)) return;
+    if (history) pushHistory();
+    set({
+      blog:
+        container === null
+          ? { ...blog, blocks: fn(blog.blocks) }
+          : {
+              ...blog,
+              parts: (blog.parts ?? []).map((p) => (p.id === container ? { ...p, blocks: fn(p.blocks) } : p)),
+            },
+    });
+    scheduleSave();
+  };
+
+  /**
+   * Apply `fn` to whichever container holds `id`. This is what keeps every
+   * existing call site — the toolbar, the rail, drag-and-drop — working on a
+   * block inside a part without knowing parts exist.
+   */
+  const mutateWhere = (id: string, fn: (blocks: Block[]) => Block[], history = true) => {
+    const container = containerOf(id);
+    if (container === undefined) return;
+    mutateIn(container, fn, history);
+  };
+
+  /** The block list `id` lives in, for index arithmetic. */
+  const listFor = (id: string): Block[] => {
+    const { blog } = get();
+    if (!blog) return [];
+    const container = containerOf(id);
+    if (container === undefined) return [];
+    if (container === null) return blog.blocks;
+    return (blog.parts ?? []).find((p) => p.id === container)?.blocks ?? [];
+  };
+
+  /** Replace the part list wholesale — used by the part-level operations. */
+  const setParts = (fn: (parts: BlogPart[]) => BlogPart[], history = true) => {
     const { blog } = get();
     if (!blog) return;
     if (history) pushHistory();
-    set({ blog: { ...blog, blocks: fn(blog.blocks) } });
+    set({ blog: { ...blog, parts: fn(blog.parts ?? []) } });
     scheduleSave();
   };
 
@@ -150,6 +264,7 @@ export const useComposerStore = create<ComposerState>()((set, get) => {
     blog: null,
     baseUpdatedAt: null,
     selectedId: null,
+    selectedFieldId: null,
     saveState: 'idle',
     saveError: null,
     pane: 'post',
@@ -163,6 +278,7 @@ export const useComposerStore = create<ComposerState>()((set, get) => {
         blog,
         baseUpdatedAt: blog.updatedAt,
         selectedId: null,
+        selectedFieldId: null,
         saveState: 'idle',
         saveError: null,
         pane: 'post',
@@ -173,10 +289,11 @@ export const useComposerStore = create<ComposerState>()((set, get) => {
 
     close: () => {
       cancelTimer();
-      set({ blog: null, baseUpdatedAt: null, selectedId: null, saveState: 'idle', undoStack: [], redoStack: [] });
+      set({ blog: null, baseUpdatedAt: null, selectedId: null, selectedFieldId: null, saveState: 'idle', undoStack: [], redoStack: [] });
     },
 
-    select: (id) => set({ selectedId: id, pane: id ? 'block' : 'post' }),
+    select: (id) => set({ selectedId: id, selectedFieldId: null, pane: id ? 'block' : 'post' }),
+    selectField: (field) => set({ selectedFieldId: field, selectedId: null, pane: 'post' }),
     setPane: (pane) => set({ pane }),
 
     patchPost: (patch) => {
@@ -186,24 +303,61 @@ export const useComposerStore = create<ComposerState>()((set, get) => {
       scheduleSave();
     },
 
-    insertBlock: (block, atIndex) => {
+    insertBlock: (block, atIndex, container = null) => {
       const { blog } = get();
       if (!blog) return;
-      const index = atIndex ?? blog.blocks.length;
-      mutateBlocks((blocks) => [...blocks.slice(0, index), block, ...blocks.slice(index)]);
+      const list =
+        container === null ? blog.blocks : (blog.parts ?? []).find((p) => p.id === container)?.blocks;
+      if (!list) return;
+      const index = atIndex ?? list.length;
+      mutateIn(container, (blocks) => [...blocks.slice(0, index), block, ...blocks.slice(index)]);
       set({ selectedId: block.id, pane: 'block' });
+    },
+
+    insertBlocks: (blocks, atIndex, container = null) => {
+      const { blog } = get();
+      if (!blog || blocks.length === 0) return;
+      const list =
+        container === null ? blog.blocks : (blog.parts ?? []).find((p) => p.id === container)?.blocks;
+      if (!list) return;
+      const index = Math.max(0, Math.min(list.length, atIndex ?? list.length));
+      mutateIn(container, (current) => [
+        ...current.slice(0, index),
+        ...blocks,
+        ...current.slice(index),
+      ]);
+      // Select the FIRST of them: that is where the reader's eye goes, and it is
+      // what the toolbar should be acting on if the author wants to adjust it.
+      set({ selectedId: blocks[0]!.id, pane: 'block' });
+    },
+
+    replaceBlockWith: (id, blocks) => {
+      const container = containerOf(id);
+      if (container === undefined) return;
+      mutateIn(container, (current) => {
+        const at = current.findIndex((b) => b.id === id);
+        if (at < 0) return current;
+        return [...current.slice(0, at), ...blocks, ...current.slice(at + 1)];
+      });
+      set(blocks.length > 0 ? { selectedId: blocks[0]!.id, pane: 'block' } : { selectedId: null, pane: 'post' });
+    },
+
+    setBodyBlocks: (blocks) => {
+      mutateIn(null, () => blocks);
+      set({ selectedId: null, pane: 'post' });
     },
 
     // Text edits do NOT push history per keystroke — that would fill the stack
     // with one-character steps and make undo useless. Structural ops do.
     updateBlock: (id, patch) =>
-      mutateBlocks((blocks) => blocks.map((b) => (b.id === id ? ({ ...b, ...patch } as Block) : b)), false),
+      mutateWhere(id, (blocks) => blocks.map((b) => (b.id === id ? ({ ...b, ...patch } as Block) : b)), false),
 
     replaceBlock: (id, block) =>
-      mutateBlocks((blocks) => blocks.map((b) => (b.id === id ? block : b))),
+      mutateWhere(id, (blocks) => blocks.map((b) => (b.id === id ? block : b))),
 
     updatePlacement: (id, patch) =>
-      mutateBlocks(
+      mutateWhere(
+        id,
         (blocks) =>
           blocks.map((b) => {
             if (b.id !== id) return b;
@@ -214,13 +368,14 @@ export const useComposerStore = create<ComposerState>()((set, get) => {
       ),
 
     moveBlock: (id, delta) => {
-      const { blog } = get();
-      if (!blog) return;
-      const from = blog.blocks.findIndex((b) => b.id === id);
+      // Moves stay INSIDE the container: nudging the last block of a part must
+      // not tip it into the next part, which is not what the arrow claims to do.
+      const list = listFor(id);
+      const from = list.findIndex((b) => b.id === id);
       if (from < 0) return;
       const to = from + delta;
-      if (to < 0 || to >= blog.blocks.length) return;
-      mutateBlocks((blocks) => {
+      if (to < 0 || to >= list.length) return;
+      mutateWhere(id, (blocks) => {
         const next = [...blocks];
         const [moved] = next.splice(from, 1);
         next.splice(to, 0, moved!);
@@ -229,11 +384,9 @@ export const useComposerStore = create<ComposerState>()((set, get) => {
     },
 
     moveBlockTo: (id, index) => {
-      const { blog } = get();
-      if (!blog) return;
-      const from = blog.blocks.findIndex((b) => b.id === id);
+      const from = listFor(id).findIndex((b) => b.id === id);
       if (from < 0 || from === index) return;
-      mutateBlocks((blocks) => {
+      mutateWhere(id, (blocks) => {
         const next = [...blocks];
         const [moved] = next.splice(from, 1);
         // Removing the item first shifts every later index down by one, so a
@@ -246,18 +399,65 @@ export const useComposerStore = create<ComposerState>()((set, get) => {
     },
 
     duplicate: (id) => {
-      const { blog } = get();
-      if (!blog) return;
-      const index = blog.blocks.findIndex((b) => b.id === id);
+      const list = listFor(id);
+      const index = list.findIndex((b) => b.id === id);
       if (index < 0) return;
-      const copy = duplicateBlock(blog.blocks[index]!);
-      mutateBlocks((blocks) => [...blocks.slice(0, index + 1), copy, ...blocks.slice(index + 1)]);
+      const copy = duplicateBlock(list[index]!);
+      mutateWhere(id, (blocks) => [...blocks.slice(0, index + 1), copy, ...blocks.slice(index + 1)]);
       set({ selectedId: copy.id });
     },
 
     removeBlock: (id) => {
-      mutateBlocks((blocks) => blocks.filter((b) => b.id !== id));
+      mutateWhere(id, (blocks) => blocks.filter((b) => b.id !== id));
       if (get().selectedId === id) set({ selectedId: null, pane: 'post' });
+    },
+
+    addPart: (init) => {
+      const { blog } = get();
+      if (!blog) return null;
+      // One empty paragraph by default, so the body is something you can click
+      // into rather than an empty box with no caret target. A caller that brings
+      // its own blocks (the assistant writing a section) gets those instead.
+      const part: BlogPart = {
+        id: newBlockId(),
+        title: init?.title ?? '',
+        blocks: init?.blocks?.length ? init.blocks : [paragraph()],
+      };
+      setParts((parts) => [...parts, part]);
+      return part.id;
+    },
+
+    updatePart: (partId, patch) =>
+      // A title is text, so no history step per keystroke — same rule as blocks.
+      setParts((parts) => parts.map((p) => (p.id === partId ? { ...p, ...patch } : p)), false),
+
+    setPartBlocks: (partId, blocks) =>
+      setParts((parts) => parts.map((p) => (p.id === partId ? { ...p, blocks } : p))),
+
+    movePart: (partId, delta) => {
+      const parts = get().blog?.parts ?? [];
+      const from = parts.findIndex((p) => p.id === partId);
+      if (from < 0) return;
+      const to = from + delta;
+      if (to < 0 || to >= parts.length) return;
+      setParts((list) => {
+        const next = [...list];
+        const [moved] = next.splice(from, 1);
+        next.splice(to, 0, moved!);
+        return next;
+      });
+    },
+
+    removePart: (partId) => {
+      const part = (get().blog?.parts ?? []).find((p) => p.id === partId);
+      setParts((parts) => parts.filter((p) => p.id !== partId));
+      // The selection may have been pointing into the part that just went away —
+      // leaving it set would keep the toolbar and the rail acting on a block that
+      // no longer exists anywhere in the post.
+      const selectedId = get().selectedId;
+      if (part && selectedId && part.blocks.some((b) => b.id === selectedId)) {
+        set({ selectedId: null, pane: 'post' });
+      }
     },
 
     addMedia: async (file) => {
@@ -322,6 +522,16 @@ export const useComposerStore = create<ComposerState>()((set, get) => {
       }
     },
 
+    adoptExternalMedia: (asset) => {
+      const { blog } = get();
+      if (!blog) return;
+      if (blog.media.some((m) => m.id === asset.id)) return;
+      set({
+        blog: { ...blog, media: [...blog.media, asset], updatedAt: new Date().toISOString() },
+        baseUpdatedAt: null,
+      });
+    },
+
     patchMedia: (mediaId, patch) => {
       const { blog } = get();
       if (!blog) return;
@@ -335,7 +545,9 @@ export const useComposerStore = create<ComposerState>()((set, get) => {
       const { blog } = get();
       if (!blog) return;
 
-      const used = blocksUsingMedia(blog.blocks, mediaId);
+      // Across the WHOLE post, parts included — counting only the body would
+      // under-report the damage and then delete an image out of a part.
+      const used = blocksUsingMedia(allBlocks(blog), mediaId);
       if (used.length > 0) {
         const ok = window.confirm(
           `That image is used in ${used.length} place${used.length === 1 ? '' : 's'}. ` +
@@ -367,9 +579,9 @@ export const useComposerStore = create<ComposerState>()((set, get) => {
       if (!blog || undoStack.length === 0) return;
       const prev = undoStack[undoStack.length - 1]!;
       set({
-        blog: { ...blog, blocks: prev.blocks, media: prev.media },
+        blog: { ...blog, blocks: prev.blocks, parts: prev.parts, media: prev.media },
         undoStack: undoStack.slice(0, -1),
-        redoStack: [...redoStack, { blocks: blog.blocks, media: blog.media }],
+        redoStack: [...redoStack, { blocks: blog.blocks, parts: blog.parts ?? [], media: blog.media }],
       });
       scheduleSave();
     },
@@ -379,9 +591,9 @@ export const useComposerStore = create<ComposerState>()((set, get) => {
       if (!blog || redoStack.length === 0) return;
       const next = redoStack[redoStack.length - 1]!;
       set({
-        blog: { ...blog, blocks: next.blocks, media: next.media },
+        blog: { ...blog, blocks: next.blocks, parts: next.parts, media: next.media },
         redoStack: redoStack.slice(0, -1),
-        undoStack: [...undoStack, { blocks: blog.blocks, media: blog.media }],
+        undoStack: [...undoStack, { blocks: blog.blocks, parts: blog.parts ?? [], media: blog.media }],
       });
       scheduleSave();
     },
@@ -407,6 +619,11 @@ export const useComposerStore = create<ComposerState>()((set, get) => {
             linkedHorseIds: blog.linkedHorseIds,
             linkedPartyIds: blog.linkedPartyIds,
             blocks: blog.blocks,
+            // Always sent, even when empty: this is the one writer that knows the
+            // author's intent for the part list, so an omission here would be read
+            // by the server as "leave them alone" and a deleted part would come
+            // back on the next reload.
+            parts: blog.parts ?? [],
             media: blog.media,
             cover: blog.cover ?? null,
             thumbnailMediaId: blog.thumbnailMediaId ?? null,

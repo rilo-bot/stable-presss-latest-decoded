@@ -11,8 +11,8 @@ import { useEditorStore } from './store';
 import type { MagazineElement } from './model';
 import * as api from './api';
 import type { MediaAsset } from './api';
-import { Section, Stepper, Segmented, ColorControl } from '@/editor/inspector/controls';
-import { ICON_NAMES, resolveIcon } from '@/editor/templates/iconRegistry';
+import { Section, Stepper, Segmented, ColorControl } from '@/editor-v2/controls';
+import { ICON_NAMES, resolveIcon } from '@/lib/iconRegistry';
 import {
   MousePointerClick, Type, Image as ImageIcon, QrCode, Square, Shapes,
   AlignLeft, AlignCenter, AlignRight, ArrowUpToLine, FoldVertical, ArrowDownToLine, Trash2,

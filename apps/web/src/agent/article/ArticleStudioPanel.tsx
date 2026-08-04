@@ -16,7 +16,7 @@ import { useAutoGrowTextarea } from '@/lib/useAutoGrowTextarea';
 import { uploadImage } from '@/lib/upload';
 import { useArticleStore } from '@/stores/articleStore';
 import { useArticleStudioUi } from '@/stores/articleStudioUiStore';
-import { useEditorAgentUi } from '@/stores/editorAgentUiStore';
+import { useStudioChrome } from '@/stores/studioChromeStore';
 import { useVoiceChat } from '@/agent/voice/useVoiceChat';
 import { fieldDef } from './articleFields';
 import { suggestForArticle, type ArticleSuggestion } from './articleSuggestions';
@@ -49,8 +49,8 @@ export function ArticleStudioPanel() {
 
   // While open, hide the global Stablehand launcher (shared editor suppress flag).
   useEffect(() => {
-    useEditorAgentUi.getState().setSuppressGlobal(open);
-    return () => useEditorAgentUi.getState().setSuppressGlobal(false);
+    useStudioChrome.getState().setSuppressGlobal(open);
+    return () => useStudioChrome.getState().setSuppressGlobal(false);
   }, [open]);
 
   // A starter chip queued a prompt — send it once.

@@ -114,8 +114,33 @@ async function getBrowser(): Promise<Browser> {
   return browser
 }
 
+/** The page's own pixel box, so one magazine page maps to exactly one sheet. */
+export interface SheetSize {
+  width: number
+  height: number
+}
+
 /**
- * Render a bulletin viewer URL to an A4 PDF, using the per-version cache.
+ * Canonical generated page — US Letter portrait at 150 DPI. Mirrors PAGE_W/PAGE_H
+ * in lib/magazineV2/config.ts. Only a fallback: an UPLOADED page carries whatever
+ * size the extractor rasterised, so the caller passes the issue's real dims.
+ */
+const DEFAULT_SHEET: SheetSize = { width: 1275, height: 1650 }
+
+/**
+ * DPI those page pixels are measured at. Generated pages are US Letter at 150 DPI;
+ * the extractor rasterises uploads at the same 150 (`RENDER_DPI` in
+ * apps/worker/src/lib/pdf.ts). Chromium reads a bare `px` as a CSS pixel (1/96in),
+ * so asking for 1275px of paper yields a 13.3-inch sheet — the right shape at an
+ * unusable size. Dividing by 150 asks for the 8.5 inches the page was designed as.
+ *
+ * Mirrored by RASTER_DPI in apps/web/src/pages/BulletinViewer.tsx, which sizes the
+ * `@page` box the same way for native browser printing.
+ */
+const RASTER_DPI = 150
+
+/**
+ * Render a bulletin viewer URL to a PDF, using the per-version cache.
  *
  * @param url       Absolute URL of the public viewer (e.g. http://localhost:5173/bulletins/abc).
  * @param cacheKey  Content-addressed key (issue id + version + updatedAt). When the
@@ -124,31 +149,37 @@ async function getBrowser(): Promise<Browser> {
  * @param token     Optional Bearer token — forwarded ONLY to same-app `/api/` calls so
  *                  staff can export an unpublished (preview) edition the headless,
  *                  otherwise-anonymous browser couldn't fetch on its own.
+ * @param sheet     The issue's page box in px. Pass the FIRST page's width/height —
+ *                  `page.pdf()` takes one size for the whole document, and an issue's
+ *                  pages are uniform in practice.
  */
 export async function renderBulletinPdf(
   url: string,
   cacheKey: string,
   token?: string,
   forceRefresh = false,
+  sheet: SheetSize | undefined = DEFAULT_SHEET,
 ): Promise<Buffer> {
   if (cacheKey && !forceRefresh) {
     const hit = cacheGet(cacheKey)
     if (hit) return hit
   }
 
+  const box = sheet ?? DEFAULT_SHEET
+
   try {
-    return await renderOnce(url, cacheKey, token)
+    return await renderOnce(url, cacheKey, token, box)
   } catch (err) {
     // Classic long-uptime failure: the shared Chromium died in a way `.connected`
     // didn't catch, so every render against it throws. Reset and try ONCE more
     // with a fresh browser before surfacing the error.
     console.warn('[pdf] render failed, relaunching Chromium and retrying once:', err instanceof Error ? err.message : err)
     resetBrowser()
-    return await renderOnce(url, cacheKey, token)
+    return await renderOnce(url, cacheKey, token, box)
   }
 }
 
-async function renderOnce(url: string, cacheKey: string, token?: string): Promise<Buffer> {
+async function renderOnce(url: string, cacheKey: string, token: string | undefined, sheet: SheetSize): Promise<Buffer> {
   const browser = await getBrowser()
   const page = await browser.newPage()
   try {
@@ -175,13 +206,20 @@ async function renderOnce(url: string, cacheKey: string, token?: string): Promis
 
     const pdf = await page.pdf({
       printBackground: true,
-      // Size each PDF sheet to the page element's EXACT pixel box rather than A4
-      // millimetres. The templates are 794×1123px (web's PAGE_W/PAGE_H — keep in
-      // sync); that is ~0.05mm over A4, and targeting A4-mm makes the final page's
-      // sub-pixel overflow spill onto an extra blank sheet. Matching the px box
-      // maps every page 1:1 to one sheet. (794px→595.5pt, 1123px→842.25pt ≈ A4.)
-      width: '794px',
-      height: '1123px',
+      // Size each sheet to the page's OWN box, converted to physical inches, so one
+      // magazine page maps to exactly one sheet at exactly the size it was designed
+      // as. Naming a paper size instead (A4 in mm) makes a page's sub-pixel overflow
+      // spill onto an extra blank sheet.
+      //
+      // These dims come from the ISSUE. They were hard-coded to 794×1123 — the
+      // retired v1 template builder's A4-at-96dpi page — which mis-sized every issue
+      // this builder produces: a generated page is 1275×1650 (Letter at 150 DPI) and
+      // an uploaded one is whatever the extractor rasterised, so a 0.773-aspect page
+      // was printed onto a 0.707-aspect sheet. Dividing by RASTER_DPI (not leaving
+      // the value in px, which Chromium reads as 1/96in) is what makes the result
+      // 8.5×11in rather than a correctly-shaped but 13.3-inch sheet.
+      width: `${(sheet.width / RASTER_DPI).toFixed(4)}in`,
+      height: `${(sheet.height / RASTER_DPI).toFixed(4)}in`,
       margin: { top: '0', right: '0', bottom: '0', left: '0' },
     })
     const buf = Buffer.from(pdf)

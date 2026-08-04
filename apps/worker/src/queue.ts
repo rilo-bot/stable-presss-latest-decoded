@@ -32,11 +32,31 @@ const POLL_INTERVAL_MS = Math.max(250, Number(process.env.MAGAZINE_V2_POLL_INTER
 // idle, when no job is running in-process).
 const STALE_RUNNING_MS = Math.max(60_000, Number(process.env.MAGAZINE_V2_STALE_JOB_MS ?? 5 * 60_000));
 
+// How long a finished job is kept for diagnostics before MongoDB drops it. The
+// queue is append-only otherwise: nothing ever deleted a `done` job, so the
+// collection grew forever and every issue ever generated left a permanent row.
+const TERMINAL_TTL_MS = Math.max(60_000, Number(process.env.MAGAZINE_V2_JOB_TTL_MS ?? 7 * 24 * 60 * 60_000));
+
 function nowIso(): string {
   return new Date().toISOString();
 }
 function sleep(ms: number): Promise<void> {
   return new Promise((r) => setTimeout(r, ms));
+}
+
+/**
+ * Fields stamped on a job when it reaches a TERMINAL state (`done` or `failed`).
+ *
+ * `expiresAt` is a real `Date`, deliberately unlike every other timestamp in this
+ * collection (which are ISO strings). MongoDB's TTL monitor only understands BSON
+ * dates — given a string it silently ignores the document forever, which is the
+ * quiet way this kind of reaper fails. See the TTL index in lib/ensureIndexes.ts.
+ *
+ * Only terminal states get the field, so a `queued` or `running` job is never a
+ * candidate for expiry no matter how long it sits there.
+ */
+function terminalStamp(): { finishedAt: string; updatedAt: string; expiresAt: Date } {
+  return { finishedAt: nowIso(), updatedAt: nowIso(), expiresAt: new Date(Date.now() + TERMINAL_TTL_MS) };
 }
 
 /**
@@ -60,9 +80,7 @@ export async function processNextJob(handlers: JobHandlers): Promise<boolean> {
   try {
     if (!handler) throw new Error(`No handler registered for job type "${job.type}".`);
     await handler(job.payload);
-    await db
-      .collection(COL.jobs)
-      .updateOne(job._id, { status: 'done', finishedAt: nowIso(), lastError: '', updatedAt: nowIso() });
+    await db.collection(COL.jobs).updateOne(job._id, { status: 'done', lastError: '', ...terminalStamp() });
     console.log(`[worker] job ${job._id} (${job.type}) done`);
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
@@ -77,7 +95,7 @@ export async function processNextJob(handlers: JobHandlers): Promise<boolean> {
       .updateOne(
         job._id,
         permanent
-          ? { status: 'failed', finishedAt: nowIso(), lastError: message, updatedAt: nowIso() }
+          ? { status: 'failed', lastError: message, ...terminalStamp() }
           : { status: 'queued', lastError: message, updatedAt: nowIso() },
       );
     // Idempotent issue handlers now RETHROW on failure (instead of self-marking
@@ -90,7 +108,7 @@ export async function processNextJob(handlers: JobHandlers): Promise<boolean> {
       const failedIssueId = (job.payload as { issueId?: string } | undefined)?.issueId;
       if (failedIssueId) {
         await db
-          .collection(COL.issues)
+          .collection(COL.magazines)
           .updateOneIf(
             failedIssueId,
             { status: 'processing' },
@@ -132,12 +150,12 @@ async function recoverOrphanedJobs(): Promise<void> {
       const msg = `Abandoned after ${attempts}/${maxAttempts} interrupted attempts (worker crashed/restarted mid-job — likely OOM).`;
       const failed = await db
         .collection(COL.jobs)
-        .updateOneIf(job._id, { status: 'running' }, { status: 'failed', lastError: msg, finishedAt: nowIso(), updatedAt: nowIso() });
+        .updateOneIf(job._id, { status: 'running' }, { status: 'failed', lastError: msg, ...terminalStamp() });
       if (failed) {
         console.error(`[worker] job ${job._id} (${job.type}) ${msg}`);
         if (issueId)
           await db
-            .collection(COL.issues)
+            .collection(COL.magazines)
             .updateOneIf(
               issueId,
               { status: 'processing' },

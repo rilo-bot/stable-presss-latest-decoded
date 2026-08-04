@@ -1,6 +1,6 @@
 import { Link } from 'react-router-dom';
 import { motion } from 'framer-motion';
-import { ArrowRight, ChevronRight, Clock, Mail, PenLine, Star } from 'lucide-react';
+import { ArrowRight, ChevronRight, Clock, PenLine, Star } from 'lucide-react';
 import { ArticleCard } from '@/components/ArticleCard';
 import { ArticleSkeletonCard } from '@/components/SkeletonCard';
 import { EmptyState } from '@/components/EmptyState';
@@ -8,6 +8,8 @@ import { cn } from '@/lib/utils';
 import type { Article } from '@/types/article';
 import type { Horse } from '@/types/horse';
 import type { HorseConnections } from '@/lib/horseConnections';
+import { SectionHead } from './SectionHead';
+import { useSiteSettingsStore } from '@/stores/siteSettingsStore';
 
 interface LandingFeaturedArticlesProps {
   articlesLoading: boolean;
@@ -15,6 +17,8 @@ interface LandingFeaturedArticlesProps {
   featuredArticles: Article[];
   horses: Horse[];
   horseConn: (horse: Horse) => HorseConnections;
+  /** Staff see newsroom CTAs in empty states; readers get reader-facing ones. */
+  isStaff: boolean;
 }
 
 export function LandingFeaturedArticles({
@@ -23,23 +27,24 @@ export function LandingFeaturedArticles({
   featuredArticles,
   horses,
   horseConn,
+  isStaff,
 }: LandingFeaturedArticlesProps) {
+  // TWO sections in one component — News and Horses — so the switches are read
+  // here rather than passed down: Landing.tsx cannot drop one half of a fragment.
+  const publicNav = useSiteSettingsStore((s) => s.publicNav);
+
   return (
     <>
-      {/* ── Latest Dispatches ─── */}
+      {/* ── Latest ───
+          Was "Latest Dispatches". Accurate either way — these ARE
+          `published.slice(1,4)`, the newest stories after the lead. */}
+      {/* Both story blocks belong to News — "Analysis & Interviews" is a
+          `?section=` cut of /news, not a surface of its own — so one switch
+          governs the pair. */}
+      {publicNav.news !== false && (
+      <>
       <section>
-        <div className="flex items-center gap-4 mb-7">
-          <h2 className="font-[family-name:var(--font-display)] text-xl font-bold text-foreground whitespace-nowrap">
-            Latest Dispatches
-          </h2>
-          <div className="flex-1 h-px bg-border/50" />
-          <Link
-            to="/news"
-            className="flex items-center gap-1 text-[10px] uppercase tracking-[0.1em] font-semibold text-muted-foreground hover:text-foreground transition-colors flex-shrink-0"
-          >
-            All stories <ChevronRight size={11} />
-          </Link>
-        </div>
+        <SectionHead title="Latest" to="/news" linkLabel="All stories" />
 
         {articlesLoading ? (
           /* Skeleton grid */
@@ -66,34 +71,45 @@ export function LandingFeaturedArticles({
             ))}
           </div>
         ) : (
+          /* Two audiences, two empty states. This told every anonymous visitor to
+             "head to the newsroom and file your first dispatch" and pointed them at
+             /production-system — a RequireStaff route that bounces them straight
+             home. A reader is told the truth and offered somewhere to go that
+             exists for them. */
           <EmptyState
             icon={PenLine}
-            heading="The press stands ready. No dispatches have been filed."
-            description="Published stories will appear here. Head to the newsroom to file your first dispatch."
-            ctaLabel="Go to Newsroom"
-            ctaHref="/production-system"
+            heading={
+              isStaff
+                ? 'The press stands ready. No dispatches have been filed.'
+                : 'No stories have been published yet.'
+            }
+            description={
+              isStaff
+                ? 'Published stories will appear here. Head to the newsroom to file your first dispatch.'
+                : 'The desk is still working on the first edition. The blog and the podcast are already open.'
+            }
+            ctaLabel={isStaff ? 'Go to Newsroom' : 'Read the blog'}
+            ctaHref={isStaff ? '/production-system' : '/blog'}
           />
         )}
       </section>
 
-      {/* ── Featured Analysis ─── */}
+      {/* ── Analysis & Interviews ───
+          THE LABEL IS NOW TRUE. This said "Featured Analysis & Interviews" over
+          `published.slice(4,7)` — the fifth, sixth and seventh newest stories,
+          whatever their category. Nothing was featured and nothing was filtered, and
+          the "All analysis" link beside it went to /news?section=analysis, which
+          DOES filter — so the teaser and its destination disagreed about what the
+          section was. Landing.tsx now selects on the real section axis; see
+          `featuredArticles` there. */}
       <section>
-        <div className="flex items-center gap-4 mb-7">
-          <div
-            className="flex-shrink-0 w-1 h-5 rounded-full"
-            style={{ background: 'hsl(var(--brand-accent))' }}
-          />
-          <h2 className="font-[family-name:var(--font-display)] text-xl font-bold text-foreground">
-            Featured Analysis &amp; Interviews
-          </h2>
-          <div className="flex-1 h-px bg-border/50" />
-          <Link
-            to="/newsletter"
-            className="flex items-center gap-1 text-[10px] uppercase tracking-[0.1em] font-semibold text-muted-foreground hover:text-foreground transition-colors flex-shrink-0"
-          >
-            Newsletter <Mail size={11} />
-          </Link>
-        </div>
+        {/* A plain `&`, not `&amp;` — this is a string prop, not markup, so the
+            entity would render literally. */}
+        <SectionHead
+          title="Analysis & Interviews"
+          to="/news?section=analysis"
+          linkLabel="All analysis"
+        />
 
         {featuredArticles.length > 0 ? (
           <div className="space-y-0">
@@ -120,24 +136,26 @@ export function LandingFeaturedArticles({
                 <div className="min-w-0">
                   {article.category && (
                     <div className="flex items-center gap-2 mb-1.5">
+                      {/* 11px, and gold as INK. `--brand-accent` is a fill colour —
+                          2.06:1 as text on this surface. */}
                       <span
-                        className="text-[9px] uppercase tracking-[0.14em] font-bold"
-                        style={{ color: 'hsl(var(--brand-accent))' }}
+                        className="text-[11px] uppercase tracking-[0.1em] font-bold"
+                        style={{ color: 'hsl(var(--brand-accent-ink))' }}
                       >
                         {article.category}
                       </span>
                     </div>
                   )}
-                  <h3 className="font-[family-name:var(--font-display)] text-base font-bold text-foreground leading-snug group-hover:opacity-[0.85] transition-opacity mb-1.5 line-clamp-2">
+                  <h3 className="font-[family-name:var(--font-display)] text-base md:text-lg font-bold text-foreground leading-snug group-hover:text-primary transition-colors mb-1.5 line-clamp-2">
                     {article.title}
                   </h3>
-                  <div className="flex items-center gap-3 text-[10px] text-muted-foreground">
+                  <div className="flex items-center gap-3 text-[12px] text-muted-foreground">
                     <span>{article.author}</span>
                     {article.readingTime && (
                       <>
                         <span>·</span>
                         <span className="flex items-center gap-1">
-                          <Clock size={9} />
+                          <Clock size={11} />
                           {article.readingTime} min read
                         </span>
                       </>
@@ -153,21 +171,17 @@ export function LandingFeaturedArticles({
           </p>
         )}
       </section>
+      </>
+      )}
 
-      {/* ── Horse profiles strip ─── */}
+      {/* ── Horse profiles strip ───
+          "Form the Stables" → "From the Stables". The old name read as a promise of
+          FORM — ratings, recent runs — which these rows do not carry; they show a
+          name and its trainer and jockey. (It may also simply have been a typo for
+          "From".) */}
+      {publicNav.horses !== false && (
       <section>
-        <div className="flex items-center gap-4 mb-6">
-          <h2 className="font-[family-name:var(--font-display)] text-xl font-bold text-foreground whitespace-nowrap">
-            Form the Stables
-          </h2>
-          <div className="flex-1 h-px bg-border/50" />
-          <Link
-            to="/horses"
-            className="flex items-center gap-1 text-[10px] uppercase tracking-[0.1em] font-semibold text-muted-foreground hover:text-foreground transition-colors flex-shrink-0"
-          >
-            All profiles <ChevronRight size={11} />
-          </Link>
-        </div>
+        <SectionHead title="From the Stables" to="/horses" linkLabel="All profiles" />
 
         <div className="space-y-0">
           {(horses ?? []).length === 0 ? (
@@ -175,36 +189,39 @@ export function LandingFeaturedArticles({
               <p className="font-[family-name:var(--font-display)] text-sm text-muted-foreground italic">
                 The stables await their first thoroughbred.
               </p>
-              <Link
-                to="/horses"
-                className="mt-3 inline-flex items-center gap-1 text-[10px] uppercase tracking-[0.1em] font-semibold text-primary hover:text-primary/80 transition-colors"
-              >
-                Add a profile <ArrowRight size={11} />
-              </Link>
+              {/* "Add a profile" is an editor's action; a reader cannot add one. */}
+              {isStaff && (
+                <Link
+                  to="/horses"
+                  className="mt-3 inline-flex items-center gap-1 text-[12px] font-semibold text-primary hover:text-primary/80 transition-colors"
+                >
+                  Add a profile <ArrowRight size={12} />
+                </Link>
+              )}
             </div>
           ) : (
-            (horses ?? []).slice(0, 4).map((horse, idx) => (
+            /* No `01 02 03 04` ordinals.
+               Each row used to be numbered in gold display type, which reads as a
+               ranking — a form table, on a racing site. These are `horses.slice(0,4)`
+               in whatever order the API returned them: not a top four, not rated,
+               not ordered by anything at all. The numbering was asserting a fact the
+               data does not contain. */
+            (horses ?? []).slice(0, 4).map((horse) => (
               <Link
                 key={horse.id}
                 to={`/horses/${horse.id}`}
-                className="group flex items-center gap-5 py-3.5 border-b border-border/40 hover:bg-muted/20 transition-colors -mx-2 px-2 rounded-sm"
+                className="group flex items-center gap-4 py-3.5 border-b border-border/40 hover:bg-muted/20 transition-colors -mx-2 px-2 rounded-sm"
               >
-                <span
-                  className="flex-shrink-0 w-7 font-[family-name:var(--font-display)] text-base font-bold tabular-nums"
-                  style={{ color: 'hsl(var(--brand-accent))' }}
-                >
-                  {String(idx + 1).padStart(2, '0')}
-                </span>
                 <div className="flex-1 min-w-0">
-                  <h3 className="font-[family-name:var(--font-display)] text-sm font-bold text-foreground leading-tight">
+                  <h3 className="font-[family-name:var(--font-display)] text-[15px] font-bold text-foreground leading-tight">
                     {horse.name}
                   </h3>
-                  <p className="text-[11px] text-muted-foreground mt-0.5">
+                  <p className="text-[12px] text-muted-foreground mt-0.5">
                     Trainer: {horseConn(horse).trainer || '—'} · Jockey: {horseConn(horse).jockey || '—'}
                   </p>
                 </div>
                 {horse.colour && (
-                  <span className="hidden sm:block text-[9px] uppercase tracking-[0.1em] text-muted-foreground border border-border/60 px-2 py-0.5 rounded-sm flex-shrink-0">
+                  <span className="hidden sm:block text-[11px] text-muted-foreground border border-border/60 px-2 py-0.5 rounded-sm flex-shrink-0">
                     {horse.colour}
                   </span>
                 )}
@@ -221,6 +238,7 @@ export function LandingFeaturedArticles({
           )}
         </div>
       </section>
+      )}
     </>
   );
 }

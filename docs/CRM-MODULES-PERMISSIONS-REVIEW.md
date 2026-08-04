@@ -352,6 +352,46 @@ row that 403s on click.
 `routes/uploads.ts` needs the same answer for evidence reads — two copies of a rule
 like that is how the H4 superadmin bug happened.
 
+### §9 — the superadmin seed endpoint (reviewed + fixed separately)
+
+`POST /api/admin/seed` survived the RBAC migration functionally intact, but it was the
+one place still speaking the pre-P2 role model and it never picked up the two
+capabilities P0/P2 added that it most needed.
+
+| | Was | Now |
+|---|---|---|
+| Secret compare | `req.body?.secret !== secret` — non-constant-time (H5) | SHA-256 both sides → `timingSafeEqual`; no branch on length |
+| Rate limit | **none** — unlimited guesses at unrestricted access | 5 per 15 min per IP |
+| Lifetime | open for as long as `SETUP_SECRET` is set; the review's advice was "remember to unset it" | **self-disabling** — 409 once `superadminHolderCount() > 0` |
+| Role write | `addToSet(… 'staffRoles', slug)` — the pre-P2 multi-role append | sets `staffRoleSlug` **and** replaces the array |
+| Suspended target | reported success while `isRevoked()` refused every request | reactivates, and says so in the response |
+| Audit | none | `console.warn` naming the email, id, IP, replaced role, reactivation |
+| `updatedAt` | never stamped | stamped on both paths |
+
+Two notes on the reasoning:
+
+**Why the count check runs after the secret.** Checking it first would let any anonymous
+caller use this endpoint to discover whether the platform has been set up yet.
+
+**Why self-disabling is safe.** It only is because there is now a recovery path that is
+*not* an endpoint: `npm run grant:superadmin <email> [--apply]`
+(`scripts/grant-superadmin.ts`, also `--list`). It requires `MONGODB_URI` — whoever can
+run it already has direct database access and could have edited the document by hand.
+Nothing is granted that the operator could not already take; what they get is a correct
+write instead of an improvised one. Re-opening the HTTP endpoint for lockout recovery
+would recreate exactly the backdoor the self-disable closes.
+
+**What the array fix did and did not change.** Reads were *already* correct — since P2
+`withIdentityDefaults` derives `staffRoles[]` from `staffRoleSlug`, so a stored
+`['editor','superadmin']` still resolved to superadmin. That is precisely why the drift
+was latent: it was invisible at read time. The fix keeps the stored document honest until
+P3 drops the array.
+
+Verified by 21 assertions: the compare against same-length/shorter/longer/empty/
+`undefined`/`null`/number/object/unicode inputs (no throw, no coercion), the gate opening
+at 0 holders and closing at 1, and the promote path writing a single-entry array that
+agrees with the field. The test promoted a real user on the test cluster and reverted it.
+
 ### Deliberately NOT done
 
 **`users.view` was not added.** There is no Users screen and no `/api/users`, so

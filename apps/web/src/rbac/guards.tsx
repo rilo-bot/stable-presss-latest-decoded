@@ -65,8 +65,14 @@ export function RequirePermission({
 }
 
 /**
- * Must be able to reach newsroom tooling. Was "holds any staff role"; now the
- * `newsroom.access` permission, which a superadmin controls per role.
+ * Must be able to reach newsroom tooling — i.e. must be staff.
+ *
+ * Still spelled as the `newsroom.access` permission, but that is no longer a
+ * checkbox anyone can grant or withhold: the server emits it for every account
+ * holding a staff role and for nobody else (see `toClientUser`). Being on the team
+ * IS Campaign Engine access; the role decides only what is inside. Kept as a
+ * permission check so there is one way to ask, rather than the browser learning a
+ * second test for the same fact.
  */
 export function RequireStaff({ children, redirect = '/' }: GuardProps) {
   return (

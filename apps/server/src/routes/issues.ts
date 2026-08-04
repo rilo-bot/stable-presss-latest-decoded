@@ -18,10 +18,8 @@
 
 import { Router } from 'express';
 import { db } from '../lib/db.js';
-import { canAccessNewsroom, isPlatformAdmin } from '../lib/rbac.js';
-import { sanitizePages } from '../lib/sanitizeHtml.js';
+import { canAccessNewsroom } from '../lib/rbac.js';
 import { renderBulletinPdf } from '../lib/pdf.js';
-import type { AccountUser } from '../lib/identity.js';
 
 // Origin of the public web app the PDF renderer navigates to. Dev: Vite on 5173.
 // Deployment: set WEB_PUBLIC_URL to the deployed frontend origin.
@@ -39,30 +37,17 @@ function pdfFileName(title: unknown): string {
 
 type WithMongoId = { _id: string; [key: string]: unknown };
 
-/**
- * Who may manage (republish / unpublish / delete) an existing issue: an admin,
- * the staff member who published it, or the owner of the source magazine. This
- * mirrors the owner-only management on magazine drafts (routes/magazines.ts) so
- * one editor can't tamper with another's published edition.
- */
-async function canManageIssue(issue: WithMongoId, account: AccountUser | undefined): Promise<boolean> {
-  if (!account) return false;
-  if (isPlatformAdmin(account)) return true;
-  if (issue.createdByUserId && issue.createdByUserId === account.id) return true;
-  if (issue.magazineId) {
-    const mag = await db.collection('magazines').findById(String(issue.magazineId));
-    if (mag && mag.ownerId === account.id) return true;
-  }
-  return false;
-}
-
 /** Full detail projection (_id → id). */
 function project<T extends WithMongoId>(doc: T): Omit<T, '_id'> & { id: string } {
   const { _id, ...rest } = doc;
   return { id: _id, ...rest } as Omit<T, '_id'> & { id: string };
 }
 
-/** Lightweight list projection — omits the heavy `pages` payload (grid needs only metadata). */
+/**
+ * Lightweight list projection — `pages` never reaches here (see the list route),
+ * so `pageCount` must already be on the document. Kept tolerant of a stray `pages`
+ * for the detail route's benefit.
+ */
 function summarize(doc: WithMongoId) {
   const { _id, pages, ...rest } = doc;
   return {
@@ -77,17 +62,31 @@ function summarize(doc: WithMongoId) {
   };
 }
 
-const byPublishedAtDesc = (a: WithMongoId, b: WithMongoId) =>
-  String(a.publishedAt) < String(b.publishedAt) ? 1 : -1;
-
 const router = Router();
 
 // list — public sees published only; staff may include unpublished (?includeUnpublished=1)
 router.get('/', async (req, res) => {
-  const all = await db.collection('issues').find();
   const includeUnpublished = canAccessNewsroom(req.account) && req.query.includeUnpublished === '1';
-  const visible = all.filter((d) => includeUnpublished || !d.unpublishedAt);
-  visible.sort(byPublishedAtDesc);
+  // An issue document embeds its ENTIRE page array (~41 KB each), and the list only
+  // ever needed metadata — so this route used to read the whole collection into the
+  // API process and then throw the pages away in summarize(). On a public,
+  // unauthenticated route that is megabytes per hit for nothing.
+  //
+  // aggregate() rather than find({ projection: { pages: 0 } }) because `pageCount`
+  // is NOT persisted on the document: projecting `pages` away would take the count
+  // with it and the grid would read "0 pages" for every issue. $size derives it
+  // inside MongoDB, so the count is exact for old and new documents alike and no
+  // backfill is needed. The sort is pushed down too, so the publishedAt index
+  // orders the results instead of the API process.
+  //
+  // NOTE: aggregate() does NOT inject the soft-delete filter that find() does —
+  // the `deletedAt: null` $match below is load-bearing, not decoration.
+  const visible = (await db.collection('issues').aggregate([
+    { $match: { deletedAt: null, ...(includeUnpublished ? {} : { unpublishedAt: null }) } },
+    { $addFields: { pageCount: { $size: { $ifNull: ['$pages', []] } } } },
+    { $project: { pages: 0 } },
+    { $sort: { publishedAt: -1 } },
+  ])) as WithMongoId[];
   res.json(visible.map(summarize));
 });
 
@@ -135,8 +134,21 @@ router.get('/:id/pdf', async (req, res) => {
   // the cached copy.
   const forceRefresh = req.query.refresh === '1';
 
+  // Sheet size = the issue's OWN first-page box. `page.pdf()` takes one size for
+  // the whole document and an issue's pages are uniform in practice. This was
+  // hard-coded in pdf.ts to the retired v1 builder's 794×1123 (A4 at 96dpi), so
+  // every page of every issue this builder produces — 1275×1650 generated, or
+  // whatever an upload rasterised to — was printed onto the wrong-shaped sheet.
+  const firstPage = (Array.isArray(doc.pages) ? doc.pages[0] : null) as
+    | { width?: unknown; height?: unknown }
+    | null;
+  const dim = (v: unknown) => (typeof v === 'number' && Number.isFinite(v) && v > 0 ? v : 0);
+  const sheet = dim(firstPage?.width) && dim(firstPage?.height)
+    ? { width: dim(firstPage?.width), height: dim(firstPage?.height) }
+    : undefined; // let pdf.ts apply its canonical default
+
   try {
-    const pdf = await renderBulletinPdf(url, cacheKey, token, forceRefresh);
+    const pdf = await renderBulletinPdf(url, cacheKey, token, forceRefresh, sheet);
     res.setHeader('Content-Type', 'application/pdf');
     res.setHeader('Content-Disposition', `attachment; filename="${pdfFileName(doc.title)}"`);
     res.setHeader('Content-Length', pdf.length);
@@ -147,127 +159,17 @@ router.get('/:id/pdf', async (req, res) => {
   }
 });
 
-// create — publish a snapshot (staff)
-router.post('/', async (req, res) => {
-  const body = req.body as Partial<{
-    magazineId: string;
-    title: string;
-    edition: string;
-    coverImage: string;
-    coverImageUrl: string;
-    pages: unknown[];
-    scope: 'full' | 'selected';
-  }>;
-
-  if (!body || !body.title || !Array.isArray(body.pages) || body.pages.length === 0) {
-    res.status(400).json({ error: 'title and at least one page are required' });
-    return;
-  }
-
-  // Only the owner of the source magazine (or an admin) may publish from it.
-  if (body.magazineId) {
-    const mag = await db.collection('magazines').findById(String(body.magazineId));
-    if (!mag || (mag.ownerId !== req.account?.id && !isPlatformAdmin(req.account))) {
-      res.status(403).json({ error: 'Only the magazine owner can publish this edition.' });
-      return;
-    }
-  }
-
-  const now = new Date().toISOString();
-  const doc: Record<string, unknown> = {
-    magazineId: body.magazineId ?? null,
-    title: body.title,
-    edition: body.edition ?? '',
-    coverImage: body.coverImage ?? '',
-    coverImageUrl: body.coverImageUrl ?? '',
-    // Trust boundary: re-sanitize page rich text server-side before freezing it
-    // into the public copy (mirrors the magazine draft route).
-    pages: sanitizePages(body.pages),
-    scope: body.scope === 'selected' ? 'selected' : 'full',
-    pageCount: body.pages.length,
-    version: 1,
-    publishedAt: now,
-    unpublishedAt: null,
-    createdByUserId: req.account?.id ?? null,
-    createdAt: now,
-    updatedAt: now,
-  };
-
-  const id = await db.collection('issues').insertOne(doc);
-  const created = await db.collection('issues').findById(id);
-  if (!created) {
-    res.status(500).json({ error: 'failed to publish' });
-    return;
-  }
-  res.status(201).json(project(created));
-});
-
-// patch — unpublish, re-show, or republish with a fresh snapshot (staff)
-router.patch('/:id', async (req, res) => {
-  const found = await db.collection('issues').findById(req.params.id);
-  if (!found) {
-    res.status(404).json({ error: 'Not found' });
-    return;
-  }
-  if (!(await canManageIssue(found, req.account))) {
-    res.status(403).json({ error: 'Only the magazine owner can manage this edition.' });
-    return;
-  }
-
-  const body = req.body as Partial<{
-    action: 'unpublish' | 'republish';
-    title: string;
-    edition: string;
-    coverImage: string;
-    coverImageUrl: string;
-    pages: unknown[];
-  }>;
-
-  const now = new Date().toISOString();
-  const update: Record<string, unknown> = { updatedAt: now };
-
-  if (body.action === 'unpublish') {
-    update.unpublishedAt = now;
-  } else if (body.action === 'republish') {
-    update.unpublishedAt = null;
-    update.version = (typeof found.version === 'number' ? found.version : 1) + 1;
-    update.publishedAt = now;
-    // Optional fresh snapshot — only replace content when the client sends new pages.
-    if (Array.isArray(body.pages) && body.pages.length > 0) {
-      update.pages = sanitizePages(body.pages);
-      update.pageCount = body.pages.length;
-      if (typeof body.title === 'string') update.title = body.title;
-      if (typeof body.edition === 'string') update.edition = body.edition;
-      if (typeof body.coverImage === 'string') update.coverImage = body.coverImage;
-      if (typeof body.coverImageUrl === 'string') update.coverImageUrl = body.coverImageUrl;
-    }
-  } else {
-    res.status(400).json({ error: "action must be 'unpublish' or 'republish'" });
-    return;
-  }
-
-  await db.collection('issues').updateOne(req.params.id, update);
-  const updated = await db.collection('issues').findById(req.params.id);
-  if (!updated) {
-    res.status(404).json({ error: 'Not found' });
-    return;
-  }
-  res.json(project(updated));
-});
-
-// delete — issue creator, source-magazine owner, or admin
-router.delete('/:id', async (req, res) => {
-  const found = await db.collection('issues').findById(req.params.id);
-  if (!found) {
-    res.status(404).json({ error: 'Not found' });
-    return;
-  }
-  if (!(await canManageIssue(found, req.account))) {
-    res.status(403).json({ error: 'Only the magazine owner can delete this edition.' });
-    return;
-  }
-  await db.collection('issues').deleteOne(req.params.id);
-  res.json({ success: true });
-});
+// ── No write endpoints ──────────────────────────────────────────────────────
+//
+// This router is READ-ONLY. POST /, PATCH /:id and DELETE /:id lived here and
+// were the v1 template builder's publish path: the browser assembled a whole
+// snapshot client-side and POSTed it, then re-POSTed pages to republish.
+//
+// The Magazine Builder writes this collection SERVER-SIDE instead —
+// POST /api/magazinesV2/issues/:id/publish freezes the stored pages itself
+// (buildPublishSnapshot), /unpublish stamps unpublishedAt, and deleting a draft
+// cascades to its published snapshot. So a client never sends page content here,
+// which is why `sanitizePages` and `canManageIssue` went with these handlers:
+// nothing arrives from a client to sanitize, and nothing here mutates.
 
 export default router;

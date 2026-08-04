@@ -1,16 +1,18 @@
 import { useMemo, useState, useEffect } from 'react';
-import { isLive, isLiveOn } from '@/types/article';
+import { isLive } from '@/types/article';
 import { Link, useSearchParams } from 'react-router-dom';
 import { useArticleStore } from '@/stores/articleStore';
+import { useAuthStore } from '@/stores/authStore';
+import { isStaff } from '@/rbac/can';
 import { ArticleSkeletonCard } from '@/components/SkeletonCard';
 import { EmptyState } from '@/components/EmptyState';
 import { cn } from '@/lib/utils';
 import {
+  BookOpen,
   ChevronRight,
   Search,
   PenLine,
   ArrowRight,
-  Mail,
 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { CATEGORIES, SECTIONS } from './news-index/constants';
@@ -32,6 +34,8 @@ export default function NewsIndex() {
 
   const [searchParams, setSearchParams] = useSearchParams();
   const articles = useArticleStore((s) => s.articles);
+  // Decides which empty-state CTA to show — newsroom, or reader-facing.
+  const staff = isStaff(useAuthStore((s) => s.currentUser));
 
   const categoryParam = searchParams.get('category') ?? null;
   const sectionParam = searchParams.get('section') ?? null;
@@ -116,21 +120,9 @@ export default function NewsIndex() {
     currentSectionDef?.description ??
     'The full Stable Press editorial record — race reports, analysis, interviews, and paddock intelligence from the thoroughbred racing world.';
 
-  // Channel split for when no filters applied. This was already a channel split
-  // in everything but name — it read three mutually exclusive *statuses*, which
-  // is why a story could never run in both the newsletter and on the site.
-  const newsletterArticles = useMemo(
-    () => filteredArticles.filter((a) => isLiveOn(a, 'newsletter')),
-    [filteredArticles]
-  );
-  const bulletinArticles = useMemo(
-    () => filteredArticles.filter((a) => isLiveOn(a, 'bulletin')),
-    [filteredArticles]
-  );
-  const publishedOnly = useMemo(
-    () => filteredArticles.filter((a) => isLiveOn(a, 'news')),
-    [filteredArticles]
-  );
+  // No channel split any more: `filteredArticles` IS the result set. There used
+  // to be three lists here — newsletter, bulletin, and everything else — because
+  // a story carried distribution channels. A published story is news now.
 
   return (
     <div className="min-h-screen bg-background">
@@ -236,13 +228,15 @@ export default function NewsIndex() {
               </button>
             ))}
 
-            {/* Newsletter shortcut */}
+            {/* Was a "Newsletter" shortcut pill. /newsletter is gone with the
+                `channels` axis; the bulletin newsstand is the real second surface a
+                reader on this page might want. */}
             <Link
-              to="/newsletter"
+              to="/bulletins"
               className="flex-shrink-0 flex items-center gap-1.5 px-3 py-1.5 rounded-sm text-[11px] font-semibold uppercase tracking-[0.08em] transition-colors border border-border/60 text-muted-foreground hover:text-foreground hover:border-border ml-auto"
             >
-              <Mail size={13} />
-              Newsletter
+              <BookOpen size={13} />
+              Bulletins
             </Link>
           </div>
 
@@ -292,21 +286,30 @@ export default function NewsIndex() {
               <div className="w-12 h-12 rounded-full bg-primary/15 flex items-center justify-center mx-auto mb-4">
                 <PenLine size={20} className="text-primary" />
               </div>
+              {/* Staff get the newsroom; readers get somewhere they can actually
+                  go. This sent every anonymous visitor to /production-system,
+                  which is RequireStaff and redirects them home. */}
               <h3 className="font-[family-name:var(--font-display)] text-lg font-bold text-foreground mb-2">
-                The press stands ready. No dispatches have been filed.
+                {staff
+                  ? 'The press stands ready. No dispatches have been filed.'
+                  : 'No stories have been published yet.'}
               </h3>
               <p className="text-sm text-muted-foreground max-w-md mx-auto mb-5">
-                Published stories from the Newsroom will appear here. Head to the Newsroom Production System to file your first dispatch.
+                {staff
+                  ? 'Published stories from the Newsroom will appear here. Head to the Newsroom Production System to file your first dispatch.'
+                  : 'The desk is still working on the first edition. The blog and the podcast are already open.'}
               </p>
               <div className="flex flex-col sm:flex-row items-center justify-center gap-3">
                 <Button asChild className="bg-primary text-primary-foreground hover:bg-primary/90 gap-1.5">
-                  <Link to="/production-system">
-                    Go to Newsroom Production System
+                  <Link to={staff ? '/production-system' : '/blog'}>
+                    {staff ? 'Go to Newsroom Production System' : 'Read the blog'}
                     <ArrowRight size={14} />
                   </Link>
                 </Button>
                 <Button asChild variant="outline">
-                  <Link to="/">Return to Home</Link>
+                  <Link to={staff ? '/' : '/podcast'}>
+                    {staff ? 'Return to Home' : 'Listen to the podcast'}
+                  </Link>
                 </Button>
               </div>
             </div>
@@ -337,9 +340,6 @@ export default function NewsIndex() {
         ) : (
           <ArticleGrid
             filteredArticles={filteredArticles}
-            newsletterArticles={newsletterArticles}
-            bulletinArticles={bulletinArticles}
-            publishedOnly={publishedOnly}
             activeCategory={activeCategory}
             activeSection={activeSection}
             search={search}

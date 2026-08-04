@@ -10,7 +10,7 @@ import { Sparkles, Paperclip, X, Loader2, FileText, FileScan, FilePlus, Globe, T
 import { toast } from 'sonner';
 import * as api from './api';
 import type { IssueSummary } from './api';
-import { ingestFile, attachmentSourceText, ATTACH_ACCEPT } from '@/editor/agent/documentUpload';
+import { ingestFile, attachmentSourceText, ATTACH_ACCEPT } from '@/agent/attachments/documentUpload';
 
 const ACCENT = '#7c3aed';
 

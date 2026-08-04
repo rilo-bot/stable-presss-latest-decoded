@@ -39,8 +39,6 @@ export type PermissionAction =
   | 'content.approve'
   | 'content.schedule'
   | 'content.publish'
-  | 'content.newsletter'
-  | 'content.bulletin'
   // Blogs — a separate axis from Stories on purpose. Publishing a blog is a
   // different power from publishing a news story, and keeping them apart is
   // what lets blogging be opened to member/guest authors later as a role
@@ -55,7 +53,12 @@ export type PermissionAction =
   | 'media.manage_all'
   // Compensation
   | 'compensation.view_own'
-  // Platform access
+  // Platform access.
+  //
+  // `newsroom.access` is IMPLICIT, not grantable — it is absent from
+  // PERMISSION_CATALOGUE on purpose (see the note there). It keeps its place in
+  // this union only because `toClientUser` emits it as a derived flag for the
+  // browser's RequireStaff guard.
   | 'newsroom.access'
   | 'platform.admin'
   | 'roles.manage'
@@ -64,7 +67,16 @@ export type PermissionAction =
   | 'team.view'
   | 'team.manage'
   | 'settings.view'
+  // Re-added with the endpoint that enforces it: PUT /api/site-settings/public-nav.
+  // See the RESERVED block below for why it was gone.
+  | 'settings.manage'
   | 'analytics.view'
+  // Reader comments. ONE permission, not a create/edit/delete axis: leaving a
+  // comment needs no permission at all (any signed-in reader may), and an author
+  // editing or deleting their own is ownership rather than a grant. The only
+  // grantable power is acting on OTHER people's comments — hide, restore, remove
+  // — which is a single editorial job. See docs/COMMENTS-PLAN.md §6.
+  | 'comments.moderate'
   // Podcast
   | 'podcast.manage'
   | 'podcast.episode.create'
@@ -104,10 +116,25 @@ export interface PermissionMeta {
  * resource, one checkbox per action within it.
  */
 export const PERMISSION_CATALOGUE: PermissionMeta[] = [
-  // Platform access — these three replace the old hardcoded role-family tests.
-  // `newsroom.access` is what `isStaff()` used to mean; `platform.admin` is what
-  // `isAdmin()` used to mean. First row because they gate everything below.
-  { id: 'newsroom.access', label: 'Access the newsroom', resource: 'Platform Access', short: 'Newsroom', description: 'Sign in to newsroom tooling and see unverified/private records.' },
+  // Platform access.
+  //
+  // `newsroom.access` WAS the first entry here and is deliberately gone. It is not
+  // reserved-because-unenforced like the block further down — it is enforced on
+  // every staff route. It is gone because it is now IMPLICIT: holding a staff role
+  // IS newsroom access (`isStaffIdentity` in identity.ts, read by
+  // `canAccessNewsroom`). Anyone added to the team from the Production System can
+  // open the Campaign Engine; their role decides what they find inside.
+  //
+  // As a grantable checkbox it was a trap. It sat in this row looking like one
+  // capability among many while actually being the precondition for all 24 module
+  // checkboxes, so the obvious way to build a "magazine only" role — tick Magazine
+  // Builder, save — produced a role that could not sign in, with nothing anywhere
+  // saying why. See docs/RBAC-UI-REVIEW.md.
+  //
+  // The id still exists in `PermissionAction` because `toClientUser` emits it as a
+  // derived flag for the browser's `RequireStaff`. It is NOT in this array, so
+  // `isPermissionAction` rejects it and `projectRole` strips it from any role row
+  // that still carries it — a role cannot grant it even by writing to the API.
   { id: 'platform.admin', label: 'Platform administration', resource: 'Platform Access', short: 'Administration', description: 'Verify claims, manage every organisation, override ownership.' },
   { id: 'roles.manage', label: 'Manage roles', resource: 'Platform Access', short: 'Manage roles', description: 'Create roles, set their permissions, and assign them.' },
   // Split OUT of platform.admin. Verifying a racing identity is a records job;
@@ -135,10 +162,11 @@ export const PERMISSION_CATALOGUE: PermissionMeta[] = [
   // "Legal & Compliance" heading, and checked by absolutely nothing — approval
   // has been one step (`content.approve`) since the five stages landed. Roles
   // still holding the retired ids simply no longer match a catalogue entry.
+  // `content.newsletter` and `content.bulletin` were removed here — see the
+  // RESERVED block below. Publishing a story is one action now: it goes live on
+  // /news under its category.
   { id: 'content.schedule', label: 'Schedule publication', resource: 'Publishing', short: 'Schedule', description: 'Set a future publish date.' },
   { id: 'content.publish', label: 'Publish', resource: 'Publishing', short: 'Publish', description: 'Push a story live.' },
-  { id: 'content.newsletter', label: 'Send to newsletter', resource: 'Publishing', short: 'Newsletter', description: 'Distribute a story via newsletter.' },
-  { id: 'content.bulletin', label: 'Add to bulletin', resource: 'Publishing', short: 'Bulletin', description: 'Include a story in a bulletin issue.' },
 
   // Blogs — two states (draft/published), so there is no submit/approve/schedule
   // row here the way Stories has one.
@@ -185,7 +213,15 @@ export const PERMISSION_CATALOGUE: PermissionMeta[] = [
   { id: 'team.view', label: 'View team', resource: 'Team & Settings', short: 'View team', description: 'See the staff roster.' },
   { id: 'team.manage', label: 'Manage team & roles', resource: 'Team & Settings', short: 'Manage team', description: 'Invite staff, create roles, assign permissions.' },
   { id: 'settings.view', label: 'View settings', resource: 'Team & Settings', short: 'View settings', description: 'Open newsroom settings.' },
+  // The Settings screen is no longer static text: Website Customisation writes
+  // which of the six public sections the site shows. `settings.view` opens the
+  // screen and shows the switches; this is what lets you move one.
+  { id: 'settings.manage', label: 'Change website settings', resource: 'Team & Settings', short: 'Change settings', description: 'Show or hide public sections of the website (News, Blog, Horses, Directory, Podcast, Bulletins).' },
   { id: 'analytics.view', label: 'View analytics', resource: 'Team & Settings', short: 'Analytics', description: 'Open the analytics dashboard.' },
+  // Its own resource row rather than one more checkbox under Team & Settings:
+  // working a comment queue is a shift somebody takes, and it is the one power
+  // here that acts on words a reader wrote in public.
+  { id: 'comments.moderate', label: 'Moderate reader comments', resource: 'Comments', short: 'Moderate', description: "Hide, restore or remove other people's comments on stories, blog posts and editions." },
 ]
 
 // ── RESERVED ids — removed from the catalogue, not forgotten ────────────────
@@ -197,14 +233,38 @@ export const PERMISSION_CATALOGUE: PermissionMeta[] = [
 //
 //   compensation.view_all   no all-contributors view exists
 //   compensation.manage     no payouts endpoint; the screen reads from `articles`
-//   settings.manage         no settings endpoint; the screen is static text
 //   workflow.view_all_columns   superseded by the `workflowStages` axis
 //   workflow.view_own_columns   superseded by the `workflowStages` axis
+//   content.newsletter      the `channels` axis is gone; see below
+//   content.bulletin        the `channels` axis is gone; see below
+//
+// The last two are a different kind of removal from the rest, and worth spelling
+// out. They DID gate something: `vetChannels` in routes/articles.ts refused a
+// write that put a story on the newsletter or bulletin channel without them. The
+// channels themselves are what went away.
+//
+//   `bulletin` had nowhere to land. /bulletins is the magazine newsstand — both
+//   builders freeze their pages into `issues` — and the bulletin-story list below
+//   it only ever rendered when no issue had been published at all.
+//
+//   `newsletter` gated distribution by a newsletter that does not exist. Nothing
+//   in this codebase sends email except sign-in OTPs, so an editor could hold
+//   "Distribute a story via newsletter" and no such distribution could occur. The
+//   /newsletter page it fed was deleted with the axis.
+//
+// A story is news now: published means live on /news under its category. Roles
+// still holding either id simply no longer match a catalogue entry, which is what
+// scripts/sync-role-catalogue.ts is for.
 //
 // RE-ADD any of these in the same commit as the endpoint that enforces it — never
 // ahead of it. scripts/check-permission-enforcement.ts fails the build if a
 // catalogue id is referenced nowhere, which is what keeps this list from growing
 // back. See docs/CRM-MODULES-PERMISSIONS-REVIEW.md §4.3–4.4.
+//
+// `settings.manage` LEFT this list and is grantable again, by exactly that rule:
+// routes/siteSettings.ts now enforces it on PUT /api/site-settings/public-nav,
+// which is what the Website Customisation switches write. It was here for the
+// right reason — the Settings screen used to be four rows of static text.
 
 const ACTION_IDS = new Set<string>(PERMISSION_CATALOGUE.map((p) => p.id))
 
@@ -240,6 +300,13 @@ export const MODULE_CATALOGUE: ModuleMeta[] = [
   // a blog-only author still gets the surface. See docs/INSTANT-CAPTURE-PLAN.md §5.1.
   { id: 'instant', label: 'Instant Capture', section: 'Content' },
   { id: 'magazine-v2', label: 'Magazine Builder', section: 'Content' },
+  // Podcast production. `podcast.read_all` rather than one of the producing
+  // powers: this row decides which BUILT-IN roles get the surface (see
+  // builtinModulesFor) and "can see episodes that aren't live" is the honest
+  // prerequisite for opening the screen at all — it is what GET / keys on. The
+  // screen needs any of four powers to do anything, and a module row holds one,
+  // so it gates the rest itself. Same posture as `instant`.
+  { id: 'podcast', label: 'Podcast', section: 'Content', requiresPermission: 'podcast.read_all' },
   { id: 'editor-hub', label: 'Editor Hub', section: 'Content', requiresPermission: 'content.editorial_review' },
   { id: 'my-assets', label: 'My Media Assets', section: 'Content', requiresPermission: 'media.upload_own' },
   { id: 'compensation', label: 'My Compensation', section: 'Content', requiresPermission: 'compensation.view_own' },
@@ -261,6 +328,13 @@ export const MODULE_CATALOGUE: ModuleMeta[] = [
   // row of its own. Role rows written before this module existed need
   // scripts/grant-emoji-analytics-module.ts (seedRoles is insert-only).
   { id: 'emoji-analytics', label: 'Emoji Analytics', section: 'Management', requiresPermission: 'analytics.view' },
+  // The comment queue. In `Content` rather than `Management` because it is a desk
+  // somebody works through, next to the stories and posts the comments are on —
+  // not a report an editor reads once a week. Role rows written before this
+  // module existed need scripts/grant-comments-module.ts (seedRoles is
+  // insert-only), and the API must be RESTARTED after this line ships or
+  // roleRegistry strips the id out of every role on every request.
+  { id: 'comment-moderation', label: 'Comments', section: 'Content', requiresPermission: 'comments.moderate' },
   { id: 'settings', label: 'Settings', section: 'Management', requiresPermission: 'settings.view' },
 
   // Editor Hub tabs — gated the same way, one level down.
@@ -365,8 +439,9 @@ export function normaliseWorkflowStages(raw: unknown): string[] {
 // from the web copy, which was the fuller of the two.
 
 export const BUILTIN_ROLE_PERMISSIONS: Record<SeedRoleSlug, PermissionAction[]> = {
+  // `newsroom.access` is absent from every role here: holding a staff role IS
+  // newsroom access now, so listing it would be a no-op that `projectRole` strips.
   contributor: [
-    'newsroom.access',
     'content.draft.create',
     'content.draft.edit_own',
     'content.submit',
@@ -378,7 +453,6 @@ export const BUILTIN_ROLE_PERMISSIONS: Record<SeedRoleSlug, PermissionAction[]> 
   ],
 
   editor: [
-    'newsroom.access',
     'content.draft.create',
     'content.draft.edit_own',
     'content.draft.edit_any',
@@ -388,8 +462,6 @@ export const BUILTIN_ROLE_PERMISSIONS: Record<SeedRoleSlug, PermissionAction[]> 
     'content.approve',
     'content.schedule',
     'content.publish',
-    'content.newsletter',
-    'content.bulletin',
     'blog.create',
     'blog.edit_own',
     'blog.edit_any',
@@ -399,6 +471,10 @@ export const BUILTIN_ROLE_PERMISSIONS: Record<SeedRoleSlug, PermissionAction[]> 
     'media.manage_all',
     'team.view',
     'analytics.view',
+    // The comment desk belongs to the editor. A contributor writes; deciding what
+    // stays up under someone else's byline is an editorial call, so it does NOT
+    // go in the contributor list.
+    'comments.moderate',
     'settings.view',
     'podcast.episode.edit_any',
     'podcast.episode.approve',

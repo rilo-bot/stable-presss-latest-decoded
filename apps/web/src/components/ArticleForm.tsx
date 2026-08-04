@@ -23,8 +23,7 @@ import { loadDraft, useFormDraft } from '@/hooks/useFormDraft';
 import type { Article } from '@/types/article';
 import { TIER_ORDER, TIER_LABELS } from '@/rbac/entitlement';
 import type { SubscriptionTier } from '@/rbac/entitlement';
-import { ARTICLE_CHANNELS, articleChannels } from '@/types/article';
-import type { ArticleChannel, ArticleStatus } from '@/types/article';
+import type { ArticleStatus } from '@/types/article';
 import { enterPermission, movesFrom, stageMeta } from '@/lib/workflow';
 import { can } from '@/lib/permissions';
 import { X, Check, Lock, Newspaper, BarChart2, Mic, RotateCcw, Mail, Radio, Globe, Clock, Tag as TagIcon } from 'lucide-react';
@@ -42,7 +41,6 @@ interface ArticleDraft {
   minTier: SubscriptionTier;
   linkedHorseIds: string[];
   imageUrl: string;
-  channels: ArticleChannel[];
   tags: string[];
   scheduledFor: string;
 }
@@ -88,12 +86,6 @@ function stageChoices(editArticle: Article | null | undefined): { value: Article
       .map((m) => ({ value: m.to, label: m.label })),
   ];
 }
-
-const CHANNEL_META: Record<ArticleChannel, { label: string; hint: string; icon: React.ReactNode }> = {
-  news: { label: 'News site', hint: 'Appears on the public news index', icon: <Globe size={12} /> },
-  newsletter: { label: 'Newsletter', hint: 'Carried on the newsletter page', icon: <Mail size={12} /> },
-  bulletin: { label: 'Bulletin', hint: 'Included in the bulletins page', icon: <Radio size={12} /> },
-};
 
 /** `datetime-local` wants `YYYY-MM-DDTHH:mm` in local time; the wire uses ISO. */
 function isoToLocalInput(iso: string | undefined): string {
@@ -159,7 +151,6 @@ export function ArticleForm({
   const [minTier, setMinTier] = useState<SubscriptionTier>('free');
   const [linkedHorseIds, setLinkedHorseIds] = useState<string[]>([]);
   const [imageUrl, setImageUrl] = useState('');
-  const [channels, setChannels] = useState<ArticleChannel[]>(['news']);
   const [tags, setTags] = useState<string[]>([]);
   const [tagInput, setTagInput] = useState('');
   const [scheduledFor, setScheduledFor] = useState('');
@@ -168,11 +159,6 @@ export function ArticleForm({
 
   const isContributor = !can('content.draft.edit_any');
   const statusOptions = stageChoices(editArticle);
-
-  // Which channels this user may put a story on. `news` needs no permission.
-  const allowedChannels = ARTICLE_CHANNELS.filter(
-    (c) => c === 'news' || can(c === 'newsletter' ? 'content.newsletter' : 'content.bulletin'),
-  );
 
   // Contributors always get their display name auto-filled as byline
   const authorLocked = isContributor;
@@ -195,7 +181,6 @@ export function ArticleForm({
       setMinTier(editArticle.minTier ?? 'free');
       setLinkedHorseIds(editArticle.linkedHorseIds ?? []);
       setImageUrl(editArticle.imageUrl ?? '');
-      setChannels(articleChannels(editArticle));
       setTags(editArticle.tags ?? []);
       setScheduledFor(isoToLocalInput(editArticle.scheduledFor));
     } else {
@@ -216,7 +201,6 @@ export function ArticleForm({
       setMinTier(draft?.minTier ?? 'free');
       setLinkedHorseIds(draft?.linkedHorseIds ?? []);
       setImageUrl(draft?.imageUrl ?? '');
-      setChannels(draft?.channels ?? ['news']);
       setTags(draft?.tags ?? []);
       setScheduledFor(draft?.scheduledFor ?? '');
       setDraftRestored(!!draft);
@@ -228,7 +212,7 @@ export function ArticleForm({
     ARTICLE_DRAFT_KEY,
     {
       title, summary, author, category, status, readingTime, minTier, linkedHorseIds,
-      channels, tags, scheduledFor,
+      tags, scheduledFor,
       // Skip transient data: URLs — they can blow the localStorage quota.
       imageUrl: imageUrl.startsWith('data:') ? '' : imageUrl,
     },
@@ -250,7 +234,6 @@ export function ArticleForm({
     setMinTier('free');
     setLinkedHorseIds([]);
     setImageUrl('');
-    setChannels(['news']);
     setTags([]);
     setTagInput('');
     setScheduledFor('');
@@ -260,12 +243,6 @@ export function ArticleForm({
   const toggleHorse = (horseId: string) => {
     setLinkedHorseIds((prev) =>
       prev.includes(horseId) ? prev.filter((id) => id !== horseId) : [...prev, horseId]
-    );
-  };
-
-  const toggleChannel = (channel: ArticleChannel) => {
-    setChannels((prev) =>
-      prev.includes(channel) ? prev.filter((c) => c !== channel) : [...prev, channel]
     );
   };
 
@@ -281,8 +258,8 @@ export function ArticleForm({
    *
    * Both store calls are AWAITED and their result checked. This used to fire
    * them without awaiting and toast "Story updated" unconditionally, so every
-   * rejection the server raised — an illegal move, a channel the user may not
-   * publish to, a failed request — was reported to the user as a success while
+   * rejection the server raised — an illegal move, a stage the user may not
+   * enter, a failed request — was reported to the user as a success while
    * the store rolled the change back behind them.
    */
   const handleSubmit = async () => {
@@ -292,10 +269,6 @@ export function ArticleForm({
     }
     if (!author.trim()) {
       toast.error('Every story needs a byline. Please add an author.');
-      return;
-    }
-    if (channels.length === 0) {
-      toast.error('Pick at least one place for this story to run.');
       return;
     }
     if (status === 'scheduled' && !scheduledFor) {
@@ -317,7 +290,6 @@ export function ArticleForm({
         readingTime: readingTime ? parseInt(readingTime, 10) : undefined,
         minTier,
         linkedHorseIds,
-        channels,
         tags,
         imageUrl: imageUrl.trim() || undefined,
         ...(status === 'scheduled'
@@ -619,61 +591,6 @@ export function ArticleForm({
               >
                 <X size={10} /> Clear category
               </button>
-            )}
-          </div>
-
-          {/* Distribution channels — where a PUBLISHED story runs. Independent
-              of the stage: a story can carry the news site and the newsletter at
-              once, which a single status could never express. */}
-          <div className="space-y-2">
-            <Label className="text-[10px] uppercase tracking-[0.1em] font-semibold text-muted-foreground">
-              Where it runs
-            </Label>
-            <p className="text-[10px] text-muted-foreground/70 -mt-0.5">
-              Takes effect once the story is published. Pick as many as apply.
-            </p>
-            <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">
-              {allowedChannels.map((c) => {
-                const on = channels.includes(c);
-                const meta = CHANNEL_META[c];
-                return (
-                  <button
-                    key={c}
-                    type="button"
-                    onClick={() => toggleChannel(c)}
-                    aria-pressed={on}
-                    className={cn(
-                      'flex items-start gap-2 px-3 py-2 rounded-sm border text-left transition-colors',
-                      on
-                        ? 'border-primary/50 bg-primary/5'
-                        : 'border-border/60 hover:border-primary/30 hover:bg-muted/40'
-                    )}
-                  >
-                    <span
-                      className={cn(
-                        'mt-0.5 flex-shrink-0 w-4 h-4 rounded-sm border flex items-center justify-center transition-colors',
-                        on ? 'bg-primary border-primary' : 'border-border'
-                      )}
-                    >
-                      {on && <Check size={10} className="text-primary-foreground" />}
-                    </span>
-                    <span className="min-w-0">
-                      <span className="flex items-center gap-1.5 text-xs font-semibold text-foreground">
-                        <span className="text-muted-foreground">{meta.icon}</span>
-                        {meta.label}
-                      </span>
-                      <span className="block text-[10px] text-muted-foreground mt-0.5 leading-snug">
-                        {meta.hint}
-                      </span>
-                    </span>
-                  </button>
-                );
-              })}
-            </div>
-            {allowedChannels.length < ARTICLE_CHANNELS.length && (
-              <p className="text-[10px] text-muted-foreground/60">
-                Newsletter and bulletin distribution need their own permissions.
-              </p>
             )}
           </div>
 

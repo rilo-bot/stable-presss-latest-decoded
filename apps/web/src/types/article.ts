@@ -19,16 +19,8 @@ import type { SubscriptionTier } from '@/rbac/entitlement';
 export const ARTICLE_STATUSES = ['draft', 'submitted', 'approved', 'scheduled', 'published'] as const;
 export type ArticleStatus = (typeof ARTICLE_STATUSES)[number];
 
-/** Where a published story is distributed. Independent of workflow position. */
-export const ARTICLE_CHANNELS = ['news', 'newsletter', 'bulletin'] as const;
-export type ArticleChannel = (typeof ARTICLE_CHANNELS)[number];
-
 export function isArticleStatus(v: unknown): v is ArticleStatus {
   return typeof v === 'string' && (ARTICLE_STATUSES as readonly string[]).includes(v);
-}
-
-export function isArticleChannel(v: unknown): v is ArticleChannel {
-  return typeof v === 'string' && (ARTICLE_CHANNELS as readonly string[]).includes(v);
 }
 
 export interface Article {
@@ -50,12 +42,6 @@ export interface Article {
   assignmentNote?: string;
 
   /**
-   * Distribution channels. Empty/absent behaves as `['news']`, so a story that
-   * predates the field still appears on the news index once published.
-   */
-  channels?: ArticleChannel[];
-
-  /**
    * Set when an editor sends a story back from Submitted. The story returns to
    * Draft, so without this flag its card would be indistinguishable from one
    * nobody has looked at yet.
@@ -69,27 +55,36 @@ export interface Article {
    * with no date behind it — the podcast workflow already did this properly.
    */
   scheduledFor?: string;
-}
 
-/** Channels a story actually goes out on, applying the `['news']` default. */
-export function articleChannels(article: Pick<Article, 'channels'>): ArticleChannel[] {
-  const set = article.channels?.filter(isArticleChannel) ?? [];
-  return set.length > 0 ? set : ['news'];
+  /**
+   * Set by the server when it WITHHELD this story's body because the reader's
+   * tier does not reach `minTier` — `summary` then holds only the free teaser.
+   *
+   * Read-only, and absent on a story the reader is entitled to (and on every
+   * story a staff member fetches, since they get the unabridged pipeline). Do not
+   * send it on a write: `readBody` in routes/articles.ts does not accept it.
+   *
+   * The page still computes the same decision from `minTier` itself, so this is
+   * belt-and-braces — but it is the only signal that distinguishes "short story"
+   * from "story we cut short", which is what stops a truncated body rendering as
+   * a complete one with no gate. See lib/paywall.ts.
+   */
+  locked?: boolean;
 }
 
 /**
- * Is this story visible to the public? The one place that question is answered.
+ * Is this story visible to the public? The one place that question is answered,
+ * and now the ONLY question a story answers about where it appears.
+ *
  * Was a three-value status check (`published`/`newsletter`/`bulletin`) repeated
  * across Landing, NewsIndex, ArticleDetail, Compensation and the media library.
+ * Then briefly `isLive` + `isLiveOn(article, channel)`, while a story could be
+ * distributed to a newsletter or a bulletin as well as the site.
+ *
+ * The channel axis is gone: a published story is news, and it appears on /news
+ * under its category. `isLiveOn` went with it — nothing needs to ask "live, but
+ * where?" any more, because there is only one where.
  */
 export function isLive(article: Pick<Article, 'status'>): boolean {
   return article.status === 'published';
-}
-
-/** Is this story live and carried on the given channel? */
-export function isLiveOn(
-  article: Pick<Article, 'status' | 'channels'>,
-  channel: ArticleChannel,
-): boolean {
-  return isLive(article) && articleChannels(article).includes(channel);
 }

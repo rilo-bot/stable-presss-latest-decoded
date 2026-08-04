@@ -37,10 +37,12 @@ export type PermissionAction =
   // `content.legal_review`, `content.compliance` and `content.publisher_review`
   // were here. They were the per-department gates of the retired twelve-status
   // workflow and nothing ever checked them — approval is one step now.
+  // `content.newsletter` and `content.bulletin` were here too. They gated the
+  // `channels` axis, which is gone: a published story is news. /bulletins is the
+  // magazine newsstand, and the /newsletter page went with the axis — nothing in
+  // the app sends email beyond sign-in OTPs.
   | 'content.schedule'              // Schedule for publication
   | 'content.publish'               // Publish content
-  | 'content.newsletter'            // Distribute via newsletter
-  | 'content.bulletin'              // Add to bulletin
 
   // Blogs — a separate axis from Stories. Two states (draft/published), so there
   // is no submit/approve/schedule here. Mirrors PERMISSION_CATALOGUE on the
@@ -64,7 +66,10 @@ export type PermissionAction =
   // apps/server/src/lib/permissionCatalogue.ts.
 
   // Platform access — replace the old hardcoded role-family tests.
-  | 'newsroom.access'               // Reach newsroom tooling (was: holds any staff role)
+  // `newsroom.access` is NOT grantable: it is absent from the server catalogue and
+  // emitted as a derived flag for every account holding a staff role. Being on the
+  // team is Campaign Engine access; the role decides what is inside it.
+  | 'newsroom.access'               // Is staff (derived, never ticked)
   | 'platform.admin'                // Platform-wide override (was: is administrator)
   | 'roles.manage'                  // Create roles, set permissions, assign them
   | 'claims.verify'                 // Verify/reject party claims (split out of platform.admin)
@@ -73,7 +78,15 @@ export type PermissionAction =
   | 'team.view'                     // Read the staff roster (Team screen, read-only)
   | 'team.manage'                   // Invite / remove team members, assign roles
   | 'settings.view'                 // View newsroom settings
+  | 'settings.manage'               // Show/hide public sections (Website Customisation)
   | 'analytics.view'                // View analytics dashboard
+
+  // Reader comments. ONE permission, not a create/edit/delete axis: leaving a
+  // comment needs no permission at all, and an author editing or deleting their
+  // own is ownership rather than a grant. The only grantable power is acting on
+  // OTHER people's comments. Mirrors PERMISSION_CATALOGUE on the server; see
+  // docs/COMMENTS-PLAN.md §6.
+  | 'comments.moderate'             // Hide, restore or remove anyone's comment
 
   // ── Podcast workflow permissions ──────────────────────────────────────────
   | 'podcast.manage'                // Broad podcast management (admin shorthand)

@@ -142,9 +142,11 @@ ${summariseCapabilities(account)}
     files a story draft conversationally. This is THE answer to "file a story
     with AI"; the manual alternative is the File a Story button on the Workflow Board.
   ${MAGAZINE_V2_ENABLED ? `- **Magazine Builder** (to:'magazine-v2'): staff build bulletins — from an AI
-    brief, an imported PDF/DOCX, or blank; pass a magazine id to open its editor
-    (which has its own assistant).` : `- **Magazine Studio** (to:'production-system', screen:'magazine-studio'): staff
-    build bulletin editions from templates.`}
+    brief, an imported PDF/DOCX, another edition's layout, or blank; pass a magazine
+    id to open its editor (which has its own assistant). A published bulletin lands
+    on /bulletins (to:'bulletins', or to:'bulletin' with its id).` : `- Bulletins are READ-ONLY right now: the Magazine Builder is disabled on this
+    deployment (MAGAZINE_V2), so no one can build or publish an edition. Readers can
+    still open published ones — to:'bulletins'. Don't offer to create a magazine.`}
   - **Horse Studio** (to:'horse-studio' + horse id): a member's private editable
     horse page with an assistant. For "edit/complete my horse's profile" — find the
     horse id via myAccount (their stable) or searchHorses first.

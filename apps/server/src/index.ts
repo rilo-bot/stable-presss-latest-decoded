@@ -60,7 +60,7 @@ const jsonAgent = express.json({ limit: '30mb' })
 app.use((req, res, next) => {
   if (
     req.path.startsWith('/api/issues') ||
-    req.path.startsWith('/api/magazines') ||
+    req.path.startsWith('/api/magazinesV2') ||
     req.path.startsWith('/api/blogs') ||
     req.path.startsWith('/api/agent')
   )
@@ -112,10 +112,10 @@ import tipperProfilesRouter from './routes/tipperProfiles.js'
 import tippingRouter from './routes/tipping.js'
 import uploadsRouter from './routes/uploads.js'
 import issuesRouter from './routes/issues.js'
-import magazinesRouter from './routes/magazines.js'
 import magazinesV2Router from './routes/magazinesV2.js'
 import sponsorsRouter from './routes/sponsors.js'
 import breakingNewsRouter from './routes/breakingNews.js'
+import siteSettingsRouter from './routes/siteSettings.js'
 import metricsRouter from './routes/metrics.js'
 import agentRouter from './routes/agent.js'
 import agentEditorRouter from './routes/agentEditor.js'
@@ -127,6 +127,9 @@ import agentVoiceRouter from './routes/agentVoice.js'
 import agentComposeRouter from './routes/agentCompose.js'
 import agentInstantRouter from './routes/agentInstant.js'
 import newsroomRouter from './routes/newsroom.js'
+import reactionsRouter from './routes/reactions.js'
+import commentsRouter from './routes/comments.js'
+import analyticsRouter from './routes/analytics.js'
 
 // Reads stay public (the public website needs them). Writes are gated by role:
 //   - articles  → editorial matrix (create / edit_own w/ author match / edit_any)
@@ -171,21 +174,38 @@ app.use('/api/uploads', uploadsRouter)         // presigned S3 PUT URLs (auth in
 // images are inline data URLs, so it needs more headroom than the global 2 MB
 // body cap (in deployment, page images are S3 URLs and bodies stay small).
 app.use('/api/issues', express.json({ limit: '30mb' }), issuesGate, issuesRouter)
-// Magazine DRAFTS — staff-only, server-persisted so multiple staff can collaborate.
-// Self-gated (attachAccount + staff + per-magazine access checks inside the route).
-app.use('/api/magazines', express.json({ limit: '30mb' }), magazinesRouter)
 // Magazine Builder v2 (free-form element model) — self-gated inside the router
 // (feature flag → staff → per-magazine owner/collaborator → write rate limit).
 // Behind MAGAZINE_V2; invisible (404) until enabled. Large body cap because a
 // page's element payload can carry inline data-URL images in local dev. The
-// global JSON parser already skips the '/api/magazines' prefix, so this mount's
-// own parser is what runs. See docs/MAGAZINE-BUILDER-V2.md.
+// global JSON parser skips the '/api/magazinesV2' prefix, so this mount's own
+// parser is what runs. See docs/MAGAZINE-BUILDER-V2.md.
 app.use('/api/magazinesV2', express.json({ limit: '30mb' }), magazinesV2Router)
 // Public landing-page content: read is public, writes are staff-only.
 app.use('/api/sponsors', staffWriteGate, sponsorsRouter)
 app.use('/api/breakingNews', staffWriteGate, breakingNewsRouter)
+// Website customisation — which of the six public sections the site shows.
+// Read is public (the navbar renders it for signed-out readers); the write gates
+// itself on `settings.manage` inside the router, so no gate is applied here.
+app.use('/api/site-settings', siteSettingsRouter)
 // Computed site metrics — public, read-only (no writes).
 app.use('/api/metrics', metricsRouter)
+// Reader reactions on blogs, blog parts, stories and bulletin issues. Self-gated
+// inside the router: counts are public, writes need an account and are rate
+// limited, and "reactable = readable" is re-derived from the target's own record
+// rather than trusted from the client. See docs/REACTIONS-PLAN.md.
+app.use('/api/reactions', reactionsRouter)
+// Reader comments on the same three surfaces (stories, blog posts, editions —
+// NOT blog parts; see COMMENT_TARGET_TYPES for why the discussion is about the
+// piece). Self-gated the same way, and the visibility gate is `assertReactable`
+// itself rather than a copy of it: commentable = reactable = readable. The
+// moderation endpoints inside enforce `comments.moderate`. See
+// docs/COMMENTS-PLAN.md.
+app.use('/api/comments', commentsRouter)
+// Staff analytics over those reactions — self-gated on `analytics.view` inside
+// the router, which is what makes that permission server-enforced rather than a
+// sidebar rule the browser observes.
+app.use('/api/analytics', analyticsRouter)
 // Production System dashboard — staff-only, role-scoped summary + AI brief.
 app.use('/api/newsroom', newsroomRouter)
 // AI concierge ("the Stablehand"). Read-only tools, RBAC-scoped to the caller
@@ -199,7 +219,9 @@ app.use('/api/agent/story', jsonAgent, agentStoryRouter)    // Story Studio — 
 app.use('/api/agent/blog', jsonAgent, agentBlogRouter)
 app.use('/api/agent/article', jsonAgent, agentArticleRouter) // Article Studio — edits one open article in place (client-executed tools)
 app.use('/api/agent/voice', jsonAgent, agentVoiceRouter)    // OpenAI STT/TTS for the concierge (key stays server-side)
-app.use('/api/agent/compose', jsonAgent, agentComposeRouter) // AI field-composer for form fields (✨ button)
+// AI field-composer for form fields (✨ button). Signed-in + rate limited INSIDE
+// the router — it was reachable anonymously, which spent the model key for free.
+app.use('/api/agent/compose', jsonAgent, agentComposeRouter)
 // Instant — capture-to-draft. Staff-only + rate-limited INSIDE the router (unlike
 // the older agent routes, which attach the account optionally): it is the most
 // expensive model surface here and there is still no token metering.

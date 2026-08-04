@@ -26,13 +26,18 @@ import {
   deriveExcerpt,
   normaliseBlocks,
   normaliseMedia,
+  normaliseParts,
+  partsBlocks,
   readingTimeFor,
   type Block,
   type BlogMedia,
+  type BlogPart,
   type BlogStatus,
 } from '../lib/blog/blocks.js'
 import { nextSlugHistory, slugify, uniqueSlug } from '../lib/blog/slug.js'
+import { TIERS, tierAllows } from '../lib/paywall.js'
 import { getStockPhoto, isStockConfigured, storeStockPhoto } from '../lib/stock.js'
+import { storage } from '../lib/storage.js'
 
 const router = Router()
 
@@ -158,15 +163,6 @@ function normaliseSeo(v: unknown, poolIds: Set<string>): Record<string, unknown>
   return seo
 }
 
-const TIERS = ['free', 'standard', 'premium'] as const
-
-/** Does `have` reach `need`? Mirrors `tierAtLeast` in web/src/rbac/entitlement.ts. */
-function tierAtLeast(have: unknown, need: unknown): boolean {
-  const h = TIERS.indexOf(have as (typeof TIERS)[number])
-  const n = TIERS.indexOf(need as (typeof TIERS)[number])
-  return (h < 0 ? 0 : h) >= (n < 0 ? 0 : n)
-}
-
 /**
  * Strip a paywalled post down to its free teaser.
  *
@@ -180,8 +176,7 @@ function tierAtLeast(have: unknown, need: unknown): boolean {
  * the gate anyway, so the visible result is unchanged for a legitimate reader.
  */
 function gateForTier(doc: Record<string, unknown>, tier: unknown): Record<string, unknown> {
-  const minTier = typeof doc.minTier === 'string' ? doc.minTier : 'free'
-  if (minTier === 'free' || tierAtLeast(tier, minTier)) return doc
+  if (tierAllows(tier, doc.minTier)) return doc
 
   const blocks = Array.isArray(doc.blocks) ? (doc.blocks as Block[]) : []
   const teaser = blocks.filter((b) => b.kind === 'paragraph').slice(0, 1)
@@ -194,7 +189,10 @@ function gateForTier(doc: Record<string, unknown>, tier: unknown): Record<string
   const pool = Array.isArray(doc.media) ? (doc.media as BlogMedia[]) : []
   const media = cover?.mediaId ? pool.filter((m) => m.id === cover.mediaId) : []
 
-  return { ...doc, blocks: teaser, media, locked: true }
+  // Parts go too. They are body copy that happens to be titled, so leaving them
+  // in the response would hand over most of a paywalled post while the page
+  // dutifully drew a gate above them — the same hole the block list had.
+  return { ...doc, blocks: teaser, parts: [], media, locked: true }
 }
 
 // ── Shared write path ───────────────────────────────────────────────────────
@@ -202,6 +200,11 @@ function gateForTier(doc: Record<string, unknown>, tier: unknown): Record<string
 interface BuiltContent {
   media: BlogMedia[]
   blocks: Block[]
+  /**
+   * The normalised parts, or undefined when the request said nothing about them
+   * — see below. `fields` carries the key only in the first case.
+   */
+  parts?: BlogPart[]
   dropped: number
   fields: Record<string, unknown>
 }
@@ -211,11 +214,21 @@ interface BuiltContent {
  * FIRST because every other reference — blocks, cover, thumbnail, OG image —
  * is validated against the ids it produces, so a dangling reference can never
  * reach the database.
+ *
+ * `parts` is the one field that is only written when the caller SENT it. Every
+ * other field here is authoritative, because the composer always sends the whole
+ * post; parts cannot be, because other writers of this endpoint don't know about
+ * them — the blog studio's `saveFull` (apps/web/src/agent/blog/blogToolExecutor.ts)
+ * rebuilds a full payload from a post it loaded, and an AI copy-edit through it
+ * would otherwise silently delete every part of the post it was asked to improve.
  */
 function buildContent(body: Record<string, unknown>, fallbackAuthor: string): BuiltContent {
   const media = normaliseMedia(body.media)
   const poolIds = new Set(media.map((m) => m.id))
   const { blocks, dropped } = normaliseBlocks(body.blocks, media)
+
+  const sentParts = body.parts !== undefined
+  const normalisedParts = sentParts ? normaliseParts(body.parts, media) : null
 
   const fields: Record<string, unknown> = {
     title: str(body.title, 300).trim(),
@@ -224,8 +237,13 @@ function buildContent(body: Record<string, unknown>, fallbackAuthor: string): Bu
     linkedHorseIds: strArray(body.linkedHorseIds, 50, 64),
     linkedPartyIds: strArray(body.linkedPartyIds, 50, 64),
     seo: normaliseSeo(body.seo, poolIds),
-    readingTime: readingTimeFor(blocks),
+    // Parts are read as part of the post, so they count towards the estimate. A
+    // caller that didn't send parts doesn't know the stored ones, so the reading
+    // time it would compute is wrong — the PUT handler recomputes it from the
+    // stored parts in that case.
+    readingTime: readingTimeFor([...blocks, ...partsBlocks(normalisedParts?.parts)]),
   }
+  if (normalisedParts) fields.parts = normalisedParts.parts
 
   const subtitle = optStr(body.subtitle, 300)
   if (subtitle) fields.subtitle = subtitle
@@ -246,7 +264,13 @@ function buildContent(body: Record<string, unknown>, fallbackAuthor: string): Bu
 
   fields.minTier = (TIERS as readonly unknown[]).includes(body.minTier) ? body.minTier : 'free'
 
-  return { media, blocks, dropped, fields }
+  return {
+    media,
+    blocks,
+    ...(normalisedParts ? { parts: normalisedParts.parts } : {}),
+    dropped: dropped + (normalisedParts?.dropped ?? 0),
+    fields,
+  }
 }
 
 // ── Routes ──────────────────────────────────────────────────────────────────
@@ -427,6 +451,7 @@ router.post('/', async (req, res) => {
     slugHistory: [],
     slugLocked: !!givenSlug,
     blocks: built.blocks,
+    parts: built.parts ?? [],
     media: built.media,
     status,
     publishedAt: status === 'published' ? now : null,
@@ -488,6 +513,16 @@ router.put('/:id', async (req, res) => {
   const now = new Date().toISOString()
   const update: Record<string, unknown> = { ...built.fields, blocks: built.blocks, media: built.media, updatedAt: now }
 
+  // What this save is working with, parts-wise: the ones it sent, or the ones
+  // already stored when it said nothing about them. Both the reading time and
+  // the "is this post empty" gate below have to reason about the post as it will
+  // BE, not just the half of it this request happened to carry.
+  const storedParts = normaliseParts(found.parts, built.media).parts
+  const effectiveParts = built.parts ?? storedParts
+  if (!built.parts) {
+    update.readingTime = readingTimeFor([...built.blocks, ...partsBlocks(storedParts)])
+  }
+
   // ── Slug ──
   // ── Slug ──
   //
@@ -541,7 +576,8 @@ router.put('/:id', async (req, res) => {
         res.status(400).json({ error: 'Give the post a title before publishing it.' })
         return
       }
-      if (built.blocks.length === 0) {
+      // A post whose writing lives entirely in its parts is not empty.
+      if (built.blocks.length === 0 && partsBlocks(effectiveParts).length === 0) {
         res.status(400).json({ error: 'This post is empty — add something before publishing.' })
         return
       }
@@ -593,7 +629,9 @@ router.post('/:id/publish', async (req, res) => {
       res.status(400).json({ error: 'Give the post a title before publishing it.' })
       return
     }
-    const hasContent = Array.isArray(found.blocks) && found.blocks.length > 0
+    const hasContent =
+      (Array.isArray(found.blocks) && found.blocks.length > 0) ||
+      partsBlocks(found.parts as BlogPart[] | undefined).length > 0
     if (!hasContent) {
       res.status(400).json({ error: 'This post is empty — add something before publishing.' })
       return
@@ -798,8 +836,12 @@ router.delete('/:id/media/:mediaId', async (req, res) => {
     return
   }
 
+  // Parts are searched as well as the body: an image placed inside a part is a
+  // use of the asset, and counting only body blocks would report "used in 0
+  // places", delete it, and leave a hole in a part the author never looked at.
   const { blocks } = normaliseBlocks(found.blocks, pool)
-  const usedBy = blocksUsingMedia(blocks, asset.id)
+  const { parts } = normaliseParts(found.parts, pool)
+  const usedBy = [...blocksUsingMedia(blocks, asset.id), ...blocksUsingMedia(partsBlocks(parts), asset.id)]
   const force = str(req.query.force, 10) === 'true'
 
   if (usedBy.length > 0 && !force) {
@@ -815,11 +857,13 @@ router.delete('/:id/media/:mediaId', async (req, res) => {
   // blocks — the validator already refuses references it cannot resolve, so the
   // cleanup is the same code path as any other write rather than a second one.
   const { blocks: nextBlocks } = normaliseBlocks(found.blocks, nextPool)
+  const { parts: nextParts } = normaliseParts(found.parts, nextPool)
 
   const update: Record<string, unknown> = {
     media: nextPool,
     blocks: nextBlocks,
-    readingTime: readingTimeFor(nextBlocks),
+    parts: nextParts,
+    readingTime: readingTimeFor([...nextBlocks, ...partsBlocks(nextParts)]),
     updatedAt: new Date().toISOString(),
   }
   // Clear the slots that pointed at it, or they'd render nothing.
@@ -830,6 +874,21 @@ router.delete('/:id/media/:mediaId', async (req, res) => {
   }
 
   await db.collection('blogs').updateOne(req.params.id, update)
+
+  // The record is updated; now drop the bytes. This is the one place where an
+  // asset is EXPLICITLY discarded by a person, which is what makes deleting safe
+  // here and not on a post delete: db.deleteOne is a soft delete, so a "deleted"
+  // post is still recoverable and must keep its images.
+  //
+  // Best-effort by design — storage.deleteObject never throws, and a failed delete
+  // leaves an orphan rather than failing a removal the author already saw succeed.
+  // Prefer the stored key; fall back to recovering it from the URL for assets
+  // saved before keys were recorded.
+  if (storage.isConfigured()) {
+    if (asset.key) await storage.deleteObject(asset.key)
+    else await storage.deleteObjectByUrl(asset.url)
+  }
+
   res.json({ success: true, removedBlocks: usedBy.length })
 })
 

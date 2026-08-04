@@ -24,7 +24,26 @@ interface PodcastState {
   removeGuest: (episodeId: string, guestId: string) => Promise<void>;
   setDistributionChannels: (episodeId: string, channels: DistributionChannel[]) => Promise<void>;
   addReviewNote: (episodeId: string, note: string) => Promise<void>;
-  deleteEpisode: (id: string) => Promise<void>;
+  /** Resolves true only when the server actually accepted the delete. */
+  deleteEpisode: (id: string) => Promise<boolean>;
+}
+
+/**
+ * The server's own message for a refused write, not `HTTP 403`.
+ *
+ * Delete is the one call here that is refused for reasons a producer can act on
+ * — "not yours", "already published", "no permission" — and the route already
+ * says which. Throwing away that sentence and showing a status code was the
+ * difference between a usable refusal and a mystery.
+ */
+async function errorFrom(res: Response): Promise<string> {
+  try {
+    const body = (await res.json()) as { error?: unknown };
+    if (typeof body.error === 'string' && body.error.trim()) return body.error;
+  } catch {
+    /* no JSON body — fall through to the status */
+  }
+  return `HTTP ${res.status}`;
 }
 
 function guestId(): string {
@@ -157,6 +176,8 @@ export const usePodcastStore = create<PodcastState>()(
       await get().updateEpisode(episodeId, { reviewNotes: note });
     },
 
+    // Returns whether it persisted, so callers only announce a deletion that
+    // happened. The optimistic removal still rolls back on refusal.
     deleteEpisode: async (id) => {
       const previous = get().episodes;
       const { activeEpisodeId } = get();
@@ -164,12 +185,14 @@ export const usePodcastStore = create<PodcastState>()(
       if (activeEpisodeId === id) set({ activeEpisodeId: null });
       try {
         const res = await authFetch(`/api/podcastEpisodes/${id}`, { method: 'DELETE' });
-        if (!res.ok) throw new Error(`HTTP ${res.status}`);
+        if (!res.ok) throw new Error(await errorFrom(res));
+        return true;
       } catch (err) {
         const message = err instanceof Error ? err.message : 'Failed to delete episode';
         set({ episodes: previous, error: message });
         if (activeEpisodeId === id) set({ activeEpisodeId });
-        toast.error(`Could not delete the episode — restoring it`);
+        toast.error(message);
+        return false;
       }
     },
   })

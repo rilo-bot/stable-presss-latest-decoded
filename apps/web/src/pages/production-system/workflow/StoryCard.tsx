@@ -7,7 +7,6 @@ import { cn } from '@/lib/utils';
 import { can, canEditArticle } from '@/lib/permissions';
 import { FORWARD_MOVE, OTHER_MOVES } from '@/lib/workflow';
 import type { Move } from '@/lib/workflow';
-import { articleChannels } from '@/types/article';
 import type { Article } from '@/types/article';
 
 function relativeTime(value: Date | string | null | undefined): string {
@@ -30,10 +29,6 @@ function scheduleLabel(iso: string | undefined): string | null {
   if (Number.isNaN(when.getTime())) return null;
   return when.toLocaleString(undefined, { day: 'numeric', month: 'short', hour: 'numeric', minute: '2-digit' });
 }
-
-const CHANNEL_LABEL: Record<string, string> = {
-  news: 'News', newsletter: 'Newsletter', bulletin: 'Bulletin',
-};
 
 /** Small pill above the headline. */
 function Tag({ label, tone }: { label: string; tone: 'alert' | 'muted' }) {
@@ -93,7 +88,6 @@ export function StoryCard({
   const others = OTHER_MOVES[article.status].filter((m) => can(m.permission));
   const editable = canEditArticle(article.author, currentUserDisplayName ?? undefined);
   const scheduled = scheduleLabel(article.scheduledFor);
-  const extraChannels = articleChannels(article).filter((c) => c !== 'news');
   const hasMenu = others.length > 0 || editable;
 
   return (
@@ -104,14 +98,9 @@ export function StoryCard({
         <div className="flex min-w-0 flex-1 flex-wrap items-center gap-1">
           {article.changesRequested && <Tag label="Changes requested" tone="alert" />}
           {article.category && <Tag label={article.category} tone="muted" />}
-          {extraChannels.map((c) => (
-            <span
-              key={c}
-              className="inline-flex rounded-sm bg-primary/10 px-1.5 py-0.5 text-[10.5px] font-semibold text-primary"
-            >
-              {CHANNEL_LABEL[c] ?? c}
-            </span>
-          ))}
+          {/* "Newsletter" / "Bulletin" pills sat here, for any channel beyond
+              `news`. The axis is gone — every published story is news — so the
+              pill could only ever have said the one thing every card said. */}
         </div>
         {hasMenu && (
           <div ref={menuRef} className="relative flex-shrink-0">

@@ -179,14 +179,15 @@ export async function sendInviteEmail(invite: InviteEmail): Promise<{ delivered:
     subject: `${invitedBy} invited you to Stable Press`,
     text:
       `${invitedBy} has invited you to join Stable Press as ${roleLabel}.\n\n` +
-      `Accept the invitation: ${acceptUrl}\n\n` +
+      `Open this link and you're in — no password, no code to type: ${acceptUrl}\n\n` +
       `This link expires in ${expiresIn} and can only be used once.`,
     html: layout({
       heading: `You've been invited as ${esc(roleLabel)}`,
       body: `
         <p style="font-size:14px;line-height:1.6;color:${MUTED};margin:0 0 24px">
           <strong>${esc(invitedBy)}</strong> has invited you to join the Stable Press newsroom as
-          <strong>${esc(roleLabel)}</strong>. Accept below to set up your account — it takes about a minute.
+          <strong>${esc(roleLabel)}</strong>. Open the link below and you're in — no password to set
+          and no code to type.
         </p>
         <p style="margin:0 0 24px">${button(acceptUrl, 'Accept invitation')}</p>
         <p style="font-size:12px;line-height:1.6;color:${FAINT};margin:0">

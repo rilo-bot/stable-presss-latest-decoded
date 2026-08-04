@@ -19,6 +19,7 @@
 
 import { db } from './db.js'
 import { ORG_MEMBERSHIPS, PARTY_MEMBERSHIPS } from './membership.js'
+import { isStaffIdentity } from './identity.js'
 import type { IdentityUser, OrgMembership, PartyClaim, Role, RoleSlug } from './identity.js'
 import { SUPERADMIN_SLUG, rolesForSlugs, type RoleDoc } from './roleRegistry.js'
 import {
@@ -242,10 +243,19 @@ export function toClientUser(account: AccountUser): Record<string, unknown> {
     ? account.roleDocs
     : [{ slug: SUPERADMIN_SLUG, label: 'Superadmin', color: undefined, icon: 'ShieldCheck' }]
 
+  // `newsroom.access` is not in the catalogue and no role can hold it — holding a
+  // staff role IS newsroom access (see identity.ts `isStaffIdentity`). It is
+  // emitted here as a DERIVED flag so the browser keeps asking one question
+  // (`RequireStaff` → `can('newsroom.access')`) instead of learning a second way
+  // to test the same fact. Without this line every staff route in the SPA would
+  // bounce to the public site.
+  const implicit: PermissionAction[] =
+    account.isSuperAdmin || isStaffIdentity(account) ? ['newsroom.access'] : []
+
   const access: ClientAccess = {
     permissions: account.isSuperAdmin
-      ? PERMISSION_CATALOGUE.map((p) => p.id)
-      : [...account.permissions],
+      ? [...implicit, ...PERMISSION_CATALOGUE.map((p) => p.id)]
+      : [...implicit, ...account.permissions],
     modules: account.isSuperAdmin ? MODULE_CATALOGUE.map((m) => m.id) : [...account.modules],
     workflowStages: account.isSuperAdmin ? [...ALL_WORKFLOW_STAGES] : [...account.workflowStages],
     isSuperAdmin: account.isSuperAdmin,

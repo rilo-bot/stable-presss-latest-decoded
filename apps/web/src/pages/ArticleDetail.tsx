@@ -26,8 +26,11 @@ import { useAuthStore } from '@/stores/authStore';
 import { canViewPremium } from '@/rbac/can';
 import { canEditArticle } from '@/lib/permissions';
 import { Paywall } from '@/components/Paywall';
+import { ReactionBar } from '@/components/ReactionBar';
+import { CommentsSection } from '@/components/comments/CommentsSection';
+import { useReactionStore } from '@/stores/reactionStore';
 import { AskAgentButton } from '@/components/AskAgentButton';
-import { STATUS_LABELS, splitIntoParagraphs, DEFAULT_HERO } from './article-detail/helpers';
+import { STATUS_LABELS, splitIntoParagraphs } from './article-detail/helpers';
 import { Sidebar } from './article-detail/Sidebar';
 import { RelatedPanel } from './article-detail/RelatedPanel';
 import { InlineEdit } from './article-detail/InlineEdit';
@@ -59,6 +62,14 @@ export default function ArticleDetail() {
   const horseConn = useMemo(() => connectionResolver(parties), [parties]);
 
   const article = useMemo(() => articles.find((a) => a.id === id), [articles, id]);
+
+  // Reader reactions at the foot of the story. Re-runs when the signed-in
+  // account changes, because `mine` — which pick is yours — belongs to the
+  // account rather than the browser. A story has one scale, so no `withParts`.
+  const loadReactions = useReactionStore((s) => s.load);
+  useEffect(() => {
+    if (article?.id && isLive(article)) void loadReactions('story', article.id);
+  }, [article, currentUser?.id, loadReactions]);
 
   // ── Inline editing (admins / editors / the article's own author) ──────────
   // Draft holds only the fields editable in place; it is seeded when edit mode
@@ -176,7 +187,10 @@ export default function ArticleDetail() {
     return <Navigate to="/news" replace />;
   }
 
-  const heroImage = article.imageUrl ?? DEFAULT_HERO;
+  // `null` when the story carries no photograph — the hero renders the green
+  // masthead surface rather than substituting stock imagery. Empty strings count
+  // as absent; `??` alone let `imageUrl: ''` through as a broken <img>.
+  const heroImage = article.imageUrl?.trim() ? article.imageUrl : null;
 
   const formattedDate = article.publishedAt
     ? new Date(article.publishedAt).toLocaleDateString('en-AU', {
@@ -198,7 +212,13 @@ export default function ArticleDetail() {
   const paragraphs = splitIntoParagraphs(article.summary ?? '');
 
   // Premium gate (entitlement axis) — independent of roles. Defaults to free/ungated.
-  const locked = !canViewPremium(currentUser, article.minTier);
+  //
+  // `article.locked` is the server saying it already cut the body down to its
+  // teaser (lib/paywall.ts); the local check is the same decision made from the
+  // same two inputs. EITHER is enough to show the gate, so the two can never
+  // combine into a truncated story rendered as if it were whole — which is what
+  // a bare client-side check would have produced if the tiers ever disagreed.
+  const locked = article.locked === true || !canViewPremium(currentUser, article.minTier);
 
   return (
     <div className="min-h-screen bg-background">
@@ -237,16 +257,28 @@ export default function ArticleDetail() {
       {/* ── Full-bleed Hero ───────────────────────────── */}
       <div className="relative w-full h-[60vh] min-h-[400px] max-h-[680px] overflow-hidden">
         <SelectableField fieldId="heroImage" label="Hero image" className="absolute inset-0">
-          <img
-            src={heroImage}
-            alt={article.title}
-            crossOrigin="anonymous"
-            className="absolute inset-0 w-full h-full object-cover object-center"
-          />
+          {heroImage ? (
+            <img
+              src={heroImage}
+              alt={article.title}
+              crossOrigin="anonymous"
+              className="absolute inset-0 w-full h-full object-cover object-center"
+            />
+          ) : (
+            /* No photograph on this story. The green masthead surface, not a
+               stock photo of someone else's horse. */
+            <div className="absolute inset-0 bg-primary" />
+          )}
         </SelectableField>
-        {/* Multi-stop scrim: bottom-to-top opacity for text legibility */}
-        <div className="absolute inset-0 bg-gradient-to-t from-foreground/95 via-foreground/50 to-foreground/10" />
-        <div className="absolute inset-0 bg-gradient-to-r from-foreground/20 via-transparent to-transparent" />
+        {/* Multi-stop scrim: bottom-to-top opacity for text legibility. Only over
+            a photograph — on the flat green fallback it would just muddy the
+            surface the headline already reads cleanly against. */}
+        {heroImage && (
+          <>
+            <div className="absolute inset-0 bg-gradient-to-t from-foreground/95 via-foreground/50 to-foreground/10" />
+            <div className="absolute inset-0 bg-gradient-to-r from-foreground/20 via-transparent to-transparent" />
+          </>
+        )}
 
         {/* Breadcrumb nav over hero */}
         <div className="absolute top-0 left-0 right-0 px-4 md:px-10 pt-5">
@@ -643,6 +675,39 @@ export default function ArticleDetail() {
                 </p>
               </div>
             </div>
+
+            {/* The reader's own verdict, closing the piece — before Related, which
+                is an invitation to leave it.
+
+                Hidden behind the paywall for the same reason it is on a blog
+                post: asking someone how a story sat with them when they were
+                shown only the first paragraph is a question they cannot answer,
+                and a reaction recorded on a teaser is a reaction to nothing. */}
+            {/* Also hidden on anything not LIVE. Staff and the author read drafts
+                on this very page, and the server refuses to record a reaction
+                against an unpublished story — so without this the scale looked
+                usable and answered every click with an error. An offer that
+                cannot be taken reads as a broken feature, not a closed one. */}
+            {!locked && isLive(article) && (
+              <>
+                <ReactionBar
+                  targetType="story"
+                  targetId={article.id}
+                  idPrefix="story-reactions"
+                  heading="How did this story sit with you?"
+                />
+                {/* Directly under the bar, and gated on exactly the same
+                    condition. The bar asks how it sat; this asks why, on the same
+                    scale and writing to the same reaction — so the two can never
+                    show one reader two different answers. */}
+                <CommentsSection
+                  targetType="story"
+                  targetId={article.id}
+                  idPrefix="story-comments"
+                  noun="story"
+                />
+              </>
+            )}
 
             {/* ── Related Articles (real, same-category) ── */}
             <RelatedPanel relatedArticles={relatedArticles} category={article.category} />

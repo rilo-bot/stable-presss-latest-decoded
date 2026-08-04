@@ -31,8 +31,6 @@ import {
 import { StoryStudioPanel } from '@/agent/story/StoryStudioPanel';
 import { BlogStudioPanel } from '@/agent/blog/BlogStudioPanel';
 import { can } from '@/lib/permissions';
-import { TemplateGallery } from '@/editor/TemplateGallery';
-import type { MagazineTemplate } from '@/editor/templates/galleryTemplates';
 import { useAuthStore } from '@/stores/authStore';
 
 import { MediaFormPanel } from '../newsroom/production-systems/MediaFormPanel';
@@ -65,7 +63,29 @@ export function ProductionSystemIndex() {
   // screen the user may well have access to a moment from now.
   if (!modules) return null;
   const first = SIDE_NAV.find((i) => modules.includes(i.id));
-  return <Navigate to={first ? navPath(first) : '/'} replace />;
+  if (first) return <Navigate to={navPath(first)} replace />;
+
+  // Staff, signed in, and their role grants no screens. This used to redirect to
+  // the public site, which reads exactly like being logged out — the one thing
+  // they know is untrue. Newsroom access comes with being on the team now, so
+  // this state is reachable by simply not ticking a screen, and it has to
+  // explain itself.
+  return (
+    <div className="flex min-h-screen items-center justify-center bg-background px-4 py-12">
+      <div className="w-full max-w-md rounded-sm border border-border/60 bg-card p-7 text-center">
+        <h1 className="mb-2 font-[family-name:var(--font-display)] text-2xl font-bold text-foreground">
+          Nothing assigned yet
+        </h1>
+        <p className="mb-6 text-sm text-muted-foreground">
+          You're on the Stable Press team, but your role doesn't include any screens yet. An
+          administrator can add them from Roles &amp; Permissions.
+        </p>
+        <Button variant="outline" onClick={() => { window.location.href = '/'; }}>
+          Go to the public site
+        </Button>
+      </div>
+    </div>
+  );
 }
 
 export default function ProductionSystemLayout() {
@@ -78,8 +98,7 @@ export default function ProductionSystemLayout() {
   const {
     currentUser, accentColor, visibleNav, accessModules, pendingReview,
     formOpen, editArticle, defaultStatus, deleteTarget, deleting,
-    setDeleteTarget, handleFormClose, confirmDelete,
-    galleryOpen, setGalleryOpen, createMagazine, ps,
+    setDeleteTarget, handleFormClose, confirmDelete, ps,
   } = state;
 
   const handleLogout = () => {
@@ -88,27 +107,15 @@ export default function ProductionSystemLayout() {
     navigate('/');
   };
 
-  const handlePickTemplate = async (template: MagazineTemplate) => {
-    const id = await createMagazine({
-      title: template.title,
-      edition: template.edition,
-      pageTypes: template.pageTypes,
-    });
-    if (id) {
-      setGalleryOpen(false);
-      navigate(`${PS_BASE}/magazine/${id}`);
-    }
-  };
-
   // Hiding a sidebar entry is not the same as closing the screen behind it.
   // Now that every screen is a real URL, a user can type or bookmark one they
   // no longer have the module for — so the check has to happen here rather than
   // relying on the entry being absent from the rail.
   //
-  // Only SIDE_NAV-backed screens are gated. Magazine Studio's id
-  // ('bulletin-templates') is deliberately not in the server's module
-  // catalogue — it's reached from Overview, not the rail — so resolving the
-  // slug through `moduleForSlug` here would lock it for everyone.
+  // Every screen is SIDE_NAV-backed now, so every screen is gated. The v1
+  // Magazine Studio used to be the exception — reached from Overview, absent from
+  // the rail, and deliberately absent from the server's module catalogue, so
+  // resolving its slug here would have locked it for everyone.
   const slug = pathname.slice(PS_BASE.length).replace(/^\//, '').split('/')[0];
   const gatedModuleId = SIDE_NAV.find((i) => i.slug === slug)?.id;
   const blocked =
@@ -259,9 +266,11 @@ export default function ProductionSystemLayout() {
         />
       )}
 
-      {galleryOpen && (
-        <TemplateGallery onPick={handlePickTemplate} onClose={() => setGalleryOpen(false)} />
-      )}
+      {/* A <TemplateGallery> modal sat here — the v1 builder's "New Magazine"
+          starter picker, offering two fixed page-set templates. The Magazine
+          Builder has its own home screen with four real starting points (blank, a
+          brief, an uploaded PDF, or another edition's layout), so there is nothing
+          left to overlay. */}
     </div>
   );
 }

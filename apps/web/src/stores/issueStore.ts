@@ -1,19 +1,22 @@
 /**
- * Published magazine issues (the public "Bulletins"), server-backed.
+ * Published magazine issues — the public "Bulletins". READ-ONLY.
  *
- * Drafts live client-side in the magazine store (a per-editor working buffer);
- * PUBLISHING crosses to the server so an issue is visible to every reader on any
- * device. The public Bulletins list + viewer read from here, not from the local
- * draft store.
+ * The list endpoint returns lightweight `IssueSummary` rows (no page payload); the
+ * viewer fetches one full `PublishedIssue` on demand and caches it in `byId`.
  *
- * The list endpoint returns lightweight `IssueSummary` rows (no page payload);
- * the viewer fetches one full `PublishedIssue` on demand and caches it in `byId`.
+ * There were four write actions here — `publish`, `republish`, `unpublish` and
+ * `deleteIssue` — and they were the v1 template builder's publish path: the browser
+ * assembled a whole snapshot from its local draft and POSTed it to /api/issues.
+ *
+ * The Magazine Builder does all of that SERVER-SIDE against stored pages
+ * (`POST /api/magazinesV2/issues/:id/publish` and `/unpublish`; deleting a draft
+ * cascades to its snapshot), so /api/issues is now read-only and so is this store.
  */
 
 import { create } from 'zustand';
 import { authFetch } from '@/lib/api';
 import { toast } from 'sonner';
-import type { IssueSummary, PublishedIssue, PublishPayload } from '@/types/magazine';
+import type { IssueSummary, PublishedIssue } from '@/types/magazine';
 
 interface IssueState {
   issues: IssueSummary[];
@@ -29,10 +32,6 @@ interface IssueState {
   /** Re-fetch the list at the scope it was last loaded with. */
   refresh: () => Promise<void>;
   fetchIssue: (id: string) => Promise<PublishedIssue | null>;
-  publish: (payload: PublishPayload) => Promise<string | null>;
-  republish: (id: string, payload?: PublishPayload) => Promise<boolean>;
-  unpublish: (id: string) => Promise<boolean>;
-  deleteIssue: (id: string) => Promise<boolean>;
 }
 
 export const useIssueStore = create<IssueState>()((set, get) => ({
@@ -74,87 +73,5 @@ export const useIssueStore = create<IssueState>()((set, get) => ({
       set({ error: message });
       return null;
     }
-  },
-
-  publish: async (payload) => {
-    try {
-      const res = await authFetch('/api/issues', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(payload),
-      });
-      if (!res.ok) throw new Error(`HTTP ${res.status}`);
-      const created = (await res.json()) as PublishedIssue;
-      // Cache the full issue and refresh the summary list.
-      set((s) => ({ byId: { ...s.byId, [created.id]: created } }));
-      await get().refresh();
-      return created.id;
-    } catch (err) {
-      const message = err instanceof Error ? err.message : 'Failed to publish';
-      set({ error: message });
-      toast.error(message);
-      return null;
-    }
-  },
-
-  republish: async (id, payload) => {
-    try {
-      const res = await authFetch(`/api/issues/${id}`, {
-        method: 'PATCH',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ action: 'republish', ...(payload ?? {}) }),
-      });
-      if (!res.ok) throw new Error(`HTTP ${res.status}`);
-      const updated = (await res.json()) as PublishedIssue;
-      set((s) => ({ byId: { ...s.byId, [id]: updated } }));
-      await get().refresh();
-      return true;
-    } catch (err) {
-      const message = err instanceof Error ? err.message : 'Failed to republish';
-      set({ error: message });
-      toast.error(message);
-      return false;
-    }
-  },
-
-  unpublish: async (id) => {
-    try {
-      const res = await authFetch(`/api/issues/${id}`, {
-        method: 'PATCH',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ action: 'unpublish' }),
-      });
-      if (!res.ok) throw new Error(`HTTP ${res.status}`);
-      set((s) => {
-        const next = { ...s.byId };
-        delete next[id];
-        return { byId: next };
-      });
-      await get().refresh();
-      return true;
-    } catch (err) {
-      const message = err instanceof Error ? err.message : 'Failed to unpublish';
-      set({ error: message });
-      toast.error(message);
-      return false;
-    }
-  },
-
-  deleteIssue: async (id) => {
-    try {
-      const res = await authFetch(`/api/issues/${id}`, { method: 'DELETE' });
-      if (!res.ok) throw new Error(`HTTP ${res.status}`);
-      set((s) => {
-        const next = { ...s.byId };
-        delete next[id];
-        return { issues: s.issues.filter((i) => i.id !== id), byId: next };
-      });
-      return true;
-    } catch (err) {
-      const message = err instanceof Error ? err.message : 'Failed to delete bulletin';
-      set({ error: message });
-      toast.error(message);
-      return false;
-    }
-  },
+  }
 }));

@@ -63,6 +63,27 @@ export const SUPERADMIN_SLUG = 'superadmin'
  * entry wins — in practice everyone has at most one, because role assignment has
  * always REPLACED rather than appended.
  */
+/**
+ * IS THIS PERSON STAFF? Holding a staff role is the whole test.
+ *
+ * This is the definition of Campaign Engine access. Anyone added to the team from
+ * the Production System is staff and can open it; their ROLE then decides which
+ * screens and actions they get once inside. It used to be a grantable permission
+ * (`newsroom.access`) sitting in the roles console alongside 24 module checkboxes,
+ * which made every one of those checkboxes silently conditional on it — tick
+ * "Magazine Builder", save, and the role could not open the app at all.
+ *
+ * The flexibility being given up deliberately: a role can no longer be granted
+ * data access WITHOUT newsroom entry (docs/DYNAMIC-RBAC-PLAN.md §2 allowed that).
+ * Nobody wanted it, and it was the mechanism of the bug.
+ *
+ * Takes the persisted shape, so it answers for any user document — not just the
+ * request's own account.
+ */
+export function isStaffIdentity(user: Pick<IdentityUser, 'staffRoleSlug'>): boolean {
+  return user.staffRoleSlug !== null
+}
+
 export function primaryStaffRole(staffRoles: unknown): RoleSlug | null {
   if (!Array.isArray(staffRoles) || staffRoles.length === 0) return null
   const slugs = staffRoles.filter((r): r is string => typeof r === 'string' && r.length > 0)

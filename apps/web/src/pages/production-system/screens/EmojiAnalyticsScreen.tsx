@@ -1,588 +1,472 @@
 /**
  * Emoji Analytics — /production-system/emoji-analytics
  *
- * What readers did with the emoji picker, read as one page: the mood, the whole
- * scale counted, which categories are warm ground, which posts to lead with, and
- * which content type is carrying the newsroom.
+ * Reader reactions on the seven-point scale, for stories, blogs and bulletins.
  *
- * STATIC, WITH SAMPLE DATA. Nothing here is wired: there is no reaction
- * collection, no endpoint, and no picker on the public site yet. This screen is
- * the design for that feature — so it labels itself as sample data in the header
- * and again under the panels that would need data we don't collect. Everything
- * it shows is derived from one invented dataset (see `../emoji-analytics/data.ts`),
- * so the panels agree with each other; when the endpoint lands, only the dataset
- * is replaced.
+ * ── THREE ANALYTICS, DELIBERATELY ──
+ *   1. How readers feel overall — the whole scale, counted.
+ *   2. What they loved — the top ten for whichever reaction you pick.
+ *   3. What kind of thing lands — stories vs blogs vs bulletins.
  *
- * Blogs are the unit of analysis, not policies or electorates: the leaderboard
- * ranks posts, and the geography cut is a CATEGORY cut, because a reaction here
- * has an item and a category but no location.
+ * Earlier cuts of this screen carried a divisiveness scatter, a reader-role
+ * heatmap, weekly trend lines, an arrival curve, audience segments and six
+ * tabbed registers. Each was defensible alone; together they were a page nobody
+ * reads. The rest is kept in docs/EMOJI-ANALYTICS-PLAN.md for when it is wanted.
+ *
+ * ── LIVE ──
+ * Reads `GET /api/analytics/reactions`. The sample generator that stood in for
+ * it has been deleted, along with the badge and the footer that admitted to it.
+ * The endpoint returns COUNTS and no arithmetic; the weighting happens here,
+ * through the one shared scale — see the note at the top of `../emoji-analytics/data`.
+ *
+ * Staff reactions are excluded by the endpoint, so these are the readership's
+ * answers rather than the building's.
+ *
+ * ── WHAT THIS PAGE WILL NOT CLAIM ──
+ * No view tracking, no dwell time and no referrers exist anywhere in Stable
+ * Press, so nothing here may imply a measurement we do not take.
+ *
+ * COMMENTS now exist (docs/COMMENTS-PLAN.md) and are NOT counted on this page.
+ * That is deliberate rather than pending: a comment carries a pick on this same
+ * seven-point scale and posting one WRITES that pick as a reaction, so every
+ * comment is already inside the figures below, once. Counting comments here as
+ * well would count the same opinion twice. What is genuinely missing is a
+ * breakdown of how many of these reactions came with words attached — worth
+ * having, and a new figure rather than a correction to an existing one.
  */
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { Link } from 'react-router-dom';
-import { ArrowUpRight, Eye, Search, Sparkles, Wrench } from 'lucide-react';
+import { Loader2 } from 'lucide-react';
 
-import { cn } from '@/lib/utils';
-
+import { authFetchRetry } from '@/lib/api';
 import {
-  BANDS, SECTION_LABELS, SIDE_FILL, TRACK_FILL, bandFor, compact, deriveDashboard, signed, splitOf,
-  type Band, type CategoryStat,
+  CONTENT_TYPES, DATE_RANGES, EMOJI_KEYS, EMPTY_REPORT, SIDE_FILL, avgStep, compact,
+  deriveDashboard, rangeFor, scoreText, shortDate, signed, stepFor, typeLabel,
+  type ContentType, type DateRangeId, type EmojiKey, type Filters, type ItemStat,
+  type ReactionsReport,
 } from '../emoji-analytics/data';
 import {
-  Bar, BandChip, BandLegend, MeterKey, ModelledNote, Net, NetBar, Panel, SampleDataBadge,
-  SplitLine, StackedMeter, StatTile, splitParts,
+  Bar, ChipToggles, DivergingBar, Empty, Panel, Section,
+  SegmentedControl, StatTile, ThreeWayBar, splitParts,
 } from '../emoji-analytics/parts';
 
-/** The band filter, grouped the way someone actually asks the question. */
-type Ground = 'all' | 'warm' | 'split' | 'cool';
-
-const GROUND_LABEL: Record<Ground, string> = {
-  all: 'All',
-  warm: 'Warm ground',
-  split: 'Split',
-  cool: 'Cool ground',
-};
-
-function inGround(band: Band, ground: Ground): boolean {
-  if (ground === 'all') return true;
-  if (ground === 'warm') return band.id === 'loved' || band.id === 'warm';
-  if (ground === 'split') return band.id === 'split';
-  return band.id === 'cool' || band.id === 'rejected';
-}
-
-/** One category as a filled tile: band colour, its net, and how many reacted. */
-function CategoryTile({
-  stat, maxVolume, selected, onSelect,
-}: {
-  stat: CategoryStat;
-  maxVolume: number;
-  selected: boolean;
-  onSelect: () => void;
-}) {
-  const { band, split } = stat;
-  const volumePct = maxVolume > 0 ? (split.reactions / maxVolume) * 100 : 0;
-
-  return (
-    <button
-      type="button"
-      onClick={onSelect}
-      aria-pressed={selected}
-      className={cn(
-        'group flex flex-col gap-2 rounded-sm p-3 text-left transition-shadow',
-        'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-card',
-        selected && 'ring-2 ring-offset-2 ring-offset-card',
-      )}
-      style={{
-        background: band.fill,
-        color: band.ink,
-        // The ring reads as selection on any of the five fills.
-        ...(selected ? { ['--tw-ring-color' as string]: 'hsl(var(--foreground))' } : null),
-      }}
-    >
-      <span className="flex items-start justify-between gap-2">
-        <span className="min-w-0">
-          <span className="block truncate text-[12.5px] font-semibold leading-tight">{stat.label}</span>
-          <span className="block truncate text-[10px] uppercase tracking-[0.08em] opacity-75">
-            {SECTION_LABELS[stat.section]}
-          </span>
-        </span>
-        <span className="flex-shrink-0 text-[19px] font-bold leading-none tabular-nums">{signed(split.net)}</span>
-      </span>
-
-      {/* Volume, inside the tile: a thin bar in the tile's own ink so it never
-          introduces a sixth colour, plus the count in words. */}
-      <span className="block">
-        <span aria-hidden="true" className="block h-[3px] w-full overflow-hidden rounded-[2px]" style={{ background: `color-mix(in srgb, ${band.ink} 22%, transparent)` }}>
-          <span className="block h-full rounded-[0_2px_2px_0]" style={{ width: `${volumePct}%`, background: `color-mix(in srgb, ${band.ink} 72%, transparent)` }} />
-        </span>
-        <span className="mt-1 block text-[10.5px] tabular-nums opacity-85">
-          {compact(split.reactions)} reactions · {stat.published} published
-        </span>
-      </span>
-    </button>
-  );
-}
+/**
+ * A piece needs this many reactions before it can be ranked. Fixed rather than
+ * exposed as a control — one fewer thing to explain, and the number is stated
+ * wherever it bites. Without it, something published yesterday tops the board on
+ * a handful of clicks.
+ */
+const MIN_REACTIONS = 40;
 
 export default function EmojiAnalyticsScreen() {
-  const d = useMemo(() => deriveDashboard(), []);
+  const [rangeId, setRangeId] = useState<DateRangeId>('90');
+  const [types, setTypes] = useState<ContentType[]>([]);
+  /** 'score' ranks on the total; a step ranks on how much of that step it earned. */
+  const [rank, setRank] = useState<'score' | EmojiKey>('score');
 
-  const [query, setQuery] = useState('');
-  const [ground, setGround] = useState<Ground>('all');
-  const [selectedKey, setSelectedKey] = useState<string | null>(null);
-
-  const overallParts = splitParts(d.overall, SIDE_FILL);
-  const maxEmojiPct = Math.max(...d.emojiRows.map((r) => r.pct));
-  const maxVolume = Math.max(...d.categories.map((c) => c.split.reactions));
-
-  const best = d.rankedCategories[0];
-  const worst = d.rankedCategories[d.rankedCategories.length - 1];
-  const blogs = d.contentTypes.find((t) => t.id === 'blog')!;
-  const stories = d.contentTypes.find((t) => t.id === 'article')!;
-  const worstBlog = d.blogLeaders[d.blogLeaders.length - 1];
-
-  // The filter row scopes BOTH the grid and the ranking beside it — one control
-  // row over everything it changes, rather than a filter per panel.
-  const q = query.trim().toLowerCase();
-  const filtered = d.rankedCategories.filter(
-    (c) => inGround(c.band, ground) && (!q || c.label.toLowerCase().includes(q)),
+  const filters: Filters = useMemo(
+    () => ({ ...rangeFor(rangeId), types }),
+    [rangeId, types],
   );
-  const groundCounts: Record<Ground, number> = {
-    all: d.rankedCategories.length,
-    warm: d.rankedCategories.filter((c) => inGround(c.band, 'warm')).length,
-    split: d.rankedCategories.filter((c) => inGround(c.band, 'split')).length,
-    cool: d.rankedCategories.filter((c) => inGround(c.band, 'cool')).length,
-  };
 
-  const selected = d.categories.find((c) => c.key === selectedKey && c.published > 0);
+  /**
+   * Staff reactions are excluded by default — these are meant to be the
+   * READERSHIP's answers, not the building's. But staff test their own reaction
+   * bars, so the exclusion is a visible control rather than a silent rule; the
+   * page also says how many it left out, so a zero is explained on its face.
+   */
+  const [audience, setAudience] = useState<'readers' | 'everyone'>('readers');
+  const includeStaff = audience === 'everyone';
+
+  const { report, state } = useReactionsReport(filters, includeStaff);
+  const d = useMemo(() => deriveDashboard(report), [report]);
+
+  const maxEmojiPct = Math.max(1, ...d.emojiRows.map((r) => r.pct));
+
+  const leaders = useMemo(() => {
+    // Ranking on the TOTAL needs no floor — a piece with four reactions cannot
+    // total anything. Ranking on a single step's count is likewise absolute.
+    // The floor exists for the ratios (the average, the band), so it is applied
+    // once, here, and the list population never changes when you switch modes.
+    const pool = d.items.filter((s) => s.split.reactions >= MIN_REACTIONS);
+    if (rank === 'score') {
+      return [...pool].sort((a, b) => b.split.score - a.split.score).slice(0, 10);
+    }
+    const i = EMOJI_KEYS.indexOf(rank);
+    return [...pool]
+      .sort((a, b) => (b.split.counts[i] ?? 0) - (a.split.counts[i] ?? 0))
+      .slice(0, 10);
+  }, [d.items, rank]);
 
   return (
-    <div className="space-y-5">
+    <div className="space-y-6 pb-4">
       {/* ── Header ── */}
-      <div className="flex flex-wrap items-start gap-x-4 gap-y-2">
+      <div className="flex flex-wrap items-start gap-x-4 gap-y-3">
         <div className="min-w-0 flex-1">
-          <p
-            className="text-[10.5px] font-bold uppercase tracking-[0.14em]"
-            style={{ color: 'hsl(var(--brand-accent-ink))' }}
-          >
+          <h1 className="font-[family-name:var(--font-display)] text-[19px] font-bold leading-tight text-foreground">
             Reader reactions
-          </p>
-          <p className="mt-1 max-w-2xl text-[12.5px] leading-relaxed text-muted-foreground">
-            One emoji per reader, per item, on a seven-point scale. This page counts them and says
-            what they mean — the mood, the ground you hold, and the posts worth building on.
+          </h1>
+          <p className="mt-1 max-w-2xl text-[13px] leading-relaxed text-muted-foreground">
+            One emoji per reader, on a seven-point scale — across stories, blogs, the parts within a blog, and
+            bulletins.
           </p>
         </div>
-        <SampleDataBadge>Sample data · no reaction feed yet</SampleDataBadge>
+        {state === 'loading' && (
+          <span className="flex items-center gap-2 text-[11.5px] text-muted-foreground">
+            <Loader2 size={13} className="animate-spin" /> Loading
+          </span>
+        )}
       </div>
 
-      {/* ── Headline figures ── */}
-      <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
-        <StatTile
-          label="Reader mood"
-          value={d.moodVerdict.headline}
-          detail={d.moodVerdict.detail}
-          display
+      {/* ── One control row, above everything it scopes ── */}
+      <div className="flex flex-wrap items-center gap-x-4 gap-y-2">
+        <SegmentedControl
+          label="Date range"
+          options={DATE_RANGES.map((r) => ({ value: r.id, label: r.label }))}
+          value={rangeId}
+          onChange={setRangeId}
         />
-        <StatTile
-          label="Total reactions"
-          value={compact(d.overall.reactions)}
-          detail={`Across ${d.published} published items`}
-          hero
+        <span aria-hidden="true" className="hidden h-4 w-px bg-border sm:block" />
+        <ChipToggles
+          label="Content type"
+          allLabel="Everything"
+          options={CONTENT_TYPES.map((t) => ({ value: t.id, label: t.label }))}
+          values={types}
+          onToggle={(v) => setTypes((cur) => (cur.includes(v) ? cur.filter((t) => t !== v) : [...cur, v]))}
+          onClear={() => setTypes([])}
         />
-        <StatTile
-          label="Most common reaction"
-          value={`${d.topEmoji.pct}%`}
-          detail={
+        <span aria-hidden="true" className="hidden h-4 w-px bg-border sm:block" />
+        <SegmentedControl
+          label="Who counts"
+          options={[
+            { value: 'readers' as const, label: 'Readers', title: 'Staff reactions excluded — the readership on its own' },
+            { value: 'everyone' as const, label: 'Everyone', title: 'Include reactions from staff accounts' },
+          ]}
+          value={audience}
+          onChange={setAudience}
+        />
+      </div>
+
+      {/* An empty range shows the page at ZERO rather than a "nothing here" card.
+          A dashboard that replaces itself with a message when the answer is nil
+          teaches you nothing about what it measures, and hides the one figure
+          that is never zero — how much has been published. Zero is an answer;
+          the line below says why it is zero, and every panel still stands. */}
+      {state === 'ready' && (d.reactions === 0 || d.staffExcluded > 0) && (
+        <p className="rounded-sm border border-border/60 bg-muted/20 px-4 py-3 text-[12px] leading-relaxed text-muted-foreground">
+          {d.reactions === 0 && (
             <>
-              react with <span aria-hidden="true">{d.topEmoji.emoji}</span> “{d.topEmoji.label.toLowerCase()}”
-              {' '}— {compact(d.topEmoji.count)} of them
+              <strong className="font-semibold text-foreground">No reactions in this range</strong> — so every
+              figure below is zero. Reactions began being recorded when the reaction bar went live, so an older
+              window is empty by definition. Try a wider range, or clear the type filter.{' '}
             </>
-          }
-        />
-        <StatTile
-          label="Firmest ground"
-          value={best.label}
-          detail={`${SECTION_LABELS[best.section]} · net ${signed(best.split.net)} on ${compact(best.split.reactions)} reactions`}
-          display
-        />
-      </div>
-
-      {/* ── The plain-words read ── */}
-      <Panel title="The story, in plain words">
-        <ul className="space-y-2">
-          {[
-            {
-              emoji: '🤝',
-              text: `Out of every 10 reactions, about ${Math.round(d.overall.forPct / 10)} are for you and ${Math.round(d.overall.againstPct / 10)} push back — overall: ${d.moodVerdict.headline.toLowerCase()}.`,
-            },
-            {
-              emoji: '📈',
-              text: `Your firmest ground is ${best.label} (net ${signed(best.split.net)}); your weakest is ${worst.label} (net ${signed(worst.split.net)}), and it is also your busiest category — ${compact(worst.split.reactions)} reactions.`,
-            },
-            {
-              emoji: '✍️',
-              text: `Blogs beat news and stories on the same volume: net ${signed(blogs.split.net)} across ${compact(blogs.split.reactions)} reactions against ${signed(stories.split.net)} across ${compact(stories.split.reactions)}.`,
-            },
-          ].map((line) => (
-            <li key={line.text} className="flex gap-2.5 text-[12.5px] leading-relaxed text-foreground">
-              <span aria-hidden="true" className="flex-shrink-0 text-[14px] leading-tight">{line.emoji}</span>
-              <span>{line.text}</span>
-            </li>
-          ))}
-        </ul>
-      </Panel>
-
-      {/* ── The scale ── */}
-      <Panel
-        title="How readers feel overall"
-        subtitle="Every reaction on the seven-point scale, folded into three sides."
-        aside={<SplitLine split={d.overall} />}
-      >
-        <StackedMeter parts={overallParts} height={16} />
-        <MeterKey parts={overallParts} />
-
-        <p className="mb-2 mt-5 text-[10.5px] font-bold uppercase tracking-[0.12em] text-muted-foreground">
-          Every emoji, counted
-        </p>
-        <p className="mb-3 text-[11px] text-muted-foreground">
-          Bars are relative to the most-used reaction ({d.topEmoji.label.toLowerCase()}, {d.topEmoji.pct}%).
-          The share of all reactions is printed on every row.
-        </p>
-        <ul className="space-y-1.5">
-          {d.emojiRows.map((row) => (
-            <li key={row.key} className="flex items-center gap-3">
-              <span aria-hidden="true" className="w-5 flex-shrink-0 text-center text-[15px] leading-none">{row.emoji}</span>
-              <span className="w-[104px] flex-shrink-0 truncate text-[12px] text-foreground">{row.label}</span>
-              <span className="min-w-0 flex-1">
-                <Bar pct={maxEmojiPct > 0 ? (row.pct / maxEmojiPct) * 100 : 0} fill={row.fill} />
-              </span>
-              <span className="w-14 flex-shrink-0 text-right text-[11.5px] tabular-nums text-muted-foreground">
-                {compact(row.count)}
-              </span>
-              <span className="w-9 flex-shrink-0 text-right text-[11.5px] font-semibold tabular-nums text-foreground">
-                {row.pct}%
-              </span>
-            </li>
-          ))}
-        </ul>
-      </Panel>
-
-      {/* ── One filter row for the two panels below it ── */}
-      <div className="flex flex-wrap items-center gap-2">
-        <div className="relative w-full sm:w-60">
-          <Search size={13} className="pointer-events-none absolute left-2.5 top-1/2 -translate-y-1/2 text-muted-foreground" />
-          <input
-            type="search"
-            value={query}
-            onChange={(e) => setQuery(e.target.value)}
-            placeholder="Find a category…"
-            aria-label="Find a category"
-            className="w-full rounded-sm border border-input bg-background py-1.5 pl-8 pr-2 text-xs text-foreground focus:border-primary/50 focus:outline-none focus-visible:ring-2 focus-visible:ring-ring"
-          />
-        </div>
-        <div role="group" aria-label="Filter categories by how they are going" className="flex flex-wrap gap-1">
-          {(['all', 'warm', 'split', 'cool'] as Ground[]).map((g) => (
-            <button
-              key={g}
-              type="button"
-              onClick={() => setGround(g)}
-              aria-pressed={ground === g}
-              className={cn(
-                'rounded-sm px-2.5 py-1.5 text-xs transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring',
-                ground === g
-                  ? 'bg-primary/10 font-semibold text-primary'
-                  : 'text-muted-foreground hover:bg-muted hover:text-foreground',
-              )}
-            >
-              {GROUND_LABEL[g]}
-              <span className="ml-1.5 tabular-nums opacity-70">{groundCounts[g]}</span>
-            </button>
-          ))}
-        </div>
-        <p className="ml-auto text-[11px] text-muted-foreground">
-          Net = % for minus % against, in points — so a big category and a small one compare fairly.
-        </p>
-      </div>
-
-      {/* ── Category grid + ranking ── */}
-      <div className="grid gap-4 lg:grid-cols-[minmax(0,1fr)_340px]">
-        <Panel
-          title="How readers feel, by category"
-          subtitle="Colour is the band · the bar inside each tile is how many reacted · pick one to break it down."
-        >
-          {filtered.length === 0 ? (
-            <p className="py-8 text-center text-[12px] text-muted-foreground">
-              No category matches that filter.
-            </p>
-          ) : (
-            <div className="grid gap-2 sm:grid-cols-2 xl:grid-cols-3">
-              {filtered.map((stat) => (
-                <CategoryTile
-                  key={stat.key}
-                  stat={stat}
-                  maxVolume={maxVolume}
-                  selected={selectedKey === stat.key}
-                  onSelect={() => setSelectedKey(selectedKey === stat.key ? null : stat.key)}
-                />
-              ))}
-            </div>
           )}
-
-          <BandLegend className="mt-4 border-t border-border/50 pt-3" />
-
-          {selected && (
-            <div className="mt-4 rounded-sm border border-border/60 bg-muted/40 p-3">
-              <div className="mb-2 flex flex-wrap items-center gap-2">
-                <h3 className="min-w-0 flex-1 truncate font-[family-name:var(--font-display)] text-[13px] font-bold text-foreground">
-                  {selected.label}
-                </h3>
-                <BandChip band={selected.band} />
-                <Net net={selected.split.net} className="text-[13px]" />
-                <button
-                  type="button"
-                  onClick={() => setSelectedKey(null)}
-                  className="text-[11px] text-muted-foreground underline-offset-2 hover:underline"
-                >
-                  Clear
-                </button>
-              </div>
-              <StackedMeter parts={splitParts(selected.split, SIDE_FILL)} height={12} />
-              <p className="mt-2 text-[11px] text-muted-foreground">
-                <SplitLine split={selected.split} /> · {compact(selected.split.reactions)} reactions on{' '}
-                {selected.published} published {selected.published === 1 ? 'item' : 'items'}
-              </p>
-              <ul className="mt-3 space-y-1.5 border-t border-border/50 pt-2.5">
-                {selected.items
-                  .map((item) => ({ item, split: splitOf([item.r]) }))
-                  .sort((a, b) => b.split.net - a.split.net)
-                  .map(({ item, split }) => (
-                    <li key={item.id} className="flex items-center gap-3">
-                      <span className="min-w-0 flex-1 truncate text-[11.5px] text-foreground">{item.title}</span>
-                      <span className="w-20 flex-shrink-0">
-                        <NetBar net={split.net} fill={bandFor(split.net).fill} height={7} />
-                      </span>
-                      <Net net={split.net} className="w-9 flex-shrink-0 text-right text-[11.5px]" />
-                    </li>
-                  ))}
-              </ul>
-            </div>
+          {/* The single most likely reason a member of staff sees nothing here
+              after reacting themselves. Said plainly, with the way to see them. */}
+          {d.staffExcluded > 0 && (
+            <>
+              <strong className="font-semibold text-foreground">
+                {d.staffExcluded} staff reaction{d.staffExcluded === 1 ? '' : 's'} not counted
+              </strong>{' '}
+              — these figures are the readership on its own, so your own reactions and your colleagues&rsquo; are
+              left out.{' '}
+              <button
+                type="button"
+                onClick={() => setAudience('everyone')}
+                className="font-semibold text-primary underline underline-offset-2 hover:opacity-80"
+              >
+                Include them
+              </button>
+              .
+            </>
           )}
+        </p>
+      )}
 
-          <ModelledNote>
-            This is a content cut, not an audience cut: a reaction carries the item it was left on,
-            so it can be grouped by that item’s category — but nothing tells us who left it or where
-            they read it. Reader-level and regional breakdowns need sign-in on the public site first.
-          </ModelledNote>
+      {state === 'error' ? (
+        <Panel>
+          <Empty>That report did not load. Reload the page, or narrow the date range and try again.</Empty>
         </Panel>
+      ) : (
+        <>
+          {/* ── Headline figures ── */}
+          <div className="grid gap-4 sm:grid-cols-3">
+            {/* At zero these say nothing rather than something false: avgStep(0)
+                is 😐, and "averages undecided across every reaction" would be a
+                claim about reactions that do not exist. */}
+            <StatTile label="Total score" value={scoreText(d.overall.score)}
+              detail={d.reactions === 0
+                ? 'Nothing counted in this range yet'
+                : <>Averages <span aria-hidden="true">{avgStep(d.overall.avgScore).emoji}</span>{' '}“{avgStep(d.overall.avgScore).label.toLowerCase()}” across every reaction</>} />
+            <StatTile label="Reader mood" value={d.moodVerdict} display
+              detail={d.reactions === 0
+                ? 'No one has answered yet'
+                : `${d.overall.forPct}% for · ${d.overall.againstPct}% against`} />
+            <StatTile label="Total reactions" value={compact(d.reactions)}
+              detail={`From ${compact(d.reactors)} readers, on ${d.coverage.reacted} of ${d.coverage.published} published items`} />
+          </div>
 
-        <Panel
-          title="Category ranking"
-          subtitle="Best net first. This is the same data as the grid, as numbers."
-          aside={`${filtered.length} of ${d.rankedCategories.length}`}
-          className="lg:sticky lg:top-[72px] lg:self-start"
-        >
-          {filtered.length === 0 ? (
-            <p className="py-6 text-center text-[12px] text-muted-foreground">Nothing matches.</p>
-          ) : (
-            <ul className="space-y-0.5">
-              {filtered.map((stat) => (
-                <li key={stat.key}>
-                  <button
-                    type="button"
-                    onClick={() => setSelectedKey(selectedKey === stat.key ? null : stat.key)}
-                    aria-pressed={selectedKey === stat.key}
-                    className={cn(
-                      'flex w-full items-center gap-2.5 rounded-sm px-1.5 py-1.5 text-left transition-colors',
-                      'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring',
-                      selectedKey === stat.key ? 'bg-muted' : 'hover:bg-muted/60',
-                    )}
-                  >
-                    <span className="min-w-0 flex-1 truncate text-[12px] text-foreground">{stat.label}</span>
-                    <span className="w-20 flex-shrink-0">
-                      <NetBar net={stat.split.net} fill={stat.band.fill} height={8} />
-                    </span>
-                    <Net net={stat.split.net} className="w-9 flex-shrink-0 text-right text-[11.5px]" />
-                  </button>
+          {/* ── 1 · The whole scale ── */}
+          <Panel title="How readers feel overall">
+            <ThreeWayBar parts={splitParts(d.overall, SIDE_FILL)} />
+
+            {/* Where the scoring model explains itself: count × weight, per
+                step, adding up to the total in the tile above. Without this the
+                score is a number the page asks you to trust. */}
+            <div className="mb-2 mt-7 flex items-baseline justify-between gap-3">
+              <p className="text-[10.5px] font-bold uppercase tracking-[0.12em] text-muted-foreground">
+                Every emoji, counted — and what it was worth
+              </p>
+              <p className="text-[11px] tabular-nums text-muted-foreground">
+                count × weight = score
+              </p>
+            </div>
+            <ul className="space-y-2">
+              {d.emojiRows.map((row, i) => (
+                <li key={row.key} className="flex items-center gap-3">
+                  <span aria-hidden="true" className="w-6 flex-shrink-0 text-center text-[16px] leading-none">
+                    {row.emoji}
+                  </span>
+                  <span className="w-[104px] flex-shrink-0 truncate text-[12.5px] text-foreground">{row.label}</span>
+                  <span className="min-w-0 flex-1">
+                    <Bar pct={(row.pct / maxEmojiPct) * 100} fill={row.fill} />
+                  </span>
+                  <span className="w-11 flex-shrink-0 text-right text-[12px] tabular-nums text-muted-foreground">
+                    {compact(row.count)}
+                  </span>
+                  <span className="w-8 flex-shrink-0 text-right text-[12px] tabular-nums text-muted-foreground">
+                    ×{signed(row.weight)}
+                  </span>
+                  <span className="w-16 flex-shrink-0 text-right text-[12px] font-semibold tabular-nums text-foreground">
+                    {scoreText(d.overall.contributions[i] ?? 0)}
+                  </span>
                 </li>
               ))}
             </ul>
-          )}
-          <p className="mt-3 border-t border-border/50 pt-2.5 text-[11px] leading-relaxed text-muted-foreground">
-            Bars run either side of the centre line: right of it is support, left is opposition. The
-            longest bar is a 100-point margin.
-          </p>
-        </Panel>
-      </div>
+            <p className="mt-3 flex items-baseline justify-end gap-3 border-t border-border/50 pt-2.5 text-[12px]">
+              <span className="text-muted-foreground">Total score</span>
+              <span className="text-[15px] font-bold tabular-nums text-foreground">{scoreText(d.overall.score)}</span>
+            </p>
+            <p className="mt-2 text-[11.5px] leading-relaxed text-muted-foreground">
+              The scale is not evenly spaced — one 🤬 cancels five 🙂, or one 🤩. Mild opinions barely move a
+              score; strong ones decide it.
+            </p>
+          </Panel>
 
-      {/* ── Audience segments ── */}
-      <Panel
-        title="Your readers, warmest to coldest"
-        subtitle={
-          <>
-            Everyone who reacted, in five groups. This counts <strong className="font-semibold text-foreground">reactions</strong>,
-            not people — one enthusiast reacting on every post counts more than once, until sign-in
-            makes per-person counting possible.
-          </>
-        }
-      >
-        <p className="mb-3 text-[12.5px] text-foreground">
-          Of every 100 reactions, <strong className="font-semibold">{d.overall.forPct} are friendly</strong>,{' '}
-          {d.overall.middlePct} sit in the middle and{' '}
-          <strong className="font-semibold">{d.overall.againstPct} push back</strong>.
-        </p>
-        <StackedMeter
-          parts={d.segments.map((s) => ({ key: s.id, pct: s.pct, fill: s.fill, label: s.label }))}
-          height={16}
-        />
-        <div className="mt-4 grid gap-x-4 gap-y-3 sm:grid-cols-3 xl:grid-cols-5">
-          {d.segments.map((s) => (
-            <div key={s.id}>
-              <p className="flex items-center gap-1.5 text-[11.5px] text-foreground">
-                <span aria-hidden="true" className="h-2 w-2 flex-shrink-0 rounded-full" style={{ background: s.fill }} />
-                {s.label}
-              </p>
-              <p className="mt-0.5 text-[22px] font-bold leading-none text-foreground">{s.pct}%</p>
-              <p className="mt-1 text-[11px] leading-relaxed text-muted-foreground">
-                {s.hint} · {compact(s.count)} reactions
-              </p>
-            </div>
-          ))}
-        </div>
-      </Panel>
-
-      {/* ── Blog leaderboard ── */}
-      <Panel
-        title="Blog leaderboard — what to lead with"
-        subtitle="Most-loved first. The posts at the top are safe to build on; the ones at the bottom need a rethink before you commission more like them."
-        aside={
-          <Link
-            to="/production-system/blogs"
-            className="inline-flex items-center gap-1 text-[11px] font-semibold text-primary underline-offset-2 hover:underline"
+          {/* ── 2 · Leaderboard ── */}
+          <Panel
+            title={rank === 'score' ? 'Highest scoring' : `Most ${stepFor(rank).label.toLowerCase()}`}
+            subtitle={
+              rank === 'score'
+                ? 'The ten highest totals in this range. Score adds up every reaction, so reach counts — read it next to the average.'
+                : <>The ten pieces that earned the most <span aria-hidden="true">{stepFor(rank).emoji}</span> in this range.</>
+            }
+            aside={
+              <SegmentedControl
+                label="Rank by"
+                options={[
+                  { value: 'score' as const, label: 'Score', title: 'Rank by total score' },
+                  ...EMOJI_KEYS.map((k) => ({
+                    value: k,
+                    label: <span aria-hidden="true" className="text-[16px] leading-none">{stepFor(k).emoji}</span>,
+                    title: `Rank by ${stepFor(k).label.toLowerCase()}`,
+                  })),
+                ]}
+                value={rank}
+                onChange={setRank}
+              />
+            }
           >
-            {d.blogLeaders.length} posts
-            <ArrowUpRight size={11} />
-          </Link>
-        }
-      >
-        <ul className="divide-y divide-border/50">
-          {d.blogLeaders.map((row, i) => (
-            <li key={row.item.id} className="flex flex-wrap items-center gap-x-3 gap-y-2 py-2.5 first:pt-0 last:pb-0">
-              <span className="w-4 flex-shrink-0 text-[11px] tabular-nums text-muted-foreground">{i + 1}</span>
-              <span className="min-w-0 flex-1 basis-[240px]">
-                <span className="block truncate text-[12.5px] font-semibold text-foreground">{row.item.title}</span>
-                <span className="mt-0.5 block text-[11px] tabular-nums text-muted-foreground">
-                  {row.split.forPct}% for · {row.split.againstPct}% against ·{' '}
-                  {compact(row.split.reactions)} reactions · {row.item.comments} comments
-                </span>
-              </span>
-              <span className="w-24 flex-shrink-0">
-                <NetBar net={row.split.net} fill={row.band.fill} />
-              </span>
-              <Net net={row.split.net} className="w-9 flex-shrink-0 text-right text-[12px]" />
-              <BandChip band={row.band} />
-            </li>
-          ))}
-        </ul>
-      </Panel>
+            {leaders.length === 0 ? (
+              <Empty>Nothing has {MIN_REACTIONS} reactions yet in this range.</Empty>
+            ) : (
+              <ul className="divide-y divide-border/50">
+                {leaders.map((s, i) => (
+                  <LeaderRow key={s.item.id} rank={i + 1} stat={s} highlight={rank} />
+                ))}
+              </ul>
+            )}
+            <p className="mt-4 border-t border-border/50 pt-3 text-[11.5px] leading-relaxed text-muted-foreground">
+              <strong className="font-semibold text-foreground">Score</strong> is every reaction added up, so the
+              biggest piece usually wins it. <strong className="font-semibold text-foreground">Avg</strong> is the
+              score per reaction, −5 to +5 — how well it went down, whatever its size. Ranked on{' '}
+              {MIN_REACTIONS}+ reactions, so nothing tops the board on a handful of clicks.
+            </p>
+          </Panel>
 
-      {/* ── Content types ── */}
-      <div>
-        <h2 className="mb-3 font-[family-name:var(--font-display)] text-sm font-bold text-foreground">
-          Reactions by content type
-        </h2>
-        <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-3">
-          {d.contentTypes.map((t) => {
-            const parts = splitParts(t.split, SIDE_FILL);
-            return (
-              <div key={t.id} className="rounded-sm border border-border/60 bg-card p-4">
-                <div className="mb-2 flex items-start gap-2">
-                  <div className="min-w-0 flex-1">
-                    <h3 className="truncate font-[family-name:var(--font-display)] text-[13px] font-bold text-foreground">
-                      {t.href ? (
+          {/* ── 3 · By content type ── */}
+          <Section title="Reactions by content type">
+            <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
+              {d.byType.map((t) => (
+                <div key={t.id} className="rounded-sm border border-border/60 bg-card p-5">
+                  <div className="mb-3 flex items-start gap-2">
+                    <div className="min-w-0 flex-1">
+                      <h3 className="truncate font-[family-name:var(--font-display)] text-[14px] font-bold text-foreground">
                         <Link to={t.href} className="underline-offset-2 hover:underline">{t.label}</Link>
-                      ) : (
-                        t.label
-                      )}
-                    </h3>
-                    <p className="mt-0.5 text-[11px] tabular-nums text-muted-foreground">
-                      {t.published} {t.published === 1 ? t.unit.replace(/s$/, '') : t.unit} ·{' '}
-                      {compact(t.split.reactions)} reactions
-                    </p>
+                      </h3>
+                      <p className="mt-0.5 text-[11.5px] tabular-nums text-muted-foreground">
+                        {t.published} {t.published === 1 ? t.unit.replace(/s$/, '') : t.unit}
+                        {' · '}{compact(t.split.reactions)} reactions
+                      </p>
+                    </div>
                   </div>
                   {t.split.reactions > 0 ? (
-                    <BandChip band={t.band} />
+                    <>
+                      <p className="mb-3 flex items-baseline gap-2">
+                        <span className="text-[26px] font-bold leading-none text-foreground">
+                          {scoreText(t.split.score)}
+                        </span>
+                        <span className="text-[11.5px] text-muted-foreground">
+                          averages <span aria-hidden="true">{avgStep(t.split.avgScore).emoji}</span>{' '}
+                          {avgStep(t.split.avgScore).label.toLowerCase()}
+                        </span>
+                      </p>
+                      <ThreeWayBar parts={splitParts(t.split, SIDE_FILL)} compact />
+                    </>
                   ) : (
-                    <span className="flex-shrink-0 text-[11px] text-muted-foreground" aria-label="No data">—</span>
+                    <p className="text-[11.5px] text-muted-foreground">No reactions yet.</p>
                   )}
                 </div>
-
-                {t.split.reactions > 0 ? (
-                  <>
-                    <StackedMeter parts={parts} height={12} />
-                    <p className="mt-2 text-[11px] text-muted-foreground">
-                      <SplitLine split={t.split} /> · net {signed(t.split.net)}
-                    </p>
-                    {t.topItem && (
-                      <p className="mt-2 truncate border-t border-border/50 pt-2 text-[11px] text-muted-foreground">
-                        Top: <span className="text-foreground">{t.topItem.title}</span>
-                      </p>
-                    )}
-                  </>
-                ) : (
-                  <>
-                    <div className="w-full rounded-[4px]" style={{ height: 12, background: TRACK_FILL }} />
-                    <p className="mt-2 text-[11px] text-muted-foreground">No reactions yet.</p>
-                  </>
-                )}
-              </div>
-            );
-          })}
-        </div>
-      </div>
-
-      {/* ── What to do about it ── */}
-      <div>
-        <h2 className="mb-3 font-[family-name:var(--font-display)] text-sm font-bold text-foreground">
-          Recommended moves
-        </h2>
-        <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-3">
-          {[
-            {
-              kicker: 'Lean in',
-              icon: <Sparkles size={13} />,
-              title: `${best.label} is your firmest ground`,
-              body: `Net ${signed(best.split.net)} on ${compact(best.split.reactions)} reactions. ${best.topItem ? `“${best.topItem.title}” led it.` : ''} Commission more of this and put it where readers land first.`,
-              to: '/production-system/blogs/new',
-              cta: 'Start a post',
-            },
-            {
-              kicker: 'Fix',
-              icon: <Wrench size={13} />,
-              title: `One post is doing most of the damage`,
-              body: `“${worstBlog.item.title}” sits at net ${signed(worstBlog.split.net)} on ${compact(worstBlog.split.reactions)} reactions and ${worstBlog.item.comments} comments — your most-reacted post and your worst-received. Reframe it before the next one in that series.`,
-              // Deliberately the list, not `blogs/${id}` — these ids are sample
-              // data and the editor would 404 on them.
-              to: '/production-system/blogs',
-              cta: 'Open the posts',
-            },
-            {
-              kicker: 'Watch',
-              icon: <Eye size={13} />,
-              title: `${worst.label} is the ground you are losing`,
-              body: `Net ${signed(worst.split.net)} and your busiest category at ${compact(worst.split.reactions)} reactions — the strongest feelings you have are the negative ones. Worth an editorial line before the next piece runs.`,
-            },
-          ].map((move) => (
-            <div key={move.title} className="rounded-sm border border-border/60 bg-card p-4">
-              <p
-                className="flex items-center gap-1.5 text-[10px] font-bold uppercase tracking-[0.12em]"
-                style={{ color: 'hsl(var(--brand-accent-ink))' }}
-              >
-                <span aria-hidden="true">{move.icon}</span>
-                {move.kicker}
-              </p>
-              <h3 className="mt-1.5 font-[family-name:var(--font-display)] text-[13px] font-bold leading-snug text-foreground">
-                {move.title}
-              </h3>
-              <p className="mt-1.5 text-[11.5px] leading-relaxed text-muted-foreground">{move.body}</p>
-              {move.to && (
-                <Link
-                  to={move.to}
-                  className="mt-2.5 inline-flex items-center gap-1 text-[11px] font-semibold text-primary underline-offset-2 hover:underline"
-                >
-                  {move.cta}
-                  <ArrowUpRight size={11} />
-                </Link>
-              )}
+              ))}
             </div>
-          ))}
-        </div>
-      </div>
+          </Section>
+        </>
+      )}
 
-      {/* ── The honest footer ── */}
-      <p className="border-t border-border/50 pt-3 text-[11px] leading-relaxed text-muted-foreground">
-        <strong className="font-semibold text-foreground">Nothing on this page is live.</strong>{' '}
-        Making it real needs three things the platform doesn’t have yet: an emoji picker on published
-        items, a reaction store that records one reaction per reader per item, and reader sign-in — until
-        the last of those, every figure here counts reactions rather than people.
+      {/* ── The honest footer ──
+          It used to say nothing here was live. It is live now, so what it owes
+          the reader is the shape of the data rather than a disclaimer about its
+          absence: who is counted, who is not, and what is simply not measured. */}
+      <p className="border-t border-border/50 pt-4 text-[11.5px] leading-relaxed text-muted-foreground">
+        Every figure counts <strong className="font-semibold text-foreground">people</strong>, not clicks — a
+        reaction belongs to a signed-in account, one per reader per item, and changing your mind replaces your
+        answer rather than adding one.{' '}
+        {includeStaff
+          ? 'Staff reactions are included in this view.'
+          : 'Staff reactions are excluded — switch “Who counts” to Everyone to include them.'}{' '}
+        Reactions began being recorded when the reaction bar went live, so nothing published before then has a
+        full history. There is no view tracking and no dwell time anywhere in the platform, so this page claims
+        neither. Reader comments carry a pick on this same scale and are counted here as the reaction they came
+        with — once, not twice.
+        {d.truncated > 0 && (
+          <>
+            {' '}
+            <strong className="font-semibold text-foreground">
+              {d.truncated} item{d.truncated === 1 ? '' : 's'} left out:
+            </strong>{' '}
+            this range holds more reacted pieces than one report carries.
+          </>
+        )}
       </p>
     </div>
+  );
+}
+
+type LoadState = 'loading' | 'ready' | 'error';
+
+/**
+ * The report for the current filters.
+ *
+ * Keeps the LAST good report on screen while a new one loads, so changing the
+ * date range does not empty the page and refill it — a dashboard that blanks on
+ * every control change reads as broken. A stale-but-labelled figure for a moment
+ * beats a flash of "no reactions".
+ */
+function useReactionsReport(
+  filters: Filters,
+  includeStaff: boolean,
+): { report: ReactionsReport; state: LoadState } {
+  const [report, setReport] = useState<ReactionsReport>(EMPTY_REPORT);
+  const [state, setState] = useState<LoadState>('loading');
+
+  const { from, to, types } = filters;
+  const typeKey = types.join(',');
+
+  useEffect(() => {
+    let active = true;
+    setState('loading');
+    const params = new URLSearchParams({ from, to });
+    if (typeKey) params.set('types', typeKey);
+    if (includeStaff) params.set('includeStaff', '1');
+
+    authFetchRetry(`/api/analytics/reactions?${params.toString()}`)
+      .then(async (res) => {
+        if (!res.ok) throw new Error(`HTTP ${res.status}`);
+        return (await res.json()) as ReactionsReport;
+      })
+      .then((data) => {
+        if (!active) return;
+        setReport({ ...EMPTY_REPORT, ...data });
+        setState('ready');
+      })
+      .catch(() => {
+        if (active) setState('error');
+      });
+
+    return () => {
+      active = false;
+    };
+  }, [from, to, typeKey, includeStaff]);
+
+  return { report, state };
+}
+
+function LeaderRow({
+  rank, stat, highlight,
+}: {
+  rank: number;
+  stat: ItemStat;
+  /** Which number this row is being ranked on — that one is emphasised. */
+  highlight: 'score' | EmojiKey;
+}) {
+  const byScore = highlight === 'score';
+  const count = byScore ? 0 : (stat.split.counts[EMOJI_KEYS.indexOf(highlight)] ?? 0);
+  const share = byScore ? 0 : Math.round((count / stat.split.reactions) * 100);
+  const avg = avgStep(stat.split.avgScore);
+  return (
+    <li className="flex flex-wrap items-center gap-x-4 gap-y-2 py-3 first:pt-0 last:pb-0">
+      <span className="w-4 flex-shrink-0 text-[12px] tabular-nums text-muted-foreground">{rank}</span>
+      <span className="min-w-0 flex-1 basis-[240px]">
+        <span className="block truncate text-[13px] font-semibold text-foreground">{stat.item.title}</span>
+        <span className="mt-0.5 block truncate text-[11.5px] text-muted-foreground">
+          {/* A part is never read on its own, so it is never listed on its own —
+              the post it belongs to is part of its name here. */}
+          {stat.item.parentTitle
+            ? <>Part of <span className="italic">{stat.item.parentTitle}</span></>
+            : typeLabel(stat.item.type)}
+          {stat.item.category ? ` · ${stat.item.category}` : ''}
+          {' · '}{shortDate(stat.item.publishedAt)}
+          {' · '}{compact(stat.split.reactions)} reactions
+        </span>
+      </span>
+      <span className="w-24 flex-shrink-0">
+        <DivergingBar split={stat.split} />
+      </span>
+
+      {/* When ranking on one emoji, that count leads and the score follows, so
+          the column you sorted by is always the one you read first. */}
+      {!byScore && (
+        <span className="flex w-14 flex-shrink-0 items-baseline justify-end gap-1">
+          <span className="text-[15px] font-bold tabular-nums text-foreground">{compact(count)}</span>
+          <span className="text-[11px] tabular-nums text-muted-foreground">{share}%</span>
+        </span>
+      )}
+      <span className="w-16 flex-shrink-0 text-right">
+        <span className={byScore
+          ? 'text-[15px] font-bold tabular-nums text-foreground'
+          : 'text-[12.5px] tabular-nums text-muted-foreground'}>
+          {scoreText(stat.split.score)}
+        </span>
+      </span>
+      {/* The average, as the step it rounds to. A decimal like "+2.8" is a
+          number that exists nowhere on the scale the reader was offered. */}
+      <span
+        className="w-8 flex-shrink-0 text-right text-[17px] leading-none"
+        title={`Averages ${avg.label.toLowerCase()}`}
+      >
+        <span aria-hidden="true">{avg.emoji}</span>
+        <span className="sr-only">Averages {avg.label}</span>
+      </span>
+    </li>
   );
 }

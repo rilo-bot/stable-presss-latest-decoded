@@ -1,6 +1,8 @@
 import { Link } from 'react-router-dom';
 import { Button } from '@/components/ui/button';
 import type { Sponsor } from '@/types/sponsor';
+import { useSiteSettingsStore } from '@/stores/siteSettingsStore';
+import type { PublicNavKey } from '@/types/siteSettings';
 
 interface LandingFooterProps {
   hasUser: boolean;
@@ -9,14 +11,19 @@ interface LandingFooterProps {
 }
 
 export function LandingFooter({ hasUser, isStaff, sponsors }: LandingFooterProps) {
+  // Reads the switches itself rather than taking a prop: the section lists live
+  // inside this component and Landing.tsx cannot filter them from outside.
+  const publicNav = useSiteSettingsStore((s) => s.publicNav);
+  const shows = (key: PublicNavKey) => publicNav[key] !== false;
+
   return (
     <>
       {/* ── Full-width Subscription Band ────────────────── */}
       {!hasUser && (
-        <section className="bg-primary text-primary-foreground py-14 px-4 md:px-8">
+        <section className="bg-primary text-primary-foreground py-14 px-6 md:px-10 lg:px-16">
           <div className="max-w-3xl mx-auto text-center">
             <span
-              className="inline-block text-[9px] uppercase tracking-[0.22em] font-bold mb-4 px-3 py-1 rounded-full"
+              className="inline-block text-[11px] uppercase tracking-[0.16em] font-bold mb-4 px-3 py-1 rounded-full"
               style={{
                 background: 'hsl(var(--brand-accent))',
                 color: 'hsl(var(--brand-accent-foreground))',
@@ -43,14 +50,16 @@ export function LandingFooter({ hasUser, isStaff, sponsors }: LandingFooterProps
               >
                 <Link to="/signup">Start Your Membership</Link>
               </Button>
-              <Button
-                size="lg"
-                variant="outline"
-                asChild
-                className="text-sm border-primary-foreground/30 text-primary-foreground bg-transparent hover:bg-primary-foreground/10"
-              >
-                <Link to="/newsletter">Browse the Newsletter</Link>
-              </Button>
+              {shows('news') && (
+                <Button
+                  size="lg"
+                  variant="outline"
+                  asChild
+                  className="text-sm border-primary-foreground/30 text-primary-foreground bg-transparent hover:bg-primary-foreground/10"
+                >
+                  <Link to="/news">Browse the Editorial</Link>
+                </Button>
+              )}
             </div>
           </div>
         </section>
@@ -58,14 +67,14 @@ export function LandingFooter({ hasUser, isStaff, sponsors }: LandingFooterProps
 
       {/* ── Footer ─────────────────────────────────────── */}
       <footer className="border-t border-border/60 bg-card">
-        <div className="max-w-7xl mx-auto px-4 md:px-8 py-12">
+        <div className="px-6 md:px-10 lg:px-16 py-12">
           <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-8 mb-10">
             {/* Brand */}
             <div>
               <h4 className="font-[family-name:var(--font-display)] text-base font-bold text-foreground mb-1">
                 Stable Press
               </h4>
-              <p className="text-[9px] uppercase tracking-[0.14em] text-muted-foreground mb-3">
+              <p className="text-[11px] uppercase tracking-[0.12em] text-muted-foreground mb-3">
                 Thoroughbred Racing Record
               </p>
               <p className="text-xs text-muted-foreground leading-relaxed">
@@ -75,19 +84,21 @@ export function LandingFooter({ hasUser, isStaff, sponsors }: LandingFooterProps
             </div>
             {/* Sections */}
             <div>
-              <h4 className="text-[9px] uppercase tracking-[0.14em] text-muted-foreground font-semibold mb-3">
+              <h4 className="text-[11px] uppercase tracking-[0.12em] text-muted-foreground font-semibold mb-3">
                 Sections
               </h4>
               <ul className="space-y-2">
+                {/* Filtered by Website Customisation — a link to a section an
+                    admin has switched off would land on a route that redirects
+                    straight back here. */}
                 {[
-                  { to: '/news', label: 'News & Race Reports' },
-                  { to: '/news?section=analysis', label: 'Analysis & Form' },
-                  { to: '/news?section=interviews', label: 'Interviews' },
-                  { to: '/horses', label: 'Horse Profiles' },
-                  { to: '/podcast', label: 'Podcast Hub' },
-                  { to: '/newsletter', label: 'Newsletter' },
-                  { to: '/bulletins', label: 'Print Bulletins' },
-                ].map((item) => (
+                  { to: '/news', label: 'News & Race Reports', section: 'news' as const },
+                  { to: '/news?section=analysis', label: 'Analysis & Form', section: 'news' as const },
+                  { to: '/news?section=interviews', label: 'Interviews', section: 'news' as const },
+                  { to: '/horses', label: 'Horse Profiles', section: 'horses' as const },
+                  { to: '/podcast', label: 'Podcast Hub', section: 'podcast' as const },
+                  { to: '/bulletins', label: 'Print Bulletins', section: 'bulletins' as const },
+                ].filter((item) => shows(item.section)).map((item) => (
                   <li key={item.label}>
                     <Link
                       to={item.to}
@@ -101,15 +112,14 @@ export function LandingFooter({ hasUser, isStaff, sponsors }: LandingFooterProps
             </div>
             {/* Community */}
             <div>
-              <h4 className="text-[9px] uppercase tracking-[0.14em] text-muted-foreground font-semibold mb-3">
+              <h4 className="text-[11px] uppercase tracking-[0.12em] text-muted-foreground font-semibold mb-3">
                 Community
               </h4>
               <ul className="space-y-2">
                 {[
                   { to: '/tipping', label: 'Tipping Ring' },
                   { to: '/tipping', label: 'Leaderboard' },
-                  { to: '/newsletter', label: 'Newsletter' },
-                  { to: '/bulletins', label: 'Print Bulletins' },
+                  ...(shows('bulletins') ? [{ to: '/bulletins', label: 'Print Bulletins' }] : []),
                   ...(isStaff ? [{ to: '/production-system', label: 'Production System' }] : []),
                 ].map((item) => (
                   <li key={item.label}>
@@ -125,7 +135,7 @@ export function LandingFooter({ hasUser, isStaff, sponsors }: LandingFooterProps
             </div>
             {/* Account */}
             <div>
-              <h4 className="text-[9px] uppercase tracking-[0.14em] text-muted-foreground font-semibold mb-3">
+              <h4 className="text-[11px] uppercase tracking-[0.12em] text-muted-foreground font-semibold mb-3">
                 Account
               </h4>
               <ul className="space-y-2">
@@ -156,7 +166,7 @@ export function LandingFooter({ hasUser, isStaff, sponsors }: LandingFooterProps
           {sponsors.length > 0 && (
             <div className="py-4 border-t border-b border-border/40 mb-6">
               <div className="flex flex-wrap items-center justify-center gap-6">
-                <span className="text-[9px] uppercase tracking-[0.16em] text-muted-foreground font-semibold">
+                <span className="text-[11px] uppercase tracking-[0.12em] text-muted-foreground font-semibold">
                   Proudly Supported By
                 </span>
                 {sponsors.map((s) =>
@@ -166,14 +176,14 @@ export function LandingFooter({ hasUser, isStaff, sponsors }: LandingFooterProps
                       href={s.websiteUrl}
                       target="_blank"
                       rel="noreferrer"
-                      className="text-[10px] font-semibold text-muted-foreground hover:text-foreground transition-colors"
+                      className="text-[12px] font-semibold text-muted-foreground hover:text-foreground transition-colors"
                     >
                       {s.name}
                     </a>
                   ) : (
                     <span
                       key={s.id}
-                      className="text-[10px] font-semibold text-muted-foreground"
+                      className="text-[12px] font-semibold text-muted-foreground"
                     >
                       {s.name}
                     </span>
@@ -186,13 +196,13 @@ export function LandingFooter({ hasUser, isStaff, sponsors }: LandingFooterProps
           <div className="flex flex-col sm:flex-row items-center justify-between gap-3">
             {/* Placeholder ABN "00 000 000 000" removed — add the real ABN here
                 once registered rather than showing a fabricated identifier. */}
-            <p className="text-[10px] text-muted-foreground">
+            <p className="text-[12px] text-muted-foreground">
               © {new Date().getFullYear()} Stable Press Pty Ltd. All rights
               reserved.
             </p>
             <p
-              className="text-[10px] italic font-[family-name:var(--font-display)]"
-              style={{ color: 'hsl(var(--brand-accent))' }}
+              className="text-[12px] italic font-[family-name:var(--font-display)]"
+              style={{ color: 'hsl(var(--brand-accent-ink))' }}
             >
               The form is everything. The rest is conversation.
             </p>

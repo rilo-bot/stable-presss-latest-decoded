@@ -28,7 +28,7 @@ import { safePublicImageUrl } from '../lib/magazineV2/url.js';
 import { roleOnMagazine, isOwner, canEditPage, editablePageIds, collaboratorsOf, type V2Collaborator } from '../lib/magazineV2/access.js';
 import { notifyShared } from '../lib/notifyShare.js';
 import { magazinePath } from '../lib/invites.js';
-import { withIdentityDefaults, type IdentityUser } from '../lib/identity.js';
+import { isStaffIdentity, withIdentityDefaults, type IdentityUser } from '../lib/identity.js';
 import { identityCan } from '../lib/effectiveAccess.js';
 import { normalizeElements, normalizeElementPatch } from '../lib/magazineV2/writePipeline.js';
 import { MAX_ELEMENTS_PER_PAGE, type MagazineElement } from '../lib/magazineV2/model.js';
@@ -111,7 +111,7 @@ async function withIssueLock<T>(id: string, fn: () => Promise<T>): Promise<T> {
 
 // ── Helpers ───────────────────────────────────────────────────────────────
 async function loadIssue(id: string): Promise<Doc | null> {
-  return (await db.collection(COL.issues).findById(id)) as Doc | null;
+  return (await db.collection(COL.magazines).findById(id)) as Doc | null;
 }
 
 async function pagesFor(magazineId: string): Promise<Doc[]> {
@@ -157,7 +157,7 @@ async function uniqueSlug(title: string): Promise<string> {
   // instead of every issue in the library — a prefix-anchored regex a slug index
   // can serve, rather than a full-collection scan on every issue create.
   const escaped = base.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-  const rows = (await db.collection(COL.issues).find({ slug: { $regex: `^${escaped}(-[0-9]+)?$` } })) as Doc[];
+  const rows = (await db.collection(COL.magazines).find({ slug: { $regex: `^${escaped}(-[0-9]+)?$` } })) as Doc[];
   const taken = new Set(rows.map((d) => String(d.slug)));
   if (!taken.has(base)) return base;
   for (let n = 2; n < 9999; n++) {
@@ -223,7 +223,7 @@ function pageSummary(p: Doc) {
 // collaborator's assignment; `myRole` + `ownerName` tell the client its rights.
 router.get('/issues', async (req, res) => {
   const uid = req.account!.id;
-  const all = (await db.collection(COL.issues).find()) as Doc[];
+  const all = (await db.collection(COL.magazines).find()) as Doc[];
   // Page counts in ONE aggregation. Previously this was an N+1 that called
   // pagesFor() per issue — each loading every page's FULL elements array from
   // Mongo just to read .length (O(issues × pages × element-bytes) transferred to
@@ -261,7 +261,7 @@ router.post('/issues/blank', async (req, res) => {
   const uid = req.account!.id;
   const title = typeof req.body?.title === 'string' && req.body.title.trim() ? req.body.title.trim() : 'Untitled issue';
   const now = new Date().toISOString();
-  const id = await db.collection(COL.issues).insertOne({
+  const id = await db.collection(COL.magazines).insertOne({
     title,
     slug: await uniqueSlug(title),
     status: 'draft',
@@ -336,7 +336,7 @@ router.post('/issues/:id/reuse', rateLimit('mag2-write', 300, 60_000), async (re
   const requested = typeof req.body?.title === 'string' ? req.body.title.trim() : '';
   const title = (requested || `${String(src.title ?? 'Untitled')} (template)`).slice(0, 200);
   const now = new Date().toISOString();
-  const id = await db.collection(COL.issues).insertOne({
+  const id = await db.collection(COL.magazines).insertOne({
     title,
     slug: await uniqueSlug(title),
     status: 'draft',
@@ -403,7 +403,7 @@ router.post('/issues/generate', rateLimit('mag2-generate', 10, 60_000), async (r
   const pc = Number(req.body?.pageCount);
   const pageCount = Number.isInteger(pc) && pc >= 3 && pc <= 16 ? pc : undefined;
   const now = new Date().toISOString();
-  const id = await db.collection(COL.issues).insertOne({
+  const id = await db.collection(COL.magazines).insertOne({
     title: 'Generating…',
     slug: await uniqueSlug('issue'),
     status: 'processing',
@@ -453,7 +453,7 @@ router.post('/issues/upload', async (req, res) => {
   }
   const baseTitle = (filename ? filename.replace(/\.[^.]+$/, '') : '').trim().slice(0, 120) || 'Untitled issue';
   const now = new Date().toISOString();
-  const id = await db.collection(COL.issues).insertOne({
+  const id = await db.collection(COL.magazines).insertOne({
     title: baseTitle,
     slug: await uniqueSlug(baseTitle),
     status: 'uploading',
@@ -472,8 +472,12 @@ router.post('/issues/upload', async (req, res) => {
   // Key extension follows the mime so the worker can tell PDF/DOCX/image apart.
   // Persist the key up front so confirm-upload reads it back (never reconstructs
   // a hardcoded 'source.pdf', which broke DOCX/image imports).
-  const key = `magazinesV2/${id}/source.${sourceExtForMime(contentType)}`;
-  await db.collection(COL.issues).updateOne(id, {
+  //
+  // Under `public/` like every other upload in the product — one prefix, no
+  // per-path exceptions. Note what that means here: the imported source file is
+  // readable by anyone with its URL, where previously only this API could fetch it.
+  const key = `${storage.PUBLIC_PREFIX}magazinesV2/${id}/source.${sourceExtForMime(contentType)}`;
+  await db.collection(COL.magazines).updateOne(id, {
     sourceFile: { key, url: '', originalName: filename.slice(0, 200), mimeType: contentType, size: 0, pageCount: 0 },
     updatedAt: now,
   });
@@ -496,6 +500,11 @@ router.post('/issues/:id/confirm-upload', async (req, res) => {
   }
   // The key (with its correct extension) was persisted at /issues/upload — use
   // it rather than reconstructing 'source.pdf' (which mis-keyed DOCX/images).
+  //
+  // The fallback stays on the OLD un-prefixed key on purpose: it only ever fires
+  // for issues created before the key was persisted, and those objects really are
+  // at `magazinesV2/<id>/source.pdf`. Moving it to `public/` would point it at an
+  // object that was never written there.
   const key = (doc.sourceFile as { key?: string } | undefined)?.key || `magazinesV2/${doc._id}/source.pdf`;
   let head: { contentLength: number; contentType: string };
   try {
@@ -509,7 +518,7 @@ router.post('/issues/:id/confirm-upload', async (req, res) => {
       ? req.body.originalName.slice(0, 200)
       : (doc.sourceFile as { originalName?: string } | undefined)?.originalName || '';
   const now = new Date().toISOString();
-  await db.collection(COL.issues).updateOne(doc._id, {
+  await db.collection(COL.magazines).updateOne(doc._id, {
     sourceFile: { key, url: storage.publicUrl(key), originalName, mimeType: head.contentType || (doc.sourceFile as { mimeType?: string } | undefined)?.mimeType || 'application/pdf', size: head.contentLength, pageCount: 0 },
     status: 'processing',
     stage: 'Preparing to digitize',
@@ -860,7 +869,7 @@ router.patch('/issues/:id', async (req, res) => {
     return;
   }
   update.updatedAt = new Date().toISOString();
-  await db.collection(COL.issues).updateOne(doc._id, update);
+  await db.collection(COL.magazines).updateOne(doc._id, update);
   const fresh = await loadIssue(doc._id);
   if (!fresh) {
     res.status(404).json({ error: 'Not found' });
@@ -886,9 +895,9 @@ router.delete('/issues/:id', async (req, res) => {
     // Remove the published Bulletin snapshot too, so deleting a draft can't leave
     // an orphan edition live on the newsstand.
     if (typeof doc.publishedIssueId === 'string' && doc.publishedIssueId) {
-      await db.collection('issues').deleteOne(doc.publishedIssueId);
+      await db.collection(COL.published).deleteOne(doc.publishedIssueId);
     }
-    await db.collection(COL.issues).deleteOne(doc._id);
+    await db.collection(COL.magazines).deleteOne(doc._id);
   });
   res.json({ success: true });
 });
@@ -968,11 +977,11 @@ router.post('/issues/:id/publish', async (req, res) => {
   const cover = (typeof doc.coverImage === 'string' && doc.coverImage) || coverUrlFromPages(pages);
   const now = new Date().toISOString();
   const existingId = typeof doc.publishedIssueId === 'string' ? doc.publishedIssueId : '';
-  const existing = existingId ? ((await db.collection('issues').findById(existingId)) as Doc | null) : null;
+  const existing = existingId ? ((await db.collection(COL.published).findById(existingId)) as Doc | null) : null;
 
   let publishedIssueId: string;
   if (existing) {
-    await db.collection('issues').updateOne(existingId, {
+    await db.collection(COL.published).updateOne(existingId, {
       title: doc.title,
       coverImage: cover,
       coverImageUrl: cover,
@@ -986,7 +995,7 @@ router.post('/issues/:id/publish', async (req, res) => {
     });
     publishedIssueId = existingId;
   } else {
-    publishedIssueId = await db.collection('issues').insertOne({
+    publishedIssueId = await db.collection(COL.published).insertOne({
       builder: 'v2', // discriminator — BulletinViewer renders these with the v2 canvas
       magazineIdV2: doc._id, // link back to the draft (for republish/cleanup)
       magazineId: null, // v1 field kept null so canManageIssue falls back to createdByUserId
@@ -1006,7 +1015,7 @@ router.post('/issues/:id/publish', async (req, res) => {
     });
   }
 
-  await db.collection(COL.issues).updateOne(doc._id, {
+  await db.collection(COL.magazines).updateOne(doc._id, {
     status: 'published',
     publishedIssueId,
     publishedAt: now,
@@ -1032,9 +1041,9 @@ router.post('/issues/:id/unpublish', async (req, res) => {
   const now = new Date().toISOString();
   const publishedIssueId = typeof doc.publishedIssueId === 'string' ? doc.publishedIssueId : '';
   if (publishedIssueId) {
-    await db.collection('issues').updateOne(publishedIssueId, { unpublishedAt: now, updatedAt: now });
+    await db.collection(COL.published).updateOne(publishedIssueId, { unpublishedAt: now, updatedAt: now });
   }
-  await db.collection(COL.issues).updateOne(doc._id, { status: 'ready', updatedAt: now });
+  await db.collection(COL.magazines).updateOne(doc._id, { status: 'ready', updatedAt: now });
   const fresh = await loadIssue(doc._id);
   res.json({ issue: withViewer(fresh ?? doc, uid) });
 });
@@ -1095,7 +1104,7 @@ router.post('/issues/:id/collaborators', async (req, res) => {
     return;
   }
   const acct = withIdentityDefaults({ id: existing._id, ...existing });
-  if (!(await identityCan(acct, 'newsroom.access'))) {
+  if (!isStaffIdentity(acct)) {
     res.status(400).json({ error: 'That person is not a staff member, so they cannot be added.' });
     return;
   }
@@ -1115,7 +1124,7 @@ router.post('/issues/:id/collaborators', async (req, res) => {
   };
   const others = collaboratorsOf(doc).filter((c) => c.userId !== acct.id);
   const alreadyShared = collaboratorsOf(doc).some((c) => c.userId === acct.id);
-  await db.collection(COL.issues).updateOne(doc._id, { collaborators: [...others, next], updatedAt: new Date().toISOString() });
+  await db.collection(COL.magazines).updateOne(doc._id, { collaborators: [...others, next], updatedAt: new Date().toISOString() });
 
   // Email a deep link to the magazine. Only on the FIRST share — re-saving
   // someone's page assignment shouldn't spam them. The share itself is already
@@ -1123,12 +1132,23 @@ router.post('/issues/:id/collaborators', async (req, res) => {
   let emailed = false;
   let emailError: string | undefined;
   if (!alreadyShared) {
+    // Resolve the assigned page IDS to the page NUMBERS the recipient will see, so
+    // the email can name them instead of counting them. This route is the only
+    // place that knows the order, hence resolving here rather than in notifyShare.
+    const all = await pagesFor(String(doc._id));
+    const numberOf = new Map(all.map((p, i) => [String(p._id), i + 1]));
+    const pageNumbers: number[] | 'all' =
+      pageIds === 'all'
+        ? 'all'
+        : pageIds.map((id) => numberOf.get(String(id))).filter((n): n is number => !!n);
+
     const r = await notifyShared({
       to: acct.email,
       sharedBy: req.account!.displayName || req.account!.email,
       title: String(doc.title ?? 'Untitled magazine'),
       path: magazinePath(String(doc._id), 'v2'),
-      pageIds,
+      pages: pageNumbers,
+      totalPages: all.length,
     });
     emailed = r.delivered;
     emailError = r.error;
@@ -1151,7 +1171,7 @@ router.delete('/issues/:id/collaborators/:userId', async (req, res) => {
     return;
   }
   const next = collaboratorsOf(doc).filter((c) => c.userId !== req.params.userId);
-  await db.collection(COL.issues).updateOne(doc._id, { collaborators: next, updatedAt: new Date().toISOString() });
+  await db.collection(COL.magazines).updateOne(doc._id, { collaborators: next, updatedAt: new Date().toISOString() });
   const fresh = await loadIssue(doc._id);
   res.json({ issue: withViewer(fresh ?? doc, uid) });
 });
@@ -1177,7 +1197,7 @@ router.post('/issues/:id/reset', async (req, res) => {
   await withIssueLock(doc._id, async () => {
     for (const p of await pagesFor(doc._id)) await db.collection(COL.pages).deleteOne(p._id);
     await blankPage(doc._id);
-    await db.collection(COL.issues).updateOne(doc._id, {
+    await db.collection(COL.magazines).updateOne(doc._id, {
       status: 'draft',
       stage: '',
       processingError: '',
@@ -1224,7 +1244,7 @@ router.post('/issues/:id/pages', async (req, res) => {
     const pos = Number.isInteger(at) && at >= 0 && at <= ids.length ? at : ids.length;
     ids.splice(pos, 0, newId);
     await writeOrder(ids);
-    await db.collection(COL.issues).updateOne(doc._id, { updatedAt: new Date().toISOString() });
+    await db.collection(COL.magazines).updateOne(doc._id, { updatedAt: new Date().toISOString() });
     return { status: 201, pages: (await pagesFor(doc._id)).map(pageSummary) };
   });
   if (out.error) {
@@ -1266,7 +1286,7 @@ router.post('/issues/:id/pages/:pageId/duplicate', async (req, res) => {
     const ids = pages.map((p) => p._id);
     ids.splice(srcIdx + 1, 0, newId);
     await writeOrder(ids);
-    await db.collection(COL.issues).updateOne(doc._id, { updatedAt: now });
+    await db.collection(COL.magazines).updateOne(doc._id, { updatedAt: now });
     return { status: 201, pages: (await pagesFor(doc._id)).map(pageSummary) };
   });
   if (out.error) {
@@ -1287,7 +1307,7 @@ router.delete('/issues/:id/pages/:pageId', async (req, res) => {
     if (!victim) return { status: 404, error: 'Page not found' };
     await db.collection(COL.pages).deleteOne(victim._id);
     await writeOrder(pages.filter((p) => p._id !== victim._id).map((p) => p._id));
-    await db.collection(COL.issues).updateOne(doc._id, { updatedAt: new Date().toISOString() });
+    await db.collection(COL.magazines).updateOne(doc._id, { updatedAt: new Date().toISOString() });
     return { status: 200, pages: (await pagesFor(doc._id)).map(pageSummary) };
   });
   if (out.error) {
@@ -1312,7 +1332,7 @@ router.patch('/issues/:id/pages/reorder', async (req, res) => {
     const [moved] = ids.splice(from, 1);
     ids.splice(to, 0, moved!);
     await writeOrder(ids);
-    await db.collection(COL.issues).updateOne(doc._id, { updatedAt: new Date().toISOString() });
+    await db.collection(COL.magazines).updateOne(doc._id, { updatedAt: new Date().toISOString() });
     return { status: 200, pages: (await pagesFor(doc._id)).map(pageSummary) };
   });
   if (out.error) {
@@ -1347,7 +1367,7 @@ router.post('/issues/:id/pages/generate', rateLimit('mag2-generate', 10, 60_000)
   const at = Number(req.body?.atIndex);
   const atIndex = Number.isInteger(at) && at >= 0 && at <= pages.length ? at : pages.length;
   const prevStatus = String(doc.status);
-  await db.collection(COL.issues).updateOne(doc._id, { status: 'processing', stage: 'Designing pages', updatedAt: new Date().toISOString() });
+  await db.collection(COL.magazines).updateOne(doc._id, { status: 'processing', stage: 'Designing pages', updatedAt: new Date().toISOString() });
   await enqueueJob('generatePages', { issueId: doc._id, count, topic, atIndex, prevStatus });
   const fresh = await loadIssue(doc._id);
   res.status(202).json({ issue: fresh ? withViewer(fresh, req.account!.id) : { id: doc._id } });

@@ -11,7 +11,7 @@ import { Sparkles, Send, Square, Loader2, Check, X, Plus, Pencil, Trash2, Paperc
 import type { UIMessage } from 'ai';
 import { toast } from 'sonner';
 import { MarkdownMessage } from '@/components/MarkdownMessage';
-import { ingestFile, attachmentSourceText, ATTACH_ACCEPT } from '@/editor/agent/documentUpload';
+import { ingestFile, attachmentSourceText, ATTACH_ACCEPT } from '@/agent/attachments/documentUpload';
 import { useVoiceChat } from '@/agent/voice/useVoiceChat';
 import { useEditorStore } from './store';
 import { uploadMediaImage, uploadMediaDoc, listUploads, listMedia, getUploadText, type AttachedImage, type MagazineUpload, type MediaAsset } from './api';

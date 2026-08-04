@@ -16,7 +16,7 @@ import { cn } from '@/lib/utils';
 import { BlogRenderer } from '@/blog/BlogRenderer';
 import { resolvePlacement } from '@/blog/placement';
 import { paragraph, image as makeImage } from '@/blog/factories';
-import { useComposerStore } from './composerStore';
+import { useComposerStore, type ContainerId } from './composerStore';
 import { InlineText } from './InlineText';
 import { InsertMenu, InsertList, filterInsertOptions } from './InsertMenu';
 import { ImagePicker } from './ImagePicker';
@@ -101,16 +101,21 @@ function SlashMenu({
 
 function InlineEditorFor({
   block,
+  blocks,
+  containerId,
   autoFocus,
   onSlash,
 }: {
   block: Block;
+  /** The list this block belongs to — the body's, or one part's. */
+  blocks: Block[];
+  containerId: ContainerId;
   autoFocus: boolean;
   onSlash: () => void;
 }) {
-  const { updateBlock, insertBlock, removeBlock, blog } = useComposerStore();
-  const index = blog?.blocks.findIndex((b) => b.id === block.id) ?? -1;
-  const addAfter = () => insertBlock(paragraph(), index + 1);
+  const { updateBlock, insertBlock, removeBlock } = useComposerStore();
+  const index = blocks.findIndex((b) => b.id === block.id);
+  const addAfter = () => insertBlock(paragraph(), index + 1, containerId);
 
   switch (block.kind) {
     case 'paragraph':
@@ -270,6 +275,8 @@ export function BlockCanvas({
   parties,
   articles,
   imageRequest = 0,
+  containerId = null,
+  compact = false,
 }: {
   horses: Array<{ id: string; name: string }>;
   parties: Array<{ id: string; name: string }>;
@@ -282,6 +289,15 @@ export function BlockCanvas({
    * the first and nothing would happen.
    */
   imageRequest?: number;
+  /**
+   * Which block list to edit: the post body (`null`) or a part, by id. A part's
+   * body is edited with THIS canvas rather than a simpler second editor, so a
+   * sub-section can hold a photograph, a pull quote or a horse card exactly like
+   * the body can — and there is one editing surface to keep working, not two.
+   */
+  containerId?: ContainerId;
+  /** Tighter spacing for a part card, which sits inside a page that already scrolls. */
+  compact?: boolean;
 }) {
   const { blog, selectedId, select, moveBlockTo, insertBlock, addMedia } = useComposerStore();
 
@@ -292,28 +308,38 @@ export function BlockCanvas({
   const [pickerFor, setPickerFor] = useState<number | null>(null);
   const [fileDragOver, setFileDragOver] = useState(false);
 
+  // This canvas's own list. A part that has been removed resolves to undefined,
+  // which is the render guard below — not an empty array, so a vanished part
+  // doesn't briefly draw as an empty page.
+  const blocks =
+    containerId === null ? blog?.blocks : blog?.parts?.find((p) => p.id === containerId)?.blocks;
+
   // Focus a block only when it was just created, so clicking an existing block
   // doesn't yank the caret out of whatever was being typed.
   const justInserted = useRef<string | null>(null);
-  const lastCount = useRef(blog?.blocks.length ?? 0);
-  if (blog && blog.blocks.length !== lastCount.current) {
-    if (blog.blocks.length > lastCount.current) justInserted.current = selectedId;
-    lastCount.current = blog.blocks.length;
+  const lastCount = useRef(blocks?.length ?? 0);
+  if (blocks && blocks.length !== lastCount.current) {
+    if (blocks.length > lastCount.current) justInserted.current = selectedId;
+    lastCount.current = blocks.length;
   }
 
   // The toolbar's Image button lands the picture after the block being edited,
   // or at the end when nothing is selected — the same place the slash menu and
-  // the hover `+` would put it.
+  // the hover `+` would put it. Read from the store rather than the closure so a
+  // stale `blocks` from an earlier render can't misplace it.
   useEffect(() => {
     if (imageRequest === 0) return;
     const state = useComposerStore.getState();
-    const blocks = state.blog?.blocks ?? [];
-    const found = state.selectedId ? blocks.findIndex((b) => b.id === state.selectedId) : -1;
-    setPickerFor(found < 0 ? blocks.length : found + 1);
-  }, [imageRequest]);
+    const list =
+      containerId === null
+        ? state.blog?.blocks ?? []
+        : state.blog?.parts?.find((p) => p.id === containerId)?.blocks ?? [];
+    const found = state.selectedId ? list.findIndex((b) => b.id === state.selectedId) : -1;
+    setPickerFor(found < 0 ? list.length : found + 1);
+  }, [imageRequest, containerId]);
 
-  if (!blog) return null;
-  const count = blog.blocks.length;
+  if (!blog || !blocks) return null;
+  const count = blocks.length;
 
   const openPicker = (atIndex: number) => setPickerFor(atIndex);
 
@@ -326,7 +352,7 @@ export function BlockCanvas({
   const onFileDrop = async (files: FileList) => {
     for (const file of Array.from(files)) {
       const media = await addMedia(file);
-      if (media) insertBlock(makeImage(media.id));
+      if (media) insertBlock(makeImage(media.id), undefined, containerId);
     }
   };
 
@@ -345,7 +371,14 @@ export function BlockCanvas({
         setFileDragOver(false);
         void onFileDrop(e.dataTransfer.files);
       }}
-      className={cn('relative pb-32', fileDragOver && 'rounded-sm ring-2 ring-inset ring-primary/40')}
+      className={cn(
+        'relative',
+        // Room below the last block for the slash menu to open downwards. A part
+        // card doesn't need anything like as much — it would just be a tall gap
+        // inside the card.
+        compact ? 'pb-12' : 'pb-32',
+        fileDragOver && 'rounded-sm ring-2 ring-inset ring-primary/40',
+      )}
     >
       {fileDragOver && (
         <div className="pointer-events-none absolute inset-x-0 top-2 z-40 flex justify-center">
@@ -357,9 +390,9 @@ export function BlockCanvas({
       )}
 
       {count === 0 ? (
-        <div className="mx-auto max-w-lg px-4 py-16 text-center">
+        <div className={cn('mx-auto max-w-lg px-4 text-center', compact ? 'py-8' : 'py-16')}>
           <p className="mb-1 font-[family-name:var(--font-display)] text-lg italic text-muted-foreground">
-            An empty page.
+            {compact ? 'This part is empty.' : 'An empty page.'}
           </p>
           <p className="mb-5 text-xs text-muted-foreground/70">
             Start typing, drop in a photograph, or press <kbd className="rounded border border-border/60 px-1">/</kbd>
@@ -367,17 +400,17 @@ export function BlockCanvas({
           <div className="flex justify-center gap-2">
             <button
               type="button"
-              onClick={() => insertBlock(paragraph(), 0)}
+              onClick={() => insertBlock(paragraph(), 0, containerId)}
               className="rounded-sm bg-primary px-3 py-1.5 text-xs font-semibold text-primary-foreground hover:bg-primary/90"
             >
               Start writing
             </button>
-            <InsertMenu onInsert={(b) => insertBlock(b, 0)} onAddImage={() => openPicker(0)} />
+            <InsertMenu onInsert={(b) => insertBlock(b, 0, containerId)} onAddImage={() => openPicker(0)} />
           </div>
         </div>
       ) : (
         <BlogRenderer
-          blocks={blog.blocks}
+          blocks={blocks}
           media={blog.media}
           dropCap={false}
           wrapBlock={(block, rendered, index) => {
@@ -447,6 +480,8 @@ export function BlockCanvas({
                     <>
                       <InlineEditorFor
                         block={block}
+                        blocks={blocks}
+                        containerId={containerId}
                         autoFocus={justInserted.current === block.id}
                         onSlash={() => {
                           setSlashAt(block.id);
@@ -469,9 +504,9 @@ export function BlockCanvas({
                               block.kind === 'paragraph' && block.html.trim().length === 0;
                             if (isEmptyPara) {
                               useComposerStore.getState().removeBlock(block.id);
-                              insertBlock(b, index);
+                              insertBlock(b, index, containerId);
                             } else {
-                              insertBlock(b, index + 1);
+                              insertBlock(b, index + 1, containerId);
                             }
                           }}
                           onClose={closeSlash}
@@ -491,7 +526,7 @@ export function BlockCanvas({
                   <div className="absolute inset-x-0 top-1/2 flex -translate-y-1/2 items-center gap-2">
                     <InsertMenu
                       compact
-                      onInsert={(b) => insertBlock(b, index + 1)}
+                      onInsert={(b) => insertBlock(b, index + 1, containerId)}
                       onAddImage={() => openPicker(index + 1)}
                     />
                     <span className="h-px flex-1 bg-border/50" aria-hidden="true" />
@@ -511,8 +546,8 @@ export function BlockCanvas({
         open={pickerFor !== null}
         onClose={() => setPickerFor(null)}
         onChoose={(media) => {
-          const at = pickerFor ?? blog.blocks.length;
-          insertBlock(makeImage(media.id), at);
+          const at = pickerFor ?? blocks.length;
+          insertBlock(makeImage(media.id), at, containerId);
         }}
       />
     </div>

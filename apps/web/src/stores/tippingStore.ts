@@ -3,6 +3,14 @@ import type { Race, Tip, TipperProfile, RaceEntrant } from '@/types/tip';
 import { authFetch } from '@/lib/api';
 import { toast } from 'sonner';
 
+/**
+ * Coins a new tipper starts with — for the OPTIMISTIC first render only.
+ *
+ * The authoritative grant is `STARTING_BALANCE` in
+ * apps/server/src/routes/tipperProfiles.ts, which is what actually reaches the
+ * database. This copy exists so a brand-new tipper's badge shows a number before
+ * the POST returns, and for the offline fallback below. Keep the two in step.
+ */
 const STARTING_BALANCE = 500;
 
 interface TippingState {
@@ -36,8 +44,15 @@ export const useTippingStore = create<TippingState>()(
     error: null,
     loaded: false,
 
-    // Loads everything the tipping ring needs from the real backend: open races,
-    // all placed tips, and the persisted tipper leaderboard.
+    // Loads everything the tipping ring needs: the races, THIS CALLER'S tips, and
+    // the tipper leaderboard.
+    //
+    // `/api/tips` used to return every tip on the platform to anyone; it is now
+    // scoped to the caller server-side, so an anonymous visitor gets `[]` here
+    // instead of the whole collection. The landing page calls this for the
+    // leaderboard and therefore makes a request it has no use for — a wasted
+    // round trip now rather than a leak. Split when the landing page's 11
+    // on-mount requests are dealt with.
     fetchRaces: async () => {
       if (get().loading || get().loaded) return;
       set({ loading: true, error: null });
@@ -64,17 +79,13 @@ export const useTippingStore = create<TippingState>()(
       const existing = get().profiles.find((p) => p.userId === userId);
       if (existing?.id) return existing;
       try {
+        // Only the name is ours to send. The opening balance and the three
+        // counters are the server's — it ignores them in the body now, so
+        // sending them would only be a second, disagreeing copy of the number.
         const res = await authFetch('/api/tipperProfiles', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            userId,
-            displayName,
-            coinBalance: STARTING_BALANCE,
-            totalWon: 0,
-            totalWagered: 0,
-            tipsPlaced: 0,
-          }),
+          body: JSON.stringify({ userId, displayName }),
         });
         if (!res.ok) throw new Error(`HTTP ${res.status}`);
         const profile: TipperProfile = await res.json();
@@ -113,47 +124,45 @@ export const useTippingStore = create<TippingState>()(
       const previousTips = get().tips;
       const previousProfiles = get().profiles;
 
-      const updatedProfile: TipperProfile = {
+      // Shown while the request is in flight. The SERVER performs the real debit
+      // in the same handler that writes the tip — this is a prediction of it, and
+      // it is replaced by the authoritative figures below.
+      const predictedProfile: TipperProfile = {
         ...profile,
         coinBalance: profile.coinBalance - wager,
         totalWagered: profile.totalWagered + wager,
         tipsPlaced: profile.tipsPlaced + 1,
       };
+      set((s) => ({
+        profiles: s.profiles.map((p) => (p.userId === userId ? predictedProfile : p)),
+      }));
 
       try {
+        // Which race, which horse, how much. `userId` comes from the token,
+        // `odds` from the entrant on the race, and `payout`/`result` are the
+        // resolver's — the server ignores all four if sent. Sending `odds` used
+        // to set the payout multiplier, since resolution pays `wager * tip.odds`.
         const res = await authFetch('/api/tips', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            userId,
-            raceId,
-            horseName: entrant.horseName,
-            horseId: entrant.horseId,
-            wager,
-            odds: entrant.odds,
-            payout: null,
-            result: 'pending',
-          }),
+          body: JSON.stringify({ raceId, horseId: entrant.horseId, wager }),
         });
-        if (!res.ok) throw new Error(`HTTP ${res.status}`);
+        if (!res.ok) {
+          // The server explains refusals in prose (race closed, already tipped,
+          // insufficient coins). Show that rather than an HTTP status.
+          const detail = await res.json().catch(() => null);
+          throw new Error(detail?.error ?? `HTTP ${res.status}`);
+        }
         const newTip: Tip = await res.json();
 
-        // Persist the debited balance (best-effort — profile already exists).
-        if (updatedProfile.id) {
-          await authFetch(`/api/tipperProfiles/${updatedProfile.id}`, {
-            method: 'PUT',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({
-              coinBalance: updatedProfile.coinBalance,
-              totalWagered: updatedProfile.totalWagered,
-              tipsPlaced: updatedProfile.tipsPlaced,
-            }),
-          });
-        }
+        // Re-read the profile the server actually wrote, so the badge shows the
+        // real balance rather than our prediction of it.
+        const profilesRes = await authFetch('/api/tipperProfiles');
+        const freshProfiles: TipperProfile[] = profilesRes.ok ? await profilesRes.json() : [];
 
         set((s) => ({
           tips: [...s.tips, newTip],
-          profiles: s.profiles.map((p) => (p.userId === userId ? updatedProfile : p)),
+          profiles: freshProfiles.length ? freshProfiles : s.profiles,
         }));
         return { ok: true };
       } catch (err) {

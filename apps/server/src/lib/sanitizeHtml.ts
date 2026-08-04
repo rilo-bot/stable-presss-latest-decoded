@@ -113,31 +113,11 @@ export function sanitizeBlogInline(html: string): string {
   });
 }
 
-type MaybeTextContent = { kind?: unknown; html?: unknown; [k: string]: unknown };
-
-/** Sanitize the `html` of every text region in a page's content map. */
-export function sanitizeContentMap(
-  content: Record<string, unknown>,
-): Record<string, unknown> {
-  const out: Record<string, unknown> = {};
-  for (const [id, c] of Object.entries(content)) {
-    const region = c as MaybeTextContent;
-    if (c && typeof c === 'object' && region.kind === 'text' && typeof region.html === 'string') {
-      out[id] = { ...region, html: sanitizeRichText(region.html) };
-    } else {
-      out[id] = c;
-    }
-  }
-  return out;
-}
-
-/** Sanitize text regions across an array of pages (each page has a `content` map). */
-export function sanitizePages(pages: unknown[]): unknown[] {
-  return pages.map((p) => {
-    const page = p as { content?: unknown };
-    if (p && typeof p === 'object' && page.content && typeof page.content === 'object') {
-      return { ...(p as object), content: sanitizeContentMap(page.content as Record<string, unknown>) };
-    }
-    return p;
-  });
-}
+// `sanitizeContentMap` and `sanitizePages` lived here: they walked the v1 template
+// builder's per-page `content` map (regionId → RegionContent) and sanitised every
+// text region's HTML. That builder is gone, and with it the only shape they knew
+// how to read.
+//
+// The Magazine Builder sanitises per ELEMENT on write, through
+// lib/magazineV2/sanitize.ts — which calls `sanitizeRichText` above, so the
+// allowlist is still defined in exactly one place.

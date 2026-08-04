@@ -1,6 +1,8 @@
 import { useMemo, useEffect } from 'react';
 import { motion } from 'framer-motion';
 import { usePodcastStore } from '@/stores/podcastStore';
+import { useAuthStore } from '@/stores/authStore';
+import { isStaff } from '@/rbac/can';
 import { PodcastPlayer } from '@/components/PodcastPlayer';
 import {Mic, LoaderCircle} from 'lucide-react';
 import { Link } from 'react-router-dom';
@@ -16,6 +18,8 @@ export default function PodcastHub() {
   const episodes = usePodcastStore((s) => s.episodes);
   const activeEpisodeId = usePodcastStore((s) => s.activeEpisodeId);
   const setActiveEpisode = usePodcastStore((s) => s.setActiveEpisode);
+  // Decides whether the empty state offers the producer workflow or a reader link.
+  const staff = isStaff(useAuthStore((s) => s.currentUser));
 
   // Only show published episodes on the public hub
   const publishedEpisodes = useMemo(
@@ -65,8 +69,11 @@ export default function PodcastHub() {
               <p className="text-[10px] uppercase tracking-[0.12em] text-primary-foreground/60 mb-2">
                 Audio Archive
               </p>
+              {/* One name for the show, matching the landing-page sidebar card.
+                  This page called it "The Gallop Podcast" while the landing page
+                  called it "The Stable Press Podcast". */}
               <h1 className="font-[family-name:var(--font-display)] text-4xl md:text-5xl font-bold leading-tight">
-                The Gallop Podcast
+                The Stable Press Podcast
               </h1>
               <div
                 className="h-px w-20 mt-3 mb-4 opacity-40"
@@ -157,6 +164,9 @@ export default function PodcastHub() {
                 <div className="w-16 h-16 rounded-full bg-primary/10 flex items-center justify-center mx-auto mb-4">
                   <Mic size={28} className="text-primary" />
                 </div>
+                {/* The production CTA is staff-only — the Campaign Engine screen
+                    behind it needs `newsroom.access` and the podcast module, and
+                    redirects a reader home. */}
                 <h3 className="font-[family-name:var(--font-display)] text-xl font-bold text-foreground mb-2">
                   The microphones are live.
                 </h3>
@@ -165,15 +175,16 @@ export default function PodcastHub() {
                   style={{ background: 'hsl(var(--brand-accent))' }}
                 />
                 <p className="text-sm text-muted-foreground max-w-xs mx-auto leading-relaxed mb-5">
-                  No episodes have been published yet. Head to the Podcast Workflow to
-                  create and publish your first episode.
+                  {staff
+                    ? 'No episodes have been published yet. Open the Podcast screen in the Campaign Engine to create and publish your first episode.'
+                    : 'No episodes have been published yet. The first conversations are being recorded.'}
                 </p>
                 <Link
-                  to="/podcast/workflow"
+                  to={staff ? '/production-system/podcast' : '/blog'}
                   className="inline-flex items-center gap-2 bg-primary text-primary-foreground text-sm font-medium px-5 py-2.5 rounded-sm hover:bg-primary/90 transition-colors"
                 >
                   <Mic size={14} />
-                  Go to Podcast Workflow
+                  {staff ? 'Open episode production' : 'Read the blog'}
                 </Link>
               </motion.div>
             ) : (
@@ -205,13 +216,18 @@ export default function PodcastHub() {
                   About the Show
                 </p>
                 <h3 className="font-[family-name:var(--font-display)] text-lg font-bold text-foreground mb-2">
-                  The Gallop Podcast
+                  The Stable Press Podcast
                 </h3>
                 <div className="h-px bg-border/60 mb-3" />
+                {/* Was "A weekly long-form audio programme from the editors of The
+                    Gallop Racing Journal" — a publication that does not exist, and
+                    a cadence nothing schedules. Same fix as the "fortnightly"
+                    bulletin copy: describe what the show is, not how often it is
+                    promised. */}
                 <p className="text-sm text-muted-foreground leading-relaxed">
-                  A weekly long-form audio programme from the editors of The Gallop
-                  Racing Journal. We go beyond the results — into the stables, the
-                  salerooms, and the minds of those who shape the sport.
+                  Long-form audio from the editors of Stable Press. We go beyond the
+                  results — into the stables, the salerooms, and the minds of those
+                  who shape the sport.
                 </p>
                 <div
                   className="mt-4 border-l-2 pl-3 py-1 italic text-sm font-[family-name:var(--font-display)] text-foreground leading-relaxed"

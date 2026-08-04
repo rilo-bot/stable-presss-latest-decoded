@@ -71,6 +71,18 @@ interface BlogState {
   listLoading: boolean;
   listError: string | null;
 
+  /**
+   * The newest few published posts, for the landing page — kept OUT of `items`.
+   *
+   * `items` is one array shared by the public /blog index and the newsroom's Blogs
+   * screen, and `fetchList` empties it on every call (see the note there). A
+   * landing page reading `items` would therefore blank the list a reader had
+   * already loaded, and race whichever screen fetched last. This slice is only
+   * ever written by `fetchLatest`, so neither can disturb the other.
+   */
+  latest: BlogSummary[];
+  latestLoaded: boolean;
+
   current: Blog | null;
   currentLoading: boolean;
   currentError: string | null;
@@ -79,6 +91,8 @@ interface BlogState {
 
   fetchList: (filters?: BlogListFilters, page?: number) => Promise<void>;
   loadMore: (filters?: BlogListFilters) => Promise<void>;
+  /** Newest published posts for the front page. Fetches once per session. */
+  fetchLatest: (limit?: number) => Promise<void>;
   fetchOne: (idOrSlug: string) => Promise<Blog | null>;
   clearCurrent: () => void;
 
@@ -113,6 +127,8 @@ export const useBlogStore = create<BlogState>()((set, get) => ({
   hasMore: false,
   listLoading: false,
   listError: null,
+  latest: [],
+  latestLoaded: false,
 
   current: null,
   currentLoading: false,
@@ -167,6 +183,27 @@ export const useBlogStore = create<BlogState>()((set, get) => ({
     } catch (err) {
       const message = err instanceof Error ? err.message : 'Could not load more posts';
       set({ listLoading: false, listError: message });
+    }
+  },
+
+  /**
+   * The newest published posts, for the front page.
+   *
+   * `status: 'published'` is pinned here and not taken from a caller, for the same
+   * reason /blog pins it: a signed-in staff account can see drafts in list
+   * results, and this feeds the PUBLIC front page. A failure leaves `latest`
+   * empty and sets no error — the landing section simply does not render, which is
+   * the right outcome for one strip among eight.
+   */
+  fetchLatest: async (limit = 3) => {
+    if (get().latestLoaded) return;
+    try {
+      const res = await authFetchRetry(`/api/blogs?${queryFrom({ status: 'published' }, 1, limit)}`);
+      if (!res.ok) return;
+      const data = (await res.json()) as BlogListResponse;
+      set({ latest: data.items, latestLoaded: true });
+    } catch {
+      // Deliberately silent — see above.
     }
   },
 

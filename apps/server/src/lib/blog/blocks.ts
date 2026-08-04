@@ -374,6 +374,96 @@ export function normaliseBlocks(v: unknown, media: BlogMedia[]): NormalisedBlock
   return { blocks, dropped }
 }
 
+// ── Parts ───────────────────────────────────────────────────────────────────
+
+/**
+ * A titled sub-section of a post — a "sub-blog".
+ *
+ * A part is a heading and a body, and deliberately NOT a nested post: no cover,
+ * no slug, no status, no byline. What earns it a type of its own rather than
+ * being a `heading` block followed by paragraphs is that a part is the unit a
+ * READER answers: each one carries its own reaction scale on the public page, so
+ * it needs an identity that survives editing. Reorder a part or rewrite its
+ * prose and `id` stays put — that id is what a stored reaction is keyed to when
+ * reactions get a collection (docs/EMOJI-ANALYTICS-PLAN.md).
+ *
+ * The body is `Block[]`, the same shape as the post's own, so a part goes
+ * through `normaliseBlocks` against the SAME media pool and renders through the
+ * same component. A part whose body were one HTML string could not hold a
+ * photograph anywhere but its end, which is the exact limitation of
+ * `Article.summary` that blogs exist to escape.
+ */
+export interface BlogPart {
+  id: string
+  title: string
+  blocks: Block[]
+}
+
+const MAX_PARTS = 20
+
+export interface NormalisedParts {
+  parts: BlogPart[]
+  dropped: number
+}
+
+/**
+ * Normalise the part list against the post's media pool.
+ *
+ * An EMPTY part is kept, not discarded. "Add part" in the editor creates a card
+ * with nothing in it and autosave fires a second later — dropping it here would
+ * delete the author's new section out from under them before they had typed the
+ * title. The public page skips a part with no title and no content instead, and
+ * the editor says so on the card, so nothing is silently swallowed at either end.
+ */
+export function normaliseParts(v: unknown, media: BlogMedia[]): NormalisedParts {
+  if (!Array.isArray(v)) return { parts: [], dropped: 0 }
+
+  let dropped = Math.max(0, v.length - MAX_PARTS)
+  const parts: BlogPart[] = []
+  const seenIds = new Set<string>()
+
+  for (const raw of v.slice(0, MAX_PARTS) as Record<string, unknown>[]) {
+    if (!raw || typeof raw !== 'object') {
+      dropped++
+      continue
+    }
+    // Duplicate ids would make two parts indistinguishable — to React keys now,
+    // and to per-part reactions later.
+    let id = optStr(raw.id, 64) ?? newId()
+    if (seenIds.has(id)) id = newId()
+    seenIds.add(id)
+
+    const nested = normaliseBlocks(raw.blocks, media)
+    dropped += nested.dropped
+    parts.push({ id, title: str(raw.title, 200).trim(), blocks: nested.blocks })
+  }
+
+  return { parts, dropped }
+}
+
+/** Every block inside every part, in order. */
+export function partsBlocks(parts: BlogPart[] | undefined): Block[] {
+  if (!Array.isArray(parts)) return []
+  return parts.flatMap((p) => (Array.isArray(p.blocks) ? p.blocks : []))
+}
+
+/**
+ * Does this part have anything in it? A part with no title and no substance is a
+ * card the author added and never filled in; the reader page skips it rather than
+ * printing a bare "Part 3" over an empty reaction scale.
+ *
+ * A divider does not count as substance — a part containing only a rule is still
+ * an empty part.
+ */
+export function partHasContent(part: BlogPart): boolean {
+  if (part.title.trim()) return true
+  return (Array.isArray(part.blocks) ? part.blocks : []).some((b) => {
+    if (b.kind === 'divider') return false
+    return blockText(b).trim().length > 0 || blockMediaIds(b).length > 0 || b.kind === 'embed' ||
+      b.kind === 'horseCard' || b.kind === 'partyCard' || b.kind === 'articleRef'
+  })
+}
+
 // ── Derived values ──────────────────────────────────────────────────────────
 
 /** Plain text of a block, for word counting and excerpt derivation. */

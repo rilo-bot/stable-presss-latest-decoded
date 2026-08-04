@@ -398,3 +398,90 @@ public author pages beyond the existing `/parties/:id` · view analytics beyond 
 3. **Staff-only authoring for v1.** Composer lives under `/production-system` with the newsroom chrome.
    Enforced by which roles hold `blog.create`, not by a hardcoded staff check, so opening it to members
    later is a role change. §4.2.
+
+---
+
+## 10. Post parts — sub-sections with their own reactions (built 2026-08-04)
+
+Asked for as "sub-blogs": a post can carry titled sections after its body, each with a **separate**
+reader reaction scale, added and reordered in the editor. Modelled on the campaign-hq policy parts
+(`packages/blocks/src/site/Policy.tsx`, `apps/client/src/tenant/PoliciesView.tsx`), which is where the
+"Add part" pattern and the numbered `PART 1` masthead come from.
+
+### 10.1 The model
+
+```ts
+interface BlogPart { id: string; title: string; blocks: Block[] }   // Blog.parts?: BlogPart[]
+```
+
+Three decisions worth keeping:
+
+**A part's body is `Block[]`, not an HTML string.** campaign-hq stores `body: string` and renders it
+with `dangerouslySetInnerHTML`. Doing that here would put a second content model in a codebase whose
+whole premise (§2) is that one HTML/text body cannot hold an image at a chosen point — the exact
+limitation of `Article.summary`. Blocks mean parts go through `normaliseBlocks` against the **same
+media pool**, render through the same `BlogRenderer`, and need no second sanitizer.
+
+**`id` is minted client-side and preserved on every save.** A part is the unit a reader answers, so its
+identity has to survive retitling, rewriting and reordering — that id is what a stored reaction will be
+keyed to when reactions get a collection (`docs/EMOJI-ANALYTICS-PLAN.md`). `normaliseParts` keeps an
+incoming id and only mints one for a part that has none, or whose id collides.
+
+**An empty part is kept, not dropped.** "Add part" creates an empty card and autosave fires a second
+later; discarding it server-side would delete the author's new section before they typed the title.
+Emptiness is answered at the two ends instead — `partHasContent()` makes the reader page skip a part
+with no title and no substance, and the editor card says so in words. Nothing is silently swallowed.
+
+### 10.2 `parts` is the one field written only when sent
+
+`buildContent` writes `parts` **only if the request body contains the key**. Every other field is
+authoritative because the composer always sends the whole post; parts cannot be, because the blog
+studio's `saveFull` (`apps/web/src/agent/blog/blogToolExecutor.ts`) rebuilds a full payload from a post
+it loaded. Without this, an AI copy-edit of the body would silently delete every part of the post it
+was asked to improve. `saveFull` now also passes `parts` through, so it is guarded at both ends.
+
+### 10.3 What else had to learn about parts
+
+| Place | Why |
+| --- | --- |
+| `gateForTier` | Sends `parts: []` to a reader below the tier. Parts are body copy; leaving them in handed over most of a paywalled post while the page drew a gate above them. |
+| Reading time | Counts body + part words. A PUT that omits `parts` recomputes from the **stored** ones. |
+| Publish gate | "This post is empty" now counts part blocks — a post whose writing lives only in parts is not empty. |
+| `DELETE /media/:id` | Searches parts for uses, names those blocks in the 409, and re-normalises parts against the reduced pool. Body-only would have reported "used in 0 places" and left a hole in a part. |
+| `ToolsRail` | Looks a block up with `findBlock` (body **or** part). Selecting a picture inside a part previously showed no settings at all. |
+| Cross-link fetches | `BlogPost` asks `allBlocks`, so a horse card inside a part gets its store loaded. |
+
+### 10.4 One editing model, several surfaces
+
+`composerStore` gained a `ContainerId` = `null` (body) | part id. Every **id-based** operation resolves
+its own container, so the toolbar, the rail and drag-and-drop work on a block inside a part without
+knowing parts exist; only `insertBlock` takes a container, because a new block has no id to look up.
+`null` vs `undefined` is load-bearing there: `null` is the body, `undefined` is "no container has it".
+
+A part's body is edited with the **same `BlockCanvas`** (`containerId` + `compact`), so a sub-section can
+hold a photograph or a pull quote. Each part card has its **own `BodyToolbar`, scoped to its part** —
+the selection is one block id for the whole post, so an unscoped toolbar would light up whenever
+anything anywhere were selected and its H2 button would retype a block in a different section. Parts
+sit **outside** the body box so only one sticky toolbar is ever pinned; nested, both would pin to the
+same offset and overlap. Undo snapshots carry `parts`, or undoing "remove part" would restore the body
+and leave the part gone.
+
+### 10.5 Reactions are still a front-end preview
+
+`BlogReactions` now takes `idPrefix` / `heading` / `note` / `variant`. A post with parts draws N+1 bars,
+so ids are derived per bar — duplicated ids would point every `aria-labelledby` at the first heading and
+a screen reader would announce every scale as belonging to the post as a whole. **The honesty rules hold
+in every variant:** counts start at zero, only your own click moves one, and each bar says nothing is
+recorded yet. The post-level bar relabels itself to "the post as a whole" once parts exist, so a reader
+knows which thing they are answering. Per-part storage lands with the emoji-analytics work; `part.id` is
+the key it will use.
+
+### 10.6 Verified
+
+Both suites are in the session scratchpad, not the repo. Server, against a live API: part ids preserved ·
+empty part survives · reading time counts part words · a PUT with no `parts` key leaves them alone ·
+publish with the writing only in a part · **paywall withholds parts from an anonymous reader** · media
+delete refuses while a part uses the asset, then strips the block from the part · hostile payload
+(non-objects dropped, duplicate ids made unique, part prose sanitized, title clamped). Browser: Add part
+· caret lands in the new title · autosave · **toolbar scoping both ways** · three independent scales with
+unique ids · picking on one part moves nothing else · no sideways scroll.

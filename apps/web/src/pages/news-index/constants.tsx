@@ -110,6 +110,6 @@ export const SECTIONS = [
 
 /* `LIVE_STATUSES` / `isLive(status)` lived here, listing the three statuses that
  * counted as public: published, newsletter, bulletin. Newsletter and bulletin
- * are distribution channels now, not statuses, so "live" is a single status and
- * the check belongs with the type: `isLive(article)` / `isLiveOn(article,
- * channel)` in `@/types/article`. */
+ * became distribution channels rather than statuses, and then stopped being
+ * either — a published story is news. So "live" is one status, and the check
+ * belongs with the type: `isLive(article)` in `@/types/article`. */

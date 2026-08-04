@@ -25,7 +25,10 @@ export function ProductionSystemTopBar({ title, actions, onOpenNav }: TopBarProp
   // to the work side of the frame, and a bar the same colour as the page it
   // floats over has no edge of its own.
   return (
-    <header className="sticky top-0 z-30 flex h-14 items-center gap-3 border-b border-border bg-card/95 px-4 backdrop-blur supports-[backdrop-filter]:bg-card/80 md:px-6">
+    // The horizontal padding tracks `main`'s in ProductionSystemLayout, including
+    // the lg step it was missing — the screen title used to sit 8px inboard of the
+    // content it names on any viewport above 1024px.
+    <header className="sticky top-0 z-30 flex h-14 items-center gap-3 border-b border-border bg-card/95 px-4 backdrop-blur supports-[backdrop-filter]:bg-card/80 md:px-6 lg:px-8">
       <button
         onClick={onOpenNav}
         className="md:hidden -ml-1 rounded-sm p-2 text-muted-foreground transition-colors hover:bg-muted/60 hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"

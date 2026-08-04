@@ -78,7 +78,10 @@ export default function TippingRing() {
   const profiles = useTippingStore((s) => s.profiles);
   const getOrCreateProfile = useTippingStore((s) => s.getOrCreateProfile);
 
-  const [loading, setLoading] = useState(true);
+  // Real fetch state, not a 500ms timer — same fix as /horses and /news. The
+  // timer showed "The bookmakers are preparing the card" on a full race card
+  // whenever the request took longer than half a second.
+  const loading = useTippingStore((s) => !s.loaded && !s.error);
 
   // Ensure profile exists for logged-in user
   useEffect(() => {
@@ -87,12 +90,6 @@ export default function TippingRing() {
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [currentUser?.id]);
-
-  // Brief skeleton phase
-  useEffect(() => {
-    const t = setTimeout(() => setLoading(false), 500);
-    return () => clearTimeout(t);
-  }, []);
 
   const profile = useMemo(
     () =>
@@ -176,7 +173,11 @@ export default function TippingRing() {
                   icon: <TrendingUp size={12} />,
                 },
                 {
-                  label: 'Races Won',
+                  // `totalWon` is COINS, credited as `+= payout` by
+                  // /api/tipping/resolve — not a count of races. Labelled "Races
+                  // Won" it read as "Races Won: 6000" for one winning tip at
+                  // 12/1. The landing page had this right; only this page didn't.
+                  label: 'Coins Won',
                   value: profile.totalWon,
                   icon: <Trophy size={12} />,
                 },
@@ -411,10 +412,10 @@ export default function TippingRing() {
                     </div>
                     <div>
                       <div className="font-[family-name:var(--font-display)] text-xl font-bold tabular-nums text-foreground">
-                        {profile.totalWon}
+                        {profile.totalWon.toLocaleString()}
                       </div>
                       <div className="text-[10px] text-muted-foreground uppercase tracking-[0.06em]">
-                        Won
+                        Coins won
                       </div>
                     </div>
                   </div>

@@ -246,7 +246,25 @@ export async function uploadLargeFile(
     xhr.send(file);
   });
 
+  // 3) Have the server confirm what actually landed.
+  //
+  // Not a formality: a presigned PUT carries no size ceiling, so the limit quoted
+  // at /sign is advisory and the bucket will accept whatever the browser sends.
+  // The server re-reads the object's real type and size from S3 and deletes it if
+  // it fails the caps — so the URL we return below is one the server has actually
+  // vouched for, rather than one we assumed from a 200.
+  const confirmRes = await authFetch('/api/uploads/confirm', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ key: signed.key }),
+  });
+  if (!confirmRes.ok) {
+    const msg = await confirmRes.json().catch(() => ({} as { error?: string }));
+    throw new Error(msg.error || `The upload could not be verified (HTTP ${confirmRes.status}).`);
+  }
+  const confirmed = (await confirmRes.json()) as { url: string; key: string };
+
   // Private bucket → server returns a relative '/api/...' URL; make it absolute.
-  const url = signed.publicUrl.startsWith('/') ? apiUrl(signed.publicUrl) : signed.publicUrl;
-  return { url, key: signed.key, fallback: false };
+  const url = confirmed.url.startsWith('/') ? apiUrl(confirmed.url) : confirmed.url;
+  return { url, key: confirmed.key, fallback: false };
 }

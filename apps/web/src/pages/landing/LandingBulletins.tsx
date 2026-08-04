@@ -1,7 +1,7 @@
 import { Link } from 'react-router-dom';
-import { ArrowRight, ChevronRight, Mail } from 'lucide-react';
-import { Button } from '@/components/ui/button';
+import { ArrowRight, ChevronRight } from 'lucide-react';
 import type { IssueSummary } from '@/types/magazine';
+import { SectionHead } from './SectionHead';
 
 interface LandingBulletinsProps {
   publishedIssues: IssueSummary[];
@@ -10,22 +10,7 @@ interface LandingBulletinsProps {
 export function LandingBulletins({ publishedIssues }: LandingBulletinsProps) {
   return (
     <section id="bulletins">
-      <div className="flex items-center gap-4 mb-6">
-        <div
-          className="flex-shrink-0 w-1 h-5 rounded-full"
-          style={{ background: 'hsl(var(--brand-accent))' }}
-        />
-        <h2 className="font-[family-name:var(--font-display)] text-xl font-bold text-foreground">
-          Print Bulletins
-        </h2>
-        <div className="flex-1 h-px bg-border/50" />
-        <Link
-          to="/bulletins"
-          className="flex items-center gap-1 text-[10px] uppercase tracking-[0.1em] font-semibold text-muted-foreground hover:text-foreground transition-colors flex-shrink-0"
-        >
-          All bulletins <ChevronRight size={11} />
-        </Link>
-      </div>
+      <SectionHead title="Print Bulletins" to="/bulletins" linkLabel="All bulletins" />
 
       {publishedIssues.length > 0 ? (
         <div className="grid grid-cols-1 sm:grid-cols-2 gap-5">
@@ -49,7 +34,7 @@ export function LandingBulletins({ publishedIssues }: LandingBulletinsProps) {
                 <div className="relative z-10 p-5 h-full flex flex-col justify-between">
                   <div>
                     <div
-                      className="inline-block text-[9px] uppercase tracking-[0.2em] font-bold px-2 py-0.5 mb-2"
+                      className="inline-block text-[11px] uppercase tracking-[0.12em] font-bold px-2 py-0.5 mb-2"
                       style={{
                         background: 'hsl(var(--brand-accent))',
                         color: 'hsl(var(--brand-accent-foreground))',
@@ -57,7 +42,7 @@ export function LandingBulletins({ publishedIssues }: LandingBulletinsProps) {
                     >
                       Print Edition
                     </div>
-                    <p className="text-[10px] uppercase tracking-[0.12em] text-primary-foreground/60">
+                    <p className="text-[11px] uppercase tracking-[0.1em] text-primary-foreground/70">
                       {issue.edition}
                     </p>
                   </div>
@@ -72,17 +57,17 @@ export function LandingBulletins({ publishedIssues }: LandingBulletinsProps) {
               {/* Body */}
               <div className="p-4 bg-card">
                 <div className="flex items-center justify-between mb-2">
-                  <span className="text-[11px] text-muted-foreground">
+                  <span className="text-[12px] text-muted-foreground">
                     {new Date(issue.publishedAt).toLocaleDateString('en-AU', {
                       month: 'long',
                       year: 'numeric',
                     })}
                   </span>
-                  <span className="text-[11px] text-muted-foreground">
+                  <span className="text-[12px] text-muted-foreground">
                     {issue.pageCount} pages
                   </span>
                 </div>
-                <span className="text-[10px] uppercase tracking-[0.1em] font-semibold text-muted-foreground group-hover:text-foreground transition-colors flex items-center gap-1">
+                <span className="text-[12px] font-semibold text-muted-foreground group-hover:text-foreground transition-colors flex items-center gap-1">
                   Read full bulletin <ChevronRight size={10} />
                 </span>
               </div>
@@ -96,49 +81,18 @@ export function LandingBulletins({ publishedIssues }: LandingBulletinsProps) {
           </p>
           <Link
             to="/bulletins"
-            className="mt-3 inline-flex items-center gap-1 text-[10px] uppercase tracking-[0.1em] font-semibold text-primary hover:text-primary/80 transition-colors"
+            className="mt-3 inline-flex items-center gap-1 text-[12px] font-semibold text-primary hover:text-primary/80 transition-colors"
           >
             Browse bulletins <ArrowRight size={11} />
           </Link>
         </div>
       )}
 
-      {/* Newsletter/Subscription prompt */}
-      <div
-        className="mt-5 border border-dashed rounded-sm p-4 flex flex-col sm:flex-row items-center gap-4"
-        style={{ borderColor: 'hsl(var(--brand-accent) / 0.4)' }}
-      >
-        <Mail
-          size={20}
-          style={{ color: 'hsl(var(--brand-accent))' }}
-          className="flex-shrink-0"
-        />
-        <div className="flex-1 text-center sm:text-left">
-          <p className="text-sm font-semibold text-foreground">
-            Newsletter &amp; Print Bulletin — delivered to subscribers.
-          </p>
-          <p className="text-xs text-muted-foreground mt-0.5">
-            Weekly editorial dispatches and the fortnightly print bulletin, organised by category.
-          </p>
-        </div>
-        <div className="flex items-center gap-2 flex-shrink-0">
-          <Button
-            size="sm"
-            variant="outline"
-            asChild
-            className="text-xs"
-          >
-            <Link to="/newsletter">Browse Newsletter</Link>
-          </Button>
-          <Button
-            size="sm"
-            asChild
-            className="bg-primary text-primary-foreground hover:bg-primary/90 text-xs"
-          >
-            <Link to="/bulletins">Browse Bulletins</Link>
-          </Button>
-        </div>
-      </div>
+      {/* A dashed "The Print Bulletin — delivered to subscribers" prompt sat here,
+          with Browse Editorial / Browse Bulletins buttons. Both destinations are in
+          the nav, in the footer, AND in this section's own header link three rows
+          up, and it was the third subscribe-shaped card on a page that had six.
+          Removed with the other two — see the note in LandingSidebar.tsx. */}
     </section>
   );
 }
