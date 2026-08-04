@@ -30,9 +30,15 @@ const SECRET_ACCESS_KEY = (process.env.AWS_SECRET_ACCESS_KEY ?? '').trim()
 const ENDPOINT = (process.env.S3_ENDPOINT ?? '').trim()
 const PUBLIC_BASE_URL = (process.env.S3_PUBLIC_BASE_URL ?? '').trim().replace(/\/$/, '')
 const FORCE_PATH_STYLE = process.env.S3_FORCE_PATH_STYLE === 'true'
-// ACL applied to uploaded objects so they're readable for display. Defaults to
-// 'public-read'. Set S3_OBJECT_ACL=none for buckets with ACLs disabled (Object
-// Ownership = Bucket owner enforced) where a bucket policy grants public read.
+// ACL applied to uploaded objects so they're readable for display.
+//
+// Defaults to 'public-read', which THIS bucket rejects: Object Ownership is
+// "bucket owner enforced", so ACLs are disabled and every PutObject carrying one
+// fails with AccessControlListNotSupported and is retried without it (see
+// uploadObject). That works, but it costs a wasted round trip per upload and the
+// retry is silent, which is why the objects looked public and were not.
+// Set S3_OBJECT_ACL=none to skip the attempt; public read comes from the bucket
+// POLICY on `public/*`, not from an ACL.
 const OBJECT_ACL = (process.env.S3_OBJECT_ACL ?? 'public-read').trim()
 // Absolute origin of THIS API in deployment (e.g. https://my-api.onrender.com),
 // used to build viewable file URLs when the bucket isn't public. Unset in local
@@ -60,14 +66,22 @@ export function isConfigured(): boolean {
 /**
  * Browser-viewable URL we STORE for an object key.
  *
- * • If S3_PUBLIC_BASE_URL is set (public bucket / CDN), use it directly — the
- *   raw object is served by S3/CloudFront with no server involvement.
- * • Otherwise the bucket is private: route through our API, which 302-redirects
- *   to a short-lived presigned GET (see GET /api/uploads/file/*). Absolute in
- *   deployment (API_PUBLIC_URL), relative in dev (same-origin via Vite proxy).
+ * • Keys under `public/` are covered by the bucket's public-read policy, so when
+ *   S3_PUBLIC_BASE_URL is set they get the raw S3/CDN URL and are served with no
+ *   server involvement at all.
+ * • EVERYTHING ELSE routes through our API, which streams the object from S3
+ *   (see GET /api/uploads/file/*). Absolute in deployment (API_PUBLIC_URL),
+ *   relative in dev, where it resolves same-origin through the Vite proxy.
+ *
+ * The `public/` test is the important half. This used to hand out a direct bucket
+ * URL for ANY key the moment S3_PUBLIC_BASE_URL was set — including
+ * `evidence/…`, which is deliberately outside `public/` so the bucket policy
+ * cannot reach it. Those URLs would 403 for everyone, including the admins who
+ * are supposed to read them, and the only visible symptom would be a broken
+ * image on a claim.
  */
 export function publicUrl(key: string): string {
-  if (PUBLIC_BASE_URL) return `${PUBLIC_BASE_URL}/${key}`
+  if (PUBLIC_BASE_URL && key.startsWith('public/')) return `${PUBLIC_BASE_URL}/${key}`
   return `${API_PUBLIC_URL}/api/uploads/file/${key}`
 }
 
@@ -139,9 +153,11 @@ export async function presignPutUrl(opts: {
 
 /**
  * Server-side (proxied) upload: stream the bytes straight to S3. The browser
- * uploads to our own API, so this needs no bucket CORS policy. Objects are
- * written public-read (unless S3_OBJECT_ACL=none) so the returned publicUrl is
- * directly viewable.
+ * uploads to our own API, so this needs no bucket CORS policy.
+ *
+ * Whether the result is publicly readable is decided by the KEY, not by this
+ * function: the bucket policy grants read on `public/*`. The ACL attempt below is
+ * a leftover for buckets that still have ACLs enabled.
  */
 export async function uploadObject(opts: {
   key: string

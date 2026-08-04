@@ -96,8 +96,48 @@ function requireUploadKind(kindFrom: (req: Request) => unknown) {
   }
 }
 
+/**
+ * Kinds that are NOT public, and who may read them.
+ *
+ * `evidence` is a member's proof of identity — a passport scan, a training
+ * licence, a stable invoice. It was served to anyone who had the URL, on the
+ * reasoning that a UUID-prefixed key is unguessable (docs/AUTH-RBAC-REVIEW.md H7).
+ * Unguessable is not private: the URL is stored on the claim, travels through
+ * notification emails, and appears in any admin's browser history and in the
+ * referrer of anything they open next.
+ *
+ * Everything else is public — party photos, horse images and blog media are
+ * rendered in `<img>` tags on the public website, and requiring a token there
+ * would simply break the site.
+ *
+ * This drives BOTH ends: which prefix a new object is written under (buildKey)
+ * and who may read one back (the GET route). Adding a kind here is therefore
+ * enough to make it private for everything uploaded from then on.
+ */
+const PRIVATE_KINDS = new Set(['evidence'])
+
+/**
+ * Where an object lands, and therefore whether the bucket will serve it.
+ *
+ * The bucket has ACLs DISABLED, so the `public-read` ACL the uploader asks for is
+ * rejected and silently dropped (see storage.uploadObject). What actually grants
+ * public read is the bucket POLICY, which covers `public/*` and nothing else.
+ * That convention already existed — every magazine image is written to
+ * `public/magazinesV2/…` for exactly this reason — but the generic upload route
+ * never joined it, so party, horse, blog and media files sat outside `public/`
+ * and could only ever be read back through this API.
+ *
+ * So: public kinds go under `public/<kind>/<userId>/…` and are directly
+ * fetchable; PRIVATE_KINDS deliberately stay outside it, where the bucket policy
+ * cannot reach them and the read gate below is the only way in.
+ *
+ * Existing objects keep their old keys and keep working — the proxy still serves
+ * anything, so nothing needs migrating.
+ */
 function buildKey(kind: unknown, userId: string, fileName: unknown): string {
-  return `${kindOf(kind)}/${userId}/${crypto.randomUUID()}-${safeName(String(fileName ?? 'file'))}`
+  const k = kindOf(kind)
+  const tail = `${k}/${userId}/${crypto.randomUUID()}-${safeName(String(fileName ?? 'file'))}`
+  return PRIVATE_KINDS.has(k) ? tail : `public/${tail}`
 }
 
 // Per-account ceiling. Generous enough for a magazine's worth of images in one
@@ -215,30 +255,20 @@ router.post(
 )
 
 /**
- * Keys are `<kind>/<ownerUserId>/<uuid>-<name>`, so the folder and the uploader
- * are both recoverable from the key itself — no database lookup needed to decide
- * who may read it.
+ * Keys are `[public/]<kind>/<ownerUserId>/<uuid>-<name>`, so the folder and the
+ * uploader are both recoverable from the key itself — no database lookup needed
+ * to decide who may read it.
+ *
+ * The leading `public/` is stripped first. It is a STORAGE-VISIBILITY prefix, not
+ * a kind, and reading it as one would make every public object parse as kind
+ * "public" owned by "blog"/"party"/… — which would quietly exempt a kind from the
+ * gate the day one is added to PRIVATE_KINDS.
  */
 function parseKey(key: string): { kind: string; ownerId: string } {
-  const [kind = '', ownerId = ''] = key.split('/')
+  const path = key.startsWith('public/') ? key.slice('public/'.length) : key
+  const [kind = '', ownerId = ''] = path.split('/')
   return { kind, ownerId }
 }
-
-/**
- * Kinds that are NOT public, and who may read them.
- *
- * `evidence` is a member's proof of identity — a passport scan, a training
- * licence, a stable invoice. It was served to anyone who had the URL, on the
- * reasoning that a UUID-prefixed key is unguessable (docs/AUTH-RBAC-REVIEW.md H7).
- * Unguessable is not private: the URL is stored on the claim, travels through
- * notification emails, and appears in any admin's browser history and in the
- * referrer of anything they open next.
- *
- * Everything else stays public — party photos, horse images and blog media are
- * rendered in `<img>` tags on the public website, and requiring a token there
- * would simply break the site.
- */
-const PRIVATE_KINDS = new Set(['evidence'])
 
 /**
  * GET /api/uploads/file/<key>
