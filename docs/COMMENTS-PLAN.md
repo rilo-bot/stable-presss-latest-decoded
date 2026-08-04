@@ -1,10 +1,13 @@
 # Reader comments — one mechanism, three surfaces, one opinion
 
-**Status: BUILT, 2026-08-04.** Comments are live on **stories**, **blog posts** and
-**bulletin editions**, with a staff moderation desk at
+**Status: BUILT AND DB-VERIFIED, 2026-08-04.** Comments are live on **stories**,
+**blog posts** and **bulletin editions**, with a staff moderation desk at
 `/production-system/comments` behind a new `comments.moderate` permission.
-Typecheck (server + web) and `check:permissions` are green. **Never opened in a
-browser** — see §11 for exactly what that leaves unverified.
+Typecheck (server + web), `vite build` and `check:permissions` are green, and
+**every rule below was exercised over HTTP against a real MongoDB — 76 assertions,
+all passing** (§11). That pass found one real defect (the rate limiter was keyed by
+IP rather than account) which is fixed. The reader thread works in a browser; the
+**moderation screen has not been opened** — see §11 for the exact remaining gap.
 
 **Related:** `docs/REACTIONS-PLAN.md` (the mechanism this is built on top of and
 writes into), `docs/EMOJI-ANALYTICS-PLAN.md` (the dashboard, and why comments do
@@ -276,39 +279,80 @@ would count one opinion twice. The two copy claims on that screen that said "no
 comments exist anywhere in the platform" have been corrected — they were true when
 written and are not now.
 
-## 11. What is NOT verified
+## 11. What was verified, and how
 
-Honest ledger, in the shape `docs/REACTIONS-PLAN.md` §11 set:
+Not by reading it. The server was run against a real MongoDB and **every rule above
+was exercised over HTTP** — 76 assertions, all passing, using six throwaway
+`zz-`prefixed accounts (a reader, a second reader, an editor, and three whose only
+job was to keep each phase inside its own rate-limit budget) plus fixture posts and
+editions in each of the states the gate cares about. Every fixture was deleted
+afterwards and the teardown asserts zero leak.
 
-| | |
+| | Result |
 |---|---|
-| `tsc --noEmit`, server | ✅ clean |
-| `tsc --noEmit`, web | ✅ clean |
-| `npm run check:permissions` | ✅ 0 unenforced; `comments.moderate` reported as a *module gate* only because that script reads **tracked** files via `git grep` and `routes/comments.ts` is not yet committed. It **is** server-enforced. |
-| Every endpoint over HTTP against a real MongoDB | ❌ **not done** |
-| Any of it in a browser | ❌ **not done** |
+| `tsc --noEmit`, server / web | ✅ clean |
+| `vite build` | ✅ clean |
+| `npm run check:permissions` | ✅ 0 unenforced, and `comments.moderate` counts as **server-enforced** (37 of 39). It read as a *module gate* until `routes/comments.ts` was tracked — that script greps tracked files only, the same footnote `analytics.view` once carried. |
+| Anonymous GET on an empty thread | 200, `items: []`, `total: 0` |
+| `blogPart` as a target type, read or write | 400 — it is not in `COMMENT_TARGET_TYPES` |
+| No emoji / unknown emoji / whitespace only / 2001 chars | 400 each |
+| Anonymous POST | 401 |
+| POST on a **draft** post | 404 |
+| POST on a **premium** post, free reader | 403 |
+| POST on a **pulled** edition | 404 |
+| POST on a story id that does not exist | 404 |
+| POST on a live edition, and on a live post | 201 |
+| **POST wrote the reader's REACTION** | `reactions` row present, `emoji: 'sortOf'`, **no weight stored** |
+| `GET /api/reactions` agrees with it | `mine: 'sortOf'`, `total: 1` |
+| Edit inside the window | 200, `editedAt` stamped |
+| **Changing the emoji on an edit MOVED the reaction** | row now `love`, and still **one** row — an edit is not a second reader |
+| Edit someone else's / after 15 minutes / a hidden comment | 403 each |
+| Report your own comment | 400 |
+| Report twice | 200 both times, **one** report row, `reportCount` stays 1 |
+| Reporting hid nothing | `status` still `visible` |
+| `reportCount` sent to a plain reader | **absent** — moderator-only, as designed |
+| `GET /moderation` anonymous / plain reader / editor | 401 / 403 / 200 |
+| Hide with no reason | 400 |
+| Hide → what a reader sees | the row, with an **empty body** and the author's name — the tombstone |
+| Hide → what a reader does *not* see | `hiddenReason` absent |
+| Hide → what a **moderator** sees | the body **and** the recorded reason |
+| Restore | 200, reason cleared, `status` back to `visible` |
+| Author deletes their own | 200, **soft** (`deletedAt` stamped, row still in the collection) |
+| **Deleting a comment kept the reaction** | reader's `hate` row survives — D6 holds |
+| Delete someone else's without the permission / as a moderator | 403 / 200 |
+| Delete an already-deleted comment | 404 |
+| Pagination | `limit=2` returns 2, `total` is the whole thread, cursor offered, next page holds **different** rows |
+| `limit=999` | capped at 50, not honoured |
+| 21 writes in a minute | 429 |
+| The queue's link to a post | `/blog/zz-verify-live` — the **slug**, not the id, so it resolves |
+| Indexes after boot | all six present, `unique: true` on `commentReports.{commentId,userId}` |
+| `grant-comments-module.ts`, dry run then `--apply` | 3 of 4 roles changed; **`contributor` correctly skipped** for holding no `content.publish` |
 
-Reactions were verified by running the server and exercising every rule over HTTP,
-and that found three real defects (`$limit: 0`, the un-awaited Express handler, an
-ignored query flag). **This feature has not had that pass**, and the same class of
-bug is entirely possible here. The list worth running:
+### One real defect, found this way
 
-- anonymous `GET` on an empty thread → 200, `items: []`, `total: 0`
-- post, then edit inside the window, then edit again after 15 minutes → 200, 200, 403
-- post → confirm a `reactions` row now exists for that reader on that target
-- change the emoji on an edit → confirm the reaction row moved, `total` unchanged
-- comment on a **draft** post → 404; on a **premium** post as a free reader → 403
-- comment on a **pulled** edition → 404
-- `blogPart` as a target type → 400 (it is not in `COMMENT_TARGET_TYPES`)
-- 2001 characters → 400; whitespace only → 400
-- report twice → 200 both times, `reportCount` stays 1
-- report your own comment → 400
-- hide with no reason → 400; hide → thread shows the tombstone and an empty body
-- hide, then `GET` the thread as a moderator → body present; as a reader → empty
-- delete someone else's comment without `comments.moderate` → 403
-- `GET /moderation` anonymous → 401; as a reader → 403; as an editor → the queue
-- 21 writes in a minute → 429
-- indexes after boot: all six present, `unique: true` on `commentReports`
+**The rate limiter was keyed by IP, not by account.** `router.use(rateLimit(…))`
+sat *above* the auth middleware, so `req.account` was always undefined when the
+limiter ran and it fell through to its `req.ip` fallback. Its own doc comment says
+the account key exists "so one user can't be blocked by another behind the same
+proxy" — and that promise was silently broken: three separate test accounts on one
+machine hit 429 after four writes *between them*. Fixed by mounting
+`attachAccountOptional` above the limiter (`attachAccount` on the write routes is
+idempotent, so it still costs one lookup and still 401s). The per-route
+`attachAccountOptional` on the thread GET was removed at the same time — unlike
+`attachAccount`, it is **not** idempotent, so listing it twice cost a second user
+lookup on every read.
+
+**`routes/reactions.ts` has the identical shape and therefore the identical bug** —
+its 60/minute is per IP, not per account. Not changed here, because it is
+pre-existing and shipping behaviour; worth a one-line fix in its own commit.
+
+### What is still NOT verified
+
+The reader thread and the composer have been used in a browser (the operator's own
+comments on a post *and* a story arrived through the UI during this work, and both
+stored correctly). **The moderation screen has never been opened**, and neither has
+the signed-out invitation state, the "Show more" button, the 15-minute edit
+disappearing, or the tombstone as rendered rather than as JSON.
 
 ## 12. Deploy steps
 
