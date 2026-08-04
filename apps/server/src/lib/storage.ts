@@ -47,6 +47,40 @@ const API_PUBLIC_URL = (process.env.API_PUBLIC_URL ?? '').trim().replace(/\/$/, 
 
 const CONFIGURED = !!(BUCKET && REGION && ACCESS_KEY_ID && SECRET_ACCESS_KEY)
 
+/**
+ * Where `public/` objects are served from — DERIVED, so it works with no extra
+ * configuration.
+ *
+ * Objects under `public/` are covered by the bucket's public-read policy, so the
+ * bucket's own origin can serve them and there is nothing for this API to do.
+ * Deriving the origin rather than requiring S3_PUBLIC_BASE_URL means the default
+ * is the public path, and a deployment cannot silently fall back to proxying
+ * every image because one env var went unset.
+ *
+ * Override with S3_PUBLIC_BASE_URL to put a CDN in front. Set it to `none` for a
+ * bucket with NO public-read policy, which forces everything through the API
+ * proxy — correct but slower, and the only safe setting there.
+ */
+const PROXY_ONLY = PUBLIC_BASE_URL.toLowerCase() === 'none'
+
+function derivePublicBase(): string {
+  // `none` must return early, not fall through to the derived origin below —
+  // otherwise opting out of public delivery silently did nothing.
+  if (PROXY_ONLY) return ''
+  if (PUBLIC_BASE_URL) return PUBLIC_BASE_URL
+  if (!CONFIGURED) return ''
+  if (ENDPOINT) {
+    // S3-compatible providers (R2 / MinIO / Spaces). Path style puts the bucket
+    // in the path; virtual-hosted style puts it in the hostname.
+    const trimmed = ENDPOINT.replace(/\/$/, '')
+    if (FORCE_PATH_STYLE) return `${trimmed}/${BUCKET}`
+    return trimmed.replace(/^(https?:\/\/)/i, `$1${BUCKET}.`)
+  }
+  return `https://${BUCKET}.s3.${REGION}.amazonaws.com`
+}
+
+const PUBLIC_BASE = derivePublicBase()
+
 let _client: S3Client | null = null
 function client(): S3Client {
   if (_client) return _client
@@ -66,22 +100,22 @@ export function isConfigured(): boolean {
 /**
  * Browser-viewable URL we STORE for an object key.
  *
- * • Keys under `public/` are covered by the bucket's public-read policy, so when
- *   S3_PUBLIC_BASE_URL is set they get the raw S3/CDN URL and are served with no
- *   server involvement at all.
+ * • Keys under `public/` get the bucket's own URL — served straight from S3 (or a
+ *   CDN in front of it) with no server in the path. THIS IS THE DEFAULT: the
+ *   origin is derived from the bucket and region, so no env var is required.
  * • EVERYTHING ELSE routes through our API, which streams the object from S3
  *   (see GET /api/uploads/file/*). Absolute in deployment (API_PUBLIC_URL),
  *   relative in dev, where it resolves same-origin through the Vite proxy.
  *
- * The `public/` test is the important half. This used to hand out a direct bucket
- * URL for ANY key the moment S3_PUBLIC_BASE_URL was set — including
- * `evidence/…`, which is deliberately outside `public/` so the bucket policy
- * cannot reach it. Those URLs would 403 for everyone, including the admins who
- * are supposed to read them, and the only visible symptom would be a broken
- * image on a claim.
+ * The `public/` test is the important half, and it is a security boundary rather
+ * than an optimisation. An earlier version handed out a direct bucket URL for ANY
+ * key once S3_PUBLIC_BASE_URL was set — including `evidence/…`, which is
+ * deliberately outside `public/` so the bucket policy cannot reach it. Those URLs
+ * 403 for everyone, including the admins who are supposed to read them, and the
+ * only visible symptom is a broken image on a claim.
  */
 export function publicUrl(key: string): string {
-  if (PUBLIC_BASE_URL && key.startsWith('public/')) return `${PUBLIC_BASE_URL}/${key}`
+  if (PUBLIC_BASE && key.startsWith('public/')) return `${PUBLIC_BASE}/${key}`
   return `${API_PUBLIC_URL}/api/uploads/file/${key}`
 }
 
