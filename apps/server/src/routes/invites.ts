@@ -47,6 +47,28 @@ function project<T extends WithMongoId>(doc: T): Omit<T, '_id'> & { id: string }
 /** The db layer's document type isn't exported, so borrow it from findById. */
 type UserDoc = Awaited<ReturnType<ReturnType<typeof db.collection>['findById']>>
 
+/**
+ * A display name from an email address, for an invite redeemed with no name given.
+ *
+ * The link signs people in on click, so there is no form to collect a byline from.
+ * "jane.fitzgerald@x.com" → "Jane Fitzgerald" is right often enough to be a better
+ * starting point than the raw address, and it is a starting point only — the
+ * account holder can be renamed. A caller that DOES have a real name (the accept
+ * page, when it chooses to ask) still wins: `displayName` in the body takes
+ * precedence over this.
+ */
+function nameFromEmail(email: string): string {
+  const local = email.split('@')[0] ?? ''
+  const words = local
+    .split(/[._\-+]+/)
+    .filter(Boolean)
+    // Strip a trailing disambiguator ("jane.f2") rather than title-casing digits.
+    .map((w) => w.replace(/\d+$/, ''))
+    .filter(Boolean)
+    .map((w) => w.charAt(0).toUpperCase() + w.slice(1))
+  return words.join(' ').slice(0, 80) || email.slice(0, 80)
+}
+
 const router = Router()
 
 router.get('/:token', async (req, res) => {
@@ -109,14 +131,11 @@ router.post('/:token/accept', rateLimit('invite-accept', 20, 5 * 60_000), async 
   let userDoc: UserDoc = (await db.collection('users').find({ email }))[0] ?? null
 
   if (!userDoc) {
-    // The byline on everything they publish, so it is asked for rather than
-    // derived from the email. The page collects it before enabling Continue.
-    const displayName =
+    // A name if one was sent, otherwise one derived from the address. The link
+    // signs them in on click, so there is no form in the way to collect it.
+    const sent =
       typeof req.body?.displayName === 'string' ? req.body.displayName.trim().slice(0, 80) : ''
-    if (!displayName) {
-      res.status(400).json({ error: 'Please enter your name.' })
-      return
-    }
+    const displayName = sent || nameFromEmail(email)
     const id = await db.collection('users').insertOne({
       email,
       displayName,

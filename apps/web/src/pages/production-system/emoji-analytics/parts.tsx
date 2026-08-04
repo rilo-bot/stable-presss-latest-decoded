@@ -24,7 +24,7 @@ import { cn } from '@/lib/utils';
 
 import {
   EMOJI_KEYS, STEP_FILL, TRACK_FILL, stepFor,
-  type Band, type Split,
+  type Split,
 } from './data';
 
 /** Surface colour behind the marks — the 2px gaps are painted in this. */
@@ -262,29 +262,6 @@ export function DivergingBar({ split, height = 10 }: { split: Split; height?: nu
         style={{ background: 'hsl(var(--input))' }}
       />
     </div>
-  );
-}
-
-// ── Bands ───────────────────────────────────────────────────────────────────
-
-/**
- * Swatch + band name. The ONLY way a band fill is drawn next to text.
- *
- * Cool and Rejected measure ΔE 14.4 apart under normal vision — below the 15
- * floor — so the label is not decoration, it is what separates them. There is
- * deliberately no variant of this without one.
- */
-export function BandChip({ band, className }: { band: Band; className?: string }) {
-  return (
-    <span
-      className={cn(
-        'inline-flex flex-shrink-0 items-center gap-1.5 rounded-full border border-border/60 bg-background px-2.5 py-1 text-[10.5px] font-semibold text-foreground',
-        className,
-      )}
-    >
-      <span aria-hidden="true" className="h-2 w-2 flex-shrink-0 rounded-full" style={{ background: band.fill }} />
-      {band.label}
-    </span>
   );
 }
 

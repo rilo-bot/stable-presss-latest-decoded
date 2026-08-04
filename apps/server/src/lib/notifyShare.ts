@@ -15,12 +15,30 @@ import { absoluteUrl } from './invites.js'
 
 const WEB_PUBLIC_URL = (process.env.WEB_PUBLIC_URL ?? 'http://localhost:5173').replace(/\/$/, '')
 
-/** Human phrasing for which pages they can touch. */
-function scopeLabel(pageIds: string[] | 'all'): string {
-  if (pageIds === 'all') return 'You can edit every page.'
-  const n = pageIds.length
-  if (n === 0) return 'No pages are assigned to you yet.'
-  return `You can edit ${n} page${n !== 1 ? 's' : ''}.`
+/**
+ * Human phrasing for which pages they can touch — NAMING them, not just counting.
+ *
+ * "You can edit 3 pages" told the recipient nothing they could act on; they had to
+ * open the magazine to discover which three. v2 pages carry no title, only an
+ * index, so the honest label is the page NUMBER — and that is exactly what the
+ * Share dialog's own page picker shows (`p.index + 1`), so the email and the UI
+ * name the same thing.
+ */
+function scopeLabel(pages: number[] | 'all', total: number): string {
+  if (pages === 'all') {
+    return total > 0
+      ? `You can edit every page (${total} in total).`
+      : 'You can edit every page.'
+  }
+  if (pages.length === 0) return 'No pages are assigned to you yet.'
+  const sorted = [...pages].sort((a, b) => a - b)
+  const list =
+    sorted.length === 1
+      ? `page ${sorted[0]}`
+      : `pages ${sorted.slice(0, -1).join(', ')} and ${sorted[sorted.length - 1]}`
+  return total > 0
+    ? `You can edit ${list} of ${total}.`
+    : `You can edit ${list}.`
 }
 
 /** `delivered` = the email actually went out. On failure, `error` carries the
@@ -33,7 +51,11 @@ export async function notifyShared(opts: {
   title: string
   /** Same-origin path to the magazine, from `magazinePath()`. */
   path: string
-  pageIds: string[] | 'all'
+  /** 1-based page NUMBERS they may edit, or 'all'. Resolved by the caller, which
+   *  is the only place that knows the page order. */
+  pages: number[] | 'all'
+  /** How many pages the magazine has, so the scope reads "3 of 12". */
+  totalPages: number
 }): Promise<{ delivered: boolean; error?: string }> {
   try {
     const { delivered } = await sendMagazineShareEmail({
@@ -41,7 +63,7 @@ export async function notifyShared(opts: {
       magazineTitle: opts.title,
       sharedBy: opts.sharedBy,
       magazineUrl: absoluteUrl(WEB_PUBLIC_URL, opts.path),
-      scope: scopeLabel(opts.pageIds),
+      scope: scopeLabel(opts.pages, opts.totalPages),
     })
     // `send()` returns delivered:false WITHOUT throwing only when no provider is
     // configured — name that reason rather than leaving it blank.

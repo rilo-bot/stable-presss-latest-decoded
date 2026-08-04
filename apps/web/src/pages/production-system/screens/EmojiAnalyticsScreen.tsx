@@ -28,12 +28,12 @@ import { useMemo, useState } from 'react';
 import { Link } from 'react-router-dom';
 
 import {
-  CONTENT_TYPES, DATE_RANGES, EMOJI_KEYS, SIDE_FILL, compact, deriveDashboard, rangeFor,
-  shortDate, signed, stepFor, typeLabel,
+  CONTENT_TYPES, DATE_RANGES, EMOJI_KEYS, SIDE_FILL, avgStep, compact, deriveDashboard, rangeFor,
+  scoreText, shortDate, signed, stepFor, typeLabel,
   type ContentType, type DateRangeId, type EmojiKey, type Filters, type ItemStat,
 } from '../emoji-analytics/data';
 import {
-  BandChip, Bar, ChipToggles, DivergingBar, Empty, Panel, SampleDataBadge, Section,
+  Bar, ChipToggles, DivergingBar, Empty, Panel, SampleDataBadge, Section,
   SegmentedControl, StatTile, ThreeWayBar, splitParts,
 } from '../emoji-analytics/parts';
 
@@ -48,7 +48,8 @@ const MIN_REACTIONS = 40;
 export default function EmojiAnalyticsScreen() {
   const [rangeId, setRangeId] = useState<DateRangeId>('90');
   const [types, setTypes] = useState<ContentType[]>([]);
-  const [emoji, setEmoji] = useState<EmojiKey>('love');
+  /** 'score' ranks on the total; a step ranks on how much of that step it earned. */
+  const [rank, setRank] = useState<'score' | EmojiKey>('score');
 
   const filters: Filters = useMemo(
     () => ({ ...rangeFor(rangeId), types }),
@@ -60,12 +61,19 @@ export default function EmojiAnalyticsScreen() {
   const maxEmojiPct = Math.max(1, ...d.emojiRows.map((r) => r.pct));
 
   const leaders = useMemo(() => {
-    const i = EMOJI_KEYS.indexOf(emoji);
-    return [...d.items]
-      .filter((s) => s.split.reactions >= MIN_REACTIONS)
+    // Ranking on the TOTAL needs no floor — a piece with four reactions cannot
+    // total anything. Ranking on a single step's count is likewise absolute.
+    // The floor exists for the ratios (the average, the band), so it is applied
+    // once, here, and the list population never changes when you switch modes.
+    const pool = d.items.filter((s) => s.split.reactions >= MIN_REACTIONS);
+    if (rank === 'score') {
+      return [...pool].sort((a, b) => b.split.score - a.split.score).slice(0, 10);
+    }
+    const i = EMOJI_KEYS.indexOf(rank);
+    return [...pool]
       .sort((a, b) => (b.split.counts[i] ?? 0) - (a.split.counts[i] ?? 0))
       .slice(0, 10);
-  }, [d.items, emoji]);
+  }, [d.items, rank]);
 
   return (
     <div className="space-y-6 pb-4">
@@ -108,61 +116,82 @@ export default function EmojiAnalyticsScreen() {
         <>
           {/* ── Headline figures ── */}
           <div className="grid gap-4 sm:grid-cols-3">
+            <StatTile label="Total score" value={scoreText(d.overall.score)}
+              detail={<>Averages <span aria-hidden="true">{avgStep(d.overall.avgScore).emoji}</span>{' '}“{avgStep(d.overall.avgScore).label.toLowerCase()}” across every reaction</>} />
             <StatTile label="Reader mood" value={d.moodVerdict} display
               detail={`${d.overall.forPct}% for · ${d.overall.againstPct}% against`} />
             <StatTile label="Total reactions" value={compact(d.reactions)}
               detail={`From ${compact(d.reactors)} readers, on ${d.coverage.reacted} of ${d.coverage.published} published items`} />
-            <StatTile label="Most common reaction" value={`${d.topEmoji.pct}%`}
-              detail={
-                <>
-                  of all reactions are <span aria-hidden="true">{d.topEmoji.emoji}</span>{' '}
-                  “{d.topEmoji.label.toLowerCase()}” — {compact(d.topEmoji.count)} of them
-                </>
-              } />
           </div>
 
           {/* ── 1 · The whole scale ── */}
           <Panel title="How readers feel overall">
             <ThreeWayBar parts={splitParts(d.overall, SIDE_FILL)} />
 
-            <p className="mb-3 mt-7 text-[10.5px] font-bold uppercase tracking-[0.12em] text-muted-foreground">
-              Every emoji, counted
-            </p>
+            {/* Where the scoring model explains itself: count × weight, per
+                step, adding up to the total in the tile above. Without this the
+                score is a number the page asks you to trust. */}
+            <div className="mb-2 mt-7 flex items-baseline justify-between gap-3">
+              <p className="text-[10.5px] font-bold uppercase tracking-[0.12em] text-muted-foreground">
+                Every emoji, counted — and what it was worth
+              </p>
+              <p className="text-[11px] tabular-nums text-muted-foreground">
+                count × weight = score
+              </p>
+            </div>
             <ul className="space-y-2">
-              {d.emojiRows.map((row) => (
+              {d.emojiRows.map((row, i) => (
                 <li key={row.key} className="flex items-center gap-3">
                   <span aria-hidden="true" className="w-6 flex-shrink-0 text-center text-[16px] leading-none">
                     {row.emoji}
                   </span>
-                  <span className="w-[110px] flex-shrink-0 truncate text-[12.5px] text-foreground">{row.label}</span>
+                  <span className="w-[104px] flex-shrink-0 truncate text-[12.5px] text-foreground">{row.label}</span>
                   <span className="min-w-0 flex-1">
                     <Bar pct={(row.pct / maxEmojiPct) * 100} fill={row.fill} />
                   </span>
-                  <span className="w-12 flex-shrink-0 text-right text-[12px] tabular-nums text-muted-foreground">
+                  <span className="w-11 flex-shrink-0 text-right text-[12px] tabular-nums text-muted-foreground">
                     {compact(row.count)}
                   </span>
-                  <span className="w-10 flex-shrink-0 text-right text-[12px] font-semibold tabular-nums text-foreground">
-                    {row.pct}%
+                  <span className="w-8 flex-shrink-0 text-right text-[12px] tabular-nums text-muted-foreground">
+                    ×{signed(row.weight)}
+                  </span>
+                  <span className="w-16 flex-shrink-0 text-right text-[12px] font-semibold tabular-nums text-foreground">
+                    {scoreText(d.overall.contributions[i] ?? 0)}
                   </span>
                 </li>
               ))}
             </ul>
+            <p className="mt-3 flex items-baseline justify-end gap-3 border-t border-border/50 pt-2.5 text-[12px]">
+              <span className="text-muted-foreground">Total score</span>
+              <span className="text-[15px] font-bold tabular-nums text-foreground">{scoreText(d.overall.score)}</span>
+            </p>
+            <p className="mt-2 text-[11.5px] leading-relaxed text-muted-foreground">
+              The scale is not evenly spaced — one 🤬 cancels five 🙂, or one 🤩. Mild opinions barely move a
+              score; strong ones decide it.
+            </p>
           </Panel>
 
           {/* ── 2 · Leaderboard ── */}
           <Panel
-            title={`Most ${stepFor(emoji).label.toLowerCase()}`}
-            subtitle={<>The ten pieces that earned the most <span aria-hidden="true">{stepFor(emoji).emoji}</span> in this range.</>}
+            title={rank === 'score' ? 'Highest scoring' : `Most ${stepFor(rank).label.toLowerCase()}`}
+            subtitle={
+              rank === 'score'
+                ? 'The ten highest totals in this range. Score adds up every reaction, so reach counts — read it next to the average.'
+                : <>The ten pieces that earned the most <span aria-hidden="true">{stepFor(rank).emoji}</span> in this range.</>
+            }
             aside={
               <SegmentedControl
-                label="Which reaction"
-                options={EMOJI_KEYS.map((k) => ({
-                  value: k,
-                  label: <span aria-hidden="true" className="text-[16px] leading-none">{stepFor(k).emoji}</span>,
-                  title: stepFor(k).label,
-                }))}
-                value={emoji}
-                onChange={setEmoji}
+                label="Rank by"
+                options={[
+                  { value: 'score' as const, label: 'Score', title: 'Rank by total score' },
+                  ...EMOJI_KEYS.map((k) => ({
+                    value: k,
+                    label: <span aria-hidden="true" className="text-[16px] leading-none">{stepFor(k).emoji}</span>,
+                    title: `Rank by ${stepFor(k).label.toLowerCase()}`,
+                  })),
+                ]}
+                value={rank}
+                onChange={setRank}
               />
             }
           >
@@ -171,13 +200,15 @@ export default function EmojiAnalyticsScreen() {
             ) : (
               <ul className="divide-y divide-border/50">
                 {leaders.map((s, i) => (
-                  <LeaderRow key={s.item.id} rank={i + 1} stat={s} emoji={emoji} />
+                  <LeaderRow key={s.item.id} rank={i + 1} stat={s} highlight={rank} />
                 ))}
               </ul>
             )}
             <p className="mt-4 border-t border-border/50 pt-3 text-[11.5px] leading-relaxed text-muted-foreground">
-              Ranked on {MIN_REACTIONS}+ reactions, so a piece published this week cannot top the board on a
-              handful of clicks. The bar is that piece&rsquo;s own spread across the seven steps.
+              <strong className="font-semibold text-foreground">Score</strong> is every reaction added up, so the
+              biggest piece usually wins it. <strong className="font-semibold text-foreground">Avg</strong> is the
+              score per reaction, −5 to +5 — how well it went down, whatever its size. Ranked on{' '}
+              {MIN_REACTIONS}+ reactions, so nothing tops the board on a handful of clicks.
             </p>
           </Panel>
 
@@ -196,14 +227,19 @@ export default function EmojiAnalyticsScreen() {
                         {' · '}{compact(t.split.reactions)} reactions
                       </p>
                     </div>
-                    {t.split.reactions > 0 && <BandChip band={t.band} />}
                   </div>
                   {t.split.reactions > 0 ? (
                     <>
-                      <ThreeWayBar parts={splitParts(t.split, SIDE_FILL)} compact />
-                      <p className="mt-2.5 text-[11.5px] tabular-nums text-muted-foreground">
-                        net {signed(t.split.net)}
+                      <p className="mb-3 flex items-baseline gap-2">
+                        <span className="text-[26px] font-bold leading-none text-foreground">
+                          {scoreText(t.split.score)}
+                        </span>
+                        <span className="text-[11.5px] text-muted-foreground">
+                          averages <span aria-hidden="true">{avgStep(t.split.avgScore).emoji}</span>{' '}
+                          {avgStep(t.split.avgScore).label.toLowerCase()}
+                        </span>
                       </p>
+                      <ThreeWayBar parts={splitParts(t.split, SIDE_FILL)} compact />
                     </>
                   ) : (
                     <p className="text-[11.5px] text-muted-foreground">No reactions yet.</p>
@@ -227,9 +263,18 @@ export default function EmojiAnalyticsScreen() {
   );
 }
 
-function LeaderRow({ rank, stat, emoji }: { rank: number; stat: ItemStat; emoji: EmojiKey }) {
-  const count = stat.split.counts[EMOJI_KEYS.indexOf(emoji)] ?? 0;
-  const share = Math.round((count / stat.split.reactions) * 100);
+function LeaderRow({
+  rank, stat, highlight,
+}: {
+  rank: number;
+  stat: ItemStat;
+  /** Which number this row is being ranked on — that one is emphasised. */
+  highlight: 'score' | EmojiKey;
+}) {
+  const byScore = highlight === 'score';
+  const count = byScore ? 0 : (stat.split.counts[EMOJI_KEYS.indexOf(highlight)] ?? 0);
+  const share = byScore ? 0 : Math.round((count / stat.split.reactions) * 100);
+  const avg = avgStep(stat.split.avgScore);
   return (
     <li className="flex flex-wrap items-center gap-x-4 gap-y-2 py-3 first:pt-0 last:pb-0">
       <span className="w-4 flex-shrink-0 text-[12px] tabular-nums text-muted-foreground">{rank}</span>
@@ -246,14 +291,34 @@ function LeaderRow({ rank, stat, emoji }: { rank: number; stat: ItemStat; emoji:
           {' · '}{compact(stat.split.reactions)} reactions
         </span>
       </span>
-      <span className="w-28 flex-shrink-0">
+      <span className="w-24 flex-shrink-0">
         <DivergingBar split={stat.split} />
       </span>
-      <span className="flex w-16 flex-shrink-0 items-baseline justify-end gap-1">
-        <span className="text-[15px] font-bold tabular-nums text-foreground">{compact(count)}</span>
-        <span className="text-[11px] tabular-nums text-muted-foreground">{share}%</span>
+
+      {/* When ranking on one emoji, that count leads and the score follows, so
+          the column you sorted by is always the one you read first. */}
+      {!byScore && (
+        <span className="flex w-14 flex-shrink-0 items-baseline justify-end gap-1">
+          <span className="text-[15px] font-bold tabular-nums text-foreground">{compact(count)}</span>
+          <span className="text-[11px] tabular-nums text-muted-foreground">{share}%</span>
+        </span>
+      )}
+      <span className="w-16 flex-shrink-0 text-right">
+        <span className={byScore
+          ? 'text-[15px] font-bold tabular-nums text-foreground'
+          : 'text-[12.5px] tabular-nums text-muted-foreground'}>
+          {scoreText(stat.split.score)}
+        </span>
       </span>
-      <BandChip band={stat.band} />
+      {/* The average, as the step it rounds to. A decimal like "+2.8" is a
+          number that exists nowhere on the scale the reader was offered. */}
+      <span
+        className="w-8 flex-shrink-0 text-right text-[17px] leading-none"
+        title={`Averages ${avg.label.toLowerCase()}`}
+      >
+        <span aria-hidden="true">{avg.emoji}</span>
+        <span className="sr-only">Averages {avg.label}</span>
+      </span>
     </li>
   );
 }

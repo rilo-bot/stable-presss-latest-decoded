@@ -28,16 +28,22 @@
  * anywhere in Stable Press.
  */
 
-import { EMOJI_SCALE, STEP_FILL } from '@/types/reactions';
+import { EMOJI_SCALE, STEP_FILL, weightOf } from '@/types/reactions';
 import type { EmojiKey, EmojiStep, Side } from '@/types/reactions';
 
-export { EMOJI_SCALE, STEP_FILL };
+export { EMOJI_SCALE, STEP_FILL, weightOf };
 export type { EmojiKey, EmojiStep, Side };
 
-/** Ascending weight, −3 → +3. The order everything iterates in. */
+/** Ascending weight, −5 → +5. The order everything iterates in. */
 export const EMOJI_KEYS: EmojiKey[] = [
   'reallyHate', 'hate', 'dislike', 'undecided', 'sortOf', 'like', 'love',
 ];
+
+/** Position of each step in `EMOJI_KEYS`, for counting without a linear scan. */
+const INDEX_BY_KEY = new Map(EMOJI_KEYS.map((k, i) => [k, i]));
+
+/** The weight of each step, in `EMOJI_KEYS` order. */
+const WEIGHTS: number[] = EMOJI_KEYS.map(weightOf);
 
 const STEP_BY_KEY = new Map(EMOJI_SCALE.map((s) => [s.key, s]));
 export function stepFor(key: EmojiKey): EmojiStep {
@@ -55,10 +61,9 @@ export function stepFor(key: EmojiKey): EmojiStep {
 //   • the for-arm  #2f7a58 → #22603f → #174a32 passes every ordinal check
 //     (monotone lightness, ΔL ≥ 0.06, single hue within 4°)
 //   • the against-arm #e37945 → #cd5c2f → #b84619 likewise (hue spread 6°)
-//   • worst all-pairs band separation under protanopia: ΔE 9.2 — passes
-//   • worst all-pairs under NORMAL vision: ΔE 14.4, for Cool ↔ Rejected. Below
-//     the 15 floor, so those two must ALWAYS carry their label. `BandChip` is
-//     the only way a band fill is ever drawn, and it always does.
+//   • the seven step fills are only ever used as a RAMP (the emoji rows, the
+//     diverging bar), never as categorical slots, so adjacent-pair separation
+//     is the ordinal check above rather than an all-pairs one.
 //   • `split` sits at 2.13:1 and `cool` at 2.89:1 against the card — under 3:1,
 //     so every value on this page is directly labelled rather than left to hue.
 //
@@ -68,31 +73,27 @@ export function stepFor(key: EmojiKey): EmojiStep {
 // Light mode only: the app's dark mode is unwired config, and a diverging ramp
 // must be RE-STEPPED for a dark surface, never flipped.
 
-export interface Band {
-  id: 'loved' | 'warm' | 'split' | 'cool' | 'rejected';
-  /** Plain-words label. Always rendered next to the fill — never colour alone. */
-  label: string;
-  fill: string;
-}
-
-export const BANDS: Band[] = [
-  { id: 'loved', label: 'Loved', fill: '#174a32' },
-  { id: 'warm', label: 'Warm', fill: '#2f7a58' },
-  { id: 'split', label: 'Split', fill: '#b2afa9' },
-  { id: 'cool', label: 'Cool', fill: '#e37945' },
-  { id: 'rejected', label: 'Rejected', fill: '#b84619' },
-];
-
-const BAND_BY_ID = new Map(BANDS.map((b) => [b.id, b]));
-
 /**
- * Which band a net score falls in. Thresholds are wide on purpose: people who
- * bother to react mostly liked it, so nets cluster high, and a tighter cut puts
- * everything in one band — the failure mode of any classed scale.
+ * The average reaction, as a STEP ON THE SCALE rather than a decimal.
+ *
+ * The weights are whole numbers — 5, 3, 1, 0, −1, −3, −5 — so an average of
+ * "+2.8" is a number that exists nowhere in the reader's world and asks the
+ * staff reader to do arithmetic to interpret. Rounding it to the nearest step
+ * says the same thing in the page's own vocabulary: this piece averages 😊.
+ *
+ * This replaced a five-band classification (Loved / Warm / Split / Cool /
+ * Rejected) with its own thresholds. The bands were a second scale invented on
+ * top of the one that already exists, and the emoji is both finer and needs no
+ * legend.
  */
-export function bandFor(net: number): Band {
-  const id = net >= 50 ? 'loved' : net >= 20 ? 'warm' : net >= -19 ? 'split' : net >= -49 ? 'cool' : 'rejected';
-  return BAND_BY_ID.get(id)!;
+export function avgStep(avgScore: number): EmojiStep {
+  let best = EMOJI_SCALE[0]!;
+  let bestGap = Infinity;
+  for (const step of EMOJI_SCALE) {
+    const gap = Math.abs(step.weight - avgScore);
+    if (gap < bestGap) { bestGap = gap; best = step; }
+  }
+  return best;
 }
 
 /** The three sides, for the for/middle/against bar — the arms' mid steps. */
@@ -269,8 +270,6 @@ export interface Reaction {
   itemId: string;
   readerId: string;
   emoji: EmojiKey;
-  /** −3 … +3, so aggregation never has to look the step up. */
-  weight: number;
   /** ISO date. Reactions arrive AFTER publication, on a decaying tail. */
   reactedAt: string;
 }
@@ -308,7 +307,6 @@ function buildReactions(): Reaction[] {
         itemId: item.id,
         readerId: `r${idx}`,
         emoji: EMOJI_KEYS[stepIndex]!,
-        weight: stepIndex - 3,
         reactedAt: new Date(at).toISOString().slice(0, 10),
       });
     }
@@ -327,10 +325,25 @@ export interface Split {
   forPct: number;
   middlePct: number;
   againstPct: number;
-  /** forPct − againstPct, in points. The single number that ranks anything. */
-  net: number;
+  /**
+   * Σ (count × weight). What a piece earned in total — the headline number.
+   *
+   * It scales with how many people showed up, which is the point AND the catch:
+   * the biggest thing usually wins. Read it next to `avgScore`, never alone.
+   */
+  score: number;
+  /**
+   * score ÷ reactions, −5 … +5. How well it was received, independent of reach.
+   *
+   * This replaced a `net` of "% for minus % against". Keeping both would have
+   * put two disagreeing direction numbers on one page — against this dataset
+   * the two orderings move 19 of 27 items.
+   */
+  avgScore: number;
   /** Per-emoji counts, ascending weight. */
   counts: number[];
+  /** Per-emoji contribution to the score (count × weight), ascending weight. */
+  contributions: number[];
 }
 
 const SIDE_OF: Side[] = EMOJI_KEYS.map((k) => stepFor(k).side);
@@ -357,20 +370,28 @@ function pcts(parts: number[], total: number): number[] {
 }
 
 const EMPTY_SPLIT: Split = {
-  reactions: 0, forPct: 0, middlePct: 0, againstPct: 0, net: 0,
+  reactions: 0, forPct: 0, middlePct: 0, againstPct: 0, score: 0, avgScore: 0,
   counts: [0, 0, 0, 0, 0, 0, 0],
+  contributions: [0, 0, 0, 0, 0, 0, 0],
 };
 
 export function splitOf(rs: Reaction[]): Split {
   if (rs.length === 0) return EMPTY_SPLIT;
 
   const counts = [0, 0, 0, 0, 0, 0, 0];
-  for (const r of rs) counts[r.weight + 3]! += 1;
+  for (const r of rs) counts[INDEX_BY_KEY.get(r.emoji)!]! += 1;
 
   let forCount = 0;
   let middleCount = 0;
   let againstCount = 0;
+  let score = 0;
+  const contributions = [0, 0, 0, 0, 0, 0, 0];
   for (let i = 0; i < 7; i++) {
+    // The weight is applied HERE, at read time, from the shared scale — never
+    // copied onto a stored reaction. Re-weighting the scale then re-scores
+    // history correctly instead of needing a backfill.
+    contributions[i] = counts[i]! * WEIGHTS[i]!;
+    score += contributions[i]!;
     if (SIDE_OF[i] === 'for') forCount += counts[i]!;
     else if (SIDE_OF[i] === 'middle') middleCount += counts[i]!;
     else againstCount += counts[i]!;
@@ -380,8 +401,10 @@ export function splitOf(rs: Reaction[]): Split {
   return {
     reactions: rs.length,
     forPct: forPct!, middlePct: middlePct!, againstPct: againstPct!,
-    net: forPct! - againstPct!,
+    score,
+    avgScore: score / rs.length,
     counts,
+    contributions,
   };
 }
 
@@ -413,13 +436,11 @@ export function rangeFor(id: DateRangeId): { from: string; to: string } {
 export interface ItemStat {
   item: Item;
   split: Split;
-  band: Band;
 }
 
 export interface TypeStat extends ContentTypeMeta {
   published: number;
   split: Split;
-  band: Band;
 }
 
 export interface EmojiRow extends EmojiStep {
@@ -441,14 +462,15 @@ export interface Dashboard {
   moodVerdict: string;
 }
 
+/** The mood in words, from the average score. */
 function moodVerdict(overall: Split): string {
   if (overall.reactions === 0) return 'No reactions yet';
-  const { net } = overall;
-  if (net >= 40) return 'Readers are with you';
-  if (net >= 15) return 'Readers are warm';
-  if (net > 5) return 'Leaning your way';
-  if (net >= -5) return 'Opinion is split';
-  if (net > -15) return 'Leaning against you';
+  const a = overall.avgScore;
+  if (a >= 3) return 'Readers are with you';
+  if (a >= 1.5) return 'Readers are warm';
+  if (a > 0.3) return 'Leaning your way';
+  if (a >= -0.3) return 'Opinion is split';
+  if (a > -1.5) return 'Leaning against you';
   return 'Readers are cold on this';
 }
 
@@ -479,7 +501,7 @@ export function deriveDashboard(
   const items: ItemStat[] = itemsInScope
     .map((item) => {
       const split = splitOf(byItemId.get(item.id) ?? []);
-      return { item, split, band: bandFor(split.net) };
+      return { item, split };
     })
     .filter((s) => s.split.reactions > 0);
 
@@ -493,7 +515,7 @@ export function deriveDashboard(
     const own = itemsInScope.filter((i) => i.type === meta.id);
     const ownIds = new Set(own.map((i) => i.id));
     const split = splitOf(rs.filter((r) => ownIds.has(r.itemId)));
-    return { ...meta, published: own.length, split, band: bandFor(split.net) };
+    return { ...meta, published: own.length, split };
   });
 
   // Coverage counts everything published up to `to`, NOT only what was published
@@ -519,6 +541,14 @@ export function signed(n: number): string {
   if (n === 0) return '0';
   return n > 0 ? `+${n}` : `−${Math.abs(n)}`;
 }
+
+/** A score: signed and grouped — +1,193 · −653 · 0. */
+export function scoreText(n: number): string {
+  if (n === 0) return '0';
+  const s = Math.abs(Math.round(n)).toLocaleString('en-NZ');
+  return n > 0 ? `+${s}` : `−${s}`;
+}
+
 
 /** 1,284 / 12.9K — compact above 10k, grouped below. */
 export function compact(n: number): string {

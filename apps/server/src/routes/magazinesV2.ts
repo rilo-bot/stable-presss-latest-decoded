@@ -1132,12 +1132,23 @@ router.post('/issues/:id/collaborators', async (req, res) => {
   let emailed = false;
   let emailError: string | undefined;
   if (!alreadyShared) {
+    // Resolve the assigned page IDS to the page NUMBERS the recipient will see, so
+    // the email can name them instead of counting them. This route is the only
+    // place that knows the order, hence resolving here rather than in notifyShare.
+    const all = await pagesFor(String(doc._id));
+    const numberOf = new Map(all.map((p, i) => [String(p._id), i + 1]));
+    const pageNumbers: number[] | 'all' =
+      pageIds === 'all'
+        ? 'all'
+        : pageIds.map((id) => numberOf.get(String(id))).filter((n): n is number => !!n);
+
     const r = await notifyShared({
       to: acct.email,
       sharedBy: req.account!.displayName || req.account!.email,
       title: String(doc.title ?? 'Untitled magazine'),
       path: magazinePath(String(doc._id), 'v2'),
-      pageIds,
+      pages: pageNumbers,
+      totalPages: all.length,
     });
     emailed = r.delivered;
     emailError = r.error;

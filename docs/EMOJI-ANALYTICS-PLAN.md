@@ -110,7 +110,11 @@ reactions
   targetType     'article' | 'blog' | 'podcast' | 'issue' | 'horse' | 'party'
   targetId
   emoji          EmojiKey            // the shared seven-step scale
-  weight         -3 … +3
+  // NO weight column. Weights (−5 −3 −1 0 +1 +3 +5) live on the scale in
+  // types/reactions.ts and are applied at READ time — a `$switch` in the
+  // aggregation. The scale was re-weighted once before shipping and may be
+  // again; a weight copied onto every row would make all of history wrong on
+  // that day and turn a config change into a backfill.
   userId?                            // null when anonymous
   anonId?                            // signed cookie — makes one-per-reader enforceable
   reactedAt
