@@ -63,6 +63,7 @@ import TeamScreen from '@/pages/production-system/screens/TeamScreen';
 import RolesScreen from '@/pages/production-system/screens/RolesScreen';
 import AnalyticsScreen from '@/pages/production-system/screens/AnalyticsScreen';
 import EmojiAnalyticsScreen from '@/pages/production-system/screens/EmojiAnalyticsScreen';
+import CommentModerationScreen from '@/pages/production-system/screens/CommentModerationScreen';
 import SettingsScreen from '@/pages/production-system/screens/SettingsScreen';
 
 /* Inject Google Fonts for vintage skeuomorphic horse dashboard */
@@ -338,6 +339,9 @@ export default function App() {
                 page in the public site's chrome; that path still resolves, as a
                 redirect below. */}
             <Route path="podcast" element={<PodcastScreen />} />
+            {/* The comment desk — reported comments, hide/restore/delete. Gated on
+                `comments.moderate`, which the endpoints behind it enforce too. */}
+            <Route path="comments" element={<CommentModerationScreen />} />
             <Route path="editor-hub" element={<EditorHubScreen />} />
             <Route path="my-assets" element={<MyAssetsScreen />} />
             <Route path="compensation" element={<CompensationScreen />} />

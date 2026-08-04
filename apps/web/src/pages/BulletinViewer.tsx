@@ -22,6 +22,9 @@ import { IssuePageCanvas } from '@/editor-v2/IssuePageCanvas';
 import type { IssuePageData } from '@/editor-v2/model';
 import { apiUrl } from '@/lib/api';
 import { useAuthStore } from '@/stores/authStore';
+import { useReactionStore } from '@/stores/reactionStore';
+import { ReactionBar } from '@/components/ReactionBar';
+import { CommentsSection } from '@/components/comments/CommentsSection';
 import { ArrowLeft, BookOpen, Download, Loader2 } from 'lucide-react';
 import { toast } from 'sonner';
 
@@ -102,6 +105,16 @@ export default function BulletinViewer() {
       active = false;
     };
   }, [id, fetchIssue]);
+
+  // Reader reactions on the edition. Re-runs when the signed-in account changes,
+  // because `mine` — which pick is yours — belongs to the account, not the
+  // browser.
+  const viewerId = useAuthStore((s) => s.currentUser?.id);
+  const loadReactions = useReactionStore((s) => s.load);
+  const issueLive = Boolean(issue && !issue.unpublishedAt);
+  useEffect(() => {
+    if (id && issueLive) void loadReactions('bulletin', id);
+  }, [id, issueLive, viewerId, loadReactions]);
 
   const containerRef = useRef<HTMLDivElement>(null);
   // Never scale a page UP past its own canonical width — that would enlarge the
@@ -285,6 +298,38 @@ export default function BulletinViewer() {
           <ReadonlyPage key={p.index} page={p} maxWidth={maxWidth} />
         ))}
       </div>
+
+      {/* The reader's verdict on the edition as a whole — an issue is one thing
+          you finish, not a set of pages you rate.
+
+          `print:hidden`, like the header: the server prints this very route to
+          produce the downloadable PDF, and a row of reaction tiles bound at the
+          back of a magazine would be in every copy. */}
+      {/* Not on a PULLED edition. Staff can still open one here, but the server
+          refuses to record against it, so offering the scale would look broken
+          rather than closed. */}
+      {!issue.unpublishedAt && (
+        <div className="mx-auto max-w-[820px] px-4 pb-14 print:hidden">
+          <ReactionBar
+            targetType="bulletin"
+            targetId={issue.id}
+            idPrefix="bulletin-reactions"
+            heading="How did this edition sit with you?"
+            note="One reaction per reader, on the issue as a whole. You can change it any time."
+          />
+          {/* Inside the same `print:hidden` wrapper as the bar, and that matters
+              here more than anywhere: the server prints this very route to produce
+              the downloadable PDF, so a comment thread would be bound into the
+              back of every copy of the magazine. */}
+          <CommentsSection
+            targetType="bulletin"
+            targetId={issue.id}
+            idPrefix="bulletin-comments"
+            heading="What readers made of this edition"
+            noun="edition"
+          />
+        </div>
+      )}
     </div>
   );
 }

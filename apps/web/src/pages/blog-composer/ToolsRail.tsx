@@ -146,6 +146,7 @@ function ImageFields({ block }: { block: Extract<Block, { kind: 'image' }> }) {
             className="mb-3 aspect-[16/9] w-full rounded-sm border border-border/60 object-cover"
           />
           <Field
+            field={`media:${media.id}.alt`}
             label="Alt text"
             hint="For screen readers and when the image fails to load. Stored per image, so every placement of it shares this."
           >
@@ -424,7 +425,7 @@ function PostFields({ onPickCover }: { onPickCover: () => void }) {
 
   return (
     <>
-      <Field label="Cover image" hint="Shown beside the post, and on cards in the index.">
+      <Field field="cover" label="Cover image" hint="Shown beside the post, and on cards in the index.">
         {cover ? (
           <>
             {/* Shown at its own aspect, because that is now how the reader gets
@@ -467,7 +468,7 @@ function PostFields({ onPickCover }: { onPickCover: () => void }) {
         )}
       </Field>
 
-      <Field label="Category">
+      <Field field="category" label="Category">
         <TextInput
           ariaLabel="Category"
           value={blog.category ?? ''}
@@ -476,7 +477,7 @@ function PostFields({ onPickCover }: { onPickCover: () => void }) {
         />
       </Field>
 
-      <Field label="Tags">
+      <Field field="tags" label="Tags">
         {blog.tags.length > 0 && (
           <div className="mb-1.5 flex flex-wrap gap-1">
             {blog.tags.map((tag) => (
@@ -508,7 +509,7 @@ function PostFields({ onPickCover }: { onPickCover: () => void }) {
         />
       </Field>
 
-      <Field label="Byline">
+      <Field field="byline" label="Byline">
         <TextInput
           ariaLabel="Author name"
           value={blog.author.name}
@@ -517,7 +518,7 @@ function PostFields({ onPickCover }: { onPickCover: () => void }) {
         />
       </Field>
 
-      <Field label="Excerpt" hint="Card and share summary. Taken from the first paragraph if left blank.">
+      <Field field="excerpt" label="Excerpt" hint="Card and share summary. Taken from the first paragraph if left blank.">
         <TextArea
           ariaLabel="Excerpt"
           value={blog.excerpt ?? ''}
@@ -537,7 +538,7 @@ function PostFields({ onPickCover }: { onPickCover: () => void }) {
         <p className="mt-1 truncate text-[11px] text-muted-foreground/70">/blog/{blog.slug}</p>
       </Field>
 
-      <Field label="Who can read it">
+      <Field field="tier" label="Who can read it">
         <Seg
           ariaLabel="Minimum tier"
           value={(blog.minTier ?? 'free') as SubscriptionTier}

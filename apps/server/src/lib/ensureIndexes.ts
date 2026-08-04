@@ -20,7 +20,12 @@ import { COL } from './magazineV2/collections.js'
 interface IndexSpec {
   collection: string
   keys: Record<string, 1 | -1>
-  options?: { unique?: boolean; partialFilterExpression?: Record<string, unknown> }
+  options?: {
+    unique?: boolean
+    partialFilterExpression?: Record<string, unknown>
+    /** TTL: seconds after the indexed DATE field before MongoDB deletes the doc. */
+    expireAfterSeconds?: number
+  }
 }
 
 const INDEX_SPECS: IndexSpec[] = [
@@ -30,13 +35,24 @@ const INDEX_SPECS: IndexSpec[] = [
   // Worker queue: claimOne({ status: 'queued' }) sorted by createdAt (hot path,
   // polled ~every 2s per worker) and the idle sweep's find({ status: 'running' }).
   { collection: COL.jobs, keys: { status: 1, deletedAt: 1, createdAt: 1 } },
+  // Reap finished jobs. Nothing ever deleted a `done` job, so the queue was
+  // append-only for the life of the deployment — every issue ever generated left a
+  // permanent row behind. `expireAfterSeconds: 0` means "expire exactly at the time
+  // in the field", and the worker only stamps `expiresAt` once a job is terminal
+  // (see terminalStamp() in apps/worker/src/queue.ts), so a queued or running job
+  // has no such field and can never be collected no matter how long it takes.
+  //
+  // This is a HARD delete by the server's TTL monitor, not the soft delete used
+  // everywhere else — correct here, because a finished job is disposable
+  // infrastructure and its outcome has already been written onto the magazine.
+  { collection: COL.jobs, keys: { expiresAt: 1 }, options: { expireAfterSeconds: 0 } },
   // Per-magazine media library: find({ magazineId }).
   { collection: COL.media, keys: { magazineId: 1, deletedAt: 1 } },
   // Per-magazine chat thread: match { magazineId } + range/sort on createdAt for
   // the paginated GET /issues/:id/chat (grows unbounded, so it must not scan).
   { collection: COL.chat, keys: { magazineId: 1, deletedAt: 1, createdAt: -1 } },
   // Issue library list: served newest-first by updatedAt.
-  { collection: COL.issues, keys: { deletedAt: 1, updatedAt: -1 } },
+  { collection: COL.magazines, keys: { deletedAt: 1, updatedAt: -1 } },
   // Blogs. The public index sorts published posts newest-first, and the staff
   // list sorts everything by last touched — both run through aggregate() with a
   // $skip/$limit, so they must not scan.
@@ -45,6 +61,34 @@ const INDEX_SPECS: IndexSpec[] = [
   { collection: 'blogs', keys: { tags: 1, deletedAt: 1 } },
   // Retired slugs still resolve (301), so this lookup is on the public read path.
   { collection: 'blogs', keys: { slugHistory: 1, deletedAt: 1 } },
+  // ── Stories & the public newsstand ──
+  //
+  // Deliberately NOT one index per collection. Most registers (horses, parties,
+  // horsePartyLinks, podcastEpisodes, breakingNews, sponsors) are read with a bare
+  // `find()` and no filter at all — the screens genuinely list everything. An index
+  // cannot make an unfiltered scan cheaper, so adding one there would be decoration
+  // that costs write throughput and buys nothing. What those routes actually need is
+  // pagination; until they have it, the scan is the honest cost. `organisations` is
+  // only ever read by id, which `_id_` already serves. Indexes below exist ONLY
+  // where a query really filters or sorts.
+  //
+  // articles: reconcileStories() runs find({ status: 'scheduled' }) and the legacy
+  // heal runs find({ status: { $nin: … } }) on the way into the list route, and the
+  // public list now filters status server-side (routes/articles.ts). One index on
+  // status serves all three.
+  { collection: 'articles', keys: { status: 1, deletedAt: 1 } },
+  // The published-issue newsstand: GET /api/issues matches { unpublishedAt: null }
+  // and sorts publishedAt desc (an aggregate, so `deletedAt` is matched explicitly).
+  // Equality keys first, then the sort key, so one index serves both. The staff
+  // ?includeUnpublished=1 path drops the unpublishedAt equality and therefore sorts
+  // in memory — acceptable: it is opt-in, authenticated, and small.
+  { collection: COL.published, keys: { deletedAt: 1, unpublishedAt: 1, publishedAt: -1 } },
+  // One member's notification list — per-user and unbounded, so it must not scan
+  // the whole collection to find a single reader's rows.
+  { collection: 'notifications', keys: { recipientUserId: 1, deletedAt: 1 } },
+  // "Does this member already have a tipper profile" — checked on the create path
+  // and read on every tipping screen.
+  { collection: 'tipperProfiles', keys: { userId: 1, deletedAt: 1 } },
   // A slug is a post's public identity — uniqueness is enforced in the database,
   // not just by uniqueSlug(), because two concurrent creates would both pass an
   // application-level check. PARTIAL on deletedAt:null for the same reason the
@@ -149,6 +193,41 @@ const INDEX_SPECS: IndexSpec[] = [
   { collection: 'reactions', keys: { parentId: 1 } },
   // The analytics date window.
   { collection: 'reactions', keys: { createdAt: -1 } },
+  // ── Comments (docs/COMMENTS-PLAN.md) ──
+  //
+  // Unlike `reactions` above, comments DO carry `deletedAt` in every key set:
+  // they go through the normal `db.collection()` wrapper and its soft delete,
+  // because a comment is a paragraph somebody wrote rather than a single field
+  // re-entered in one click, and a moderation decision should stay reversible.
+  //
+  // The thread read: match one target, newest first, cursor-paginated on
+  // createdAt. Equality keys first, then the sort key, so ONE index serves the
+  // match, the sort and the `createdAt: { $lt: cursor }` range together.
+  { collection: 'comments', keys: { targetType: 1, targetId: 1, deletedAt: 1, createdAt: -1 } },
+  // The moderation queue's working list: reported-and-still-visible, most
+  // reported first. Without this, opening the queue scans every comment ever
+  // left — the one screen that grows with the whole platform's conversation.
+  { collection: 'comments', keys: { deletedAt: 1, status: 1, reportCount: -1 } },
+  // "Everything, newest first" — the queue's `all` filter and the hidden list.
+  { collection: 'comments', keys: { deletedAt: 1, createdAt: -1 } },
+  // ONE REPORT PER READER PER COMMENT. Like the reactions unique index, this is
+  // not an optimisation — it IS the rule, and `reportCount` is only a count of
+  // PEOPLE because of it. Two taps racing each other would otherwise each pass
+  // the application-level check and write a row, and the number a moderator
+  // triages on would quietly stop meaning what it says.
+  //
+  // PARTIAL on `deletedAt: null`, unlike reactions' plain unique index, because
+  // reports go through the soft-delete wrapper: a tombstoned report must not
+  // hold the key and block the same reader reporting a restored comment again.
+  {
+    collection: 'commentReports',
+    keys: { commentId: 1, userId: 1 },
+    options: { unique: true, partialFilterExpression: { deletedAt: null } },
+  },
+  // Recounting a comment's reports after each new one, and the "have I already
+  // reported these?" lookup for a whole page of a thread.
+  { collection: 'commentReports', keys: { commentId: 1, deletedAt: 1 } },
+  { collection: 'commentReports', keys: { userId: 1, deletedAt: 1 } },
 ]
 
 /** The name MongoDB derives for an index when none is given. */

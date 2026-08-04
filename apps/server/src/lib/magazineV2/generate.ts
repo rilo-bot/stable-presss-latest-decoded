@@ -1282,7 +1282,7 @@ export async function generateMagazineIssue(issueId: string, brief: string, page
     }
 
     const plan = await planIssue(brief, { pageCount, sourceText });
-    await db.collection(COL.issues).updateOne(issueId, {
+    await db.collection(COL.magazines).updateOne(issueId, {
       pagesTotal: plan.pages.length,
       pagesProcessed: 0,
       stage: 'Designing pages',
@@ -1319,10 +1319,10 @@ export async function generateMagazineIssue(issueId: string, brief: string, page
       await insertComposedPage(issueId, i, composed);
       if (i === 0) coverImage = coverUrlOf(composed);
       done += 1;
-      await db.collection(COL.issues).updateOne(issueId, { pagesProcessed: done });
+      await db.collection(COL.magazines).updateOne(issueId, { pagesProcessed: done });
     });
 
-    await db.collection(COL.issues).updateOne(issueId, {
+    await db.collection(COL.magazines).updateOne(issueId, {
       status: 'ready',
       title: plan.title,
       coverImage,
@@ -1357,7 +1357,7 @@ export async function generateMorePages(
 ): Promise<void> {
   const restore = (['ready', 'draft', 'published'].includes(opts.prevStatus) ? opts.prevStatus : 'ready') as string;
   try {
-    const issue = (await db.collection(COL.issues).findById(issueId)) as (GenTheme & { _id: string; title?: string }) | null;
+    const issue = (await db.collection(COL.magazines).findById(issueId)) as (GenTheme & { _id: string; title?: string }) | null;
     if (!issue) return;
     const gt = ((issue as unknown as { genTheme?: GenTheme }).genTheme ?? {}) as GenTheme;
 
@@ -1375,12 +1375,12 @@ export async function generateMorePages(
       palette = p.palette;
       fonts = p.fonts;
       subtitle = subtitle || p.subtitle;
-      await db.collection(COL.issues).updateOne(issueId, {
+      await db.collection(COL.magazines).updateOne(issueId, {
         genTheme: { title, subtitle, palette, fonts, prompt: opts.topic || title },
       });
     }
 
-    await db.collection(COL.issues).updateOne(issueId, { stage: 'Designing pages', updatedAt: new Date().toISOString() });
+    await db.collection(COL.magazines).updateOne(issueId, { stage: 'Designing pages', updatedAt: new Date().toISOString() });
 
     const specs = await planPages({ title, subtitle, topic: opts.topic, count: opts.count });
     const plan: GenPlan = { title, subtitle, palette, fonts, pages: specs };
@@ -1406,9 +1406,9 @@ export async function generateMorePages(
 
     const update: Record<string, unknown> = { status: restore, stage: '', processingError: '', pagesTotal: total, updatedAt: new Date().toISOString() };
     if (atIndex === 0 && composed[0]) update.coverImage = coverUrlOf(composed[0]);
-    await db.collection(COL.issues).updateOne(issueId, update);
+    await db.collection(COL.magazines).updateOne(issueId, update);
   } catch (err) {
     console.error('[magazineV2] add-pages failed:', err instanceof Error ? err.message : err);
-    await db.collection(COL.issues).updateOne(issueId, { status: restore, stage: '', processingError: err instanceof Error ? err.message : 'Adding pages failed', updatedAt: new Date().toISOString() });
+    await db.collection(COL.magazines).updateOne(issueId, { status: restore, stage: '', processingError: err instanceof Error ? err.message : 'Adding pages failed', updatedAt: new Date().toISOString() });
   }
 }

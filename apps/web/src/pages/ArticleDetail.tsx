@@ -26,6 +26,9 @@ import { useAuthStore } from '@/stores/authStore';
 import { canViewPremium } from '@/rbac/can';
 import { canEditArticle } from '@/lib/permissions';
 import { Paywall } from '@/components/Paywall';
+import { ReactionBar } from '@/components/ReactionBar';
+import { CommentsSection } from '@/components/comments/CommentsSection';
+import { useReactionStore } from '@/stores/reactionStore';
 import { AskAgentButton } from '@/components/AskAgentButton';
 import { STATUS_LABELS, splitIntoParagraphs } from './article-detail/helpers';
 import { Sidebar } from './article-detail/Sidebar';
@@ -59,6 +62,14 @@ export default function ArticleDetail() {
   const horseConn = useMemo(() => connectionResolver(parties), [parties]);
 
   const article = useMemo(() => articles.find((a) => a.id === id), [articles, id]);
+
+  // Reader reactions at the foot of the story. Re-runs when the signed-in
+  // account changes, because `mine` — which pick is yours — belongs to the
+  // account rather than the browser. A story has one scale, so no `withParts`.
+  const loadReactions = useReactionStore((s) => s.load);
+  useEffect(() => {
+    if (article?.id && isLive(article)) void loadReactions('story', article.id);
+  }, [article, currentUser?.id, loadReactions]);
 
   // ── Inline editing (admins / editors / the article's own author) ──────────
   // Draft holds only the fields editable in place; it is seeded when edit mode
@@ -664,6 +675,39 @@ export default function ArticleDetail() {
                 </p>
               </div>
             </div>
+
+            {/* The reader's own verdict, closing the piece — before Related, which
+                is an invitation to leave it.
+
+                Hidden behind the paywall for the same reason it is on a blog
+                post: asking someone how a story sat with them when they were
+                shown only the first paragraph is a question they cannot answer,
+                and a reaction recorded on a teaser is a reaction to nothing. */}
+            {/* Also hidden on anything not LIVE. Staff and the author read drafts
+                on this very page, and the server refuses to record a reaction
+                against an unpublished story — so without this the scale looked
+                usable and answered every click with an error. An offer that
+                cannot be taken reads as a broken feature, not a closed one. */}
+            {!locked && isLive(article) && (
+              <>
+                <ReactionBar
+                  targetType="story"
+                  targetId={article.id}
+                  idPrefix="story-reactions"
+                  heading="How did this story sit with you?"
+                />
+                {/* Directly under the bar, and gated on exactly the same
+                    condition. The bar asks how it sat; this asks why, on the same
+                    scale and writing to the same reaction — so the two can never
+                    show one reader two different answers. */}
+                <CommentsSection
+                  targetType="story"
+                  targetId={article.id}
+                  idPrefix="story-comments"
+                  noun="story"
+                />
+              </>
+            )}
 
             {/* ── Related Articles (real, same-category) ── */}
             <RelatedPanel relatedArticles={relatedArticles} category={article.category} />

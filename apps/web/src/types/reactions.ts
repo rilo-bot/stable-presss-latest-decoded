@@ -72,6 +72,42 @@ export function weightOf(key: EmojiKey): number {
  *
  * Never colour alone: every use of these carries the step's label as well.
  */
+/**
+ * Which side of the baseline one reaction sits on — the ONE place a seven-point
+ * pick becomes Positive / Neutral / Negative.
+ *
+ * This exists because a comment carries a category, and the category is DERIVED
+ * rather than stored (docs/COMMENTS-PLAN.md §4). The server keeps only the emoji
+ * key on a comment row; the three-way label is computed here, from the same
+ * `side` field the analytics dashboard already groups on. So there is one scale,
+ * one mapping, and no way for a comment tagged "Negative" to sit next to a 🤩.
+ *
+ * Re-labelling the scale, or moving a step from one arm to the other, stays a
+ * change to THIS file and re-categorises all of history correctly — the same
+ * reason `weightOf` derives instead of storing.
+ */
+const SIDE_BY_KEY = new Map(EMOJI_SCALE.map((s) => [s.key, s.side]));
+
+export function sideOf(key: EmojiKey): Side {
+  return SIDE_BY_KEY.get(key) ?? 'middle';
+}
+
+/**
+ * What each side is called to a reader.
+ *
+ * "Positive / Neutral / Negative" rather than the internal `for / middle /
+ * against`: the internal names describe a position in a diverging bar chart,
+ * which is the dashboard's vocabulary and not a reader's.
+ */
+export const SIDE_LABEL: Record<Side, string> = {
+  for: 'Positive',
+  middle: 'Neutral',
+  against: 'Negative',
+};
+
+/** The three categories in scale order, for a filter row or a legend. */
+export const SIDES: Side[] = ['against', 'middle', 'for'];
+
 export const STEP_FILL: Record<EmojiKey, string> = {
   reallyHate: '#b84619',
   hate: '#cd5c2f',

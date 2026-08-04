@@ -13,27 +13,40 @@
  * tabbed registers. Each was defensible alone; together they were a page nobody
  * reads. The rest is kept in docs/EMOJI-ANALYTICS-PLAN.md for when it is wanted.
  *
- * ── STATIC, WITH SAMPLE DATA ──
- * There is no `reactions` collection and no endpoint. This is the design for
- * that system, so it says so in the header and in the footer. Everything derives
- * from one generated reaction list, so the panels always agree; when the
- * endpoint lands, only the source changes.
+ * ── LIVE ──
+ * Reads `GET /api/analytics/reactions`. The sample generator that stood in for
+ * it has been deleted, along with the badge and the footer that admitted to it.
+ * The endpoint returns COUNTS and no arithmetic; the weighting happens here,
+ * through the one shared scale — see the note at the top of `../emoji-analytics/data`.
+ *
+ * Staff reactions are excluded by the endpoint, so these are the readership's
+ * answers rather than the building's.
  *
  * ── WHAT THIS PAGE WILL NOT CLAIM ──
- * No view tracking, no dwell time, no referrers and no comments exist anywhere
- * in Stable Press. Reactions are the only reader signal there is — which is why
- * nothing here may imply a measurement we do not take.
+ * No view tracking, no dwell time and no referrers exist anywhere in Stable
+ * Press, so nothing here may imply a measurement we do not take.
+ *
+ * COMMENTS now exist (docs/COMMENTS-PLAN.md) and are NOT counted on this page.
+ * That is deliberate rather than pending: a comment carries a pick on this same
+ * seven-point scale and posting one WRITES that pick as a reaction, so every
+ * comment is already inside the figures below, once. Counting comments here as
+ * well would count the same opinion twice. What is genuinely missing is a
+ * breakdown of how many of these reactions came with words attached — worth
+ * having, and a new figure rather than a correction to an existing one.
  */
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { Link } from 'react-router-dom';
+import { Loader2 } from 'lucide-react';
 
+import { authFetchRetry } from '@/lib/api';
 import {
-  CONTENT_TYPES, DATE_RANGES, EMOJI_KEYS, SIDE_FILL, avgStep, compact, deriveDashboard, rangeFor,
-  scoreText, shortDate, signed, stepFor, typeLabel,
+  CONTENT_TYPES, DATE_RANGES, EMOJI_KEYS, EMPTY_REPORT, SIDE_FILL, avgStep, compact,
+  deriveDashboard, rangeFor, scoreText, shortDate, signed, stepFor, typeLabel,
   type ContentType, type DateRangeId, type EmojiKey, type Filters, type ItemStat,
+  type ReactionsReport,
 } from '../emoji-analytics/data';
 import {
-  Bar, ChipToggles, DivergingBar, Empty, Panel, SampleDataBadge, Section,
+  Bar, ChipToggles, DivergingBar, Empty, Panel, Section,
   SegmentedControl, StatTile, ThreeWayBar, splitParts,
 } from '../emoji-analytics/parts';
 
@@ -56,7 +69,17 @@ export default function EmojiAnalyticsScreen() {
     [rangeId, types],
   );
 
-  const d = useMemo(() => deriveDashboard(filters), [filters]);
+  /**
+   * Staff reactions are excluded by default — these are meant to be the
+   * READERSHIP's answers, not the building's. But staff test their own reaction
+   * bars, so the exclusion is a visible control rather than a silent rule; the
+   * page also says how many it left out, so a zero is explained on its face.
+   */
+  const [audience, setAudience] = useState<'readers' | 'everyone'>('readers');
+  const includeStaff = audience === 'everyone';
+
+  const { report, state } = useReactionsReport(filters, includeStaff);
+  const d = useMemo(() => deriveDashboard(report), [report]);
 
   const maxEmojiPct = Math.max(1, ...d.emojiRows.map((r) => r.pct));
 
@@ -88,7 +111,11 @@ export default function EmojiAnalyticsScreen() {
             bulletins.
           </p>
         </div>
-        <SampleDataBadge>Sample data · no reaction feed yet</SampleDataBadge>
+        {state === 'loading' && (
+          <span className="flex items-center gap-2 text-[11.5px] text-muted-foreground">
+            <Loader2 size={13} className="animate-spin" /> Loading
+          </span>
+        )}
       </div>
 
       {/* ── One control row, above everything it scopes ── */}
@@ -108,18 +135,73 @@ export default function EmojiAnalyticsScreen() {
           onToggle={(v) => setTypes((cur) => (cur.includes(v) ? cur.filter((t) => t !== v) : [...cur, v]))}
           onClear={() => setTypes([])}
         />
+        <span aria-hidden="true" className="hidden h-4 w-px bg-border sm:block" />
+        <SegmentedControl
+          label="Who counts"
+          options={[
+            { value: 'readers' as const, label: 'Readers', title: 'Staff reactions excluded — the readership on its own' },
+            { value: 'everyone' as const, label: 'Everyone', title: 'Include reactions from staff accounts' },
+          ]}
+          value={audience}
+          onChange={setAudience}
+        />
       </div>
 
-      {d.reactions === 0 ? (
-        <Panel><Empty>No reactions in this range. Widen the dates or clear the type filter.</Empty></Panel>
+      {/* An empty range shows the page at ZERO rather than a "nothing here" card.
+          A dashboard that replaces itself with a message when the answer is nil
+          teaches you nothing about what it measures, and hides the one figure
+          that is never zero — how much has been published. Zero is an answer;
+          the line below says why it is zero, and every panel still stands. */}
+      {state === 'ready' && (d.reactions === 0 || d.staffExcluded > 0) && (
+        <p className="rounded-sm border border-border/60 bg-muted/20 px-4 py-3 text-[12px] leading-relaxed text-muted-foreground">
+          {d.reactions === 0 && (
+            <>
+              <strong className="font-semibold text-foreground">No reactions in this range</strong> — so every
+              figure below is zero. Reactions began being recorded when the reaction bar went live, so an older
+              window is empty by definition. Try a wider range, or clear the type filter.{' '}
+            </>
+          )}
+          {/* The single most likely reason a member of staff sees nothing here
+              after reacting themselves. Said plainly, with the way to see them. */}
+          {d.staffExcluded > 0 && (
+            <>
+              <strong className="font-semibold text-foreground">
+                {d.staffExcluded} staff reaction{d.staffExcluded === 1 ? '' : 's'} not counted
+              </strong>{' '}
+              — these figures are the readership on its own, so your own reactions and your colleagues&rsquo; are
+              left out.{' '}
+              <button
+                type="button"
+                onClick={() => setAudience('everyone')}
+                className="font-semibold text-primary underline underline-offset-2 hover:opacity-80"
+              >
+                Include them
+              </button>
+              .
+            </>
+          )}
+        </p>
+      )}
+
+      {state === 'error' ? (
+        <Panel>
+          <Empty>That report did not load. Reload the page, or narrow the date range and try again.</Empty>
+        </Panel>
       ) : (
         <>
           {/* ── Headline figures ── */}
           <div className="grid gap-4 sm:grid-cols-3">
+            {/* At zero these say nothing rather than something false: avgStep(0)
+                is 😐, and "averages undecided across every reaction" would be a
+                claim about reactions that do not exist. */}
             <StatTile label="Total score" value={scoreText(d.overall.score)}
-              detail={<>Averages <span aria-hidden="true">{avgStep(d.overall.avgScore).emoji}</span>{' '}“{avgStep(d.overall.avgScore).label.toLowerCase()}” across every reaction</>} />
+              detail={d.reactions === 0
+                ? 'Nothing counted in this range yet'
+                : <>Averages <span aria-hidden="true">{avgStep(d.overall.avgScore).emoji}</span>{' '}“{avgStep(d.overall.avgScore).label.toLowerCase()}” across every reaction</>} />
             <StatTile label="Reader mood" value={d.moodVerdict} display
-              detail={`${d.overall.forPct}% for · ${d.overall.againstPct}% against`} />
+              detail={d.reactions === 0
+                ? 'No one has answered yet'
+                : `${d.overall.forPct}% for · ${d.overall.againstPct}% against`} />
             <StatTile label="Total reactions" value={compact(d.reactions)}
               detail={`From ${compact(d.reactors)} readers, on ${d.coverage.reacted} of ${d.coverage.published} published items`} />
           </div>
@@ -251,16 +333,82 @@ export default function EmojiAnalyticsScreen() {
         </>
       )}
 
-      {/* ── The honest footer ── */}
+      {/* ── The honest footer ──
+          It used to say nothing here was live. It is live now, so what it owes
+          the reader is the shape of the data rather than a disclaimer about its
+          absence: who is counted, who is not, and what is simply not measured. */}
       <p className="border-t border-border/50 pt-4 text-[11.5px] leading-relaxed text-muted-foreground">
-        <strong className="font-semibold text-foreground">Nothing on this page is live.</strong>{' '}
-        Making it real needs three things the platform does not have yet: a reaction bar on published items that
-        stores what it collects, a reaction store recording one reaction per reader per item, and reader sign-in —
-        until the last of those, every figure here counts reactions rather than people. There is no view tracking
-        and no comments anywhere in the platform, so this page claims neither.
+        Every figure counts <strong className="font-semibold text-foreground">people</strong>, not clicks — a
+        reaction belongs to a signed-in account, one per reader per item, and changing your mind replaces your
+        answer rather than adding one.{' '}
+        {includeStaff
+          ? 'Staff reactions are included in this view.'
+          : 'Staff reactions are excluded — switch “Who counts” to Everyone to include them.'}{' '}
+        Reactions began being recorded when the reaction bar went live, so nothing published before then has a
+        full history. There is no view tracking and no dwell time anywhere in the platform, so this page claims
+        neither. Reader comments carry a pick on this same scale and are counted here as the reaction they came
+        with — once, not twice.
+        {d.truncated > 0 && (
+          <>
+            {' '}
+            <strong className="font-semibold text-foreground">
+              {d.truncated} item{d.truncated === 1 ? '' : 's'} left out:
+            </strong>{' '}
+            this range holds more reacted pieces than one report carries.
+          </>
+        )}
       </p>
     </div>
   );
+}
+
+type LoadState = 'loading' | 'ready' | 'error';
+
+/**
+ * The report for the current filters.
+ *
+ * Keeps the LAST good report on screen while a new one loads, so changing the
+ * date range does not empty the page and refill it — a dashboard that blanks on
+ * every control change reads as broken. A stale-but-labelled figure for a moment
+ * beats a flash of "no reactions".
+ */
+function useReactionsReport(
+  filters: Filters,
+  includeStaff: boolean,
+): { report: ReactionsReport; state: LoadState } {
+  const [report, setReport] = useState<ReactionsReport>(EMPTY_REPORT);
+  const [state, setState] = useState<LoadState>('loading');
+
+  const { from, to, types } = filters;
+  const typeKey = types.join(',');
+
+  useEffect(() => {
+    let active = true;
+    setState('loading');
+    const params = new URLSearchParams({ from, to });
+    if (typeKey) params.set('types', typeKey);
+    if (includeStaff) params.set('includeStaff', '1');
+
+    authFetchRetry(`/api/analytics/reactions?${params.toString()}`)
+      .then(async (res) => {
+        if (!res.ok) throw new Error(`HTTP ${res.status}`);
+        return (await res.json()) as ReactionsReport;
+      })
+      .then((data) => {
+        if (!active) return;
+        setReport({ ...EMPTY_REPORT, ...data });
+        setState('ready');
+      })
+      .catch(() => {
+        if (active) setState('error');
+      });
+
+    return () => {
+      active = false;
+    };
+  }, [from, to, typeKey, includeStaff]);
+
+  return { report, state };
 }
 
 function LeaderRow({

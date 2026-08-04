@@ -1,8 +1,10 @@
 # Real reactions — one mechanism, four surfaces
 
-**Status: P0 + P1 BUILT, 2026-08-04.** Reactions on blogs and blog parts are
-real and verified against a live database (§11). P2 (stories), P3 (bulletins)
-and P4 (the dashboard endpoint) are still open.
+**Status: COMPLETE — P0–P4 BUILT, 2026-08-04.** Reactions are real on **all four
+surfaces** (blogs, blog parts, stories, bulletin issues), and the Emoji
+Analytics dashboard reads them live. Every gate and every figure is verified
+against a live database (§11). The sample generator, the "Sample data" badge and
+the "nothing on this page is live" footer are all deleted.
 **Related:** `docs/EMOJI-ANALYTICS-PLAN.md` (the dashboard this feeds),
 `docs/BLOG-SYSTEM-PLAN.md` §10 (blog parts).
 
@@ -150,14 +152,52 @@ table — but as its own piece of work, not smuggled in with this one.
   it. Otherwise a made-up uuid creates orphan rows the dashboard would then count.
 - **Rate limited** per account, through the existing `lib/rateLimit.ts`.
 - **Counts are public. `mine` needs auth. The dashboard needs `analytics.view`.**
+- **The PAGE must not offer what the server will refuse.** Staff and authors read
+  drafts on the very pages that carry a bar, and "reactable = readable" is
+  narrower than "can you see this" — so each page hides the bar unless the thing
+  is live (`isBlogLive` / `isLive` / `!issue.unpublishedAt`), matching
+  `assertReactable` exactly. This was a real defect, found by opening a draft
+  story: the scale rendered, every click answered `Not found`, and it read as a
+  broken feature rather than one that isn't open yet. A 404 that still reaches
+  the client — the thing was unpublished while someone had it open — now reads
+  "This is not open for reactions" instead of the API's "Not found".
 
-## 8. What the dashboard does on the day this lands
+## 8. The dashboard — P4, as built
 
-Nothing structural. `deriveDashboard()` was written as the API contract for
-exactly this: `GET /api/analytics/reactions?from&to&types` returns the same
-`Dashboard` shape, the sample generator is deleted, and the screen changes one
-import. The sample-data badge and the "nothing on this page is live" footer come
-off in the same commit — and not one commit earlier.
+`GET /api/analytics/reactions?from&to&types` (`routes/analytics.ts`), gated on
+`analytics.view`. `reactionsReport()` in `lib/reactions.ts` does the work.
+
+**The endpoint returns COUNTS and performs no arithmetic.** That is the one
+design decision here worth defending. Scoring means weights, and the weights
+live in exactly one file — `apps/web/src/types/reactions.ts`, shared with the
+public reaction bar. A server-side copy would be a second scale waiting to
+disagree with the first, which is the precise failure that module was extracted
+to prevent. The browser multiplies, so a re-weighting stays a one-file change
+and re-scores all of history correctly with no backfill.
+
+The payload is therefore **one row per reacted item**, bounded by the published
+catalogue, rather than one row per reaction, which would grow with traffic.
+Three things the client cannot derive from those rows come separately:
+`reactors` (distinct people — a reader reacts to many items, so per-item counts
+cannot be summed), `publishedByType` (the coverage denominator), and
+`truncated`.
+
+Other decisions worth recording:
+
+- **Staff reactions are excluded**, using the `isStaff` flag stamped at write
+  time. `?includeStaff=1` puts them back; there is no UI for it.
+- **`analytics.view` is now server-enforced.** It gated a sidebar module and
+  nothing else, because there was no server-side data to protect. There is now.
+  (`check:permissions` reads *tracked* files via `git grep`, so it will keep
+  reporting this as a module gate until `routes/analytics.ts` is committed.)
+- **A target whose record has gone is dropped, not shown as "Unknown".** Its
+  reactions still exist, but a leaderboard row nobody can click is noise.
+- **The report caps at 500 reacted items** and says so in `truncated`, which the
+  page prints. A dashboard that quietly leaves things out is worse than one that
+  admits it.
+- **`rangeFor()` now measures from `Date.now()`.** It used to measure from a
+  frozen constant, because the sample data was generated around one — against a
+  live feed that would have silently stopped including today.
 
 ## 9. Phases
 
@@ -165,13 +205,15 @@ off in the same commit — and not one commit earlier.
 |---|---|---|
 | **P0** ✅ | `lib/reactions.ts`, `routes/reactions.ts`, indexes, `rawCollection`. No UI change. | Testable with curl; nothing user-visible |
 | **P1** ✅ | **Blogs.** `ReactionBar` wired for `blog` + `blogPart`, real counts, sign-in prompt, optimistic update. Preview copy comes off the blog page. | Reactions are real on `/blog/:slug` |
-| **P2** | **Stories** — `/articles/:id`. Same component, one new `targetType`. The server side already accepts `story`. | |
-| **P3** | **Bulletins** — the magazine issue viewer. The server side already accepts `bulletin`. | |
-| **P4** | Analytics endpoint; screen swaps sample → real; badges come off. | The dashboard is live |
+| **P2** ✅ | **Stories** — `ReactionBar` closes the article column on `/articles/:id`, above Related (which is an invitation to leave). Hidden behind the paywall. | Reactions are real on a story |
+| **P3** ✅ | **Bulletins** — under the last page of `/bulletins/:id`, `print:hidden` so it never lands in the downloadable PDF. | Reactions are real on an edition |
+| **P4** ✅ | `GET /api/analytics/reactions` behind `analytics.view`; the screen swaps sample → real; generator, badge and footer deleted. | The dashboard is live |
 
-P1 was the real milestone: it proves the mechanism against the hardest surface,
-because blogs are the only one with two granularities. P2 and P3 are now a
-`ReactionBar` on a page each — `assertReactable` already knows both.
+P1 was the real milestone: it proved the mechanism against the hardest surface,
+because blogs are the only one with two granularities. P2 and P3 were then a
+`ReactionBar` on a page each with no server change at all — `assertReactable`
+already knew both target types, which is what "one mechanism" was supposed to
+buy and did.
 
 ## 11. What was verified, and how
 
@@ -192,8 +234,24 @@ above was exercised over HTTP:
 | A **draft** post | 404 |
 | A **premium** post, free reader | 403 |
 | `reactions` indexes after boot | All four present, `unique: true` on the right one |
+| **Story**: react, then change it | 200; `total` stays 1 |
+| **Story**: a draft | 404 |
+| **Story**: premium, free reader | 403 |
+| **Bulletin**: a live issue | 200 |
+| **Bulletin**: an issue that was pulled (`unpublishedAt`) | 404 |
+| **Bulletin**: an id that does not exist | 404 |
+| **Analytics**, anonymous | 401 |
+| **Analytics**, signed-in reader with no `analytics.view` | 403 |
+| **Analytics**, administrator | Counts match a hand-computed catalogue exactly |
+| — staff reaction excluded by default | 8 reactions / 5 readers of 9 rows |
+| — `?includeStaff=1` | staff rows reappear |
+| — `?types=blog,blogPart` | only those types, and the coverage denominator narrows with them |
+| — `?types=blog,podcast` | unknown type dropped, not a 400 |
+| — a window with nothing in it | zeros, not an error |
+| — `from` after `to` | 400 |
+| — blog part row | titled "Part A", carrying its post's title as `parentTitle` |
 
-Two defects were found this way and fixed:
+Three defects were found this way and fixed:
 
 1. **`$limit: 0` is not a legal MongoDB stage.** It was the stub for the `mine`
    branch of the `$facet` when nobody is signed in. The sub-pipeline is now
@@ -203,21 +261,47 @@ Two defects were found this way and fixed:
    there was no 500 to read, just a client timeout. Every handler in this router
    now goes through a `handle()` wrapper that turns a rejection into a logged
    500. Worth knowing: the rest of the app's routers have the same latent shape.
+3. **`?includeStaff=1` was documented and never read.** The handler ignored the
+   query parameter entirely, so the flag the doc comment promised did nothing.
+   Only caught because the expected count (9) and the observed count (8) were
+   written down before the request was made.
 
 ## 10. Decisions — settled
 
-**D1 — Counts appear AFTER you pick.** A visible tally is a nudge: seven numbers
-under seven emoji tell you the popular answer before you have given your own,
-and the whole value of this scale is that it is not a popularity poll. Before
-you answer you see the size of the room ("412 readers have had their say") and
-no breakdown; the split is the reward for answering. Implemented as
-`showCounts = picked !== null` in `ReactionBar`.
+**D1 — Counts are PUBLIC, always, and start at zero.** *Reversed by the user
+after seeing it, 2026-08-04.* It first shipped as reveal-on-react, on the
+argument that a visible tally nudges the answer. Overruled: this is a reader
+feature, and a scale that withholds what everyone else said looks like it is
+hiding something. Every step shows its real count to everyone, signed in or not,
+before they answer.
+
+A zero is shown as a zero — no seeding, no rounding up, no "be the first" in
+place of a figure. `docs/FAKE-DATA-REMOVED.md` records the sweep that pulled
+invented follower counts and subscriber stats out of this app; a plausible
+number is a lie somebody eventually decides on.
 
 **D2 — A reader may change their pick, freely.** `setReaction` is an upsert, and
 tapping your current pick again clears it. A locked-in misclick is worse data
 than a considered change. `total` does not move on a change, because a change is
 not a second reader.
 
-**D3 — Staff reactions are stored with a flag.** `isStaff` is stamped at write
-time from the account (never the client), so the dashboard can exclude the
-building's own reactions from the readership's. No UI for it.
+**D3 — Staff reactions are stored with a flag, excluded by default, and the
+exclusion is VISIBLE.** `isStaff` is stamped at write time from the account,
+never the client.
+
+"No UI for it" was wrong, and the way it was wrong is worth recording. Staff
+test their own reaction bars, so the very first thing this feature did to the
+people who built it was hide their reactions and show an unexplained zero — the
+user reacted on three surfaces, opened the dashboard and found nothing. The
+report now returns `staffExcluded`, the page prints "N staff reactions not
+counted" with an **Include them** link, and a "Who counts: Readers / Everyone"
+control sits with the other filters. The default is unchanged, because these
+figures are meant to be the readership's; what changed is that the rule explains
+itself instead of looking like a bug.
+
+**Sign-in, D1's companion.** A signed-out reader tapping a step is not making a
+dead click — it is asking to take part, so it routes to `/login?next=…` via
+`loginUrlFor` and comes back to the piece they were reading. Silently ignoring
+the tap was the worst of both: the control looked live and nothing happened.
+Arrow keys still only move, never redirect — reading the scale is not answering
+it.

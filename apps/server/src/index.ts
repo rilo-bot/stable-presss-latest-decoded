@@ -128,6 +128,8 @@ import agentComposeRouter from './routes/agentCompose.js'
 import agentInstantRouter from './routes/agentInstant.js'
 import newsroomRouter from './routes/newsroom.js'
 import reactionsRouter from './routes/reactions.js'
+import commentsRouter from './routes/comments.js'
+import analyticsRouter from './routes/analytics.js'
 
 // Reads stay public (the public website needs them). Writes are gated by role:
 //   - articles  → editorial matrix (create / edit_own w/ author match / edit_any)
@@ -193,6 +195,17 @@ app.use('/api/metrics', metricsRouter)
 // limited, and "reactable = readable" is re-derived from the target's own record
 // rather than trusted from the client. See docs/REACTIONS-PLAN.md.
 app.use('/api/reactions', reactionsRouter)
+// Reader comments on the same three surfaces (stories, blog posts, editions —
+// NOT blog parts; see COMMENT_TARGET_TYPES for why the discussion is about the
+// piece). Self-gated the same way, and the visibility gate is `assertReactable`
+// itself rather than a copy of it: commentable = reactable = readable. The
+// moderation endpoints inside enforce `comments.moderate`. See
+// docs/COMMENTS-PLAN.md.
+app.use('/api/comments', commentsRouter)
+// Staff analytics over those reactions — self-gated on `analytics.view` inside
+// the router, which is what makes that permission server-enforced rather than a
+// sidebar rule the browser observes.
+app.use('/api/analytics', analyticsRouter)
 // Production System dashboard — staff-only, role-scoped summary + AI brief.
 app.use('/api/newsroom', newsroomRouter)
 // AI concierge ("the Stablehand"). Read-only tools, RBAC-scoped to the caller
@@ -206,7 +219,9 @@ app.use('/api/agent/story', jsonAgent, agentStoryRouter)    // Story Studio — 
 app.use('/api/agent/blog', jsonAgent, agentBlogRouter)
 app.use('/api/agent/article', jsonAgent, agentArticleRouter) // Article Studio — edits one open article in place (client-executed tools)
 app.use('/api/agent/voice', jsonAgent, agentVoiceRouter)    // OpenAI STT/TTS for the concierge (key stays server-side)
-app.use('/api/agent/compose', jsonAgent, agentComposeRouter) // AI field-composer for form fields (✨ button)
+// AI field-composer for form fields (✨ button). Signed-in + rate limited INSIDE
+// the router — it was reachable anonymously, which spent the model key for free.
+app.use('/api/agent/compose', jsonAgent, agentComposeRouter)
 // Instant — capture-to-draft. Staff-only + rate-limited INSIDE the router (unlike
 // the older agent routes, which attach the account optionally): it is the most
 // expensive model surface here and there is still no token metering.

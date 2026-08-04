@@ -6,14 +6,31 @@
 // Same server spine as routes/agent.ts (OpenRouter key stays server-side). It is
 // a prose helper, not a data tool: the prompt forbids inventing racing facts,
 // names, numbers or IDs that weren't supplied (the no-fake-data policy).
+//
+// ── Gating ──
+// SIGNED IN, and rate limited. This route used `attachAccountOptional`, which
+// meant any request from anywhere spent the OpenRouter key with no account, no
+// limit and no metering — the "guest-reachable unmetered endpoints" finding in
+// docs/AI-AGENTS-AUDIT.md, on the endpoint the ✨ button on every form field calls.
+//
+// Signed in rather than staff-only (which is what routes/agentInstant.ts uses):
+// the ✨ sits on member-facing forms too — horse and party profile fields, and
+// onboarding — so a staff check would break composing for the people the field
+// belongs to. Being a known account is what makes the rate limit mean anything.
 // ---------------------------------------------------------------------------
 
 import { Router } from 'express'
 import { generateText } from 'ai'
-import { attachAccountOptional } from '../lib/auth.js'
+import { attachAccount } from '../lib/auth.js'
+import { rateLimit } from '../lib/rateLimit.js'
 import { getAgentModel, isAgentConfigured } from '../lib/agent/provider.js'
 
 const router = Router()
+
+router.use(attachAccount)
+// One model call per press, so this is 60 composed fields per 5 minutes per
+// account — far more than anyone fills in by hand, and closed to a loop.
+router.use(rateLimit('agent-compose', 60, 5 * 60_000))
 
 interface ComposeBody {
   field?: { key?: string; label?: string }
@@ -23,7 +40,7 @@ interface ComposeBody {
   currentValue?: string
 }
 
-router.post('/', attachAccountOptional, async (req, res) => {
+router.post('/', async (req, res) => {
   if (!isAgentConfigured()) {
     res.status(503).json({ error: 'The writing assistant is resting — OPENROUTER_API_KEY is not configured on the server.' })
     return

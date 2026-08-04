@@ -54,6 +54,16 @@ interface ComposerState {
   /** The `updatedAt` the server last confirmed — the concurrency baseline. */
   baseUpdatedAt: string | null;
   selectedId: string | null;
+  /**
+   * The non-block input the author has aimed the assistant at — a registry field
+   * id like `excerpt` or `part:<id>.title` (see agent/blog/blogFields.ts).
+   *
+   * It lives HERE, next to the block selection, because the two are ONE
+   * selection: whatever "this" means, it means one thing. `select` and
+   * `selectField` each clear the other, so the body toolbar and the studio can
+   * never disagree about what the author is pointing at.
+   */
+  selectedFieldId: string | null;
   saveState: SaveState;
   saveError: string | null;
   /** Right pane: the selected block's settings, or the post's own settings. */
@@ -66,6 +76,8 @@ interface ComposerState {
   load: (blog: Blog) => void;
   close: () => void;
   select: (id: string | null) => void;
+  /** Aim the assistant at one input. Clears any block selection — see `selectedFieldId`. */
+  selectField: (field: string | null) => void;
   setPane: (pane: 'block' | 'post') => void;
 
   /** Patch post-level fields (title, slug, tags, cover, seo…). */
@@ -73,6 +85,18 @@ interface ComposerState {
 
   /** Insert into the body, or into a part when `container` is a part id. */
   insertBlock: (block: Block, atIndex?: number, container?: ContainerId) => void;
+  /**
+   * Insert SEVERAL blocks as ONE step.
+   *
+   * Not a loop over `insertBlock`: that would push an undo step and arm an
+   * autosave per block, so undoing an assistant's five-paragraph insertion would
+   * take five presses of Ctrl+Z and leave the author in the middle of it.
+   */
+  insertBlocks: (blocks: Block[], atIndex?: number, container?: ContainerId) => void;
+  /** Swap one block for several (or none) — the AI's "rewrite this" in one step. */
+  replaceBlockWith: (id: string, blocks: Block[]) => void;
+  /** Replace the whole main body in one step (a whole-post AI rewrite). */
+  setBodyBlocks: (blocks: Block[]) => void;
   updateBlock: (id: string, patch: Partial<Block>) => void;
   /**
    * Swap a block for a wholly different one, keeping its position.
@@ -96,12 +120,24 @@ interface ComposerState {
    * immediately, and returns the new part's id so the caller can put the caret in
    * its title field.
    */
-  addPart: () => string | null;
+  addPart: (init?: { title?: string; blocks?: Block[] }) => string | null;
   updatePart: (partId: string, patch: { title?: string }) => void;
+  /** Replace a part's whole body in one step (the assistant writing a section). */
+  setPartBlocks: (partId: string, blocks: Block[]) => void;
   movePart: (partId: string, delta: number) => void;
   removePart: (partId: string) => void;
 
   addMedia: (file: File) => Promise<BlogMedia | null>;
+  /**
+   * Take on an asset some OTHER caller registered against this post — the studio
+   * sourcing a stock photo through `POST /:id/media/stock`.
+   *
+   * That endpoint writes to the document and moves `updatedAt`, so without this the
+   * composer would hold a pool missing the new photo and a baseline the server has
+   * already passed: the next autosave 409s and the author is told someone else
+   * edited their post. Clearing `baseUpdatedAt` is the same trick `addMedia` uses.
+   */
+  adoptExternalMedia: (asset: BlogMedia) => void;
   patchMedia: (mediaId: string, patch: Partial<BlogMedia>) => void;
   removeMedia: (mediaId: string) => Promise<void>;
 
@@ -228,6 +264,7 @@ export const useComposerStore = create<ComposerState>()((set, get) => {
     blog: null,
     baseUpdatedAt: null,
     selectedId: null,
+    selectedFieldId: null,
     saveState: 'idle',
     saveError: null,
     pane: 'post',
@@ -241,6 +278,7 @@ export const useComposerStore = create<ComposerState>()((set, get) => {
         blog,
         baseUpdatedAt: blog.updatedAt,
         selectedId: null,
+        selectedFieldId: null,
         saveState: 'idle',
         saveError: null,
         pane: 'post',
@@ -251,10 +289,11 @@ export const useComposerStore = create<ComposerState>()((set, get) => {
 
     close: () => {
       cancelTimer();
-      set({ blog: null, baseUpdatedAt: null, selectedId: null, saveState: 'idle', undoStack: [], redoStack: [] });
+      set({ blog: null, baseUpdatedAt: null, selectedId: null, selectedFieldId: null, saveState: 'idle', undoStack: [], redoStack: [] });
     },
 
-    select: (id) => set({ selectedId: id, pane: id ? 'block' : 'post' }),
+    select: (id) => set({ selectedId: id, selectedFieldId: null, pane: id ? 'block' : 'post' }),
+    selectField: (field) => set({ selectedFieldId: field, selectedId: null, pane: 'post' }),
     setPane: (pane) => set({ pane }),
 
     patchPost: (patch) => {
@@ -273,6 +312,39 @@ export const useComposerStore = create<ComposerState>()((set, get) => {
       const index = atIndex ?? list.length;
       mutateIn(container, (blocks) => [...blocks.slice(0, index), block, ...blocks.slice(index)]);
       set({ selectedId: block.id, pane: 'block' });
+    },
+
+    insertBlocks: (blocks, atIndex, container = null) => {
+      const { blog } = get();
+      if (!blog || blocks.length === 0) return;
+      const list =
+        container === null ? blog.blocks : (blog.parts ?? []).find((p) => p.id === container)?.blocks;
+      if (!list) return;
+      const index = Math.max(0, Math.min(list.length, atIndex ?? list.length));
+      mutateIn(container, (current) => [
+        ...current.slice(0, index),
+        ...blocks,
+        ...current.slice(index),
+      ]);
+      // Select the FIRST of them: that is where the reader's eye goes, and it is
+      // what the toolbar should be acting on if the author wants to adjust it.
+      set({ selectedId: blocks[0]!.id, pane: 'block' });
+    },
+
+    replaceBlockWith: (id, blocks) => {
+      const container = containerOf(id);
+      if (container === undefined) return;
+      mutateIn(container, (current) => {
+        const at = current.findIndex((b) => b.id === id);
+        if (at < 0) return current;
+        return [...current.slice(0, at), ...blocks, ...current.slice(at + 1)];
+      });
+      set(blocks.length > 0 ? { selectedId: blocks[0]!.id, pane: 'block' } : { selectedId: null, pane: 'post' });
+    },
+
+    setBodyBlocks: (blocks) => {
+      mutateIn(null, () => blocks);
+      set({ selectedId: null, pane: 'post' });
     },
 
     // Text edits do NOT push history per keystroke — that would fill the stack
@@ -340,12 +412,17 @@ export const useComposerStore = create<ComposerState>()((set, get) => {
       if (get().selectedId === id) set({ selectedId: null, pane: 'post' });
     },
 
-    addPart: () => {
+    addPart: (init) => {
       const { blog } = get();
       if (!blog) return null;
-      // One empty paragraph, so the body is something you can click into rather
-      // than an empty box with no caret target.
-      const part: BlogPart = { id: newBlockId(), title: '', blocks: [paragraph()] };
+      // One empty paragraph by default, so the body is something you can click
+      // into rather than an empty box with no caret target. A caller that brings
+      // its own blocks (the assistant writing a section) gets those instead.
+      const part: BlogPart = {
+        id: newBlockId(),
+        title: init?.title ?? '',
+        blocks: init?.blocks?.length ? init.blocks : [paragraph()],
+      };
       setParts((parts) => [...parts, part]);
       return part.id;
     },
@@ -353,6 +430,9 @@ export const useComposerStore = create<ComposerState>()((set, get) => {
     updatePart: (partId, patch) =>
       // A title is text, so no history step per keystroke — same rule as blocks.
       setParts((parts) => parts.map((p) => (p.id === partId ? { ...p, ...patch } : p)), false),
+
+    setPartBlocks: (partId, blocks) =>
+      setParts((parts) => parts.map((p) => (p.id === partId ? { ...p, blocks } : p))),
 
     movePart: (partId, delta) => {
       const parts = get().blog?.parts ?? [];
@@ -440,6 +520,16 @@ export const useComposerStore = create<ComposerState>()((set, get) => {
         set((s) => ({ uploading: Math.max(0, s.uploading - 1) }));
         return null;
       }
+    },
+
+    adoptExternalMedia: (asset) => {
+      const { blog } = get();
+      if (!blog) return;
+      if (blog.media.some((m) => m.id === asset.id)) return;
+      set({
+        blog: { ...blog, media: [...blog.media, asset], updatedAt: new Date().toISOString() },
+        baseUpdatedAt: null,
+      });
     },
 
     patchMedia: (mediaId, patch) => {

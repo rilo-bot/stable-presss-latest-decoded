@@ -1,31 +1,33 @@
 /**
- * Emoji analytics — the sample dataset and everything derived from it.
+ * Emoji analytics — the shape of the report, and everything derived from it.
  *
- * ── SAMPLE DATA, NOT LIVE ──
+ * ── LIVE. The sample generator is gone. ──
  *
- * There is no `reactions` collection, no endpoint, and no reaction bar wired to
- * storage. This module invents a plausible one so the page can be designed, and
- * the page says so on its face. See docs/EMOJI-ANALYTICS-PLAN.md.
+ * This file used to invent a plausible reaction dataset so the page could be
+ * designed, and said so on the page's face. `GET /api/analytics/reactions` now
+ * exists, so the invented catalogue, the seeded PRNG and the mood shapes have
+ * been deleted rather than left behind a flag. Sample data that survives its own
+ * endpoint is how a page ends up quietly lying.
  *
- * TWO RULES SHAPE THIS FILE, both about the day the real endpoint lands:
+ * ── WHY THE SERVER SENDS COUNTS AND NOT SCORES ──
  *
- * 1. THE SAMPLE IS REACTION-LEVEL, NOT ITEM-LEVEL — one row per reaction, the
- *    shape `reactions` will store. Seven counts per item could never answer a
- *    question about who reacted, or when.
+ * The endpoint returns seven counts per item and no arithmetic. Scoring lives
+ * here, in the browser, because scoring means WEIGHTS and the weights live in
+ * exactly one file — `@/types/reactions`, shared with the public reaction bar. A
+ * server-side copy would be a second scale waiting to disagree with the first,
+ * which is the precise failure that module was extracted to prevent. Re-weight
+ * the scale and every figure on this page re-derives correctly, with no backfill
+ * and no second edit.
  *
- * 2. `deriveDashboard()` IS THE API CONTRACT. It aggregates a flat reaction list
- *    the way the Mongo pipeline will and returns what the endpoint should
- *    return. Swapping sample for real is a source change; no component moves.
+ * The payload is therefore one row per reacted item — bounded by the published
+ * catalogue — rather than one row per reaction, which would grow with traffic.
  *
- * The generator is DETERMINISTIC (a seeded PRNG, never Math.random) so the page
- * does not reshuffle itself between renders.
+ * ── WHAT THIS PAGE WILL NOT CLAIM ──
  *
- * SCOPE: stories, blogs and bulletins. Podcasts and magazine issues are out —
- * they are not where reactions are being collected first.
- *
- * NOT MODELLED, because the platform does not collect it: views, dwell time,
- * referrers, geography, devices, and comments. There is no comments collection
- * anywhere in Stable Press.
+ * No views, no dwell time, no referrers, no geography, no devices, no comments.
+ * None of it is collected anywhere in Stable Press. Reactions are the only
+ * reader signal there is, which is exactly why nothing here may imply a
+ * measurement we do not take.
  */
 
 import { EMOJI_SCALE, STEP_FILL, weightOf } from '@/types/reactions';
@@ -34,13 +36,10 @@ import type { EmojiKey, EmojiStep, Side } from '@/types/reactions';
 export { EMOJI_SCALE, STEP_FILL, weightOf };
 export type { EmojiKey, EmojiStep, Side };
 
-/** Ascending weight, −5 → +5. The order everything iterates in. */
+/** Ascending weight, −5 → +5. The order everything iterates in, server included. */
 export const EMOJI_KEYS: EmojiKey[] = [
   'reallyHate', 'hate', 'dislike', 'undecided', 'sortOf', 'like', 'love',
 ];
-
-/** Position of each step in `EMOJI_KEYS`, for counting without a linear scan. */
-const INDEX_BY_KEY = new Map(EMOJI_KEYS.map((k, i) => [k, i]));
 
 /** The weight of each step, in `EMOJI_KEYS` order. */
 const WEIGHTS: number[] = EMOJI_KEYS.map(weightOf);
@@ -110,6 +109,7 @@ export const TRACK_FILL = '#eae1cd';
 
 /**
  * The four things a reader can react to, as this platform actually models them.
+ * These four strings ARE the server's `ReactionTargetType`.
  *
  * Two of these were wrong in an earlier draft and are worth writing down:
  *
@@ -121,11 +121,11 @@ export const TRACK_FILL = '#eae1cd';
  * drops a `channels` key on write.
  *
  * BLOG PARTS ARE THEIR OWN TARGET. `BlogPart` — a "sub-blog" — is a titled
- * section of a post with a STABLE id, and the published page already renders a
- * reaction scale for each part as well as one for the post overall. So a post
- * and its parts are separate reaction targets, and the part id is what a stored
- * reaction is keyed to. Counting only whole posts would throw away the finer of
- * the two signals the reader page already asks for.
+ * section of a post with a STABLE id, and the published page renders a reaction
+ * scale for each part as well as one for the post overall. So a post and its
+ * parts are separate reaction targets, and the part id is what a stored reaction
+ * is keyed to. Counting only whole posts would throw away the finer of the two
+ * signals the reader page asks for.
  */
 export type ContentType = 'story' | 'blog' | 'blogPart' | 'bulletin';
 
@@ -149,8 +149,9 @@ export function typeLabel(id: ContentType): string {
   return TYPE_LABEL.get(id) ?? id;
 }
 
-// ── The published catalogue ─────────────────────────────────────────────────
+// ── The report, as the endpoint sends it ────────────────────────────────────
 
+/** One reacted item, with its seven counts. Mirrors `ReportItem` on the server. */
 export interface Item {
   id: string;
   title: string;
@@ -160,162 +161,38 @@ export interface Item {
   /** For a blog part: the post it belongs to. A part is never read alone. */
   parentTitle?: string;
   publishedAt: string;
+  /** Per-emoji counts, ascending weight, always all seven. */
+  counts: number[];
+}
+
+/** The body of `GET /api/analytics/reactions`. */
+export interface ReactionsReport {
+  from: string;
+  to: string;
+  types: ContentType[];
+  items: Item[];
+  /** Distinct PEOPLE — per-item counts cannot give this, a reader reacts to many. */
+  reactors: number;
+  publishedByType: Record<ContentType, number>;
+  /** Reacted items the server's cap left out. 0 in every normal case. */
+  truncated: number;
   /**
-   * The seven-step shape this piece pulls, ascending weight. A relative weight,
-   * not a count — the generator samples from it.
+   * Staff reactions left out of these figures — reported so the page can EXPLAIN
+   * a zero rather than just show one. Staff test their own reaction bars, so
+   * "I reacted and the dashboard shows nothing" is the first thing this feature
+   * does to the people who build it.
    */
-  mood: [number, number, number, number, number, number, number];
-  /** Roughly how many reactions it earns. */
-  pull: number;
+  staffExcluded: number;
 }
 
-/** Moods, written as shapes rather than numbers pulled from the air. */
-const ADORED: Item['mood'] = [0, 1, 2, 5, 18, 30, 30];
-const RESPECTED: Item['mood'] = [1, 2, 5, 10, 24, 26, 14];
-const SOLID: Item['mood'] = [2, 4, 9, 12, 22, 22, 12];
-const DIVISIVE: Item['mood'] = [22, 14, 8, 6, 8, 14, 24];
-const COOL: Item['mood'] = [10, 18, 26, 14, 12, 8, 4];
-const REJECTED: Item['mood'] = [26, 24, 20, 10, 8, 6, 3];
-const QUIET: Item['mood'] = [4, 7, 13, 38, 20, 12, 6];
-
-export const ITEMS: Item[] = [
-  // ── Blogs ──
-  { id: 'b1', title: 'Inside the Karaka barn that never sleeps', type: 'blog', category: 'Trainer Profiles', publishedAt: '2026-07-28', mood: ADORED, pull: 402 },
-  { id: 'b2', title: 'The clock does not lie: reading Te Rapa sectionals', type: 'blog', category: 'Form Guide', publishedAt: '2026-07-24', mood: SOLID, pull: 305 },
-  { id: 'b3', title: 'What a $1.2m yearling tells you about the shed', type: 'blog', category: 'Bloodstock', publishedAt: '2026-07-21', mood: ADORED, pull: 354 },
-  { id: 'b4', title: 'Riding heavy: five jockeys on the winter grind', type: 'blog', category: 'Jockey Desk', publishedAt: '2026-07-17', mood: COOL, pull: 324 },
-  { id: 'b5', title: 'The syndicate that bought a horse for the story', type: 'blog', category: 'Owner Stories', publishedAt: '2026-07-14', mood: RESPECTED, pull: 268 },
-  { id: 'b6', title: "Ellerslie's new drainage, one year on", type: 'blog', category: 'Track Notes', publishedAt: '2026-07-09', mood: QUIET, pull: 195 },
-  { id: 'b7', title: 'Nobody wants to talk about the whip rule', type: 'blog', category: 'Industry News', publishedAt: '2026-07-03', mood: DIVISIVE, pull: 612 },
-  { id: 'b8', title: 'A morning with the Awapuni track crew', type: 'blog', category: 'Morning Edition', publishedAt: '2026-06-27', mood: RESPECTED, pull: 221 },
-
-  // ── Stories ──
-  { id: 's1', title: 'Group One at Trentham: the run home in full', type: 'story', category: 'Race Reports', publishedAt: '2026-07-27', mood: ADORED, pull: 448 },
-  { id: 's2', title: 'Stewards fine trainer over late scratching', type: 'story', category: 'Industry News', publishedAt: '2026-07-23', mood: REJECTED, pull: 386 },
-  { id: 's3', title: 'Saturday form: the five that matter', type: 'story', category: 'Form Guide', publishedAt: '2026-07-19', mood: SOLID, pull: 331 },
-  { id: 's4', title: 'Waikato sale tops $18m as buyers return', type: 'story', category: 'Bloodstock', publishedAt: '2026-07-16', mood: ADORED, pull: 362 },
-  { id: 's5', title: 'Rider suspended after Hastings incident', type: 'story', category: 'Jockey Desk', publishedAt: '2026-07-12', mood: DIVISIVE, pull: 401 },
-  { id: 's6', title: 'Track rated heavy 11 at Riccarton', type: 'story', category: 'Track Notes', publishedAt: '2026-07-08', mood: QUIET, pull: 176 },
-  { id: 's7', title: 'Riccarton: a length and a half, and a protest', type: 'story', category: 'Race Reports', publishedAt: '2026-06-24', mood: COOL, pull: 296 },
-  { id: 's8', title: 'Prize money lifted for provincial meetings', type: 'story', category: 'Industry News', publishedAt: '2026-06-12', mood: RESPECTED, pull: 268 },
-
-  // ── Blog parts (sub-blogs) ──
-  // Each is a titled section of the post above it, carrying its own reaction
-  // scale on the published page. A part can outscore its own post — that is the
-  // whole reason the reader page asks twice.
-  { id: 'b7p1', title: 'What the rule actually says', type: 'blogPart', parentTitle: 'Nobody wants to talk about the whip rule', publishedAt: '2026-07-03', mood: RESPECTED, pull: 188 },
-  { id: 'b7p2', title: 'The riders’ case', type: 'blogPart', parentTitle: 'Nobody wants to talk about the whip rule', publishedAt: '2026-07-03', mood: DIVISIVE, pull: 214 },
-  { id: 'b7p3', title: 'Where I think this lands', type: 'blogPart', parentTitle: 'Nobody wants to talk about the whip rule', publishedAt: '2026-07-03', mood: REJECTED, pull: 171 },
-  { id: 'b1p1', title: 'Four in the morning', type: 'blogPart', parentTitle: 'Inside the Karaka barn that never sleeps', publishedAt: '2026-07-28', mood: ADORED, pull: 164 },
-  { id: 'b1p2', title: 'The staffing problem nobody solves', type: 'blogPart', parentTitle: 'Inside the Karaka barn that never sleeps', publishedAt: '2026-07-28', mood: SOLID, pull: 121 },
-  { id: 'b3p1', title: 'Reading the catalogue page', type: 'blogPart', parentTitle: 'What a $1.2m yearling tells you about the shed', publishedAt: '2026-07-21', mood: ADORED, pull: 143 },
-  { id: 'b3p2', title: 'What the buyers were really bidding on', type: 'blogPart', parentTitle: 'What a $1.2m yearling tells you about the shed', publishedAt: '2026-07-21', mood: RESPECTED, pull: 118 },
-  { id: 'b4p1', title: 'Making weight in July', type: 'blogPart', parentTitle: 'Riding heavy: five jockeys on the winter grind', publishedAt: '2026-07-17', mood: COOL, pull: 136 },
-
-  // ── Bulletins — published magazine issues (v1 and v2 both freeze into these) ──
-  { id: 'i1', title: 'Stable Press Quarterly — Spring 2026', type: 'bulletin', publishedAt: '2026-07-26', mood: ADORED, pull: 229 },
-  { id: 'i2', title: 'Karaka Sales Special — 2026', type: 'bulletin', publishedAt: '2026-07-12', mood: RESPECTED, pull: 188 },
-  { id: 'i3', title: 'Stable Press Quarterly — Winter 2026', type: 'bulletin', publishedAt: '2026-06-28', mood: SOLID, pull: 142 },
-
-  // Published in the last few days. These exist so the page has to cope with
-  // what it meets on day one: pieces with too few reactions to say anything
-  // about. Counted, shown, and kept out of every ranking by the floor.
-  { id: 's9', title: 'Ruakākā twilight meeting moved to Sunday', type: 'story', category: 'Morning Edition', publishedAt: '2026-08-02', mood: SOLID, pull: 21 },
-  { id: 'b9', title: 'Why we are changing how we cover stewards', type: 'blog', category: 'Industry News', publishedAt: '2026-08-01', mood: DIVISIVE, pull: 34 },
-  { id: 'i4', title: 'Spring Carnival Preview — 2026', type: 'bulletin', publishedAt: '2026-08-03', mood: SOLID, pull: 0 },
-];
-
-// ── The generator ───────────────────────────────────────────────────────────
-
-/** mulberry32 — small, fast, deterministic. */
-function rng(seed: number): () => number {
-  let a = seed >>> 0;
-  return () => {
-    a = (a + 0x6d2b79f5) >>> 0;
-    let t = Math.imul(a ^ (a >>> 15), 1 | a);
-    t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t;
-    return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
-  };
-}
-
-function hash(s: string): number {
-  let h = 2166136261;
-  for (let i = 0; i < s.length; i++) {
-    h ^= s.charCodeAt(i);
-    h = Math.imul(h, 16777619);
-  }
-  return h >>> 0;
-}
-
-/** Pick an index from a weight vector. */
-function pick(weights: number[], r: number): number {
-  const total = weights.reduce((a, b) => a + b, 0);
-  let acc = 0;
-  const target = r * total;
-  for (let i = 0; i < weights.length; i++) {
-    acc += weights[i]!;
-    if (target < acc) return i;
-  }
-  return weights.length - 1;
-}
-
-/**
- * One reaction — the shape `reactions` will store.
- *
- * `readerId` is what makes "one reaction per reader per item" enforceable, and
- * what lets the page report readers separately from reactions. In the real
- * store it is a user id or a signed device cookie, backed by a unique index.
- */
-export interface Reaction {
-  itemId: string;
-  readerId: string;
-  emoji: EmojiKey;
-  /** ISO date. Reactions arrive AFTER publication, on a decaying tail. */
-  reactedAt: string;
-}
-
-const READER_POOL = 2400;
-const DAY = 86_400_000;
-const TODAY = Date.parse('2026-08-04');
-
-/** Most reactions land in the first two days, with a long thin tail after. */
-function arrivalOffsetDays(r: number): number {
-  return Math.round(-Math.log(1 - r * 0.985) * 3.2);
-}
-
-function buildReactions(): Reaction[] {
-  const out: Reaction[] = [];
-
-  for (const item of ITEMS) {
-    const r = rng(hash(item.id));
-    const publishedMs = Date.parse(item.publishedAt);
-    // One reaction per reader per item — the unique index, honoured here.
-    const used = new Set<number>();
-
-    for (let i = 0; i < item.pull; i++) {
-      let idx = Math.floor(r() * READER_POOL);
-      let guard = 0;
-      while (used.has(idx) && guard++ < 8) idx = Math.floor(r() * READER_POOL);
-      if (used.has(idx)) continue;
-      used.add(idx);
-
-      const stepIndex = pick(item.mood, r());
-      const at = publishedMs + arrivalOffsetDays(r()) * DAY;
-      if (at > TODAY) continue; // nothing arrives from the future
-
-      out.push({
-        itemId: item.id,
-        readerId: `r${idx}`,
-        emoji: EMOJI_KEYS[stepIndex]!,
-        reactedAt: new Date(at).toISOString().slice(0, 10),
-      });
-    }
-  }
-
-  return out;
-}
-
-export const REACTIONS: Reaction[] = buildReactions();
+export const EMPTY_REPORT: ReactionsReport = {
+  from: '', to: '', types: [],
+  items: [],
+  reactors: 0,
+  publishedByType: { story: 0, blog: 0, blogPart: 0, bulletin: 0 },
+  truncated: 0,
+  staffExcluded: 0,
+};
 
 // ── Aggregation ─────────────────────────────────────────────────────────────
 
@@ -336,8 +213,7 @@ export interface Split {
    * score ÷ reactions, −5 … +5. How well it was received, independent of reach.
    *
    * This replaced a `net` of "% for minus % against". Keeping both would have
-   * put two disagreeing direction numbers on one page — against this dataset
-   * the two orderings move 19 of 27 items.
+   * put two disagreeing direction numbers on one page.
    */
   avgScore: number;
   /** Per-emoji counts, ascending weight. */
@@ -375,11 +251,20 @@ const EMPTY_SPLIT: Split = {
   contributions: [0, 0, 0, 0, 0, 0, 0],
 };
 
-export function splitOf(rs: Reaction[]): Split {
-  if (rs.length === 0) return EMPTY_SPLIT;
-
-  const counts = [0, 0, 0, 0, 0, 0, 0];
-  for (const r of rs) counts[INDEX_BY_KEY.get(r.emoji)!]! += 1;
+/**
+ * Turn seven counts into everything the page shows about them.
+ *
+ * THIS is where the weights are applied — at read time, from the shared scale,
+ * never from anything stored. Re-weighting then re-scores all of history
+ * correctly instead of needing a backfill.
+ */
+export function splitOf(rawCounts: number[]): Split {
+  const counts = EMOJI_KEYS.map((_, i) => {
+    const n = rawCounts[i];
+    return typeof n === 'number' && Number.isFinite(n) && n > 0 ? n : 0;
+  });
+  const reactions = counts.reduce((a, b) => a + b, 0);
+  if (reactions === 0) return EMPTY_SPLIT;
 
   let forCount = 0;
   let middleCount = 0;
@@ -387,25 +272,27 @@ export function splitOf(rs: Reaction[]): Split {
   let score = 0;
   const contributions = [0, 0, 0, 0, 0, 0, 0];
   for (let i = 0; i < 7; i++) {
-    // The weight is applied HERE, at read time, from the shared scale — never
-    // copied onto a stored reaction. Re-weighting the scale then re-scores
-    // history correctly instead of needing a backfill.
     contributions[i] = counts[i]! * WEIGHTS[i]!;
     score += contributions[i]!;
     if (SIDE_OF[i] === 'for') forCount += counts[i]!;
     else if (SIDE_OF[i] === 'middle') middleCount += counts[i]!;
     else againstCount += counts[i]!;
   }
-  const [forPct, middlePct, againstPct] = pcts([forCount, middleCount, againstCount], rs.length);
+  const [forPct, middlePct, againstPct] = pcts([forCount, middleCount, againstCount], reactions);
 
   return {
-    reactions: rs.length,
+    reactions,
     forPct: forPct!, middlePct: middlePct!, againstPct: againstPct!,
     score,
-    avgScore: score / rs.length,
+    avgScore: score / reactions,
     counts,
     contributions,
   };
+}
+
+/** Add two count vectors — how a type's totals are built from its items. */
+function addCounts(into: number[], from: number[]): void {
+  for (let i = 0; i < 7; i++) into[i] = (into[i] ?? 0) + (from[i] ?? 0);
 }
 
 // ── The dashboard ───────────────────────────────────────────────────────────
@@ -425,11 +312,21 @@ export const DATE_RANGES = [
 ] as const;
 export type DateRangeId = (typeof DATE_RANGES)[number]['id'];
 
+const DAY = 86_400_000;
+
+/**
+ * The range as dates, computed from NOW.
+ *
+ * It used to be measured from a frozen constant, because the sample data was
+ * generated around one. With a live feed that would have quietly stopped
+ * including today.
+ */
 export function rangeFor(id: DateRangeId): { from: string; to: string } {
   const days = DATE_RANGES.find((r) => r.id === id)!.days;
+  const now = Date.now();
   return {
-    from: new Date(TODAY - days * DAY).toISOString().slice(0, 10),
-    to: new Date(TODAY).toISOString().slice(0, 10),
+    from: new Date(now - days * DAY).toISOString().slice(0, 10),
+    to: new Date(now).toISOString().slice(0, 10),
   };
 }
 
@@ -449,7 +346,7 @@ export interface EmojiRow extends EmojiStep {
   fill: string;
 }
 
-/** What the endpoint returns. Three analytics, so three things plus the totals. */
+/** Everything the screen renders. Three analytics, so three things plus totals. */
 export interface Dashboard {
   overall: Split;
   reactions: number;
@@ -460,6 +357,10 @@ export interface Dashboard {
   items: ItemStat[];
   byType: TypeStat[];
   moodVerdict: string;
+  /** Passed through so the page can admit it when the server capped the report. */
+  truncated: number;
+  /** Passed through so the page can explain a zero caused by the staff filter. */
+  staffExcluded: number;
 }
 
 /** The mood in words, from the average score. */
@@ -474,36 +375,21 @@ function moodVerdict(overall: Split): string {
   return 'Readers are cold on this';
 }
 
-export function deriveDashboard(
-  filters: Filters,
-  allReactions: Reaction[] = REACTIONS,
-  allItems: Item[] = ITEMS,
-): Dashboard {
-  const typeSet = new Set(filters.types);
-  const itemsInScope = allItems.filter(
-    (i) => (typeSet.size === 0 || typeSet.has(i.type)) && i.publishedAt <= filters.to,
-  );
-  const scopeIds = new Set(itemsInScope.map((i) => i.id));
-
-  const rs = allReactions.filter(
-    (r) => scopeIds.has(r.itemId) && r.reactedAt >= filters.from && r.reactedAt <= filters.to,
-  );
-
-  const overall = splitOf(rs);
-
-  const byItemId = new Map<string, Reaction[]>();
-  for (const r of rs) {
-    const list = byItemId.get(r.itemId);
-    if (list) list.push(r);
-    else byItemId.set(r.itemId, [r]);
-  }
-
-  const items: ItemStat[] = itemsInScope
-    .map((item) => {
-      const split = splitOf(byItemId.get(item.id) ?? []);
-      return { item, split };
-    })
+/**
+ * Everything on the page, from one report.
+ *
+ * The server has already applied the date window and the type filter, so this
+ * does no filtering of its own — it weights, totals and shapes. Keeping those
+ * two responsibilities apart is what lets the endpoint stay arithmetic-free.
+ */
+export function deriveDashboard(report: ReactionsReport): Dashboard {
+  const items: ItemStat[] = report.items
+    .map((item) => ({ item, split: splitOf(item.counts) }))
     .filter((s) => s.split.reactions > 0);
+
+  const overallCounts = [0, 0, 0, 0, 0, 0, 0];
+  for (const s of items) addCounts(overallCounts, s.split.counts);
+  const overall = splitOf(overallCounts);
 
   const shares = pcts(overall.counts, overall.reactions);
   const emojiRows: EmojiRow[] = EMOJI_SCALE.map((step) => {
@@ -511,26 +397,30 @@ export function deriveDashboard(
     return { ...step, count: overall.counts[i]!, pct: shares[i]!, fill: STEP_FILL[step.key] };
   });
 
-  const byType: TypeStat[] = CONTENT_TYPES.map((meta) => {
-    const own = itemsInScope.filter((i) => i.type === meta.id);
-    const ownIds = new Set(own.map((i) => i.id));
-    const split = splitOf(rs.filter((r) => ownIds.has(r.itemId)));
-    return { ...meta, published: own.length, split };
+  const scoped = report.types.length ? new Set(report.types) : null;
+  const byType: TypeStat[] = CONTENT_TYPES.filter((meta) => !scoped || scoped.has(meta.id)).map((meta) => {
+    const own = [0, 0, 0, 0, 0, 0, 0];
+    for (const s of items) if (s.item.type === meta.id) addCounts(own, s.split.counts);
+    return { ...meta, published: report.publishedByType[meta.id] ?? 0, split: splitOf(own) };
   });
 
   // Coverage counts everything published up to `to`, NOT only what was published
   // inside the window: a June post can still be earning reactions in August, and
   // excluding it would flatter the number.
+  const published = byType.reduce((a, t) => a + t.published, 0);
+
   return {
     overall,
-    reactions: rs.length,
-    reactors: new Set(rs.map((r) => r.readerId)).size,
-    coverage: { reacted: items.length, published: itemsInScope.length },
+    reactions: overall.reactions,
+    reactors: report.reactors,
+    coverage: { reacted: items.length, published },
     emojiRows,
     topEmoji: [...emojiRows].sort((a, b) => b.count - a.count)[0]!,
     items,
     byType,
     moodVerdict: moodVerdict(overall),
+    truncated: report.truncated,
+    staffExcluded: report.staffExcluded,
   };
 }
 
@@ -548,7 +438,6 @@ export function scoreText(n: number): string {
   const s = Math.abs(Math.round(n)).toLocaleString('en-NZ');
   return n > 0 ? `+${s}` : `−${s}`;
 }
-
 
 /** 1,284 / 12.9K — compact above 10k, grouped below. */
 export function compact(n: number): string {

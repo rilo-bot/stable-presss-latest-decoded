@@ -10,13 +10,18 @@
  * account rather than a device, so nothing needs a "this counts reactions, not
  * readers" caveat.
  *
- * ── Counts appear AFTER you pick ──
+ * ── Counts are PUBLIC, and start at zero ──
  *
- * Before you answer you see the size of the room ("412 readers have had their
- * say") and no breakdown. A visible tally is a nudge: seven numbers under seven
- * emoji tell you what the popular answer is before you have given your own, and
- * the whole value of this scale is that it is not a popularity poll. Once you
- * have picked, the split is yours to see.
+ * Every step shows its real count to everyone, signed in or not, before they
+ * answer. An earlier cut hid the breakdown until you picked, on the argument
+ * that a visible tally nudges the answer. That was overruled: this is a reader
+ * feature, and a scale that withholds what everybody else said is a scale that
+ * looks like it is hiding something. The number is the point.
+ *
+ * A count of zero is shown as zero. There is no seeding, no rounding up and no
+ * "be the first" in place of a figure — `docs/FAKE-DATA-REMOVED.md` records the
+ * sweep that pulled invented follower counts and subscriber stats out of this
+ * app, and a plausible number is a lie somebody eventually decides on.
  *
  * The seven-point scale comes from `@/types/reactions`, shared with the staff
  * Emoji Analytics screen — that screen ranks on these very rows, so the two must
@@ -31,8 +36,9 @@
  * post overall — precisely the thing per-part scales exist to distinguish.
  */
 import { useRef } from 'react';
-import { Link } from 'react-router-dom';
+import { Link, useLocation, useNavigate } from 'react-router-dom';
 
+import { loginUrlFor } from '@/lib/safeRedirect';
 import { cn } from '@/lib/utils';
 import { useAuthStore } from '@/stores/authStore';
 import {
@@ -92,12 +98,24 @@ export function ReactionBar({
   const clearReaction = useReactionStore((s) => s.clear);
   const signedIn = useAuthStore((s) => Boolean(s.currentUser));
 
+  const navigate = useNavigate();
+  const location = useLocation();
   const tileRefs = useRef<(HTMLButtonElement | null)[]>([]);
   const headingId = `${idPrefix}-heading`;
   const compact = variant === 'compact';
   const picked = data.mine;
-  // D1: the breakdown is the reward for answering, not the prompt.
-  const showCounts = picked !== null;
+
+  /**
+   * Send a signed-out reader to sign in, and bring them BACK here.
+   *
+   * `loginUrlFor` builds the `?next=` the login page already honours, so the
+   * post you were reading is the post you return to. Without it, wanting to
+   * react costs you your place in the article — which is a price nobody pays,
+   * so the reaction is simply not given.
+   */
+  const goSignIn = () => {
+    navigate(loginUrlFor(location.pathname, location.search, location.hash));
+  };
 
   /**
    * Arrow-key movement, because this is a radio group and a keyboard user
@@ -105,8 +123,9 @@ export function ReactionBar({
    * Moving the focus also SELECTS — standard radio behaviour, and right here,
    * since the options are an ordinal scale so landing on one is choosing it.
    *
-   * A signed-out reader still gets the movement; the write is what is refused,
-   * and it is refused with a sentence rather than a dead control.
+   * A signed-out reader still gets the movement. Arrowing along the scale is
+   * reading it, not answering it, so it must not fire a sign-in detour on every
+   * keystroke — only committing does, via `pick`.
    */
   const onKeyDown = (e: React.KeyboardEvent, index: number) => {
     const delta =
@@ -123,7 +142,14 @@ export function ReactionBar({
   };
 
   const pick = (emoji: EmojiKey) => {
-    if (!signedIn || busy) return;
+    if (busy) return;
+    // Signed out, a tap is not a dead click — it is a request to take part, so
+    // it goes to sign-in and comes back here. Ignoring it silently was the worst
+    // of both: the control looked live and nothing happened.
+    if (!signedIn) {
+      goSignIn();
+      return;
+    }
     // Tapping your current pick again takes it back, which is the only way off a
     // one-per-reader control once you are on it.
     if (emoji === picked) void clearReaction(targetType, targetId);
@@ -237,19 +263,18 @@ export function ReactionBar({
               >
                 {step.label}
               </span>
-              {/* Hidden until you have answered — a tally you can see is a tally
-                  you are answering against. The slot is held either way so the
-                  tiles do not jump height when the numbers arrive. */}
+              {/* The real count, always, to everyone — and 0 when it is 0. */}
               <span
                 className={cn(
                   'font-[family-name:var(--font-display)] font-bold tabular-nums',
                   compact ? 'text-sm' : 'text-base',
                   isPicked ? 'text-foreground' : 'text-muted-foreground/60',
-                  !showCounts && 'invisible',
                 )}
-                aria-hidden={!showCounts}
               >
-                {data.counts[step.key]}
+                {data.counts[step.key] ?? 0}
+              </span>
+              <span className="sr-only">
+                {data.counts[step.key] === 1 ? '1 reader' : `${data.counts[step.key] ?? 0} readers`}
               </span>
             </button>
           );
@@ -263,11 +288,13 @@ export function ReactionBar({
           <p className="text-destructive">{error}</p>
         ) : !signedIn ? (
           <p className="text-muted-foreground">
-            <Link to="/login" className="font-semibold text-primary underline underline-offset-2 hover:opacity-80">
+            <Link
+              to={loginUrlFor(location.pathname, location.search, location.hash)}
+              className="font-semibold text-primary underline underline-offset-2 hover:opacity-80"
+            >
               Sign in
             </Link>{' '}
-            to have your say.
-            {data.total > 0 && ` ${readerLine(data.total)} so far.`}
+            to have your say — {readerLine(data.total)} so far.
           </p>
         ) : picked ? (
           <p className="text-muted-foreground">
@@ -295,7 +322,15 @@ export function ReactionBar({
   );
 }
 
-/** "1 reader has" / "412 readers have" — a count of people, not of reactions. */
+/**
+ * "no readers yet" / "1 reader has" / "412 readers have".
+ *
+ * A count of PEOPLE, not of reactions — the identity is an account and the
+ * unique index allows one row per reader per thing, so the two are the same
+ * number by construction rather than by hope.
+ */
 function readerLine(total: number): string {
-  return total === 1 ? '1 reader has had their say' : `${total.toLocaleString()} readers have had their say`;
+  if (total === 0) return 'no readers have had their say';
+  if (total === 1) return '1 reader has had their say';
+  return `${total.toLocaleString()} readers have had their say`;
 }

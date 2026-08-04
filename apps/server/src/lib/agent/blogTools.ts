@@ -148,6 +148,94 @@ export function buildBlogTools(account?: AccountUser, authHeader?: string): Tool
       }),
     }),
 
+    // ── Editor commands ─────────────────────────────────────────────────────
+    //
+    // These act on the post OPEN IN THE EDITOR, through the composer's own state
+    // rather than a whole-post save: the edit appears instantly, Ctrl+Z takes it
+    // back like any other editing step, and unsaved typing is not overwritten.
+    // The autosave still carries everything through PUT /api/blogs/:id, so the
+    // RBAC gate and the block validator are exactly as they were.
+    //
+    // Each one takes the post `id` even though the editor already knows it: the
+    // author can switch posts mid-conversation, and a command that silently
+    // retargeted would edit the wrong piece of writing.
+    setBlogField: tool({
+      description:
+        'Set ONE input on the post open in the editor. `field` must be an id from the editor field list you were given (`title`, `subtitle`, `excerpt`, `category`, `tags`, `byline`, `tier`, `seo.metaTitle`, `seo.metaDescription`, `cover`, `thumbnail`, `part:<id>.title`, `media:<id>.alt`). Values are plain text: tags comma-separated, `tier` one of free/standard/premium, `cover`/`thumbnail` the id of a photo ALREADY attached to the post. Body writing is NOT settable here — use insertBlogContent / replaceBlogSelection so it goes in as real blocks. Returns { ok, changed } or { ok: false, error }.',
+      inputSchema: z.object({
+        id: z.string().describe('The post id — must be the one open in the editor.'),
+        field: z.string().describe('A field id from the editor field list.'),
+        value: z.string().describe('The new value as plain text. An empty string clears an optional field.'),
+      }),
+    }),
+
+    insertBlogContent: tool({
+      description:
+        'Add body items to the post open in the editor WITHOUT touching what is already there. This is how "add this here" works. `where`: "selection" puts it straight after whatever the author has clicked (a paragraph, or the end of a selected part) — that is the default and the one to use when they say "here"; "end"/"start" are the ends of the main body; "part" appends to the part named by `partId`. Show the user the text and get approval first. Returns { ok, changed }.',
+      inputSchema: z.object({
+        id: z.string().describe('The post id — must be the one open in the editor.'),
+        where: z
+          .enum(['selection', 'end', 'start', 'part'])
+          .describe('Where it goes. Use "selection" when the user says "here".'),
+        partId: z.string().optional().describe('Required only when `where` is "part".'),
+        body: BodySchema,
+      }),
+    }),
+
+    replaceBlogSelection: tool({
+      description:
+        'Rewrite exactly what the author has selected in the editor — the clicked paragraph, or the body of the selected part. Nothing else in the post changes, which makes this the right tool for "tighten this bit" and the wrong one for a whole-post rewrite (use replaceBlogBody for that). If nothing is selected it comes back refused: ask the user to click the passage they mean rather than guessing. Returns { ok, changed }.',
+      inputSchema: z.object({
+        id: z.string().describe('The post id — must be the one open in the editor.'),
+        body: BodySchema,
+      }),
+    }),
+
+    // ── Parts ("sub-blogs") ─────────────────────────────────────────────────
+    //
+    // A part is a titled sub-section shown after the body, with its OWN reader
+    // reaction scale — so the choice to make something a part rather than a
+    // heading is editorial: it is a section readers are asked to respond to
+    // separately. See docs/BLOG-SYSTEM-PLAN.md §10.
+    addBlogPart: tool({
+      description:
+        'Add a titled part ("sub-blog") to the post open in the editor: a section shown after the main body WITH ITS OWN reader reaction scale, so readers can respond to it separately. Because of that scale, only make something a part when the user asks for one or agrees to it — do not convert ordinary sections into parts on your own initiative. Maximum 20 per post. Returns { ok, changed }.',
+      inputSchema: z.object({
+        id: z.string().describe('The post id — must be the one open in the editor.'),
+        title: z.string().describe('The part\'s heading. Short, and specific to the section.'),
+        body: BodySchema.optional().describe('The part\'s writing. Omit to add an empty part for the user to fill in.'),
+      }),
+    }),
+
+    updateBlogPart: tool({
+      description:
+        'Retitle a part, rewrite its body, or both. Pass only what changes. A part cannot be given an empty body — remove it instead if it is not wanted. Returns { ok, changed }.',
+      inputSchema: z.object({
+        id: z.string().describe('The post id — must be the one open in the editor.'),
+        partId: z.string().describe('The part id, from the editor parts outline.'),
+        title: z.string().optional(),
+        body: BodySchema.optional(),
+      }),
+    }),
+
+    moveBlogPart: tool({
+      description: 'Move a part one place up or down in the running order. Returns { ok, changed }.',
+      inputSchema: z.object({
+        id: z.string().describe('The post id — must be the one open in the editor.'),
+        partId: z.string().describe('The part id, from the editor parts outline.'),
+        direction: z.enum(['up', 'down']),
+      }),
+    }),
+
+    removeBlogPart: tool({
+      description:
+        'Delete a part and its writing. The user is shown a confirmation they must click, so do not ask in chat as well — call it and report what came back, including { cancelled: true } if they declined. Any reader reactions recorded against that part go with it. Returns { ok, changed }.',
+      inputSchema: z.object({
+        id: z.string().describe('The post id — must be the one open in the editor.'),
+        partId: z.string().describe('The part id, from the editor parts outline.'),
+      }),
+    }),
+
     setBlogPublished: tool({
       description:
         'Put a post live, or take it back down. Publishing requires a title and some content, and the original publish date is never rewritten by a republish. Only ever call this when the user has explicitly asked for it — never as a follow-up to writing or editing. Returns { ok, status }.',

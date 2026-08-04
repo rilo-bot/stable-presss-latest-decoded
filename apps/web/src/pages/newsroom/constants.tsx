@@ -3,7 +3,7 @@ import {
   FileText, LayoutDashboard, CheckSquare, Shield, Send, Users, BarChart2,
   Settings, Eye, ArrowRight, BookOpen, Mic, Star, Edit, DollarSign, Image,
   File, UserCheck, CalendarClock, FolderOpen, Inbox, Layers, Newspaper, Flag,
-  PenLine, Zap, SmilePlus,
+  PenLine, Zap, SmilePlus, MessageSquare,
 } from 'lucide-react';
 import type { ArticleStatus } from '@/types/article';
 import type { PartyRole } from '@/types/party';
@@ -131,6 +131,13 @@ export const SIDE_NAV: SideNavItem[] = [
     requiresPermission: 'content.editorial_review',
     editorOnly: true,
   },
+  /* The comment desk. In `Content` rather than `Management` because it is a queue
+     somebody works through, next to the stories and posts the comments are on —
+     not a report an editor reads once a week. `requiresPermission` here is
+     decorative (the rail filters on the module list); MODULE_CATALOGUE's
+     `comment-moderation` row is what decides which built-in roles get it, and
+     roles written before it existed need scripts/grant-comments-module.ts. */
+  { id: 'comment-moderation', label: 'Comments', icon: <MessageSquare size={15} />, section: 'Content', slug: 'comments', requiresPermission: 'comments.moderate' },
   { id: 'my-assets', label: 'My Media Assets', icon: <Image size={15} />, section: 'Content', slug: 'my-assets', requiresPermission: 'media.upload_own' },
   { id: 'compensation', label: 'My Compensation', icon: <DollarSign size={15} />, section: 'Content', slug: 'compensation', requiresPermission: 'compensation.view_own' },
   /* One naming rule across the four registers: name what the register holds.

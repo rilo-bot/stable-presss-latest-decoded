@@ -43,6 +43,7 @@ import { usePageMeta } from '@/lib/usePageMeta';
 import { BLOG_GRID_CLASS, spanClass } from '@/blog/placement';
 import { BlogRenderer } from '@/blog/BlogRenderer';
 import { ReactionBar } from '@/components/ReactionBar';
+import { CommentsSection } from '@/components/comments/CommentsSection';
 import { Paywall } from '@/components/Paywall';
 import { EmptyState } from '@/components/EmptyState';
 import { useBlogStore } from '@/stores/blogStore';
@@ -52,7 +53,7 @@ import { usePartyStore } from '@/stores/partyStore';
 import { useArticleStore } from '@/stores/articleStore';
 import { useReactionStore } from '@/stores/reactionStore';
 import { canViewContent } from '@/rbac/entitlement';
-import { allBlocks, mediaById, partHasContent, type BlogMedia, type BlogPart } from '@/types/blog';
+import { allBlocks, isBlogLive, mediaById, partHasContent, type BlogMedia, type BlogPart } from '@/types/blog';
 
 function formatDate(iso: string | null | undefined): string | null {
   if (!iso) return null;
@@ -117,11 +118,14 @@ function PartSection({
   index,
   media,
   postId,
+  canReact,
 }: {
   part: BlogPart;
   index: number;
   media: BlogMedia[];
   postId: string;
+  /** False on a draft: the content still previews, the scale is withheld. */
+  canReact: boolean;
 }) {
   // A part may legitimately have writing and no title, so the section is labelled
   // by its heading only when there IS one — `aria-labelledby` pointing at an
@@ -165,6 +169,7 @@ function PartSection({
           whole layout floats free of the section it belongs to, while the text
           measure alone is too narrow for seven tiles and their labels. `wide` is
           the text column plus its shoulders, which is exactly this case. */}
+      {canReact && (
       <div className={BLOG_GRID_CLASS}>
         <div className={spanClass('wide')}>
           <ReactionBar
@@ -178,6 +183,7 @@ function PartSection({
           />
         </div>
       </div>
+      )}
     </section>
   );
 }
@@ -205,8 +211,10 @@ export default function BlogPost() {
   // `withParts`, each part's. Re-runs when the signed-in account changes, because
   // `mine` — which pick is yours — belongs to the account, not the browser.
   useEffect(() => {
-    if (current?.id && !current.locked) void loadReactions('blog', current.id, true);
-  }, [current?.id, current?.locked, viewerId, loadReactions]);
+    if (current?.id && !current.locked && isBlogLive(current)) {
+      void loadReactions('blog', current.id, true);
+    }
+  }, [current, viewerId, loadReactions]);
 
   useEffect(() => {
     if (!current) return;
@@ -275,6 +283,16 @@ export default function BlogPost() {
    * staff-privileged payload that arrived ungated.
    */
   const locked = current.locked === true || !canViewContent(tier, current.minTier);
+
+  /**
+   * Reactions are offered only on a LIVE post — which is a narrower question than
+   * "can you see this page". Staff and the author read drafts here, and the server
+   * refuses to record a reaction against anything unpublished (`assertReactable`),
+   * so without this check a draft showed a working-looking scale that answered
+   * every click with an error. An offer that cannot be taken is worse than no
+   * offer: it reads as a broken feature rather than as one that isn't open yet.
+   */
+  const canReact = !locked && isBlogLive(current);
 
   const body = locked ? (
     <>
@@ -498,13 +516,21 @@ export default function BlogPost() {
             disappearance. */}
         {!locked &&
           visibleParts.map((part, i) => (
-            <PartSection key={part.id} part={part} index={i} media={current.media} postId={current.id} />
+            <PartSection
+              key={part.id}
+              part={part}
+              index={i}
+              media={current.media}
+              postId={current.id}
+              canReact={canReact}
+            />
           ))}
 
-        {/* Hidden behind the paywall: asking someone how a piece sat with them
+        {/* Hidden behind the paywall — asking someone how a piece sat with them
             when they were only shown the first paragraph is a question they
-            cannot answer. */}
-        {!locked && (
+            cannot answer — and hidden on a draft, which staff can read here but
+            nobody may react to. See `canReact`. */}
+        {canReact && (
           <ReactionBar
             targetType="blog"
             targetId={current.id}
@@ -517,6 +543,24 @@ export default function BlogPost() {
                   note: 'One reaction per reader, on the piece overall — the parts above are rated separately.',
                 }
               : {})}
+          />
+        )}
+
+        {/* One thread for the POST, never one per part. Parts are RATED
+            separately because that takes a tap and says something the post-level
+            score cannot; a thread per part would split the discussion into eight
+            rooms with nobody in them, and make the reader who wants to talk about
+            the piece choose where. `COMMENT_TARGET_TYPES` on the server has no
+            `blogPart` for the same reason, so this is enforced and not a habit.
+
+            Gated on `canReact` — the identical condition the bar uses, because
+            the server applies the identical gate to both. */}
+        {canReact && (
+          <CommentsSection
+            targetType="blog"
+            targetId={current.id}
+            idPrefix="post-comments"
+            noun="post"
           />
         )}
       </div>

@@ -235,21 +235,25 @@ function readSlot(raw: unknown): { ok: true; at: string } | { ok: false; error: 
 router.get('/', async (req, res) => {
   await reconcileStories();
 
+  const seesPipeline = canSeePipeline(req.account);
+
+  // The `status: 'published'` filter is applied by MONGODB for public callers, not
+  // afterwards in JS. Two reasons, and the second is the important one:
+  //   1. it uses the articles status index instead of scanning the collection, and
+  //   2. an unpublished draft never leaves the database for a caller who may not see
+  //      it — so the tier gate below is no longer the only thing standing between a
+  //      public request and the whole pipeline.
   // find() already excludes soft-deleted docs.
-  const items = await db.collection('articles').find();
+  const items = await db.collection('articles').find(seesPipeline ? {} : { status: 'published' });
   const sorted = items.sort((a, b) => recencyKey(b) - recencyKey(a)).map(project);
 
-  if (canSeePipeline(req.account)) {
+  if (seesPipeline) {
     res.json(sorted);
     return;
   }
-  // Live stories only, in the public projection, each cut to what this reader's
-  // subscription tier entitles them to.
-  res.json(
-    sorted
-      .filter((d) => d.status === 'published')
-      .map((d) => gateArticleForTier(publicView(d), req.account?.subscriptionTier)),
-  );
+  // Public projection, each story cut to what this reader's subscription tier
+  // entitles them to.
+  res.json(sorted.map((d) => gateArticleForTier(publicView(d), req.account?.subscriptionTier)));
 });
 
 // create

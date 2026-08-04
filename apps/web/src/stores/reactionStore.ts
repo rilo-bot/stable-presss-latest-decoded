@@ -91,6 +91,11 @@ interface ReactionState {
 
 async function errorFrom(res: Response, fallback: string): Promise<string> {
   if (res.status === 401) return 'Sign in to have your say.';
+  // The server says "Not found" for anything unpublished, which is the right
+  // answer to give an API and the wrong sentence to show a reader who is looking
+  // at the thing. The pages hide the bar on a draft, so this only fires when
+  // something is unpublished WHILE it is open.
+  if (res.status === 404) return 'This is not open for reactions.';
   try {
     const body = (await res.json()) as { error?: unknown };
     if (typeof body.error === 'string' && body.error) return body.error;

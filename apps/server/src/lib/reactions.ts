@@ -303,3 +303,276 @@ export async function clearReaction(
   const result = await col.deleteOne({ targetType, targetId, userId })
   return result.deletedCount > 0
 }
+
+// ── The staff dashboard's report ────────────────────────────────────────────
+//
+// What the Emoji Analytics screen reads. It returns COUNTS, never rows, and it
+// deliberately does NOT compute a score.
+//
+// Both of those are on purpose:
+//
+//  • Counts, not rows, because shipping one object per reaction to a browser is
+//    the load-everything pattern this codebase already has a review about. The
+//    payload here is bounded by the published catalogue, not by traffic.
+//
+//  • No score, because scoring means weights, and the weights live in exactly
+//    one file (`apps/web/src/types/reactions.ts`). A server copy would be a
+//    second scale waiting to disagree with the first — the precise failure the
+//    shared module was extracted to prevent. The client multiplies these counts
+//    by that one scale, so a re-weighting stays a one-file change and re-scores
+//    all of history correctly.
+
+export interface ReportItem {
+  id: string
+  title: string
+  type: ReactionTargetType
+  /** Display label only — the dashboard does no category maths. */
+  category?: string
+  /** For a blog part: the post it belongs to. A part is never read alone. */
+  parentTitle?: string
+  publishedAt: string
+  /** Per-emoji counts in `REACTION_EMOJI_KEYS` order, all seven, zeros included. */
+  counts: number[]
+}
+
+export interface ReactionsReport {
+  items: ReportItem[]
+  /** Distinct people, which per-item counts cannot give: one reader reacts to many items. */
+  reactors: number
+  /** How much was published up to `to`, per type — the denominator of "coverage". */
+  publishedByType: Record<ReactionTargetType, number>
+  /** How many reacted items were dropped by the cap. 0 in every normal case. */
+  truncated: number
+  /**
+   * Staff reactions left out of the figures above. Reported, never silently
+   * dropped: staff test their own reaction bars, so "I reacted and the dashboard
+   * shows nothing" is the first thing this feature does to the people who build
+   * it. The number turns that into an explanation instead of a bug hunt. Always
+   * 0 when `includeStaff` is on, because then nothing was excluded.
+   */
+  staffExcluded: number
+}
+
+/**
+ * Metadata is fetched for at most this many reacted items.
+ *
+ * A hard stop rather than a silent one: the route logs whatever it drops and the
+ * response carries `truncated`, because a dashboard that quietly leaves things
+ * out is worse than one that says it did. Reacted items are bounded by the
+ * published catalogue, so reaching this means the catalogue outgrew the design
+ * of this endpoint — at which point ranking belongs on the server.
+ */
+const MAX_REPORT_ITEMS = 500
+
+const dayEnd = (isoDate: string): string => `${isoDate}T23:59:59.999Z`
+
+interface GroupRow {
+  _id: { t: ReactionTargetType; id: string; p?: string; e: ReactionEmojiKey }
+  n: number
+}
+
+export async function reactionsReport(opts: {
+  from: string
+  to: string
+  types: ReactionTargetType[]
+  /** Staff reactions are excluded by default — see `isStaff` on setReaction. */
+  includeStaff?: boolean
+}): Promise<ReactionsReport> {
+  const col = await rawCollection(COLLECTION)
+
+  const match: Record<string, unknown> = {
+    createdAt: { $gte: opts.from, $lte: dayEnd(opts.to) },
+  }
+  if (opts.types.length) match.targetType = { $in: opts.types }
+  if (!opts.includeStaff) match.isStaff = { $ne: true }
+
+  const [facet] = await col
+    .aggregate<{ counts?: GroupRow[]; reactors?: { n: number }[] }>([
+      { $match: match },
+      {
+        $facet: {
+          counts: [
+            { $group: { _id: { t: '$targetType', id: '$targetId', p: '$parentId', e: '$emoji' }, n: { $sum: 1 } } },
+          ],
+          reactors: [{ $group: { _id: '$userId' } }, { $count: 'n' }],
+        },
+      },
+    ])
+    .toArray()
+
+  // Count what the staff filter removed, over the SAME window and types, so the
+  // page can say "your own reactions are here, just not counted" rather than
+  // showing an unexplained zero.
+  const staffExcluded = opts.includeStaff
+    ? 0
+    : await col.countDocuments({ ...match, isStaff: true })
+
+  // Fold the (target, emoji) rows into one counts vector per target.
+  const byTarget = new Map<string, { type: ReactionTargetType; id: string; parentId?: string; counts: number[] }>()
+  for (const row of facet?.counts ?? []) {
+    const t = row._id?.t
+    const id = row._id?.id == null ? '' : String(row._id.id)
+    const e = row._id?.e
+    if (!isTargetType(t) || !id || !isEmojiKey(e)) continue
+    const key = `${t}:${id}`
+    let entry = byTarget.get(key)
+    if (!entry) {
+      entry = { type: t, id, parentId: row._id.p ? String(row._id.p) : undefined, counts: REACTION_EMOJI_KEYS.map(() => 0) }
+      byTarget.set(key, entry)
+    }
+    entry.counts[REACTION_EMOJI_KEYS.indexOf(e)] = row.n
+  }
+
+  const all = [...byTarget.values()]
+  const kept = all.slice(0, MAX_REPORT_ITEMS)
+
+  const [items, publishedByType] = await Promise.all([
+    describeTargets(kept),
+    publishedCounts(opts.to, opts.types),
+  ])
+
+  return {
+    items,
+    reactors: facet?.reactors?.[0]?.n ?? 0,
+    publishedByType,
+    truncated: all.length - kept.length,
+    // `isStaff: true` replaces the `$ne: true` already in `match` — same window,
+    // same types, opposite side of the one filter.
+    staffExcluded,
+  }
+}
+
+/**
+ * Put a title, a date and a category on each reacted target.
+ *
+ * Point lookups by `_id`, run concurrently — `findById` is the only reader that
+ * copes with this codebase's two id shapes (ObjectId and plain string), and it
+ * applies the same soft-delete rule as every other read, so a deleted piece
+ * drops out of the dashboard rather than appearing as an untitled row.
+ *
+ * A target whose record has gone is DROPPED, not shown as "Unknown": its
+ * reactions still exist, but a leaderboard row nobody can click is noise.
+ */
+async function describeTargets(
+  targets: { type: ReactionTargetType; id: string; parentId?: string; counts: number[] }[],
+): Promise<ReportItem[]> {
+  // One read per distinct blog, not per part: a post with eight reacted parts
+  // would otherwise be fetched nine times.
+  const blogCache = new Map<string, Record<string, unknown> | null>()
+  const readBlog = async (id: string) => {
+    if (!blogCache.has(id)) blogCache.set(id, await db.collection('blogs').findById(id))
+    return blogCache.get(id) ?? null
+  }
+
+  const out = await Promise.all(
+    targets.map(async (t): Promise<ReportItem | null> => {
+      const base = { id: t.id, type: t.type, counts: t.counts }
+
+      if (t.type === 'story') {
+        const doc = await db.collection('articles').findById(t.id)
+        if (!doc) return null
+        return {
+          ...base,
+          title: str(doc.title) || 'Untitled story',
+          category: str(doc.category) || undefined,
+          publishedAt: isoOf(doc.publishedAt ?? doc.createdAt),
+        }
+      }
+
+      if (t.type === 'blog') {
+        const doc = await readBlog(t.id)
+        if (!doc) return null
+        return {
+          ...base,
+          title: str(doc.title) || 'Untitled post',
+          category: str(doc.category) || undefined,
+          publishedAt: isoOf(doc.publishedAt ?? doc.createdAt),
+        }
+      }
+
+      if (t.type === 'blogPart') {
+        if (!t.parentId) return null
+        const post = await readBlog(t.parentId)
+        if (!post) return null
+        const parts = Array.isArray(post.parts) ? (post.parts as Record<string, unknown>[]) : []
+        const part = parts.find((p) => p?.id === t.id)
+        // The part was deleted out of the post it was on. Its reactions are real
+        // but there is nothing left to name them after.
+        if (!part) return null
+        return {
+          ...base,
+          title: str(part.title) || 'Untitled part',
+          parentTitle: str(post.title) || 'Untitled post',
+          publishedAt: isoOf(post.publishedAt ?? post.createdAt),
+        }
+      }
+
+      const issue = await db.collection('issues').findById(t.id)
+      if (!issue) return null
+      return {
+        ...base,
+        title: str(issue.title) || 'Untitled edition',
+        publishedAt: isoOf(issue.publishedAt ?? issue.createdAt),
+      }
+    }),
+  )
+
+  return out.filter((i): i is ReportItem => i !== null)
+}
+
+/**
+ * How much was published up to `to` — the "reacted on N of M published" figure.
+ *
+ * Counted, never loaded: an issue document embeds its whole page array, so
+ * pulling issues in to length an array would read megabytes to produce one
+ * number. `blogPart` is the sum of every part on every live post, which is why
+ * it goes through an aggregation rather than a countDocuments.
+ *
+ * Deliberately counts everything published up to `to`, NOT only what was
+ * published inside the window: a June post can still be earning reactions in
+ * August, and excluding it would flatter the coverage figure.
+ */
+async function publishedCounts(
+  to: string,
+  types: ReactionTargetType[],
+): Promise<Record<ReactionTargetType, number>> {
+  const wanted = (t: ReactionTargetType) => types.length === 0 || types.includes(t)
+  const upTo = dayEnd(to)
+  const out: Record<ReactionTargetType, number> = { story: 0, blog: 0, blogPart: 0, bulletin: 0 }
+
+  const [story, blog, bulletin, parts] = await Promise.all([
+    wanted('story')
+      ? db.collection('articles').count({ status: 'published', publishedAt: { $lte: upTo } })
+      : Promise.resolve(0),
+    wanted('blog')
+      ? db.collection('blogs').count({ status: 'published', publishedAt: { $lte: upTo } })
+      : Promise.resolve(0),
+    wanted('bulletin')
+      ? db.collection('issues').count({ unpublishedAt: null, publishedAt: { $lte: upTo } })
+      : Promise.resolve(0),
+    wanted('blogPart')
+      ? db.collection('blogs').aggregate([
+          { $match: { deletedAt: null, status: 'published', publishedAt: { $lte: upTo } } },
+          { $group: { _id: null, n: { $sum: { $size: { $ifNull: ['$parts', []] } } } } },
+        ])
+      : Promise.resolve([]),
+  ])
+
+  out.story = story as number
+  out.blog = blog as number
+  out.bulletin = bulletin as number
+  const partRows = parts as { n?: unknown }[]
+  out.blogPart = typeof partRows[0]?.n === 'number' ? partRows[0].n : 0
+  return out
+}
+
+function str(v: unknown): string {
+  return typeof v === 'string' ? v.trim() : ''
+}
+
+/** An ISO date string, whatever shape the source stored. */
+function isoOf(v: unknown): string {
+  if (typeof v === 'string' && v) return v
+  if (v instanceof Date) return v.toISOString()
+  return new Date(0).toISOString()
+}

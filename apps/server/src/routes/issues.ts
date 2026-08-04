@@ -43,7 +43,11 @@ function project<T extends WithMongoId>(doc: T): Omit<T, '_id'> & { id: string }
   return { id: _id, ...rest } as Omit<T, '_id'> & { id: string };
 }
 
-/** Lightweight list projection — omits the heavy `pages` payload (grid needs only metadata). */
+/**
+ * Lightweight list projection — `pages` never reaches here (see the list route),
+ * so `pageCount` must already be on the document. Kept tolerant of a stray `pages`
+ * for the detail route's benefit.
+ */
 function summarize(doc: WithMongoId) {
   const { _id, pages, ...rest } = doc;
   return {
@@ -58,17 +62,31 @@ function summarize(doc: WithMongoId) {
   };
 }
 
-const byPublishedAtDesc = (a: WithMongoId, b: WithMongoId) =>
-  String(a.publishedAt) < String(b.publishedAt) ? 1 : -1;
-
 const router = Router();
 
 // list — public sees published only; staff may include unpublished (?includeUnpublished=1)
 router.get('/', async (req, res) => {
-  const all = await db.collection('issues').find();
   const includeUnpublished = canAccessNewsroom(req.account) && req.query.includeUnpublished === '1';
-  const visible = all.filter((d) => includeUnpublished || !d.unpublishedAt);
-  visible.sort(byPublishedAtDesc);
+  // An issue document embeds its ENTIRE page array (~41 KB each), and the list only
+  // ever needed metadata — so this route used to read the whole collection into the
+  // API process and then throw the pages away in summarize(). On a public,
+  // unauthenticated route that is megabytes per hit for nothing.
+  //
+  // aggregate() rather than find({ projection: { pages: 0 } }) because `pageCount`
+  // is NOT persisted on the document: projecting `pages` away would take the count
+  // with it and the grid would read "0 pages" for every issue. $size derives it
+  // inside MongoDB, so the count is exact for old and new documents alike and no
+  // backfill is needed. The sort is pushed down too, so the publishedAt index
+  // orders the results instead of the API process.
+  //
+  // NOTE: aggregate() does NOT inject the soft-delete filter that find() does —
+  // the `deletedAt: null` $match below is load-bearing, not decoration.
+  const visible = (await db.collection('issues').aggregate([
+    { $match: { deletedAt: null, ...(includeUnpublished ? {} : { unpublishedAt: null }) } },
+    { $addFields: { pageCount: { $size: { $ifNull: ['$pages', []] } } } },
+    { $project: { pages: 0 } },
+    { $sort: { publishedAt: -1 } },
+  ])) as WithMongoId[];
   res.json(visible.map(summarize));
 });
 

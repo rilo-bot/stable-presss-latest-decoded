@@ -42,7 +42,7 @@ type Doc = { _id: string; [k: string]: any };
 /** Digitize a freshly-uploaded PDF into pages + editable elements. */
 export async function processIssue(payload: { issueId: string }): Promise<void> {
   const { issueId } = payload;
-  const issue = (await db.collection(COL.issues).findById(issueId)) as Doc | null;
+  const issue = (await db.collection(COL.magazines).findById(issueId)) as Doc | null;
   if (!issue) return; // deleted before the job ran — nothing to do
   const now = () => new Date().toISOString();
   // MuPDF Document lives in the WASM heap (not GC'd) — free it in finally so the
@@ -69,7 +69,7 @@ export async function processIssue(payload: { issueId: string }): Promise<void> 
     if (totalPages <= 0) throw new Error('This file has no pages to process.');
 
     const capped = Math.min(totalPages, MAX_PAGES_PER_ISSUE);
-    await db.collection(COL.issues).updateOne(issueId, {
+    await db.collection(COL.magazines).updateOne(issueId, {
       pagesTotal: capped,
       pagesProcessed: 0,
       stage: 'Digitizing pages',
@@ -109,12 +109,12 @@ export async function processIssue(payload: { issueId: string }): Promise<void> 
       const result = await processSinglePage(doc!, index, { issueId, pageId: pageIds[index]! });
       if (index === 0 && result?.backgroundUrl) coverImage = result.backgroundUrl;
       done += 1;
-      await db.collection(COL.issues).updateOne(issueId, { pagesProcessed: done });
+      await db.collection(COL.magazines).updateOne(issueId, { pagesProcessed: done });
     });
 
     const failedCount = ((await db.collection(COL.pages).find({ magazineId: issueId, status: 'failed' })) as Doc[]).length;
     if (failedCount >= capped) {
-      await db.collection(COL.issues).updateOne(issueId, {
+      await db.collection(COL.magazines).updateOne(issueId, {
         status: 'failed',
         processingError: 'Every page failed to process — the file may be corrupted or unreadable.',
         stage: '',
@@ -126,7 +126,7 @@ export async function processIssue(payload: { issueId: string }): Promise<void> 
       let processingError = '';
       if (failedCount > 0) processingError = `${failedCount} of ${capped} page(s) failed to process — retry them individually.`;
       else if (capped < totalPages) processingError = `Only the first ${capped} of ${totalPages} pages were processed (per-issue page cap).`;
-      await db.collection(COL.issues).updateOne(issueId, {
+      await db.collection(COL.magazines).updateOne(issueId, {
         status: 'ready',
         ...(coverImage ? { coverImage } : {}),
         processingError,
@@ -215,7 +215,7 @@ async function processImageIssue(issue: Doc, src: { key?: string; mimeType?: str
     updatedAt: now(),
   });
 
-  await db.collection(COL.issues).updateOne(issueId, {
+  await db.collection(COL.magazines).updateOne(issueId, {
     status: 'ready',
     pagesTotal: 1,
     pagesProcessed: 1,
@@ -232,7 +232,7 @@ async function processImageIssue(issue: Doc, src: { key?: string; mimeType?: str
  *  the source (the worker may have restarted since the original job). */
 export async function processPageJob(payload: { issueId: string; pageId: string; index: number }): Promise<void> {
   const { issueId, pageId, index } = payload;
-  const issue = (await db.collection(COL.issues).findById(issueId)) as Doc | null;
+  const issue = (await db.collection(COL.magazines).findById(issueId)) as Doc | null;
   const src = issue?.sourceFile as { key?: string; mimeType?: string } | undefined;
   if (!issue || !src?.key) return;
   const now = () => new Date().toISOString();
@@ -266,7 +266,7 @@ export async function processPageJob(payload: { issueId: string; pageId: string;
   const all = (await db.collection(COL.pages).find({ magazineId: issueId })) as Doc[];
   const failed = all.filter((p) => p.status === 'failed').length;
   if (issue.status === 'processing' || issue.status === 'failed') {
-    await db.collection(COL.issues).updateOne(issueId, {
+    await db.collection(COL.magazines).updateOne(issueId, {
       status: failed >= all.length && all.length > 0 ? 'failed' : 'ready',
       processingError: failed > 0 ? `${failed} of ${all.length} page(s) failed to process.` : '',
       stage: '',

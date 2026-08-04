@@ -75,22 +75,11 @@ export function Section({ title, children }: { title: string; children: ReactNod
   );
 }
 
-/** The line that says "these numbers are invented". Never hide it. */
-export function SampleDataBadge({ children = 'Sample data' }: { children?: ReactNode }) {
-  return (
-    <span
-      className="inline-flex flex-shrink-0 items-center gap-1.5 rounded-sm border px-2.5 py-1.5 text-[11px] font-semibold uppercase tracking-[0.08em]"
-      style={{
-        borderColor: 'hsl(var(--brand-accent) / 0.45)',
-        background: 'hsl(var(--brand-accent) / 0.12)',
-        color: 'hsl(var(--brand-accent-ink))',
-      }}
-    >
-      <span aria-hidden="true" className="h-1.5 w-1.5 rounded-full" style={{ background: 'hsl(var(--brand-accent))' }} />
-      {children}
-    </span>
-  );
-}
+// `SampleDataBadge` lived here — the chip that said "these numbers are
+// invented". It was deleted with the sample generator when the endpoint landed.
+// If a screen ever needs it back, write it again then: a badge that outlives the
+// data it was warning about is worse than no badge, because staff learn to read
+// past it and it is still on screen the day the numbers are real.
 
 /** Empty state, used wherever a filter can empty a panel. */
 export function Empty({ children }: { children: ReactNode }) {

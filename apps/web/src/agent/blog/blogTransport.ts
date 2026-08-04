@@ -11,6 +11,7 @@ import { DefaultChatTransport } from 'ai';
 import { apiUrl } from '@/lib/api';
 import { useAuthStore } from '@/stores/authStore';
 import { useBlogStudioUi } from '@/stores/blogStudioUiStore';
+import { buildBlogEditorContext } from './blogEditorContext';
 
 export function createBlogTransport() {
   return new DefaultChatTransport({
@@ -35,6 +36,11 @@ export function createBlogTransport() {
             ...(ui.postId ? { postId: ui.postId } : {}),
             ...(ui.postTitle ? { postTitle: ui.postTitle } : {}),
             ...(ui.postStatus ? { postStatus: ui.postStatus } : {}),
+            // What is on the author's screen: every input's state, the parts
+            // outline, the photo pool, and WHAT THEY HAVE POINTED AT. Also read at
+            // send time — a selection from the previous turn would make "this"
+            // resolve to the wrong paragraph.
+            editor: buildBlogEditorContext(),
           };
           body = JSON.stringify(parsed);
         } catch {

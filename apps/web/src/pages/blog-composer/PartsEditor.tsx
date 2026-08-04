@@ -33,7 +33,7 @@ import { partHasContent, type BlogPart } from '@/types/blog';
 import { useComposerStore } from './composerStore';
 import { BlockCanvas } from './BlockCanvas';
 import { BodyToolbar } from './BodyToolbar';
-import { inputCls } from './controls';
+import { FieldAi, inputCls } from './controls';
 import type { RefOptions } from './ToolsRail';
 
 /** Mirrors MAX_PARTS in the server's lib/blog/blocks.ts. */
@@ -52,7 +52,7 @@ function PartCard({
   refs: RefOptions;
   autoFocusTitle: boolean;
 }) {
-  const { updatePart, movePart, removePart, select } = useComposerStore();
+  const { updatePart, movePart, removePart, select, selectField, selectedFieldId } = useComposerStore();
   /** Per-card counter for the toolbar's Image button — see BlockCanvas. */
   const [imageRequest, setImageRequest] = useState(0);
 
@@ -115,19 +115,31 @@ function PartCard({
 
       <div className="space-y-4 p-3">
         <div>
-          <label
-            htmlFor={`part-title-${part.id}`}
-            className="mb-1.5 block text-[10px] font-bold uppercase tracking-[0.12em] text-muted-foreground"
-          >
-            Part title
-          </label>
+          <div className="mb-1.5 flex items-center justify-between gap-2">
+            <label
+              htmlFor={`part-title-${part.id}`}
+              className="block text-[10px] font-bold uppercase tracking-[0.12em] text-muted-foreground"
+            >
+              Part title
+            </label>
+            {/* Composed from THIS part's writing, not the post's opening — see
+                blogComposeContext. */}
+            <FieldAi field={`part:${part.id}.title`} />
+          </div>
           <input
             id={`part-title-${part.id}`}
             value={part.title}
             autoFocus={autoFocusTitle}
             placeholder="A heading for this section"
+            // On the input, not the wrapper — see the note in controls.tsx.
+            onFocus={() => selectField(`part:${part.id}.title`)}
             onChange={(e) => updatePart(part.id, { title: e.target.value })}
-            className={cn(inputCls, 'font-[family-name:var(--font-display)] font-semibold')}
+            className={cn(
+              inputCls,
+              'font-[family-name:var(--font-display)] font-semibold',
+              selectedFieldId === `part:${part.id}.title` &&
+                'ring-2 ring-purple-500/70 ring-offset-2 ring-offset-background',
+            )}
           />
         </div>
 

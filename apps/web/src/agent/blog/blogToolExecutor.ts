@@ -37,6 +37,20 @@ import {
   spliceBodyItems,
   type BodyItem,
 } from '@/blog/bodyItems';
+import { useComposerStore } from '@/pages/blog-composer/composerStore';
+import {
+  applyAddPart,
+  applyInsert,
+  applyMovePart,
+  applyRemovePart,
+  applyReplaceSelection,
+  applySetField,
+  applyUpdatePart,
+  editorBlog,
+  editorOpenFor,
+  type BridgeResult,
+  type InsertWhere,
+} from './blogEditorBridge';
 import type { Blog, BlogMedia, BlogSeo } from '@/types/blog';
 import type { SubscriptionTier } from '@/rbac/entitlement';
 
@@ -49,6 +63,15 @@ const CLIENT_TOOLS = new Set([
   'setBlogPublished',
   'deleteBlogPost',
   'setBlogCover',
+  // Editor commands — these edit the composer's live document rather than saving
+  // a whole post. See blogEditorBridge.ts for why that is the right seam.
+  'setBlogField',
+  'insertBlogContent',
+  'replaceBlogSelection',
+  'addBlogPart',
+  'updateBlogPart',
+  'moveBlogPart',
+  'removeBlogPart',
 ]);
 // `searchStockPhotos` is deliberately NOT here: it runs on the server, because the
 // stock provider's key must not reach the browser.
@@ -326,8 +349,59 @@ async function saveFull(post: Blog, patch: BlogSaveInput): Promise<{ ok: boolean
   return { ok: true };
 }
 
+/**
+ * `updateBlogPost` and `replaceBlogBody` predate the editor bridge, and a
+ * whole-post save while the composer holds newer local state is exactly the
+ * collision that produces a false "someone else saved this post" 409. So when the
+ * editor is open on this post, both of them go through the composer instead —
+ * `id` is what decides, and nothing else changes for the model.
+ *
+ * The alternative was forbidding them in the prompt, which would leave the
+ * failure one disobeyed instruction away.
+ */
+async function updatePostInEditor(id: string, arg: Record<string, unknown>): Promise<unknown> {
+  const pairs: Array<[string, string]> = [];
+  if (arg.title !== undefined) {
+    const title = str(arg.title, 300);
+    if (!title) return { ok: false, error: 'A blank title was refused — a post needs one to publish.' };
+    pairs.push(['title', title]);
+  }
+  if (arg.subtitle !== undefined) pairs.push(['subtitle', str(arg.subtitle, 300)]);
+  if (arg.excerpt !== undefined) pairs.push(['excerpt', str(arg.excerpt, 500)]);
+  if (arg.category !== undefined) pairs.push(['category', str(arg.category, 80)]);
+  if (arg.tags !== undefined) pairs.push(['tags', strArray(arg.tags).join(', ')]);
+  if (arg.minTier !== undefined) pairs.push(['tier', str(arg.minTier, 20)]);
+  if (arg.metaTitle !== undefined) pairs.push(['seo.metaTitle', str(arg.metaTitle, 200)]);
+  if (arg.metaDescription !== undefined) pairs.push(['seo.metaDescription', str(arg.metaDescription, 400)]);
+
+  if (pairs.length === 0) return { ok: false, error: 'Nothing to change — pass the fields you are updating.' };
+
+  const changed: string[] = [];
+  for (const [field, value] of pairs) {
+    const result = applySetField(id, field, value);
+    // Stop at the first refusal rather than applying half the patch and reporting
+    // failure: a partially-applied change the model thinks failed is worse than a
+    // clean stop it can explain.
+    if (!result.ok) {
+      return {
+        ok: false,
+        error: result.error,
+        ...(changed.length ? { alsoApplied: changed, note: 'Those changes DID apply before the failure — say so.' } : {}),
+      };
+    }
+    changed.push(result.changed);
+  }
+  toast.success(`Updated the ${changed.join(', ')}`, {
+    action: { label: 'Undo', onClick: () => useComposerStore.getState().undo() },
+  });
+  return { ok: true, changed };
+}
+
 async function updatePost(arg: Record<string, unknown>): Promise<unknown> {
-  const post = await load(str(arg.id, 64));
+  const id = str(arg.id, 64);
+  if (editorOpenFor(id)) return updatePostInEditor(id, arg);
+
+  const post = await load(id);
   if (!post) return { ok: false, error: 'That post could not be opened.' };
 
   // Only fields the model actually sent. `undefined` means "leave it alone", which
@@ -356,7 +430,10 @@ async function updatePost(arg: Record<string, unknown>): Promise<unknown> {
 }
 
 async function replaceBody(arg: Record<string, unknown>): Promise<unknown> {
-  const post = await load(str(arg.id, 64));
+  const id = str(arg.id, 64);
+  // Live document when the editor is open — see updatePostInEditor above.
+  const open = editorOpenFor(id) ? editorBlog() : null;
+  const post = open ?? (await load(id));
   if (!post) return { ok: false, error: 'That post could not be opened.' };
 
   const { items, dropped } = await resolveRefs(toBodyItems(arg.body));
@@ -380,8 +457,15 @@ async function replaceBody(arg: Record<string, unknown>): Promise<unknown> {
   // re-anchored as though they were photographs.
   const { blocks, movedVisuals } = spliceBodyItems(post.blocks, items);
 
-  const result = await saveFull(post, { blocks, ...linksFrom(items) });
-  if (!result.ok) return result;
+  if (open) {
+    const { setBodyBlocks, patchPost, undo } = useComposerStore.getState();
+    setBodyBlocks(blocks);
+    patchPost(linksFrom(items));
+    toast.success('Rewrote the body', { action: { label: 'Undo', onClick: () => undo() } });
+  } else {
+    const result = await saveFull(post, { blocks, ...linksFrom(items) });
+    if (!result.ok) return result;
+  }
   return {
     ok: true,
     items: items.length,
@@ -559,6 +643,20 @@ async function setCover(arg: Record<string, unknown>): Promise<unknown> {
     return { ok: false, cancelled: true, error: 'The user would rather choose their own photo — tell them to use the image button below the chat.' };
   }
 
+  // With the editor open, take the new asset into the LIVE pool and set the cover
+  // there. Re-reading and saving the whole post instead would throw away whatever
+  // the author had typed since their last autosave — the endpoint that stored the
+  // photo has already written to the document, so the composer's baseline needs
+  // clearing either way (see adoptExternalMedia).
+  if (editorOpenFor(postId)) {
+    const { adoptExternalMedia, undo } = useComposerStore.getState();
+    adoptExternalMedia(asset);
+    const applied = applySetField(postId, 'cover', asset.id);
+    if (!applied.ok) return { ok: false, error: applied.error };
+    toast.success('Cover photo set', { action: { label: 'Undo', onClick: () => undo() } });
+    return { ok: true, alt: asset.alt };
+  }
+
   // Re-read: the media endpoint bumped updatedAt, so saving against the version we
   // loaded before it would 409 against a baseline we ourselves invalidated.
   const fresh = await load(postId);
@@ -566,6 +664,157 @@ async function setCover(arg: Record<string, unknown>): Promise<unknown> {
 
   const result = await saveFull(fresh, { cover: { mediaId: asset.id, treatment: 'side' } });
   return result.ok ? { ok: true, alt: asset.alt } : result;
+}
+
+// ── Editor commands ──────────────────────────────────────────────────────────
+//
+// These do NOT go through `saveFull`. They edit the composer's live document, so
+// the change lands instantly, Ctrl+Z takes it back, and unsaved typing survives —
+// see blogEditorBridge.ts for the full reasoning. Autosave still carries it
+// through PUT /api/blogs/:id, so nothing about the RBAC gate or the block
+// validator changes.
+//
+// One shared shape, because every one of them can fail for the same two reasons
+// (the post isn't open; the ids are stale) and the model needs to hear that
+// plainly rather than as a generic failure.
+
+/** Report a bridge result, toasting success with a way to take it back. */
+function reportEdit(result: BridgeResult, verb: string): unknown {
+  if (!result.ok) return { ok: false, error: result.error };
+  // The Undo is not decoration: an AI edit the author did not want is the thing
+  // most likely to go wrong here, and it must be one click away, not a request
+  // typed back into the chat.
+  toast.success(`${verb} ${result.changed}`, {
+    action: { label: 'Undo', onClick: () => useComposerStore.getState().undo() },
+  });
+  return { ok: true, changed: result.changed };
+}
+
+/** Body items, validated and with dead reference cards removed. */
+async function editorItems(v: unknown): Promise<{ items: BodyItem[]; dropped: string[] }> {
+  return resolveRefs(toBodyItems(v));
+}
+
+function droppedNote(dropped: string[]): Record<string, unknown> {
+  return dropped.length > 0
+    ? {
+        droppedRefs: dropped,
+        note: `${dropped.length} record card(s) were dropped because those ids do not exist. Tell the user which, and search again for the right record rather than guessing.`,
+      }
+    : {};
+}
+
+async function setField(arg: Record<string, unknown>): Promise<unknown> {
+  const id = str(arg.id, 64);
+  const field = str(arg.field, 120);
+  if (!id || !field) return { ok: false, error: 'A post id and a field id are required.' };
+  // `value` is NOT trimmed to empty-as-missing here: an empty string is how an
+  // optional field gets cleared, and str() already bounds the length.
+  const value = typeof arg.value === 'string' ? arg.value.slice(0, 5000) : '';
+  return reportEdit(applySetField(id, field, value), 'Updated the');
+}
+
+async function insertContent(arg: Record<string, unknown>): Promise<unknown> {
+  const id = str(arg.id, 64);
+  if (!id) return { ok: false, error: 'A post id is required.' };
+
+  const { items, dropped } = await editorItems(arg.body);
+  if (items.length === 0) {
+    return { ok: false, error: 'There was nothing to insert after validation. Send the text as body items in plain text.' };
+  }
+
+  const at = str(arg.where, 20);
+  const where: InsertWhere =
+    at === 'end' ? { at: 'end' }
+    : at === 'start' ? { at: 'start' }
+    : at === 'part' ? { at: 'part', partId: str(arg.partId, 64) }
+    : { at: 'selection' };
+
+  if (where.at === 'part' && !where.partId) {
+    return { ok: false, error: 'A partId is required when inserting into a part.' };
+  }
+
+  const result = applyInsert(id, items, where);
+  return { ...(reportEdit(result, 'Added') as Record<string, unknown>), ...droppedNote(dropped) };
+}
+
+async function replaceSelection(arg: Record<string, unknown>): Promise<unknown> {
+  const id = str(arg.id, 64);
+  if (!id) return { ok: false, error: 'A post id is required.' };
+
+  const { items, dropped } = await editorItems(arg.body);
+  const result = applyReplaceSelection(id, items);
+  return { ...(reportEdit(result, 'Rewrote') as Record<string, unknown>), ...droppedNote(dropped) };
+}
+
+async function addPart(arg: Record<string, unknown>): Promise<unknown> {
+  const id = str(arg.id, 64);
+  if (!id) return { ok: false, error: 'A post id is required.' };
+
+  const { items, dropped } = arg.body === undefined ? { items: [], dropped: [] } : await editorItems(arg.body);
+  const result = applyAddPart(id, { title: str(arg.title, 200), items });
+  return { ...(reportEdit(result, 'Added') as Record<string, unknown>), ...droppedNote(dropped) };
+}
+
+async function updatePart(arg: Record<string, unknown>): Promise<unknown> {
+  const id = str(arg.id, 64);
+  const partId = str(arg.partId, 64);
+  if (!id || !partId) return { ok: false, error: 'A post id and a part id are required.' };
+
+  let items: BodyItem[] | undefined;
+  let dropped: string[] = [];
+  if (arg.body !== undefined) {
+    const resolved = await editorItems(arg.body);
+    items = resolved.items;
+    dropped = resolved.dropped;
+    if (items.length === 0) {
+      return { ok: false, error: 'The new part body was empty after validation — nothing was changed.' };
+    }
+  }
+
+  const result = applyUpdatePart(id, {
+    partId,
+    ...(typeof arg.title === 'string' ? { title: str(arg.title, 200) } : {}),
+    ...(items ? { items } : {}),
+  });
+  return { ...(reportEdit(result, 'Updated') as Record<string, unknown>), ...droppedNote(dropped) };
+}
+
+async function movePart(arg: Record<string, unknown>): Promise<unknown> {
+  const id = str(arg.id, 64);
+  const partId = str(arg.partId, 64);
+  if (!id || !partId) return { ok: false, error: 'A post id and a part id are required.' };
+  const direction = arg.direction === 'up' ? 'up' : 'down';
+  return reportEdit(applyMovePart(id, partId, direction), 'Moved');
+}
+
+async function removePart(arg: Record<string, unknown>): Promise<unknown> {
+  const id = str(arg.id, 64);
+  const partId = str(arg.partId, 64);
+  if (!id || !partId) return { ok: false, error: 'A post id and a part id are required.' };
+
+  const blog = editorBlog();
+  if (!blog || blog.id !== id) {
+    return { ok: false, error: 'That post is not open in the editor, so its parts cannot be changed here.' };
+  }
+  const part = (blog.parts ?? []).find((p) => p.id === partId);
+  if (!part) return { ok: false, error: `There is no part with id "${partId}" on this post.` };
+
+  // Deleting writing takes a human click, exactly like deleting a post. Reader
+  // reactions are recorded against the part id, so this is not only text going.
+  const outcome = await useBlogStudioUi.getState().requestConfirm({
+    kind: 'delete',
+    title: part.title || 'Untitled part',
+    detail:
+      blog.status === 'published'
+        ? 'This post is LIVE. Removing this part takes it off the page, along with any reactions readers left on it.'
+        : 'The part and its writing will be removed from this draft.',
+  });
+  if (outcome !== 'confirm') {
+    return { ok: false, cancelled: true, error: 'The user declined. The part was not removed.' };
+  }
+
+  return reportEdit(applyRemovePart(id, partId), 'Removed');
 }
 
 // ── Dispatch ─────────────────────────────────────────────────────────────────
@@ -590,6 +839,20 @@ export async function executeBlogTool(name: string, input: unknown): Promise<unk
       return deletePost(arg);
     case 'setBlogCover':
       return setCover(arg);
+    case 'setBlogField':
+      return setField(arg);
+    case 'insertBlogContent':
+      return insertContent(arg);
+    case 'replaceBlogSelection':
+      return replaceSelection(arg);
+    case 'addBlogPart':
+      return addPart(arg);
+    case 'updateBlogPart':
+      return updatePart(arg);
+    case 'moveBlogPart':
+      return movePart(arg);
+    case 'removeBlogPart':
+      return removePart(arg);
     default:
       return { ok: false, error: `Unknown tool: ${name}` };
   }

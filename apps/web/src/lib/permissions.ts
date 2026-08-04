@@ -81,6 +81,13 @@ export type PermissionAction =
   | 'settings.manage'               // Show/hide public sections (Website Customisation)
   | 'analytics.view'                // View analytics dashboard
 
+  // Reader comments. ONE permission, not a create/edit/delete axis: leaving a
+  // comment needs no permission at all, and an author editing or deleting their
+  // own is ownership rather than a grant. The only grantable power is acting on
+  // OTHER people's comments. Mirrors PERMISSION_CATALOGUE on the server; see
+  // docs/COMMENTS-PLAN.md §6.
+  | 'comments.moderate'             // Hide, restore or remove anyone's comment
+
   // ── Podcast workflow permissions ──────────────────────────────────────────
   | 'podcast.manage'                // Broad podcast management (admin shorthand)
   | 'podcast.episode.create'        // Create a new episode draft

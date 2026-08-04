@@ -71,6 +71,12 @@ export type PermissionAction =
   // See the RESERVED block below for why it was gone.
   | 'settings.manage'
   | 'analytics.view'
+  // Reader comments. ONE permission, not a create/edit/delete axis: leaving a
+  // comment needs no permission at all (any signed-in reader may), and an author
+  // editing or deleting their own is ownership rather than a grant. The only
+  // grantable power is acting on OTHER people's comments — hide, restore, remove
+  // — which is a single editorial job. See docs/COMMENTS-PLAN.md §6.
+  | 'comments.moderate'
   // Podcast
   | 'podcast.manage'
   | 'podcast.episode.create'
@@ -212,6 +218,10 @@ export const PERMISSION_CATALOGUE: PermissionMeta[] = [
   // screen and shows the switches; this is what lets you move one.
   { id: 'settings.manage', label: 'Change website settings', resource: 'Team & Settings', short: 'Change settings', description: 'Show or hide public sections of the website (News, Blog, Horses, Directory, Podcast, Bulletins).' },
   { id: 'analytics.view', label: 'View analytics', resource: 'Team & Settings', short: 'Analytics', description: 'Open the analytics dashboard.' },
+  // Its own resource row rather than one more checkbox under Team & Settings:
+  // working a comment queue is a shift somebody takes, and it is the one power
+  // here that acts on words a reader wrote in public.
+  { id: 'comments.moderate', label: 'Moderate reader comments', resource: 'Comments', short: 'Moderate', description: "Hide, restore or remove other people's comments on stories, blog posts and editions." },
 ]
 
 // ── RESERVED ids — removed from the catalogue, not forgotten ────────────────
@@ -318,6 +328,13 @@ export const MODULE_CATALOGUE: ModuleMeta[] = [
   // row of its own. Role rows written before this module existed need
   // scripts/grant-emoji-analytics-module.ts (seedRoles is insert-only).
   { id: 'emoji-analytics', label: 'Emoji Analytics', section: 'Management', requiresPermission: 'analytics.view' },
+  // The comment queue. In `Content` rather than `Management` because it is a desk
+  // somebody works through, next to the stories and posts the comments are on —
+  // not a report an editor reads once a week. Role rows written before this
+  // module existed need scripts/grant-comments-module.ts (seedRoles is
+  // insert-only), and the API must be RESTARTED after this line ships or
+  // roleRegistry strips the id out of every role on every request.
+  { id: 'comment-moderation', label: 'Comments', section: 'Content', requiresPermission: 'comments.moderate' },
   { id: 'settings', label: 'Settings', section: 'Management', requiresPermission: 'settings.view' },
 
   // Editor Hub tabs — gated the same way, one level down.
@@ -454,6 +471,10 @@ export const BUILTIN_ROLE_PERMISSIONS: Record<SeedRoleSlug, PermissionAction[]> 
     'media.manage_all',
     'team.view',
     'analytics.view',
+    // The comment desk belongs to the editor. A contributor writes; deciding what
+    // stays up under someone else's byline is an editorial call, so it does NOT
+    // go in the contributor list.
+    'comments.moderate',
     'settings.view',
     'podcast.episode.edit_any',
     'podcast.episode.approve',

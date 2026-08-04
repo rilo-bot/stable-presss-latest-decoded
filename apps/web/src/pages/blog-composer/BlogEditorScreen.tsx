@@ -47,7 +47,7 @@ import { PartsEditor } from './PartsEditor';
 import { InlineText } from './InlineText';
 import { ToolsRail } from './ToolsRail';
 import { ImagePicker } from './ImagePicker';
-import { inputCls } from './controls';
+import { FieldAi, inputCls } from './controls';
 
 function SaveChip() {
   const { saveState, saveError } = useComposerStore();
@@ -140,7 +140,7 @@ export default function BlogEditorScreen() {
   const setPublished = useBlogStore((s) => s.setPublished);
   const {
     blog, load, close, saveState, saveNow, undo, redo, undoStack, redoStack, patchPost, select,
-    adoptServerVersion,
+    adoptServerVersion, selectField, selectedFieldId,
   } = useComposerStore();
 
   const canPublish = useCan('blog.publish');
@@ -372,12 +372,15 @@ export default function BlogEditorScreen() {
       <div className="grid gap-6 lg:grid-cols-[minmax(0,1fr)_20rem]">
         <div className="min-w-0">
           <div className="mb-4">
-            <label
-              htmlFor="blog-title"
-              className="mb-1.5 block text-[10px] font-bold uppercase tracking-[0.12em] text-muted-foreground"
-            >
-              Title
-            </label>
+            <div className="mb-1.5 flex items-center justify-between gap-2">
+              <label
+                htmlFor="blog-title"
+                className="block text-[10px] font-bold uppercase tracking-[0.12em] text-muted-foreground"
+              >
+                Title
+              </label>
+              <FieldAi field="title" />
+            </div>
             {/* A plain input, not a contentEditable heading: a headline is one
                 line of text with no formatting, and an input gets Tab order,
                 spellcheck and undo for free. */}
@@ -385,10 +388,15 @@ export default function BlogEditorScreen() {
               id="blog-title"
               value={blog.title}
               placeholder="A headline for your post"
+              // On the input, not a wrapper — see the note in controls.tsx: with it
+              // on the wrapper, focusing the ✨ shifted the layout and cancelled
+              // its own click.
+              onFocus={() => selectField('title')}
               onChange={(e) => patchPost({ title: e.target.value })}
               className={cn(
                 inputCls,
                 'font-[family-name:var(--font-display)] text-lg font-bold',
+                selectedFieldId === 'title' && 'ring-2 ring-purple-500/70 ring-offset-2 ring-offset-background',
               )}
             />
           </div>
@@ -428,14 +436,30 @@ export default function BlogEditorScreen() {
                   <div className={spanClass('text')}>
                     <CoverSlot onPick={() => setCoverPickerOpen(true)} />
 
-                    <InlineText
-                      plain
-                      value={blog.subtitle ?? ''}
-                      onChange={(subtitle) => patchPost({ subtitle })}
-                      placeholder="Add a standfirst (optional)"
-                      ariaLabel="Post standfirst"
-                      className="mb-6 text-lg leading-relaxed text-muted-foreground"
-                    />
+                    {/* The standfirst keeps its editorial type scale rather than
+                        becoming a labelled form field, so its ✨ sits beside it
+                        instead of over a label row it doesn't have. */}
+                    <div className="group/sf relative mb-6">
+                      {/* The focus handler wraps ONLY the text, so the ✨ beside it
+                          cannot shift the layout by selecting on its own focus. */}
+                      <div onFocusCapture={() => selectField('subtitle')}>
+                        <InlineText
+                          plain
+                          value={blog.subtitle ?? ''}
+                          onChange={(subtitle) => patchPost({ subtitle })}
+                          placeholder="Add a standfirst (optional)"
+                          ariaLabel="Post standfirst"
+                          className={cn(
+                            'text-lg leading-relaxed text-muted-foreground',
+                            selectedFieldId === 'subtitle' &&
+                              'rounded-sm ring-2 ring-purple-500/70 ring-offset-2 ring-offset-background',
+                          )}
+                        />
+                      </div>
+                      <div className="absolute -top-1 right-0 opacity-0 transition-opacity focus-within:opacity-100 group-hover/sf:opacity-100">
+                        <FieldAi field="subtitle" />
+                      </div>
+                    </div>
                   </div>
                 </div>
 
