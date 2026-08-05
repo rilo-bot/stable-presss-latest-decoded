@@ -265,3 +265,62 @@ the registry and the assistant can set them (it already writes them when filing 
 draft), but there is no field for them in the rail — so they have no ✨ and cannot be
 typed by hand. Either add the two inputs or accept that they are AI-and-create-time
 only; right now the editor is silent about them, which is the part worth fixing.
+
+---
+
+## 11. Dangling tool calls — production incident, 2026-08-05
+
+Seen on the deployed API:
+
+```
+MissingToolResultsError: Tool result is missing for tool call z106jg4h
+    at convertToLanguageModelPrompt … at streamStep
+[agent-blog] stream error: …
+[api] POST /chat → 200 (325ms)
+```
+
+**This is not a transient error. It kills the conversation.** Every studio here uses
+client-executed tools: the model asks, the browser runs it, the browser sends the
+result back. If a result never arrives, the history keeps an assistant tool call with
+nothing attached — and that broken history is re-sent with *every* subsequent
+message, so each one throws. The user types, gets "I hit a snag", types again, gets it
+again. Only "New chat" escapes, at the cost of the thread.
+
+Note where it throws: **not** in `convertToModelMessages`, which happily emits a
+`tool-call` with no tool result after it, but deeper, in streamText's own
+`convertToLanguageModelPrompt`. Any test that only exercises the former proves
+nothing.
+
+### Three fixes, in order of importance
+
+**1. The server repairs the history — `lib/agent/repairMessages.ts`.** Any tool part
+without a result is marked `output-error` with a plain explanation before the SDK sees
+it. Applied in **all five** routes with client-executed tools (`agent`, `agentArticle`,
+`agentBlog`, `agentProfile`, `agentStory`) — the bug was latent in every one. It is
+deliberately **not** a fake success: synthesising `{ ok: true }` would tell the model a
+post had been deleted when nothing ran. The model gets an error it can talk about, and
+the conversation continues. A repair is logged with the tool name, so a recurring
+cause is visible.
+
+This is the fix that matters, because no client can promise to come back — a closed
+laptop cannot send a tool result.
+
+**2. The client always answers — `useBlogChatSession.ts`.** `onToolCall` used to
+`return` early for any name missing from a hardcoded allowlist, which made "add a tool
+server-side, forget the list" a silent chat-killer. It now always adds a result;
+`executeBlogTool` already reports an unknown name as an ordinary failure.
+
+**3. A parked confirmation blocks sending — `BlogStudioPanel.tsx`.** The likeliest
+trigger: a confirm card is a tool call awaiting a click, and nothing stopped the user
+from typing instead. Sending now refuses with *"Answer the card above first"* rather
+than poisoning the history. Their typing is kept and the card stays open.
+
+### Verified
+
+`verify-repair.mts` drives **streamText itself** against a mock model (no tokens): the
+production error reproduces with the same call id, the same history streams cleanly
+after repair, a further turn on the poisoned history also fails and is also fixed, the
+repaired part is `output-error` with no invented output, and a healthy conversation is
+returned as the same array. In the browser: with a confirm parked, **no request goes
+out**, the user is told why, the card stays open, their text is kept, and sending works
+again the moment they answer.

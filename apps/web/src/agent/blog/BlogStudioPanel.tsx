@@ -200,6 +200,15 @@ export function BlogStudioPanel() {
   const send = (text: string) => {
     const t = text.trim();
     if ((!t && !attach.hasAttachments) || busy || attach.busy) return;
+    // A parked confirmation is a tool call still waiting on a click. Sending now
+    // would put a tool call with no result into the history, and from then on EVERY
+    // message in this conversation fails server-side (MissingToolResultsError) —
+    // the chat is dead until "New chat". So the card has to be answered first, and
+    // it is right there with both buttons on it.
+    if (useBlogStudioUi.getState().pendingConfirm) {
+      toast.info('Answer the card above first — yes or no.');
+      return;
+    }
     void sendMessage(
       attach.hasAttachments ? { text: t, files: attachmentsToFileParts(attach.attachments) } : { text: t },
     );
