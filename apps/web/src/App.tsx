@@ -8,7 +8,7 @@ import { Toaster } from 'sonner';
 import { NavBar } from '@/components/NavBar';
 import { AgentWidget } from '@/components/AgentWidget';
 import { PublicSection } from '@/components/PublicSection';
-import { RequireAuth, RequireStaff, RequirePermission } from '@/rbac/guards';
+import { RequireAuth, RequireAdmin, RequirePermission } from '@/rbac/guards';
 import { useAuthStore } from '@/stores/authStore';
 import { useSiteSettingsStore } from '@/stores/siteSettingsStore';
 import { useHorseStore } from '@/stores/horseStore';
@@ -34,7 +34,6 @@ import Bulletins from '@/pages/Bulletins';
 import BulletinViewer from '@/pages/BulletinViewer';
 import Parties from '@/pages/Parties';
 import PartyDetail from '@/pages/PartyDetail';
-import ClaimsQueue from '@/pages/ClaimsQueue';
 import OrgDashboard from '@/pages/OrgDashboard';
 import Dashboard from '@/pages/Dashboard';
 import Studio from '@/pages/Studio';
@@ -312,7 +311,7 @@ export default function App() {
         <Route path="/invite/:token" element={<InviteAccept />} />
 
         {/* Staff-only routes — readers/parties are redirected home */}
-        <Route element={<RequireStaff />}>
+        <Route element={<RequireAdmin />}>
           {/* ── Production system ──
               Every screen is a real route under /production-system, sharing one
               layout (sidebar + shared dialogs). Deliberately NOT wrapped in
@@ -425,19 +424,9 @@ export default function App() {
           />
         </Route>
 
-        {/* Permission-gated admin routes. Was `RequireRole roles={['administrator']}`
-            — a hardcoded slug that a superadmin-defined role could never satisfy.
-            /staff is gone: it duplicated Newsroom → Team Members. */}
-        <Route element={<RequirePermission permission="platform.admin" />}>
-          <Route
-            path="/claims"
-            element={
-              <AppLayout>
-                <ClaimsQueue />
-              </AppLayout>
-            }
-          />
-        </Route>
+        {/* /claims is gone with claim verification: claiming a register entry
+            takes effect immediately, so there is no queue to review. /staff went
+            earlier — it duplicated Newsroom → Team Members. */}
 
         {/* 404 */}
         <Route

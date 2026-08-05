@@ -46,7 +46,7 @@ export default function PodcastScreen() {
 
   const episodes = usePodcastStore((s) => s.episodes);
   const deleteEpisode = usePodcastStore((s) => s.deleteEpisode);
-  const displayName = useAuthStore((s) => s.currentUser?.displayName);
+  const displayName = useAuthStore((s) => s.currentUser?.name);
 
   const [createOpen, setCreateOpen] = useState(false);
   const [selectedEpisode, setSelectedEpisode] = useState<PodcastEpisode | null>(null);

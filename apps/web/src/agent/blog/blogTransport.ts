@@ -29,7 +29,7 @@ export function createBlogTransport() {
           const ui = useBlogStudioUi.getState();
           const parsed = JSON.parse(body);
           parsed.blogContext = {
-            displayName: currentUser?.displayName,
+            displayName: currentUser?.name,
             // A display label for the prompt; capabilities come from the server.
             role: currentUser?.access?.roles?.[0]?.label,
             mode: ui.mode,

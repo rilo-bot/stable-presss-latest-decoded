@@ -301,7 +301,7 @@ export const useInstantStore = create<InstantState>()((set, get) => ({
 
   save: async () => {
     const { mode, story, blog, photos, coverPhotoId } = get();
-    const author = useAuthStore.getState().currentUser?.displayName ?? '';
+    const author = useAuthStore.getState().currentUser?.name ?? '';
 
     if (mode === 'story') {
       if (!story.title.trim() || !story.body.trim()) {

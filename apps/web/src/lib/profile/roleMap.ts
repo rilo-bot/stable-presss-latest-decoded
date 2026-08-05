@@ -1,45 +1,41 @@
 import type { PartyRole } from '@/types/party';
-import type { HorsePartyRelationshipType } from '@/types/horsePartyLink';
 import type { Horse } from '@/types/horse';
 
 /**
- * Single source of truth tying a party ROLE to (a) the HorsePartyLink
- * relationship_type that expresses it, and (b) the legacy direct id-array
- * field on the Horse record. Used in BOTH directions:
- *   - horse-central: which parties fill each relationship tile
- *   - party-central: which horses a party is connected to
+ * Ties a racing ROLE to the direct id-array field on the Horse record that also
+ * expresses it. Used in BOTH directions:
+ *   - horse-central: which people fill each role tile
+ *   - person-central: which horses a person is connected to
  *
- * `syndicate manager` has no dedicated relationship_type — it is matched by
- * the party carrying the 'syndicate manager' role (relType left undefined →
- * "any link to this party"), plus the horse's syndicateManagerIds field.
+ * The `relType` binding is gone along with the horsePartyLinks table — a party
+ * row IS the relationship now, and carries `role` and `horseId` directly. The
+ * `horseField` arrays remain because the server still stores them; they hold
+ * PERSON ids. See rbac/scope.ts, which reads both representations.
  */
 export interface RoleBinding {
   role: PartyRole;
-  /** relationship_type in HorsePartyLink, or undefined to match any link to the party */
-  relType?: HorsePartyRelationshipType;
-  /** legacy direct id-array field on Horse */
+  /** Direct id-array field on Horse, holding person ids. */
   horseField: keyof Horse;
-  /** human label for the role */
   label: string;
 }
 
 export const ROLE_BINDINGS: Record<PartyRole, RoleBinding> = {
-  owner:               { role: 'owner',               relType: 'ownership', horseField: 'ownerIds',             label: 'Owner' },
-  trainer:             { role: 'trainer',             relType: 'training',  horseField: 'trainerIds',           label: 'Trainer' },
-  jockey:              { role: 'jockey',              relType: 'riding',    horseField: 'jockeyIds',            label: 'Jockey' },
-  breeder:             { role: 'breeder',             relType: 'bred-by',   horseField: 'breederIds',           label: 'Breeder' },
-  'bloodstock agent':  { role: 'bloodstock agent',    relType: 'agent',     horseField: 'bloodstockAgentIds',   label: 'Bloodstock Agent' },
-  'syndicate manager': { role: 'syndicate manager',   relType: undefined,   horseField: 'syndicateManagerIds',  label: 'Syndicate Manager' },
-  personnel:           { role: 'personnel',           relType: 'personnel', horseField: 'personnelIds',         label: 'Personnel' },
+  owner:               { role: 'owner',              horseField: 'ownerIds',            label: 'Owner' },
+  trainer:             { role: 'trainer',            horseField: 'trainerIds',          label: 'Trainer' },
+  jockey:              { role: 'jockey',             horseField: 'jockeyIds',           label: 'Jockey' },
+  breeder:             { role: 'breeder',            horseField: 'breederIds',          label: 'Breeder' },
+  'bloodstock agent':  { role: 'bloodstock agent',   horseField: 'bloodstockAgentIds',  label: 'Bloodstock Agent' },
+  'syndicate manager': { role: 'syndicate manager',  horseField: 'syndicateManagerIds', label: 'Syndicate Manager' },
+  personnel:           { role: 'personnel',          horseField: 'personnelIds',        label: 'Personnel' },
 };
 
-/** Roles that get a full standalone profile page this round. */
+/** Roles that get a full standalone profile page. */
 export const PROFILE_ROLES: PartyRole[] = ['owner', 'trainer', 'jockey', 'breeder', 'syndicate manager'];
 
-/** Pick the role to centralise a party on, given an optional URL hint. */
+/** Pick the role to centralise a person on, given an optional URL hint. */
 export function resolveActiveRole(roles: PartyRole[], hint?: string | null): PartyRole {
   if (hint && roles.includes(hint as PartyRole)) return hint as PartyRole;
-  // Prefer a role we build full profiles for, else the party's first role.
+  // Prefer a role we build full profiles for, else the person's first role.
   const preferred = roles.find((r) => PROFILE_ROLES.includes(r));
   return preferred ?? roles[0] ?? 'owner';
 }

@@ -31,9 +31,17 @@ export function toOrgRole(value: unknown): OrgRole {
   return value === 'owner' || value === 'manager' ? value : 'member'
 }
 
-/** One row in `parties` — the register AND the claim. One row per person×role×horse. */
+/**
+ * One row in `parties`: an EDGE joining a person to a role, and optionally to a
+ * horse and an org. One row per person × role × horse.
+ *
+ * `name` and `imageUrl` are the PERSON's, resolved at read time from `people`.
+ * They are never written to the edge — that duplication is what the split
+ * exists to prevent, so treat them as read-only projections.
+ */
 export interface PartyRow {
   id: string
+  personId: string
   name: string
   imageUrl?: string
   role: PartyRole

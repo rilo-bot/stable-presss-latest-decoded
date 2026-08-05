@@ -132,7 +132,7 @@ export default function OverviewScreen() {
   return (
     <div className="space-y-6">
       <OverviewMasthead
-        name={s.currentUser?.displayName ?? 'there'}
+        name={s.currentUser?.name ?? 'there'}
         roleLabel={s.roleLabel}
         isContributor={s.isContributor}
         brief={brief}
@@ -182,7 +182,7 @@ export default function OverviewScreen() {
           title={s.isContributor ? 'My recent stories' : 'Recent activity'}
           articles={s.filteredArticles.slice(0, 8)}
           allStoriesPath={resolveWhere('all-stories')}
-          canEdit={(a) => canEditArticle(a.author, s.currentUser?.displayName)}
+          canEdit={(a) => canEditArticle(a.author, s.currentUser?.name)}
           onEdit={s.handleEdit}
         />
       )}

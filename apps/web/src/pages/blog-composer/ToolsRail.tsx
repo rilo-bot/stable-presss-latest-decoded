@@ -17,7 +17,6 @@ import { allBlocks, findBlock, mediaById } from '@/types/blog';
 import { useComposerStore } from './composerStore';
 import { Field, RailSection, Seg, TextArea, TextInput, inputCls } from './controls';
 import type { Block, Placement } from '@/types/blog';
-import type { SubscriptionTier } from '@/rbac/entitlement';
 import {
   AlignCenter, AlignLeft, AlignRight, Copy, ImageIcon, Maximize,
   RectangleHorizontal, Square, Trash2, X,
@@ -538,18 +537,6 @@ function PostFields({ onPickCover }: { onPickCover: () => void }) {
         <p className="mt-1 truncate text-[11px] text-muted-foreground/70">/blog/{blog.slug}</p>
       </Field>
 
-      <Field field="tier" label="Who can read it">
-        <Seg
-          ariaLabel="Minimum tier"
-          value={(blog.minTier ?? 'free') as SubscriptionTier}
-          onChange={(minTier) => patchPost({ minTier })}
-          options={[
-            { value: 'free', label: 'Everyone' },
-            { value: 'standard', label: 'Standard' },
-            { value: 'premium', label: 'Premium' },
-          ]}
-        />
-      </Field>
 
       {/* Counts the WHOLE post. `blog.blocks.length` alone described only the
           writing above the first part, while the reading time beside it already

@@ -5,6 +5,7 @@
 
 import { db } from './db.js'
 import { ORG_MEMBERS, PARTIES } from './collections.js'
+import { loadPeople } from './people.js'
 import type { IdentityUser, OrgMemberRow, PartyRow, Role } from './identity.js'
 import { SUPERADMIN_ROLE_NAME, getRole, type RoleDoc } from './roleRegistry.js'
 import {
@@ -71,16 +72,29 @@ export async function resolveAccount(identity: IdentityUser): Promise<AccountUse
 async function loadParties(userId: string): Promise<PartyRow[]> {
   if (!userId) return []
   const rows = await db.collection(PARTIES).find({ userId })
-  return rows.map((r) => ({
-    id: String(r._id),
-    name: String(r.name ?? ''),
-    imageUrl: r.imageUrl ? String(r.imageUrl) : undefined,
-    role: r.role as PartyRow['role'],
-    taken: r.taken === true,
-    userId: r.userId ? String(r.userId) : undefined,
-    orgId: r.orgId ? String(r.orgId) : undefined,
-    horseId: r.horseId ? String(r.horseId) : undefined,
-  }))
+  return toPartyRows(rows)
+}
+
+/**
+ * Project party edges with their person joined in — ONE extra query for the
+ * whole batch, however many edges there are.
+ */
+export async function toPartyRows(rows: Array<Record<string, any>>): Promise<PartyRow[]> {
+  const people = await loadPeople(rows.map((r) => (r.personId ? String(r.personId) : undefined)))
+  return rows.map((r) => {
+    const person = people.get(String(r.personId))
+    return {
+      id: String(r._id ?? r.id),
+      personId: String(r.personId ?? ''),
+      name: person?.name ?? '',
+      imageUrl: person?.imageUrl,
+      role: r.role as PartyRow['role'],
+      taken: r.taken === true,
+      userId: r.userId ? String(r.userId) : undefined,
+      orgId: r.orgId ? String(r.orgId) : undefined,
+      horseId: r.horseId ? String(r.horseId) : undefined,
+    }
+  })
 }
 
 async function loadOrgMembers(userId: string): Promise<OrgMemberRow[]> {

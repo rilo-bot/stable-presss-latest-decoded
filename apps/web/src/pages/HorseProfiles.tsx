@@ -4,7 +4,7 @@ import { useHorseStore } from '@/stores/horseStore';
 import { usePartyStore } from '@/stores/partyStore';
 import { useFollowStore } from '@/stores/followStore';
 import { useAuthStore } from '@/stores/authStore';
-import { isStaff } from '@/rbac/can';
+import { isAdmin } from '@/rbac/can';
 import { connectionResolver } from '@/lib/horseConnections';
 import { HorseCard } from '@/components/HorseCard';
 import { HorseSkeletonCard } from '@/components/SkeletonCard';
@@ -12,6 +12,7 @@ import { EmptyState } from '@/components/EmptyState';
 import { Input } from '@/components/ui/input';
 import { Search, Plus, Heart, ChevronRight } from 'lucide-react';
 import { motion } from 'framer-motion';
+import { useRegister } from '@/lib/register';
 
 export default function HorseProfiles() {
   // === auto fetch-on-mount (backend planner) ===
@@ -24,10 +25,10 @@ export default function HorseProfiles() {
   // === end auto fetch-on-mount ===
 
   const horses = useHorseStore((s) => s.horses);
-  const parties = usePartyStore((s) => s.parties);
+  const parties = useRegister();
   const navigate = useNavigate();
   const [query, setQuery] = useState('');
-  const staff = isStaff(useAuthStore((s) => s.currentUser));
+  const staff = isAdmin(useAuthStore((s) => s.currentUser));
 
   // Real fetch state, not a timer.
   //

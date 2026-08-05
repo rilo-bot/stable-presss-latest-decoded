@@ -6,7 +6,7 @@
  * Build a resolver once per parties list, then call it per horse (cheap).
  */
 import type { Horse } from '@/types/horse';
-import type { Party } from '@/types/party';
+import type { RegisterPerson } from '@/lib/register';
 
 export interface HorseConnections {
   owner: string;
@@ -19,7 +19,7 @@ export interface HorseConnections {
 }
 
 /** Build a reusable resolver from a parties list (indexes once). */
-export function connectionResolver(parties: Party[]): (horse: Horse) => HorseConnections {
+export function connectionResolver(parties: RegisterPerson[]): (horse: Horse) => HorseConnections {
   const byId = new Map(parties.map((p) => [p.id, p]));
   const join = (ids?: string[]): string =>
     (ids ?? []).map((id) => byId.get(id)?.name).filter(Boolean).join(', ');
@@ -35,6 +35,6 @@ export function connectionResolver(parties: Party[]): (horse: Horse) => HorseCon
 }
 
 /** One-off convenience for a single horse. */
-export function horseConnections(horse: Horse, parties: Party[]): HorseConnections {
+export function horseConnections(horse: Horse, parties: RegisterPerson[]): HorseConnections {
   return connectionResolver(parties)(horse);
 }

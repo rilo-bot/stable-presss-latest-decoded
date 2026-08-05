@@ -44,7 +44,6 @@ import { BLOG_GRID_CLASS, spanClass } from '@/blog/placement';
 import { BlogRenderer } from '@/blog/BlogRenderer';
 import { ReactionBar } from '@/components/ReactionBar';
 import { CommentsSection } from '@/components/comments/CommentsSection';
-import { Paywall } from '@/components/Paywall';
 import { EmptyState } from '@/components/EmptyState';
 import { useBlogStore } from '@/stores/blogStore';
 import { useAuthStore } from '@/stores/authStore';
@@ -52,7 +51,6 @@ import { useHorseStore } from '@/stores/horseStore';
 import { usePartyStore } from '@/stores/partyStore';
 import { useArticleStore } from '@/stores/articleStore';
 import { useReactionStore } from '@/stores/reactionStore';
-import { canViewContent } from '@/rbac/entitlement';
 import { allBlocks, isBlogLive, mediaById, partHasContent, type BlogMedia, type BlogPart } from '@/types/blog';
 
 function formatDate(iso: string | null | undefined): string | null {
@@ -191,7 +189,6 @@ function PartSection({
 export default function BlogPost() {
   const { slug } = useParams<{ slug: string }>();
   const { current, currentLoading, currentError, movedTo, fetchOne, clearCurrent } = useBlogStore();
-  const tier = useAuthStore((s) => s.currentUser?.subscriptionTier);
   const viewerId = useAuthStore((s) => s.currentUser?.id);
   const loadReactions = useReactionStore((s) => s.load);
 
@@ -211,7 +208,7 @@ export default function BlogPost() {
   // `withParts`, each part's. Re-runs when the signed-in account changes, because
   // `mine` — which pick is yours — belongs to the account, not the browser.
   useEffect(() => {
-    if (current?.id && !current.locked && isBlogLive(current)) {
+    if (current?.id && isBlogLive(current)) {
       void loadReactions('blog', current.id, true);
     }
   }, [current, viewerId, loadReactions]);
@@ -277,14 +274,6 @@ export default function BlogPost() {
   const hasParts = visibleParts.length > 0;
 
   /**
-   * `current.locked` is the SERVER'S answer — it now withholds the body of a
-   * post above the reader's tier instead of sending it and trusting this file to
-   * hide it. The local check stays as the fallback for a cached or
-   * staff-privileged payload that arrived ungated.
-   */
-  const locked = current.locked === true || !canViewContent(tier, current.minTier);
-
-  /**
    * Reactions are offered only on a LIVE post — which is a narrower question than
    * "can you see this page". Staff and the author read drafts here, and the server
    * refuses to record a reaction against anything unpublished (`assertReactable`),
@@ -292,23 +281,13 @@ export default function BlogPost() {
    * every click with an error. An offer that cannot be taken is worse than no
    * offer: it reads as a broken feature rather than as one that isn't open yet.
    */
-  const canReact = !locked && isBlogLive(current);
+  const canReact = isBlogLive(current);
 
-  const body = locked ? (
-    <>
-      {/* First paragraph as the free teaser, then the gate. */}
-      <BlogRenderer
-        blocks={current.blocks.filter((b) => b.kind === 'paragraph').slice(0, 1)}
-        media={current.media}
-        dropCap
-      />
-      <Paywall requiredTier={current.minTier ?? 'premium'} />
-    </>
-  ) : (
-    <BlogRenderer blocks={current.blocks} media={current.media} dropCap />
-  );
+  // A published post is readable in full by anyone. The tier gate that used to
+  // trim this to a teaser is gone with subscriptions.
+  const body = <BlogRenderer blocks={current.blocks} media={current.media} dropCap />;
 
-  const tags = !locked && current.tags.length > 0 && (
+  const tags = current.tags.length > 0 && (
     <div className="mt-8 flex flex-wrap gap-2">
       {current.tags.map((tag) => (
         <Link
@@ -322,7 +301,7 @@ export default function BlogPost() {
     </div>
   );
 
-  const bylineCard = !locked && (
+  const bylineCard = (
     <div className="mt-8 flex items-center justify-between gap-4 rounded-sm border border-border/60 bg-background p-4">
       <div className="flex min-w-0 items-center gap-3">
         {current.author.avatarUrl ? (
@@ -514,8 +493,7 @@ export default function BlogPost() {
             An empty part is skipped rather than printing a bare "Part 3" over an
             empty scale; the editor says so on the card, so it is never a silent
             disappearance. */}
-        {!locked &&
-          visibleParts.map((part, i) => (
+        {visibleParts.map((part, i) => (
             <PartSection
               key={part.id}
               part={part}

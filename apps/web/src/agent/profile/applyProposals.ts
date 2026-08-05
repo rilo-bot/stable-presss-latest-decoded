@@ -9,8 +9,8 @@ import { usePartyStore } from '@/stores/partyStore';
 import { useHorsePartyLinkStore } from '@/stores/horsePartyLinkStore';
 import { ROLE_BINDINGS } from '@/lib/profile/roleMap';
 import type { Horse } from '@/types/horse';
-import type { Party } from '@/types/party';
 import { useProfileAgentUi, type Proposal, type FieldProposal, type ConnProposal } from '@/stores/profileAgentUiStore';
+import type { RegisterPerson } from '@/lib/register';
 
 const NUMERIC_FIELDS = new Set(['careerWinnings', 'currentRating', 'handsSize', 'metricSize', 'damYob', 'started_year']);
 
@@ -32,7 +32,7 @@ async function applyField(p: FieldProposal) {
     useProfileAgentUi.getState().pushUndo({ kind: 'field', entityKind: 'horse', entityId: p.entityId, field: p.field, prevValue: prev });
   } else {
     const prev = (usePartyStore.getState().parties.find((x) => x.id === p.entityId) as Record<string, unknown> | undefined)?.[p.field];
-    await usePartyStore.getState().updateParty(p.entityId, { [p.field]: value } as Partial<Party>);
+    await usePartyStore.getState().updateParty(p.entityId, { [p.field]: value } as Partial<RegisterPerson>);
     useProfileAgentUi.getState().pushUndo({ kind: 'field', entityKind: 'party', entityId: p.entityId, field: p.field, prevValue: prev });
   }
 }
@@ -77,7 +77,7 @@ export async function undoLastProposal() {
   if (!e) return;
   if (e.kind === 'field') {
     if (e.entityKind === 'horse') await useHorseStore.getState().updateHorse(e.entityId, { [e.field]: e.prevValue } as Partial<Horse>);
-    else await usePartyStore.getState().updateParty(e.entityId, { [e.field]: e.prevValue } as Partial<Party>);
+    else await usePartyStore.getState().updateParty(e.entityId, { [e.field]: e.prevValue } as Partial<RegisterPerson>);
   } else {
     await useHorsePartyLinkStore.getState().removeLink(e.linkId);
   }

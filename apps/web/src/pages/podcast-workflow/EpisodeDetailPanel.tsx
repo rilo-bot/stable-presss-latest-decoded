@@ -57,7 +57,7 @@ export function EpisodeDetailPanel({
   const [confirmingDelete, setConfirmingDelete] = useState(false);
   const [deleting, setDeleting] = useState(false);
 
-  const isOwn = canEditEpisode(liveEpisode.producedBy, currentUser?.displayName);
+  const isOwn = canEditEpisode(liveEpisode.producedBy, currentUser?.name);
   const canAdvanceToAudio = can('podcast.audio.upload') && liveEpisode.status === 'draft' && isOwn;
   const canAdvanceToGuests = can('podcast.guests.manage') && liveEpisode.status === 'audio_uploaded' && isOwn;
   const canAdvanceToDesc = (can('podcast.episode.edit_own') || can('podcast.episode.edit_any')) && liveEpisode.status === 'guests_added' && isOwn;
@@ -68,7 +68,7 @@ export function EpisodeDetailPanel({
   // three clauses — the local version here missed `podcast.manage`, so an admin
   // whose role held the umbrella but neither edit power was refused a button the
   // server would have honoured.
-  const canDelete = canDeleteEpisode(liveEpisode, currentUser?.displayName);
+  const canDelete = canDeleteEpisode(liveEpisode, currentUser?.name);
 
   const handleAddGuest = () => {
     if (!guestForm.name.trim()) {

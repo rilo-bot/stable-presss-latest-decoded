@@ -15,12 +15,12 @@
  */
 import { Link } from 'react-router-dom';
 import { MapPin, User } from 'lucide-react';
-import type { Party } from '@/types/party';
 import { PARTY_ROLE_LABELS } from '@/types/party';
 import { SectionHead } from './SectionHead';
+import type { RegisterPerson } from '@/lib/register';
 
 interface LandingDirectoryProps {
-  parties: Party[];
+  parties: RegisterPerson[];
 }
 
 export function LandingDirectory({ parties }: LandingDirectoryProps) {
@@ -65,10 +65,10 @@ export function LandingDirectory({ parties }: LandingDirectoryProps) {
                   {(party.roles ?? []).map((r) => PARTY_ROLE_LABELS[r]).join(' · ')}
                 </p>
               )}
-              {party.base_location && (
+              {party.baseLocation && (
                 <p className="mt-1 flex items-center gap-1 text-[11px] text-muted-foreground">
                   <MapPin size={10} className="flex-shrink-0" />
-                  <span className="truncate">{party.base_location}</span>
+                  <span className="truncate">{party.baseLocation}</span>
                 </p>
               )}
             </div>

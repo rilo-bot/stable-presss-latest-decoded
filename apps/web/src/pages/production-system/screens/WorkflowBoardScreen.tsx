@@ -32,7 +32,7 @@ export default function WorkflowBoardScreen() {
         isContributor={s.isContributor}
         myStories={s.myStories}
         totalStories={s.totalStories}
-        currentUserDisplayName={s.currentUser?.displayName ?? null}
+        currentUserDisplayName={s.currentUser?.name ?? null}
         onMove={s.handleMove}
         onEdit={s.handleEdit}
         onDelete={s.handleDelete}

@@ -1,84 +1,95 @@
 /**
  * RBAC — relationship scope.
  *
- * Permissions are ROLE + SCOPE (RBAC.md §6): a party's reach over horses comes
- * from the dated party↔horse links, not from the role alone. These are pure
- * functions (no React) so both the profile UI and the permission engine share
- * one source of truth. Extracted from hooks/useProfileScope.ts.
+ * A party edge carries `horseId` directly, so reach over horses is a filter,
+ * not a join through a link table.
+ *
+ * Connections are still recorded in TWO places: the party edge, and the legacy
+ * `ownerIds`/`trainerIds`/… arrays on the horse itself, which the server still
+ * accepts and stores. Both are folded in here so neither is silently dropped.
+ * The arrays hold PERSON ids.
+ *
+ * Pure functions (no React) so the profile UI and the permission engine share
+ * one source of truth. Mirrors apps/server/src/lib/scope.ts.
  */
+import type { PartyRow } from '@/stores/authStore';
 import type { Horse } from '@/types/horse';
-import type { HorsePartyLink } from '@/types/horsePartyLink';
-import { isCurrentLink } from '@/types/horsePartyLink';
 import type { PartyRole } from '@/types/party';
 import { ROLE_BINDINGS } from '@/lib/profile/roleMap';
 
 export interface ScopeData {
+  /** Every party edge the client has loaded — see stores/partyStore.ts. */
+  parties: PartyRow[];
   horses: Horse[];
-  links: HorsePartyLink[];
 }
 
-export interface ScopeOpts {
-  /** Only count links with no end_date (current relationships). Default false. */
-  currentOnly?: boolean;
+function legacyIds(horse: Horse, role: PartyRole): string[] {
+  const arr = horse[ROLE_BINDINGS[role].horseField] as string[] | undefined;
+  return Array.isArray(arr) ? arr : [];
 }
 
-/**
- * Horse ids a party fills in a SPECIFIC role (e.g. the horses this party trains).
- * Combines relationship links (filtered by the role's relType) with the legacy
- * direct id-array field on the horse. Mirrors useProfileScope's horseIds.
- */
-export function horsesInScopeForParty(
-  partyId: string,
+/** Horse ids a person is connected to in a SPECIFIC role. */
+export function horsesForPersonInRole(
+  personId: string,
   role: PartyRole,
   data: ScopeData,
-  opts: ScopeOpts = {},
 ): string[] {
-  const binding = ROLE_BINDINGS[role];
-  const ids = new Set<string>();
-
-  data.links.forEach((l) => {
-    if (l.party_id !== partyId) return;
-    if (binding.relType && l.relationship_type !== binding.relType) return;
-    if (opts.currentOnly && !isCurrentLink(l)) return;
-    ids.add(l.horse_id);
-  });
-
+  const ids = new Set(
+    data.parties
+      .filter((p) => p.personId === personId && p.role === role && p.horseId)
+      .map((p) => p.horseId!),
+  );
   data.horses.forEach((h) => {
-    const arr = h[binding.horseField] as string[] | undefined;
-    if (Array.isArray(arr) && arr.includes(partyId)) ids.add(h.id);
+    if (legacyIds(h, role).includes(personId)) ids.add(h.id);
   });
-
-  return Array.from(ids);
+  return [...ids];
 }
 
-/**
- * Horse ids a party is linked to via ANY relationship. Used for authorised-record
- * visibility and organisation scope (where the role doesn't matter — only that a
- * link exists).
- */
-export function horsesLinkedToParty(
-  partyId: string,
-  data: ScopeData,
-  opts: ScopeOpts = {},
-): string[] {
-  const ids = new Set<string>();
-
-  data.links.forEach((l) => {
-    if (l.party_id !== partyId) return;
-    if (opts.currentOnly && !isCurrentLink(l)) return;
-    ids.add(l.horse_id);
-  });
-
-  // Fold in legacy direct id-array fields across every role binding.
+/** Horse ids a person is connected to in ANY role. */
+export function horsesForPerson(personId: string, data: ScopeData): string[] {
+  const ids = new Set(
+    data.parties.filter((p) => p.personId === personId && p.horseId).map((p) => p.horseId!),
+  );
   data.horses.forEach((h) => {
     for (const role of Object.keys(ROLE_BINDINGS) as PartyRole[]) {
-      const arr = h[ROLE_BINDINGS[role].horseField] as string[] | undefined;
-      if (Array.isArray(arr) && arr.includes(partyId)) {
+      if (legacyIds(h, role).includes(personId)) {
         ids.add(h.id);
         break;
       }
     }
   });
+  return [...ids];
+}
 
-  return Array.from(ids);
+/** The party edges attached to one horse — what its connections panel shows. */
+export function partiesForHorse(horseId: string, data: ScopeData): PartyRow[] {
+  return data.parties.filter((p) => p.horseId === horseId);
+}
+
+/** Person ids filling a given role on a horse, from BOTH representations. */
+export function peopleForHorseInRole(
+  horseId: string,
+  role: PartyRole,
+  data: ScopeData,
+): string[] {
+  const ids = new Set(
+    data.parties
+      .filter((p) => p.horseId === horseId && p.role === role && p.personId)
+      .map((p) => p.personId),
+  );
+  const horse = data.horses.find((h) => h.id === horseId);
+  if (horse) legacyIds(horse, role).forEach((id) => ids.add(id));
+  return [...ids];
+}
+
+/** Horse ids reachable through a set of organisations. */
+export function horsesForOrgs(orgIds: string[], data: ScopeData): string[] {
+  const wanted = new Set(orgIds);
+  return [
+    ...new Set(
+      data.parties
+        .filter((p) => p.orgId && wanted.has(p.orgId) && p.horseId)
+        .map((p) => p.horseId!),
+    ),
+  ];
 }

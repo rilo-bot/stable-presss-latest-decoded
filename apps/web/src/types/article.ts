@@ -1,5 +1,3 @@
-import type { SubscriptionTier } from '@/rbac/entitlement';
-
 /**
  * Where a story sits in the editorial workflow. Five stages, nothing else.
  *
@@ -36,8 +34,6 @@ export interface Article {
   readingTime?: number;
   tags?: string[];
   createdAt: Date;
-  /** Minimum subscription tier to read the full article. Defaults to free. */
-  minTier?: SubscriptionTier;
   /** Editorial assignment / instruction note attached by an editor. */
   assignmentNote?: string;
 
@@ -56,20 +52,6 @@ export interface Article {
    */
   scheduledFor?: string;
 
-  /**
-   * Set by the server when it WITHHELD this story's body because the reader's
-   * tier does not reach `minTier` — `summary` then holds only the free teaser.
-   *
-   * Read-only, and absent on a story the reader is entitled to (and on every
-   * story a staff member fetches, since they get the unabridged pipeline). Do not
-   * send it on a write: `readBody` in routes/articles.ts does not accept it.
-   *
-   * The page still computes the same decision from `minTier` itself, so this is
-   * belt-and-braces — but it is the only signal that distinguishes "short story"
-   * from "story we cut short", which is what stops a truncated body rendering as
-   * a complete one with no gate. See lib/paywall.ts.
-   */
-  locked?: boolean;
 }
 
 /**

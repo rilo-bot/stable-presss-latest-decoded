@@ -118,6 +118,29 @@ function mongoCollection(name: string) {
       if (!doc || doc.deletedAt) return null
       return { ...doc, _id: doc._id.toString() } as Doc
     },
+    /**
+     * Many live docs by id, in ONE query. The batch form of findById.
+     *
+     * `find({ _id: { $in: ids } })` does NOT work: ids are stored as ObjectIds
+     * and the query passes straight through unconverted, so it silently matches
+     * nothing. Both forms are offered here because a few legacy docs carry a
+     * plain string _id.
+     */
+    async findByIds(ids: string[]): Promise<Doc[]> {
+      const unique = [...new Set(ids.filter(Boolean))]
+      if (unique.length === 0) return []
+      const db = await getMongoDb()
+      const keys: unknown[] = []
+      for (const id of unique) {
+        keys.push(id)
+        if (ObjectId.isValid(id)) keys.push(new ObjectId(id))
+      }
+      const docs = await db
+        .collection(name)
+        .find({ _id: { $in: keys } as never, deletedAt: null })
+        .toArray()
+      return docs.map((d) => ({ ...d, _id: d._id.toString() })) as Doc[]
+    },
     async insertOne(doc: Record<string, unknown>): Promise<string> {
       const db = await getMongoDb()
       const result = await db.collection(name).insertOne(doc)

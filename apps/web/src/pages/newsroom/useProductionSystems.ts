@@ -8,11 +8,11 @@ import { useReportStore } from '@/stores/reportStore';
 import { connectionResolver } from '@/lib/horseConnections';
 import { toast } from 'sonner';
 import type { Horse } from '@/types/horse';
-import type { Party } from '@/types/party';
 import type { MediaItem, MediaType } from '@/types/mediaItem';
 import type { RacingEntry } from '@/types/racingEntry';
 import type { Sale } from '@/types/sale';
 import type { HorseReport } from '@/types/horseReport';
+import type { RegisterPerson } from '@/lib/register';
 
 /**
  * Owns all "production system" concerns for the Newsroom: the horse, party,
@@ -30,7 +30,7 @@ export function useProductionSystems() {
 
   const horses = useHorseStore((s) => s.horses);
   const removeHorse = useHorseStore((s) => s.removeHorse);
-  const parties = usePartyStore((s) => s.parties);
+  const parties = useRegister();
   const removeParty = usePartyStore((s) => s.removeParty);
   const horseConn = useMemo(() => connectionResolver(parties ?? []), [parties]);
 
@@ -63,9 +63,9 @@ export function useProductionSystems() {
 
   // === Parties Production System state ===
   const [partyFormOpen, setPartyFormOpen] = useState(false);
-  const [editParty, setEditParty] = useState<Party | undefined>(undefined);
+  const [editParty, setEditParty] = useState<RegisterPerson | undefined>(undefined);
   const [partySearch, setPartySearch] = useState('');
-  const [partyDeleteTarget, setPartyDeleteTarget] = useState<Party | null>(null);
+  const [partyDeleteTarget, setPartyDeleteTarget] = useState<RegisterPerson | null>(null);
   const [partyDeleteConfirm, setPartyDeleteConfirm] = useState(false);
 
   // === Media Production System state ===
@@ -114,7 +114,7 @@ export function useProductionSystems() {
       (p) =>
         p.name?.toLowerCase().includes(q) ||
         p.profession?.toLowerCase().includes(q) ||
-        p.base_location?.toLowerCase().includes(q) ||
+        p.baseLocation?.toLowerCase().includes(q) ||
         (p.roles ?? []).some((r) => r.toLowerCase().includes(q))
     );
   }, [safeParties, partySearch]);
@@ -182,7 +182,7 @@ export function useProductionSystems() {
     toast.success(`${name} has been removed.`);
   };
 
-  const handleOpenPartyForm = (party?: Party) => {
+  const handleOpenPartyForm = (party?: RegisterPerson) => {
     setEditParty(party);
     setPartyFormOpen(true);
   };
@@ -192,7 +192,7 @@ export function useProductionSystems() {
     setEditParty(undefined);
   };
 
-  const handlePartyDelete = (party: Party) => {
+  const handlePartyDelete = (party: RegisterPerson) => {
     setPartyDeleteTarget(party);
     setPartyDeleteConfirm(true);
   };

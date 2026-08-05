@@ -13,8 +13,8 @@ import { ROLE_BINDINGS } from '@/lib/profile/roleMap';
 import { STOCK } from '@/lib/stockImages';
 import { useProfileAgentUi } from '@/stores/profileAgentUiStore';
 import type { Horse } from '@/types/horse';
-import type { Party } from '@/types/party';
 import type { PartyRole } from '@/types/party';
+import type { RegisterPerson } from '@/lib/register';
 
 const CLIENT_TOOLS = new Set(['getProfile', 'setField', 'setConnection', 'suggestImageOptions', 'setPhoto', 'clearField']);
 
@@ -44,7 +44,7 @@ async function setField(entityKind: 'horse' | 'party', entityId: string, field: 
     ui.pushUndo({ kind: 'field', entityKind: 'horse', entityId, field, prevValue: prev });
   } else {
     const prev = (usePartyStore.getState().parties.find((p) => p.id === entityId) as Record<string, unknown> | undefined)?.[field];
-    await usePartyStore.getState().updateParty(entityId, { [field]: value } as Partial<Party>);
+    await usePartyStore.getState().updateParty(entityId, { [field]: value } as Partial<RegisterPerson>);
     ui.pushUndo({ kind: 'field', entityKind: 'party', entityId, field, prevValue: prev });
   }
   return { ok: true, applied: true, field };

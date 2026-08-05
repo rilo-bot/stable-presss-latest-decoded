@@ -210,6 +210,40 @@ export function partyScopedWriteGate(req: Request, res: Response, next: NextFunc
   })
 }
 
+/**
+ * A person's PROFILE, which is a different question from the edges pointing at
+ * it: you may edit the person you have claimed an edge to — that is your own
+ * profile — or anyone an org you manage fields in the register.
+ *
+ * Sharing `partyScopedWriteGate` here would compare a person id against party
+ * ids and refuse everyone but an admin.
+ */
+async function accountCanManagePerson(
+  account: AccountUser | undefined,
+  personId: string,
+): Promise<boolean> {
+  if (!account) return false
+  if (isAdmin(account)) return true
+  if (account.parties.some((p) => p.personId === personId)) return true
+  const edges = await db.collection(PARTIES).find({ personId })
+  return edges.some((e) => e.orgId && canManageOrg(account, String(e.orgId)))
+}
+
+export function personScopedWriteGate(req: Request, res: Response, next: NextFunction): void {
+  if (req.method === 'GET') return void attachAccountOptional(req, res, next)
+
+  void attachAccount(req, res, async () => {
+    const account = req.account
+    if (isAdmin(account)) return next()
+    if (req.method === 'POST') return forbid(res, 'Only an admin can add someone to the register.')
+    if (req.method === 'DELETE') return forbid(res, 'You cannot remove someone from the register.')
+
+    const id = firstSegment(req)
+    if (id && (await accountCanManagePerson(account, id))) return next()
+    return forbid(res, 'You can only edit your own profile.')
+  })
+}
+
 // ── Editorial ───────────────────────────────────────────────────────────────
 
 export function articlesWriteGate(req: Request, res: Response, next: NextFunction): void {

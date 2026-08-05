@@ -155,7 +155,7 @@ export function useProductionSystemState() {
       ARTICLE_STATUSES.map((s) => [s, [] as Article[]]),
     ) as Record<ArticleStatus, Article[]>;
     const visibleArticles = isContributor
-      ? (articles ?? []).filter((a) => a.author === currentUser?.displayName)
+      ? (articles ?? []).filter((a) => a.author === currentUser?.name)
       : (articles ?? []);
     for (const article of visibleArticles) {
       // An unrecognised status falls into Draft so the story is at least
@@ -166,7 +166,7 @@ export function useProductionSystemState() {
       else map.draft.push(article);
     }
     return map;
-  }, [articles, isContributor, currentUser?.displayName]);
+  }, [articles, isContributor, currentUser?.name]);
 
   // Kanban visibility is the third role axis, ticked per role by a superadmin.
   const stageIds = currentUser?.access?.workflowStages ?? [];
@@ -253,13 +253,13 @@ export function useProductionSystemState() {
   };
 
   const handleEdit = (article: Article) => {
-    if (!canEditArticle(article.author, currentUser?.displayName)) return;
+    if (!canEditArticle(article.author, currentUser?.name)) return;
     setEditArticle(article);
     setFormOpen(true);
   };
 
   const handleDelete = (article: Article) => {
-    if (!canEditArticle(article.author, currentUser?.displayName)) return;
+    if (!canEditArticle(article.author, currentUser?.name)) return;
     setDeleteTarget(article);
   };
 
@@ -302,7 +302,7 @@ export function useProductionSystemState() {
 
   const totalStories = (articles ?? []).length;
   const myStories = isContributor
-    ? (articles ?? []).filter((a) => a.author === currentUser?.displayName).length
+    ? (articles ?? []).filter((a) => a.author === currentUser?.name).length
     : totalStories;
   // One review queue now — the editorial/legal/compliance/publisher gates that
   // used to be counted alongside Submitted are gone.
@@ -313,7 +313,7 @@ export function useProductionSystemState() {
 
   const filteredArticles = useMemo(() => {
     const base = isContributor
-      ? (articles ?? []).filter((a) => a.author === currentUser?.displayName)
+      ? (articles ?? []).filter((a) => a.author === currentUser?.name)
       : (articles ?? []);
     if (!searchQuery.trim()) return base;
     const q = searchQuery.toLowerCase();
@@ -323,7 +323,7 @@ export function useProductionSystemState() {
         a.author.toLowerCase().includes(q) ||
         (a.category ?? '').toLowerCase().includes(q),
     );
-  }, [articles, searchQuery, isContributor, currentUser?.displayName]);
+  }, [articles, searchQuery, isContributor, currentUser?.name]);
 
   return {
     // identity / capability

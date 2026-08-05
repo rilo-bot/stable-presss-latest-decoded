@@ -7,6 +7,7 @@ import {
   ORG_MEMBERS,
   OTPS,
   PARTIES,
+  PEOPLE,
   USERS,
 } from './collections.js'
 
@@ -72,6 +73,10 @@ const INDEX_SPECS: IndexSpec[] = [
   { collection: PARTIES, keys: { horseId: 1, deletedAt: 1 } },
   // The unclaimed register: "who can I claim?" filtered by role.
   { collection: PARTIES, keys: { taken: 1, role: 1, deletedAt: 1 } },
+  // Every read that shows a party name joins the person in through this.
+  { collection: PARTIES, keys: { personId: 1, deletedAt: 1 } },
+  // people. Names are how the register is searched and sorted.
+  { collection: PEOPLE, keys: { name: 1, deletedAt: 1 } },
   {
     collection: ORG_MEMBERS,
     keys: { userId: 1, orgId: 1 },

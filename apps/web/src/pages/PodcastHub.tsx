@@ -2,7 +2,7 @@ import { useMemo, useEffect } from 'react';
 import { motion } from 'framer-motion';
 import { usePodcastStore } from '@/stores/podcastStore';
 import { useAuthStore } from '@/stores/authStore';
-import { isStaff } from '@/rbac/can';
+import { isAdmin } from '@/rbac/can';
 import { PodcastPlayer } from '@/components/PodcastPlayer';
 import {Mic, LoaderCircle} from 'lucide-react';
 import { Link } from 'react-router-dom';
@@ -19,7 +19,7 @@ export default function PodcastHub() {
   const activeEpisodeId = usePodcastStore((s) => s.activeEpisodeId);
   const setActiveEpisode = usePodcastStore((s) => s.setActiveEpisode);
   // Decides whether the empty state offers the producer workflow or a reader link.
-  const staff = isStaff(useAuthStore((s) => s.currentUser));
+  const staff = isAdmin(useAuthStore((s) => s.currentUser));
 
   // Only show published episodes on the public hub
   const publishedEpisodes = useMemo(

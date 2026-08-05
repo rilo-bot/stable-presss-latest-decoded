@@ -1,23 +1,25 @@
-// The racing register.
+// The racing register - the EDGE table.
 //
-// ONE ROW PER (person, role, horse) - which is why `role` is a single value.
+// ONE ROW PER (person, role, horse), which is why `role` is a single value. The
+// row says "this person fills this role, on this horse, for this org". WHO the
+// person is lives once in `people` and is joined in on read, never stored here.
+//
 // A row is either unclaimed (taken: false, no userId) or claimed. There is no
 // pending/verified state. Only this file writes taken + userId, together.
 
 import { Router } from 'express'
 import { db } from '../../lib/db.js'
-import { PARTIES } from '../../lib/collections.js'
+import { PARTIES, PEOPLE } from '../../lib/collections.js'
 import { isAdmin } from '../../lib/rbac.js'
-import { toPartyRole, type PartyRole } from '../../lib/identity.js'
-import { project, type WithMongoId } from '../../lib/project.js'
+import { toPartyRole, type PartyRole, type PartyRow } from '../../lib/identity.js'
+import { toPartyRows } from '../../lib/effectiveAccess.js'
 
 const router = Router()
 
 /** `taken` is never accepted from a client - it mirrors `userId`. */
 interface PartyFields {
-  name: string
+  personId: string
   role: PartyRole
-  imageUrl?: string
   orgId?: string
   horseId?: string
 }
@@ -27,35 +29,32 @@ const str = (v: unknown, max: number): string | undefined => {
   return s ? s.slice(0, max) : undefined
 }
 
-/** Validate the writable body of a register row. */
-function readBody(body: unknown): PartyFields | { error: string } {
+async function readBody(body: unknown): Promise<PartyFields | { error: string }> {
   const b = (body ?? {}) as Record<string, unknown>
-  const name = str(b.name, 120)
-  if (!name) return { error: 'A name is required.' }
+  const personId = str(b.personId, 64)
+  if (!personId) return { error: 'A person is required.' }
+  if (!(await db.collection(PEOPLE).findById(personId))) {
+    return { error: 'That person is not in the register.' }
+  }
   const role = toPartyRole(b.role)
   if (!role) return { error: 'A valid racing role is required (owner, trainer, jockey…).' }
   return {
-    name,
+    personId,
     role,
-    imageUrl: str(b.imageUrl, 2048),
     orgId: str(b.orgId, 64),
     horseId: str(b.horseId, 64),
   }
 }
 
-// Public: this is how someone finds the row that represents them. `userId` is
-// stripped for other callers - that a row is taken is public, by whom is not.
+/** That a row is taken is public; by WHOM is not, except to admins and the owner. */
+function redact(rows: PartyRow[], accountId: string | undefined, admin: boolean): PartyRow[] {
+  if (admin) return rows
+  return rows.map((r) => (r.userId === accountId ? r : { ...r, userId: undefined }))
+}
+
 router.get('/', async (req, res) => {
-  const account = req.account
-  const admin = isAdmin(account)
-  const rows = (await db.collection(PARTIES).find()) as WithMongoId[]
-  res.json(
-    rows.map((row) => {
-      const out = project(row)
-      if (!admin && out.userId !== account?.id) delete (out as { userId?: unknown }).userId
-      return out
-    }),
-  )
+  const rows = await toPartyRows(await db.collection(PARTIES).find())
+  res.json(redact(rows, req.account?.id, isAdmin(req.account)))
 })
 
 router.get('/:id', async (req, res) => {
@@ -64,22 +63,19 @@ router.get('/:id', async (req, res) => {
     res.status(404).json({ error: 'Not found' })
     return
   }
-  const out = project(found)
-  if (!isAdmin(req.account) && out.userId !== req.account?.id) {
-    delete (out as { userId?: unknown }).userId
-  }
-  res.json(out)
+  const [row] = await toPartyRows([found])
+  res.json(redact([row!], req.account?.id, isAdmin(req.account))[0])
 })
 
 router.post('/', async (req, res) => {
-  const parsed = readBody(req.body)
+  const parsed = await readBody(req.body)
   if ('error' in parsed) {
     res.status(400).json({ error: parsed.error })
     return
   }
   const now = new Date().toISOString()
-  // UNCLAIMED: registering a trainer records that they exist, it does not
-  // assert who they are. Only the person claiming it sets `userId`.
+  // UNCLAIMED: recording that a trainer fills a role does not assert who they
+  // are. Only the person claiming it sets `userId`.
   const id = await db.collection(PARTIES).insertOne({
     ...parsed,
     taken: false,
@@ -87,12 +83,13 @@ router.post('/', async (req, res) => {
     updatedAt: now,
   })
   const created = await db.collection(PARTIES).findById(id)
-  res.status(201).json(project(created!))
+  const [row] = await toPartyRows([created!])
+  res.status(201).json(row)
 })
 
 router.put('/:id', async (req, res) => {
   const id = String(req.params.id)
-  const parsed = readBody(req.body)
+  const parsed = await readBody(req.body)
   if ('error' in parsed) {
     res.status(400).json({ error: parsed.error })
     return
@@ -107,7 +104,8 @@ router.put('/:id', async (req, res) => {
     return
   }
   const updated = await db.collection(PARTIES).findById(id)
-  res.json(project(updated!))
+  const [row] = await toPartyRows([updated!])
+  res.json(row)
 })
 
 // "This is me".
@@ -133,7 +131,8 @@ router.post('/:id/claim', async (req, res) => {
     updatedAt: new Date().toISOString(),
   })
   const fresh = await db.collection(PARTIES).findById(id)
-  res.json(project(fresh!))
+  const [out] = await toPartyRows([fresh!])
+  res.json(out)
 })
 
 // The ROW survives as an unclaimed entry: its horse and org links are still true.
@@ -155,7 +154,8 @@ router.post('/:id/release', async (req, res) => {
     updatedAt: new Date().toISOString(),
   })
   const fresh = await db.collection(PARTIES).findById(id)
-  res.json(project(fresh!))
+  const [out] = await toPartyRows([fresh!])
+  res.json(out)
 })
 
 router.delete('/:id', async (req, res) => {

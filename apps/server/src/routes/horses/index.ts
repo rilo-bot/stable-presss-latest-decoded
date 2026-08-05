@@ -112,7 +112,7 @@ router.post('/', async (req, res) => {
       .find({ userId: account.id, role: identity.role, horseId: id });
     if (dupe.length === 0) {
       await db.collection(PARTIES).insertOne({
-        name: identity.name,
+        personId: identity.personId,
         role: identity.role,
         horseId: id,
         orgId: identity.orgId,

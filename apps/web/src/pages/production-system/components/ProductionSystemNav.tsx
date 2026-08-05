@@ -245,7 +245,7 @@ function NavAccount({
 
   if (!currentUser) return null;
 
-  const initial = currentUser.displayName.charAt(0).toUpperCase();
+  const initial = currentUser.name.charAt(0).toUpperCase();
   const roleText = assignedRoles.length ? roleSummary(assignedRoles) : 'No role assigned';
 
   return (
@@ -282,7 +282,7 @@ function NavAccount({
           'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary-foreground/60',
           collapsed && 'justify-center border-transparent bg-transparent p-1',
         )}
-        title={collapsed ? `${currentUser.displayName} — ${roleText}` : undefined}
+        title={collapsed ? `${currentUser.name} — ${roleText}` : undefined}
       >
         <span
           className="flex h-8 w-8 flex-shrink-0 items-center justify-center rounded-full text-[12px] font-bold text-primary-foreground"
@@ -294,7 +294,7 @@ function NavAccount({
           <>
             <span className="min-w-0 flex-1">
               <span className="block truncate text-[13px] font-semibold leading-tight text-primary-foreground">
-                {currentUser.displayName}
+                {currentUser.name}
               </span>
               <span className="block truncate text-[11px] leading-tight text-primary-foreground/60">
                 {roleText}

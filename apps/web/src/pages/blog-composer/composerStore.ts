@@ -628,7 +628,6 @@ export const useComposerStore = create<ComposerState>()((set, get) => {
             cover: blog.cover ?? null,
             thumbnailMediaId: blog.thumbnailMediaId ?? null,
             seo: blog.seo,
-            minTier: blog.minTier,
             // Omitted when null so a media upload (which legitimately moved
             // updatedAt) doesn't trip the check against a baseline we know is stale.
             ...(baseUpdatedAt ? { baseUpdatedAt } : {}),

@@ -21,13 +21,12 @@ import { connectionResolver } from '@/lib/horseConnections';
 import { useAuthStore } from '@/stores/authStore';
 import { loadDraft, useFormDraft } from '@/hooks/useFormDraft';
 import type { Article } from '@/types/article';
-import { TIER_ORDER, TIER_LABELS } from '@/rbac/entitlement';
-import type { SubscriptionTier } from '@/rbac/entitlement';
 import type { ArticleStatus } from '@/types/article';
 import { enterPermission, movesFrom, stageMeta } from '@/lib/workflow';
 import { can } from '@/lib/permissions';
 import { X, Check, Lock, Newspaper, BarChart2, Mic, RotateCcw, Mail, Radio, Globe, Clock, Tag as TagIcon } from 'lucide-react';
 import { toast } from 'sonner';
+import { useRegister } from '@/lib/register';
 
 const ARTICLE_DRAFT_KEY = 'article';
 
@@ -38,7 +37,6 @@ interface ArticleDraft {
   category: string;
   status: ArticleStatus;
   readingTime: string;
-  minTier: SubscriptionTier;
   linkedHorseIds: string[];
   imageUrl: string;
   tags: string[];
@@ -138,7 +136,7 @@ export function ArticleForm({
   const addArticle = useArticleStore((s) => s.addArticle);
   const updateArticle = useArticleStore((s) => s.updateArticle);
   const horses = useHorseStore((s) => s.horses);
-  const parties = usePartyStore((s) => s.parties);
+  const parties = useRegister();
   const horseConn = connectionResolver(parties);
   const currentUser = useAuthStore((s) => s.currentUser);
 
@@ -148,7 +146,6 @@ export function ArticleForm({
   const [category, setCategory] = useState('');
   const [status, setStatus] = useState<ArticleStatus>(defaultStatus);
   const [readingTime, setReadingTime] = useState('');
-  const [minTier, setMinTier] = useState<SubscriptionTier>('free');
   const [linkedHorseIds, setLinkedHorseIds] = useState<string[]>([]);
   const [imageUrl, setImageUrl] = useState('');
   const [tags, setTags] = useState<string[]>([]);
@@ -178,7 +175,6 @@ export function ArticleForm({
       // story's position the moment they hit save.
       setStatus(editArticle.status);
       setReadingTime(editArticle.readingTime?.toString() ?? '');
-      setMinTier(editArticle.minTier ?? 'free');
       setLinkedHorseIds(editArticle.linkedHorseIds ?? []);
       setImageUrl(editArticle.imageUrl ?? '');
       setTags(editArticle.tags ?? []);
@@ -194,24 +190,23 @@ export function ArticleForm({
       setTitle(draft?.title ?? '');
       setSummary(draft?.summary ?? '');
       // Contributors are always attributed to their own account — never restore a byline for them.
-      setAuthor(isContributor ? (currentUser?.displayName ?? '') : (draft?.author ?? ''));
+      setAuthor(isContributor ? (currentUser?.name ?? '') : (draft?.author ?? ''));
       setCategory(draft?.category ?? '');
       setStatus(draft?.status ?? clampedDefault);
       setReadingTime(draft?.readingTime ?? '');
-      setMinTier(draft?.minTier ?? 'free');
       setLinkedHorseIds(draft?.linkedHorseIds ?? []);
       setImageUrl(draft?.imageUrl ?? '');
       setTags(draft?.tags ?? []);
       setScheduledFor(draft?.scheduledFor ?? '');
       setDraftRestored(!!draft);
     }
-  }, [open, editArticle, defaultStatus, isContributor, currentUser?.displayName]);
+  }, [open, editArticle, defaultStatus, isContributor, currentUser?.name]);
 
   // Auto-save an in-progress draft so an accidental close doesn't lose work.
   const { clearDraft } = useFormDraft<ArticleDraft>(
     ARTICLE_DRAFT_KEY,
     {
-      title, summary, author, category, status, readingTime, minTier, linkedHorseIds,
+      title, summary, author, category, status, readingTime, linkedHorseIds,
       tags, scheduledFor,
       // Skip transient data: URLs — they can blow the localStorage quota.
       imageUrl: imageUrl.startsWith('data:') ? '' : imageUrl,
@@ -226,12 +221,11 @@ export function ArticleForm({
     clearDraft();
     setTitle('');
     setSummary('');
-    setAuthor(isContributor ? (currentUser?.displayName ?? '') : '');
+    setAuthor(isContributor ? (currentUser?.name ?? '') : '');
     setCategory('');
     const needed = enterPermission(defaultStatus);
     setStatus(needed === null || can(needed) ? defaultStatus : 'draft');
     setReadingTime('');
-    setMinTier('free');
     setLinkedHorseIds([]);
     setImageUrl('');
     setTags([]);
@@ -288,7 +282,6 @@ export function ArticleForm({
         category: category || undefined,
         status,
         readingTime: readingTime ? parseInt(readingTime, 10) : undefined,
-        minTier,
         linkedHorseIds,
         tags,
         imageUrl: imageUrl.trim() || undefined,
@@ -485,26 +478,6 @@ export function ArticleForm({
                 onChange={(e) => setReadingTime(e.target.value)}
                 placeholder="e.g. 8"
               />
-            </div>
-            <div className="space-y-1.5">
-              <Label
-                htmlFor="article-mintier"
-                className="text-[10px] uppercase tracking-[0.1em] font-semibold text-muted-foreground"
-              >
-                Access Tier
-              </Label>
-              <select
-                id="article-mintier"
-                value={minTier}
-                onChange={(e) => setMinTier(e.target.value as SubscriptionTier)}
-                className="w-full h-9 rounded-md border border-input bg-background px-2 text-sm"
-              >
-                {TIER_ORDER.map((t) => (
-                  <option key={t} value={t}>
-                    {t === 'free' ? 'Free — everyone' : `${TIER_LABELS[t]} members & up`}
-                  </option>
-                ))}
-              </select>
             </div>
           </div>
 

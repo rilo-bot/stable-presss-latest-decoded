@@ -1,33 +1,33 @@
 import { create } from 'zustand';
 import { authFetch } from '@/lib/api';
 import { useAuthStore } from '@/stores/authStore';
+import type { PartyRow } from '@/stores/authStore';
 import type { OrgRole, PartyRole } from '@/rbac/roles';
 
+/**
+ * Mirrors the `organisations` collection: name, owner, description, bio. There
+ * is no location or profession on an org — those belong to a person.
+ */
 export interface OrgSummary {
   id: string;
   name: string;
-  base_location?: string;
+  description?: string;
+  bio?: string;
   myRole: OrgRole;
 }
 
 export interface OrgMember {
   userId: string;
-  displayName: string;
-  email: string;
-  orgRole: OrgRole;
-}
-
-export interface ManagedParty {
-  id: string;
   name: string;
-  roles: PartyRole[];
-  managedByOrgId: string;
+  email: string;
+  role: OrgRole;
 }
 
 export interface OrgDetail {
-  org: { id: string; name: string; base_location?: string; profession?: string };
+  org: { id: string; name: string; description?: string; bio?: string };
   members: OrgMember[];
-  managedParties: ManagedParty[];
+  /** Register edges this org fields, with the person joined in. */
+  parties: PartyRow[];
   horseIds: string[];
 }
 
@@ -41,14 +41,18 @@ interface OrgState {
   mine: OrgSummary[];
   detail: OrgDetail | null;
   loading: boolean;
-  createOrg: (data: { name: string; base_location?: string }) => Promise<Result>;
+  createOrg: (data: { name: string; description?: string; bio?: string }) => Promise<Result>;
   fetchMine: () => Promise<void>;
   fetchOrg: (id: string) => Promise<void>;
-  addMember: (orgId: string, email: string, orgRole: OrgRole) => Promise<Result>;
+  addMember: (orgId: string, email: string, role: OrgRole) => Promise<Result>;
   removeMember: (orgId: string, userId: string) => Promise<Result>;
-  createManagedParty: (
+  /**
+   * Field someone in the register under this org. ONE role per entry — the row
+   * is an edge, so a person who both trains and owns gets two.
+   */
+  addOrgParty: (
     orgId: string,
-    data: { name: string; roles: PartyRole[] },
+    data: { personId: string; role: PartyRole; horseId?: string } | { name: string; role: PartyRole; horseId?: string },
   ) => Promise<Result>;
 }
 
@@ -71,7 +75,8 @@ export const useOrgStore = create<OrgState>((set, get) => ({
       });
       const body = await res.json().catch(() => null);
       if (!res.ok) return { ok: false, error: body?.error ?? 'Could not create the organisation.' };
-      // Creator gained an org_owner membership — refresh the session.
+      // The creator gained an owner membership — refresh the session so scope
+      // resolution picks it up.
       await useAuthStore.getState().verifySession();
       return { ok: true, id: body?.org?.id };
     } catch {
@@ -100,12 +105,15 @@ export const useOrgStore = create<OrgState>((set, get) => ({
     }
   },
 
-  addMember: async (orgId, email, orgRole) => {
+  addMember: async (orgId, email, role) => {
     try {
       const res = await authFetch(`/api/organisations/${orgId}/members`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ email, orgRole }),
+        // `role`, not `orgRole`: the server reads `body.role` and defaults an
+        // unrecognised value to 'member', so the wrong key silently demoted
+        // every owner and manager it was asked to add.
+        body: JSON.stringify({ email, role }),
       });
       if (!res.ok) return { ok: false, error: await readError(res, 'Could not add the member.') };
       await get().fetchOrg(orgId);
@@ -128,7 +136,7 @@ export const useOrgStore = create<OrgState>((set, get) => ({
     }
   },
 
-  createManagedParty: async (orgId, data) => {
+  addOrgParty: async (orgId, data) => {
     try {
       const res = await authFetch(`/api/organisations/${orgId}/managed-parties`, {
         method: 'POST',

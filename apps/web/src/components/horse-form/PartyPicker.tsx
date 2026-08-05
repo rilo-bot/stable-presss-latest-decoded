@@ -1,12 +1,13 @@
 import { useState, useMemo } from 'react';
-import type { Party, PartyRole } from '@/types/party';
+import type { PartyRole } from '@/types/party';
 import { PARTY_ROLE_LABELS } from '@/types/party';
 import { Label } from '@/components/ui/label';
 import { X, ChevronDown, Plus, Check } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { PartyForm } from '@/components/PartyForm';
+import type { RegisterPerson } from '@/lib/register';
 
-/* ── Party multi-select picker ── */
+/* ── RegisterPerson multi-select picker ── */
 export function PartyPicker({
   label,
   roleFilter,
@@ -20,7 +21,7 @@ export function PartyPicker({
   roleFilter: PartyRole | PartyRole[];
   selectedIds: string[];
   onChange: (ids: string[]) => void;
-  allParties: Party[];
+  allParties: RegisterPerson[];
   required?: boolean;
   hint?: string;
 }) {

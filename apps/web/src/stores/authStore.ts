@@ -1,37 +1,41 @@
 import { create } from 'zustand';
 import { persist } from 'zustand/middleware';
 import { apiUrl } from '@/lib/api';
-import type { Role, PartyRole, OrgRole } from '@/rbac/roles';
-import type { SubscriptionTier } from '@/rbac/entitlement';
+import type { PartyRole, OrgRole } from '@/rbac/roles';
 
-/** A self-claimed racing identity, pending until verified. See RBAC.md §7. */
-export interface PartyClaim {
+/**
+ * One row of the racing register: an EDGE joining a person to a role, and
+ * optionally to a horse and an org. One row per person × role × horse.
+ *
+ * `name` and `imageUrl` are the PERSON's, resolved server-side at read time and
+ * never stored on the edge — treat them as read-only projections and edit the
+ * person through peopleStore. There is no pending/verified state: a row is
+ * claimed or it is not.
+ *
+ * Mirrors `PartyRow` in apps/server/src/lib/identity.ts.
+ */
+export interface PartyRow {
   id: string;
-  partyId: string;
+  personId: string;
+  name: string;
+  imageUrl?: string;
   role: PartyRole;
-  status: 'pending' | 'verified' | 'rejected';
-  evidenceUrl?: string;
-  verifiedBy?: string;
-  verifierType?: 'admin' | 'org';
-  verifiedAt?: string;
-  rejectionReason?: string;
-  /**
-   * True when this claim registered the account's OWN person-party (vs. claiming
-   * a pre-existing one). Self-registered claims get PROVISIONAL editing access
-   * while still pending — see manageablePartyIds in rbac/can.ts.
-   */
-  selfRegistered?: boolean;
+  taken: boolean;
+  userId?: string;
+  orgId?: string;
+  horseId?: string;
 }
 
-/** Membership of one organisation, with a scoped org role. */
-export interface OrgMembership {
+/** Membership of one organisation. Mirrors `OrgMemberRow` on the server. */
+export interface OrgMember {
+  id: string;
   orgId: string;
-  orgRole: OrgRole;
+  role: OrgRole;
 }
 
-/** One role the user holds, as defined in the database. */
+/** The admin role the user holds, for display. Keyed by `name`, not a slug. */
 export interface AssignedRole {
-  slug: string;
+  name: string;
   label: string;
   color?: string;
   /** A lucide icon NAME — resolved to a component by lib/roleDisplay.tsx. */
@@ -39,37 +43,43 @@ export interface AssignedRole {
 }
 
 /**
- * What the signed-in user may actually do, resolved SERVER-side as the union
- * across every role they hold. This is the ONLY source of permission truth on
- * the client — there is no local role matrix any more, because roles are rows
- * in a database that a superadmin edits at runtime.
+ * What the signed-in user may actually do, resolved SERVER-side. This is the
+ * ONLY source of permission truth on the client — there is no local role matrix,
+ * because roles are rows in a database that a superadmin edits at runtime.
  */
 export interface ResolvedAccess {
   /** Granted action ids, e.g. 'content.publish'. */
   permissions: string[];
   /** Navigation surfaces the user may open, e.g. 'analytics'. */
   modules: string[];
-  /** Kanban columns the user may see (was the static `allowedStatuses`). */
+  /** Kanban columns the user may see. */
   workflowStages: string[];
   /** Unrestricted access. Rendered as a badge; enforcement is server-side. */
   isSuperAdmin: boolean;
-  /** The roles themselves, for display (label, colour, icon). */
+  /** The role itself, for display (label, colour, icon). At most one. */
   roles: AssignedRole[];
 }
 
+/**
+ * The signed-in account. Mirrors `toClientUser` in
+ * apps/server/src/lib/effectiveAccess.ts — keep the two in step.
+ *
+ * There are exactly TWO categories of account: users, and admins. `isAdmin` is
+ * the whole test, and the server derives it from `users.roleId` rather than
+ * storing it, so it cannot drift from the role the account actually holds.
+ */
 export interface AuthUser {
   id: string;
   email: string;
-  displayName: string;
+  name: string;
   createdAt: string;
-  /** All global roles (reader + staff + verified party roles). */
-  roles: Role[];
-  /** Entitlement axis — gates premium content only. */
-  subscriptionTier: SubscriptionTier;
-  partyClaims: PartyClaim[];
-  orgMemberships: OrgMembership[];
-  /** DYNAMIC axis — role slugs into the server's `roles` collection. */
-  staffRoles: string[];
+  /** Holds an admin role. Server-derived — never sent up, never stored. */
+  isAdmin: boolean;
+  lastLogin: string | null;
+  /** Racing roles, derived from the register rows below. Display only. */
+  roles: PartyRole[];
+  parties: PartyRow[];
+  orgMembers: OrgMember[];
   /** Server-resolved effective access. Absent only on a partial payload. */
   access?: ResolvedAccess;
 }
@@ -78,13 +88,10 @@ export interface AuthUser {
  * Normalize a raw user payload from the API into a complete AuthUser.
  *
  * `previous` carries forward `access` when an endpoint returns a user object
- * without it (e.g. /api/subscription, which only touches the entitlement axis).
- * Without this a tier change would blank the whole navigation until the next
- * session check.
+ * without it, so a partial response cannot blank the whole navigation until the
+ * next session check.
  */
 function hydrateUser(raw: any, previous?: AuthUser | null): AuthUser {
-  const roles: Role[] =
-    Array.isArray(raw?.roles) && raw.roles.length > 0 ? raw.roles : ['reader'];
   const rawAccess = raw?.access;
   const access: ResolvedAccess | undefined = rawAccess
     ? {
@@ -99,13 +106,13 @@ function hydrateUser(raw: any, previous?: AuthUser | null): AuthUser {
   return {
     id: String(raw?.id ?? ''),
     email: String(raw?.email ?? ''),
-    displayName: String(raw?.displayName ?? ''),
+    name: String(raw?.name ?? ''),
     createdAt: String(raw?.createdAt ?? ''),
-    roles,
-    subscriptionTier: (raw?.subscriptionTier as SubscriptionTier) ?? 'free',
-    partyClaims: Array.isArray(raw?.partyClaims) ? raw.partyClaims : [],
-    orgMemberships: Array.isArray(raw?.orgMemberships) ? raw.orgMemberships : [],
-    staffRoles: Array.isArray(raw?.staffRoles) ? raw.staffRoles : [],
+    isAdmin: raw?.isAdmin === true,
+    lastLogin: typeof raw?.lastLogin === 'string' ? raw.lastLogin : null,
+    roles: Array.isArray(raw?.roles) ? raw.roles : [],
+    parties: Array.isArray(raw?.parties) ? raw.parties : [],
+    orgMembers: Array.isArray(raw?.orgMembers) ? raw.orgMembers : [],
     access,
   };
 }
@@ -113,7 +120,7 @@ function hydrateUser(raw: any, previous?: AuthUser | null): AuthUser {
 export interface OtpRequestResult {
   ok: boolean;
   error?: string;
-  /** Present only in dev (when SendGrid isn't configured) — shows the code in the UI. */
+  /** Present only in dev (when email isn't configured) — shows the code in the UI. */
   devCode?: string;
 }
 
@@ -133,25 +140,24 @@ interface AuthState {
 
   /** Step 1 — Login: ask the server to email a one-time code. */
   requestLoginOtp: (email: string) => Promise<OtpRequestResult>;
-  /** Step 1 — Signup: register pending details and ask for a code. Every new
-   *  account starts as a reader; roles/tier are layered on after signup. */
-  requestSignupOtp: (
-    email: string,
-    displayName: string
-  ) => Promise<OtpRequestResult>;
+  /**
+   * Step 1 — Signup: register pending details and ask for a code.
+   *
+   * Signup takes a name and an email, and nothing else. Becoming an admin means
+   * `users.roleId`, which only an existing admin can set.
+   */
+  requestSignupOtp: (email: string, name: string) => Promise<OtpRequestResult>;
   /** Step 2 — Verify the code; on success stores the user + JWT. */
   verifyOtp: (email: string, code: string) => Promise<VerifyResult>;
   /**
    * Redeem a team-invite link. One call replaces the whole OTP round trip: the
    * server creates the account if it is new, applies the invited role, and
-   * returns a session in the same shape `verifyOtp` gets. `displayName` is
-   * required only for an address with no account yet.
+   * returns a session in the same shape `verifyOtp` gets. `name` is required
+   * only for an address with no account yet.
    */
-  acceptInvite: (token: string, displayName?: string) => Promise<AcceptInviteResult>;
+  acceptInvite: (token: string, name?: string) => Promise<AcceptInviteResult>;
   /** Validate a persisted token against the server; clears session on 401. */
   verifySession: () => Promise<void>;
-  /** Set the current user's subscription tier (entitlement axis). */
-  setSubscriptionTier: (tier: SubscriptionTier) => Promise<{ ok: boolean; error?: string }>;
   logout: () => void;
 }
 
@@ -186,12 +192,12 @@ export const useAuthStore = create<AuthState>()(
         }
       },
 
-      requestSignupOtp: async (email, displayName) => {
+      requestSignupOtp: async (email, name) => {
         try {
           const { data } = await postJson('/api/auth/request-otp', {
             email,
             mode: 'signup',
-            displayName,
+            name,
           });
           if (data?.ok) return { ok: true, devCode: data.devCode };
           return { ok: false, error: data?.error ?? 'Could not send a code. Please try again.' };
@@ -213,11 +219,11 @@ export const useAuthStore = create<AuthState>()(
         }
       },
 
-      acceptInvite: async (token, displayName) => {
+      acceptInvite: async (token, name) => {
         try {
           const { data } = await postJson(
             `/api/invites/${encodeURIComponent(token)}/accept`,
-            displayName ? { displayName } : {},
+            name ? { name } : {},
           );
           if (data?.token && data?.user) {
             set({ currentUser: hydrateUser(data.user), token: data.token as string });
@@ -247,34 +253,15 @@ export const useAuthStore = create<AuthState>()(
         }
       },
 
-      setSubscriptionTier: async (tier) => {
-        try {
-          const token = get().token;
-          const res = await fetch(apiUrl('/api/subscription'), {
-            method: 'POST',
-            headers: {
-              'Content-Type': 'application/json',
-              ...(token ? { Authorization: `Bearer ${token}` } : {}),
-            },
-            body: JSON.stringify({ tier }),
-          });
-          const data = await res.json().catch(() => null);
-          if (!res.ok) return { ok: false, error: data?.error ?? 'Could not update your plan.' };
-          if (data?.user) set({ currentUser: hydrateUser(data.user, get().currentUser) });
-          return { ok: true };
-        } catch {
-          return { ok: false, error: 'Network error. Please try again.' };
-        }
-      },
-
       logout: () => set({ currentUser: null, token: null }),
     }),
     {
       name: 'stablepress-auth',
-      // v4: adds server-resolved `access` (effective permissions + modules) and
-      // customRoleIds. A v3 session has no access payload, so permission checks
-      // would fall back to the legacy single-role matrix — reset instead.
-      version: 4,
+      // v5: the user payload was reshaped — `name` (was displayName), `parties`
+      // (was partyClaims), `orgMembers` (was orgMemberships), and the
+      // subscription tier / staffRoles axes are gone. A v4 session would hydrate
+      // with a blank name and no register rows, so reset instead.
+      version: 5,
       migrate: () => ({ currentUser: null, token: null }),
       partialize: (s) => ({ currentUser: s.currentUser, token: s.token }),
     }
@@ -283,21 +270,17 @@ export const useAuthStore = create<AuthState>()(
 
 // ── Selector hooks ────────────────────────────────────────────────────────────
 
-/** True if the current user holds the given global role. */
-export function useHasRole(role: Role): boolean {
+/** True if the current user holds the given racing role. */
+export function useHasRole(role: PartyRole): boolean {
   return useAuthStore((s) => !!s.currentUser?.roles.includes(role));
 }
 
-/** The current user's subscription tier (free when signed out). */
-export function useSubscriptionTier(): SubscriptionTier {
-  return useAuthStore((s) => s.currentUser?.subscriptionTier ?? 'free');
+/** True if the current user holds an admin role. THE admin test. */
+export function useIsAdmin(): boolean {
+  return useAuthStore((s) => s.currentUser?.isAdmin === true);
 }
 
-/** Verified party roles the user can currently act as. */
+/** Racing roles the user can currently act as. */
 export function useActivePartyRoles(): PartyRole[] {
-  return useAuthStore((s) =>
-    (s.currentUser?.partyClaims ?? [])
-      .filter((c) => c.status === 'verified')
-      .map((c) => c.role),
-  );
+  return useAuthStore((s) => [...new Set((s.currentUser?.parties ?? []).map((p) => p.role))]);
 }

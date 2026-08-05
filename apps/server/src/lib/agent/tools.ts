@@ -13,7 +13,9 @@ import { tool, type ToolSet } from 'ai'
 import { z } from 'zod'
 import { db } from '../db.js'
 import { isAdmin } from '../rbac.js'
-import { ORGANISATIONS, PARTIES } from '../collections.js'
+import { ORGANISATIONS, PARTIES, PEOPLE } from '../collections.js'
+import { loadPerson, projectPerson } from '../people.js'
+import { toPartyRows } from '../effectiveAccess.js'
 import { visibleHorseIds, manageablePartyIds } from '../scope.js'
 import type { AccountUser } from '../identity.js'
 import { FEATURE_GUIDES, GUIDE_TOPICS } from './guides.js'
@@ -208,8 +210,9 @@ export function buildTools(account?: AccountUser, authHeader?: string): ToolSet 
           note: 'That horse is not in this reader\'s view (it may be unverified or private). Suggest searching the public register, or — if it is their own horse — claiming the matching racing role from the Dashboard.',
         }
         if (!horse) return notFound
-        // Connections are `parties` rows carrying this horseId - one indexed query.
-        const links = await db.collection(PARTIES).find({ horseId })
+        // Connections are `parties` edges carrying this horseId - one indexed
+        // query, plus one to resolve the people behind them.
+        const links = await toPartyRows(await db.collection(PARTIES).find({ horseId }))
         const authorised = account ? new Set(await visibleHorseIds(account)) : new Set<string>()
         const visible =
           staff ||
@@ -236,9 +239,9 @@ export function buildTools(account?: AccountUser, authHeader?: string): ToolSet 
         return {
           horse: horseCard(horse),
           connections: links.slice(0, 50).map((p) => ({
-            party: String(p.name ?? 'a party'),
+            party: p.name || 'a party',
             relationship: p.role,
-            claimed: p.taken === true,
+            claimed: p.taken,
           })),
           racingEntries,
           sales,
@@ -257,19 +260,41 @@ export function buildTools(account?: AccountUser, authHeader?: string): ToolSet 
         limit: z.number().optional(),
       }),
       execute: async ({ query, role, limit }) => {
-        let parties = await visibleParties(account)
-        if (query) parties = parties.filter((p) => matches(p.name, query) || matches(p.base_location, query))
-        if (role) parties = parties.filter((p) => Array.isArray(p.roles) && p.roles.some((r: string) => matches(r, role)))
+        // A "party" to a reader is a PERSON. The roles they fill are their edges
+        // in the register, so both collections are read and folded together.
+        const [peopleDocs, edges] = await Promise.all([
+          db.collection(PEOPLE).find(),
+          db.collection(PARTIES).find(),
+        ])
+        const rolesByPerson = new Map<string, Set<string>>()
+        for (const e of edges) {
+          const key = String(e.personId ?? '')
+          if (!key) continue
+          if (!rolesByPerson.has(key)) rolesByPerson.set(key, new Set())
+          rolesByPerson.get(key)!.add(String(e.role))
+        }
+
+        let people = peopleDocs.map(projectPerson)
+        if (query) {
+          people = people.filter(
+            (p) => matches(p.name, query) || matches(p.baseLocation, query) || matches(p.profession, query),
+          )
+        }
+        if (role) {
+          people = people.filter((p) =>
+            [...(rolesByPerson.get(p.id) ?? [])].some((r) => matches(r, role)),
+          )
+        }
         return {
-          count: parties.length,
-          parties: parties.slice(0, clamp(limit, 10, 25)).map((p) => ({
-            id: idOf(p),
+          count: people.length,
+          parties: people.slice(0, clamp(limit, 10, 25)).map((p) => ({
+            id: p.id,
             name: p.name,
-            type: p.party_type,
-            roles: p.roles,
-            location: p.base_location,
-            country: p.country,
-            since: p.started_year,
+            roles: [...(rolesByPerson.get(p.id) ?? [])],
+            profession: p.profession,
+            location: p.baseLocation,
+            country: p.countryOfBirth,
+            since: p.startedYear,
           })),
         }
       },
@@ -280,21 +305,30 @@ export function buildTools(account?: AccountUser, authHeader?: string): ToolSet 
         "A party's profile plus the horses they are connected to that this reader can see. Returns notFound if the party is not visible to them.",
       inputSchema: z.object({ partyId: z.string() }),
       execute: async ({ partyId }) => {
-        const party = (await visibleParties(account)).find((p) => idOf(p) === partyId)
-        if (!party) return { notFound: true }
+        // Accepts a person id OR an edge id: the reader-facing "party" is the
+        // person, but a link elsewhere in the app may point at one of the edges.
+        let person = await loadPerson(partyId)
+        if (!person) {
+          const edge = await db.collection(PARTIES).findById(partyId)
+          person = await loadPerson(edge?.personId ? String(edge.personId) : undefined)
+        }
+        if (!person) return { notFound: true }
+
+        // Every edge for this person — one indexed query. Their horses and the
+        // roles they fill both fall out of it.
+        const edges = await db.collection(PARTIES).find({ personId: person.id })
+        const connectedIds = new Set(edges.filter((e) => e.horseId).map((e) => String(e.horseId)))
         const horses = await visibleHorses(account)
-        // A party row carries `horseId` directly — one row per (person, role,
-        // horse) — so "which horses is this party connected to?" is a lookup by
-        // NAME across the register, not a join through a link table.
-        const siblings = await db.collection(PARTIES).find({ name: party.name })
-        const connectedIds = new Set(siblings.filter((p) => p.horseId).map((p) => String(p.horseId)))
         return {
           party: {
-            id: idOf(party),
-            name: party.name,
-            role: party.role,
-            claimed: party.taken === true,
-            organisationId: party.orgId,
+            id: person.id,
+            name: person.name,
+            roles: [...new Set(edges.map((e) => String(e.role)))],
+            profession: person.profession,
+            location: person.baseLocation,
+            since: person.startedYear,
+            claimed: edges.some((e) => e.taken === true),
+            organisationIds: [...new Set(edges.filter((e) => e.orgId).map((e) => String(e.orgId)))],
           },
           connectedHorses: horses
             .filter((h) => connectedIds.has(idOf(h)))

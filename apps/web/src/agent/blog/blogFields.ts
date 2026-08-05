@@ -36,7 +36,7 @@ import { mediaById } from '@/types/blog';
  *               `setBlogField`: prose is written with the body tools so it goes
  *               through the BodyItem seam instead of arriving as a lump of text.
  */
-export type BlogFieldKind = 'text' | 'longtext' | 'tags' | 'tier' | 'mediaRef' | 'body';
+export type BlogFieldKind = 'text' | 'longtext' | 'tags' | 'mediaRef' | 'body';
 
 export interface BlogFieldDef {
   /** Stable id. Dynamic ones are `part:<partId>.title`, `block:<blockId>`, `media:<mediaId>.alt`. */
@@ -55,7 +55,6 @@ const FIXED: Array<Omit<BlogFieldDef, 'writable'>> = [
   { field: 'category', name: 'Category', kind: 'text' },
   { field: 'tags', name: 'Tags', kind: 'tags' },
   { field: 'byline', name: 'Byline', kind: 'text' },
-  { field: 'tier', name: 'Who can read it', kind: 'tier' },
   { field: 'seo.metaTitle', name: 'Browser tab title', kind: 'text' },
   { field: 'seo.metaDescription', name: 'Search summary', kind: 'longtext' },
   { field: 'cover', name: 'Cover image', kind: 'mediaRef' },
@@ -127,7 +126,6 @@ export function readBlogField(blog: Blog, field: string): string {
     case 'category': return blog.category ?? '';
     case 'tags': return blog.tags.join(', ');
     case 'byline': return blog.author.name;
-    case 'tier': return blog.minTier ?? 'free';
     case 'seo.metaTitle': return blog.seo.metaTitle ?? '';
     case 'seo.metaDescription': return blog.seo.metaDescription ?? '';
     case 'cover': return mediaById(blog, blog.cover?.mediaId)?.filename ?? '';

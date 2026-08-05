@@ -5,7 +5,7 @@ import { useOrgStore } from '@/stores/orgStore';
 import { useClaimStore } from '@/stores/claimStore';
 import { useHorseStore } from '@/stores/horseStore';
 import { useHorsePartyLinkStore } from '@/stores/horsePartyLinkStore';
-import { authorisedHorseIds, previewHorseIds, hasProvisionalParty, primaryPartyId, isStaff } from '@/rbac/can';
+import { authorisedHorseIds, previewHorseIds, hasProvisionalParty, primaryPartyId, isAdmin } from '@/rbac/can';
 import { can } from '@/lib/permissions';
 import { PARTY_ROLES, PARTY_ROLE_LABELS } from '@/types/party';
 import type { PartyRole } from '@/types/party';
@@ -72,7 +72,7 @@ export default function Dashboard() {
   }, [currentUser, horses, links]);
 
   if (!currentUser) return null;
-  const staff = isStaff(currentUser);
+  const staff = isAdmin(currentUser);
   // Was roles.includes('administrator') — roles[] no longer carries staff slugs.
   const admin = can('platform.admin');
   const claims = currentUser.partyClaims ?? [];
@@ -157,7 +157,7 @@ export default function Dashboard() {
       {/* Header */}
       <div>
         <h1 className="font-[family-name:var(--font-display)] text-3xl font-bold text-foreground">
-          Welcome, {currentUser.displayName}
+          Welcome, {currentUser.name}
         </h1>
         <p className="text-sm text-muted-foreground mt-1">
           Your roles:{' '}

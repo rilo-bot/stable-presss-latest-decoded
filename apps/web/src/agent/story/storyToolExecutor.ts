@@ -14,7 +14,8 @@ import { useHorseStore } from '@/stores/horseStore';
 import { usePartyStore } from '@/stores/partyStore';
 import { useAuthStore } from '@/stores/authStore';
 import { connectionResolver } from '@/lib/horseConnections';
-import type { SubscriptionTier } from '@/rbac/entitlement';
+import { buildRegister } from '@/lib/register';
+import { usePeopleStore } from '@/stores/peopleStore';
 
 const CLIENT_TOOLS = new Set(['listHorses', 'createStoryDraft']);
 
@@ -28,14 +29,12 @@ async function listHorses(): Promise<unknown> {
     usePartyStore.getState().fetchParties(),
   ]);
   const horses = useHorseStore.getState().horses;
-  const conn = connectionResolver(usePartyStore.getState().parties);
+  const conn = connectionResolver(buildRegister(usePeopleStore.getState().people, usePartyStore.getState().parties));
   const list = horses.slice(0, 200).map((h) => ({ id: h.id, name: h.name, trainer: conn(h).trainer || '' }));
   // Also surface the list to the user as an on-screen, read-only reference box.
   useStoryStudioUi.getState().setHorseOptions(list);
   return { horses: list };
 }
-
-const VALID_TIERS: SubscriptionTier[] = ['free', 'standard', 'premium'];
 
 async function createDraft(arg: Record<string, unknown>): Promise<unknown> {
   const title = String(arg.title ?? '').trim();
@@ -47,11 +46,10 @@ async function createDraft(arg: Record<string, unknown>): Promise<unknown> {
   const readingTime = Math.max(1, Math.round(words / 200));
 
   // Byline = the signed-in member (never asked).
-  const author = useAuthStore.getState().currentUser?.displayName?.trim() || 'Staff Correspondent';
+  const author = useAuthStore.getState().currentUser?.name?.trim() || 'Staff Correspondent';
 
   const category = arg.category ? String(arg.category) : undefined;
-  const rawTier = String(arg.minTier ?? 'free') as SubscriptionTier;
-  const minTier: SubscriptionTier = VALID_TIERS.includes(rawTier) ? rawTier : 'free';
+
   const linkedHorseIds = Array.isArray(arg.linkedHorseIds) ? arg.linkedHorseIds.map(String) : [];
 
   // Lead photo = whatever the user attached via the composer (kept out of the model's context).
@@ -64,7 +62,7 @@ async function createDraft(arg: Record<string, unknown>): Promise<unknown> {
     status: 'draft',
     publishedAt: null,
     linkedHorseIds,
-    minTier,
+
     readingTime,
     ...(category ? { category } : {}),
     ...(imageUrl ? { imageUrl } : {}),

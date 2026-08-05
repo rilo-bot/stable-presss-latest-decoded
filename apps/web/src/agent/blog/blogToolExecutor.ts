@@ -52,7 +52,6 @@ import {
   type InsertWhere,
 } from './blogEditorBridge';
 import type { Blog, BlogMedia, BlogSeo } from '@/types/blog';
-import type { SubscriptionTier } from '@/rbac/entitlement';
 
 const CLIENT_TOOLS = new Set([
   'listBlogPosts',
@@ -80,7 +79,6 @@ export function isBlogClientTool(name: string): boolean {
   return CLIENT_TOOLS.has(name);
 }
 
-const TIERS: SubscriptionTier[] = ['free', 'standard', 'premium'];
 
 function str(v: unknown, max = 2000): string {
   return typeof v === 'string' ? v.slice(0, max).trim() : '';
@@ -287,7 +285,6 @@ async function openPost(arg: Record<string, unknown>): Promise<unknown> {
     excerpt: post.excerpt ?? '',
     category: post.category ?? '',
     tags: post.tags,
-    minTier: post.minTier ?? 'free',
     status: post.status,
     slug: post.slug,
     readingTime: post.readingTime,
@@ -337,7 +334,6 @@ async function saveFull(post: Blog, patch: BlogSaveInput): Promise<{ ok: boolean
     cover: post.cover ?? null,
     thumbnailMediaId: post.thumbnailMediaId ?? null,
     seo: post.seo,
-    minTier: post.minTier,
     ...patch,
     baseUpdatedAt: post.updatedAt,
   };
@@ -370,7 +366,6 @@ async function updatePostInEditor(id: string, arg: Record<string, unknown>): Pro
   if (arg.excerpt !== undefined) pairs.push(['excerpt', str(arg.excerpt, 500)]);
   if (arg.category !== undefined) pairs.push(['category', str(arg.category, 80)]);
   if (arg.tags !== undefined) pairs.push(['tags', strArray(arg.tags).join(', ')]);
-  if (arg.minTier !== undefined) pairs.push(['tier', str(arg.minTier, 20)]);
   if (arg.metaTitle !== undefined) pairs.push(['seo.metaTitle', str(arg.metaTitle, 200)]);
   if (arg.metaDescription !== undefined) pairs.push(['seo.metaDescription', str(arg.metaDescription, 400)]);
 
@@ -416,10 +411,6 @@ async function updatePost(arg: Record<string, unknown>): Promise<unknown> {
   if (arg.excerpt !== undefined) patch.excerpt = str(arg.excerpt, 500);
   if (arg.category !== undefined) patch.category = str(arg.category, 80);
   if (arg.tags !== undefined) patch.tags = strArray(arg.tags);
-  if (arg.minTier !== undefined) {
-    const tier = str(arg.minTier, 20) as SubscriptionTier;
-    if (TIERS.includes(tier)) patch.minTier = tier;
-  }
   const seo = mergeSeo(post.seo, arg);
   if (seo) patch.seo = seo;
 
@@ -503,15 +494,12 @@ async function createDraft(arg: Record<string, unknown>): Promise<unknown> {
     });
   }
 
-  const tier = str(arg.minTier, 20) as SubscriptionTier;
-
   const created = await useBlogStore.getState().createBlog({
     title,
     subtitle: str(arg.subtitle, 300) || undefined,
     excerpt: str(arg.excerpt, 500) || undefined,
     category: str(arg.category, 80) || undefined,
     tags: strArray(arg.tags),
-    minTier: TIERS.includes(tier) ? tier : 'free',
     // Consumed immediately by `usePageMeta` on the public post page, so a post
     // written here gets a real browser-tab title and search summary rather than
     // the site's generic one.
@@ -523,7 +511,7 @@ async function createDraft(arg: Record<string, unknown>): Promise<unknown> {
     ...linksFrom(items),
     ...(media[0] ? { cover: { mediaId: media[0].id, treatment: 'side' as const } } : {}),
     // The byline is the signed-in member, never asked for and never model-supplied.
-    author: { name: useAuthStore.getState().currentUser?.displayName?.trim() || 'Staff' },
+    author: { name: useAuthStore.getState().currentUser?.name?.trim() || 'Staff' },
     // Explicitly a draft. Publishing is always a separate, deliberate ask.
     status: 'draft',
   });

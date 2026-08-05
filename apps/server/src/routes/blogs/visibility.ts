@@ -5,10 +5,11 @@
 // posts that are not (`canSeeDrafts`).
 //
 // There used to be a third — `gateForTier`, which trimmed a "premium" post to a
-// and the subscription route were deleted), so the gate was reading a field
-// nothing set: every post came back `locked: false` for everyone. A paywall that
-// is always open is worse than no paywall, because the code reads as if one is
-// being enforced. Removed with `minTier` rather than left as scaffolding.
+// teaser. Subscriptions are gone (the tier on the account and the subscription
+// route were both deleted), so the gate was reading a field nothing set: every
+// post came back `locked: false` for everyone. A paywall that is always open is
+// worse than no paywall, because the code reads as if one is being enforced.
+// Removed along with `minTier` rather than left standing as scaffolding.
 // ---------------------------------------------------------------------------
 
 import { accountCan } from '../../lib/effectiveAccess.js'

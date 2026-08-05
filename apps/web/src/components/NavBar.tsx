@@ -3,7 +3,7 @@ import { Link, useNavigate, useLocation } from 'react-router-dom';
 import { cn } from '@/lib/utils';
 import { useAuthStore } from '@/stores/authStore';
 import { can } from '@/lib/permissions';
-import { isStaff, primaryPartyId } from '@/rbac/can';
+import { isAdmin, primaryPartyId } from '@/rbac/can';
 import { ChevronDown, ChevronUp, Menu, X } from 'lucide-react';
 import { toast } from 'sonner';
 import { type NavSection } from './navbar/config';
@@ -58,7 +58,7 @@ export function NavBar() {
     };
   }, [collapsed]);
 
-  const staff = isStaff(currentUser);
+  const staff = isAdmin(currentUser);
   const accountLabel = staff ? 'Staff' : 'Member';
   const myPartyId = primaryPartyId(currentUser);
 

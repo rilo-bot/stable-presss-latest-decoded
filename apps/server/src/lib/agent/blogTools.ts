@@ -158,7 +158,7 @@ export function buildBlogTools(account?: AccountUser, authHeader?: string): Tool
     // retargeted would edit the wrong piece of writing.
     setBlogField: tool({
       description:
-        'Set ONE input on the post open in the editor. `field` must be an id from the editor field list you were given (`title`, `subtitle`, `excerpt`, `category`, `tags`, `byline`, `tier`, `seo.metaTitle`, `seo.metaDescription`, `cover`, `thumbnail`, `part:<id>.title`, `media:<id>.alt`). Values are plain text: tags comma-separated, `tier` one of free/standard/premium, `cover`/`thumbnail` the id of a photo ALREADY attached to the post. Body writing is NOT settable here — use insertBlogContent / replaceBlogSelection so it goes in as real blocks. Returns { ok, changed } or { ok: false, error }.',
+        'Set ONE input on the post open in the editor. `field` must be an id from the editor field list you were given (`title`, `subtitle`, `excerpt`, `category`, `tags`, `byline`, `seo.metaTitle`, `seo.metaDescription`, `cover`, `thumbnail`, `part:<id>.title`, `media:<id>.alt`). Values are plain text: tags comma-separated, `cover`/`thumbnail` the id of a photo ALREADY attached to the post. Body writing is NOT settable here — use insertBlogContent / replaceBlogSelection so it goes in as real blocks. Returns { ok, changed } or { ok: false, error }.',
       inputSchema: z.object({
         id: z.string().describe('The post id — must be the one open in the editor.'),
         field: z.string().describe('A field id from the editor field list.'),

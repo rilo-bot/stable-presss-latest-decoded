@@ -14,8 +14,6 @@
  * placement — a shape the article model cannot express. See
  * docs/BLOG-SYSTEM-PLAN.md §2.
  */
-import type { SubscriptionTier } from '@/rbac/entitlement';
-
 // ── Status ──────────────────────────────────────────────────────────────────
 
 /**
@@ -384,14 +382,6 @@ export interface Blog {
   publishAt?: string | null;
 
   seo: BlogSeo;
-  minTier?: SubscriptionTier;
-  /**
-   * Set by the read endpoint when it withheld the body because this reader's tier
-   * does not reach `minTier`. When true, `blocks` holds only the free teaser and
-   * `media` only the cover — the paywall is enforced on the server, and this flag
-   * is how the page knows to draw the gate rather than assuming a short post.
-   */
-  locked?: boolean;
   /** Computed server-side from the blocks on every save, never typed by hand. */
   readingTime: number;
 

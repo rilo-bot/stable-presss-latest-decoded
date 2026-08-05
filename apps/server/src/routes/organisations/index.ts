@@ -7,7 +7,9 @@
 import { Router } from 'express'
 import { db } from '../../lib/db.js'
 import { attachAccount } from '../../lib/auth.js'
-import { ORGANISATIONS, ORG_MEMBERS, PARTIES, USERS } from '../../lib/collections.js'
+import { ORGANISATIONS, ORG_MEMBERS, PARTIES, PEOPLE, USERS } from '../../lib/collections.js'
+import { readPersonBody } from '../../lib/people.js'
+import { toPartyRows } from '../../lib/effectiveAccess.js'
 import { toOrgRole, toPartyRole, type OrgRole } from '../../lib/identity.js'
 import { isPlatformAdmin, orgRoleIn, canManageOrg, isOrgOwner } from '../../lib/rbac.js'
 import { project } from '../../lib/project.js'
@@ -101,11 +103,12 @@ router.get('/:id', async (req, res) => {
       role: x.row.role as OrgRole,
     }))
 
-  // A party row carries orgId and horseId, so this is ONE indexed query.
-  const orgParties = await db.collection(PARTIES).find({ orgId })
-  const horseIds = [...new Set(orgParties.filter((p) => p.horseId).map((p) => String(p.horseId)))]
+  // A party edge carries orgId and horseId, so this is ONE indexed query, plus
+  // one more to resolve the people behind the edges.
+  const orgParties = await toPartyRows(await db.collection(PARTIES).find({ orgId }))
+  const horseIds = [...new Set(orgParties.filter((p) => p.horseId).map((p) => p.horseId!))]
 
-  res.json({ org: project(org), members, parties: orgParties.map(project), horseIds })
+  res.json({ org: project(org), members, parties: orgParties, horseIds })
 })
 
 router.put('/:id', async (req, res) => {
@@ -201,19 +204,32 @@ router.post('/:id/parties', async (req, res) => {
     res.status(403).json({ error: 'Only org owners and managers can add parties.' })
     return
   }
-  const name = str(req.body?.name, 120)
-  if (!name) {
-    res.status(400).json({ error: 'Party name is required.' })
-    return
-  }
   const role = toPartyRole(req.body?.role)
   if (!role) {
     res.status(400).json({ error: 'A valid racing role is required (owner, trainer, jockey…).' })
     return
   }
   const now = new Date().toISOString()
+
+  // Either point at an existing person, or create one from a bare name. An org
+  // adding a strapper should not have to register them separately first.
+  let personId = str(req.body?.personId, 64)
+  if (personId) {
+    if (!(await db.collection(PEOPLE).findById(personId))) {
+      res.status(400).json({ error: 'That person is not in the register.' })
+      return
+    }
+  } else {
+    const parsed = readPersonBody(req.body)
+    if ('error' in parsed) {
+      res.status(400).json({ error: 'A person, or at least a name, is required.' })
+      return
+    }
+    personId = await db.collection(PEOPLE).insertOne({ ...parsed, createdAt: now, updatedAt: now })
+  }
+
   const id = await db.collection(PARTIES).insertOne({
-    name,
+    personId,
     role,
     orgId,
     horseId: str(req.body?.horseId, 64),
@@ -222,7 +238,8 @@ router.post('/:id/parties', async (req, res) => {
     updatedAt: now,
   })
   const created = await db.collection(PARTIES).findById(id)
-  res.status(201).json({ party: project(created!) })
+  const [party] = await toPartyRows([created!])
+  res.status(201).json({ party })
 })
 
 export default router

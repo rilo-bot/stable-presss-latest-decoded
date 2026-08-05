@@ -8,6 +8,7 @@ import {
   blogsWriteGate,
   horseScopedWriteGate,
   partyScopedWriteGate,
+  personScopedWriteGate,
 } from '../lib/rbac.js'
 
 // ── Identity & access ──
@@ -21,6 +22,7 @@ import organisationsRouter from './organisations/index.js'
 import notificationsRouter from './notifications/index.js'
 import horsesRouter from './horses/index.js'
 import partiesRouter from './parties/index.js'
+import peopleRouter from './people/index.js'
 import racesRouter from './races/index.js'
 import salesRouter from './sales/index.js'
 import reportsRouter from './reports/index.js'
@@ -138,6 +140,11 @@ router.use('/horses', horseScopedWriteGate({ collection: 'horses', idIsHorse: tr
 // ONE mount. `/parties` was mounted TWICE — the same router imported under two
 // names, the FIRST without a gate — so `partyScopedWriteGate` never ran and
 // DELETE /api/parties/:id was reachable unauthenticated.
+// `people` is the profile, `parties` the edge. Both are admin-to-create: the
+// register is shared, so someone who needs an identity CLAIMS an edge rather
+// than minting a rival one. Editing differs, hence two gates — you may edit the
+// person you have claimed, and the edges you have claimed.
+router.use('/people', personScopedWriteGate, peopleRouter)
 router.use('/parties', partyScopedWriteGate, partiesRouter)
 router.use('/races', adminGate(), racesRouter)
 router.use('/sales', horseScopedWriteGate({ collection: 'sales' }), salesRouter)

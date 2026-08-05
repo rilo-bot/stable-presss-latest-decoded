@@ -72,35 +72,29 @@ export function getStartedYearLabel(roles: PartyRole[]): string {
   return map[primary] ?? 'Started year';
 }
 
-export interface Party {
+/**
+ * A person in the racing world. Stored ONCE in `people` and referenced by every
+ * party edge, so a trainer on thirty horses has one profile, not thirty copies.
+ *
+ * This is not an account. Most people here have never signed in; the link to an
+ * account is `PartyRow.userId`, set when somebody claims the edge.
+ *
+ * Mirrors `Person` in apps/server/src/lib/people.ts.
+ */
+export interface Person {
   id: string;
-  createdAt: Date;
-  /** A party is always an individual person. Organisations live in their own
-   *  collection (see orgStore) and are not parties. */
-  roles: PartyRole[];
   name: string;
-  /** Required for all parties. Base64 data URL or remote URL. */
-  photo?: string;
-  /** Profession / job title */
+  /** Base64 data URL or remote URL. */
+  imageUrl?: string;
+  /** Profession / job title. */
   profession?: string;
-  /** Set when an organisation manages this party (no separate login). */
-  managedByOrgId?: string;
-  /** ISO date string YYYY-MM-DD — person only */
-  date_of_birth?: string;
-  /** Country where born / incorporated */
-  country_of_birth?: string;
-  /** Primary base (city / track / suburb) */
-  base_location?: string;
-  /** Year they started in their primary racing role */
-  started_year?: number;
-  /** Specific personnel subtypes — only populated when 'personnel' is in roles */
-  personnel_subtype?: PersonnelSubtype[];
-  /**
-   * Public visibility. Member self-registered parties start 'unverified' (hidden
-   * from the public site, editable by their owner) and flip to 'verified' on staff
-   * approval of the claim. Missing/legacy parties are treated as verified.
-   */
-  verificationStatus?: 'unverified' | 'verified';
-  /** Account that self-registered this party (provisional ownership). */
-  createdByUserId?: string;
+  /** ISO date string, YYYY-MM-DD. */
+  dateOfBirth?: string;
+  countryOfBirth?: string;
+  /** Primary base (city / track / suburb). */
+  baseLocation?: string;
+  /** Year they started in racing. */
+  startedYear?: number;
+  /** Only meaningful for someone holding a 'personnel' edge. */
+  personnelSubtype: PersonnelSubtype[];
 }

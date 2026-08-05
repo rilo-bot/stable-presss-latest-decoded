@@ -44,7 +44,7 @@ interface PendingCover {
 export default function BlogCreateForm() {
   const navigate = useNavigate();
   const createBlog = useBlogStore((s) => s.createBlog);
-  const displayName = useAuthStore((s) => s.currentUser?.displayName);
+  const displayName = useAuthStore((s) => s.currentUser?.name);
 
   const [title, setTitle] = useState('');
   const [subtitle, setSubtitle] = useState('');

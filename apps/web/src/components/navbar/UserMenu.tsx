@@ -107,7 +107,7 @@ export function UserMenu({ currentUser, accountLabel, handleLogout, accountLinks
           )}
         >
           <User size={12} className="text-primary-foreground/80" />
-          <span className="text-xs font-medium text-primary-foreground">{currentUser.displayName}</span>
+          <span className="text-xs font-medium text-primary-foreground">{currentUser.name}</span>
           <span
             className="rounded-full px-1.5 py-0.5 text-[10px] font-bold uppercase tracking-wider"
             style={{

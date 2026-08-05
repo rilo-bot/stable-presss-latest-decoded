@@ -1,8 +1,8 @@
 import { useState } from 'react';
 import { ChevronRight, X, User } from 'lucide-react';
-import type { Party } from '@/types/party';
 import type { MediaType } from '@/types/mediaItem';
 import type { RaceStatus } from '@/types/racingEntry';
+import type { RegisterPerson } from '@/lib/register';
 
 /* ─── Shared style tokens ─── */
 /* Body/label/value text — a clean, screen-readable serif (replaces the hard-to-read
@@ -17,7 +17,7 @@ export type DataCardImgKey = 'media' | 'racing' | 'breeding' | 'sales' | 'pedigr
 
 /* ─── Helpers ─── */
 /** A party's real uploaded photo, or undefined — callers render an icon placeholder (no stock images). */
-export function partyPhoto(party: Party | undefined, _roleKey?: string): string | undefined {
+export function partyPhoto(party: RegisterPerson | undefined, _roleKey?: string): string | undefined {
   return party?.photo || undefined;
 }
 

@@ -65,14 +65,17 @@ export type PermissionAction =
   // removed because nothing consulted them. See the RESERVED note in
   // apps/server/src/lib/permissionCatalogue.ts.
 
-  // Platform access — replace the old hardcoded role-family tests.
-  // `newsroom.access` is NOT grantable: it is absent from the server catalogue and
-  // emitted as a derived flag for every account holding a staff role. Being on the
-  // team is Campaign Engine access; the role decides what is inside it.
-  | 'newsroom.access'               // Is staff (derived, never ticked)
-  | 'platform.admin'                // Platform-wide override (was: is administrator)
+  // Platform access.
+  //
+  // There is no `newsroom.access` action. Reaching Campaign Engine is
+  // `user.isAdmin` — holding a role IS access, and the role decides only what is
+  // inside. It lived here as a permission nothing could grant, which locked
+  // every admin out of the admin app once the server dropped it.
+  //
+  // `claims.verify` is gone too: it guarded a verification step that no longer
+  // exists. Claiming a register entry is immediate.
+  | 'platform.admin'                // Platform-wide override
   | 'roles.manage'                  // Create roles, set permissions, assign them
-  | 'claims.verify'                 // Verify/reject party claims (split out of platform.admin)
 
   // Team & admin
   | 'team.view'                     // Read the staff roster (Team screen, read-only)
