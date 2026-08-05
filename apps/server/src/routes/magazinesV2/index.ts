@@ -20,7 +20,7 @@ import crypto from 'crypto';
 import { Router, type RequestHandler } from 'express';
 import { db } from '../../lib/db.js';
 import { attachAccount } from '../../lib/auth.js';
-import { canAccessNewsroom } from '../../lib/rbac.js';
+import { isAdmin } from '../../lib/rbac.js';
 import { MAGAZINE_V2_ENABLED, PAGE_W, PAGE_H, MAX_PAGES_PER_ISSUE, MAX_SOURCE_BYTES, ALLOWED_SOURCE_MIME, sourceExtForMime, MAX_IMAGE_BYTES, ALLOWED_IMAGE_MIME, imageExtFor } from '../../lib/magazineV2/config.js';
 import { COL } from '../../lib/magazineV2/collections.js';
 import { rateLimit } from '../../lib/rateLimit.js';
@@ -28,8 +28,8 @@ import { safePublicImageUrl } from '../../lib/magazineV2/url.js';
 import { roleOnMagazine, isOwner, canEditPage, editablePageIds, collaboratorsOf, type V2Collaborator } from '../../lib/magazineV2/access.js';
 import { notifyShared } from '../../lib/notifyShare.js';
 import { magazinePath } from '../../lib/invites.js';
-import { isStaffIdentity, withIdentityDefaults, type IdentityUser } from '../../lib/identity.js';
-import { identityCan } from '../../lib/effectiveAccess.js';
+import { withIdentityDefaults, type IdentityUser } from '../../lib/identity.js';
+import { identityCan, resolveAccount } from '../../lib/effectiveAccess.js';
 import { normalizeElements, normalizeElementPatch } from '../../lib/magazineV2/writePipeline.js';
 import { MAX_ELEMENTS_PER_PAGE, type MagazineElement } from '../../lib/magazineV2/model.js';
 import { isAgentConfigured } from '../../lib/agent/provider.js';
@@ -77,7 +77,7 @@ router.use((_req, res, next) => {
 });
 router.use(attachAccount);
 router.use((req, res, next) => {
-  if (!canAccessNewsroom(req.account)) {
+  if (!isAdmin(req.account)) {
     res.status(403).json({ error: 'Staff access required.' });
     return;
   }
@@ -270,7 +270,7 @@ router.post('/issues/blank', async (req, res) => {
     pagesProcessed: 0,
     pagesTotal: 1,
     ownerId: uid,
-    ownerName: req.account!.displayName,
+    ownerName: req.account!.name,
     collaborators: [],
     publishedIssueIds: [],
     schemaVersion: 2,
@@ -345,7 +345,7 @@ router.post('/issues/:id/reuse', rateLimit('mag2-write', 300, 60_000), async (re
     pagesProcessed: srcPages.length,
     pagesTotal: srcPages.length,
     ownerId: uid,
-    ownerName: req.account!.displayName,
+    ownerName: req.account!.name,
     collaborators: [],
     publishedIssueIds: [],
     // Provenance: which layout this shell came from (handy for debugging, and it
@@ -413,7 +413,7 @@ router.post('/issues/generate', rateLimit('mag2-generate', 10, 60_000), async (r
     pagesTotal: pageCount ?? 8,
     stage: 'Designing the issue',
     ownerId: uid,
-    ownerName: req.account!.displayName,
+    ownerName: req.account!.name,
     collaborators: [],
     publishedIssueIds: [],
     schemaVersion: 2,
@@ -462,7 +462,7 @@ router.post('/issues/upload', async (req, res) => {
     pagesProcessed: 0,
     pagesTotal: 0,
     ownerId: uid,
-    ownerName: req.account!.displayName,
+    ownerName: req.account!.name,
     collaborators: [],
     publishedIssueIds: [],
     schemaVersion: 2,
@@ -1103,9 +1103,12 @@ router.post('/issues/:id/collaborators', async (req, res) => {
     res.status(404).json({ error: 'No account with that email. Ask them to sign up first.' });
     return;
   }
-  const acct = withIdentityDefaults({ id: existing._id, ...existing });
-  if (!isStaffIdentity(acct)) {
-    res.status(400).json({ error: 'That person is not a staff member, so they cannot be added.' });
+  // RESOLVED, not read off the user document. `users.isAdmin` is a denormalised
+  // copy of "has an `admins` row" and can be stale, so a collaborator check that
+  // trusted it would add someone the newsroom itself refuses to let in.
+  const acct = await resolveAccount(withIdentityDefaults({ id: existing._id, ...existing }));
+  if (!isAdmin(acct)) {
+    res.status(400).json({ error: 'That person is not an admin, so they cannot be added.' });
     return;
   }
   if (acct.id === doc.ownerId) {
@@ -1118,7 +1121,7 @@ router.post('/issues/:id/collaborators', async (req, res) => {
   const next: V2Collaborator = {
     userId: acct.id,
     email: acct.email,
-    displayName: acct.displayName,
+    displayName: acct.name,
     role: await magRoleForStaff(acct),
     pageIds,
   };
@@ -1144,7 +1147,7 @@ router.post('/issues/:id/collaborators', async (req, res) => {
 
     const r = await notifyShared({
       to: acct.email,
-      sharedBy: req.account!.displayName || req.account!.email,
+      sharedBy: req.account!.name || req.account!.email,
       title: String(doc.title ?? 'Untitled magazine'),
       path: magazinePath(String(doc._id), 'v2'),
       pages: pageNumbers,

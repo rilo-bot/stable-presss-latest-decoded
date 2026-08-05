@@ -52,7 +52,7 @@ import {
   type ReactionEmojiKey,
   type ReactionTargetType,
 } from './reactions.js'
-import { canAccessNewsroom } from './rbac.js'
+import { isAdmin } from './rbac.js'
 import type { AccountUser } from './effectiveAccess.js'
 
 const COLLECTION = 'comments'
@@ -245,7 +245,7 @@ async function resolveAuthorNames(rows: Record<string, unknown>[]): Promise<Map<
   const found = await Promise.all(ids.map(async (id) => [id, await db.collection('users').findById(id)] as const))
   const out = new Map<string, string>()
   for (const [id, doc] of found) {
-    const name = typeof doc?.displayName === 'string' ? doc.displayName.trim() : ''
+    const name = typeof doc?.name === 'string' ? doc.name.trim() : ''
     if (name) out.set(id, name)
   }
   return out
@@ -392,11 +392,11 @@ export async function postComment(input: {
     targetId: input.targetId,
     userId: input.account.id,
     // FALLBACK ONLY — read when the account is gone. See the header note.
-    authorNameAtPost: input.account.displayName ?? '',
+    authorNameAtPost: input.account.name ?? '',
     body: body.value,
     emoji: input.emoji,
     // Stamped from the ACCOUNT, never the client, exactly as reactions do it.
-    isStaff: canAccessNewsroom(input.account),
+    isStaff: isAdmin(input.account),
     status: 'visible',
     reportCount: 0,
     createdAt: now,
@@ -409,7 +409,7 @@ export async function postComment(input: {
   return {
     ok: true,
     value: viewOf(fresh, {
-      names: new Map([[input.account.id, input.account.displayName ?? '']]),
+      names: new Map([[input.account.id, input.account.name ?? '']]),
       reported: new Set(),
       viewerId: input.account.id,
       canModerate: false,
@@ -485,7 +485,7 @@ export async function editComment(input: {
   return {
     ok: true,
     value: viewOf(fresh, {
-      names: new Map([[input.account.id, input.account.displayName ?? '']]),
+      names: new Map([[input.account.id, input.account.name ?? '']]),
       reported: new Set(),
       viewerId: input.account.id,
       canModerate: false,

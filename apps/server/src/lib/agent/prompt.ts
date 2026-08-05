@@ -27,10 +27,10 @@ function describeViewer(account?: AccountUser): string {
       'up when it would unlock what they are asking for — never as a scold.',
     ].join(' ')
   }
-  const roles = account.roles.join(', ') || 'reader'
+  const roles = [...new Set(["reader", ...account.parties.map((p) => p.role)])].join(', ')
   return [
-    `The reader is SIGNED IN as "${account.displayName || account.email}".`,
-    `Roles: ${roles}. Subscription tier: ${account.subscriptionTier}.`,
+    `The reader is SIGNED IN as "${account.name || account.email}".`,
+    `Roles: ${roles}.`,
     'Use the myAccount tool when you need the specifics of what they can manage',
     '(their stable, claims, organisations) so your guidance is personal and exact.',
   ].join(' ')

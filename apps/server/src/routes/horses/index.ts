@@ -1,44 +1,23 @@
 import { Router } from 'express';
 import { db } from '../../lib/db.js';
-import { canAccessNewsroom } from '../../lib/rbac.js';
-import { visibleHorseIds, manageablePartyIds } from '../../lib/scope.js';
-
-type WithMongoId = { _id: string; [key: string]: unknown };
-function project<T extends WithMongoId>(doc: T): Omit<T, '_id'> & { id: string } {
-  const { _id, ...rest } = doc;
-  return { id: _id, ...rest } as Omit<T, '_id'> & { id: string };
-}
+import { isAdmin } from '../../lib/rbac.js';
+import { PARTIES } from '../../lib/collections.js';
+import { visibleHorseIds } from '../../lib/scope.js';
+import { project } from '../../lib/project.js';
 
 const router = Router();
-
-// Mirror of the web ROLE_BINDINGS (lib/profile/roleMap.ts): which legacy *Ids
-// field on a Horse maps to which HorsePartyLink relationship_type. Used to link
-// the CREATING party under its own role (trainer → Trainers box, not Owners).
-// `syndicateManagerIds` has no relationship_type — handled by the fallback.
-const ROLE_LINK_FIELDS: { field: string; rel: string }[] = [
-  { field: 'ownerIds', rel: 'ownership' },
-  { field: 'trainerIds', rel: 'training' },
-  { field: 'jockeyIds', rel: 'riding' },
-  { field: 'breederIds', rel: 'bred-by' },
-  { field: 'bloodstockAgentIds', rel: 'agent' },
-  { field: 'personnelIds', rel: 'personnel' },
-];
 
 router.get('/', async (req, res) => {
   const items = await db.collection('horses').find();
   const account = req.account;
-  if (canAccessNewsroom(account)) {
+  if (isAdmin(account)) {
     res.json(items.map(project));
     return;
   }
-  // Non-staff callers: hide horses that are still unverified, except the viewer's
+  // Non-admin callers: hide horses that are still unverified, except the viewer's
   // own created/authorised horses (so an owner can see the pending horse they
   // just registered).
-  let allowed = new Set<string>();
-  if (account) {
-    const links = await db.collection('horsePartyLinks').find();
-    allowed = new Set(visibleHorseIds(account, { horses: items, links }));
-  }
+  const allowed = new Set<string>(account ? await visibleHorseIds(account) : []);
   const visible = items.filter(
     (h) =>
       h.verificationStatus !== 'unverified' ||
@@ -91,7 +70,7 @@ router.post('/', async (req, res) => {
   }
 
   const account = req.account;
-  const staff = canAccessNewsroom(account);
+  const staff = isAdmin(account);
   const now = new Date().toISOString();
 
   // Staff-created horses are live; member-created horses are unverified (hidden
@@ -114,35 +93,34 @@ router.post('/', async (req, res) => {
 
   const id = await db.collection('horses').insertOne(doc);
 
-  // A member registering a horse is auto-linked to it UNDER THEIR OWN ROLE, so
-  // they show up in the matching connection box (an owner in Owners, a trainer in
-  // Trainers, etc.) and keep authorised access via the standard scope rules. The
-  // role is taken from whichever *Ids field the client populated with a party the
-  // member manages; if none was provided, we fall back to linking their owner
-  // party (or first manageable party) as ownership.
-  if (account && !staff) {
-    const manageable = account.partyClaims.filter(
-      (c) => c.status === 'verified' || (c.status === 'pending' && c.selfRegistered !== false),
-    );
-    const manageablePartyIds = new Set(manageable.map((c) => c.partyId));
-    const insertLink = (party_id: string, relationship_type: string) =>
-      db.collection('horsePartyLinks').insertOne({
-        horse_id: id, party_id, relationship_type, start_date: now.slice(0, 10), createdAt: now, updatedAt: now,
+  // A user registering a horse gets a `parties` row pointing at it, UNDER THEIR
+  // OWN ROLE — so they appear in the matching connection box (an owner in Owners,
+  // a trainer in Trainers) and keep authorised access through the standard scope
+  // rules in lib/scope.ts.
+  //
+  // ONE ROW PER (person, role, horse). There is no link table any more: the party
+  // row carries `horseId`, which is what makes `writableHorseIds` a single indexed
+  // query. The role comes from a party they have already claimed — preferring
+  // 'owner', because that is what registering a horse usually means — and the row
+  // is created already claimed, since they are demonstrably that person.
+  if (account && !staff && account.parties.length > 0) {
+    const identity =
+      account.parties.find((p) => p.role === 'owner') ?? account.parties[0]!;
+    // Only if they are not already on this horse under that role.
+    const dupe = await db
+      .collection(PARTIES)
+      .find({ userId: account.id, role: identity.role, horseId: id });
+    if (dupe.length === 0) {
+      await db.collection(PARTIES).insertOne({
+        name: identity.name,
+        role: identity.role,
+        horseId: id,
+        orgId: identity.orgId,
+        taken: true,
+        userId: account.id,
+        createdAt: now,
+        updatedAt: now,
       });
-
-    let linkedAny = false;
-    const rec = body as Record<string, unknown>;
-    for (const { field, rel } of ROLE_LINK_FIELDS) {
-      const ids = Array.isArray(rec[field]) ? (rec[field] as string[]) : [];
-      for (const pid of ids) {
-        if (!manageablePartyIds.has(pid)) continue; // only auto-link parties the member manages
-        await insertLink(pid, rel);
-        linkedAny = true;
-      }
-    }
-    if (!linkedAny) {
-      const ownerClaim = manageable.find((c) => c.role === 'owner') ?? manageable[0];
-      if (ownerClaim) await insertLink(ownerClaim.partyId, 'ownership');
     }
   }
 
@@ -190,7 +168,7 @@ router.put('/:id', async (req, res) => {
   }>;
 
   const account = req.account;
-  const staff = canAccessNewsroom(account);
+  const staff = isAdmin(account);
   const now = new Date().toISOString();
   const update: Record<string, unknown> = { ...body, updatedAt: now };
   delete (update as { id?: unknown }).id;

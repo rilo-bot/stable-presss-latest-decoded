@@ -19,7 +19,6 @@ import {
   type BlogMedia,
   type BlogPart,
 } from '../../lib/blog/blocks.js'
-import { TIERS } from '../../lib/paywall.js'
 import { optStr, str, strArray } from './helpers.js'
 
 interface AuthorInput {
@@ -149,7 +148,6 @@ export function buildContent(body: Record<string, unknown>, fallbackAuthor: stri
   const thumbnailMediaId = optStr(body.thumbnailMediaId, 64)
   fields.thumbnailMediaId = thumbnailMediaId && poolIds.has(thumbnailMediaId) ? thumbnailMediaId : null
 
-  fields.minTier = (TIERS as readonly unknown[]).includes(body.minTier) ? body.minTier : 'free'
 
   return {
     media,

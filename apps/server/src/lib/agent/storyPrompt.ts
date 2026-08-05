@@ -40,7 +40,7 @@ export function buildStorySystemPrompt(account: AccountUser | undefined, ctx?: S
     '6. CATEGORY & SUBCATEGORY. Ask which section and category it belongs to, listing them in the question — News (Race Reports, Industry News, Morning Edition), Analysis (Form Guide, Track Notes, Bloodstock), or Interviews (Trainer Profiles, Jockey Desk, Owner Stories). Map their answer to ONE of these values: race-reports, industry-news, morning-edition, form-guide, track-notes, bloodstock, trainer-profiles, jockey-desk, owner-stories. If their words are ambiguous, ask again briefly.',
     '7. WORKFLOW STAGE — always `draft`; never ask.',
     '8. LINKED HORSES. Call `listHorses` first — this also shows the user a scrollable reference list of the horses on file. Then ask which horse profiles (if any) they want to link, telling them they can read the list on screen and just name the ones they want (or say none). Match the names they type/speak to ids. If a name doesn\'t match any horse, tell them and ask again or proceed. It\'s fine to link none.',
-    '9. FILE IT. Call `createStoryDraft` with { title, summary, category, minTier, linkedHorseIds } from the steps above. Then tell the user warmly, in one short line, that the draft is filed and is opening for them to review.',
+    '9. FILE IT. Call `createStoryDraft` with { title, summary, category, linkedHorseIds } from the steps above. Then tell the user warmly, in one short line, that the draft is filed and is opening for them to review.',
     '',
     'RULES:',
     '- One question per message, in order. Never ask for two things at once and never skip a step.',

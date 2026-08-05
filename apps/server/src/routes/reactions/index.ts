@@ -6,7 +6,7 @@
 // would be four places to forget the paywall check. `targetType` is a path
 // segment, validated against the shared list before anything else runs.
 //
-// Self-gated, like /api/partyClaims and /api/notifications: reads attach the
+// Self-gated, like /api/parties and /api/notifications: reads attach the
 // account OPTIONALLY (anyone may see the counts; only a signed-in caller gets
 // `mine` back), writes require one. See docs/REACTIONS-PLAN.md §6 for why the
 // identity is an account rather than a device.

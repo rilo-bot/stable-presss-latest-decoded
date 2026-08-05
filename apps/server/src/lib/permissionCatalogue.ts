@@ -1,30 +1,6 @@
-// ---------------------------------------------------------------------------
-// THE permission catalogue — single source of truth for actions + modules.
-//
-// Before this file the matrix lived in three hand-mirrored copies (web
-// lib/permissions.ts, server lib/permissions.ts, CONTENT_PERMS in rbac.ts) and
-// had already drifted. Everything now derives from here; the web app fetches it
-// over `GET /api/roles/catalogue` so the admin UI can render permission
-// checkboxes without a redeploy when actions are added.
-//
-// Two axes an admin can tick:
-//   ACTIONS  — capability ("may publish", "may approve an episode")
-//   MODULES  — navigation surface ("can open the Analytics screen")
-//
-// See RBAC.md §4.4.
-// ---------------------------------------------------------------------------
 
-/**
- * The roles a fresh install is seeded with, besides `superadmin`. Nothing
- * authorizes against this type — it exists so the seed data below stays
- * exhaustively typed. A superadmin may edit these or add their own at runtime.
- *
- * Deliberately NOT seeded: legal_reviewer, podcast_producer and publisher.
- * Every permission they used to hold still exists in the catalogue below, so a
- * superadmin can build any of them from the Roles & Permissions console — they
- * just aren't there out of the box.
- */
-export type SeedRoleSlug = 'contributor' | 'editor' | 'administrator'
+/** The roles a fresh install is seeded with, besides `superadmin`. Nothing */
+export type SeedRoleName = 'contributor' | 'editor' | 'administrator'
 
 // ── Actions ─────────────────────────────────────────────────────────────────
 
@@ -53,16 +29,9 @@ export type PermissionAction =
   | 'media.manage_all'
   // Compensation
   | 'compensation.view_own'
-  // Platform access.
-  //
-  // `newsroom.access` is IMPLICIT, not grantable — it is absent from
-  // PERMISSION_CATALOGUE on purpose (see the note there). It keeps its place in
-  // this union only because `toClientUser` emits it as a derived flag for the
-  // browser's RequireStaff guard.
-  | 'newsroom.access'
+  // Platform access
   | 'platform.admin'
   | 'roles.manage'
-  | 'claims.verify'
   // Team & admin
   | 'team.view'
   | 'team.manage'
@@ -118,30 +87,16 @@ export interface PermissionMeta {
 export const PERMISSION_CATALOGUE: PermissionMeta[] = [
   // Platform access.
   //
-  // `newsroom.access` WAS the first entry here and is deliberately gone. It is not
-  // reserved-because-unenforced like the block further down — it is enforced on
-  // every staff route. It is gone because it is now IMPLICIT: holding a staff role
-  // IS newsroom access (`isStaffIdentity` in identity.ts, read by
-  // `canAccessNewsroom`). Anyone added to the team from the Production System can
-  // open the Campaign Engine; their role decides what they find inside.
+  // There is no 'newsroom.access' here, and no equivalent. Opening the admin app
+  // is `isAdmin` — the account CATEGORY, the presence of an `admins` row — not a
+  // grantable permission. A role only decides what an admin finds INSIDE.
   //
-  // As a grantable checkbox it was a trap. It sat in this row looking like one
-  // capability among many while actually being the precondition for all 24 module
-  // checkboxes, so the obvious way to build a "magazine only" role — tick Magazine
-  // Builder, save — produced a role that could not sign in, with nothing anywhere
-  // saying why. See docs/RBAC-UI-REVIEW.md.
-  //
-  // The id still exists in `PermissionAction` because `toClientUser` emits it as a
-  // derived flag for the browser's `RequireStaff`. It is NOT in this array, so
-  // `isPermissionAction` rejects it and `projectRole` strips it from any role row
-  // that still carries it — a role cannot grant it even by writing to the API.
-  { id: 'platform.admin', label: 'Platform administration', resource: 'Platform Access', short: 'Administration', description: 'Verify claims, manage every organisation, override ownership.' },
+  // 'claims.verify' is gone too. It guarded a verification step that no longer
+  // exists: a `parties` row is claimed or unclaimed, and claiming it is immediate.
+  // Leaving a permission in the catalogue that nothing enforces is exactly what
+  // `npm run check:permissions` exists to catch.
+  { id: 'platform.admin', label: 'Platform administration', resource: 'Platform Access', short: 'Administration', description: 'Manage every organisation, override ownership, read private records.' },
   { id: 'roles.manage', label: 'Manage roles', resource: 'Platform Access', short: 'Manage roles', description: 'Create roles, set their permissions, and assign them.' },
-  // Split OUT of platform.admin. Verifying a racing identity is a records job;
-  // it used to require the permission that ALSO grants "manage every
-  // organisation, override any ownership", so there was no way to staff the
-  // verification queue without handing over the platform.
-  { id: 'claims.verify', label: 'Verify party claims', resource: 'Platform Access', short: 'Verify claims', description: 'Approve or reject claims on a racing identity (owner, trainer, jockey…).' },
 
   // Stories
   { id: 'content.draft.create', label: 'Create drafts', resource: 'Stories', short: 'Create', description: 'Start a new story draft.' },
@@ -155,16 +110,6 @@ export const PERMISSION_CATALOGUE: PermissionMeta[] = [
   { id: 'content.approve', label: 'Approve content', resource: 'Editorial', short: 'Approve', description: 'Approve a story for publication.' },
 
   // Publishing.
-  //
-  // `content.legal_review`, `content.compliance` and `content.publisher_review`
-  // were removed here. They were the per-department gates of the retired
-  // twelve-status workflow: grantable in the Roles console, listed under a
-  // "Legal & Compliance" heading, and checked by absolutely nothing — approval
-  // has been one step (`content.approve`) since the five stages landed. Roles
-  // still holding the retired ids simply no longer match a catalogue entry.
-  // `content.newsletter` and `content.bulletin` were removed here — see the
-  // RESERVED block below. Publishing a story is one action now: it goes live on
-  // /news under its category.
   { id: 'content.schedule', label: 'Schedule publication', resource: 'Publishing', short: 'Schedule', description: 'Set a future publish date.' },
   { id: 'content.publish', label: 'Publish', resource: 'Publishing', short: 'Publish', description: 'Push a story live.' },
 
@@ -214,8 +159,6 @@ export const PERMISSION_CATALOGUE: PermissionMeta[] = [
   { id: 'team.manage', label: 'Manage team & roles', resource: 'Team & Settings', short: 'Manage team', description: 'Invite staff, create roles, assign permissions.' },
   { id: 'settings.view', label: 'View settings', resource: 'Team & Settings', short: 'View settings', description: 'Open newsroom settings.' },
   // The Settings screen is no longer static text: Website Customisation writes
-  // which of the six public sections the site shows. `settings.view` opens the
-  // screen and shows the switches; this is what lets you move one.
   { id: 'settings.manage', label: 'Change website settings', resource: 'Team & Settings', short: 'Change settings', description: 'Show or hide public sections of the website (News, Blog, Horses, Directory, Podcast, Bulletins).' },
   { id: 'analytics.view', label: 'View analytics', resource: 'Team & Settings', short: 'Analytics', description: 'Open the analytics dashboard.' },
   // Its own resource row rather than one more checkbox under Team & Settings:
@@ -225,46 +168,6 @@ export const PERMISSION_CATALOGUE: PermissionMeta[] = [
 ]
 
 // ── RESERVED ids — removed from the catalogue, not forgotten ────────────────
-//
-// These were grantable checkboxes that no code path consulted, in either the
-// server or the browser. A permission that cannot be enforced is worse than a
-// missing one: an administrator ticks it, believes they have restricted payout
-// editing or settings changes, and nothing whatsoever has changed.
-//
-//   compensation.view_all   no all-contributors view exists
-//   compensation.manage     no payouts endpoint; the screen reads from `articles`
-//   workflow.view_all_columns   superseded by the `workflowStages` axis
-//   workflow.view_own_columns   superseded by the `workflowStages` axis
-//   content.newsletter      the `channels` axis is gone; see below
-//   content.bulletin        the `channels` axis is gone; see below
-//
-// The last two are a different kind of removal from the rest, and worth spelling
-// out. They DID gate something: `vetChannels` in routes/articles.ts refused a
-// write that put a story on the newsletter or bulletin channel without them. The
-// channels themselves are what went away.
-//
-//   `bulletin` had nowhere to land. /bulletins is the magazine newsstand — both
-//   builders freeze their pages into `issues` — and the bulletin-story list below
-//   it only ever rendered when no issue had been published at all.
-//
-//   `newsletter` gated distribution by a newsletter that does not exist. Nothing
-//   in this codebase sends email except sign-in OTPs, so an editor could hold
-//   "Distribute a story via newsletter" and no such distribution could occur. The
-//   /newsletter page it fed was deleted with the axis.
-//
-// A story is news now: published means live on /news under its category. Roles
-// still holding either id simply no longer match a catalogue entry, which is what
-// scripts/sync-role-catalogue.ts is for.
-//
-// RE-ADD any of these in the same commit as the endpoint that enforces it — never
-// ahead of it. scripts/check-permission-enforcement.ts fails the build if a
-// catalogue id is referenced nowhere, which is what keeps this list from growing
-// back. See docs/CRM-MODULES-PERMISSIONS-REVIEW.md §4.3–4.4.
-//
-// `settings.manage` LEFT this list and is grantable again, by exactly that rule:
-// routes/siteSettings.ts now enforces it on PUT /api/site-settings/public-nav,
-// which is what the Website Customisation switches write. It was here for the
-// right reason — the Settings screen used to be four rows of static text.
 
 const ACTION_IDS = new Set<string>(PERMISSION_CATALOGUE.map((p) => p.id))
 
@@ -352,11 +255,6 @@ export function isModuleId(v: unknown): v is string {
 }
 
 // ── Workflow stages (the third checkbox axis) ───────────────────────────────
-//
-// Which Kanban columns a role sees. This was `RoleConfig.allowedStatuses`, a
-// static per-role array in apps/web/src/pages/newsroom/constants.tsx — real
-// per-role config with nowhere to live once roles are DB-defined.
-// Mirrors WORKFLOW_STAGES in apps/web/src/components/KanbanColumn.tsx.
 
 export interface WorkflowStageMeta {
   id: string
@@ -409,18 +307,7 @@ const RETIRED_STAGES: Record<string, string> = {
   archived: 'published',
 }
 
-/**
- * Resolve a role's `workflowStages` to current ids.
- *
- * Retired ids are REMAPPED, not dropped. Dropping them is what the reader here
- * used to do (`.filter(isWorkflowStage)`), and for a role whose stages were ALL
- * retired — the seeded `legal_reviewer`, for instance — that left an empty list,
- * which the board turns into a kanban with no columns at all: a staff member with
- * stories to work on looking at a blank screen.
- *
- * Done on read rather than by a migration script so there is nothing to remember
- * to run, and nothing that behaves differently depending on whether someone did.
- */
+/** Resolve a role's `workflowStages` to current ids. */
 export function normaliseWorkflowStages(raw: unknown): string[] {
   if (!Array.isArray(raw)) return []
   const out = new Set<string>()
@@ -433,12 +320,8 @@ export function normaliseWorkflowStages(raw: unknown): string[] {
 }
 
 // ── Built-in role matrix ────────────────────────────────────────────────────
-//
-// The merge of what web lib/permissions.ts and server lib/permissions.ts each
-// held. `podcast.read_all` came only from the server copy; everything else came
-// from the web copy, which was the fuller of the two.
 
-export const BUILTIN_ROLE_PERMISSIONS: Record<SeedRoleSlug, PermissionAction[]> = {
+export const BUILTIN_ROLE_PERMISSIONS: Record<SeedRoleName, PermissionAction[]> = {
   // `newsroom.access` is absent from every role here: holding a staff role IS
   // newsroom access now, so listing it would be a no-op that `projectRole` strips.
   contributor: [
@@ -488,7 +371,7 @@ export const BUILTIN_ROLE_PERMISSIONS: Record<SeedRoleSlug, PermissionAction[]> 
   administrator: PERMISSION_CATALOGUE.map((p) => p.id),
 }
 
-export const BUILTIN_ROLE_LABELS: Record<SeedRoleSlug, string> = {
+export const BUILTIN_ROLE_LABELS: Record<SeedRoleName, string> = {
   contributor: 'Contributor',
   editor: 'Editor',
   administrator: 'Administrator',
@@ -499,7 +382,7 @@ export const BUILTIN_ROLE_LABELS: Record<SeedRoleSlug, string> = {
  * so this exactly reproduces today's sidebar filtering. Custom roles do NOT go
  * through here; they carry an explicit, admin-ticked module list.
  */
-export function builtinModulesFor(role: SeedRoleSlug): string[] {
+export function builtinModulesFor(role: SeedRoleName): string[] {
   const held = new Set<string>(BUILTIN_ROLE_PERMISSIONS[role])
   return MODULE_CATALOGUE.filter((m) => !m.requiresPermission || held.has(m.requiresPermission)).map(
     (m) => m.id,

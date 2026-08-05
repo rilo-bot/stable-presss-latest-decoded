@@ -57,7 +57,7 @@ function ownsEpisode(doc: Record<string, unknown>, req: Request): boolean {
   if (typeof doc.producedByUserId === 'string' && doc.producedByUserId) {
     return doc.producedByUserId === account.id;
   }
-  return typeof doc.producedBy === 'string' && doc.producedBy === String(account.displayName ?? '');
+  return typeof doc.producedBy === 'string' && doc.producedBy === String(account.name ?? '');
 }
 
 // ── List — drafts/unpublished are visible only to podcast roles ──────────────
@@ -101,7 +101,7 @@ router.post('/', attachAccount, async (req, res) => {
   // Ownership is stamped server-side, never taken from the body — `edit_own`
   // depends on it, so a client that could set it could grant itself ownership.
   doc.producedByUserId = req.account!.id;
-  doc.producedBy = String(req.account!.displayName ?? '');
+  doc.producedBy = String(req.account!.name ?? '');
 
   const id = await db.collection('podcastEpisodes').insertOne(doc);
   const created = await db.collection('podcastEpisodes').findById(id);

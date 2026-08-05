@@ -4,7 +4,207 @@
 > Companion to [RBAC.md](../RBAC.md) (what the system must be) and
 > [AUTH-RBAC-REVIEW.md](./AUTH-RBAC-REVIEW.md) (what is currently wrong).
 >
-> **Decisions locked 2026-08-03.** Nothing built yet.
+> **⚠️ SUPERSEDED IN PART — see §0. The owner specified a different shape on
+> 2026-08-05.** §1–§7 describe the model that was built as P0–P2 and remain accurate
+> as history and as the reasoning behind each mechanism. Where §0 and §3 disagree,
+> **§0 wins.**
+
+---
+
+## 0. The locked model (2026-08-05)
+
+Specified by the owner directly. Six collections, minimal and centralised.
+
+```
+users          _id, name, email, isAdmin, lastLogin, createdAt
+               + subscriptionTier, status, tokenVersion      ← see "retained", below
+admins         _id, userId, roleId                            ← unique (userId)
+adminRoles     _id, name, permissions[], modules[], workflowStages[], isSuper
+organizations  _id, name, ownerUserId, description, bio
+orgMembers     _id, userId, orgId, role                       ← static owner|manager|member
+parties        _id, name, imageUrl, role, taken, userId?, orgId?, horseId
+```
+
+**Deleted from `users`:** `roles[]`, `staffRoles[]`, `staffRoleSlug`, `partyClaims[]`,
+`orgMemberships[]`; `displayName` → `name`.
+**Deleted collections:** `partyMemberships`, `orgMemberships` (P1's edge tables — their
+job moves to `parties` and `orgMembers`), `pendingStaffGrants`.
+**Renamed:** `roles` → `adminRoles`, `slug` → **`name`**; `isSuper` replaces the
+`slug === 'superadmin'` test.
+
+### No slugs, and no legacy support
+
+**There is no slug anywhere in this model.** Roles, users and parties each have a
+plain `name`. `adminRoles` is referenced by `_id` (from `admins.roleId`), so nothing
+needs a stable machine key at all — a role can be renamed freely without touching a
+single assignment. `SUPERADMIN_ROLE_NAME` survives only as the name the seeded
+all-access role is *created* with; authority comes from the `isSuper` field, never
+from a name comparison.
+
+Every backward-compatibility fallback has been REMOVED, on instruction — this is a
+new database, so there is nothing to be compatible with:
+
+- `projectRole` no longer reads `doc.slug`, and no longer infers `isSuper` from the
+  name.
+- `withIdentityDefaults` no longer reads `displayName`.
+- `seedRoles` no longer reads `r.slug`.
+- `RoleSlug` type, the deprecated `SUPERADMIN_SLUG` alias, `primaryStaffRole`
+  (collapsed a `staffRoles[]` array that no longer exists), `PartyClaim`,
+  `OrgMembership`, `SubscriptionTier` and `isStaticRole` are all deleted.
+- `SeedRoleSlug` → `SeedRoleName`.
+- The migration scripts are deleted (`migrate-user-model.ts`,
+  `migrate-admin-roles.ts`). Nothing migrates; the DB is new.
+
+### What changed from P0–P2, and the cost accepted
+
+The staff axis moves from **one indexed field on the user document** back to a
+**flag plus a join table**. That was considered and rejected in §1.2; the owner
+reaffirmed it twice, so it is the model. Two consequences, stated so nobody
+rediscovers them as bugs:
+
+1. **`isAdmin` is derivable from the presence of an `admins` row**, so the two can
+   disagree — `isAdmin: true` with no row is an account flagged as staff and locked
+   out of everything; the reverse is an account with a role treated as a reader.
+   Same for `parties.taken` versus `parties.userId`.
+   *Mitigation:* both pairs are written by a **single helper each**, never at a call
+   site, so they cannot drift by omission. That makes it a discipline problem solved
+   by construction rather than by review.
+2. **Resolution needs the `admins` row**, which the previous model got for free.
+   *Mitigation:* the token's `sub` IS the user id, so `users`, `admins`, `parties`
+   and `orgMembers` are all fetched in ONE `Promise.all` — one round trip, which is
+   actually fewer than the two the P2 path used.
+
+### Verification is gone
+
+`parties` has `taken: boolean`, not `pending | verified | rejected`. A user claiming
+a party is immediately that party. There is no evidence upload, no verifier, no
+queue, and the public site has no way to distinguish an asserted role from a checked
+one. `claims.verify` therefore leaves the permission catalogue — leaving it would
+fail `npm run check:permissions`, which is exactly what that guard is for.
+
+`parties` doubles as the register: staff create a row with `taken: false` and no
+`userId` for a trainer or owner who has never signed up, and a claim flips
+`taken: true` and sets `userId`.
+
+### Build status — 2026-08-05, mid-refactor, DOES NOT COMPILE
+
+**115 server type errors remaining.** This is a deliberate mid-slice state, not a
+regression: the model types changed first and the call sites follow. Nothing is
+committed.
+
+**Slice 1 — DONE, verified.** `roles` → `adminRoles`, `slug` → `roleName`, `+isSuper`.
+Server typechecked clean at that point; `adminRoles` verified in the DB with
+permission/module counts matching the old collection exactly. `check:permissions`
+green. `scripts/migrate-admin-roles.ts` exists (`--apply`, `--drop-old`); it was a
+no-op locally because the dev server had already re-seeded. **The old `roles`
+collection is still present and now dead** — drop it with `--drop-old` once eyeballed.
+
+**Slice 2 — IN PROGRESS.** Done so far:
+
+- `lib/staffAssignment.ts` (new) — the `admins` collection, and the ONLY writers of
+  `users.isAdmin`: `grantStaffRole` / `revokeStaffRole` / `revokeRoleEverywhere`,
+  plus `staffRoleFor`, `staffRolesForUsers`, `superadminHolderCount`,
+  `holdersOfRole`, `reconcileIsAdmin`.
+- `IdentityUser` is now exactly the spec: `id, name, email, createdAt, isAdmin,
+  lastLogin`. `newReaderFields()` reduced to `{ isAdmin: false, lastLogin: null }`.
+- `PartyRow` / `OrgMemberRow` types added.
+- `resolveAccount` rewired: three concurrent indexed queries (`admins`, `parties`,
+  `orgMembers`), superadmin via `hasSuperRole` reading `isSuper`, and the stored
+  `isAdmin` **overwritten** from the authoritative `admins` table so a stale flag can
+  never grant access.
+- `toClientUser` emits `name`/`isAdmin`/`lastLogin`/`parties`/`orgMembers`; the wire
+  key for a role stays `slug` (reading `roleName`) so the web app is untouched for now.
+- `lib/scope.ts` rewritten: **`ScopeData` is gone.** A party row carries `horseId`, so
+  `horsePartyLinks` and the seven legacy `ownerIds`/`trainerIds`/… arrays are no
+  longer consulted, and nothing preloads the horse collection. `writableHorseIds` /
+  `visibleHorseIds` are now `async` and do one `$in` query for org-reached horses.
+- `PARTY_MEMBERSHIPS`/`ORG_MEMBERSHIPS` constants renamed to `PARTIES`/`ORG_MEMBERS`.
+
+### Error count: 137 → 57
+
+Cleared so far, all of it deletion rather than porting:
+
+- **`displayName` → `name`** across 12 files (done per-file against the compiler's
+  own list, never by a repo-wide sed — `displayName` also exists on non-user objects).
+- **The paywall is gone.** `lib/paywall.ts` deleted; `tierAllows` / `gateForTier` /
+  `gateArticleForTier` call sites removed from `lib/reactions.ts`,
+  `routes/articles`, `routes/blogs/reads.ts`, `lib/agent/tools.ts`,
+  `lib/agent/capabilities.ts`, `lib/agent/prompt.ts`. Nothing is tier-gated: a
+  published record is readable by anyone. The STATUS gate stays — a draft is still
+  not reactable or readable.
+- **`account.roles` is no longer a field.** The agent files derive it inline from
+  claimed party rows (`['reader', ...parties.map(p => p.role)]`), which is the same
+  thing `toClientUser` sends the browser.
+- **Pending-claim reporting removed** from the agent capabilities — with no
+  verification step there is no pending state to report, so both the count and the
+  "N claims pending staff verification" gate line are gone.
+
+### There is no "staff" — only users and admins
+
+Removed on instruction, because each of these was the same fact wearing a third name:
+
+- **`newsroom.access` is deleted from `PermissionAction` entirely.** Opening the admin
+  app is `users.isAdmin` — the account *category*, not a grantable permission and not
+  a derived flag. It had already stopped being grantable; now it does not exist.
+- **`isStaffIdentity()` deleted.** It read `isAdmin` and returned it.
+- **`canAccessNewsroom()` → `isAdminAccount()`**, which is
+  `account.isSuperAdmin || account.isAdmin`. Renamed rather than kept, so no call site
+  reads as though a third category exists.
+- **`resolveAccount` no longer recomputes `isAdmin`.** It was `roleDocs.length > 0`,
+  which duplicated the stored flag. The flag is now simply trusted: `isAdmin` is the
+  category, the `admins` row is the role. An admin with no role is an admin who can
+  get in and do nothing — coherent, and no longer silently rewritten on every request.
+- **The `implicit` permission array is gone** from `toClientUser`; it existed only to
+  synthesise `newsroom.access` for the browser.
+
+### Auth, rebuilt for two categories
+
+- **Signup takes a name and an email. Nothing else.** The request body is never
+  consulted for a role, so a client cannot send one even by accident. Every signup is
+  `isAdmin: false`; becoming an admin means an `admins` row, which only an existing
+  admin creates.
+- **The `reader` role is gone.** `ReaderRole` deleted and `Role = PartyRole`, because
+  with two categories "reader" was never a role — it was the absence of one. An
+  account with no claimed party has an empty role list.
+- **`lastLogin` is written for the first time**, in `verify-otp`, AFTER every gate
+  passes — so it means "last time this account got in", not "last time someone tried".
+- **Invite grants go through `grantStaffRole`.** They used to union role slugs into an
+  array; now one role per user, last valid invite wins, applied through the single
+  writer so the row and the flag cannot half-apply.
+- `newReaderFields` → `newUserFields`. The token no longer carries `v`.
+
+### Remaining work, by cluster
+
+| Files | What |
+|---|---|
+| `lib/agent/capabilities.ts` (20), `lib/agent/tools.ts` (16), `lib/agent/prompt.ts` (3) | read `partyClaims` / `orgMemberships` / `subscriptionTier`; repoint at `parties` / `orgMembers`, drop tier |
+| `lib/membership.ts` (8) | **DELETE** — the P1 reconcilers mirror embedded arrays that no longer exist. Keep only the two collection-name constants (move them to `staffAssignment.ts` or a `collections.ts`) |
+| `routes/partyClaims/` (8) | **DELETE** the route — no verification flow. Also remove `claims.verify` from the catalogue or `check:permissions` fails |
+| `routes/horsePartyLinks/` | **DELETE** — redundant now `parties.horseId` exists |
+| `lib/paywall.ts`, `routes/blogs/visibility.ts`, `routes/blogs/content.ts`, `routes/blogs/write.ts`, `routes/articles/index.ts`, `lib/comments.ts`, `lib/reactions.ts` | remove `subscriptionTier` / `minTier` gating entirely (owner: "remove the subscription related, we have the diff plan") |
+| `routes/staff/` (9), `routes/roles/` (5) | assignment must go through `grantStaffRole`/`revokeStaffRole`; `assigneeCounts` via `holdersOfRole`; roster via `staffRolesForUsers` |
+| `lib/rbac.ts` (6), `routes/horses/` (6), `lib/ownedRecordRoutes.ts` (2) | `writableHorseIds` is async now — `await` it; `accountCanManageHorse` loses its `ScopeData` loads |
+| `routes/auth/` (2), `routes/invites/` | `displayName` → `name`; stamp `lastLogin` on verify-otp; delete `isRevoked`/`tokenVersion`/`status` |
+| `routes/magazinesV2/` (7), `routes/newsroom/` (3), `routes/podcastEpisodes/` (2), `routes/organisations/` (2) | `displayName` → `name`; org membership reads |
+| `lib/notify.ts` | `usersForParty` — repoint at `parties` |
+| `lib/ensureIndexes.ts` | new indexes: `admins.userId` unique, `admins.roleId`, `parties.userId`, `parties.orgId`, `parties.horseId`, `orgMembers.{userId,orgId}` unique; drop the `partyMemberships`/`orgMemberships` ones |
+| `apps/web` | `AccountUser` shape changed — `partyClaims`/`orgMemberships`/`subscriptionTier`/`displayName` all gone. `rbac/can.ts`, `rbac/scope.ts`, `rbac/entitlement.ts`, `RequireTier`, `authStore`, Dashboard, blog/article tier UI |
+| new | `scripts/migrate-user-model-v2.ts` — `displayName`→`name`, `staffRoleSlug`→`admins` row + `isAdmin`, drop the 5 dead fields, `partyMemberships`→`parties`, `orgMemberships`→`orgMembers` |
+
+### Removed on the owner's instruction
+
+`subscriptionTier`, `status` and `tokenVersion` are **gone** from `users`. I argued to
+keep them; the owner ruled otherwise twice ("only put what I said for the users
+collection", "remove the subscription related, we have the diff plan"), so they are
+out and the features they powered come out with them:
+
+- **the paywall** — `lib/paywall.ts`, `minTier` on blogs and articles, `RequireTier`
+  in the web app, and the tier checks in `comments.ts` / `reactions.ts` / agent prompts.
+  A separate plan covers subscriptions.
+- **account suspension** — `status: 'suspended'`.
+- **sign-out-everywhere** — `tokenVersion` + the `v` JWT claim + `isRevoked()`.
+
+`users` is therefore exactly: `_id, name, email, isAdmin, lastLogin, createdAt`.
 
 ---
 

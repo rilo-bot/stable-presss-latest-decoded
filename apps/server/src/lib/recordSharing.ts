@@ -53,7 +53,7 @@ export function ownershipFields(account: AccountUser): {
 } {
   return {
     createdByUserId: account.id,
-    createdByName: account.displayName || account.email,
+    createdByName: account.name || account.email,
     sharedWith: [],
   }
 }

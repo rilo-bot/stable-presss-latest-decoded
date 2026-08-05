@@ -1,199 +1,258 @@
-import { Router } from 'express';
-import { db } from '../../lib/db.js';
-import { attachAccount } from '../../lib/auth.js';
-import { withIdentityDefaults, PARTY_ROLES, type OrgRole } from '../../lib/identity.js';
-import { isPlatformAdmin, orgRoleIn, canManageOrg, isOrgOwner } from '../../lib/rbac.js';
-import { ORG_MEMBERSHIPS, mirrorOrgMemberships } from '../../lib/membership.js';
+// ---------------------------------------------------------------------------
+// Organisations, and who belongs to one.
+//
+// TWO COLLECTIONS, NOT AN ARRAY. Membership lives in `orgMembers`
+// (userId × orgId → 'owner' | 'manager' | 'member'), which is what
+// `resolveAccount` reads. It used to be written to a `users.orgMemberships`
+// array that nothing read, so creating an organisation granted the creator
+// nothing at all.
+//
+// `organisations.ownerUserId` and the owner's `orgMembers` row are the same
+// fact stored twice, so `setMember` and `createOrganisation` are the only
+// writers of either — the same discipline lib/admins.ts applies to `isAdmin`.
+// ---------------------------------------------------------------------------
 
-type WithMongoId = { _id: string; [key: string]: unknown };
-function project<T extends WithMongoId>(doc: T): Omit<T, '_id'> & { id: string } {
-  const { _id, ...rest } = doc;
-  return { id: _id, ...rest } as Omit<T, '_id'> & { id: string };
+import { Router } from 'express'
+import { db } from '../../lib/db.js'
+import { attachAccount } from '../../lib/auth.js'
+import { ORGANISATIONS, ORG_MEMBERS, PARTIES, USERS } from '../../lib/collections.js'
+import { toOrgRole, toPartyRole, type OrgRole } from '../../lib/identity.js'
+import { isPlatformAdmin, orgRoleIn, canManageOrg, isOrgOwner } from '../../lib/rbac.js'
+import { project } from '../../lib/project.js'
+
+const router = Router()
+
+const str = (v: unknown, max: number): string | undefined => {
+  const s = typeof v === 'string' ? v.trim() : ''
+  return s ? s.slice(0, max) : undefined
 }
 
-const router = Router();
+/**
+ * Set (or change) one person's membership of one organisation.
+ *
+ * The ONLY writer of `orgMembers`. Upsert-by-hand rather than two call sites,
+ * so "add a member" and "change their role" cannot disagree about the shape.
+ */
+async function setMember(userId: string, orgId: string, role: OrgRole): Promise<void> {
+  const now = new Date().toISOString()
+  const existing = await db.collection(ORG_MEMBERS).find({ userId, orgId })
+  if (existing[0]) {
+    await db.collection(ORG_MEMBERS).updateOne(String(existing[0]._id), { role, updatedAt: now })
+    // A unique index covers (userId, orgId), but a row written before it existed
+    // would make "what is their role?" depend on document order.
+    for (const dupe of existing.slice(1)) await db.collection(ORG_MEMBERS).deleteOne(String(dupe._id))
+    return
+  }
+  await db.collection(ORG_MEMBERS).insertOne({ userId, orgId, role, createdAt: now, updatedAt: now })
+}
+
+async function removeMember(userId: string, orgId: string): Promise<void> {
+  const rows = await db.collection(ORG_MEMBERS).find({ userId, orgId })
+  for (const row of rows) await db.collection(ORG_MEMBERS).deleteOne(String(row._id))
+}
 
 // Every organisation route requires authentication.
-router.use(attachAccount);
+router.use(attachAccount)
 
-// ── Create an organisation → creator becomes org_owner ────────────────────────
+// ── Create an organisation → creator becomes owner ───────────────────────────
 router.post('/', async (req, res) => {
-  const account = req.account!;
-  const name = typeof req.body?.name === 'string' ? req.body.name.trim() : '';
+  const account = req.account!
+  const name = str(req.body?.name, 120)
   if (!name) {
-    res.status(400).json({ error: 'Organisation name is required.' });
-    return;
+    res.status(400).json({ error: 'Organisation name is required.' })
+    return
   }
 
-  // Organisations live in their OWN collection — they are not parties. An org can
-  // add individual parties it manages (see /managed-parties); those stay in the
-  // parties collection with a managedByOrgId pointer.
-  const orgId = await db.collection('organisations').insertOne({
+  const now = new Date().toISOString()
+  const orgId = await db.collection(ORGANISATIONS).insertOne({
     name,
-    profession: typeof req.body?.profession === 'string' ? req.body.profession.trim() : undefined,
-    base_location: typeof req.body?.base_location === 'string' ? req.body.base_location.trim() : undefined,
-    country_of_birth:
-      typeof req.body?.country_of_birth === 'string' ? req.body.country_of_birth.trim() : undefined,
-    createdAt: new Date().toISOString(),
-  });
+    ownerUserId: account.id,
+    description: str(req.body?.description, 2000),
+    bio: str(req.body?.bio, 2000),
+    createdAt: now,
+    updatedAt: now,
+  })
+  // The owner is a member too. `ownerUserId` is the fast answer to "whose org is
+  // this?"; the row is what `resolveAccount` reads to give them scope.
+  await setMember(account.id, orgId, 'owner')
 
-  const userDoc = await db.collection('users').findById(account.id);
-  const memberships = Array.isArray(userDoc?.orgMemberships) ? userDoc!.orgMemberships : [];
-  const nextMemberships = [...memberships, { orgId, orgRole: 'org_owner' as OrgRole }];
-  await db.collection('users').updateOne(account.id, { orgMemberships: nextMemberships });
-  // P1 dual-write (docs/USER-MODEL-PLAN.md §8).
-  await mirrorOrgMemberships(account.id, nextMemberships);
+  const org = await db.collection(ORGANISATIONS).findById(orgId)
+  res.status(201).json({ org: project(org!), myRole: 'owner' as OrgRole })
+})
 
-  const org = await db.collection('organisations').findById(orgId);
-  const fresh = await db.collection('users').findById(account.id);
-  res.status(201).json({
-    org: project(org!),
-    user: withIdentityDefaults({ id: fresh!._id, ...fresh }),
-  });
-});
-
-// ── Organisations the current user belongs to ─────────────────────────────────
+// ── Organisations the current user belongs to ────────────────────────────────
 router.get('/mine', async (req, res) => {
-  const account = req.account!;
-  const out: Array<Record<string, unknown>> = [];
-  for (const m of account.orgMemberships) {
-    const org = await db.collection('organisations').findById(m.orgId);
-    if (org) out.push({ ...project(org), myRole: m.orgRole });
+  const account = req.account!
+  const out: Array<Record<string, unknown>> = []
+  for (const m of account.orgMembers) {
+    const org = await db.collection(ORGANISATIONS).findById(m.orgId)
+    if (org) out.push({ ...project(org), myRole: m.role })
   }
-  res.json(out);
-});
+  res.json(out)
+})
 
-// ── Organisation detail: members + managed parties + horse scope ──────────────
+// ── Organisation detail: members + the parties it holds ──────────────────────
 router.get('/:id', async (req, res) => {
-  const account = req.account!;
-  const orgId = req.params.id;
+  const account = req.account!
+  const orgId = String(req.params.id)
   if (!isPlatformAdmin(account) && !orgRoleIn(account, orgId)) {
-    res.status(403).json({ error: 'You are not a member of this organisation.' });
-    return;
+    res.status(403).json({ error: 'You are not a member of this organisation.' })
+    return
   }
-  const org = await db.collection('organisations').findById(orgId);
+  const org = await db.collection(ORGANISATIONS).findById(orgId)
   if (!org) {
-    res.status(404).json({ error: 'Organisation not found.' });
-    return;
+    res.status(404).json({ error: 'Organisation not found.' })
+    return
   }
 
-  // P2: one indexed lookup on {orgId} plus a fetch per member, instead of loading
+  // One indexed lookup on {orgId} plus a fetch per member, instead of loading
   // every user on the platform to find one org's members.
-  const memberRows = await db.collection(ORG_MEMBERSHIPS).find({ orgId });
+  const memberRows = await db.collection(ORG_MEMBERS).find({ orgId })
   const memberDocs = await Promise.all(
-    memberRows.map((r) => db.collection('users').findById(String(r.userId))),
-  );
+    memberRows.map((r) => db.collection(USERS).findById(String(r.userId))),
+  )
   const members = memberRows
     .map((r, i) => ({ row: r, user: memberDocs[i] }))
     .filter((x) => x.user)
     .map((x) => ({
       userId: String(x.user!._id),
-      displayName: x.user!.displayName,
-      email: x.user!.email,
-      orgRole: x.row.orgRole as OrgRole,
-    }));
+      name: String(x.user!.name ?? ''),
+      email: String(x.user!.email ?? ''),
+      role: x.row.role as OrgRole,
+    }))
 
-  const parties = await db.collection('parties').find();
-  const managedParties = parties.filter((p) => p.managedByOrgId === orgId).map(project);
-  const managedIds = new Set(managedParties.map((p) => p.id));
+  // A party row carries `orgId` and `horseId` directly, so the org's parties and
+  // the horses it reaches are ONE indexed query — no link table, no full scan.
+  const orgParties = await db.collection(PARTIES).find({ orgId })
+  const horseIds = [...new Set(orgParties.filter((p) => p.horseId).map((p) => String(p.horseId)))]
 
-  const links = await db.collection('horsePartyLinks').find();
-  const horseIds = Array.from(
-    new Set(
-      links.filter((l) => l.party_id === orgId || managedIds.has(l.party_id)).map((l) => l.horse_id),
-    ),
-  );
+  res.json({ org: project(org), members, parties: orgParties.map(project), horseIds })
+})
 
-  res.json({ org: project(org), members, managedParties, horseIds });
-});
+// ── Update the organisation profile (owner or manager) ───────────────────────
+router.put('/:id', async (req, res) => {
+  const orgId = String(req.params.id)
+  if (!canManageOrg(req.account, orgId)) {
+    res.status(403).json({ error: 'Only org owners and managers can edit the organisation.' })
+    return
+  }
+  const update: Record<string, unknown> = { updatedAt: new Date().toISOString() }
+  const name = str(req.body?.name, 120)
+  if (name) update.name = name
+  if ('description' in (req.body ?? {})) update.description = str(req.body?.description, 2000) ?? null
+  if ('bio' in (req.body ?? {})) update.bio = str(req.body?.bio, 2000) ?? null
+  // Ownership moves through /:id/members, which keeps the row and the pointer
+  // in step. Accepting it here would let a manager hand the org to themselves.
+  const ok = await db.collection(ORGANISATIONS).updateOne(orgId, update)
+  if (!ok) {
+    res.status(404).json({ error: 'Organisation not found.' })
+    return
+  }
+  const fresh = await db.collection(ORGANISATIONS).findById(orgId)
+  res.json({ org: project(fresh!) })
+})
 
-// ── Add a member by email (existing account) ──────────────────────────────────
+// ── Add or re-role a member by email ─────────────────────────────────────────
 router.post('/:id/members', async (req, res) => {
-  const account = req.account!;
-  const orgId = req.params.id;
+  const account = req.account!
+  const orgId = String(req.params.id)
   if (!canManageOrg(account, orgId)) {
-    res.status(403).json({ error: 'Only org owners/managers can add members.' });
-    return;
+    res.status(403).json({ error: 'Only org owners and managers can add members.' })
+    return
   }
-  const email = typeof req.body?.email === 'string' ? req.body.email.trim().toLowerCase() : '';
-  const requested = req.body?.orgRole;
-  const orgRole: OrgRole =
-    requested === 'org_manager' ? 'org_manager' : requested === 'org_owner' ? 'org_owner' : 'org_member';
-  // Granting owner/manager is owner-only; managers can add plain members.
-  if ((orgRole === 'org_owner' || orgRole === 'org_manager') && !isOrgOwner(account, orgId)) {
-    res.status(403).json({ error: 'Only the org owner can grant owner/manager roles.' });
-    return;
+  const email = typeof req.body?.email === 'string' ? req.body.email.trim().toLowerCase() : ''
+  const role = toOrgRole(req.body?.role)
+  // Granting owner or manager is owner-only; a manager may add plain members.
+  if ((role === 'owner' || role === 'manager') && !isOrgOwner(account, orgId)) {
+    res.status(403).json({ error: 'Only the org owner can grant owner or manager.' })
+    return
   }
 
-  const target = (await db.collection('users').find({ email }))[0];
+  const target = (await db.collection(USERS).find({ email }))[0]
   if (!target) {
-    res.status(404).json({ error: 'No account found with that email. Ask them to sign up first.' });
-    return;
+    res.status(404).json({ error: 'No account found with that email. Ask them to sign up first.' })
+    return
   }
-  const memberships = Array.isArray(target.orgMemberships) ? target.orgMemberships : [];
-  if (memberships.some((m: { orgId: string }) => m.orgId === orgId)) {
-    res.status(409).json({ error: 'That person is already a member.' });
-    return;
+  const targetId = String(target._id)
+  const already = (await db.collection(ORG_MEMBERS).find({ userId: targetId, orgId }))[0]
+  if (already && already.role === role) {
+    res.status(409).json({ error: 'That person already holds this role.' })
+    return
   }
-  const nextMemberships = [...memberships, { orgId, orgRole }];
-  await db.collection('users').updateOne(target._id, { orgMemberships: nextMemberships });
-  await mirrorOrgMemberships(String(target._id), nextMemberships); // P1 dual-write
+
+  await setMember(targetId, orgId, role)
+  // Promoting someone to owner MOVES ownership: two owners means two people who
+  // can remove each other, and `ownerUserId` can only name one of them.
+  if (role === 'owner') {
+    await db.collection(ORGANISATIONS).updateOne(orgId, {
+      ownerUserId: targetId,
+      updatedAt: new Date().toISOString(),
+    })
+    if (account.id !== targetId) await setMember(account.id, orgId, 'manager')
+  }
+
   res.status(201).json({
     ok: true,
-    member: { userId: String(target._id), displayName: target.displayName, email: target.email, orgRole },
-  });
-});
+    member: { userId: targetId, name: String(target.name ?? ''), email: String(target.email ?? ''), role },
+  })
+})
 
-// ── Remove a member (owner only) ──────────────────────────────────────────────
+// ── Remove a member (owner only) ─────────────────────────────────────────────
 router.delete('/:id/members/:userId', async (req, res) => {
-  const account = req.account!;
-  const orgId = req.params.id;
+  const account = req.account!
+  const orgId = String(req.params.id)
+  const userId = String(req.params.userId)
   if (!isOrgOwner(account, orgId)) {
-    res.status(403).json({ error: 'Only the org owner can remove members.' });
-    return;
+    res.status(403).json({ error: 'Only the org owner can remove members.' })
+    return
   }
-  if (req.params.userId === account.id) {
-    res.status(400).json({ error: 'The owner cannot remove themselves.' });
-    return;
+  const org = await db.collection(ORGANISATIONS).findById(orgId)
+  if (!org) {
+    res.status(404).json({ error: 'Organisation not found.' })
+    return
   }
-  const target = await db.collection('users').findById(req.params.userId);
-  if (!target) {
-    res.status(404).json({ error: 'Member not found.' });
-    return;
+  // An org with no owner cannot be administered by anyone but a platform admin,
+  // and nothing here can appoint a replacement — so this is refused rather than
+  // recovered from. Hand ownership over first, which also removes you.
+  if (String(org.ownerUserId) === userId) {
+    res.status(400).json({ error: 'The owner cannot be removed. Transfer ownership first.' })
+    return
   }
-  const memberships = (Array.isArray(target.orgMemberships) ? target.orgMemberships : []).filter(
-    (m: { orgId: string }) => m.orgId !== orgId,
-  );
-  await db.collection('users').updateOne(req.params.userId, { orgMemberships: memberships });
-  // P1 dual-write — the reconciler soft-deletes the row that just left the array.
-  await mirrorOrgMemberships(String(req.params.userId), memberships);
-  res.json({ ok: true });
-});
+  await removeMember(userId, orgId)
+  res.json({ ok: true })
+})
 
-// ── Create a managed party the org controls (no separate login) ───────────────
-router.post('/:id/managed-parties', async (req, res) => {
-  const account = req.account!;
-  const orgId = req.params.id;
-  if (!canManageOrg(account, orgId)) {
-    res.status(403).json({ error: 'Only org owners/managers can add parties.' });
-    return;
+// ── Register a party the org holds ───────────────────────────────────────────
+// A row in the shared register, stamped with `orgId`. Unclaimed by design: the
+// organisation holds it, and a person claims it only if they are that person.
+router.post('/:id/parties', async (req, res) => {
+  const orgId = String(req.params.id)
+  if (!canManageOrg(req.account, orgId)) {
+    res.status(403).json({ error: 'Only org owners and managers can add parties.' })
+    return
   }
-  const name = typeof req.body?.name === 'string' ? req.body.name.trim() : '';
+  const name = str(req.body?.name, 120)
   if (!name) {
-    res.status(400).json({ error: 'Party name is required.' });
-    return;
+    res.status(400).json({ error: 'Party name is required.' })
+    return
   }
-  const roles = Array.isArray(req.body?.roles)
-    ? req.body.roles.filter((r: unknown) => PARTY_ROLES.includes(r as never))
-    : [];
-  const id = await db.collection('parties').insertOne({
-    roles,
+  const role = toPartyRole(req.body?.role)
+  if (!role) {
+    res.status(400).json({ error: 'A valid racing role is required (owner, trainer, jockey…).' })
+    return
+  }
+  const now = new Date().toISOString()
+  const id = await db.collection(PARTIES).insertOne({
     name,
-    managedByOrgId: orgId,
-    createdAt: new Date().toISOString(),
-  });
-  const created = await db.collection('parties').findById(id);
-  res.status(201).json({ party: project(created!) });
-});
+    role,
+    orgId,
+    horseId: str(req.body?.horseId, 64),
+    taken: false,
+    createdAt: now,
+    updatedAt: now,
+  })
+  const created = await db.collection(PARTIES).findById(id)
+  res.status(201).json({ party: project(created!) })
+})
 
-export default router;
+export default router

@@ -14,11 +14,10 @@ import { Router } from 'express'
 import { generateText } from 'ai'
 import { db } from '../../lib/db.js'
 import { attachAccount } from '../../lib/auth.js'
-import { canAccessNewsroom, isPlatformAdmin } from '../../lib/rbac.js'
+import { isAdmin, isPlatformAdmin } from '../../lib/rbac.js'
 import { accountCan } from '../../lib/effectiveAccess.js'
 import { getCapabilities } from '../../lib/agent/capabilities.js'
 import { getAgentModel, isAgentConfigured } from '../../lib/agent/provider.js'
-import { PARTY_MEMBERSHIPS } from '../../lib/membership.js'
 import type { AccountUser } from '../../lib/identity.js'
 
 const router = Router()
@@ -68,12 +67,15 @@ async function buildNewsroomSummary(account: AccountUser) {
   for (const a of articles) byStatus[String(a.status)] = (byStatus[String(a.status)] ?? 0) + 1
   const countStatus = (...statuses: string[]) => statuses.reduce((n, s) => n + (byStatus[s] ?? 0), 0)
 
-  const mine = articles.filter((a) => a.author && a.author === account.displayName)
+  const mine = articles.filter((a) => a.author && a.author === account.name)
   const countMine = (...statuses: string[]) =>
     mine.filter((a) => statuses.includes(String(a.status))).length
 
   const unverifiedHorses = horses.filter((h) => h.verificationStatus === 'unverified').length
-  const unverifiedParties = parties.filter((p) => p.verificationStatus === 'unverified').length
+  // Parties have no verification axis — a register row is either claimed or not.
+  // The unclaimed count is the useful one: those are people an admin registered
+  // who have not yet signed up and taken their identity.
+  const unclaimedParties = parties.filter((p) => p.taken !== true).length
   const issuesInProgress = issues.filter((d) => !d.publishedAt || d.unpublishedAt).length
 
   const now = Date.now()
@@ -82,13 +84,11 @@ async function buildNewsroomSummary(account: AccountUser) {
     return ['upcoming', 'open', 'scheduled'].includes(String(r.status))
   }).length
 
-  // Pending racing-role claims this account may verify (admins see all; org
-  // verification is layered separately — non-admins get 0 here for now).
-  // P2: one indexed count. Was a full users scan on EVERY dashboard load.
-  let pendingClaims = 0
-  if (isPlatformAdmin(account)) {
-    pendingClaims = await db.collection(PARTY_MEMBERSHIPS).count({ status: 'pending' })
-  }
+  // There is no claim QUEUE any more. A `parties` row is either claimed or not,
+  // and claiming it is immediate — no evidence, no verifier, no pending state —
+  // so there is nothing for an admin to action. The count and its
+  // "Racing-role claims to verify" attention item are gone rather than left
+  // reading a `status` field nothing writes, which made them permanently zero.
 
   // ── "Needs your attention" — only what THIS role acts on, only when non-zero ──
   const needs: NeedItem[] = []
@@ -113,14 +113,13 @@ async function buildNewsroomSummary(account: AccountUser) {
   }
   const myDrafts = countMine('draft')
   if (myDrafts) needs.push({ id: 'my-drafts', label: 'Your drafts in progress', count: myDrafts, where: 'workflow' })
-  if (pendingClaims) needs.push({ id: 'verify-claims', label: 'Racing-role claims to verify', count: pendingClaims, where: 'claims' })
   if (unverifiedHorses) needs.push({ id: 'verify-horses', label: 'Unverified horses to review', count: unverifiedHorses, where: 'horses' })
-  if (unverifiedParties) needs.push({ id: 'verify-parties', label: 'Unverified parties to review', count: unverifiedParties, where: 'parties' })
+  if (unclaimedParties) needs.push({ id: 'unclaimed-parties', label: 'Register entries nobody has claimed', count: unclaimedParties, where: 'parties' })
   if (issuesInProgress) needs.push({ id: 'finish-bulletins', label: 'Bulletins in progress', count: issuesInProgress, where: 'magazine-v2' })
 
   return {
     generatedFor: {
-      name: account.displayName || account.email,
+      name: account.name || account.email,
       // The AI brief describes the reader's editorial job, so it wants their
       // ROLE LABELS — `roles` is now the static axis ('reader' + party roles)
       // and would have made every brief say "roles: reader".
@@ -138,7 +137,7 @@ async function buildNewsroomSummary(account: AccountUser) {
       horses: horses.length,
       unverifiedHorses,
       parties: parties.length,
-      unverifiedParties,
+      unclaimedParties,
       articlesLive: countStatus(...LIVE_STATUSES),
       upcomingRaces,
       issues: issues.length,
@@ -149,7 +148,7 @@ async function buildNewsroomSummary(account: AccountUser) {
 
 router.get('/summary', async (req, res) => {
   const account = req.account!
-  if (!canAccessNewsroom(account)) {
+  if (!isAdmin(account)) {
     res.status(403).json({ error: 'Staff access required.' })
     return
   }
@@ -162,7 +161,7 @@ router.get('/summary', async (req, res) => {
 
 router.post('/brief', async (req, res) => {
   const account = req.account!
-  if (!canAccessNewsroom(account)) {
+  if (!isAdmin(account)) {
     res.status(403).json({ error: 'Staff access required.' })
     return
   }

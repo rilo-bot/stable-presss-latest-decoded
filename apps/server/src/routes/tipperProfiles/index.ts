@@ -19,7 +19,7 @@
 
 import { Router } from 'express';
 import { db } from '../../lib/db.js';
-import { canAccessNewsroom } from '../../lib/rbac.js';
+import { isAdmin } from '../../lib/rbac.js';
 
 type WithMongoId = { _id: string; [key: string]: unknown };
 function project<T extends WithMongoId>(doc: T): Omit<T, '_id'> & { id: string } {
@@ -54,7 +54,7 @@ router.post('/', async (req, res) => {
     return;
   }
   // A member may only create their own tipper profile (staff may seed any).
-  if (!canAccessNewsroom(req.account) && userId !== req.account?.id) {
+  if (!isAdmin(req.account) && userId !== req.account?.id) {
     res.status(403).json({ error: 'You can only create your own tipper profile.' });
     return;
   }
@@ -103,7 +103,7 @@ router.put('/:id', async (req, res) => {
     return;
   }
   // Owner-only, or staff (who may fix an inappropriate display name).
-  if (!canAccessNewsroom(req.account) && String(found.userId) !== req.account?.id) {
+  if (!isAdmin(req.account) && String(found.userId) !== req.account?.id) {
     res.status(403).json({ error: 'You can only update your own tipper profile.' });
     return;
   }

@@ -11,7 +11,7 @@ import { Router } from 'express'
 import { db } from '../../lib/db.js'
 import type { BlogMedia } from '../../lib/blog/blocks.js'
 import { isBlogStatus, optStr, project, str, type WithMongoId } from './helpers.js'
-import { canSeeDrafts, gateForTier, isLive } from './visibility.js'
+import { canSeeDrafts, isLive } from './visibility.js'
 
 const router = Router()
 
@@ -151,7 +151,7 @@ router.get('/:idOrSlug', async (req, res) => {
   // loads through this same endpoint and needs every block. Everyone else is
   // subject to the post's own tier.
   const full = { ...project(doc), live: isLive(doc) }
-  res.json(seeDrafts ? full : gateForTier(full, req.account?.subscriptionTier))
+  res.json(seeDrafts ? full : full)
 })
 
 export default router

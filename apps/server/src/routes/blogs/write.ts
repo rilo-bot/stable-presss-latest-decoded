@@ -38,7 +38,7 @@ router.post('/', async (req, res) => {
   // required to PUBLISH instead, which is where it actually matters.
   const title = str(body.title, 300).trim()
 
-  const built = buildContent(body, account.displayName)
+  const built = buildContent(body, account.name)
   const now = new Date().toISOString()
 
   // A slug supplied at creation is a deliberate choice and locks; one derived
@@ -122,7 +122,7 @@ router.put('/:id', async (req, res) => {
   // publish time.
   const title = str(body.title, 300).trim()
 
-  const built = buildContent(body, account.displayName)
+  const built = buildContent(body, account.name)
   const now = new Date().toISOString()
   const update: Record<string, unknown> = { ...built.fields, blocks: built.blocks, media: built.media, updatedAt: now }
 

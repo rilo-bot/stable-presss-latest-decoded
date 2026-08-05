@@ -35,7 +35,6 @@ export function buildStoryTools(): ToolSet {
         title: z.string().describe('The approved headline.'),
         summary: z.string().describe('The approved full story text — paragraphs separated by blank lines.'),
         category: z.enum(CATEGORY_VALUES).optional().describe('The category the user chose, mapped to one of the valid values.'),
-        minTier: z.enum(['free', 'standard', 'premium']).describe('The access tier the user chose.'),
         linkedHorseIds: z.array(z.string()).describe('Ids (from listHorses) of the horses the user named — may be empty.'),
       }),
     }),

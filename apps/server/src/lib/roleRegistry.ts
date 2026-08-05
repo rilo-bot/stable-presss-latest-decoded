@@ -1,29 +1,14 @@
-// ---------------------------------------------------------------------------
-// The role registry — DB-defined roles, plus the in-process cache that makes
-// them free to read.
-//
-// Roles used to be a TypeScript union, so a permission check cost nothing. Now
-// they are rows, and a naive implementation would add a database round trip to
-// EVERY authenticated request. This module is the answer: one cached
-// Map<slug, RoleDoc>, refreshed on a TTL and busted explicitly whenever a role
-// is mutated. `attachAccount` resolves permissions out of that map, so the
-// request path stays allocation-cheap and does no extra I/O.
-//
-// Staleness bound: an explicit bust makes a change instant on the instance that
-// made it; other instances converge within CACHE_TTL_MS. That is acceptable
-// while the API runs single-instance (see docs/MAGAZINE-V2-SCALABILITY-REVIEW.md);
-// a horizontally-scaled deployment would want a pub/sub invalidation instead.
-//
-// See docs/DYNAMIC-RBAC-PLAN.md §1.
-// ---------------------------------------------------------------------------
 
 import { db } from './db.js'
+import { ADMIN_ROLES } from './collections.js'
 import {
   isModuleId,
   isPermissionAction,
   normaliseWorkflowStages,
   type PermissionAction,
 } from './permissionCatalogue.js'
+
+export { ADMIN_ROLES }
 
 /**
  * The immutable, all-access role. Never resolved through the DB.
@@ -32,45 +17,10 @@ import {
  * primitives — the slug and `primaryStaffRole` — live in one place. Re-exported
  * here because every existing call site imports it from the registry.
  */
-export { SUPERADMIN_SLUG } from './identity.js'
-import { SUPERADMIN_SLUG } from './identity.js'
+export { SUPERADMIN_ROLE_NAME } from './identity.js'
+import { SUPERADMIN_ROLE_NAME } from './identity.js'
 
-/**
- * How many accounts currently hold superadmin.
- *
- * Consulted before ANY change that would take it away from someone — removing
- * the role, moving them to a different one, or removing them from the team
- * outright. Reaching zero is unrecoverable without shell access to re-run the
- * SETUP_SECRET seed, so every one of those paths has to ask.
- */
-export async function superadminHolderCount(): Promise<number> {
-  // P2: one indexed count. Was a full users scan filtered in JS, and this runs on
-  // EVERY role mutation — the hottest of the ten scan sites relative to its cost.
-  return db.collection('users').count({ staffRoleSlug: SUPERADMIN_SLUG })
-}
-
-/**
- * THE guard on handing out a role. Returns an error message, or null to allow.
- *
- * `team.manage` used to be sufficient on its own, which made it equivalent to
- * superadmin in two steps: `administrator` is seeded with every permission in the
- * catalogue, so a team manager could name their own account and become a full
- * platform admin. Two rules close that (docs/AUTH-RBAC-REVIEW.md C3):
- *
- *   1. NO SELF-SERVICE. Changing your own role is not a roster action.
- *   2. NO AMPLIFICATION. You cannot hand out access you do not hold yourself.
- *      Rule 1 alone only stops the single-actor version — two colleagues who each
- *      held `team.manage` could still promote each other.
- *
- * A superadmin is exempt from rule 2 (they hold every permission by definition)
- * but NOT from rule 1: `superadmin` is the one role whose loss is unrecoverable,
- * so even they change their own through another superadmin.
- *
- * `isSelf` is passed in rather than derived, because the two callers identify the
- * target differently — routes/roles.ts by user id, routes/staff.ts by email.
- * The actor is typed structurally so this file needs no import from
- * effectiveAccess.ts, which imports THIS module (an AccountUser satisfies it).
- */
+/** THE guard on handing out a role. Returns an error message, or null to allow. */
 export function denyRoleGrant(
   actor: { isSuperAdmin: boolean; permissions: ReadonlySet<PermissionAction> },
   role: RoleDoc,
@@ -87,23 +37,7 @@ export function denyRoleGrant(
   return null
 }
 
-/**
- * THE guard for every path that can take `superadmin` away from someone.
- *
- * Both rules live here because they were previously copy-pasted across four
- * routes and had already diverged: routes/staff.ts checked "only a superadmin may
- * change another superadmin" AND the last-holder count, while
- * routes/roles.ts checked only the count — so anyone holding `team.manage` could
- * demote a superadmin as long as a second one existed. Two paths to one operation
- * with two different rule sets is the classic shape of an access-control bug.
- * See docs/AUTH-RBAC-REVIEW.md H4.
- *
- * `losesSuperadmin` is the caller's answer to "would this operation leave the
- * target without the slug?" — computed at the call site because each route
- * expresses the change differently (replace, pull, clear).
- *
- * Returns a user-facing error message, or null when the change is allowed.
- */
+/** THE guard for every path that can take `superadmin` away from someone. */
 export async function checkSuperadminLoss(
   actor: { isSuperAdmin: boolean },
   losesSuperadmin: boolean,
@@ -112,7 +46,8 @@ export async function checkSuperadminLoss(
   if (!actor.isSuperAdmin) return 'Only a superadmin can change another superadmin.'
   // Reaching zero is unrecoverable without shell access to re-run the
   // SETUP_SECRET seed, so this is checked even for a superadmin acting.
-  if ((await superadminHolderCount()) <= 1) {
+  // Imported lazily: lib/admins.ts imports this module for getRole().
+  if ((await (await import('./admins.js')).superadminCount()) <= 1) {
     return 'Cannot remove the last superadmin — the platform would be locked out.'
   }
   return null
@@ -120,7 +55,8 @@ export async function checkSuperadminLoss(
 
 export interface RoleDoc {
   id: string
-  slug: string
+  /** Human-readable role name, unique. The reference key is  (admins.roleId). */
+  name: string
   label: string
   description?: string
   color?: string
@@ -130,6 +66,13 @@ export interface RoleDoc {
   isSystem: boolean
   /** Superadmin only — protected from any edit. */
   isImmutable: boolean
+  /**
+   * Unrestricted access. Replaces the `name === 'superadmin'` string test.
+   *
+   * A FIELD rather than a name comparison because the name is now editable, and a
+   * rename must not be able to silently strip omnipotence — or grant it.
+   */
+  isSuper: boolean
   permissions: PermissionAction[]
   modules: string[]
   workflowStages: string[]
@@ -140,15 +83,17 @@ export interface RoleDoc {
 
 /** Normalize a raw Mongo doc, dropping ids the catalogue no longer knows. */
 export function projectRole(doc: Record<string, any>): RoleDoc {
+  const name = String(doc.name ?? '')
   return {
     id: String(doc._id ?? doc.id ?? ''),
-    slug: String(doc.slug ?? ''),
+    name,
     label: String(doc.label ?? ''),
     description: doc.description ? String(doc.description) : undefined,
     color: doc.color ? String(doc.color) : undefined,
     icon: doc.icon ? String(doc.icon) : undefined,
     isSystem: doc.isSystem === true,
     isImmutable: doc.isImmutable === true,
+    isSuper: doc.isSuper === true,
     permissions: Array.isArray(doc.permissions) ? doc.permissions.filter(isPermissionAction) : [],
     modules: Array.isArray(doc.modules) ? doc.modules.filter(isModuleId) : [],
     // Retired stage ids are remapped, not dropped — see normaliseWorkflowStages.
@@ -167,13 +112,7 @@ let cache: Map<string, RoleDoc> | null = null
 let cachedAt = 0
 /** In-flight load, so a burst of concurrent requests triggers ONE query. */
 let inflight: Promise<Map<string, RoleDoc>> | null = null
-/**
- * Bumped on every bust. A load that started before a bust must not commit its
- * (now stale) result afterwards — without this, an edit saved while another
- * request happened to be mid-load would appear to succeed and then not take
- * effect for a full TTL, which is exactly the bug an explicit bust exists to
- * prevent.
- */
+/** Bumped on every bust. A load that started before a bust must not commit its */
 let generation = 0
 
 /** Drop the cache. Call after every write to the roles collection. */
@@ -186,11 +125,18 @@ export function bustRoleCache(): void {
 
 async function loadRoles(): Promise<Map<string, RoleDoc>> {
   const startedAt = generation
-  const docs = await db.collection('roles').find()
+  const docs = await db.collection(ADMIN_ROLES).find()
   const map = new Map<string, RoleDoc>()
   for (const doc of docs) {
     const role = projectRole(doc)
-    if (role.slug) map.set(role.slug, role)
+    // Indexed under BOTH keys, in one map, on purpose.
+    //
+    // `admins.roleId` references `_id`, so resolution looks a role up by id; the
+    // Roles console and its URLs still address roles by name. Ids are Mongo
+    // ObjectId hex and role names are slugs, so the two key spaces cannot collide,
+    // and one map means one cache to bust rather than two that could disagree.
+    if (role.id) map.set(role.id, role)
+    if (role.name) map.set(role.name, role)
   }
   // Anything busted while this read was in flight wins; drop our result.
   if (generation === startedAt) {
@@ -200,7 +146,7 @@ async function loadRoles(): Promise<Map<string, RoleDoc>> {
   return map
 }
 
-/** Every role, keyed by slug. Served from cache unless stale. */
+/** Every role, keyed by BOTH id and name. Served from cache unless stale. */
 export function getRoles(): Promise<Map<string, RoleDoc>> {
   if (cache && Date.now() - cachedAt < CACHE_TTL_MS) return Promise.resolve(cache)
   // Collapse concurrent misses onto a single load.
@@ -220,18 +166,7 @@ export function getRoles(): Promise<Map<string, RoleDoc>> {
   return inflight
 }
 
-export async function getRole(slug: string): Promise<RoleDoc | undefined> {
-  return (await getRoles()).get(slug)
-}
-
-/** Resolve a list of slugs to role docs, silently dropping unknown ones. */
-export async function rolesForSlugs(slugs: string[]): Promise<RoleDoc[]> {
-  if (slugs.length === 0) return []
-  const all = await getRoles()
-  const out: RoleDoc[] = []
-  for (const slug of slugs) {
-    const role = all.get(slug)
-    if (role) out.push(role)
-  }
-  return out
+/** One role by EITHER its id or its name. */
+export async function getRole(idOrName: string): Promise<RoleDoc | undefined> {
+  return (await getRoles()).get(idOrName)
 }

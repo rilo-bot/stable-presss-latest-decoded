@@ -18,7 +18,7 @@
 
 import { Router } from 'express';
 import { db } from '../../lib/db.js';
-import { canAccessNewsroom } from '../../lib/rbac.js';
+import { isAdmin } from '../../lib/rbac.js';
 import { renderBulletinPdf } from '../../lib/pdf.js';
 
 // Origin of the public web app the PDF renderer navigates to. Dev: Vite on 5173.
@@ -66,7 +66,7 @@ const router = Router();
 
 // list — public sees published only; staff may include unpublished (?includeUnpublished=1)
 router.get('/', async (req, res) => {
-  const includeUnpublished = canAccessNewsroom(req.account) && req.query.includeUnpublished === '1';
+  const includeUnpublished = isAdmin(req.account) && req.query.includeUnpublished === '1';
   // An issue document embeds its ENTIRE page array (~41 KB each), and the list only
   // ever needed metadata — so this route used to read the whole collection into the
   // API process and then throw the pages away in summarize(). On a public,
@@ -97,7 +97,7 @@ router.get('/:id', async (req, res) => {
     res.status(404).json({ error: 'Not found' });
     return;
   }
-  if (doc.unpublishedAt && !canAccessNewsroom(req.account)) {
+  if (doc.unpublishedAt && !isAdmin(req.account)) {
     res.status(404).json({ error: 'Not found' });
     return;
   }
@@ -113,7 +113,7 @@ router.get('/:id/pdf', async (req, res) => {
     res.status(404).json({ error: 'Not found' });
     return;
   }
-  const staff = canAccessNewsroom(req.account);
+  const staff = isAdmin(req.account);
   if (doc.unpublishedAt && !staff) {
     res.status(404).json({ error: 'Not found' });
     return;

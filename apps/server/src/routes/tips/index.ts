@@ -29,7 +29,7 @@
 
 import { Router } from 'express';
 import { db } from '../../lib/db.js';
-import { canAccessNewsroom } from '../../lib/rbac.js';
+import { isAdmin } from '../../lib/rbac.js';
 
 type WithMongoId = { _id: string; [key: string]: unknown };
 function project<T extends WithMongoId>(doc: T): Omit<T, '_id'> & { id: string } {
@@ -50,7 +50,7 @@ const router = Router();
  * tipping record is the member's own; staff see everything for moderation.
  */
 router.get('/', async (req, res) => {
-  if (canAccessNewsroom(req.account)) {
+  if (isAdmin(req.account)) {
     const all = await db.collection('tips').find();
     res.json(all.map(project));
     return;
@@ -200,7 +200,7 @@ router.post('/', async (req, res) => {
  * or `wager` after the fact.
  */
 router.put('/:id', async (req, res) => {
-  if (!canAccessNewsroom(req.account)) {
+  if (!isAdmin(req.account)) {
     res.status(403).json({ error: 'Placed tips cannot be amended.' });
     return;
   }

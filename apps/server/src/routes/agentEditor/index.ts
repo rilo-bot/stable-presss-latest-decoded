@@ -16,7 +16,7 @@
 
 import { Router, raw } from 'express'
 import { attachAccount } from '../../lib/auth.js'
-import { canAccessNewsroom } from '../../lib/rbac.js'
+import { isAdmin } from '../../lib/rbac.js'
 import { isAgentConfigured } from '../../lib/agent/provider.js'
 import { ingestDocument, ingestKind } from '../../lib/agent/documentIngest.js'
 
@@ -27,7 +27,7 @@ const router = Router()
 // endpoint would be an open, unauthenticated OCR/LLM proxy.)
 router.use(attachAccount)
 router.use((req, res, next) => {
-  if (!canAccessNewsroom(req.account)) {
+  if (!isAdmin(req.account)) {
     res.status(403).json({ error: 'Staff access required.' })
     return
   }

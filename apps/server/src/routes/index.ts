@@ -2,13 +2,12 @@
 import express, { Router } from 'express'
 
 import {
+  adminGate,
   authedWriteGate,
-  staffWriteGate,
   articlesWriteGate,
   blogsWriteGate,
   horseScopedWriteGate,
   partyScopedWriteGate,
-  issuesGate,
 } from '../lib/rbac.js'
 
 // ── Identity & access ──
@@ -17,13 +16,10 @@ import adminRouter from './admin/index.js'
 import staffRouter from './staff/index.js'
 import invitesRouter from './invites/index.js'
 import rolesRouter from './roles/index.js'
-import subscriptionRouter from './subscription/index.js'
 // ── Register & relationships ──
-import partyClaimsRouter from './partyClaims/index.js'
 import organisationsRouter from './organisations/index.js'
 import notificationsRouter from './notifications/index.js'
 import horsesRouter from './horses/index.js'
-import horsePartyLinksRouter from './horsePartyLinks/index.js'
 import partiesRouter from './parties/index.js'
 import racesRouter from './races/index.js'
 import salesRouter from './sales/index.js'
@@ -87,7 +83,7 @@ const jsonAgent = express.json({ limit: '30mb' })
 // These MUST precede the default parser below; see the header comment.
 
 // Published magazine issues. Public read (incl. unpublished for staff), staff write.
-router.use('/issues', jsonMagazine, issuesGate, issuesRouter)
+router.use('/issues', jsonMagazine, adminGate({ attachOnRead: true }), issuesRouter)
 // Magazine Builder v2 (free-form element model) — self-gated inside the router
 // (feature flag → staff → per-magazine owner/collaborator → write rate limit).
 // Behind MAGAZINE_V2; invisible (404) until enabled. See docs/MAGAZINE-BUILDER-V2.md.
@@ -134,16 +130,16 @@ router.use('/admin', adminRouter)               // secret-gated first-admin seed
 router.use('/staff', staffRouter)               // admin-only staff grant/revoke
 router.use('/invites', invitesRouter)           // PUBLIC: invite-link lookup (no account yet)
 router.use('/roles', rolesRouter)               // admin-only custom roles + permission catalogue
-router.use('/subscription', subscriptionRouter) // self-service tier (manual, no billing yet)
 
 // ── Register & relationships ── (self-gated routers attach the account inside)
-router.use('/partyClaims', partyClaimsRouter)
 router.use('/organisations', organisationsRouter)
 router.use('/notifications', notificationsRouter)
 router.use('/horses', horseScopedWriteGate({ collection: 'horses', idIsHorse: true, optionalGet: true }), horsesRouter)
-router.use('/horsePartyLinks', horseScopedWriteGate({ collection: 'horsePartyLinks' }), horsePartyLinksRouter)
+// ONE mount. `/parties` was mounted TWICE — the same router imported under two
+// names, the FIRST without a gate — so `partyScopedWriteGate` never ran and
+// DELETE /api/parties/:id was reachable unauthenticated.
 router.use('/parties', partyScopedWriteGate, partiesRouter)
-router.use('/races', staffWriteGate, racesRouter)
+router.use('/races', adminGate(), racesRouter)
 router.use('/sales', horseScopedWriteGate({ collection: 'sales' }), salesRouter)
 router.use('/reports', horseScopedWriteGate({ collection: 'reports', optionalGet: true }), reportsRouter)
 router.use('/mediaItems', horseScopedWriteGate({ collection: 'mediaItems' }), mediaItemsRouter)
@@ -163,8 +159,8 @@ router.use('/tipping', authedWriteGate, tippingRouter)
 
 // ── Public site & engagement ──
 // Public landing-page content: read is public, writes are staff-only.
-router.use('/sponsors', staffWriteGate, sponsorsRouter)
-router.use('/breakingNews', staffWriteGate, breakingNewsRouter)
+router.use('/sponsors', adminGate(), sponsorsRouter)
+router.use('/breakingNews', adminGate(), breakingNewsRouter)
 // Website customisation — which of the six public sections the site shows.
 // Read is public (the navbar renders it for signed-out readers); the write gates
 // itself on `settings.manage` inside the router, so no gate is applied here.

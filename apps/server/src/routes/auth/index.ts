@@ -2,11 +2,12 @@ import { Router } from 'express';
 import { db } from '../../lib/db.js';
 import { genOtp, hashOtp, signToken, attachAccount } from '../../lib/auth.js';
 import { sendOtpEmail, isEmailConfigured } from '../../lib/email.js';
-import { withIdentityDefaults, newReaderFields } from '../../lib/identity.js';
+import { withIdentityDefaults, newUserFields } from '../../lib/identity.js';
 import { resolveAccount, toClientUser } from '../../lib/effectiveAccess.js';
 import { getRoles } from '../../lib/roleRegistry.js';
-import { COLLECTION as INVITES, isExpired } from '../../lib/invites.js';
-import { staffRoleSlugFor } from '../../lib/membership.js';
+import { isExpired } from '../../lib/invites.js';
+import { INVITES, OTPS, USERS } from '../../lib/collections.js';
+import { grantAdminRole } from '../../lib/admins.js';
 
 type WithMongoId = { _id: string; [key: string]: unknown };
 function project<T extends WithMongoId>(doc: T): Omit<T, '_id'> & { id: string } {
@@ -37,14 +38,14 @@ function normalizeEmail(email: unknown): string {
 
 /** Newest-first OTP record for an email, or null. */
 async function latestOtp(email: string) {
-  const rows = await db.collection('otps').find({ email });
+  const rows = await db.collection(OTPS).find({ email });
   if (rows.length === 0) return null;
   return rows.sort((a, b) => String(b.createdAt).localeCompare(String(a.createdAt)))[0]!;
 }
 
 async function clearOtps(email: string): Promise<void> {
-  const rows = await db.collection('otps').find({ email });
-  await Promise.all(rows.map((r) => db.collection('otps').deleteOne(r._id)));
+  const rows = await db.collection(OTPS).find({ email });
+  await Promise.all(rows.map((r) => db.collection(OTPS).deleteOne(r._id)));
 }
 
 // ── Step 1: request a code ───────────────────────────────────────────────────
@@ -56,12 +57,18 @@ router.post('/request-otp', async (req, res) => {
     return;
   }
 
-  const existingUsers = await db.collection('users').find({ email });
+  const existingUsers = await db.collection(USERS).find({ email });
   const user = existingUsers[0] ?? null;
 
-  // Every new account starts as a plain reader. Roles (party / staff) and
-  // subscription tier are layered on AFTER signup — never self-selected here.
-  let pendingUser: { email: string; displayName: string } | undefined;
+  // SIGNUP TAKES A NAME AND AN EMAIL. Nothing else.
+  //
+  // There are exactly two categories of account (docs/USER-MODEL-PLAN.md §0):
+  // normal users, and admins. `isAdmin` is the whole distinction, and it is FALSE
+  // for everyone who signs up here — becoming an admin means an `admins` row, which
+  // only an existing admin can create. So there is no role to select, and the
+  // request body is not consulted for one: a field sent here could not be honoured
+  // even if a client sent it.
+  let pendingUser: { email: string; name: string } | undefined;
   if (mode === 'login') {
     if (!user) {
       res.status(404).json({ error: 'No account found with that email address.' });
@@ -72,12 +79,12 @@ router.post('/request-otp', async (req, res) => {
       res.status(409).json({ error: 'An account with this email already exists.' });
       return;
     }
-    const displayName = typeof req.body?.displayName === 'string' ? req.body.displayName.trim() : '';
-    if (!displayName) {
+    const name = typeof req.body?.name === 'string' ? req.body.name.trim() : '';
+    if (!name) {
       res.status(400).json({ error: 'Please enter your name.' });
       return;
     }
-    pendingUser = { email, displayName };
+    pendingUser = { email, name };
   }
 
   // Dev bypass (see DEV_OTP_CODE above): fixed code, no email, no cooldown, and
@@ -86,7 +93,7 @@ router.post('/request-otp', async (req, res) => {
   if (DEV_OTP_CODE) {
     await clearOtps(email);
     const now = new Date();
-    await db.collection('otps').insertOne({
+    await db.collection(OTPS).insertOne({
       email,
       codeHash: hashOtp(DEV_OTP_CODE),
       purpose: mode,
@@ -122,7 +129,7 @@ router.post('/request-otp', async (req, res) => {
   // The fixed code can ONLY ever be issued outside production (guarded above).
   const code = isEmailConfigured() ? genOtp() : '123456';
   const now = new Date();
-  await db.collection('otps').insertOne({
+  await db.collection(OTPS).insertOne({
     email,
     codeHash: hashOtp(code),
     purpose: mode,
@@ -173,7 +180,7 @@ router.post('/verify-otp', async (req, res) => {
     return;
   }
   if (otp.codeHash !== hashOtp(code)) {
-    await db.collection('otps').updateOne(otp._id, { attempts: (otp.attempts ?? 0) + 1 });
+    await db.collection(OTPS).updateOne(otp._id, { attempts: (otp.attempts ?? 0) + 1 });
     res.status(400).json({ error: 'Incorrect code. Please check and try again.' });
     return;
   }
@@ -183,26 +190,26 @@ router.post('/verify-otp', async (req, res) => {
 
   let userDoc;
   if (otp.purpose === 'signup') {
-    const pending = otp.pendingUser as { email: string; displayName: string } | undefined;
+    const pending = otp.pendingUser as { email: string; name: string } | undefined;
     if (!pending) {
       res.status(400).json({ error: 'Signup details missing. Please start again.' });
       return;
     }
     // Guard against a race where the account was created since request-otp.
-    const dupes = await db.collection('users').find({ email });
+    const dupes = await db.collection(USERS).find({ email });
     if (dupes[0]) {
       userDoc = dupes[0];
     } else {
-      const id = await db.collection('users').insertOne({
+      const id = await db.collection(USERS).insertOne({
         email: pending.email,
-        displayName: pending.displayName,
+        name: pending.name,
         createdAt: new Date().toISOString(),
-        ...newReaderFields(),
+        ...newUserFields(),
       });
-      userDoc = await db.collection('users').findById(id);
+      userDoc = await db.collection(USERS).findById(id);
     }
   } else {
-    const rows = await db.collection('users').find({ email });
+    const rows = await db.collection(USERS).find({ email });
     userDoc = rows[0] ?? null;
   }
 
@@ -222,32 +229,40 @@ router.post('/verify-otp', async (req, res) => {
   const grants = await db.collection(INVITES).find({ email });
   if (grants.length > 0) {
     const known = await getRoles();
-    const merged = new Set(withIdentityDefaults(project(finalDoc)).staffRoles);
+    // ONE role per user, so the LAST valid invite wins rather than a union.
+    // Expired rows are consumed either way, so they cannot linger and apply later.
+    let granted: string | null = null;
     for (const g of grants) {
       if (isExpired(g)) continue;
-      if (typeof g.role === 'string' && known.has(g.role)) merged.add(g.role);
+      const role = typeof g.role === 'string' ? known.get(g.role) : undefined;
+      if (role) granted = role.id;
     }
-    // P1 dual-write: `staffRoleSlug` is a field on this same document, so it goes
-    // in the SAME $set as the array — it cannot half-apply.
-    await db.collection('users').updateOne(String(finalDoc._id), {
-      staffRoles: [...merged],
-      staffRoleSlug: staffRoleSlugFor([...merged]),
-    });
+    // Through the single writer, so the `admins` row and `users.isAdmin` cannot
+    // half-apply — see lib/admins.ts.
+    if (granted) await grantAdminRole(String(finalDoc._id), granted);
     await Promise.all(grants.map((g) => db.collection(INVITES).deleteOne(g._id)));
-    const refreshed = await db.collection('users').findById(finalDoc._id);
+    const refreshed = await db.collection(USERS).findById(finalDoc._id);
     if (refreshed) finalDoc = refreshed;
   }
 
-  // Normalize (fills identity defaults for legacy docs too) before issuing the
-  // token. The JWT deliberately carries NO role/permission data — every
-  // authorization input is read live on each request, so a role edit takes
-  // effect immediately rather than at the next login.
+  // Stamp the sign-in. This is the ONLY writer of `lastLogin`, and it happens
+  // after every gate above has passed — so the field means "last time this
+  // account actually got in", not "last time someone tried".
+  const now = new Date().toISOString();
+  await db.collection(USERS).updateOne(String(finalDoc._id), { lastLogin: now });
+  finalDoc = { ...finalDoc, lastLogin: now };
+
+  // Normalize before issuing the token. The JWT deliberately carries NO role or
+  // permission data — every authorization input is read live on each request, so a
+  // role change takes effect immediately rather than at the next login.
   const identity = withIdentityDefaults(project(finalDoc));
-  // `v` pins the token to the account's current session generation, so bumping
-  // users.tokenVersion signs every existing session out (see lib/auth.ts isRevoked).
   const token = signToken({
     sub: identity.id,
     email: identity.email,
+    // Pins the session to the account's CURRENT generation. Omitting this made
+    // "sign out everywhere" a permanent lockout: `isRevoked` reads a missing `v`
+    // as 0, so once `tokenVersion` was bumped every freshly-issued token was also
+    // revoked on the very next request. The invite path already did this.
     v: typeof finalDoc.tokenVersion === 'number' ? finalDoc.tokenVersion : 0,
   });
   res.json({ token, user: toClientUser(await resolveAccount(identity)) });

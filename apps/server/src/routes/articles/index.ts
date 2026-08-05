@@ -22,8 +22,7 @@
 import { Router } from 'express';
 import { db } from '../../lib/db.js';
 import { accountCan } from '../../lib/effectiveAccess.js';
-import { gateArticleForTier, TIERS } from '../../lib/paywall.js';
-import { canAccessNewsroom } from '../../lib/rbac.js';
+import { isAdmin } from '../../lib/rbac.js';
 import {
   ARTICLE_STATUSES,
   enterPermission,
@@ -51,7 +50,7 @@ type Account = Parameters<typeof accountCan>[0];
  */
 function canSeePipeline(account: Account): boolean {
   return (
-    canAccessNewsroom(account) ||
+    isAdmin(account) ||
     accountCan(account, 'content.draft.edit_any') ||
     accountCan(account, 'content.draft.edit_own') ||
     accountCan(account, 'content.draft.create')
@@ -66,14 +65,15 @@ function canSeePipeline(account: Account): boolean {
  * editorial correspondence), `changesRequested`, `scheduledFor`,
  * `createdByUserId` and `updatedAt`.
  *
- * `summary` — the whole story body — is HERE, and being on this list is not the
- * same as being free to read: a premium story's body is cut down to its teaser by
- * `gateArticleForTier` (lib/paywall.ts) on the way out. The whitelist answers
- * "which fields", the tier gate answers "how much of this one".
+ * `summary` — the whole story body — is HERE, and a published story is readable
+ * in full by anyone. It used to be trimmed to a teaser by `gateArticleForTier`
+ * (lib/paywall.ts) for readers below its `minTier`; subscriptions are gone, so
+ * both the tier and the gate went with them rather than being left as a gate
+ * that never closes. See routes/blogs/visibility.ts for the same removal.
  */
 const PUBLIC_FIELDS = [
   'id', 'title', 'summary', 'author', 'publishedAt', 'linkedHorseIds', 'status',
-  'imageUrl', 'category', 'readingTime', 'tags', 'createdAt', 'minTier',
+  'imageUrl', 'category', 'readingTime', 'tags', 'createdAt',
 ] as const;
 
 function publicView(doc: Record<string, unknown>): Record<string, unknown> {
@@ -199,11 +199,6 @@ function readBody(raw: unknown): Record<string, unknown> {
     const n = Number(body.readingTime);
     out.readingTime = Number.isFinite(n) && n > 0 ? Math.min(999, Math.round(n)) : null;
   }
-  if (has('minTier')) {
-    const t = str(body.minTier, 20);
-    out.minTier = (TIERS as readonly string[]).includes(t) ? t : 'free';
-  }
-
   return out;
 }
 
@@ -253,7 +248,7 @@ router.get('/', async (req, res) => {
   }
   // Public projection, each story cut to what this reader's subscription tier
   // entitles them to.
-  res.json(sorted.map((d) => gateArticleForTier(publicView(d), req.account?.subscriptionTier)));
+  res.json(sorted.map((d) => publicView(d)));
 });
 
 // create

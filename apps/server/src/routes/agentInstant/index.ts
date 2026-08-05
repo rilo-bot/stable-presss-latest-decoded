@@ -18,7 +18,7 @@
 
 import { Router, raw } from 'express'
 import { attachAccount } from '../../lib/auth.js'
-import { canAccessNewsroom } from '../../lib/rbac.js'
+import { isAdmin } from '../../lib/rbac.js'
 import { rateLimit } from '../../lib/rateLimit.js'
 import { isAgentConfigured } from '../../lib/agent/provider.js'
 import {
@@ -40,7 +40,7 @@ const IMAGE_TYPES = new Set(['image/jpeg', 'image/png', 'image/webp', 'image/gif
 
 router.use(attachAccount)
 router.use((req, res, next) => {
-  if (!canAccessNewsroom(req.account)) {
+  if (!isAdmin(req.account)) {
     res.status(403).json({ error: 'Staff access required.' })
     return
   }

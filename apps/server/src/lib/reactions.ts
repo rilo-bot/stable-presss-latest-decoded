@@ -29,8 +29,7 @@
 // ---------------------------------------------------------------------------
 
 import { db, rawCollection } from './db.js'
-import { tierAllows } from './paywall.js'
-import { canAccessNewsroom } from './rbac.js'
+import { isAdmin } from './rbac.js'
 import type { AccountUser } from './effectiveAccess.js'
 
 const COLLECTION = 'reactions'
@@ -108,7 +107,6 @@ export async function assertReactable(
   parentId: string | undefined,
   account: AccountUser | undefined,
 ): Promise<Reactable> {
-  const tier = account?.subscriptionTier
   const gone = { ok: false, status: 404, error: 'Not found' } as const
 
   if (targetType === 'blog' || targetType === 'blogPart') {
@@ -119,9 +117,6 @@ export async function assertReactable(
 
     const post = await db.collection('blogs').findById(postId)
     if (!post || !isBlogLive(post)) return gone
-    if (!tierAllows(tier, post.minTier)) {
-      return { ok: false, status: 403, error: 'This post is for subscribers.' }
-    }
 
     if (targetType === 'blog') return { ok: true }
 
@@ -136,9 +131,6 @@ export async function assertReactable(
   if (targetType === 'story') {
     const story = await db.collection('articles').findById(targetId)
     if (!story || story.status !== 'published') return gone
-    if (!tierAllows(tier, story.minTier)) {
-      return { ok: false, status: 403, error: 'This story is for subscribers.' }
-    }
     return { ok: true }
   }
 
@@ -267,7 +259,7 @@ export async function setReaction(input: {
   const set: Record<string, unknown> = {
     emoji: input.emoji,
     updatedAt: now,
-    isStaff: canAccessNewsroom(input.account),
+    isStaff: isAdmin(input.account),
   }
   if (input.parentId) set.parentId = input.parentId
 

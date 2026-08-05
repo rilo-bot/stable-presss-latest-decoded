@@ -1,16 +1,19 @@
 // ---------------------------------------------------------------------------
-// Who may see which post, and how much of it.
+// Who may see which post.
 //
-// Three questions, kept together because they are the same question at three
-// depths: is this post public at all (`isLive`), may THIS caller see non-public
-// posts (`canSeeDrafts`), and how much of a public post does their subscription
-// entitle them to (`gateForTier`).
+// Two questions: is this post public at all (`isLive`), and may THIS caller see
+// posts that are not (`canSeeDrafts`).
+//
+// There used to be a third — `gateForTier`, which trimmed a "premium" post to a
+// teaser based on `users.subscriptionTier`. Subscriptions are gone (lib/paywall.ts
+// and the subscription route were deleted), so the gate was reading a field
+// nothing set: every post came back `locked: false` for everyone. A paywall that
+// is always open is worse than no paywall, because the code reads as if one is
+// being enforced. Removed with `minTier` rather than left as scaffolding.
 // ---------------------------------------------------------------------------
 
 import { accountCan } from '../../lib/effectiveAccess.js'
-import { canAccessNewsroom } from '../../lib/rbac.js'
-import { tierAllows } from '../../lib/paywall.js'
-import type { Block, BlogMedia } from '../../lib/blog/blocks.js'
+import { isAdmin } from '../../lib/rbac.js'
 
 /**
  * Is this post visible to the public right now?
@@ -34,40 +37,8 @@ export function isLive(doc: Record<string, unknown>, now = Date.now()): boolean 
 /** May this caller see posts that aren't live? */
 export function canSeeDrafts(req: { account?: Parameters<typeof accountCan>[0] }): boolean {
   return (
-    canAccessNewsroom(req.account) ||
+    isAdmin(req.account) ||
     accountCan(req.account, 'blog.edit_any') ||
     accountCan(req.account, 'blog.create')
   )
-}
-
-/**
- * Strip a paywalled post down to its free teaser.
- *
- * This has to happen on the SERVER. The reader page computes the same `locked`
- * decision and renders a Paywall, but until this existed the response still
- * carried every block and the whole media pool — so a premium post was readable
- * in full from the network tab, or with one curl. A client cannot enforce a
- * paywall over content it has already been handed.
- *
- * The teaser is the first paragraph, which is exactly what the page showed above
- * the gate anyway, so the visible result is unchanged for a legitimate reader.
- */
-export function gateForTier(doc: Record<string, unknown>, tier: unknown): Record<string, unknown> {
-  if (tierAllows(tier, doc.minTier)) return doc
-
-  const blocks = Array.isArray(doc.blocks) ? (doc.blocks as Block[]) : []
-  const teaser = blocks.filter((b) => b.kind === 'paragraph').slice(0, 1)
-
-  // The pool is trimmed to the cover, because the rest of it is a list of URLs
-  // for photographs belonging to text we just withheld. The cover stays: it is
-  // already public on every card in /blog, and the gated page still needs to look
-  // like the post it is asking you to buy.
-  const cover = (doc.cover ?? null) as { mediaId?: string } | null
-  const pool = Array.isArray(doc.media) ? (doc.media as BlogMedia[]) : []
-  const media = cover?.mediaId ? pool.filter((m) => m.id === cover.mediaId) : []
-
-  // Parts go too. They are body copy that happens to be titled, so leaving them
-  // in the response would hand over most of a paywalled post while the page
-  // dutifully drew a gate above them — the same hole the block list had.
-  return { ...doc, blocks: teaser, parts: [], media, locked: true }
 }

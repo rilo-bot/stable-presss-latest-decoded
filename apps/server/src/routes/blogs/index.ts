@@ -14,7 +14,7 @@
 //
 // Supporting modules, none of which register a route:
 //   helpers.ts     id projection + the field coercers
-//   visibility.ts  isLive / canSeeDrafts / gateForTier (the paywall)
+//   visibility.ts  isLive / canSeeDrafts
 //   content.ts     request body → storable post shape (normalisation)
 //
 // GROUP ORDER. Registered most-specific-first, so a broad pattern can never

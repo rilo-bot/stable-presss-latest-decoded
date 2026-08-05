@@ -32,11 +32,13 @@
 import { Router } from 'express'
 import { db } from '../../lib/db.js'
 import { signToken } from '../../lib/auth.js'
-import { SUPERADMIN_SLUG, newReaderFields, withIdentityDefaults } from '../../lib/identity.js'
+import { newUserFields, withIdentityDefaults } from '../../lib/identity.js'
 import { resolveAccount, toClientUser } from '../../lib/effectiveAccess.js'
 import { getRoles } from '../../lib/roleRegistry.js'
 import { rateLimit } from '../../lib/rateLimit.js'
-import { COLLECTION as INVITES, findInviteByToken, sanitizeRedirect } from '../../lib/invites.js'
+import { findInviteByToken, sanitizeRedirect } from '../../lib/invites.js'
+import { INVITES, USERS } from '../../lib/collections.js'
+import { adminRecordFor, grantAdminRole } from '../../lib/admins.js'
 
 type WithMongoId = { _id: string; [key: string]: unknown }
 function project<T extends WithMongoId>(doc: T): Omit<T, '_id'> & { id: string } {
@@ -87,7 +89,7 @@ router.get('/:token', async (req, res) => {
   }
 
   const email = String(invite.email)
-  const hasAccount = (await db.collection('users').find({ email })).length > 0
+  const hasAccount = (await db.collection(USERS).find({ email })).length > 0
 
   res.json({
     invite: {
@@ -99,7 +101,7 @@ router.get('/:token', async (req, res) => {
       // guard, or have been written by another path, and this value ends up
       // driving a client-side navigation.
       redirectTo: sanitizeRedirect(invite.redirectTo),
-      role: { slug: role.slug, label: role.label, description: role.description, color: role.color, icon: role.icon },
+      role: { name: role.name, label: role.label, description: role.description, color: role.color, icon: role.icon },
     },
   })
 })
@@ -128,21 +130,19 @@ router.post('/:token/accept', rateLimit('invite-accept', 20, 5 * 60_000), async 
   }
 
   const email = String(invite.email)
-  let userDoc: UserDoc = (await db.collection('users').find({ email }))[0] ?? null
+  let userDoc: UserDoc = (await db.collection(USERS).find({ email }))[0] ?? null
 
   if (!userDoc) {
     // A name if one was sent, otherwise one derived from the address. The link
     // signs them in on click, so there is no form in the way to collect it.
-    const sent =
-      typeof req.body?.displayName === 'string' ? req.body.displayName.trim().slice(0, 80) : ''
-    const displayName = sent || nameFromEmail(email)
-    const id = await db.collection('users').insertOne({
+    const sent = typeof req.body?.name === 'string' ? req.body.name.trim().slice(0, 80) : ''
+    const id = await db.collection(USERS).insertOne({
       email,
-      displayName,
+      name: sent || nameFromEmail(email),
       createdAt: new Date().toISOString(),
-      ...newReaderFields(),
+      ...newUserFields(),
     })
-    userDoc = await db.collection('users').findById(id)
+    userDoc = await db.collection(USERS).findById(id)
     if (!userDoc) {
       res.status(500).json({ error: 'Could not create your account. Please try again.' })
       return
@@ -156,12 +156,10 @@ router.post('/:token/accept', rateLimit('invite-accept', 20, 5 * 60_000), async 
   // shell access. Every other path guards that with `checkSuperadminLoss`; there
   // is no acting admin here to report a refusal to, so the invite is simply
   // applied as a no-op and they are signed in.
-  const current = withIdentityDefaults(project(userDoc))
-  if (current.staffRoleSlug !== SUPERADMIN_SLUG) {
-    // P1 dual-write: both axes in one $set, as everywhere else.
-    await db
-      .collection('users')
-      .updateOne(String(userDoc._id), { staffRoles: [role.slug], staffRoleSlug: role.slug })
+  const held = (await adminRecordFor(String(userDoc._id))).role
+  if (held?.isSuper !== true) {
+    // Single writer: the `admins` row and `users.isAdmin` cannot half-apply.
+    await grantAdminRole(String(userDoc._id), role.id, String(invite.invitedBy ?? ''))
   }
 
   // Consume EVERY invite for this address, not just the redeemed one. Leaving a
@@ -171,7 +169,7 @@ router.post('/:token/accept', rateLimit('invite-accept', 20, 5 * 60_000), async 
   const siblings = await db.collection(INVITES).find({ email })
   await Promise.all(siblings.map((row) => db.collection(INVITES).deleteOne(row._id)))
 
-  const fresh = await db.collection('users').findById(String(userDoc._id))
+  const fresh = await db.collection(USERS).findById(String(userDoc._id))
   const identity = withIdentityDefaults(project(fresh ?? userDoc))
   const session = signToken({
     sub: identity.id,

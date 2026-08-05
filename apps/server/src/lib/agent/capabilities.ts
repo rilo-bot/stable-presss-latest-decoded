@@ -16,7 +16,7 @@
 
 import { db } from '../db.js'
 import { MAGAZINE_V2_ENABLED } from '../magazineV2/config.js'
-import { canAccessNewsroom, isPlatformAdmin, contentCan } from '../rbac.js'
+import { isAdmin, isPlatformAdmin, contentCan } from '../rbac.js'
 import { accountCan } from '../effectiveAccess.js'
 import { manageablePartyIds, visibleHorseIds } from '../scope.js'
 import type { AccountUser } from '../identity.js'
@@ -45,12 +45,11 @@ export interface CapabilityReport {
   identity: {
     name?: string
     roles: string[]
-    canAccessNewsroom: boolean
+    isAdmin: boolean
     isPlatformAdmin: boolean
-    subscriptionTier?: string
   }
   /** Concrete counts that make guidance specific. */
-  stable: { manageableHorses: number; manageableParties: number; pendingClaims: number }
+  stable: { manageableHorses: number; manageableParties: number }
   organisations: Array<{ orgId: string; orgRole: string }>
   capabilities: Capability[]
 }
@@ -70,12 +69,13 @@ function buildCapabilities(
   account: AccountUser,
   counts: { manageableHorses: number; manageableParties: number },
 ): Capability[] {
-  const staff = canAccessNewsroom(account)
+  const staff = isAdmin(account)
   const admin = isPlatformAdmin(account)
   const hasParty = counts.manageableParties > 0
-  const premium = account.subscriptionTier === 'premium'
-  const orgManage = account.orgMemberships.some(
-    (m) => m.orgRole === 'org_owner' || m.orgRole === 'org_manager',
+  // No subscription tiers in this model — nothing is paywalled.
+  const premium = true
+  const orgManage = account.orgMembers.some(
+    (m) => m.role === 'owner' || m.role === 'manager',
   )
 
   const caps: Capability[] = [
@@ -202,7 +202,7 @@ function buildCapabilities(
   }
 
   // ── Organisation ──
-  if (account.orgMemberships.length) {
+  if (account.orgMembers.length) {
     caps.push({
       id: 'manage-org',
       label: 'Manage your organisation',
@@ -223,8 +223,8 @@ export async function getCapabilities(account?: AccountUser): Promise<Capability
   if (!account) {
     return {
       signedIn: false,
-      identity: { roles: ['guest'], canAccessNewsroom: false, isPlatformAdmin: false },
-      stable: { manageableHorses: 0, manageableParties: 0, pendingClaims: 0 },
+      identity: { roles: ['guest'], isAdmin: false, isPlatformAdmin: false },
+      stable: { manageableHorses: 0, manageableParties: 0 },
       organisations: [],
       capabilities: [
         { id: 'browse', label: 'Browse public horses, parties, news, bulletins & the podcast', category: 'account', allowed: true },
@@ -236,26 +236,24 @@ export async function getCapabilities(account?: AccountUser): Promise<Capability
   }
 
   const partyIds = manageablePartyIds(account)
-  const [horses, links] = await Promise.all([
-    db.collection('horses').find(),
-    db.collection('horsePartyLinks').find(),
-  ])
-  const manageableHorses = canAccessNewsroom(account)
-    ? horses.length
-    : visibleHorseIds(account, { horses, links }).length
-  const pendingClaims = account.partyClaims.filter((c) => c.status === 'pending').length
+  // An admin's number is the whole register; everyone else's comes from their own
+  // claimed party rows and their orgs. Only the ADMIN branch needs the collection,
+  // so the non-admin path no longer loads every horse to count a handful.
+  const manageableHorses = isAdmin(account)
+    ? await db.collection('horses').count()
+    : (await visibleHorseIds(account)).length
 
   return {
     signedIn: true,
     identity: {
-      name: account.displayName || account.email,
-      roles: account.roles,
-      canAccessNewsroom: canAccessNewsroom(account),
+      name: account.name || account.email,
+      roles: [...new Set(["reader", ...account.parties.map((p) => p.role)])],
+      isAdmin: isAdmin(account),
       isPlatformAdmin: isPlatformAdmin(account),
-      subscriptionTier: account.subscriptionTier,
+
     },
-    stable: { manageableHorses, manageableParties: partyIds.length, pendingClaims },
-    organisations: account.orgMemberships.map((m) => ({ orgId: m.orgId, orgRole: m.orgRole })),
+    stable: { manageableHorses, manageableParties: partyIds.length },
+    organisations: account.orgMembers.map((m) => ({ orgId: m.orgId, orgRole: m.role })),
     capabilities: buildCapabilities(account, { manageableHorses, manageableParties: partyIds.length }),
   }
 }
@@ -276,7 +274,7 @@ export function summariseCapabilities(account?: AccountUser): string {
     ].join('\n')
   }
 
-  const staff = canAccessNewsroom(account)
+  const staff = isAdmin(account)
   const admin = isPlatformAdmin(account)
   const partyIds = manageablePartyIds(account)
   const can: string[] = ['follow horses', 'place tips', 'register a horse (joins their stable, hidden until staff verify)']
@@ -285,10 +283,8 @@ export function summariseCapabilities(account?: AccountUser): string {
   if (partyIds.length) can.push(`edit their own party profile (${partyIds.length})`)
   else gated.push('editing a party profile → claim a racing role from the Dashboard to mint it')
 
-  const pending = account.partyClaims.filter((c) => c.status === 'pending')
-  if (pending.length) gated.push(`${pending.length} racing-role claim(s) pending staff verification (read-only until verified)`)
 
-  if (account.subscriptionTier !== 'premium') gated.push('premium articles → switch plan on Dashboard → Your Plan')
+
 
   if (staff) {
     can.push('work in the Production System (the staff CMS)', `build & publish bulletins in the ${MAGAZINE_SURFACE}`)
@@ -307,12 +303,12 @@ export function summariseCapabilities(account?: AccountUser): string {
     else gated.push('verifying claims & managing the team → administrator only')
   }
 
-  const orgManage = account.orgMemberships.filter((m) => m.orgRole === 'org_owner' || m.orgRole === 'org_manager')
+  const orgManage = account.orgMembers.filter((m) => m.role === 'owner' || m.role === 'manager')
   if (orgManage.length) can.push(`manage their organisation(s) (${orgManage.length})`)
 
   return [
     'CAPABILITIES (use these to guide precisely — offer the EXACT next step, never a generic answer).',
-    `Roles: ${account.roles.join(', ') || 'reader'}. Subscription: ${account.subscriptionTier}.`,
+    `Roles: ${[...new Set(['reader', ...account.parties.map((p) => p.role)])].join(', ')}.`,
     `CAN now: ${can.join('; ')}.`,
     gated.length ? `GATED (always offer the unlock path): ${gated.join('; ')}.` : 'Nothing is gated for this reader right now.',
     'For exact stable counts or a full breakdown, call the whatCanIDo tool.',

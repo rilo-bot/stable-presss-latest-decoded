@@ -1,27 +1,24 @@
 // ---------------------------------------------------------------------------
-// Server-side permission enforcement.
+// Route gates and the category test.
 //
-// NO ROLE SLUG APPEARS IN THIS FILE. Every gate asks what the account may DO,
-// never what it IS. The two old role-family tests are gone:
+// TWO CATEGORIES, ONE AXIS EACH:
 //
-//   isStaff(account)  →  canAccessNewsroom(account)   // 'newsroom.access'
-//   isAdmin(account)  →  isPlatformAdmin(account)     // 'platform.admin'
+//   isAdmin(account)              — the CATEGORY. Holds an `admins` row, so they
+//                                   may enter the admin app at all.
+//   accountCan(account, action)   — the PERMISSION, from the role in that row.
+//                                   Superadmin (`isSuper`) short-circuits to true.
 //
-// They were deleted rather than deprecated so the compiler enumerated every
-// call site during the migration — a missed one is an access-control bug that
-// no test would necessarily catch. See docs/DYNAMIC-RBAC-PLAN.md §2.
-//
-// Racing scope (which horses/parties an account may write) is a separate axis
-// and still comes from relationships, never from a role. See scope.ts, RBAC.md §6.
+// Nothing else. `isAdminAccount` (a second name for the first) and the five
+// hand-copied "staff only" middlewares are gone: one `adminGate` replaces them,
+// so a change to what admin-only means happens in one place.
 // ---------------------------------------------------------------------------
 
 import type { Request, Response, NextFunction } from 'express'
 import { db } from './db.js'
 import { attachAccount, attachAccountOptional } from './auth.js'
-import { isStaffIdentity, type OrgRole } from './identity.js'
+import type { OrgRole } from './identity.js'
 import { writableHorseIds, manageablePartyIds } from './scope.js'
 import { accountCan, accountCanAny, accountCanOpenModule, type AccountUser } from './effectiveAccess.js'
-import type { PermissionAction } from './permissionCatalogue.js'
 
 export { accountCan, accountCanOpenModule }
 export type { AccountUser }
@@ -32,68 +29,48 @@ type ContentAction =
   | 'content.draft.edit_any'
 
 /**
- * May the account use newsroom tooling and see unverified/private records?
+ * THE category test: is this an admin account?
  *
- * HOLDING A STAFF ROLE IS THE TEST — see `isStaffIdentity`. Being on the team is
- * what grants Campaign Engine access; the role decides what you find inside it.
- *
- * This was `accountCan(account, 'newsroom.access')`, a grantable checkbox. That
- * made all 24 module checkboxes silently conditional on one unrelated-looking box
- * in another row, so the obvious way to build a "magazine only" role produced one
- * that could not sign in. `newsroom.access` is no longer in the catalogue and no
- * role can hold it; it survives only as the flag `toClientUser` emits so the
- * browser's `RequireStaff` keeps asking one question.
+ * Reads the resolved `isAdmin`, which `resolveAccount` derives from the `admins`
+ * row — never the stored `users.isAdmin` flag. A superadmin is an admin by
+ * definition, but the check is spelled out because a superadmin whose role row is
+ * missing must still get in.
  */
-export function canAccessNewsroom(account: AccountUser | undefined): boolean {
+export function isAdmin(account: AccountUser | undefined): boolean {
   if (!account) return false
-  return account.isSuperAdmin || isStaffIdentity(account)
+  return account.isSuperAdmin || account.isAdmin
 }
 
 /**
- * Platform-wide administrative override — verify any claim, manage any
- * organisation, see everything. This is what `isAdmin()` meant.
+ * Platform-wide administrative override — manage any organisation, see
+ * everything, override ownership. A PERMISSION, not a category: an admin holding
+ * a narrow role does not have it.
  */
 export function isPlatformAdmin(account: AccountUser | undefined): boolean {
   return accountCan(account, 'platform.admin')
 }
 
-/**
- * May the account verify or reject a party claim ANYWHERE on the platform?
- *
- * `claims.verify` was split out of `platform.admin` because the two are different
- * jobs: working the verification queue is records work, while `platform.admin`
- * also grants "manage every organisation, override any ownership". There was no
- * way to staff the queue without handing over the whole platform.
- *
- * Defined HERE, not in routes/partyClaims.ts, because routes/uploads.ts needs the
- * same answer to decide who may read a claim's evidence file. Two copies of a rule
- * like this is exactly how the H4 superadmin-guard bug happened.
- */
-export function canVerifyClaims(account: AccountUser | undefined): boolean {
-  return accountCanAny(account, ['platform.admin', 'claims.verify'])
-}
-
-/** May the account READ the staff roster? Writing it needs `team.manage`. */
+/** May the account READ the team roster? Writing it needs `team.manage`. */
 export function canViewTeam(account: AccountUser | undefined): boolean {
   return accountCanAny(account, ['team.view', 'team.manage'])
 }
 
 /** The account's role within a given organisation, if any. */
 export function orgRoleIn(account: AccountUser | undefined, orgId: string): OrgRole | undefined {
-  return account?.orgMemberships.find((m) => m.orgId === orgId)?.orgRole
+  return account?.orgMembers.find((m) => m.orgId === orgId)?.role
 }
 
 /** May run operational org actions (add members/parties): owner, manager, or a platform admin. */
 export function canManageOrg(account: AccountUser | undefined, orgId: string): boolean {
   if (isPlatformAdmin(account)) return true
   const r = orgRoleIn(account, orgId)
-  return r === 'org_owner' || r === 'org_manager'
+  return r === 'owner' || r === 'manager'
 }
 
-/** Owner-only actions (members/roles/billing/delete): the org owner or a platform admin. */
+/** Owner-only actions (members/roles/delete): the org owner or a platform admin. */
 export function isOrgOwner(account: AccountUser | undefined, orgId: string): boolean {
   if (isPlatformAdmin(account)) return true
-  return orgRoleIn(account, orgId) === 'org_owner'
+  return orgRoleIn(account, orgId) === 'owner'
 }
 
 export function contentCan(account: AccountUser | undefined, action: ContentAction): boolean {
@@ -116,53 +93,80 @@ export function canManageTeam(account: AccountUser | undefined): boolean {
 
 const forbid = (res: Response, msg: string) => res.status(403).json({ error: msg })
 
-/** GET is public; any write requires a signed-in account (any role, incl. reader). */
+/** First non-empty path segment of the mounted sub-path (the :id for /:id routes). */
+function firstSegment(req: Request): string | undefined {
+  return req.url.split('?')[0].split('/').filter(Boolean)[0]
+}
+
+// ── Gates ───────────────────────────────────────────────────────────────────
+
+/**
+ * THE admin-only gate. Was five hand-copied middlewares (`staffWriteGate`,
+ * `reportsGate`, `issuesGate`, and inline blocks in two agent routers) that had
+ * already begun to differ in which methods they let through.
+ *
+ *   readPublic     GET bypasses the gate entirely (default true).
+ *   attachOnRead   attach the account on GET without requiring one, so the
+ *                  handler can widen the response for an admin.
+ *
+ * `adminGate()` with no options is "public read, admin write".
+ * `adminGate({ readPublic: false })` is "admin only, every method".
+ */
+export function adminGate(
+  opts: { readPublic?: boolean; attachOnRead?: boolean } = {},
+): (req: Request, res: Response, next: NextFunction) => void {
+  const { readPublic = true, attachOnRead = false } = opts
+  return (req, res, next) => {
+    if (req.method === 'GET' && readPublic) {
+      if (attachOnRead) {
+        void attachAccountOptional(req, res, next)
+        return
+      }
+      next()
+      return
+    }
+    void attachAccount(req, res, () => {
+      if (!isAdmin(req.account)) {
+        forbid(res, 'Admin access required.')
+        return
+      }
+      next()
+    })
+  }
+}
+
+/** GET is public; any write requires a signed-in account (admin or not). */
 export function authedWriteGate(req: Request, res: Response, next: NextFunction): void {
   if (req.method === 'GET') return next()
   void attachAccount(req, res, next)
 }
 
-/** GET is public; any write requires a STAFF account. */
-export function staffWriteGate(req: Request, res: Response, next: NextFunction): void {
-  if (req.method === 'GET') return next()
-  void attachAccount(req, res, () => {
-    if (!canAccessNewsroom(req.account)) {
-      forbid(res, 'Staff access required.')
-      return
-    }
-    next()
-  })
-}
-
 /**
- * Can the account write this horse's data? Staff always; otherwise the creator,
- * or a current verified-party / org link to the horse (mirror of the web
- * `canManageHorse`). Loads horses + links live so role/claim changes take effect
- * without re-issuing a token.
+ * Can the account write this horse's data? Admins always; otherwise the creator,
+ * or a claimed party row pointing at the horse, or an org they own or manage.
+ * Read live so a claim change takes effect without re-issuing a token.
  */
 export async function accountCanManageHorse(
   account: AccountUser | undefined,
   horseId: string,
 ): Promise<boolean> {
   if (!account) return false
-  if (canAccessNewsroom(account)) return true
+  if (isAdmin(account)) return true
   const horse = await db.collection('horses').findById(horseId)
   if (!horse) return false
   if (horse.createdByUserId && horse.createdByUserId === account.id) return true
-  const horses = await db.collection('horses').find()
-  const links = await db.collection('horsePartyLinks').find()
   // WRITE scope: excludes horses reachable only through an org the account is a
-  // plain member of (docs/AUTH-RBAC-REVIEW.md H8).
-  return writableHorseIds(account, { horses, links }).includes(horseId)
+  // plain member of.
+  return (await writableHorseIds(account)).includes(horseId)
 }
 
 /**
  * Horse-scoped write gate: GET is public (optionally account-aware so the
- * handler can filter private/unverified rows); writes require staff OR an
- * authorised relationship to the target horse.
+ * handler can filter private rows); writes require an admin OR an authorised
+ * relationship to the target horse.
  *   - `idIsHorse`   the router's :id IS the horse id (the horses router itself);
  *                   POST is allowed for any signed-in account (the handler stamps
- *                   creator + auto-links their owner party).
+ *                   creator + auto-creates their owner party row).
  *   - otherwise     a child record keyed by `horse_id` (body on POST; looked up
  *                   from `collection` on PUT/DELETE).
  *   - `optionalGet` attach the account on GET (for visibility filtering).
@@ -182,10 +186,10 @@ export function horseScopedWriteGate(opts: {
     }
     void attachAccount(req, res, async () => {
       const account = req.account
-      if (canAccessNewsroom(account)) return next()
+      if (isAdmin(account)) return next()
 
       if (req.method === 'POST') {
-        if (opts.idIsHorse) return next() // create a horse: handler stamps creator + auto-links owner
+        if (opts.idIsHorse) return next() // create a horse: handler stamps creator + owner party
         const horseId = typeof req.body?.horse_id === 'string' ? req.body.horse_id : undefined
         if (horseId && (await accountCanManageHorse(account, horseId))) return next()
         return forbid(res, 'You can only add records to horses you manage.')
@@ -206,14 +210,6 @@ export function horseScopedWriteGate(opts: {
       }
 
       // A body that RE-POINTS the record at a different horse has to be authorised
-      // for the DESTINATION as well. Checking only the pre-image was a horizontal
-      // privilege escalation: every handler here does `{ ...req.body }`, so a caller
-      // could move a record they legitimately own onto a horse they do not manage.
-      // On horsePartyLinks that was severe rather than merely untidy — it re-pointed
-      // the caller's OWN party at someone else's horse, and a current party↔horse
-      // link is exactly what writableHorseIds() reads, so the move granted write
-      // access to that horse and to every child record hanging off it.
-      // See docs/AUTH-RBAC-REVIEW.md C1.
       if (!opts.idIsHorse && req.method === 'PUT') {
         const target = typeof req.body?.horse_id === 'string' ? req.body.horse_id : undefined
         if (target && target !== horseId && !(await accountCanManageHorse(account, target))) {
@@ -225,33 +221,28 @@ export function horseScopedWriteGate(opts: {
   }
 }
 
-/** First non-empty path segment of the mounted sub-path (the :id for /:id routes). */
-function firstSegment(req: Request): string | undefined {
-  return req.url.split('?')[0].split('/').filter(Boolean)[0]
-}
-
 /**
- * Can the account edit this party's profile? Staff always; otherwise the account
- * that manages it — a verified or provisional (pending self-registered) claim on
- * it, or the creator of a self-registered party. Mirror of the web `canManageParty`.
+ * Can the account edit this party row? Admins always; otherwise the account that
+ * claimed it (`userId`), or an org they own or manage.
  */
 export async function accountCanManageParty(
   account: AccountUser | undefined,
   partyId: string,
 ): Promise<boolean> {
   if (!account) return false
-  if (canAccessNewsroom(account)) return true
+  if (isAdmin(account)) return true
   if (manageablePartyIds(account).includes(partyId)) return true
   const party = await db.collection('parties').findById(partyId)
-  return !!party && party.createdByUserId === account.id
+  if (!party) return false
+  const orgId = party.orgId ? String(party.orgId) : ''
+  return !!orgId && canManageOrg(account, orgId)
 }
 
 /**
- * Party write gate. GET is account-aware (so the handler can hide unverified
- * parties from the public). Creation/deletion of register entries stays staff-only
- * — member parties are minted by the claim flow. A member may PUT only their OWN
- * party profile (provisional self-service); the handler strips verify fields so
- * they can't self-promote to the public site.
+ * Party register gate. GET is account-aware (unclaimed register rows are public;
+ * the handler decides what else the caller sees). Creating a register entry and
+ * deleting one stay admin-only. A signed-in user may PUT a row they have claimed,
+ * and claiming happens through POST /:id/claim, which carries its own rules.
  */
 export function partyScopedWriteGate(req: Request, res: Response, next: NextFunction): void {
   if (req.method === 'GET') {
@@ -260,30 +251,24 @@ export function partyScopedWriteGate(req: Request, res: Response, next: NextFunc
   }
   void attachAccount(req, res, async () => {
     const account = req.account
-    if (canAccessNewsroom(account)) return next()
-    // Members may create a provisional party (e.g. adding a trainer from a horse
-    // page); the handler stamps it unverified + createdByUserId so it stays hidden
-    // from the public until staff verify it.
-    if (req.method === 'POST') {
-      if (!account) return forbid(res, 'Sign in to add a party.')
-      return next()
-    }
-    if (req.method === 'DELETE') return forbid(res, 'You cannot delete a party.')
+    if (isAdmin(account)) return next()
+
+    const segments = req.url.split('?')[0].split('/').filter(Boolean)
+    // POST /:id/claim and POST /:id/release are claim operations, not register
+    // writes — the handler enforces "is it already taken", which is the real rule.
+    if (req.method === 'POST' && segments.length > 1) return next()
+    // Creating a register entry is admin-only: the register is a shared record,
+    // and a user who needs an identity claims one rather than minting a rival row.
+    if (req.method === 'POST') return forbid(res, 'Only an admin can add a register entry.')
+    if (req.method === 'DELETE') return forbid(res, 'You cannot delete a register entry.')
+
     const id = firstSegment(req)
     if (id && (await accountCanManageParty(account, id))) return next()
-    return forbid(res, 'You can only edit your own party profile.')
+    return forbid(res, 'You can only edit a party you have claimed.')
   })
 }
 
-/**
- * Editorial gate for /api/articles: create / edit_own / edit_any.
- *
- * GET attaches the account OPTIONALLY rather than being flatly public. It used
- * to `return next()` with no account at all, which meant the handler had no way
- * to tell a reader from an editor and so returned the entire collection —
- * drafts, submitted copy and editors' notes — to anyone who asked. The handler
- * decides visibility now (`canSeePipeline`), and it needs an account to do it.
- */
+/** Editorial gate for /api/articles: create / edit_own / edit_any. */
 export function articlesWriteGate(req: Request, res: Response, next: NextFunction): void {
   if (req.method === 'GET') {
     void attachAccountOptional(req, res, next)
@@ -310,21 +295,13 @@ export function articlesWriteGate(req: Request, res: Response, next: NextFunctio
   })
 }
 
-/**
- * Does this account own the story?
- *
- * `createdByUserId` is the real answer and is stamped on every story created
- * since the field landed. The `author` fallback is for stories that predate it:
- * ownership used to be `doc.author === account.displayName`, which breaks the
- * moment two staff share a name or one is renamed, and the byline is free text
- * for editors — it was never an identity claim. Blogs already do it this way.
- */
+/** Does this account own the story? */
 export function ownsArticle(doc: Record<string, unknown>, account: AccountUser | undefined): boolean {
   if (!account) return false
   if (typeof doc.createdByUserId === 'string' && doc.createdByUserId) {
     return doc.createdByUserId === account.id
   }
-  return typeof doc.author === 'string' && doc.author === account.displayName
+  return typeof doc.author === 'string' && doc.author === account.name
 }
 
 /**
@@ -332,15 +309,13 @@ export function ownsArticle(doc: Record<string, unknown>, account: AccountUser |
  *
  * GET attaches the account OPTIONALLY rather than being flatly public: the
  * handler needs to know whether the caller may see drafts, and a post that is
- * not live must 404 for everyone else. `articlesWriteGate` can skip that only
- * because the articles list leaks unpublished stories to the public already —
- * not a precedent worth copying.
+ * not live must 404 for everyone else.
  *
  * Ownership is by `createdByUserId`, NOT by matching a display name the way
- * articles do (`doc.author === account.displayName`). That comparison breaks
- * the moment two staff share a name or one renames themselves, and on a blog
- * the byline is deliberately free text — an author may publish under a pen name
- * — so it is not an identity claim at all.
+ * articles do (`doc.author === account.name`). That comparison breaks the moment
+ * two people share a name or one renames themselves, and on a blog the byline is
+ * deliberately free text — an author may publish under a pen name — so it is not
+ * an identity claim at all.
  */
 export function blogsWriteGate(req: Request, res: Response, next: NextFunction): void {
   if (req.method === 'GET') {
@@ -391,41 +366,4 @@ async function blogEditGate(
     // unauthorised caller which post ids exist is a probe they don't need.
   }
   forbid(res, 'You can only edit your own blog posts.')
-}
-
-/**
- * Gate for /api/reports: GET loads the account optionally (so the handler can
- * filter private records by visibility); writes are staff-only.
- */
-export function reportsGate(req: Request, res: Response, next: NextFunction): void {
-  if (req.method === 'GET') {
-    void attachAccountOptional(req, res, next)
-    return
-  }
-  void attachAccount(req, res, () => {
-    if (!canAccessNewsroom(req.account)) {
-      forbid(res, 'Staff access required.')
-      return
-    }
-    next()
-  })
-}
-
-/**
- * Gate for /api/issues (published magazine bulletins): GET is public but loads
- * the account optionally (so staff can also see unpublished issues for
- * management); publishing/unpublishing/deleting is staff-only.
- */
-export function issuesGate(req: Request, res: Response, next: NextFunction): void {
-  if (req.method === 'GET') {
-    void attachAccountOptional(req, res, next)
-    return
-  }
-  void attachAccount(req, res, () => {
-    if (!canAccessNewsroom(req.account)) {
-      forbid(res, 'Staff access required.')
-      return
-    }
-    next()
-  })
 }

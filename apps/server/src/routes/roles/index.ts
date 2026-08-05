@@ -16,10 +16,10 @@ import { Router } from 'express'
 import type { NextFunction, Request, Response } from 'express'
 import { db } from '../../lib/db.js'
 import { attachAccount } from '../../lib/auth.js'
-import { withIdentityDefaults } from '../../lib/identity.js'
+import { ADMIN_ROLES, USERS } from '../../lib/collections.js'
 import { canManageRoles, canManageTeam, canViewTeam } from '../../lib/rbac.js'
 import {
-  SUPERADMIN_SLUG,
+  SUPERADMIN_ROLE_NAME,
   bustRoleCache,
   checkSuperadminLoss,
   denyRoleGrant,
@@ -37,7 +37,13 @@ import {
   type PermissionAction,
 } from '../../lib/permissionCatalogue.js'
 import type { AccountUser } from '../../lib/effectiveAccess.js'
-import { clearStaffRoleSlug, staffRoleSlugFor } from '../../lib/membership.js'
+import {
+  adminRecordsForUsers,
+  assigneeCountsByRoleId,
+  grantAdminRole,
+  revokeAdminRole,
+  revokeRoleEverywhere,
+} from '../../lib/admins.js'
 
 const router = Router()
 
@@ -122,36 +128,23 @@ function readRoleBody(body: unknown): RoleBody | { error: string } {
   }
 }
 
-/** How many users hold each role slug. */
-async function assigneeCounts(): Promise<Map<string, number>> {
-  // P2: only the staff population, via the indexed field — was every user on the
-  // platform. One role per person now, so this is a straight tally.
-  const staff = await db.collection('users').find({ staffRoleSlug: { $ne: null } })
-  const counts = new Map<string, number>()
-  for (const u of staff) {
-    const slug = String(u.staffRoleSlug)
-    counts.set(slug, (counts.get(slug) ?? 0) + 1)
-  }
-  return counts
-}
-
 /**
  * Would this change strip the acting user's own ability to manage roles?
  * A superadmin is exempt — they can never lock themselves out.
  *
  * The old version also checked "do any of their OTHER roles still grant
- * roles.manage". That branch is now unreachable by construction: a person holds
- * exactly one staff role (docs/USER-MODEL-PLAN.md §1), so if they hold the role
- * being edited there is no other role to fall back on. Simplified rather than kept,
- * because dead defensive code reads as a live guarantee.
+ * roles.manage". That branch is unreachable by construction: a person holds
+ * exactly one admin role, so if they hold the role being edited there is no other
+ * role to fall back on. Simplified rather than kept, because dead defensive code
+ * reads as a live guarantee.
  */
 function wouldSelfLockOut(
   actor: AccountUser,
-  slug: string,
+  roleId: string,
   nextPermissions: PermissionAction[],
 ): boolean {
   if (actor.isSuperAdmin) return false
-  if (actor.staffRoleSlug !== slug) return false
+  if (actor.roleDocs[0]?.id !== roleId) return false
   return !nextPermissions.includes('roles.manage')
 }
 
@@ -166,9 +159,12 @@ router.get('/catalogue', (_req, res) => {
 
 // ── List every role ──────────────────────────────────────────────────────────
 router.get('/', async (_req, res) => {
-  const [roles, counts] = await Promise.all([getRoles(), assigneeCounts()])
-  const out = [...roles.values()]
-    .map((r) => ({ ...r, assigneeCount: counts.get(r.slug) ?? 0 }))
+  const [roles, counts] = await Promise.all([getRoles(), assigneeCountsByRoleId()])
+  // The registry map is keyed under BOTH id and name, so iterating it yields each
+  // role twice. De-duplicate by id before counting or the console shows doubles.
+  const distinct = [...new Map([...roles.values()].map((r) => [r.id, r])).values()]
+  const out = distinct
+    .map((r) => ({ ...r, assigneeCount: counts.get(r.id) ?? 0 }))
     .sort((a, b) => {
       // Superadmin first, then the rest of the system roles, then custom.
       if (a.isImmutable !== b.isImmutable) return a.isImmutable ? -1 : 1
@@ -185,29 +181,32 @@ router.post('/', requireDefineRoles, async (req, res) => {
     res.status(400).json({ error: parsed.error })
     return
   }
-  const slug = slugify(parsed.label)
-  if (!slug) {
+  const name = slugify(parsed.label)
+  if (!name) {
     res.status(400).json({ error: 'Role name must contain at least one letter or number.' })
     return
   }
-  if (slug === SUPERADMIN_SLUG) {
+  if (name === SUPERADMIN_ROLE_NAME) {
     res.status(409).json({ error: 'That name is reserved.' })
     return
   }
-  if ((await getRoles()).has(slug)) {
+  if ((await getRoles()).has(name)) {
     res.status(409).json({ error: 'A role with that name already exists.' })
     return
   }
 
   const now = new Date().toISOString()
-  const id = await db.collection('roles').insertOne({
-    slug,
+  const id = await db.collection(ADMIN_ROLES).insertOne({
+    name,
     label: parsed.label,
     description: parsed.description,
     color: parsed.color,
     icon: parsed.icon ?? 'Shield',
     isSystem: false,
     isImmutable: false,
+    // Unrestricted access is not something a role can be CREATED with — only the
+    // seeded superadmin carries it, and `isImmutable` stops it being edited in.
+    isSuper: false,
     permissions: parsed.permissions,
     modules: parsed.modules,
     workflowStages: parsed.workflowStages,
@@ -216,13 +215,15 @@ router.post('/', requireDefineRoles, async (req, res) => {
     updatedAt: now,
   })
   bustRoleCache()
-  const created = await db.collection('roles').findById(id)
+  const created = await db.collection(ADMIN_ROLES).findById(id)
   res.status(201).json({ role: { ...projectRole(created!), assigneeCount: 0 } })
 })
 
 // ── Update ───────────────────────────────────────────────────────────────────
-router.put('/:slug', requireDefineRoles, async (req, res) => {
-  const current = (await getRoles()).get(String(req.params.slug))
+// `:name` resolves through the registry, which is keyed by BOTH id and name — so
+// the console may address a role either way and a rename does not break a URL.
+router.put('/:name', requireDefineRoles, async (req, res) => {
+  const current = (await getRoles()).get(String(req.params.name))
   if (!current) {
     res.status(404).json({ error: 'Role not found.' })
     return
@@ -236,7 +237,7 @@ router.put('/:slug', requireDefineRoles, async (req, res) => {
     res.status(400).json({ error: parsed.error })
     return
   }
-  if (wouldSelfLockOut(req.account!, current.slug, parsed.permissions)) {
+  if (wouldSelfLockOut(req.account!, current.id, parsed.permissions)) {
     res.status(409).json({
       error:
         'That would remove your own ability to manage roles. Grant "Manage roles" to another role you hold first.',
@@ -244,9 +245,9 @@ router.put('/:slug', requireDefineRoles, async (req, res) => {
     return
   }
 
-  // The slug is the key stored on every user doc, so renaming a role changes
-  // its LABEL only. Re-slugging would orphan every assignment.
-  await db.collection('roles').updateOne(current.id, {
+  // Assignments reference `adminRoles._id`, never the name — so a rename is free
+  // and nothing needs re-pointing. Only the LABEL is editable here regardless.
+  await db.collection(ADMIN_ROLES).updateOne(current.id, {
     label: parsed.label,
     description: parsed.description,
     color: parsed.color,
@@ -257,13 +258,13 @@ router.put('/:slug', requireDefineRoles, async (req, res) => {
     updatedAt: new Date().toISOString(),
   })
   bustRoleCache()
-  const fresh = await db.collection('roles').findById(current.id)
+  const fresh = await db.collection(ADMIN_ROLES).findById(current.id)
   res.json({ role: projectRole(fresh!) })
 })
 
 // ── Delete ───────────────────────────────────────────────────────────────────
-router.delete('/:slug', requireDefineRoles, async (req, res) => {
-  const current = (await getRoles()).get(String(req.params.slug))
+router.delete('/:name', requireDefineRoles, async (req, res) => {
+  const current = (await getRoles()).get(String(req.params.name))
   if (!current) {
     res.status(404).json({ error: 'Role not found.' })
     return
@@ -274,18 +275,17 @@ router.delete('/:slug', requireDefineRoles, async (req, res) => {
     })
     return
   }
-  if (!req.account!.isSuperAdmin && req.account!.staffRoles.includes(current.slug)) {
+  if (!req.account!.isSuperAdmin && req.account!.roleDocs[0]?.id === current.id) {
     res.status(409).json({ error: 'You cannot delete a role you currently hold.' })
     return
   }
 
-  // Drop every reference first — a deleted role still listed on user docs would
-  // resolve to nothing and silently shrink someone's access.
-  const unassigned = await db.collection('users').pullFromAll('staffRoles', current.slug)
-  // P1 dual-write: the same cleanup for the scalar axis, or holders would keep a
-  // slug pointing at a role that no longer exists.
-  await clearStaffRoleSlug(current.slug)
-  await db.collection('roles').deleteOne(current.id)
+  // Drop every assignment FIRST — an `admins` row pointing at a deleted role
+  // leaves an admin holding nothing, which is worse than not being an admin
+  // because no screen shows them as broken. `revokeRoleEverywhere` clears the
+  // rows and `users.isAdmin` together, through the single writer.
+  const unassigned = await revokeRoleEverywhere(current.id)
+  await db.collection(ADMIN_ROLES).deleteOne(current.id)
   bustRoleCache()
   res.json({ ok: true, unassigned })
 })
@@ -298,19 +298,20 @@ router.delete('/:slug', requireDefineRoles, async (req, res) => {
 // short-circuits every check), and answering "what can this person do?" required
 // mentally OR-ing several permission sets. The effective access is unchanged for
 // anyone holding a single role, which is everyone in practice.
-router.post('/:slug/assign', requireAssignRoles, async (req, res) => {
-  const role = (await getRoles()).get(String(req.params.slug))
+router.post('/:name/assign', requireAssignRoles, async (req, res) => {
+  const role = (await getRoles()).get(String(req.params.name))
   if (!role) {
     res.status(404).json({ error: 'Role not found.' })
     return
   }
-  // Only an existing superadmin may mint another one.
-  if (role.slug === SUPERADMIN_SLUG && !req.account!.isSuperAdmin) {
+  // Only an existing superadmin may mint another one. Reads `isSuper`, not the
+  // name — the name is editable and must not be able to grant omnipotence.
+  if (role.isSuper && !req.account!.isSuperAdmin) {
     res.status(403).json({ error: 'Only a superadmin can grant the superadmin role.' })
     return
   }
   const userId = typeof req.body?.userId === 'string' ? req.body.userId : ''
-  const target = userId ? await db.collection('users').findById(userId) : null
+  const target = userId ? await db.collection(USERS).findById(userId) : null
   if (!target) {
     res.status(404).json({ error: 'Team member not found.' })
     return
@@ -320,9 +321,8 @@ router.post('/:slug/assign', requireAssignRoles, async (req, res) => {
     res.status(403).json({ error: denied })
     return
   }
-  const acct = withIdentityDefaults({ id: target._id, ...target })
-  const held = acct.staffRoles
-  if (held.length === 1 && held[0] === role.slug) {
+  const held = (await adminRecordsForUsers([userId])).get(userId)?.role ?? null
+  if (held?.id === role.id) {
     res.status(409).json({ error: 'That member already holds this role.' })
     return
   }
@@ -330,30 +330,25 @@ router.post('/:slug/assign', requireAssignRoles, async (req, res) => {
   // Replacing a role TAKES AWAY the old one, so the superadmin guard has to fire
   // here too — not only on explicit removal. Without it, "change Mahin to Editor"
   // would quietly delete the only superadmin.
-  const blocked = await checkSuperadminLoss(
-    req.account!,
-    held.includes(SUPERADMIN_SLUG) && role.slug !== SUPERADMIN_SLUG,
-  )
+  const blocked = await checkSuperadminLoss(req.account!, held?.isSuper === true && !role.isSuper)
   if (blocked) {
     res.status(403).json({ error: blocked })
     return
   }
 
-  // P1 dual-write — same $set as the array, so the two cannot diverge.
-  await db
-    .collection('users')
-    .updateOne(userId, { staffRoles: [role.slug], staffRoleSlug: role.slug })
-  res.status(201).json({ ok: true, staffRoles: [role.slug] })
+  // Single writer: the `admins` row and `users.isAdmin` cannot half-apply.
+  await grantAdminRole(userId, role.id, req.account!.id)
+  res.status(201).json({ ok: true, role: { name: role.name, label: role.label } })
 })
 
-router.delete('/:slug/assign/:userId', requireAssignRoles, async (req, res) => {
-  const role = (await getRoles()).get(String(req.params.slug))
+router.delete('/:name/assign/:userId', requireAssignRoles, async (req, res) => {
+  const role = (await getRoles()).get(String(req.params.name))
   if (!role) {
     res.status(404).json({ error: 'Role not found.' })
     return
   }
   const userId = String(req.params.userId)
-  const target = await db.collection('users').findById(userId)
+  const target = await db.collection(USERS).findById(userId)
   if (!target) {
     res.status(404).json({ error: 'Team member not found.' })
     return
@@ -368,23 +363,20 @@ router.delete('/:slug/assign/:userId', requireAssignRoles, async (req, res) => {
   // Was a bare holder-count check, so anyone with `team.manage` could demote a
   // superadmin whenever a second one existed — routes/staff.ts guarded that and
   // this route did not. One helper now answers for every path.
-  const acct = withIdentityDefaults({ id: target._id, ...target })
-  const blocked = await checkSuperadminLoss(
-    req.account!,
-    role.slug === SUPERADMIN_SLUG && acct.staffRoles.includes(SUPERADMIN_SLUG),
-  )
+  const held = (await adminRecordsForUsers([userId])).get(userId)?.role ?? null
+  const blocked = await checkSuperadminLoss(req.account!, role.isSuper && held?.isSuper === true)
   if (blocked) {
     res.status(403).json({ error: blocked })
     return
   }
-
-  await db.collection('users').pullFrom(userId, 'staffRoles', role.slug)
-  // P1 dual-write. Clear the scalar only when it is the role being pulled —
-  // someone holding a different one keeps it.
-  const acctSlug = staffRoleSlugFor(acct.staffRoles)
-  if (acctSlug === role.slug) {
-    await db.collection('users').updateOne(userId, { staffRoleSlug: null })
+  // Unassigning a role they do not hold is a no-op, not an error — but it must
+  // not revoke whatever they DO hold.
+  if (held?.id !== role.id) {
+    res.json({ ok: true })
+    return
   }
+
+  await revokeAdminRole(userId)
   res.json({ ok: true })
 })
 

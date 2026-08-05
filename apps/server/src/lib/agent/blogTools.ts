@@ -26,7 +26,6 @@ import { BodyItemSchema } from './instantPrompt.js'
 import { isStockConfigured, searchStockPhotos } from '../stock.js'
 import { buildTools } from './tools.js'
 
-const TIERS = ['free', 'standard', 'premium'] as const
 
 /**
  * The record-lookup tools the Blog Studio borrows from the general agent.
@@ -104,7 +103,6 @@ export function buildBlogTools(account?: AccountUser, authHeader?: string): Tool
         body: BodySchema,
         category: z.string().optional().describe('A short section label, e.g. "Bloodstock", "Racing", "Opinion".'),
         tags: z.array(z.string()).optional().describe('Two to six lowercase topic tags.'),
-        minTier: z.enum(TIERS).describe('Who can read it: the tier the user chose.'),
         metaTitle: z
           .string()
           .optional()
@@ -130,7 +128,6 @@ export function buildBlogTools(account?: AccountUser, authHeader?: string): Tool
         excerpt: z.string().optional(),
         category: z.string().optional(),
         tags: z.array(z.string()).optional().describe('The COMPLETE new tag list — it replaces the old one.'),
-        minTier: z.enum(TIERS).optional(),
         metaTitle: z.string().optional().describe('Search/browser-tab title, ≤60 chars. Pass an empty string to clear it.'),
         metaDescription: z
           .string()

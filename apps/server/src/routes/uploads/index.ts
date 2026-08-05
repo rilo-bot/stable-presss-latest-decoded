@@ -2,7 +2,7 @@ import { Router, raw } from 'express'
 import type { NextFunction, Request, Response } from 'express'
 import crypto from 'crypto'
 import { attachAccount, attachAccountOptional } from '../../lib/auth.js'
-import { canVerifyClaims } from '../../lib/rbac.js'
+import { isPlatformAdmin } from '../../lib/rbac.js'
 import { accountCanAny } from '../../lib/effectiveAccess.js'
 import { rateLimit } from '../../lib/rateLimit.js'
 import { storage } from '../../lib/storage.js'
@@ -368,7 +368,7 @@ router.get('/file/*', attachAccountOptional, async (req, res) => {
   const { kind, ownerId } = parseKey(key)
   if (PRIVATE_KINDS.has(kind)) {
     const account = req.account
-    const mayRead = !!account && (account.id === ownerId || canVerifyClaims(account))
+    const mayRead = !!account && (account.id === ownerId || isPlatformAdmin(account))
     if (!mayRead) {
       // 404, not 403: a 403 confirms that an evidence file exists at this key.
       res.status(404).json({ error: 'Not found' })

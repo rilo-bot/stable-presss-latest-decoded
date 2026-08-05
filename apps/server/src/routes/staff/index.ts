@@ -1,30 +1,34 @@
 // ---------------------------------------------------------------------------
-// Team roster + pending invites.
+// The admin roster + pending invites.
 //
-// Role GRANT/REVOKE now lives in routes/roles.ts (`POST /api/roles/:slug/assign`)
+// Role GRANT/REVOKE lives in routes/roles.ts (`POST /api/roles/:name/assign`)
 // because roles are DB rows, not a fixed enum. What remains here is the roster
 // itself and the invite-by-email flow for people who have no account yet.
 //
-// A pending invite stores a role SLUG. It is validated against the live registry
+// A pending invite stores a role NAME. It is validated against the live registry
 // at both ends — when staged, and again when applied at first sign-in — so an
-// invite for a role that was deleted in between is dropped rather than silently
-// granting nothing.
+// invite for a role deleted in between is dropped rather than granting nothing.
 // ---------------------------------------------------------------------------
 
 import { Router } from 'express'
 import { db } from '../../lib/db.js'
 import { attachAccount } from '../../lib/auth.js'
-import { withIdentityDefaults } from '../../lib/identity.js'
-import { canAccessNewsroom, canManageTeam, canViewTeam } from '../../lib/rbac.js'
+import { INVITES, USERS } from '../../lib/collections.js'
+import { isAdmin, canManageTeam, canViewTeam } from '../../lib/rbac.js'
 import {
-  SUPERADMIN_SLUG,
+  adminRecordsForUsers,
+  grantAdminRole,
+  revokeAdminRole,
+  superadminCount,
+} from '../../lib/admins.js'
+import {
+  SUPERADMIN_ROLE_NAME,
   checkSuperadminLoss,
   denyRoleGrant,
   getRoles,
 } from '../../lib/roleRegistry.js'
 import { isEmailConfigured, sendInviteEmail, sendRoleGrantedEmail } from '../../lib/email.js'
 import {
-  COLLECTION as INVITES,
   INVITE_RESEND_COOLDOWN_MS,
   expiresInLabel,
   generateInviteToken,
@@ -41,43 +45,58 @@ const router = Router()
 
 router.use(attachAccount)
 
+/**
+ * Every admin account, with the role each holds.
+ *
+ * `isAdmin: true` is the indexed denormalised copy of "has an `admins` row", so
+ * this reads the admin population rather than scanning every user — then joins
+ * the roles in ONE query via `adminRecordsForUsers`.
+ */
+async function adminRoster() {
+  const users = await db.collection(USERS).find({ isAdmin: true })
+  const records = await adminRecordsForUsers(users.map((u) => String(u._id)))
+  return users
+    .map((u) => {
+      const id = String(u._id)
+      const role = records.get(id)?.role ?? null
+      return {
+        userId: id,
+        name: String(u.name ?? ''),
+        email: String(u.email ?? ''),
+        // null when the role row was deleted out from under them. They are still
+        // an admin holding nothing, and must stay visible so someone can fix it.
+        role: role ? { name: role.name, label: role.label, color: role.color, icon: role.icon } : null,
+        lastLogin: typeof u.lastLogin === 'string' ? u.lastLogin : null,
+      }
+    })
+    .sort((a, b) => (a.name || a.email).localeCompare(b.name || b.email))
+}
+
 // ── Share pickers: who can I share something with? ───────────────────────────
 // Registered BEFORE the `team.*` gate below on purpose. This is not roster
 // administration — it is the name/email list a share dialog needs to offer
-// colleagues, so the only question is "are you staff". Gating it behind
+// colleagues, so the only question is "are you an admin". Gating it behind
 // `team.view` would leave a contributor unable to share their own magazine.
 //
-// It returns the three fields a picker renders and NOTHING else — no role
-// slugs, no invite state, no permission enumeration.
-//
-// This replaces `GET /api/magazines/staff-directory`, which disappeared with the
-// v1 magazines router; both share dialogs kept calling that dead path and, with
-// their fetch errors swallowed, rendered an empty picker as "everyone already
-// has access".
+// It returns the three fields a picker renders and NOTHING else — no role names,
+// no invite state, no permission enumeration.
 router.get('/directory', async (req, res) => {
-  if (!canAccessNewsroom(req.account)) {
-    res.status(403).json({ error: 'Staff access required.' })
+  if (!isAdmin(req.account)) {
+    res.status(403).json({ error: 'Admin access required.' })
     return
   }
-  // `staffRoleSlug != null` IS "is staff" and it is indexed, so this reads the
-  // staff population rather than scanning every reader.
-  const users = await db.collection('users').find({ staffRoleSlug: { $ne: null } })
-  const staff = users
-    .map((u) => withIdentityDefaults({ id: u._id, ...u }))
-    .filter((u) => u.staffRoleSlug !== null)
-    .map((u) => ({ userId: u.id, displayName: u.displayName, email: u.email }))
-    .sort((a, b) => (a.displayName || a.email).localeCompare(b.displayName || b.email))
-  res.json(staff)
+  const users = await db.collection(USERS).find({ isAdmin: true })
+  const people = users
+    .map((u) => ({ userId: String(u._id), name: String(u.name ?? ''), email: String(u.email ?? '') }))
+    .sort((a, b) => (a.name || a.email).localeCompare(b.name || b.email))
+  res.json(people)
 })
 
 // Roster access is `team.*`, not `roles.manage` — inviting someone is a different
 // power from defining what a role may do. See routes/roles.ts.
 //
 // READ vs WRITE are split. The whole router used to require `team.manage`, which
-// left `team.view` ("See the staff roster") granting nothing at all: the seeded
-// editor role holds it and got a 403 from every endpoint here. GET now needs
-// `team.view`; everything that changes the roster still needs `team.manage`.
-// The `team` module in the catalogue is gated to match.
+// left `team.view` ("See the team roster") granting nothing at all.
 router.use((req, res, next) => {
   const allowed = req.method === 'GET' ? canViewTeam(req.account) : canManageTeam(req.account)
   if (!allowed) {
@@ -92,21 +111,9 @@ router.use((req, res, next) => {
   next()
 })
 
-// ── Roster: everyone holding at least one role, plus pending invites ─────────
+// ── Roster: every admin, plus pending invites ────────────────────────────────
 router.get('/', async (_req, res) => {
-  // P2: `staffRoleSlug != null` IS "is staff", and it is indexed — so the roster is
-  // one query over the staff population rather than a scan of every reader.
-  const users = await db.collection('users').find({ staffRoleSlug: { $ne: null } })
-  const staff = users
-    .map((u) => withIdentityDefaults({ id: u._id, ...u }))
-    .filter((u) => u.staffRoles.length > 0)
-    .map((u) => ({
-      userId: u.id,
-      displayName: u.displayName,
-      email: u.email,
-      staffRoles: u.staffRoles,
-    }))
-    .sort((a, b) => (a.displayName || a.email).localeCompare(b.displayName || b.email))
+  const staff = await adminRoster()
 
   // The raw token is never returned — only whether the link is still live, so
   // the UI can offer "Resend" on an expired invite instead of a dead row.
@@ -124,24 +131,24 @@ router.get('/', async (_req, res) => {
 })
 
 /** Display name for the "invited by" line — falls back to the email. */
-function actorName(req: { account?: { displayName?: string; email?: string } }): string {
-  return req.account?.displayName?.trim() || req.account?.email || 'A Stable Press administrator'
+function actorName(req: { account?: { name?: string; email?: string } }): string {
+  return req.account?.name?.trim() || req.account?.email || 'A Stable Press administrator'
 }
 
 // ── Invite by email: grant now if the account exists, else stage it ──────────
 router.post('/', async (req, res) => {
   const email = typeof req.body?.email === 'string' ? req.body.email.trim().toLowerCase() : ''
-  const slug = typeof req.body?.role === 'string' ? req.body.role : ''
+  const roleName = typeof req.body?.role === 'string' ? req.body.role : ''
   if (!email || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
     res.status(400).json({ error: 'A valid email is required.' })
     return
   }
-  const role = (await getRoles()).get(slug)
+  const role = (await getRoles()).get(roleName)
   if (!role) {
     res.status(400).json({ error: 'That role no longer exists.' })
     return
   }
-  if (role.slug === SUPERADMIN_SLUG && !req.account!.isSuperAdmin) {
+  if (role.isSuper && !req.account!.isSuperAdmin) {
     res.status(403).json({ error: 'Only a superadmin can grant the superadmin role.' })
     return
   }
@@ -156,10 +163,11 @@ router.post('/', async (req, res) => {
 
   // ── Already has an account: the role applies now, so there is nothing to
   // accept. Tell them it happened and point at the newsroom.
-  const existing = (await db.collection('users').find({ email }))[0]
+  const existing = (await db.collection(USERS).find({ email }))[0]
   if (existing) {
-    const acct = withIdentityDefaults({ id: existing._id, ...existing })
-    if (acct.staffRoles.includes(role.slug)) {
+    const userId = String(existing._id)
+    const current = (await adminRecordsForUsers([userId])).get(userId)
+    if (current?.role?.id === role.id) {
       res.status(409).json({ error: 'That person already holds this role.' })
       return
     }
@@ -168,16 +176,13 @@ router.post('/', async (req, res) => {
     // superadmin guard applies here as much as on an explicit removal.
     const blocked = await checkSuperadminLoss(
       req.account!,
-      acct.staffRoles.includes(SUPERADMIN_SLUG) && role.slug !== SUPERADMIN_SLUG,
+      current?.role?.isSuper === true && !role.isSuper,
     )
     if (blocked) {
       res.status(403).json({ error: blocked })
       return
     }
-    // P1 dual-write (docs/USER-MODEL-PLAN.md §8) — same $set as the array.
-    await db
-      .collection('users')
-      .updateOne(String(existing._id), { staffRoles: [role.slug], staffRoleSlug: role.slug })
+    await grantAdminRole(userId, role.id, req.account!.id)
 
     // The grant is the point; the email is a courtesy. A delivery failure must
     // not roll it back or read as failure — report it and let the UI say so.
@@ -198,7 +203,7 @@ router.post('/', async (req, res) => {
 
   // ── No account yet: stage the grant and email a one-time accept link.
   const dupes = await db.collection(INVITES).find({ email })
-  const existingInvite = dupes.find((g) => g.role === role.slug)
+  const existingInvite = dupes.find((g) => g.role === role.name)
   if (existingInvite && !isExpired(existingInvite)) {
     res.status(409).json({
       error: 'A pending invite for this role already exists. Resend it from the list below.',
@@ -210,7 +215,7 @@ router.post('/', async (req, res) => {
   const now = new Date()
   const doc = {
     email,
-    role: role.slug,
+    role: role.name,
     tokenHash: hashInviteToken(token),
     expiresAt: inviteExpiry(now),
     invitedBy: req.account!.id,
@@ -262,14 +267,12 @@ const lastMemberNotify = new Map<string, number>()
 
 router.post('/member/:userId/resend', async (req, res) => {
   const userId = String(req.params.userId)
-  const target = await db.collection('users').findById(userId)
+  const target = await db.collection(USERS).findById(userId)
   if (!target) {
     res.status(404).json({ error: 'Team member not found.' })
     return
   }
-  const acct = withIdentityDefaults({ id: target._id, ...target })
-  const slug = acct.staffRoles[0]
-  const role = slug ? (await getRoles()).get(slug) : undefined
+  const role = (await adminRecordsForUsers([userId])).get(userId)?.role
   if (!role) {
     res.status(409).json({ error: 'That person holds no role, so there is nothing to send.' })
     return
@@ -283,7 +286,7 @@ router.post('/member/:userId/resend', async (req, res) => {
 
   try {
     const { delivered } = await sendRoleGrantedEmail({
-      to: acct.email,
+      to: String(target.email ?? ''),
       roleLabel: role.label,
       invitedBy: actorName(req),
       newsroomUrl: `${WEB_PUBLIC_URL}/production-system`,
@@ -298,13 +301,13 @@ router.post('/member/:userId/resend', async (req, res) => {
   }
 })
 
-// ── Remove a member from the team ────────────────────────────────────────────
-// Revokes every staff role in one action. The account itself survives — they
-// drop back to being a plain reader rather than being deleted, because their
-// bylines, stories and uploads all still reference them.
+// ── Remove someone from the team ─────────────────────────────────────────────
+// Drops the `admins` row. The ACCOUNT survives — they become a plain user rather
+// than being deleted, because their bylines, stories and uploads still reference
+// them.
 router.delete('/member/:userId', async (req, res) => {
   const userId = String(req.params.userId)
-  const target = await db.collection('users').findById(userId)
+  const target = await db.collection(USERS).findById(userId)
   if (!target) {
     res.status(404).json({ error: 'Team member not found.' })
     return
@@ -313,24 +316,20 @@ router.delete('/member/:userId', async (req, res) => {
     res.status(403).json({ error: 'You cannot remove yourself from the team.' })
     return
   }
-  // Both rules that used to be spelled out here now live in one helper, so the
-  // roles router cannot drift from this one again (it had: it checked the holder
-  // count but not who was acting).
-  const acct = withIdentityDefaults({ id: target._id, ...target })
-  const blocked = await checkSuperadminLoss(
-    req.account!,
-    acct.staffRoles.includes(SUPERADMIN_SLUG),
-  )
+  // Both rules that used to be spelled out here live in one helper, so the roles
+  // router cannot drift from this one again (it had: it checked the holder count
+  // but not who was acting).
+  const current = (await adminRecordsForUsers([userId])).get(userId)
+  const blocked = await checkSuperadminLoss(req.account!, current?.role?.isSuper === true)
   if (blocked) {
     res.status(403).json({ error: blocked })
     return
   }
 
-  // P1 dual-write: removal clears both axes together.
-  await db.collection('users').updateOne(userId, { staffRoles: [], staffRoleSlug: null })
+  await revokeAdminRole(userId)
   // Any invite still sitting for that address would silently re-grant on their
   // next sign-in, undoing the removal.
-  const orphaned = await db.collection(INVITES).find({ email: acct.email })
+  const orphaned = await db.collection(INVITES).find({ email: String(target.email ?? '') })
   await Promise.all(orphaned.map((g) => db.collection(INVITES).deleteOne(g._id)))
 
   res.json({ ok: true })
@@ -382,16 +381,13 @@ router.post('/pending/:id/resend', async (req, res) => {
 })
 
 // ── Cancel a pending invite ──────────────────────────────────────────────────
-// Previously unreachable: the UI listed pending invites with no way to withdraw
-// one, so a mistyped address sat there indefinitely, auto-applying whenever
-// someone eventually claimed it.
 router.delete('/pending/:id', async (req, res) => {
-  const found = await db.collection(INVITES).findById(req.params.id)
+  const found = await db.collection(INVITES).findById(String(req.params.id))
   if (!found) {
     res.status(404).json({ error: 'Invite not found.' })
     return
   }
-  await db.collection(INVITES).deleteOne(req.params.id)
+  await db.collection(INVITES).deleteOne(String(req.params.id))
   res.json({ ok: true })
 })
 
