@@ -5,7 +5,6 @@
 // posts that are not (`canSeeDrafts`).
 //
 // There used to be a third — `gateForTier`, which trimmed a "premium" post to a
-// teaser based on `users.subscriptionTier`. Subscriptions are gone (lib/paywall.ts
 // and the subscription route were deleted), so the gate was reading a field
 // nothing set: every post came back `locked: false` for everyone. A paywall that
 // is always open is worse than no paywall, because the code reads as if one is

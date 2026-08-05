@@ -9,12 +9,8 @@
 
 import { Router } from 'express';
 import { db } from '../../lib/db.js';
+import { project, type WithMongoId } from '../../lib/project.js';
 
-type WithMongoId = { _id: string; [key: string]: unknown };
-function project<T extends WithMongoId>(doc: T): Omit<T, '_id'> & { id: string } {
-  const { _id, ...rest } = doc;
-  return { id: _id, ...rest } as Omit<T, '_id'> & { id: string };
-}
 
 const bySortOrder = (a: WithMongoId, b: WithMongoId) => {
   const ao = typeof a.sortOrder === 'number' ? a.sortOrder : 0;

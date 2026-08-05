@@ -121,7 +121,6 @@ async function buildNewsroomSummary(account: AccountUser) {
     generatedFor: {
       name: account.name || account.email,
       // The AI brief describes the reader's editorial job, so it wants their
-      // ROLE LABELS — `roles` is now the static axis ('reader' + party roles)
       // and would have made every brief say "roles: reader".
       roles: account.roleDocs.map((r) => r.label),
       isPlatformAdmin: isPlatformAdmin(account),

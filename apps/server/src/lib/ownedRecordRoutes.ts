@@ -26,7 +26,7 @@ import {
   type RecordShare,
 } from './recordSharing.js'
 
-type WithMongoId = { _id: string; [key: string]: unknown }
+import type { WithMongoId } from './project.js'
 
 export interface OwnedRecordOptions {
   /** Mongo collection name. */
@@ -173,7 +173,7 @@ export function ownedRecordRouter(opts: OwnedRecordOptions): Router {
     // `isSuperAdmin` at all, so the check silently collapsed to the raw flag.
     const identity = await resolveAccount(withIdentityDefaults({ id: target._id, ...target }))
     if (!isAdmin(identity)) {
-      res.status(400).json({ error: 'That person does not have newsroom access, so they cannot be added.' })
+      res.status(400).json({ error: 'That person is not an admin, so they cannot be added.' })
       return
     }
     if (identity.id === found.createdByUserId) {

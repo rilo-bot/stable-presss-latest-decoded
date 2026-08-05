@@ -1,18 +1,8 @@
-// ---------------------------------------------------------------------------
-// The racing register — `parties`.
+// The racing register.
 //
-// ONE ROW PER (person, role, horse). Someone who both owns and trains a horse has
-// two rows; someone who owns two horses has two rows. That is what makes `role` a
-// single value instead of an array, and it is why claiming is per-row.
-//
-// A row is EITHER unclaimed (`taken: false`, no `userId`) — an admin registered a
-// trainer who has never signed up — OR claimed (`taken: true`, `userId` set).
-// There is no pending/verified state: a claim is immediately true. `taken` is
-// derived from `userId`, and only this file writes the pair, so they cannot drift.
-//
-// Gating is in lib/rbac.ts `partyScopedWriteGate`: register entries are created
-// and deleted by admins; a claimed row is editable by whoever claimed it.
-// ---------------------------------------------------------------------------
+// ONE ROW PER (person, role, horse) - which is why `role` is a single value.
+// A row is either unclaimed (taken: false, no userId) or claimed. There is no
+// pending/verified state. Only this file writes taken + userId, together.
 
 import { Router } from 'express'
 import { db } from '../../lib/db.js'
@@ -23,7 +13,7 @@ import { project, type WithMongoId } from '../../lib/project.js'
 
 const router = Router()
 
-/** The stored shape. `taken` is never accepted from a client — it mirrors `userId`. */
+/** `taken` is never accepted from a client - it mirrors `userId`. */
 interface PartyFields {
   name: string
   role: PartyRole
@@ -53,10 +43,8 @@ function readBody(body: unknown): PartyFields | { error: string } {
   }
 }
 
-// ── List ─────────────────────────────────────────────────────────────────────
-// The register is public: it is how someone finds the row that represents them
-// so they can claim it. `userId` is stripped for anonymous and non-owning callers
-// — who holds a row is not public information, only that it is taken.
+// Public: this is how someone finds the row that represents them. `userId` is
+// stripped for other callers - that a row is taken is public, by whom is not.
 router.get('/', async (req, res) => {
   const account = req.account
   const admin = isAdmin(account)
@@ -70,7 +58,6 @@ router.get('/', async (req, res) => {
   )
 })
 
-// ── Read one ─────────────────────────────────────────────────────────────────
 router.get('/:id', async (req, res) => {
   const found = await db.collection(PARTIES).findById(String(req.params.id))
   if (!found) {
@@ -84,7 +71,6 @@ router.get('/:id', async (req, res) => {
   res.json(out)
 })
 
-// ── Create a register entry (admin only — see partyScopedWriteGate) ──────────
 router.post('/', async (req, res) => {
   const parsed = readBody(req.body)
   if ('error' in parsed) {
@@ -92,9 +78,8 @@ router.post('/', async (req, res) => {
     return
   }
   const now = new Date().toISOString()
-  // Created UNCLAIMED. An admin registering a trainer is recording that the
-  // trainer exists, not asserting that they are the trainer — the person claims
-  // the row themselves, which is the only thing that sets `userId`.
+  // UNCLAIMED: registering a trainer records that they exist, it does not
+  // assert who they are. Only the person claiming it sets `userId`.
   const id = await db.collection(PARTIES).insertOne({
     ...parsed,
     taken: false,
@@ -105,7 +90,6 @@ router.post('/', async (req, res) => {
   res.status(201).json(project(created!))
 })
 
-// ── Edit a row ───────────────────────────────────────────────────────────────
 router.put('/:id', async (req, res) => {
   const id = String(req.params.id)
   const parsed = readBody(req.body)
@@ -113,8 +97,7 @@ router.put('/:id', async (req, res) => {
     res.status(400).json({ error: parsed.error })
     return
   }
-  // `taken` and `userId` are the claim, and the claim is not editable through
-  // the register — POST /:id/claim and /:id/release are the only ways to move it.
+  // The claim is not editable here: /:id/claim and /:id/release own it.
   const ok = await db.collection(PARTIES).updateOne(id, {
     ...parsed,
     updatedAt: new Date().toISOString(),
@@ -127,7 +110,7 @@ router.put('/:id', async (req, res) => {
   res.json(project(updated!))
 })
 
-// ── Claim a row: "this is me" ────────────────────────────────────────────────
+// "This is me".
 router.post('/:id/claim', async (req, res) => {
   const account = req.account!
   const id = String(req.params.id)
@@ -137,8 +120,6 @@ router.post('/:id/claim', async (req, res) => {
     return
   }
   if (row.taken === true || row.userId) {
-    // Deliberately the same message whether they already hold it or someone else
-    // does — the register does not tell you who a row belongs to.
     if (String(row.userId) === account.id) {
       res.status(409).json({ error: 'You have already claimed this.' })
       return
@@ -146,7 +127,6 @@ router.post('/:id/claim', async (req, res) => {
     res.status(409).json({ error: 'That register entry has already been claimed.' })
     return
   }
-  // `taken` and `userId` written together, in the one place that writes them.
   await db.collection(PARTIES).updateOne(id, {
     taken: true,
     userId: account.id,
@@ -156,9 +136,7 @@ router.post('/:id/claim', async (req, res) => {
   res.json(project(fresh!))
 })
 
-// ── Release a claim ──────────────────────────────────────────────────────────
-// The ROW survives — it goes back to being an unclaimed register entry, because
-// the horse links and org pointer on it are still true.
+// The ROW survives as an unclaimed entry: its horse and org links are still true.
 router.post('/:id/release', async (req, res) => {
   const account = req.account!
   const id = String(req.params.id)
@@ -180,7 +158,6 @@ router.post('/:id/release', async (req, res) => {
   res.json(project(fresh!))
 })
 
-// ── Delete (admin only — see partyScopedWriteGate) ───────────────────────────
 router.delete('/:id', async (req, res) => {
   const ok = await db.collection(PARTIES).deleteOne(String(req.params.id))
   if (!ok) {

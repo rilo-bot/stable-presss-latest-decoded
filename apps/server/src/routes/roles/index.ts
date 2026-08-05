@@ -1,16 +1,7 @@
-// ---------------------------------------------------------------------------
-// Roles API — full CRUD over the dynamic `roles` collection, plus assignment.
+// Roles: CRUD over `adminRoles`, plus assigning them.
 //
-// Every role in the platform lives here, including the seeded ones. A
-// superadmin may edit any of them; the only hard limits are:
-//
-//   isImmutable (superadmin) — cannot be edited or deleted, ever
-//   isSystem    (seeded)     — cannot be DELETED, but may be freely edited
-//
-// Lockout guards below stop an admin removing their own ability to get back in.
-//
-// See docs/DYNAMIC-RBAC-PLAN.md.
-// ---------------------------------------------------------------------------
+//   isImmutable (superadmin)  cannot be edited or deleted, ever
+//   isSystem    (seeded)      cannot be DELETED, but may be freely edited
 
 import { Router } from 'express'
 import type { NextFunction, Request, Response } from 'express'
@@ -23,8 +14,13 @@ import {
   bustRoleCache,
   checkSuperadminLoss,
   denyRoleGrant,
+  assignRole,
+  assigneeCounts,
+  clearRole,
+  clearRoleEverywhere,
   getRoles,
   projectRole,
+  roleOfUser,
   type RoleDoc,
 } from '../../lib/roleRegistry.js'
 import {
@@ -37,28 +33,14 @@ import {
   type PermissionAction,
 } from '../../lib/permissionCatalogue.js'
 import type { AccountUser } from '../../lib/effectiveAccess.js'
-import {
-  adminRecordsForUsers,
-  assigneeCountsByRoleId,
-  grantAdminRole,
-  revokeAdminRole,
-  revokeRoleEverywhere,
-} from '../../lib/admins.js'
 
 const router = Router()
 
 router.use(attachAccount)
 
 /**
- * Two different powers, two different gates:
- *
- *   roles.manage — DEFINE a role (create / edit what it grants / delete)
- *   team.manage  — decide WHO HOLDS one (assign / unassign)
- *
- * Reads are open to either, because the Team Members screen has to list the
- * roles it offers in its dropdown. Gating the whole router on roles.manage (as
- * it originally did) meant anyone with only team.manage got a fully-rendered
- * team screen where every call 403'd.
+ * TWO POWERS: roles.manage DEFINES a role; team.manage decides WHO HOLDS one.
+ * Reads are open to either, because the Team screen renders the role dropdown.
  */
 const requireDefineRoles = (req: Request, res: Response, next: NextFunction): void => {
   if (!canManageRoles(req.account)) {
@@ -76,10 +58,7 @@ const requireAssignRoles = (req: Request, res: Response, next: NextFunction): vo
   next()
 }
 
-// READS are open to anyone who may see the Team screen: it renders each member's
-// role label and colour, so a `team.view` holder who could not GET this would see
-// a roster of blanks. Every mutating route below carries its own narrower gate
-// (`requireDefineRoles` / `requireAssignRoles`), so widening the read is safe.
+// Every mutating route below carries its own narrower gate, so the wide read is safe.
 router.use((req, res, next) => {
   const allowed =
     canManageRoles(req.account) ||
@@ -112,8 +91,7 @@ function readRoleBody(body: unknown): RoleBody | { error: string } {
   if (!label) return { error: 'A role name is required.' }
   if (label.length > 60) return { error: 'Role name must be 60 characters or fewer.' }
 
-  // Unknown ids are dropped rather than rejected: the catalogue gains and loses
-  // entries between deploys, and a stale checkbox shouldn't 400 the whole save.
+  // Unknown ids are dropped, not rejected: a stale checkbox must not 400 a save.
   return {
     label,
     description:
@@ -128,16 +106,7 @@ function readRoleBody(body: unknown): RoleBody | { error: string } {
   }
 }
 
-/**
- * Would this change strip the acting user's own ability to manage roles?
- * A superadmin is exempt — they can never lock themselves out.
- *
- * The old version also checked "do any of their OTHER roles still grant
- * roles.manage". That branch is unreachable by construction: a person holds
- * exactly one admin role, so if they hold the role being edited there is no other
- * role to fall back on. Simplified rather than kept, because dead defensive code
- * reads as a live guarantee.
- */
+/** Would this edit strip the actor's own roles.manage? A superadmin is exempt. */
 function wouldSelfLockOut(
   actor: AccountUser,
   roleId: string,
@@ -159,9 +128,8 @@ router.get('/catalogue', (_req, res) => {
 
 // ── List every role ──────────────────────────────────────────────────────────
 router.get('/', async (_req, res) => {
-  const [roles, counts] = await Promise.all([getRoles(), assigneeCountsByRoleId()])
-  // The registry map is keyed under BOTH id and name, so iterating it yields each
-  // role twice. De-duplicate by id before counting or the console shows doubles.
+  const [roles, counts] = await Promise.all([getRoles(), assigneeCounts()])
+  // The registry is keyed by BOTH id and name, so iterating yields each twice.
   const distinct = [...new Map([...roles.values()].map((r) => [r.id, r])).values()]
   const out = distinct
     .map((r) => ({ ...r, assigneeCount: counts.get(r.id) ?? 0 }))
@@ -204,8 +172,7 @@ router.post('/', requireDefineRoles, async (req, res) => {
     icon: parsed.icon ?? 'Shield',
     isSystem: false,
     isImmutable: false,
-    // Unrestricted access is not something a role can be CREATED with — only the
-    // seeded superadmin carries it, and `isImmutable` stops it being edited in.
+    // Only the seeded superadmin is ever isSuper; isImmutable stops it being edited in.
     isSuper: false,
     permissions: parsed.permissions,
     modules: parsed.modules,
@@ -245,8 +212,7 @@ router.put('/:name', requireDefineRoles, async (req, res) => {
     return
   }
 
-  // Assignments reference `adminRoles._id`, never the name — so a rename is free
-  // and nothing needs re-pointing. Only the LABEL is editable here regardless.
+  // users.roleId references _id, never the name, so a rename needs no re-pointing.
   await db.collection(ADMIN_ROLES).updateOne(current.id, {
     label: parsed.label,
     description: parsed.description,
@@ -280,11 +246,9 @@ router.delete('/:name', requireDefineRoles, async (req, res) => {
     return
   }
 
-  // Drop every assignment FIRST — an `admins` row pointing at a deleted role
-  // leaves an admin holding nothing, which is worse than not being an admin
-  // because no screen shows them as broken. `revokeRoleEverywhere` clears the
-  // rows and `users.isAdmin` together, through the single writer.
-  const unassigned = await revokeRoleEverywhere(current.id)
+  // Unassign FIRST: a roleId pointing at a deleted role leaves an admin holding
+  // nothing, and no screen shows them as broken.
+  const unassigned = await clearRoleEverywhere(current.id)
   await db.collection(ADMIN_ROLES).deleteOne(current.id)
   bustRoleCache()
   res.json({ ok: true, unassigned })
@@ -292,20 +256,14 @@ router.delete('/:name', requireDefineRoles, async (req, res) => {
 
 // ── Assign / unassign ────────────────────────────────────────────────────────
 //
-// ONE ROLE PER PERSON. Assigning REPLACES whatever they held rather than adding
-// to it: a union of roles meant the Team screen showed rows like
-// "Superadmin · Administrator" where the second chip granted nothing (superadmin
-// short-circuits every check), and answering "what can this person do?" required
-// mentally OR-ing several permission sets. The effective access is unchanged for
-// anyone holding a single role, which is everyone in practice.
+// ONE ROLE PER PERSON: assigning REPLACES whatever they held.
 router.post('/:name/assign', requireAssignRoles, async (req, res) => {
   const role = (await getRoles()).get(String(req.params.name))
   if (!role) {
     res.status(404).json({ error: 'Role not found.' })
     return
   }
-  // Only an existing superadmin may mint another one. Reads `isSuper`, not the
-  // name — the name is editable and must not be able to grant omnipotence.
+  // Reads isSuper, not the name: the name is editable.
   if (role.isSuper && !req.account!.isSuperAdmin) {
     res.status(403).json({ error: 'Only a superadmin can grant the superadmin role.' })
     return
@@ -321,15 +279,13 @@ router.post('/:name/assign', requireAssignRoles, async (req, res) => {
     res.status(403).json({ error: denied })
     return
   }
-  const held = (await adminRecordsForUsers([userId])).get(userId)?.role ?? null
+  const held = await roleOfUser(target)
   if (held?.id === role.id) {
     res.status(409).json({ error: 'That member already holds this role.' })
     return
   }
 
-  // Replacing a role TAKES AWAY the old one, so the superadmin guard has to fire
-  // here too — not only on explicit removal. Without it, "change Mahin to Editor"
-  // would quietly delete the only superadmin.
+  // Replacing TAKES AWAY the old role, so the superadmin guard fires here too.
   const blocked = await checkSuperadminLoss(req.account!, held?.isSuper === true && !role.isSuper)
   if (blocked) {
     res.status(403).json({ error: blocked })
@@ -337,7 +293,7 @@ router.post('/:name/assign', requireAssignRoles, async (req, res) => {
   }
 
   // Single writer: the `admins` row and `users.isAdmin` cannot half-apply.
-  await grantAdminRole(userId, role.id, req.account!.id)
+  await assignRole(userId, role.id)
   res.status(201).json({ ok: true, role: { name: role.name, label: role.label } })
 })
 
@@ -353,30 +309,26 @@ router.delete('/:name/assign/:userId', requireAssignRoles, async (req, res) => {
     res.status(404).json({ error: 'Team member not found.' })
     return
   }
-  // Removing your own role is the same self-service problem as granting one: it
-  // is how you would drop a restriction you are subject to.
+  // Same self-service problem as granting: it is how you drop your own restriction.
   if (userId === req.account!.id) {
     res.status(403).json({ error: 'You cannot change your own role. Ask another administrator.' })
     return
   }
 
-  // Was a bare holder-count check, so anyone with `team.manage` could demote a
-  // superadmin whenever a second one existed — routes/staff.ts guarded that and
-  // this route did not. One helper now answers for every path.
-  const held = (await adminRecordsForUsers([userId])).get(userId)?.role ?? null
+  // One helper answers for every path; this route used to skip the actor check.
+  const held = await roleOfUser(target)
   const blocked = await checkSuperadminLoss(req.account!, role.isSuper && held?.isSuper === true)
   if (blocked) {
     res.status(403).json({ error: blocked })
     return
   }
-  // Unassigning a role they do not hold is a no-op, not an error — but it must
-  // not revoke whatever they DO hold.
+  // A no-op, not an error - but it must not revoke whatever they DO hold.
   if (held?.id !== role.id) {
     res.json({ ok: true })
     return
   }
 
-  await revokeAdminRole(userId)
+  await clearRole(userId)
   res.json({ ok: true })
 })
 

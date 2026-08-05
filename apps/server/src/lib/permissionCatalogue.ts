@@ -322,8 +322,6 @@ export function normaliseWorkflowStages(raw: unknown): string[] {
 // ── Built-in role matrix ────────────────────────────────────────────────────
 
 export const BUILTIN_ROLE_PERMISSIONS: Record<SeedRoleName, PermissionAction[]> = {
-  // `newsroom.access` is absent from every role here: holding a staff role IS
-  // newsroom access now, so listing it would be a no-op that `projectRole` strips.
   contributor: [
     'content.draft.create',
     'content.draft.edit_own',

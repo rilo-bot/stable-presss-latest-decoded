@@ -1,35 +1,45 @@
-// ---------------------------------------------------------------------------
-// One-off cleanup to bring an existing database onto the six-collection model.
+// Bring an existing database onto the model. Deletes rather than migrates -
+// nothing in the old data needs carrying forward, with one exception noted below.
 //
-// This is NOT a migration — no old data is preserved or translated. It DELETES
-// fields and collections that the model no longer has, on the explicit
-// instruction that nothing in the database needs carrying forward.
+//   npx tsx scripts/clean-user-model.ts            report only
+//   npx tsx scripts/clean-user-model.ts --apply    write
 //
-//   npx tsx scripts/clean-user-model.ts            # report only
-//   npx tsx scripts/clean-user-model.ts --apply    # actually write
-//
-// Safe to re-run: every step is idempotent.
-// ---------------------------------------------------------------------------
+// Idempotent: safe to re-run.
 
 import 'dotenv/config'
 import { MongoClient } from 'mongodb'
 
 const APPLY = process.argv.includes('--apply')
 
-/** Fields deleted from `users`. The model is name, email, isAdmin, lastLogin. */
+/** Fields deleted from `users`. The model is name, email, roleId, lastLogin. */
 const DEAD_USER_FIELDS = [
-  'displayName', // → name
+  'displayName',
+  'isAdmin',
   'roles',
   'staffRoles',
   'staffRoleSlug',
   'partyClaims',
   'orgMemberships',
-  'orgMembers', // the embedded array; membership is the orgMembers COLLECTION
+  'orgMembers',
   'subscriptionTier',
 ] as const
 
-/** Collections the model no longer has. */
-const DEAD_COLLECTIONS = ['roles', 'orgMemberships', 'partyMemberships', 'horsePartyLinks'] as const
+const DEAD_COLLECTIONS = [
+  'admins',
+  'roles',
+  'orgMemberships',
+  'partyMemberships',
+  'horsePartyLinks',
+] as const
+
+/** Indexes on fields that no longer exist. Dropped FIRST - see below. */
+const DEAD_INDEXES: Array<[string, string]> = [
+  ['adminRoles', 'roleName_1'],
+  ['adminRoles', 'slug_1'],
+  ['users', 'staffRoleSlug_1_deletedAt_1'],
+  ['users', 'isAdmin_1_deletedAt_1'],
+  ['users', 'staffRoles_1'],
+]
 
 async function main(): Promise<void> {
   const uri = process.env.MONGODB_URI
@@ -39,17 +49,26 @@ async function main(): Promise<void> {
   await client.connect()
   const db = client.db()
   console.log(`[clean] database: ${db.databaseName}`)
-  console.log(APPLY ? '[clean] APPLYING changes\n' : '[clean] DRY RUN — pass --apply to write\n')
+  console.log(APPLY ? '[clean] APPLYING\n' : '[clean] DRY RUN - pass --apply to write\n')
 
-  // ── 1. adminRoles: `roleName` → `name` ────────────────────────────────────
-  //
-  // The live docs were keyed `roleName`; every reader looks for `name`, so all
-  // four roles projected with a blank name and the unique index on `name`
-  // indexed nothing.
+  // 1. Drop indexes on fields about to disappear. MUST run first: a UNIQUE index
+  // on a field being $unset makes every document collide on null and aborts the
+  // rest of the script half-done.
+  for (const [coll, index] of DEAD_INDEXES) {
+    const existing = await db
+      .collection(coll)
+      .indexes()
+      .catch(() => [] as Array<{ name?: string }>)
+    if (!existing.some((i) => i.name === index)) continue
+    console.log(`drop index ${coll}.${index}`)
+    if (APPLY) await db.collection(coll).dropIndex(index)
+  }
+
+  // 2. adminRoles: `roleName` -> `name`. Every reader looks for `name`, so
+  // mis-keyed docs projected blank and the unique index indexed nothing.
   const misKeyed = await db.collection('adminRoles').find({ roleName: { $exists: true } }).toArray()
-  console.log(`adminRoles with \`roleName\` instead of \`name\`: ${misKeyed.length}`)
   for (const doc of misKeyed) {
-    console.log(`   ${String(doc.roleName)} → name`)
+    console.log(`adminRoles: ${String(doc.roleName)} -> name`)
     if (APPLY) {
       await db
         .collection('adminRoles')
@@ -57,29 +76,48 @@ async function main(): Promise<void> {
     }
   }
 
-  // ── 2. users: drop dead fields, and rename displayName → name ─────────────
+  // 3. THE ONE THING THAT IS NOT THROWN AWAY: the admin grant itself.
+  //
+  // The role used to live in an `admins` join row (and before that in
+  // `users.staffRoleSlug`). It now lives in `users.roleId`. Dropping those
+  // without reading them first would leave the database with zero admins and no
+  // way back in - /api/admin/seed needs SETUP_SECRET, and grant-superadmin.ts
+  // needs shell access.
   const users = await db.collection('users').find({}).toArray()
+  const adminRows = await db.collection('admins').find({}).toArray().catch(() => [])
+  const rolesByName = new Map(
+    (await db.collection('adminRoles').find({}).toArray()).map((r) => [
+      String(r.name ?? r.roleName ?? ''),
+      String(r._id),
+    ]),
+  )
+  const roleIdByUser = new Map<string, string>()
+  for (const row of adminRows) roleIdByUser.set(String(row.userId), String(row.roleId))
+  for (const u of users) {
+    if (roleIdByUser.has(String(u._id))) continue
+    const legacyName = String(u.staffRoleSlug ?? (Array.isArray(u.staffRoles) ? u.staffRoles[0] : '') ?? '')
+    const id = legacyName ? rolesByName.get(legacyName) : undefined
+    if (id) roleIdByUser.set(String(u._id), id)
+  }
+
+  // 4. users: set roleId, drop everything the model no longer has.
   console.log(`\nusers: ${users.length}`)
   for (const u of users) {
+    const id = String(u._id)
     const drops = DEAD_USER_FIELDS.filter((f) => f in u)
-    // `name` is the identity field; fall back to the old displayName, then the
-    // local part of the email, so nobody ends up nameless.
-    const needsName = typeof u.name !== 'string' || !u.name
-    const name = needsName
-      ? String(u.displayName ?? String(u.email ?? '').split('@')[0] ?? '')
-      : String(u.name)
-
     const set: Record<string, unknown> = {}
-    if (needsName) set.name = name
-    // Written EXPLICITLY rather than left absent so `find({ isAdmin: true })`
-    // behaves predictably. Step 3 corrects it from the admins table.
-    if (typeof u.isAdmin !== 'boolean') set.isAdmin = false
+
+    const roleId = roleIdByUser.get(id) ?? null
+    if (u.roleId === undefined || String(u.roleId ?? '') !== String(roleId ?? '')) set.roleId = roleId
+    if (typeof u.name !== 'string' || !u.name) {
+      set.name = String(u.displayName ?? String(u.email ?? '').split('@')[0] ?? '')
+    }
     if (!('lastLogin' in u)) set.lastLogin = null
 
     if (drops.length === 0 && Object.keys(set).length === 0) continue
     console.log(
-      `   ${String(u.email)}: ${drops.length ? `drop [${drops.join(', ')}]` : 'no drops'}` +
-        `${Object.keys(set).length ? ` set {${Object.keys(set).join(', ')}}` : ''}`,
+      `   ${String(u.email)}: roleId=${roleId ?? 'null'}` +
+        (drops.length ? ` drop[${drops.join(', ')}]` : ''),
     )
     if (APPLY) {
       const update: Record<string, unknown> = {}
@@ -89,43 +127,19 @@ async function main(): Promise<void> {
     }
   }
 
-  // ── 3. reconcile users.isAdmin against the admins table ───────────────────
-  //
-  // The table is authoritative: it carries the roleId, so a flag with no row
-  // grants nothing while a row with no flag is a real grant the flag is lying
-  // about. resolveAccount reads the ROW, so this only repairs the denormalised
-  // copy the roster lists from.
-  const adminRows = await db.collection('admins').find({}).toArray()
-  const withRow = new Set(adminRows.map((r) => String(r.userId)))
-  const userIds = new Set(users.map((u) => String(u._id)))
-  console.log(`\nadmins rows: ${adminRows.length}`)
-  for (const u of users) {
-    const id = String(u._id)
-    const shouldBe = withRow.has(id)
-    if (u.isAdmin === shouldBe) continue
-    console.log(`   ${String(u.email)}: isAdmin ${u.isAdmin === true} → ${shouldBe}`)
-    if (APPLY) await db.collection('users').updateOne({ _id: u._id }, { $set: { isAdmin: shouldBe } })
-  }
-  for (const r of adminRows) {
-    if (userIds.has(String(r.userId))) continue
-    console.log(`   orphan admins row for missing user ${String(r.userId)} — removing`)
-    if (APPLY) await db.collection('admins').deleteOne({ _id: r._id })
-  }
-
-  // ── 4. drop the collections the model no longer has ───────────────────────
-  const present = new Set((await db.listCollections().toArray()).map((c) => c.name))
+  // 5. Drop the collections the model no longer has.
   console.log('')
+  const present = new Set((await db.listCollections().toArray()).map((c) => c.name))
   for (const name of DEAD_COLLECTIONS) {
     if (!present.has(name)) {
       console.log(`${name}: absent`)
       continue
     }
-    const n = await db.collection(name).countDocuments()
-    console.log(`${name}: DROPPING (${n} docs)`)
+    console.log(`${name}: DROP (${await db.collection(name).countDocuments()} docs)`)
     if (APPLY) await db.collection(name).drop()
   }
 
-  console.log(APPLY ? '\n[clean] done.' : '\n[clean] dry run complete — re-run with --apply.')
+  console.log(APPLY ? '\n[clean] done.' : '\n[clean] dry run complete.')
   await client.close()
 }
 

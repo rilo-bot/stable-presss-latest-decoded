@@ -35,13 +35,7 @@ function pdfFileName(title: unknown): string {
   return `${base || 'bulletin'}.pdf`;
 }
 
-type WithMongoId = { _id: string; [key: string]: unknown };
-
-/** Full detail projection (_id → id). */
-function project<T extends WithMongoId>(doc: T): Omit<T, '_id'> & { id: string } {
-  const { _id, ...rest } = doc;
-  return { id: _id, ...rest } as Omit<T, '_id'> & { id: string };
-}
+import { project, type WithMongoId } from '../../lib/project.js';
 
 /**
  * Lightweight list projection — `pages` never reaches here (see the list route),

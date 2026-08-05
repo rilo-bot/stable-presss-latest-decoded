@@ -31,12 +31,8 @@ import {
   normaliseLegacyStatus,
 } from '../../lib/workflow.js';
 import type { ArticleStatus } from '../../lib/workflow.js';
+import { project, type WithMongoId } from '../../lib/project.js';
 
-type WithMongoId = { _id: string; [key: string]: unknown };
-function project<T extends WithMongoId>(doc: T): Omit<T, '_id'> & { id: string } {
-  const { _id, ...rest } = doc;
-  return { id: _id, ...rest } as Omit<T, '_id'> & { id: string };
-}
 
 const router = Router();
 

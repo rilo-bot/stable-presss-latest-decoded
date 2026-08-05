@@ -1,16 +1,8 @@
-// ---------------------------------------------------------------------------
 // Organisations, and who belongs to one.
 //
-// TWO COLLECTIONS, NOT AN ARRAY. Membership lives in `orgMembers`
-// (userId × orgId → 'owner' | 'manager' | 'member'), which is what
-// `resolveAccount` reads. It used to be written to a `users.orgMemberships`
-// array that nothing read, so creating an organisation granted the creator
-// nothing at all.
-//
-// `organisations.ownerUserId` and the owner's `orgMembers` row are the same
-// fact stored twice, so `setMember` and `createOrganisation` are the only
-// writers of either — the same discipline lib/admins.ts applies to `isAdmin`.
-// ---------------------------------------------------------------------------
+// Membership lives in `orgMembers` (userId x orgId -> owner|manager|member),
+// which is what resolveAccount reads. `ownerUserId` and the owner's member row
+// are the same fact twice, so setMember is the only writer of either.
 
 import { Router } from 'express'
 import { db } from '../../lib/db.js'
@@ -27,19 +19,13 @@ const str = (v: unknown, max: number): string | undefined => {
   return s ? s.slice(0, max) : undefined
 }
 
-/**
- * Set (or change) one person's membership of one organisation.
- *
- * The ONLY writer of `orgMembers`. Upsert-by-hand rather than two call sites,
- * so "add a member" and "change their role" cannot disagree about the shape.
- */
+/** The ONLY writer of `orgMembers`, so add and re-role cannot disagree. */
 async function setMember(userId: string, orgId: string, role: OrgRole): Promise<void> {
   const now = new Date().toISOString()
   const existing = await db.collection(ORG_MEMBERS).find({ userId, orgId })
   if (existing[0]) {
     await db.collection(ORG_MEMBERS).updateOne(String(existing[0]._id), { role, updatedAt: now })
-    // A unique index covers (userId, orgId), but a row written before it existed
-    // would make "what is their role?" depend on document order.
+    // A pre-index duplicate would make "what is their role?" order-dependent.
     for (const dupe of existing.slice(1)) await db.collection(ORG_MEMBERS).deleteOne(String(dupe._id))
     return
   }
@@ -54,7 +40,6 @@ async function removeMember(userId: string, orgId: string): Promise<void> {
 // Every organisation route requires authentication.
 router.use(attachAccount)
 
-// ── Create an organisation → creator becomes owner ───────────────────────────
 router.post('/', async (req, res) => {
   const account = req.account!
   const name = str(req.body?.name, 120)
@@ -72,15 +57,13 @@ router.post('/', async (req, res) => {
     createdAt: now,
     updatedAt: now,
   })
-  // The owner is a member too. `ownerUserId` is the fast answer to "whose org is
-  // this?"; the row is what `resolveAccount` reads to give them scope.
+  // The owner is a member too: the row is what gives them scope.
   await setMember(account.id, orgId, 'owner')
 
   const org = await db.collection(ORGANISATIONS).findById(orgId)
   res.status(201).json({ org: project(org!), myRole: 'owner' as OrgRole })
 })
 
-// ── Organisations the current user belongs to ────────────────────────────────
 router.get('/mine', async (req, res) => {
   const account = req.account!
   const out: Array<Record<string, unknown>> = []
@@ -91,7 +74,6 @@ router.get('/mine', async (req, res) => {
   res.json(out)
 })
 
-// ── Organisation detail: members + the parties it holds ──────────────────────
 router.get('/:id', async (req, res) => {
   const account = req.account!
   const orgId = String(req.params.id)
@@ -105,8 +87,6 @@ router.get('/:id', async (req, res) => {
     return
   }
 
-  // One indexed lookup on {orgId} plus a fetch per member, instead of loading
-  // every user on the platform to find one org's members.
   const memberRows = await db.collection(ORG_MEMBERS).find({ orgId })
   const memberDocs = await Promise.all(
     memberRows.map((r) => db.collection(USERS).findById(String(r.userId))),
@@ -121,15 +101,13 @@ router.get('/:id', async (req, res) => {
       role: x.row.role as OrgRole,
     }))
 
-  // A party row carries `orgId` and `horseId` directly, so the org's parties and
-  // the horses it reaches are ONE indexed query — no link table, no full scan.
+  // A party row carries orgId and horseId, so this is ONE indexed query.
   const orgParties = await db.collection(PARTIES).find({ orgId })
   const horseIds = [...new Set(orgParties.filter((p) => p.horseId).map((p) => String(p.horseId)))]
 
   res.json({ org: project(org), members, parties: orgParties.map(project), horseIds })
 })
 
-// ── Update the organisation profile (owner or manager) ───────────────────────
 router.put('/:id', async (req, res) => {
   const orgId = String(req.params.id)
   if (!canManageOrg(req.account, orgId)) {
@@ -141,8 +119,7 @@ router.put('/:id', async (req, res) => {
   if (name) update.name = name
   if ('description' in (req.body ?? {})) update.description = str(req.body?.description, 2000) ?? null
   if ('bio' in (req.body ?? {})) update.bio = str(req.body?.bio, 2000) ?? null
-  // Ownership moves through /:id/members, which keeps the row and the pointer
-  // in step. Accepting it here would let a manager hand the org to themselves.
+  // Ownership moves through /:id/members. Here, a manager could self-promote.
   const ok = await db.collection(ORGANISATIONS).updateOne(orgId, update)
   if (!ok) {
     res.status(404).json({ error: 'Organisation not found.' })
@@ -152,7 +129,6 @@ router.put('/:id', async (req, res) => {
   res.json({ org: project(fresh!) })
 })
 
-// ── Add or re-role a member by email ─────────────────────────────────────────
 router.post('/:id/members', async (req, res) => {
   const account = req.account!
   const orgId = String(req.params.id)
@@ -181,8 +157,7 @@ router.post('/:id/members', async (req, res) => {
   }
 
   await setMember(targetId, orgId, role)
-  // Promoting someone to owner MOVES ownership: two owners means two people who
-  // can remove each other, and `ownerUserId` can only name one of them.
+  // Promoting to owner MOVES ownership: ownerUserId can only name one person.
   if (role === 'owner') {
     await db.collection(ORGANISATIONS).updateOne(orgId, {
       ownerUserId: targetId,
@@ -197,7 +172,6 @@ router.post('/:id/members', async (req, res) => {
   })
 })
 
-// ── Remove a member (owner only) ─────────────────────────────────────────────
 router.delete('/:id/members/:userId', async (req, res) => {
   const account = req.account!
   const orgId = String(req.params.id)
@@ -211,9 +185,7 @@ router.delete('/:id/members/:userId', async (req, res) => {
     res.status(404).json({ error: 'Organisation not found.' })
     return
   }
-  // An org with no owner cannot be administered by anyone but a platform admin,
-  // and nothing here can appoint a replacement — so this is refused rather than
-  // recovered from. Hand ownership over first, which also removes you.
+  // Nothing here can appoint a replacement, so this is refused, not recovered.
   if (String(org.ownerUserId) === userId) {
     res.status(400).json({ error: 'The owner cannot be removed. Transfer ownership first.' })
     return
@@ -222,9 +194,7 @@ router.delete('/:id/members/:userId', async (req, res) => {
   res.json({ ok: true })
 })
 
-// ── Register a party the org holds ───────────────────────────────────────────
-// A row in the shared register, stamped with `orgId`. Unclaimed by design: the
-// organisation holds it, and a person claims it only if they are that person.
+// A row in the shared register stamped with `orgId`. Unclaimed by design.
 router.post('/:id/parties', async (req, res) => {
   const orgId = String(req.params.id)
   if (!canManageOrg(req.account, orgId)) {

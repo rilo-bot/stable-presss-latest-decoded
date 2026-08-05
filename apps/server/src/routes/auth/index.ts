@@ -4,16 +4,11 @@ import { genOtp, hashOtp, signToken, attachAccount } from '../../lib/auth.js';
 import { sendOtpEmail, isEmailConfigured } from '../../lib/email.js';
 import { withIdentityDefaults, newUserFields } from '../../lib/identity.js';
 import { resolveAccount, toClientUser } from '../../lib/effectiveAccess.js';
-import { getRoles } from '../../lib/roleRegistry.js';
+import { assignRole, getRoles } from '../../lib/roleRegistry.js';
 import { isExpired } from '../../lib/invites.js';
 import { INVITES, OTPS, USERS } from '../../lib/collections.js';
-import { grantAdminRole } from '../../lib/admins.js';
+import { project, type WithMongoId } from '../../lib/project.js';
 
-type WithMongoId = { _id: string; [key: string]: unknown };
-function project<T extends WithMongoId>(doc: T): Omit<T, '_id'> & { id: string } {
-  const { _id, ...rest } = doc;
-  return { id: _id, ...rest } as Omit<T, '_id'> & { id: string };
-}
 
 const OTP_TTL_MS = (Number(process.env.OTP_TTL_MINUTES) || 10) * 60 * 1000;
 const RESEND_COOLDOWN_MS = 30 * 1000;
@@ -60,14 +55,8 @@ router.post('/request-otp', async (req, res) => {
   const existingUsers = await db.collection(USERS).find({ email });
   const user = existingUsers[0] ?? null;
 
-  // SIGNUP TAKES A NAME AND AN EMAIL. Nothing else.
-  //
-  // There are exactly two categories of account (docs/USER-MODEL-PLAN.md §0):
-  // normal users, and admins. `isAdmin` is the whole distinction, and it is FALSE
-  // for everyone who signs up here — becoming an admin means an `admins` row, which
-  // only an existing admin can create. So there is no role to select, and the
-  // request body is not consulted for one: a field sent here could not be honoured
-  // even if a client sent it.
+  // SIGNUP TAKES A NAME AND AN EMAIL. Nothing else. Becoming an admin means
+  // users.roleId, which only an existing admin can set, so no role is read here.
   let pendingUser: { email: string; name: string } | undefined;
   if (mode === 'login') {
     if (!user) {
@@ -87,9 +76,7 @@ router.post('/request-otp', async (req, res) => {
     pendingUser = { email, name };
   }
 
-  // Dev bypass (see DEV_OTP_CODE above): fixed code, no email, no cooldown, and
-  // the code returned in the response. Gated solely on DEV_OTP_CODE so it is
-  // impossible to trigger unless an operator explicitly opted in.
+  // Dev bypass: fixed code, no email, no cooldown. Gated solely on DEV_OTP_CODE.
   if (DEV_OTP_CODE) {
     await clearOtps(email);
     const now = new Date();
@@ -113,9 +100,7 @@ router.post('/request-otp', async (req, res) => {
     return;
   }
 
-  // Fail CLOSED in production: never fall back to the fixed dev code / console
-  // delivery when email isn't configured — that would let anyone sign in as any
-  // account with a known code. Refuse instead of silently degrading.
+  // Fail CLOSED: never fall back to the fixed dev code when email is unconfigured.
   if (IS_PROD && !isEmailConfigured()) {
     console.error('[auth] request-otp refused: PROD=true but email is not configured (need RESEND_API_KEY + RESEND_FROM_EMAIL, or SMTP_HOST + SMTP_FROM).');
     res.status(503).json({ error: 'Sign-in is temporarily unavailable. Please try again later.' });
@@ -124,9 +109,7 @@ router.post('/request-otp', async (req, res) => {
 
   await clearOtps(email);
 
-  // Dev env (no SendGrid configured): skip emailing and use a fixed, predictable
-  // code so you can sign in without checking an inbox. Real envs get a random one.
-  // The fixed code can ONLY ever be issued outside production (guarded above).
+  // Outside production only (guarded above): a fixed code, so no inbox is needed.
   const code = isEmailConfigured() ? genOtp() : '123456';
   const now = new Date();
   await db.collection(OTPS).insertOne({
@@ -147,9 +130,7 @@ router.post('/request-otp', async (req, res) => {
     return;
   }
 
-  // Only expose the code to the client in dev (email not sent). Never in prod —
-  // combined with the guard above, prod always has email configured, so this is
-  // belt-and-suspenders against the code ever appearing in a production response.
+  // Never in prod. Belt-and-braces on top of the guard above.
   const body: { ok: true; devCode?: string } = { ok: true };
   if (!isEmailConfigured() && !IS_PROD) body.devCode = code;
   res.json(body);
@@ -218,51 +199,37 @@ router.post('/verify-otp', async (req, res) => {
     return;
   }
 
-  // Apply any roles pre-granted to this email (first sign-in). Two filters:
-  //   - the role must still exist, so a role deleted between invite and sign-in
-  //     is dropped rather than written as a dangling slug;
-  //   - the invite must not have expired, or the 14-day window on the emailed
-  //     link would be cosmetic — the grant would still land whenever they
-  //     eventually signed up.
-  // Expired rows are consumed either way, so they don't linger forever.
+  // Apply any role pre-granted to this email. The role must still exist and the
+  // invite must not have expired, or the 14-day window would be cosmetic.
   let finalDoc = userDoc;
   const grants = await db.collection(INVITES).find({ email });
   if (grants.length > 0) {
     const known = await getRoles();
-    // ONE role per user, so the LAST valid invite wins rather than a union.
-    // Expired rows are consumed either way, so they cannot linger and apply later.
+    // ONE role per user, so the LAST valid invite wins.
     let granted: string | null = null;
     for (const g of grants) {
       if (isExpired(g)) continue;
       const role = typeof g.role === 'string' ? known.get(g.role) : undefined;
       if (role) granted = role.id;
     }
-    // Through the single writer, so the `admins` row and `users.isAdmin` cannot
-    // half-apply — see lib/admins.ts.
-    if (granted) await grantAdminRole(String(finalDoc._id), granted);
+
+
+    if (granted) await assignRole(String(finalDoc._id), granted);
     await Promise.all(grants.map((g) => db.collection(INVITES).deleteOne(g._id)));
     const refreshed = await db.collection(USERS).findById(finalDoc._id);
     if (refreshed) finalDoc = refreshed;
   }
 
-  // Stamp the sign-in. This is the ONLY writer of `lastLogin`, and it happens
-  // after every gate above has passed — so the field means "last time this
-  // account actually got in", not "last time someone tried".
+  // The ONLY writer of lastLogin, and only after every gate above has passed.
   const now = new Date().toISOString();
   await db.collection(USERS).updateOne(String(finalDoc._id), { lastLogin: now });
   finalDoc = { ...finalDoc, lastLogin: now };
 
-  // Normalize before issuing the token. The JWT deliberately carries NO role or
-  // permission data — every authorization input is read live on each request, so a
-  // role change takes effect immediately rather than at the next login.
+  // The JWT carries NO role data: authorization is read live on every request.
   const identity = withIdentityDefaults(project(finalDoc));
   const token = signToken({
     sub: identity.id,
     email: identity.email,
-    // Pins the session to the account's CURRENT generation. Omitting this made
-    // "sign out everywhere" a permanent lockout: `isRevoked` reads a missing `v`
-    // as 0, so once `tokenVersion` was bumped every freshly-issued token was also
-    // revoked on the very next request. The invite path already did this.
     v: typeof finalDoc.tokenVersion === 'number' ? finalDoc.tokenVersion : 0,
   });
   res.json({ token, user: toClientUser(await resolveAccount(identity)) });

@@ -208,7 +208,8 @@ export function buildTools(account?: AccountUser, authHeader?: string): ToolSet 
           note: 'That horse is not in this reader\'s view (it may be unverified or private). Suggest searching the public register, or — if it is their own horse — claiming the matching racing role from the Dashboard.',
         }
         if (!horse) return notFound
-        const links = await db.collection('horsePartyLinks').find(horseIdMatch(horseId))
+        // Connections are `parties` rows carrying this horseId - one indexed query.
+        const links = await db.collection(PARTIES).find({ horseId })
         const authorised = account ? new Set(await visibleHorseIds(account)) : new Set<string>()
         const visible =
           staff ||
@@ -216,23 +217,6 @@ export function buildTools(account?: AccountUser, authHeader?: string): ToolSet 
           (account ? horse.createdByUserId === account.id : false) ||
           authorised.has(idOf(horse))
         if (!visible) return notFound
-
-        // Resolve names for ONLY the parties this horse links to, applying the same
-        // visibility rule routes/parties.ts GET uses (unverified parties stay hidden
-        // unless the reader is staff / their owner / a manager).
-        const own = new Set<string>(account ? manageablePartyIds(account) : [])
-        const isPartyVisible = (p: Doc) =>
-          p.verificationStatus !== 'unverified' ||
-          (account ? p.createdByUserId === account.id : false) ||
-          own.has(idOf(p))
-        const partyIds = [...new Set(links.map((l) => String(l.party_id)))]
-        const partyDocs = (
-          await Promise.all(partyIds.map((pid) => db.collection('parties').findById(pid)))
-        ).filter((p): p is NonNullable<typeof p> => p !== null)
-        const partyName = (pid: string) => {
-          const p = partyDocs.find((x) => idOf(x) === pid)
-          return p && isPartyVisible(p) ? p.name : undefined
-        }
 
         // Child collections: match horse_id + cap in Mongo. aggregate() does NOT
         // auto-filter soft-deletes, so match deletedAt:null explicitly (find() would).
@@ -251,10 +235,10 @@ export function buildTools(account?: AccountUser, authHeader?: string): ToolSet 
         ])
         return {
           horse: horseCard(horse),
-          connections: links.slice(0, 50).map((l) => ({
-            party: partyName(String(l.party_id)) ?? 'a party',
-            relationship: l.relationship_type,
-            current: !l.end_date,
+          connections: links.slice(0, 50).map((p) => ({
+            party: String(p.name ?? 'a party'),
+            relationship: p.role,
+            claimed: p.taken === true,
           })),
           racingEntries,
           sales,

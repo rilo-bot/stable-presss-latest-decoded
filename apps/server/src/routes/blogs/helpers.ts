@@ -10,13 +10,7 @@
 
 import { BLOG_STATUSES, type BlogStatus } from '../../lib/blog/blocks.js'
 
-export type WithMongoId = { _id: string; [key: string]: unknown }
-
-/** Mongo's `_id` → the `id` the client speaks. */
-export function project<T extends WithMongoId>(doc: T): Omit<T, '_id'> & { id: string } {
-  const { _id, ...rest } = doc
-  return { id: _id, ...rest } as Omit<T, '_id'> & { id: string }
-}
+export { project, type WithMongoId } from '../../lib/project.js'
 
 export function isBlogStatus(v: unknown): v is BlogStatus {
   return typeof v === 'string' && (BLOG_STATUSES as readonly string[]).includes(v)

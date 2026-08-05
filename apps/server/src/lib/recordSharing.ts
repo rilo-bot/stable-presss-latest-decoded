@@ -7,7 +7,7 @@
 //   anyone the record is shared with     →  SEES it (read-only)
 //   everyone else                        →  cannot see it at all
 //
-// `newsroom.access` deliberately does NOT grant visibility here. Holding a
+// An admin role does NOT grant visibility here. Holding a
 // staff role gets you into the newsroom; it does not get you other people's
 // records. That is the whole point of this module.
 //
@@ -59,15 +59,15 @@ export function ownershipFields(account: AccountUser): {
 }
 
 /** Unrestricted visibility. Admin and superadmin only. */
-export function seesEverything(account: AccountUser | undefined): boolean {
+function seesEverything(account: AccountUser | undefined): boolean {
   return accountCan(account, 'platform.admin')
 }
 
-export function isCreator(account: AccountUser | undefined, doc: OwnedRecord): boolean {
+function isCreator(account: AccountUser | undefined, doc: OwnedRecord): boolean {
   return !!account && !!doc.createdByUserId && doc.createdByUserId === account.id
 }
 
-export function isSharedWith(account: AccountUser | undefined, doc: OwnedRecord): boolean {
+function isSharedWith(account: AccountUser | undefined, doc: OwnedRecord): boolean {
   return !!account && sharesOf(doc).some((s) => s.userId === account.id)
 }
 
