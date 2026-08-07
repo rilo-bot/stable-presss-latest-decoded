@@ -57,7 +57,6 @@ function describePage(pathname: string): PageContext {
     studio: 'Profile Studio',
     newsroom: 'Newsroom',
     'site-content': 'Site Content',
-    claims: 'Verify Claims',
   };
   const entityType: Record<string, string> = {
     horses: 'horse',
@@ -156,7 +155,6 @@ function navPathFor(to: string, id?: string, screen?: string): string | null {
     case 'horse-studio': return id ? `/studio/horse/${id}` : '/dashboard';
     case 'profile-studio': return id ? `/studio/${id}` : '/dashboard';
     case 'site-content': return '/site-content';
-    case 'claims': return '/claims';
     case 'login': return '/login';
     case 'signup': return '/signup';
     case 'horse': return id ? `/horses/${id}` : '/horses';

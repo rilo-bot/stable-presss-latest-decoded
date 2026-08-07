@@ -16,6 +16,7 @@ import {
 } from '@/components/ui/dialog';
 import { PartyForm } from '@/components/PartyForm';
 import { usePartyStore } from '@/stores/partyStore';
+import { useRegister, useLoadRegister } from '@/lib/register';
 import { useAuthStore } from '@/stores/authStore';
 import { isAdmin, canManageParty } from '@/rbac/can';
 import type { PartyRole } from '@/types/party';
@@ -42,9 +43,9 @@ function PartyCard({ party, onEdit, onDelete, onOpen, canManage }: { party: Regi
     <div onClick={onOpen} role="link" tabIndex={0} onKeyDown={(e) => { if (e.key === 'Enter') onOpen(); }} className="bg-card border border-border/60 rounded-md overflow-hidden flex flex-col hover:border-primary/40 hover:shadow-sm transition-all group cursor-pointer focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring">
       {/* Photo / Avatar area */}
       <div className="relative bg-muted/30 h-40 flex items-center justify-center overflow-hidden">
-        {party.photo ? (
+        {party.imageUrl ? (
           <img
-            src={party.photo}
+            src={party.imageUrl}
             alt={party.name}
             crossOrigin="anonymous"
             className="w-full h-full object-cover group-hover:scale-[1.02] transition-transform duration-300"
@@ -207,7 +208,7 @@ export default function Parties() {
   }, [fetchParties]);
   // === end auto fetch-on-mount ===
 
-  const parties = usePartyStore((s) => s.parties);
+  const parties = useRegister();
   const removeParty = usePartyStore((s) => s.removeParty);
   const navigate = useNavigate();
   // Mirrors the server's partyScopedWriteGate so the UI only offers writes that

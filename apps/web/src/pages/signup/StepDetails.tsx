@@ -2,10 +2,8 @@ import { Link } from 'react-router-dom';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
-import { Mail, ArrowRight, BookOpen, Star, Building2, Check } from 'lucide-react';
+import { Mail, ArrowRight } from 'lucide-react';
 import { cn } from '@/lib/utils';
-
-export type AccountType = 'reader' | 'individual' | 'organisation';
 
 type FieldErrors = {
   displayName?: string;
@@ -17,8 +15,6 @@ interface StepDetailsProps {
   setDisplayName: (value: string) => void;
   email: string;
   setEmail: (value: string) => void;
-  accountType: AccountType;
-  setAccountType: (value: AccountType) => void;
   fieldErrors: FieldErrors;
   setFieldErrors: React.Dispatch<React.SetStateAction<FieldErrors>>;
   loading: boolean;
@@ -30,8 +26,6 @@ export default function StepDetails({
   setDisplayName,
   email,
   setEmail,
-  accountType,
-  setAccountType,
   fieldErrors,
   setFieldErrors,
   loading,
@@ -121,42 +115,6 @@ export default function StepDetails({
               {fieldErrors.email}
             </p>
           )}
-        </div>
-
-        {/* Account type — everyone is a reader; individuals also claim racing roles */}
-        <div className="space-y-2">
-          <Label className="text-[11px] uppercase tracking-[0.1em] text-muted-foreground font-semibold">
-            How will you use Stable Press?
-          </Label>
-          <div className="grid gap-2">
-            {[
-              { value: 'reader' as const, icon: <BookOpen size={15} />, label: 'Reader', desc: 'Follow horses & owners, read editorial, place tips.' },
-              { value: 'individual' as const, icon: <Star size={15} />, label: 'Racing individual', desc: 'Owner, trainer, jockey, breeder… claim your role.' },
-              { value: 'organisation' as const, icon: <Building2 size={15} />, label: 'Organisation', desc: 'Syndicate, stud, stable or agency with members.' },
-            ].map((opt) => (
-              <button
-                key={opt.value}
-                type="button"
-                onClick={() => setAccountType(opt.value)}
-                aria-pressed={accountType === opt.value}
-                className={cn(
-                  'flex items-start gap-3 px-3 py-2.5 rounded-md border text-left transition-colors',
-                  accountType === opt.value
-                    ? 'border-primary bg-primary/10'
-                    : 'border-input hover:border-primary/50',
-                )}
-              >
-                <span className={cn('mt-0.5', accountType === opt.value ? 'text-primary' : 'text-muted-foreground')}>
-                  {opt.icon}
-                </span>
-                <span className="flex-1">
-                  <span className="block text-sm font-semibold text-foreground">{opt.label}</span>
-                  <span className="block text-[11px] text-muted-foreground leading-snug">{opt.desc}</span>
-                </span>
-                {accountType === opt.value && <Check size={15} className="text-primary mt-0.5" />}
-              </button>
-            ))}
-          </div>
         </div>
 
         <Button

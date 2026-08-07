@@ -1,4 +1,4 @@
-// users          _id, name, email, roleId, lastLogin, createdAt, status, tokenVersion
+// users          _id, name, email, roleId, lastLogin, createdAt, tokenVersion
 // adminRoles     _id, name, permissions[], modules[], workflowStages[], isSuper
 // organisations  _id, name, ownerUserId, description, bio
 // orgMembers     _id, userId, orgId, role          'owner' | 'manager' | 'member'

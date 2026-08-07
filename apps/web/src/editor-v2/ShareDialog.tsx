@@ -166,7 +166,7 @@ export function ShareDialog({ onClose }: { onClose: () => void }) {
                 <option value="" className="bg-[#0d1626]">Choose a staff member…</option>
                 {candidates.map((o) => (
                   <option key={o.userId} value={o.email} className="bg-[#0d1626]">
-                    {o.displayName || o.email} ({o.email})
+                    {o.name || o.email} ({o.email})
                   </option>
                 ))}
               </select>

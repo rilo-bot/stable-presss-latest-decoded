@@ -500,7 +500,7 @@ export function buildTools(account?: AccountUser, authHeader?: string): ToolSet 
         "'production-system' is the staff CMS — pass `screen` to land on a specific screen. " +
         "Pair navigation with a short note on what to do once there. Don't send a non-staff reader to a staff-only surface (production-system, story-studio, blog-studio" +
         (MAGAZINE_V2_ENABLED ? ', magazine-v2' : '') +
-        ", site-content, claims) — guide them instead; horse-studio/profile-studio only for records the member manages.",
+        ", site-content) — guide them instead; horse-studio/profile-studio only for records the member manages.",
       inputSchema: z.object({
         to: z
           .enum([
@@ -509,7 +509,10 @@ export function buildTools(account?: AccountUser, authHeader?: string): ToolSet 
             // not offering it — it would navigate a reader off the site.
             'home', 'news', 'bulletins', 'horses', 'parties', 'tipping', 'podcast',
             'dashboard', 'production-system', 'story-studio', 'blog-studio', 'horse-studio', 'profile-studio',
-            'site-content', 'claims', 'login', 'signup',
+            // No 'claims': /claims was removed with claim verification. Claiming
+            // a register entry takes effect immediately, so the queue it pointed
+            // at no longer exists — offering it would navigate an admin to a 404.
+            'site-content', 'login', 'signup',
             'horse', 'party', 'article', 'bulletin', 'organisation',
             // The staff Magazine Builder home; with an id, that magazine's editor.
             ...(MAGAZINE_V2_ENABLED ? (['magazine-v2'] as const) : []),

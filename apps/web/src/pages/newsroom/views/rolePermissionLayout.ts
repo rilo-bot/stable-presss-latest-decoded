@@ -33,7 +33,6 @@ export const DANGEROUS_PERMISSIONS = new Set([
   'platform.admin',
   'roles.manage',
   'team.manage',
-  'claims.verify',
 ]);
 
 export interface ScreenSpec {
@@ -68,8 +67,8 @@ export const ROLE_LAYOUT: SectionSpec[] = [
     title: 'Platform',
     isAccess: true,
     note:
-      'Everyone on the team can open the Campaign Engine — that comes with being staff, not from a checkbox. These two are platform-wide powers on top of it.',
-    screens: [{ actions: ['platform.admin', 'claims.verify'] }],
+      'Everyone on the team can open the Campaign Engine — that comes with being staff, not from a checkbox. These are platform-wide powers on top of it.',
+    screens: [{ actions: ['platform.admin', 'roles.manage'] }],
   },
 
   {

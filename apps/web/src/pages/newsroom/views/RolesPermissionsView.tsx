@@ -67,7 +67,6 @@ const RISK_BLURBS: Record<string, string> = {
   'platform.admin': 'can manage every organisation and override any ownership',
   'roles.manage': 'can change what every role on the platform grants',
   'team.manage': 'can invite people and change who holds which role',
-  'claims.verify': 'can verify or reject racing identities',
 };
 
 /**
@@ -162,7 +161,7 @@ function accessSummary(role: Role, l: Lookups): string {
 
 /** Everything about a role that search should match — name AND what it grants. */
 function haystack(role: Role, l: Lookups): string {
-  const bits = [role.label, role.slug, role.description ?? ''];
+  const bits = [role.label, role.name, role.description ?? ''];
   for (const id of role.permissions) {
     const m = l.perm.get(id);
     if (m) bits.push(m.label, m.resource, m.short);
@@ -683,9 +682,9 @@ function RoleEditor({
           </span>
           {otherRoles.map((r) => (
             <button
-              key={r.slug}
+              key={r.name}
               type="button"
-              onClick={() => onCloneFrom(r.slug)}
+              onClick={() => onCloneFrom(r.name)}
               className="rounded-full border border-input px-2 py-1 text-[12px] text-muted-foreground transition-colors hover:border-primary/50 hover:text-foreground"
             >
               {r.label}
@@ -696,7 +695,7 @@ function RoleEditor({
 
       {role && (
         <p className="text-[11px] text-muted-foreground/70">
-          The identifier <code>{role.slug}</code> stays fixed — renaming changes the label only.
+          The identifier <code>{role.name}</code> stays fixed — renaming changes the label only.
         </p>
       )}
 
@@ -769,7 +768,7 @@ function RoleRow({
 }) {
   const color = role ? roleColor(role) : draft.color;
   const assignees = role?.assigneeCount ?? 0;
-  const panelId = `role-panel-${role?.slug ?? 'new'}`;
+  const panelId = `role-panel-${role?.name ?? 'new'}`;
 
   return (
     <section
@@ -911,9 +910,9 @@ export function RolesPermissionsView({ canManageRoles }: RolesPermissionsViewPro
   const deleteRole = useRoleStore((s) => s.deleteRole);
 
   /** Which row is expanded for READING. Independent of edit mode. */
-  const [openSlug, setOpenSlug] = useState<string | null>(null);
+  const [openName, setOpenName] = useState<string | null>(null);
   /** null = not editing, '' = composing a new role, otherwise the role SLUG. */
-  const [editingSlug, setEditingSlug] = useState<string | null>(null);
+  const [editingName, setEditingName] = useState<string | null>(null);
   const [draft, setDraft] = useState<RoleDraft>(emptyDraft);
   const [busy, setBusy] = useState(false);
   const [query, setQuery] = useState('');
@@ -986,8 +985,8 @@ export function RolesPermissionsView({ canManageRoles }: RolesPermissionsViewPro
 
   /** Unsaved ticks or identity edits that Cancel would throw away. */
   const isDirty = (): boolean => {
-    if (editingSlug === null) return false;
-    if (editingSlug === '') {
+    if (editingName === null) return false;
+    if (editingName === '') {
       return (
         draft.label.trim() !== '' ||
         draft.permissions.length > 0 ||
@@ -995,7 +994,7 @@ export function RolesPermissionsView({ canManageRoles }: RolesPermissionsViewPro
         draft.workflowStages.length > 0
       );
     }
-    const saved = roles.find((r) => r.slug === editingSlug);
+    const saved = roles.find((r) => r.name === editingName);
     if (!saved) return false;
     const same = (a: string[], b: string[]) =>
       a.length === b.length && [...a].sort().join() === [...b].sort().join();
@@ -1011,17 +1010,17 @@ export function RolesPermissionsView({ canManageRoles }: RolesPermissionsViewPro
   };
 
   const startNew = () => {
-    setEditingSlug('');
-    setOpenSlug(null);
+    setEditingName('');
+    setOpenName(null);
     setDraft(emptyDraft());
   };
   const startEdit = (role: Role) => {
-    setEditingSlug(role.slug);
-    setOpenSlug(role.slug); // editing implies open
+    setEditingName(role.name);
+    setOpenName(role.name); // editing implies open
     setDraft(draftFrom(role));
   };
   const closeEditor = () => {
-    setEditingSlug(null);
+    setEditingName(null);
     setDraft(emptyDraft());
   };
 
@@ -1036,13 +1035,13 @@ export function RolesPermissionsView({ canManageRoles }: RolesPermissionsViewPro
 
   const toggleOpen = (slug: string) => {
     // A row being edited must not collapse out from under the editor.
-    if (editingSlug === slug) return;
-    setOpenSlug((s) => (s === slug ? null : slug));
+    if (editingName === slug) return;
+    setOpenName((s) => (s === slug ? null : slug));
   };
 
   /** Copy another role's three tick-sets as a starting point. */
   const cloneFrom = (slug: string) => {
-    const src = roles.find((r) => r.slug === slug);
+    const src = roles.find((r) => r.name === slug);
     if (!src) return;
     setDraft((d) => ({
       ...d,
@@ -1059,12 +1058,12 @@ export function RolesPermissionsView({ canManageRoles }: RolesPermissionsViewPro
       return;
     }
     setBusy(true);
-    const r = editingSlug ? await updateRole(editingSlug, draft) : await createRole(draft);
+    const r = editingName ? await updateRole(editingName, draft) : await createRole(draft);
     setBusy(false);
     if (r.ok) {
-      toast.success(editingSlug ? 'Role updated.' : 'Role created.');
+      toast.success(editingName ? 'Role updated.' : 'Role created.');
       // Leave the row they just saved open so the result is visible.
-      setOpenSlug(editingSlug || r.slug || null);
+      setOpenName(editingName || r.name || null);
       closeEditor();
     } else toast.error(r.error ?? 'Could not save the role.');
   };
@@ -1073,13 +1072,13 @@ export function RolesPermissionsView({ canManageRoles }: RolesPermissionsViewPro
     const role = deleteTarget;
     if (!role) return;
     setBusy(true);
-    const r = await deleteRole(role.slug);
+    const r = await deleteRole(role.name);
     setBusy(false);
     if (r.ok) {
       toast.success('Role deleted.');
       setDeleteTarget(null);
-      if (editingSlug === role.slug) closeEditor();
-      if (openSlug === role.slug) setOpenSlug(null);
+      if (editingName === role.name) closeEditor();
+      if (openName === role.name) setOpenName(null);
     } else toast.error(r.error ?? 'Could not delete the role.');
   };
 
@@ -1129,7 +1128,7 @@ export function RolesPermissionsView({ canManageRoles }: RolesPermissionsViewPro
               </button>
             )}
           </div>
-          {editingSlug === null && (
+          {editingName === null && (
             <Button size="sm" onClick={startNew} className="gap-1.5">
               <Plus size={14} /> New role
             </Button>
@@ -1138,7 +1137,7 @@ export function RolesPermissionsView({ canManageRoles }: RolesPermissionsViewPro
       </div>
 
       {/* New-role row, composed at the top */}
-      {editingSlug === '' && (
+      {editingName === '' && (
         <RoleRow
           {...rowProps}
           role={null}
@@ -1165,15 +1164,15 @@ export function RolesPermissionsView({ canManageRoles }: RolesPermissionsViewPro
           {filtered.map((role) => (
             <RoleRow
               {...rowProps}
-              key={role.slug}
+              key={role.name}
               role={role}
               // A search that matched what a role GRANTS is only useful if you can
               // see the match, so a filtered list opens its results.
-              open={query.trim() !== '' || openSlug === role.slug || editingSlug === role.slug}
-              editing={editingSlug === role.slug}
-              editingElsewhere={editingSlug !== null && editingSlug !== role.slug}
-              otherRoles={roles.filter((r) => r.slug !== role.slug)}
-              onToggleOpen={() => toggleOpen(role.slug)}
+              open={query.trim() !== '' || openName === role.name || editingName === role.name}
+              editing={editingName === role.name}
+              editingElsewhere={editingName !== null && editingName !== role.name}
+              otherRoles={roles.filter((r) => r.name !== role.name)}
+              onToggleOpen={() => toggleOpen(role.name)}
               onStartEdit={() => startEdit(role)}
               onDelete={() => setDeleteTarget(role)}
             />

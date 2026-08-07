@@ -170,8 +170,8 @@ export function RacingDataForm({ horseId, initial, compact = false, onSave, onCa
   useEffect(() => { fetchParties(); }, [fetchParties]);
   useEffect(() => { fetchHorses(); }, [fetchHorses]);
 
-  const jockeys = useMemo(() => allParties.filter((p) => p.roles.includes('jockey')), [allParties]);
-  const trainers = useMemo(() => allParties.filter((p) => p.roles.includes('trainer')), [allParties]);
+  const jockeys = useMemo(() => allParties.filter((p) => p.role === 'jockey'), [allParties]);
+  const trainers = useMemo(() => allParties.filter((p) => p.role === 'trainer'), [allParties]);
 
   const isEdit = !!initial;
 

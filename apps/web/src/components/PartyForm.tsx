@@ -15,8 +15,9 @@ import {
   DialogClose,
 } from '@/components/ui/dialog';
 import { usePartyStore } from '@/stores/partyStore';
+import { usePeopleStore } from '@/stores/peopleStore';
 import { uploadImage } from '@/lib/upload';
-import type { PartyRole, PersonnelSubtype } from '@/types/party';
+import type { PartyRole, PersonnelSubtype, Person } from '@/types/party';
 import { getStartedYearLabel } from '@/types/party';
 import {
   ACCEPTED_IMAGE_TYPES,
@@ -32,7 +33,7 @@ import type { RegisterPerson } from '@/lib/register';
 interface PartyDraft {
   name: string;
   roles: PartyRole[];
-  photo?: string;
+  imageUrl?: string;
   profession: string;
   dateOfBirth: string;
   countryOfBirth: string;
@@ -45,8 +46,11 @@ interface PartyDraft {
    Component
 ───────────────────────────────────────────── */
 export function PartyForm({ open, onOpenChange, party, defaultRole, onSaved }: PartyFormProps) {
+  // The PROFILE is a person; the ROLES are edges. Two stores, one form.
+  const addPerson = usePeopleStore((s) => s.addPerson);
+  const updatePerson = usePeopleStore((s) => s.updatePerson);
   const addParty = usePartyStore((s) => s.addParty);
-  const updateParty = usePartyStore((s) => s.updateParty);
+  const removeParty = usePartyStore((s) => s.removeParty);
   const isEdit = !!party;
 
   /* ── Form state ── (parties are always individuals; orgs live in their own collection) */
@@ -55,9 +59,9 @@ export function PartyForm({ open, onOpenChange, party, defaultRole, onSaved }: P
   const [roles, setRoles] = useState<PartyRole[]>(
     party?.roles ?? (defaultRole ? [defaultRole] : [])
   );
-  const [photo, setPhoto] = useState<string | undefined>(party?.photo);
+  const [photo, setPhoto] = useState<string | undefined>(party?.imageUrl);
   const [photoFile, setPhotoFile] = useState<File | null>(null);
-  const [photoPreview, setPhotoPreview] = useState<string | undefined>(party?.photo);
+  const [photoPreview, setPhotoPreview] = useState<string | undefined>(party?.imageUrl);
   const [saving, setSaving] = useState(false);
   const [errors, setErrors] = useState<Record<string, string>>({});
   const fileInputRef = useRef<HTMLInputElement>(null);
@@ -94,9 +98,9 @@ export function PartyForm({ open, onOpenChange, party, defaultRole, onSaved }: P
     setName(party?.name ?? '');
     // In create mode, re-apply the defaultRole; in edit mode, restore existing roles
     setRoles(party?.roles ?? (defaultRole ? [defaultRole] : []));
-    setPhoto(party?.photo);
+    setPhoto(party?.imageUrl);
     setPhotoFile(null);
-    setPhotoPreview(party?.photo);
+    setPhotoPreview(party?.imageUrl);
     setErrors({});
     setSaving(false);
     setProfession(party?.profession ?? '');
@@ -119,9 +123,9 @@ export function PartyForm({ open, onOpenChange, party, defaultRole, onSaved }: P
       setDraftRestored(!!draft);
       setRoles(draft?.roles ?? (defaultRole ? [defaultRole] : []));
       setName(draft?.name ?? '');
-      setPhoto(draft?.photo);
+      setPhoto(draft?.imageUrl);
       setPhotoFile(null);
-      setPhotoPreview(draft?.photo);
+      setPhotoPreview(draft?.imageUrl);
       setErrors({});
       setSaving(false);
       setProfession(draft?.profession ?? '');
@@ -141,14 +145,14 @@ export function PartyForm({ open, onOpenChange, party, defaultRole, onSaved }: P
       name, roles, profession, dateOfBirth, countryOfBirth, baseLocation, startedYear,
       personnelSubtypes,
       // Skip transient data: URLs (preview blobs) — they can blow the localStorage quota.
-      photo: photo?.startsWith('data:') ? undefined : photo,
+      imageUrl: photo?.startsWith('data:') ? undefined : photo,
     },
     {
       enabled: open && !isEdit,
       // Roles default to the entry-point role, so don't count them as "real" input.
       isEmpty: (d) =>
         !d.name.trim() && !d.profession.trim() && !d.dateOfBirth &&
-        !d.countryOfBirth.trim() && !d.baseLocation.trim() && !d.startedYear && !d.photo,
+        !d.countryOfBirth.trim() && !d.baseLocation.trim() && !d.startedYear && !d.imageUrl,
     },
   );
 
@@ -207,7 +211,7 @@ export function PartyForm({ open, onOpenChange, party, defaultRole, onSaved }: P
       const { url } = await uploadImage(file, { kind: 'party', maxDim: 320, quality: 0.6 });
       setPhotoFile(file);
       setPhoto(url);
-      setErrors((prev) => { const n = { ...prev }; delete n.photo; return n; });
+      setErrors((prev) => { const n = { ...prev }; delete n.imageUrl; return n; });
     } catch (err) {
       toast.error(err instanceof Error ? err.message : 'Could not upload the image. Please try again.');
     }
@@ -270,28 +274,39 @@ export function PartyForm({ open, onOpenChange, party, defaultRole, onSaved }: P
     }
     setSaving(true);
     try {
-      const payload: Omit<RegisterPerson, 'id' | 'createdAt'> = {
-        roles,
+      const payload: Omit<Person, 'id'> = {
         name: name.trim(),
-        photo,
+        imageUrl: photo,
         profession: profession.trim() || undefined,
-        date_of_birth: dateOfBirth || undefined,
-        country_of_birth: countryOfBirth.trim() || undefined,
-        base_location: baseLocation.trim() || undefined,
-        started_year: startedYear ? parseInt(startedYear, 10) : undefined,
-        personnel_subtype: showPersonnelSubtype && personnelSubtypes.length > 0
-          ? personnelSubtypes
-          : undefined,
+        dateOfBirth: dateOfBirth || undefined,
+        countryOfBirth: countryOfBirth.trim() || undefined,
+        baseLocation: baseLocation.trim() || undefined,
+        startedYear: startedYear ? parseInt(startedYear, 10) : undefined,
+        personnelSubtype: showPersonnelSubtype ? personnelSubtypes : [],
       };
       if (isEdit && party) {
-        await updateParty(party.id, payload);
-        toast.success('RegisterPerson record updated.');
+        await updatePerson(party.id, payload);
+        // Roles are edges, so a role change is an add/remove, not a field write.
+        // Only edges with no horse are touched: one attached to a horse is a
+        // real connection and is not this form's to delete.
+        const held = new Set(party.roles);
+        const wanted = new Set(roles);
+        for (const role of roles) {
+          if (!held.has(role)) await addParty({ personId: party.id, role });
+        }
+        for (const edge of party.edges) {
+          if (!wanted.has(edge.role) && !edge.horseId) await removeParty(edge.id);
+        }
+        toast.success('Profile updated.');
         onSaved?.(party.id);
       } else {
-        const id = await addParty(payload);
+        const id = await addPerson(payload);
+        if (!id) return;
+        // ONE EDGE PER ROLE — that is what makes them findable in the register.
+        for (const role of roles) await addParty({ personId: id, role });
         clearDraft();
         setDraftRestored(false);
-        toast.success('RegisterPerson added to Stable Press.');
+        toast.success('Added to the register.');
         onSaved?.(id);
       }
       onOpenChange(false);
@@ -325,7 +340,7 @@ export function PartyForm({ open, onOpenChange, party, defaultRole, onSaved }: P
         {/* ── Sticky header ── */}
         <DialogHeader className="px-6 pt-6 pb-4 border-b border-border/60 flex-shrink-0">
           <DialogTitle className="font-[family-name:var(--font-display)] text-xl font-bold text-foreground">
-            {isEdit ? 'Edit RegisterPerson' : 'Add New RegisterPerson'}
+            {isEdit ? 'Edit Profile' : 'Add to the Register'}
           </DialogTitle>
           <p className="text-xs text-muted-foreground mt-0.5">
             Register an individual or organisation connected to the racing industry.
@@ -496,7 +511,7 @@ export function PartyForm({ open, onOpenChange, party, defaultRole, onSaved }: P
           <PhotoUpload
             photoPreview={photoPreview}
             photoFile={photoFile}
-            photoError={errors.photo}
+            photoError={errors.imageUrl}
             dragOver={dragOver}
             fileInputRef={fileInputRef}
             dropZoneRef={dropZoneRef}
@@ -521,7 +536,7 @@ export function PartyForm({ open, onOpenChange, party, defaultRole, onSaved }: P
             disabled={saving}
             className="min-w-[110px]"
           >
-            {saving ? 'Saving…' : isEdit ? 'Save Changes' : 'Add RegisterPerson'}
+            {saving ? 'Saving…' : isEdit ? 'Save Changes' : 'Add to Register'}
           </Button>
         </DialogFooter>
       </DialogContent>

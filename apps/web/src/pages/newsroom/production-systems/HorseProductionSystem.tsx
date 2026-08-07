@@ -3,19 +3,19 @@ import { useNavigate } from 'react-router-dom';
 import { Plus, Search, Eye, Link, ChevronDown, X, Trash2 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { EmptyState } from '@/components/EmptyState';
-import { HorsePartyLinkPanel } from '@/components/HorsePartyLinkPanel';
+import { RoleConnectionsRail } from '@/components/profile/RoleConnectionsRail';
 import { AddHorseChoice } from '@/components/AddHorseChoice';
 import { DeleteConfirmDialog } from '../components/DeleteConfirmDialog';
 import { useHorseStore } from '@/stores/horseStore';
 import { cn } from '@/lib/utils';
 import type { Horse } from '@/types/horse';
-import type { Party } from '@/types/party';
+import type { RegisterPerson } from '@/lib/register';
 import type { connectionResolver } from '@/lib/horseConnections';
 
 interface HorseProductionSystemProps {
   horses: Horse[];
   filteredHorses: Horse[];
-  parties: Party[];
+  parties: RegisterPerson[];
   horseSearch: string;
   setHorseSearch: (v: string) => void;
   expandedHorseId: string | null;
@@ -63,7 +63,7 @@ export function HorseProductionSystem({
   const renderPartyLinks = (ids?: string[]) => {
     const linked = (ids ?? [])
       .map((id) => partyById.get(id))
-      .filter((p): p is Party => Boolean(p));
+      .filter((p): p is RegisterPerson => Boolean(p));
     if (linked.length === 0) {
       return <span className="text-muted-foreground/40 text-sm">—</span>;
     }
@@ -289,9 +289,17 @@ export function HorseProductionSystem({
                                   <X size={13} />
                                 </button>
                               </div>
-                              <HorsePartyLinkPanel
+                              {/* Was HorsePartyLinkPanel, which read the deleted
+                                  horsePartyLinks table. Connections are party
+                                  edges now, and this rail is the one component
+                                  that renders them. */}
+                              <RoleConnectionsRail
                                 horseId={horse.id}
-                                horseName={horse.name}
+                                editable
+                                onOpenParty={(personId) => navigate(`/parties/${personId}`)}
+                                reportsActive={false}
+                                onOpenReports={() => navigate(`/studio/horse/${horse.id}`)}
+                                footer={null}
                               />
                             </div>
                           </td>

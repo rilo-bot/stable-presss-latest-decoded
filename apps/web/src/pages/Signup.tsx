@@ -1,53 +1,48 @@
 import { useState, useRef, useEffect } from 'react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
 import { useAuthStore } from '@/stores/authStore';
-import { useClaimStore } from '@/stores/claimStore';
-import { useOrgStore } from '@/stores/orgStore';
-import { primaryPartyId } from '@/rbac/can';
-import type { PartyRole } from '@/types/party';
 import { toast } from 'sonner';
-import { uploadRawFile } from '@/lib/upload';
-import StepDetails, { type AccountType } from './signup/StepDetails';
+import StepDetails from './signup/StepDetails';
 import StepOtp from './signup/StepOtp';
-import StepClaim from './signup/StepClaim';
-import StepOrg from './signup/StepOrg';
 
-type Step = 'details' | 'otp' | 'claim' | 'org';
+/**
+ * Signup is a NAME, an EMAIL, and a code. Nothing else.
+ *
+ * It used to ask "How will you use Stable Press?" and branch into a role-claim
+ * step or an organisation step. Both were dead weight: the server reads only
+ * `{ email, name }` from request-otp — every other axis (admin role, racing
+ * role, org membership) is granted AFTER an account exists, by someone who
+ * already has the right to grant it. The claim step in particular promised an
+ * admin review queue that no longer exists and uploaded evidence files it then
+ * discarded.
+ *
+ * Claiming a register entry now happens on the Dashboard, against the live
+ * register. Creating an organisation happens from the org pages. Neither
+ * belongs in front of a brand-new account that has nothing yet.
+ */
+type Step = 'details' | 'otp';
 
 export default function Signup() {
   const [step, setStep] = useState<Step>('details');
 
-  // Step 1 state — email may be prefilled from the landing-page membership form.
+  // Step 1 — email may be prefilled from the landing-page membership form.
   const [searchParams] = useSearchParams();
   const [displayName, setDisplayName] = useState('');
   const [email, setEmail] = useState(() => searchParams.get('email') ?? '');
-  const [accountType, setAccountType] = useState<AccountType>('reader');
   const [fieldErrors, setFieldErrors] = useState<{
     displayName?: string;
     email?: string;
   }>({});
 
-  // Step 2 state
+  // Step 2
   const [otpDigits, setOtpDigits] = useState(['', '', '', '', '', '']);
   const [otpPreview, setOtpPreview] = useState<string | null>(null);
   const [otpError, setOtpError] = useState('');
-
-  // Step 3 (claim) state — individuals claim one or more racing roles.
-  const [selectedRoles, setSelectedRoles] = useState<PartyRole[]>([]);
-  const [evidenceDataUrl, setEvidenceDataUrl] = useState<string | undefined>();
-  const [evidenceName, setEvidenceName] = useState<string | null>(null);
-  const [uploadingEvidence, setUploadingEvidence] = useState(false);
-
-  // Step 3 (org) state — organisations create an org and become its owner.
-  const [orgName, setOrgName] = useState('');
-  const [orgLocation, setOrgLocation] = useState('');
 
   const [loading, setLoading] = useState(false);
 
   const requestSignupOtp = useAuthStore((s) => s.requestSignupOtp);
   const verifyOtp = useAuthStore((s) => s.verifyOtp);
-  const createClaim = useClaimStore((s) => s.createClaim);
-  const createOrg = useOrgStore((s) => s.createOrg);
   const navigate = useNavigate();
 
   const digitRefs = useRef<(HTMLInputElement | null)[]>([]);
@@ -132,87 +127,13 @@ export default function Signup() {
     const result = await verifyOtp(email.trim(), code);
     setLoading(false);
     if (result.ok) {
-      // Every account is created as a reader. Individuals continue to claim their
-      // racing role(s); organisations set up their org; readers are done.
-      if (accountType === 'individual') {
-        toast.success('Account created. Now claim your racing role.');
-        setStep('claim');
-      } else if (accountType === 'organisation') {
-        toast.success('Account created. Now set up your organisation.');
-        setStep('org');
-      } else {
-        toast.success('Your account is ready. Welcome to Stable Press.');
-        navigate('/dashboard');
-      }
+      toast.success('Your account is ready. Welcome to Stable Press.');
+      navigate('/dashboard');
     } else {
       toast.error(result.error ?? 'Verification failed. Please try again.');
       setOtpError(result.error ?? '');
       setOtpDigits(['', '', '', '', '', '']);
       setTimeout(() => digitRefs.current[0]?.focus(), 80);
-    }
-  };
-
-  const toggleRole = (role: PartyRole) => {
-    setSelectedRoles((prev) =>
-      prev.includes(role) ? prev.filter((r) => r !== role) : [...prev, role],
-    );
-  };
-
-  const handleEvidenceFile = async (e: React.ChangeEvent<HTMLInputElement>) => {
-    const file = e.target.files?.[0];
-    e.target.value = '';
-    if (!file) return;
-    if (file.size > 4 * 1024 * 1024) {
-      toast.error('Please choose a file under 4 MB.');
-      return;
-    }
-    setUploadingEvidence(true);
-    try {
-      const { url } = await uploadRawFile(file, 'evidence');
-      setEvidenceDataUrl(url);
-      setEvidenceName(file.name);
-    } catch (err) {
-      toast.error(err instanceof Error ? err.message : 'Could not upload that file. Please try again.');
-    } finally {
-      setUploadingEvidence(false);
-    }
-  };
-
-  const handleClaimSubmit = async () => {
-    if (selectedRoles.length === 0) {
-      toast.error('Select at least one role to claim.');
-      return;
-    }
-    setLoading(true);
-    const results = await Promise.all(
-      selectedRoles.map((role) => createClaim(role, { evidenceUrl: evidenceDataUrl })),
-    );
-    setLoading(false);
-    const failed = results.filter((r) => !r.ok);
-    if (failed.length > 0) {
-      toast.error(failed[0].error ?? 'Some claims could not be submitted.');
-      return;
-    }
-    // Provisional access: the profile is live for them now (hidden from the public
-    // until verified). Drop them straight into their hub to add details + horses.
-    toast.success('Profile created — add your details and horses next.');
-    const partyId = primaryPartyId(useAuthStore.getState().currentUser);
-    navigate(partyId ? `/studio/${partyId}` : '/dashboard');
-  };
-
-  const handleOrgSubmit = async () => {
-    if (!orgName.trim()) {
-      toast.error('Enter your organisation name.');
-      return;
-    }
-    setLoading(true);
-    const result = await createOrg({ name: orgName.trim(), base_location: orgLocation.trim() || undefined });
-    setLoading(false);
-    if (result.ok && result.id) {
-      toast.success('Organisation created. You are its owner.');
-      navigate(`/orgs/${result.id}`);
-    } else {
-      toast.error(result.error ?? 'Could not create the organisation.');
     }
   };
 
@@ -311,8 +232,6 @@ export default function Signup() {
               setDisplayName={setDisplayName}
               email={email}
               setEmail={setEmail}
-              accountType={accountType}
-              setAccountType={setAccountType}
               fieldErrors={fieldErrors}
               setFieldErrors={setFieldErrors}
               loading={loading}
@@ -335,32 +254,6 @@ export default function Signup() {
               onPaste={handleOtpPaste}
               onSubmit={handleOtpSubmit}
               onResend={handleResend}
-            />
-          )}
-
-          {/* Step 3: Claim racing role(s) — individuals only */}
-          {step === 'claim' && (
-            <StepClaim
-              selectedRoles={selectedRoles}
-              evidenceName={evidenceName}
-              uploadingEvidence={uploadingEvidence}
-              loading={loading}
-              onToggleRole={toggleRole}
-              onEvidenceFile={handleEvidenceFile}
-              onSubmit={handleClaimSubmit}
-              onSkip={() => navigate('/dashboard')}
-            />
-          )}
-
-          {/* Step 3: Create organisation — organisations only */}
-          {step === 'org' && (
-            <StepOrg
-              orgName={orgName}
-              setOrgName={setOrgName}
-              orgLocation={orgLocation}
-              setOrgLocation={setOrgLocation}
-              loading={loading}
-              onSubmit={handleOrgSubmit}
             />
           )}
         </div>

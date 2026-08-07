@@ -41,7 +41,8 @@ export interface NeedItem {
   count: number
   /**
    * The module id that holds this work. MUST be a live entry in the client's
-   * SIDE_NAV (or the 'claims' route), because the dashboard turns it into a link.
+   * SIDE_NAV, because the dashboard turns it into a link. A token that matches
+   * no module is DROPPED, so a stale one costs an item, never a dead link.
    *
    * Three of these pointed at screens that had been deleted — 'review' and
    * 'drafts' (SIDE_NAV rows removed when the 12-status workflow collapsed to 5

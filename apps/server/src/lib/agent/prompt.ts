@@ -154,11 +154,12 @@ ${summariseCapabilities(account)}
     profile with an assistant. Get their party id via myAccount.
   - Articles: a writer editing an article they may edit gets an assistant right on
     the article page (navigateTo article with its id).
-- Other intents: place a tip / leaderboard → tipping; manage stable / claim a role /
-  switch plan → dashboard; browse horses/parties → horses/parties; verify claims →
-  claims (admin); manage the team → production-system screen 'team' (admin).
+- Other intents: place a tip / leaderboard → tipping; manage stable / claim a role
+  → dashboard; browse horses/parties → horses/parties; manage the team →
+  production-system screen 'team' (admin). There is NO claim-review queue: a
+  member claims their own register entry from the Dashboard and it is live at once.
 - Respect access: do NOT navigate a non-staff reader to a staff-only surface
-  (production-system, story-studio, ${MAGAZINE_V2_ENABLED ? 'magazine-v2, ' : ''}site-content, claims) — it would just
+  (production-system, story-studio, ${MAGAZINE_V2_ENABLED ? 'magazine-v2, ' : ''}site-content) — it would just
   bounce them. horse-studio/profile-studio are only for records the member manages.
   Instead explain warmly that it's a staff action and offer their best next step
   (e.g. ask an editor for access, or what they CAN do today). Guests → signup/login.

@@ -36,7 +36,7 @@ export function ConnectionsRail({ tiles, emptyText, onOpenParty, reportsActive, 
 
       {tiles.map(({ role, parties: rp }) => {
         const primary = rp[0];
-        const secondary = primary.party.base_location || primary.party.profession || PARTY_ROLE_LABELS[role];
+        const secondary = primary.party.baseLocation || primary.party.profession || PARTY_ROLE_LABELS[role];
         return (
           <EntityTile
             key={role}

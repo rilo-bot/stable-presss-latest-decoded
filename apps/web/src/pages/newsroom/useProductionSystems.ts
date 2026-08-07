@@ -12,7 +12,7 @@ import type { MediaItem, MediaType } from '@/types/mediaItem';
 import type { RacingEntry } from '@/types/racingEntry';
 import type { Sale } from '@/types/sale';
 import type { HorseReport } from '@/types/horseReport';
-import type { RegisterPerson } from '@/lib/register';
+import { useRegister, useLoadRegister, type RegisterPerson } from '@/lib/register';
 
 /**
  * Owns all "production system" concerns for the Newsroom: the horse, party,
@@ -30,6 +30,7 @@ export function useProductionSystems() {
 
   const horses = useHorseStore((s) => s.horses);
   const removeHorse = useHorseStore((s) => s.removeHorse);
+  useLoadRegister();
   const parties = useRegister();
   const removeParty = usePartyStore((s) => s.removeParty);
   const horseConn = useMemo(() => connectionResolver(parties ?? []), [parties]);

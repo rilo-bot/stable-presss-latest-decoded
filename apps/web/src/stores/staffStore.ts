@@ -1,12 +1,29 @@
 import { create } from 'zustand';
 import { authFetch } from '@/lib/api';
+import type { AssignedRole } from '@/stores/authStore';
 
+/**
+ * One row of the admin roster. Mirrors `adminRoster()` in
+ * apps/server/src/routes/staff/index.ts — keep the two in step.
+ *
+ * This interface described the OLD shape (`displayName`, and `staffRoles` as an
+ * array of slugs) long after the server moved to `name` + a single resolved
+ * `role` object. Nothing caught it: `fetchStaff` assigns `await res.json()`,
+ * which is `any`, so the boundary is unchecked and the mismatch surfaced only as
+ * a rendered lie — every member showing "No role — no access" with their email
+ * where their name should be. If you change the server's projection, change this.
+ */
 export interface StaffUser {
   userId: string;
-  displayName: string;
+  name: string;
   email: string;
-  /** Role SLUGS into the server's `roles` collection. */
-  staffRoles: string[];
+  /**
+   * The ONE admin role they hold, display fields already resolved server-side.
+   * null when the role was deleted under them: still an admin, holding nothing,
+   * and kept visible so someone can fix it.
+   */
+  role: AssignedRole | null;
+  lastLogin: string | null;
 }
 
 export interface PendingGrant {

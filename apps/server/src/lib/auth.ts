@@ -76,11 +76,20 @@ function claimsFromHeader(req: Request): VerifiedClaims | null {
 }
 
 /**
- * Suspended, or signed out everywhere? Both read from the LIVE document rather
- * than the token, so revocation takes effect on the next request.
+ * Signed out everywhere?
+ *
+ * Read from the LIVE document rather than the token, so bumping
+ * `users.tokenVersion` invalidates every session on its next request. This is
+ * the only way to revoke a Bearer JWT — once signed, a token cannot be taken
+ * back, so something server-side has to be checked on every request. It costs
+ * nothing: the document is already loaded to resolve permissions.
+ *
+ * There was a `status === 'suspended'` check here too. Soft-deleting the user
+ * already revokes instantly (findById treats a tombstoned doc as gone), and it
+ * is reversible, so `status` was a second field saying the same thing — the
+ * kind of pair that drifts.
  */
 function isRevoked(claims: VerifiedClaims, doc: Record<string, unknown>): boolean {
-  if (doc.status === 'suspended') return true
   const current = typeof doc.tokenVersion === 'number' ? doc.tokenVersion : 0
   return (claims.v ?? 0) < current
 }

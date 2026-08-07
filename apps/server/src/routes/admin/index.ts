@@ -75,10 +75,6 @@ router.post('/seed', seedLimit, async (req, res) => {
   if (existing) {
     const previousRole = existing.roleId ? await getRole(String(existing.roleId)) : null;
 
-    // isRevoked() refuses a suspended account on every request.
-    const wasSuspended = existing.status === 'suspended';
-    if (wasSuspended) await db.collection(USERS).updateOne(String(existing._id), { status: 'active', updatedAt: now });
-
     await assignRole(String(existing._id), superRole.id);
     const fresh = await db.collection(USERS).findById(existing._id);
 
@@ -86,15 +82,13 @@ router.post('/seed', seedLimit, async (req, res) => {
     console.warn(
       `[admin] SUPERADMIN GRANTED to existing user ${email} (id ${String(existing._id)}) ` +
         `from ${req.ip ?? 'unknown ip'} at ${now}` +
-        (previousRole ? ` — replaced admin role "${previousRole.name}"` : '') +
-        (wasSuspended ? ' — account was SUSPENDED and has been reactivated' : ''),
+        (previousRole ? ` — replaced admin role "${previousRole.name}"` : ''),
     );
 
     res.json({
       user: withIdentityDefaults({ id: fresh!._id, ...fresh }),
       created: false,
       replacedRole: previousRole?.name ?? null,
-      reactivated: wasSuspended,
     });
     return;
   }

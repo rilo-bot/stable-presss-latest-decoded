@@ -2,7 +2,6 @@ import { useEffect, useMemo, useState } from 'react';
 import { Link, useParams } from 'react-router-dom';
 import { useAuthStore } from '@/stores/authStore';
 import { useOrgStore } from '@/stores/orgStore';
-import { useClaimStore } from '@/stores/claimStore';
 import { useHorseStore } from '@/stores/horseStore';
 import { PARTY_ROLES, PARTY_ROLE_LABELS } from '@/types/party';
 import type { PartyRole } from '@/types/party';
@@ -17,9 +16,9 @@ import {
 } from 'lucide-react';
 
 const ORG_ROLE_LABELS: Record<OrgRole, string> = {
-  org_owner: 'Owner',
-  org_manager: 'Manager',
-  org_member: 'Member',
+  owner: 'Owner',
+  manager: 'Manager',
+  member: 'Member',
 };
 
 export default function OrgDashboard() {
@@ -30,20 +29,16 @@ export default function OrgDashboard() {
   const fetchOrg = useOrgStore((s) => s.fetchOrg);
   const addMember = useOrgStore((s) => s.addMember);
   const removeMember = useOrgStore((s) => s.removeMember);
-  const createManagedParty = useOrgStore((s) => s.createManagedParty);
+  const addOrgParty = useOrgStore((s) => s.addOrgParty);
   const horses = useHorseStore((s) => s.horses);
   const fetchHorses = useHorseStore((s) => s.fetchHorses);
-  const pending = useClaimStore((s) => s.pending);
-  const fetchPending = useClaimStore((s) => s.fetchPending);
-  const verifyClaim = useClaimStore((s) => s.verifyClaim);
-  const rejectClaim = useClaimStore((s) => s.rejectClaim);
 
-  const myRole = currentUser?.orgMemberships?.find((m) => m.orgId === id)?.orgRole;
-  const canManage = myRole === 'org_owner' || myRole === 'org_manager';
-  const isOwner = myRole === 'org_owner';
+  const myRole = currentUser?.orgMembers?.find((m) => m.orgId === id)?.role;
+  const canManage = myRole === 'owner' || myRole === 'manager';
+  const isOwner = myRole === 'owner';
 
   const [memberEmail, setMemberEmail] = useState('');
-  const [memberRole, setMemberRole] = useState<OrgRole>('org_member');
+  const [memberRole, setMemberRole] = useState<OrgRole>('member');
   const [partyName, setPartyName] = useState('');
   const [partyRoles, setPartyRoles] = useState<PartyRole[]>([]);
   const [busy, setBusy] = useState<string | null>(null);
@@ -52,18 +47,8 @@ export default function OrgDashboard() {
     if (!id) return;
     void fetchOrg(id);
     void fetchHorses();
-    if (canManage) void fetchPending();
-  }, [id, canManage, fetchOrg, fetchHorses, fetchPending]);
+  }, [id, fetchOrg, fetchHorses]);
 
-  const managedIds = useMemo(
-    () => new Set((detail?.managedParties ?? []).map((p) => p.id)),
-    [detail],
-  );
-  // Claims for THIS org's managed parties (server already scopes to orgs you manage).
-  const orgPending = useMemo(
-    () => pending.filter((c) => managedIds.has(c.partyId)),
-    [pending, managedIds],
-  );
   const scopedHorses = useMemo(
     () => horses.filter((h) => (detail?.horseIds ?? []).includes(h.id)),
     [horses, detail],
@@ -77,7 +62,7 @@ export default function OrgDashboard() {
     if (r.ok) {
       toast.success('Member added.');
       setMemberEmail('');
-      setMemberRole('org_member');
+      setMemberRole('member');
     } else toast.error(r.error ?? 'Could not add member.');
   };
 
@@ -90,32 +75,32 @@ export default function OrgDashboard() {
   };
 
   const onAddParty = async () => {
-    if (!partyName.trim()) return;
+    const name = partyName.trim();
+    if (!name || partyRoles.length === 0) return;
     setBusy('party');
-    const r = await createManagedParty(id, { name: partyName.trim(), roles: partyRoles });
+    // ONE EDGE PER ROLE. The first call creates the person from the name; the
+    // rest reuse them, so picking Trainer + Owner adds two register entries for
+    // one person rather than a single row claiming both.
+    const first = await addOrgParty(id, { name, role: partyRoles[0]! });
+    let failure = first.ok ? undefined : (first.error ?? 'Could not add the entry.');
+    if (first.ok) {
+      const personId = useOrgStore
+        .getState()
+        .detail?.parties.find((p) => p.name === name && p.role === partyRoles[0])?.personId;
+      for (const role of partyRoles.slice(1)) {
+        const r = personId
+          ? await addOrgParty(id, { personId, role })
+          : await addOrgParty(id, { name, role });
+        if (!r.ok && !failure) failure = r.error ?? 'Could not add every role.';
+      }
+    }
     setBusy(null);
-    if (r.ok) {
-      toast.success('Managed party added.');
+    if (failure) toast.error(failure);
+    else {
+      toast.success(partyRoles.length > 1 ? `${name} added under ${partyRoles.length} roles.` : `${name} added.`);
       setPartyName('');
       setPartyRoles([]);
-    } else toast.error(r.error ?? 'Could not add party.');
-  };
-
-  const onVerify = async (claimId: string) => {
-    setBusy(claimId);
-    const r = await verifyClaim(claimId);
-    setBusy(null);
-    if (r.ok) toast.success('Claim verified.');
-    else toast.error(r.error ?? 'Could not verify.');
-  };
-
-  const onReject = async (claimId: string) => {
-    const reason = window.prompt('Reason for rejection (optional):') ?? undefined;
-    setBusy(claimId);
-    const r = await rejectClaim(claimId, reason);
-    setBusy(null);
-    if (r.ok) toast.success('Claim rejected.');
-    else toast.error(r.error ?? 'Could not reject.');
+    }
   };
 
   if (loading && !detail) {
@@ -162,9 +147,9 @@ export default function OrgDashboard() {
             </span>
           )}
         </div>
-        {detail.org.base_location && (
+        {detail.org.description && (
           <p className="text-sm text-muted-foreground mt-1 flex items-center gap-1.5">
-            <MapPin size={13} /> {detail.org.base_location}
+            <MapPin size={13} /> {detail.org.description}
           </p>
         )}
         <div className="h-px w-full bg-border/60 mt-4" />
@@ -183,11 +168,11 @@ export default function OrgDashboard() {
                 className="flex items-center gap-3 p-3 border border-border/60 rounded-sm bg-card"
               >
                 <div className="flex-1 min-w-0">
-                  <span className="block text-sm font-medium text-foreground truncate">{m.displayName}</span>
+                  <span className="block text-sm font-medium text-foreground truncate">{m.name}</span>
                   <span className="block text-xs text-muted-foreground truncate">{m.email}</span>
                 </div>
                 <span className="text-[10px] uppercase tracking-wide font-bold text-muted-foreground">
-                  {ORG_ROLE_LABELS[m.orgRole]}
+                  {ORG_ROLE_LABELS[m.role]}
                 </span>
                 {isOwner && m.userId !== currentUser?.id && (
                   <button
@@ -220,9 +205,9 @@ export default function OrgDashboard() {
                   onChange={(e) => setMemberRole(e.target.value as OrgRole)}
                   className="flex-1 h-9 rounded-md border border-input bg-background px-2 text-sm"
                 >
-                  <option value="org_member">Member</option>
-                  {isOwner && <option value="org_manager">Manager</option>}
-                  {isOwner && <option value="org_owner">Owner</option>}
+                  <option value="member">Member</option>
+                  {isOwner && <option value="manager">Manager</option>}
+                  {isOwner && <option value="owner">Owner</option>}
                 </select>
                 <Button size="sm" onClick={onAddMember} disabled={busy === 'member' || !memberEmail.trim()} className="gap-1.5">
                   {busy === 'member' ? <Loader2 size={14} className="animate-spin" /> : <UserPlus size={14} />}
@@ -239,17 +224,17 @@ export default function OrgDashboard() {
         {/* Managed parties */}
         <section>
           <SectionHeading icon={<Star size={15} />}>
-            Managed Parties ({detail.managedParties.length})
+            Managed Parties ({detail.parties.length})
           </SectionHeading>
           <ul className="space-y-2 mb-4">
-            {detail.managedParties.length === 0 && (
+            {detail.parties.length === 0 && (
               <li className="text-xs text-muted-foreground italic py-2">No managed parties yet.</li>
             )}
-            {detail.managedParties.map((p) => (
+            {detail.parties.map((p) => (
               <li key={p.id} className="p-3 border border-border/60 rounded-sm bg-card">
                 <span className="block text-sm font-medium text-foreground">{p.name}</span>
                 <span className="block text-xs text-muted-foreground">
-                  {p.roles.length ? p.roles.map((r) => PARTY_ROLE_LABELS[r] ?? r).join(', ') : 'No roles'}
+                  {PARTY_ROLE_LABELS[p.role] ?? p.role}
                 </span>
               </li>
             ))}
@@ -287,43 +272,6 @@ export default function OrgDashboard() {
         </section>
       </div>
 
-      {/* Pending verifications (owner/manager) */}
-      {canManage && (
-        <section>
-          <SectionHeading icon={<ShieldCheck size={15} />}>
-            Pending Verifications ({orgPending.length})
-          </SectionHeading>
-          {orgPending.length === 0 ? (
-            <p className="text-xs text-muted-foreground italic">
-              No one has claimed your managed parties yet.
-            </p>
-          ) : (
-            <ul className="space-y-2">
-              {orgPending.map((c) => (
-                <li
-                  key={c.id}
-                  className="flex flex-col sm:flex-row sm:items-center gap-3 p-3 border border-border/60 rounded-sm bg-card"
-                >
-                  <div className="flex-1 min-w-0">
-                    <span className="text-sm font-medium text-foreground">{c.claimantName}</span>
-                    <span className="text-xs text-muted-foreground ml-2">
-                      claims <span className="font-medium">{PARTY_ROLE_LABELS[c.role] ?? c.role}</span> · {c.partyName}
-                    </span>
-                  </div>
-                  <div className="flex items-center gap-2">
-                    <Button size="sm" onClick={() => onVerify(c.id)} disabled={busy === c.id} className="gap-1.5">
-                      {busy === c.id ? <Loader2 size={14} className="animate-spin" /> : <Check size={14} />} Approve
-                    </Button>
-                    <Button size="sm" variant="outline" onClick={() => onReject(c.id)} disabled={busy === c.id} className="gap-1.5">
-                      <X size={14} /> Reject
-                    </Button>
-                  </div>
-                </li>
-              ))}
-            </ul>
-          )}
-        </section>
-      )}
 
       {/* Org horses */}
       <section>

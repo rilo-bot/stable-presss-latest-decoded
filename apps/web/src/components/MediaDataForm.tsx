@@ -19,6 +19,7 @@ import { useMediaStore } from '@/stores/mediaStore';
 import { uploadRawFile } from '@/lib/upload';
 import { useHorseStore } from '@/stores/horseStore';
 import { usePartyStore } from '@/stores/partyStore';
+import { useRegister } from '@/lib/register';
 import { useArticleStore } from '@/stores/articleStore';
 import { loadDraft, useFormDraft } from '@/hooks/useFormDraft';
 import { DraftRestoredHint } from './DraftRestoredHint';
@@ -56,7 +57,7 @@ export function MediaDataForm({ horseId, initial, onSave, onCancel, compact = fa
 
   const horses = useHorseStore((s) => s.horses);
   const fetchHorses = useHorseStore((s) => s.fetchHorses);
-  const allParties = usePartyStore((s) => s.parties);
+  const allParties = useRegister();
   const fetchParties = usePartyStore((s) => s.fetchParties);
   const allArticles = useArticleStore((s) => s.articles);
   const fetchArticles = useArticleStore((s) => s.fetchArticles);

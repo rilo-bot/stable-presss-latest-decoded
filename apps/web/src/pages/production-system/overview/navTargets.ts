@@ -36,22 +36,17 @@ const WHERE_ALIAS: Record<string, string> = {
 };
 
 /**
- * Tokens that leave the production system entirely, so they resolve to an
- * absolute route rather than a module. Claim verification is a platform-admin
- * screen on the public app; the server only emits this item for admins.
- */
-const EXTERNAL_ROUTES: Record<string, string> = {
-  claims: '/claims',
-};
-
-/**
  * The route for a dashboard `where` token, or null if this user cannot get there.
  * Fails closed on the module axis, the same way the sidebar does.
+ *
+ * There was an EXTERNAL_ROUTES escape hatch here for one token, 'claims', which
+ * pointed outside the production system at /claims. Both ends are gone: claim
+ * verification was removed (a member claims their own register entry and it is
+ * live at once), and the server stopped emitting the token. Left in, it was the
+ * one path that could return a route WITHOUT checking it still existed — exactly
+ * the bug the rest of this file was written to prevent.
  */
 export function resolveWhere(where: string): string | null {
-  const external = EXTERNAL_ROUTES[where];
-  if (external) return external;
-
   const moduleId = WHERE_ALIAS[where] ?? where;
   const item = SIDE_NAV.find((i) => i.id === moduleId);
   if (!item) return null;

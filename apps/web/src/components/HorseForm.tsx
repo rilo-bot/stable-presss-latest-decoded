@@ -1,6 +1,6 @@
 import { useState, useEffect, useMemo } from 'react';
 import { useHorseStore } from '@/stores/horseStore';
-import { usePartyStore } from '@/stores/partyStore';
+import { useRegister } from '@/lib/register';
 import type { Horse } from '@/types/horse';
 import { Button } from '@/components/ui/button';
 import { X, Share as HorseIcon, Save, Trash, RotateCcw } from 'lucide-react';
@@ -35,7 +35,7 @@ export function HorseForm({ open, onClose, editHorse, defaultOwnerId, defaultCon
   const addHorse = useHorseStore((s) => s.addHorse);
   const updateHorse = useHorseStore((s) => s.updateHorse);
   const removeHorse = useHorseStore((s) => s.removeHorse);
-  const allParties = usePartyStore((s) => s.parties);
+  const allParties = useRegister();
 
   const [form, setForm] = useState<FormData>(empty());
   const [saving, setSaving] = useState(false);

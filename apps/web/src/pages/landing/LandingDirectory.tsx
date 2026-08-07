@@ -24,7 +24,10 @@ interface LandingDirectoryProps {
 }
 
 export function LandingDirectory({ parties }: LandingDirectoryProps) {
-  const verified = parties.filter((p) => p.verificationStatus === 'verified').slice(0, 4);
+  // Everyone in the register is public — there is no verified/unverified split
+  // any more. Show the people who actually fill a role, so the directory can't
+  // lead with a bare name that has nothing behind it.
+  const verified = parties.filter((p) => p.roles.length > 0).slice(0, 4);
   if (verified.length === 0) return null;
 
   return (
@@ -39,9 +42,9 @@ export function LandingDirectory({ parties }: LandingDirectoryProps) {
             className="group flex flex-col rounded-sm border border-border/60 bg-card overflow-hidden hover:border-primary/40 transition-colors"
           >
             <div className="relative h-28 bg-muted/30 flex items-center justify-center overflow-hidden">
-              {party.photo ? (
+              {party.imageUrl ? (
                 <img
-                  src={party.photo}
+                  src={party.imageUrl}
                   alt={party.name}
                   crossOrigin="anonymous"
                   loading="lazy"

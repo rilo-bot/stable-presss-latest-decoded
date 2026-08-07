@@ -126,7 +126,10 @@ export interface V2Collaborator {
   role: 'editor' | 'contributor';
   pageIds: string[] | 'all';
 }
-export interface StaffEntry { userId: string; displayName: string; email: string }
+/** A row of /api/staff/directory. The field is `name` — NOT `displayName`, which
+ *  is what V2Collaborator above carries. Reading the wrong one silently renders
+ *  every candidate as their raw email address. */
+export interface StaffEntry { userId: string; name: string; email: string }
 
 /** Staff picker candidates. Staff-gated (not `team.view`) — a contributor must be
  *  able to share their own magazine. The old `/api/magazines/staff-directory`

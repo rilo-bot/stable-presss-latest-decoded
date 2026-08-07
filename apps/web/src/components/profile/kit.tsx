@@ -18,7 +18,7 @@ export type DataCardImgKey = 'media' | 'racing' | 'breeding' | 'sales' | 'pedigr
 /* ─── Helpers ─── */
 /** A party's real uploaded photo, or undefined — callers render an icon placeholder (no stock images). */
 export function partyPhoto(party: RegisterPerson | undefined, _roleKey?: string): string | undefined {
-  return party?.photo || undefined;
+  return party?.imageUrl || undefined;
 }
 
 export function fmtDate(iso?: string | null): string {

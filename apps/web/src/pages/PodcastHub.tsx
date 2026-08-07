@@ -165,7 +165,7 @@ export default function PodcastHub() {
                   <Mic size={28} className="text-primary" />
                 </div>
                 {/* The production CTA is staff-only — the Campaign Engine screen
-                    behind it needs `newsroom.access` and the podcast module, and
+                    behind it needs an admin role and the podcast module, and
                     redirects a reader home. */}
                 <h3 className="font-[family-name:var(--font-display)] text-xl font-bold text-foreground mb-2">
                   The microphones are live.

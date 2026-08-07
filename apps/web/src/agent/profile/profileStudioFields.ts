@@ -32,11 +32,11 @@ const FIELD_BOXES: StudioBoxDef[] = [
   { key: 'notes', label: 'Notes', kind: 'fields', fields: ['pullQuote', 'pedigreeNotes'] },
 ];
 
-// One connection box per role with a relationship_type (Syndicate Manager has
-// none — it's derived — so it isn't selectable). Keyed conn:<rel> to match the
-// onboarding connection steps.
-const CONNECTION_BOXES: StudioBoxDef[] = ROLE_BOXES.filter((d) => d.rel).map((d) => ({
-  key: `conn:${d.rel}`,
+// One connection box per racing role. Keyed conn:<role> to match the
+// every role is selectable now.— the party edge carries the role directly, so
+// every role is selectable now.
+const CONNECTION_BOXES: StudioBoxDef[] = ROLE_BOXES.map((d) => ({
+  key: `conn:${d.role}`,
   label: d.label.replace(/\s*Data$/i, '').replace(/\(s\)/i, 's'),
   kind: 'connection' as const,
   fields: [],

@@ -78,13 +78,13 @@ export function NavBar() {
     ? [
         { label: 'Dashboard', to: '/dashboard' },
         ...(myPartyId ? [{ label: 'My Profile', to: `/parties/${myPartyId}` }] : []),
-        ...(currentUser.orgMemberships && currentUser.orgMemberships.length > 0
-          ? [{ label: 'My Organisation', to: `/orgs/${currentUser.orgMemberships[0].orgId}` }]
+        ...(currentUser.orgMembers && currentUser.orgMembers.length > 0
+          ? [{ label: 'My Organisation', to: `/orgs/${currentUser.orgMembers[0].orgId}` }]
           : []),
         ...(staff ? [{ label: 'Site Content', to: '/site-content', staff: true }] : []),
-        ...(can('platform.admin')
-          ? [{ label: 'Verify Claims', to: '/claims', staff: true }]
-          : []),
+        // No "Verify Claims": /claims went with claim verification itself.
+        // Claiming a register entry takes effect immediately, so there is no
+        // queue — and the link outlived the route, landing admins on the 404.
       ]
     : [];
 

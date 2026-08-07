@@ -25,7 +25,7 @@ import { cn } from '@/lib/utils';
 import { roleSummary, useAssignedRoles } from '@/lib/roleDisplay';
 import type { AuthUser } from '@/stores/authStore';
 import type { Horse } from '@/types/horse';
-import type { Party } from '@/types/party';
+import type { RegisterPerson } from '@/lib/register';
 import type { MediaItem } from '@/types/mediaItem';
 import type { RacingEntry } from '@/types/racingEntry';
 
@@ -37,7 +37,7 @@ const SECTIONS = ['Workspace', 'Content', 'Stables', 'Management'] as const;
 export interface NavCounts {
   pendingReview: number;
   horses: Horse[];
-  safeParties: Party[];
+  safeParties: RegisterPerson[];
   mediaItems: MediaItem[];
   racingEntries: RacingEntry[];
 }

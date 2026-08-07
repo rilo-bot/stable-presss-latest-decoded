@@ -1,18 +1,18 @@
 // Apply / discard / undo for Stable Studio proposals. Kept out of the store to
 // avoid a store↔store import cycle (mirrors editor/agent/applyEdits.ts).
-// Field proposals → updateHorse/updateParty; connection proposals → find-or-create
-// the party (provisional) then addLink. Every apply records an undo entry.
+// Field proposals → updateHorse/updatePerson; connection proposals → find-or-create
+// the person then add ONE party edge. Every apply records an undo entry.
 
 import { toast } from 'sonner';
 import { useHorseStore } from '@/stores/horseStore';
 import { usePartyStore } from '@/stores/partyStore';
-import { useHorsePartyLinkStore } from '@/stores/horsePartyLinkStore';
-import { ROLE_BINDINGS } from '@/lib/profile/roleMap';
+import { usePeopleStore } from '@/stores/peopleStore';
+
 import type { Horse } from '@/types/horse';
 import { useProfileAgentUi, type Proposal, type FieldProposal, type ConnProposal } from '@/stores/profileAgentUiStore';
-import type { RegisterPerson } from '@/lib/register';
+import type { Person } from '@/types/party';
 
-const NUMERIC_FIELDS = new Set(['careerWinnings', 'currentRating', 'handsSize', 'metricSize', 'damYob', 'started_year']);
+const NUMERIC_FIELDS = new Set(['careerWinnings', 'currentRating', 'handsSize', 'metricSize', 'damYob', 'startedYear']);
 
 function coerce(field: string, raw: string): string | number | undefined {
   const v = raw.trim();
@@ -31,26 +31,29 @@ async function applyField(p: FieldProposal) {
     await useHorseStore.getState().updateHorse(p.entityId, { [p.field]: value } as Partial<Horse>);
     useProfileAgentUi.getState().pushUndo({ kind: 'field', entityKind: 'horse', entityId: p.entityId, field: p.field, prevValue: prev });
   } else {
-    const prev = (usePartyStore.getState().parties.find((x) => x.id === p.entityId) as Record<string, unknown> | undefined)?.[p.field];
-    await usePartyStore.getState().updateParty(p.entityId, { [p.field]: value } as Partial<RegisterPerson>);
+    const prev = (usePeopleStore.getState().people.find((x) => x.id === p.entityId) as Record<string, unknown> | undefined)?.[p.field];
+    await usePeopleStore.getState().updatePerson(p.entityId, { [p.field]: value } as Partial<Person>);
     useProfileAgentUi.getState().pushUndo({ kind: 'field', entityKind: 'party', entityId: p.entityId, field: p.field, prevValue: prev });
   }
 }
 
+/**
+ * A connection IS a party edge. The person is created first when the name is
+ * new, then ONE edge joins them to this horse under that role.
+ *
+ * The proposal's start/end years are ignored: an edge carries no dates, so
+ * writing them would be inventing a field the server does not store.
+ */
 async function applyConnection(p: ConnProposal) {
-  const rel = ROLE_BINDINGS[p.role]?.relType;
-  if (!rel) { toast.error(`${p.role} can't be linked directly.`); return; }
   const name = p.partyName.trim();
-  const existing = usePartyStore.getState().parties.find((x) => x.name.trim().toLowerCase() === name.toLowerCase());
-  let partyId = existing?.id;
-  if (!partyId) {
-    partyId = await usePartyStore.getState().addParty({ name, roles: [p.role] });
-    if (!partyId) return;
+  const existing = usePeopleStore.getState().people.find((x) => x.name.trim().toLowerCase() === name.toLowerCase());
+  let personId = existing?.id;
+  if (!personId) {
+    personId = await usePeopleStore.getState().addPerson({ name, personnelSubtype: [] });
+    if (!personId) return;
   }
-  const start = p.startYear ? `${p.startYear}-01-01` : new Date().toISOString().slice(0, 10);
-  const end = p.present ? null : (p.endYear ? `${p.endYear}-12-31` : null);
-  const linkId = await useHorsePartyLinkStore.getState().addLink({ horse_id: p.entityId, party_id: partyId, relationship_type: rel, start_date: start, end_date: end });
-  if (linkId) useProfileAgentUi.getState().pushUndo({ kind: 'connection', linkId });
+  const edgeId = await usePartyStore.getState().addParty({ personId, role: p.role, horseId: p.entityId });
+  if (edgeId) useProfileAgentUi.getState().pushUndo({ kind: 'connection', linkId: edgeId });
 }
 
 export async function applyProposal(p: Proposal) {
@@ -77,9 +80,9 @@ export async function undoLastProposal() {
   if (!e) return;
   if (e.kind === 'field') {
     if (e.entityKind === 'horse') await useHorseStore.getState().updateHorse(e.entityId, { [e.field]: e.prevValue } as Partial<Horse>);
-    else await usePartyStore.getState().updateParty(e.entityId, { [e.field]: e.prevValue } as Partial<RegisterPerson>);
+    else await usePeopleStore.getState().updatePerson(e.entityId, { [e.field]: e.prevValue } as Partial<Person>);
   } else {
-    await useHorsePartyLinkStore.getState().removeLink(e.linkId);
+    await usePartyStore.getState().removeParty(e.linkId);
   }
   toast.success('Reverted.');
 }

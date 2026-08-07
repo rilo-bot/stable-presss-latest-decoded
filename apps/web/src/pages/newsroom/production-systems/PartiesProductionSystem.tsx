@@ -120,9 +120,9 @@ export function PartiesProductionSystem({
                     >
                       <td className="px-4 py-3 max-w-[200px]">
                         <div className="flex items-center gap-2.5">
-                          {party.photo ? (
+                          {party.imageUrl ? (
                             <img
-                              src={party.photo}
+                              src={party.imageUrl}
                               alt={party.name}
                               crossOrigin="anonymous"
                               className="w-7 h-7 rounded-full object-cover flex-shrink-0 border border-border/40"

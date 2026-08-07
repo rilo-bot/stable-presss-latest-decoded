@@ -1,4 +1,4 @@
-import type { Party } from '@/types/party';
+import type { RegisterPerson } from '@/lib/register';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Textarea } from '@/components/ui/textarea';
@@ -356,13 +356,13 @@ export function ConnectionsSection({
 }: {
   form: FormData;
   setField: SetField;
-  allParties: Party[];
-  ownerParties: Party[];
-  trainerParties: Party[];
-  jockeyParties: Party[];
-  breederParties: Party[];
-  agentParties: Party[];
-  syndMgrParties: Party[];
+  allParties: RegisterPerson[];
+  ownerParties: RegisterPerson[];
+  trainerParties: RegisterPerson[];
+  jockeyParties: RegisterPerson[];
+  breederParties: RegisterPerson[];
+  agentParties: RegisterPerson[];
+  syndMgrParties: RegisterPerson[];
 }) {
   return (
     <Section title="Connections &amp; Personnel" number="3" defaultOpen={false}>

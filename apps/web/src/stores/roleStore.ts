@@ -31,7 +31,7 @@ export interface WorkflowStageMeta {
 /** A role as stored in the database. Every role in the platform is one of these. */
 export interface Role {
   id: string;
-  slug: string;
+  name: string;
   label: string;
   description?: string;
   color?: string;
@@ -61,7 +61,7 @@ export interface RoleDraft {
 interface Result {
   ok: boolean;
   error?: string;
-  slug?: string;
+  name?: string;
 }
 
 interface Catalogue {
@@ -78,11 +78,11 @@ interface RoleState {
   fetchCatalogue: () => Promise<void>;
   fetchRoles: () => Promise<void>;
   createRole: (draft: RoleDraft) => Promise<Result>;
-  updateRole: (slug: string, draft: RoleDraft) => Promise<Result>;
-  deleteRole: (slug: string) => Promise<Result>;
+  updateRole: (name: string, draft: RoleDraft) => Promise<Result>;
+  deleteRole: (name: string) => Promise<Result>;
   /** One role per person — this REPLACES whatever they held, it doesn't add. */
-  assignRole: (slug: string, userId: string) => Promise<Result>;
-  unassignRole: (slug: string, userId: string) => Promise<Result>;
+  assignRole: (name: string, userId: string) => Promise<Result>;
+  unassignRole: (name: string, userId: string) => Promise<Result>;
 }
 
 async function readError(res: Response, fallback: string): Promise<string> {
@@ -136,15 +136,15 @@ export const useRoleStore = create<RoleState>((set, get) => ({
       if (!res.ok) return { ok: false, error: await readError(res, 'Could not create the role.') };
       const data = await res.json().catch(() => null);
       await get().fetchRoles();
-      return { ok: true, slug: data?.role?.slug };
+      return { ok: true, name: data?.role?.name };
     } catch {
       return { ok: false, error: 'Network error. Please try again.' };
     }
   },
 
-  updateRole: async (slug, draft) => {
+  updateRole: async (name, draft) => {
     try {
-      const res = await authFetch(`/api/roles/${slug}`, {
+      const res = await authFetch(`/api/roles/${name}`, {
         method: 'PUT',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(draft),
@@ -158,9 +158,9 @@ export const useRoleStore = create<RoleState>((set, get) => ({
     }
   },
 
-  deleteRole: async (slug) => {
+  deleteRole: async (name) => {
     try {
-      const res = await authFetch(`/api/roles/${slug}`, { method: 'DELETE' });
+      const res = await authFetch(`/api/roles/${name}`, { method: 'DELETE' });
       if (!res.ok) return { ok: false, error: await readError(res, 'Could not delete the role.') };
       await get().fetchRoles();
       await refreshSession();
@@ -170,9 +170,9 @@ export const useRoleStore = create<RoleState>((set, get) => ({
     }
   },
 
-  assignRole: async (slug, userId) => {
+  assignRole: async (name, userId) => {
     try {
-      const res = await authFetch(`/api/roles/${slug}/assign`, {
+      const res = await authFetch(`/api/roles/${name}/assign`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ userId }),
@@ -186,9 +186,9 @@ export const useRoleStore = create<RoleState>((set, get) => ({
     }
   },
 
-  unassignRole: async (slug, userId) => {
+  unassignRole: async (name, userId) => {
     try {
-      const res = await authFetch(`/api/roles/${slug}/assign/${userId}`, { method: 'DELETE' });
+      const res = await authFetch(`/api/roles/${name}/assign/${userId}`, { method: 'DELETE' });
       if (!res.ok) return { ok: false, error: await readError(res, 'Could not remove the role.') };
       await get().fetchRoles();
       await refreshSession();

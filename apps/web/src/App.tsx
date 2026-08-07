@@ -13,7 +13,6 @@ import { useAuthStore } from '@/stores/authStore';
 import { useSiteSettingsStore } from '@/stores/siteSettingsStore';
 import { useHorseStore } from '@/stores/horseStore';
 import { usePartyStore } from '@/stores/partyStore';
-import { useHorsePartyLinkStore } from '@/stores/horsePartyLinkStore';
 
 import Landing from '@/pages/Landing';
 import Login from '@/pages/Login';
@@ -157,7 +156,6 @@ export default function App() {
     if (firstAuthRun.current) { firstAuthRun.current = false; return; }
     void useHorseStore.getState().fetchHorses(true);
     void usePartyStore.getState().fetchParties(true);
-    void useHorsePartyLinkStore.getState().fetchHorsePartyLinks(true);
   }, [authToken]);
 
   return (
