@@ -9,10 +9,10 @@ import { can } from '@/lib/permissions';
 import { PARTY_ROLES, PARTY_ROLE_LABELS } from '@/types/party';
 import type { PartyRole } from '@/types/party';
 import type { Horse } from '@/types/horse';
-import { ROLE_BINDINGS } from '@/lib/profile/roleMap';
+import { ensureConnection } from '@/lib/horseConnections';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
-import { HorseForm } from '@/components/HorseForm';
+import { HorseForm, type ConnectFields } from '@/components/HorseForm';
 import { AddHorseChoice } from '@/components/AddHorseChoice';
 import { SectionHeading } from '@/components/SectionHeading';
 import { toast } from 'sonner';
@@ -40,6 +40,7 @@ export default function Dashboard() {
   const parties = usePartyStore((s) => s.parties);
   const fetchParties = usePartyStore((s) => s.fetchParties);
   const claimParty = usePartyStore((s) => s.claimParty);
+  const addParty = usePartyStore((s) => s.addParty);
   const navigate = useNavigate();
 
   // Signup can hand off the role the member picked (`/dashboard?claim=trainer`),
@@ -76,7 +77,7 @@ export default function Dashboard() {
   );
 
   if (!currentUser) return null;
-  const staff = isAdmin(currentUser);
+  const admin = isAdmin(currentUser);
   // The edges this account has claimed. Every one is live — there is no
   // pending/verified split, so there is no status to render.
   const claims = currentUser.parties ?? [];
@@ -94,21 +95,38 @@ export default function Dashboard() {
     if (pid) navigate(`/studio/${pid}`);
   };
 
-  // Pre-link the member to a new horse under THEIR claimed role (owner→ownerIds,
-  // trainer→trainerIds, …) so they appear in the matching connection box. The
-  // array holds PERSON ids, so that is what goes in — not the edge id.
-  const myConnect = (): Partial<Horse> => {
-    const mine = claims.find((c) => c.id === myPartyId);
-    const c: Partial<Horse> = {};
-    if (mine) (c as Record<string, string[]>)[ROLE_BINDINGS[mine.role].horseField] = [mine.personId];
-    return c;
+  // Pre-link the member to a new horse under THEIR claimed role, so they appear
+  // in the matching connection box. A link is a party EDGE, and an edge points at
+  // a PERSON — so this carries `personId`, never the edge's own id.
+  const myEdge = () => claims.find((c) => c.id === myPartyId);
+  const myConnect = (): ConnectFields => {
+    const mine = myEdge();
+    return mine ? { [mine.role]: [mine.personId] } : {};
   };
 
   // Guided path: create an un-named draft (photo-first) and drop into its studio.
+  // The horse is saved first, then linked — the edge needs its id.
+  //
+  // The register is re-read in between because the SERVER also links the creator
+  // on POST /api/horses. Without the refresh this would add a duplicate edge and
+  // the member would appear twice in their own connection box.
   const onAddHorseGuided = async () => {
     setAddChooser(false);
     setBusy('horse');
-    const created = await addHorse({ ...myConnect(), name: '', isUnnamed: true, pedigreeNotes: '' });
+    const created = await addHorse({ name: '', isUnnamed: true, pedigreeNotes: '' });
+    if (created) {
+      const mine = myEdge();
+      if (mine) {
+        await fetchParties(true);
+        await ensureConnection(
+          usePartyStore.getState().parties,
+          created.id,
+          mine.personId,
+          mine.role,
+          addParty,
+        );
+      }
+    }
     setBusy(null);
     if (created) navigate(`/studio/horse/${created.id}`);
   };
@@ -149,7 +167,7 @@ export default function Dashboard() {
           The register is shared and admin-maintained — you claim the entry that
           already represents you rather than minting a rival one. Claiming takes
           effect immediately; there is nothing to wait for. */}
-      {!staff && !myPartyId && (
+      {!admin && !myPartyId && (
         <section className="rounded-lg border border-primary/30 bg-primary/5 p-5">
           <h2 className="text-sm font-bold uppercase tracking-[0.1em] text-foreground">Find yourself in the register</h2>
           <p className="text-xs text-muted-foreground mt-1">
@@ -331,9 +349,9 @@ export default function Dashboard() {
           </div>
         </Section>
 
-        {/* Staff / admin */}
-        {staff && (
-          <Section title="Production System & Staff" icon={<Users size={15} />}>
+        {/* Admin */}
+        {admin && (
+          <Section title="Production System" icon={<Users size={15} />}>
             <p className="text-sm text-muted-foreground mb-3">
               Story workflow, thoroughbred records, parties, media and racing data all live in the
               production system.

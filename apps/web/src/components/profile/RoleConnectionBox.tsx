@@ -41,14 +41,16 @@ export const roleDefByRole: Record<string, RoleDef> = Object.fromEntries(
 );
 
 /**
- * One connection. `id` is the party edge's id, EXCEPT for a legacy connection
- * that lives only in the horse's own `ownerIds`/`trainerIds` array — those have
- * no edge row, so they are read-only here.
+ * One connection. `id` is the party edge's id — always, now.
+ *
+ * There used to be a second kind, living only in the horse's own `ownerIds` /
+ * `trainerIds` array with no edge row behind it. Those carried `legacy: true`
+ * and had to be rendered read-only, because there was nothing to delete. Both
+ * the arrays and the distinction are gone.
  */
 export interface Entry {
   id: string;
   party: RegisterPerson | undefined;
-  legacy: boolean;
 }
 
 export interface AddPayload { name: string; photo?: string }
@@ -149,7 +151,7 @@ export function RoleConnectionBox({ def, entries, editable, onOpenParty, onAdd, 
                         {e.party?.profession || PARTY_ROLE_LABELS[def.role]}
                       </div>
                     </button>
-                    {editable && !e.legacy ? (
+                    {editable ? (
                       <button onClick={() => onRemove(e.id)} title="Remove connection" style={{ background: 'none', border: 'none', cursor: 'pointer', color: '#a85', padding: 2, flexShrink: 0 }}><Trash2 size={12} /></button>
                     ) : (
                       e.party && <ChevronRight size={13} style={{ color: 'var(--gold-mid)', flexShrink: 0 }} />

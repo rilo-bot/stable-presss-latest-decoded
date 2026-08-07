@@ -6,11 +6,11 @@ import type { PublicNavKey } from '@/types/siteSettings';
 
 interface LandingFooterProps {
   hasUser: boolean;
-  isStaff: boolean;
+  isAdmin: boolean;
   sponsors: Sponsor[];
 }
 
-export function LandingFooter({ hasUser, isStaff, sponsors }: LandingFooterProps) {
+export function LandingFooter({ hasUser, isAdmin, sponsors }: LandingFooterProps) {
   // Reads the switches itself rather than taking a prop: the section lists live
   // inside this component and Landing.tsx cannot filter them from outside.
   const publicNav = useSiteSettingsStore((s) => s.publicNav);
@@ -120,7 +120,7 @@ export function LandingFooter({ hasUser, isStaff, sponsors }: LandingFooterProps
                   { to: '/tipping', label: 'Tipping Ring' },
                   { to: '/tipping', label: 'Leaderboard' },
                   ...(shows('bulletins') ? [{ to: '/bulletins', label: 'Print Bulletins' }] : []),
-                  ...(isStaff ? [{ to: '/production-system', label: 'Production System' }] : []),
+                  ...(isAdmin ? [{ to: '/production-system', label: 'Production System' }] : []),
                 ].map((item) => (
                   <li key={item.label}>
                     <Link
@@ -147,7 +147,7 @@ export function LandingFooter({ hasUser, isStaff, sponsors }: LandingFooterProps
                         { to: '/signup', label: 'Create Account' },
                         { to: '/signup', label: 'Membership Plans' },
                       ]),
-                  ...(isStaff ? [{ to: '/production-system', label: 'Production System' }] : []),
+                  ...(isAdmin ? [{ to: '/production-system', label: 'Production System' }] : []),
                 ].map((item) => (
                   <li key={item.label}>
                     <Link

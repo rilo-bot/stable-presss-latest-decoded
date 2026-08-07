@@ -137,7 +137,10 @@ export function ArticleForm({
   const updateArticle = useArticleStore((s) => s.updateArticle);
   const horses = useHorseStore((s) => s.horses);
   const parties = useRegister();
-  const horseConn = connectionResolver(parties);
+  // The raw EDGES, not the joined register — an edge is what ties a person to a
+  // horse, and it already carries their name.
+  const partyEdges = usePartyStore((s) => s.parties);
+  const horseConn = connectionResolver(partyEdges);
   const currentUser = useAuthStore((s) => s.currentUser);
 
   const [title, setTitle] = useState('');

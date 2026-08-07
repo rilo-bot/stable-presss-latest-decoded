@@ -46,7 +46,8 @@ import { ProfileAgentPanel, StudioLauncher } from '@/agent/profile/ProfileAgentP
 import { useProfileAgentUi, type ProfileContext } from '@/stores/profileAgentUiStore';
 import { DossierMeter } from '@/components/DossierMeter';
 import { AskAgentButton } from '@/components/AskAgentButton';
-import { HorseForm } from '@/components/HorseForm';
+import { HorseForm, type ConnectFields } from '@/components/HorseForm';
+import { ensureConnection } from '@/lib/horseConnections';
 import { AddHorseChoice } from '@/components/AddHorseChoice';
 
 type Mode = 'view' | 'edit';
@@ -102,6 +103,7 @@ export function PartyProfile({ partyId, mode, onBack }: PartyProfileProps) {
   useLoadRegister();
   const parties = usePartyStore((s) => s.parties);
   const fetchParties = usePartyStore((s) => s.fetchParties);
+  const addParty = usePartyStore((s) => s.addParty);
   const updatePerson = usePeopleStore((s) => s.updatePerson);
   const horses = useHorseStore((s) => s.horses);
   const fetchHorses = useHorseStore((s) => s.fetchHorses);
@@ -216,22 +218,33 @@ export function PartyProfile({ partyId, mode, onBack }: PartyProfileProps) {
     void set({ personnelSubtype: next });
   };
 
-  // Link the new horse to THIS party under the role the studio is centred on, so
+  // Link the new horse to THIS person under the role the studio is centred on, so
   // the creator shows in the matching connection box (a trainer in Trainers, not
-  // Owners). The server reads this *Ids field to pick the link's relationship.
-  const selfConnect = (): Partial<Horse> => {
-    const c: Partial<Horse> = {};
-    (c as Record<string, string[]>)[ROLE_BINDINGS[activeRole].horseField] = [partyId];
-    return c;
-  };
+  // Owners).
+  //
+  // This used to be a `Partial<Horse>` setting the matching `*Ids` array, saved
+  // with the horse in one request. Those fields are gone — the link is a party
+  // EDGE, so it is written separately, after the horse has an id.
+  const selfConnect = (): ConnectFields => ({ [activeRole]: [partyId] });
 
   // Photo-first path: create an un-named draft (foal / yearling) with no name and
   // jump into its studio — naming is never a hard gate.
   const onAddUnnamedFoal = async () => {
     setAdding(true);
     try {
-      const created = await addHorse({ ...selfConnect(), name: '', isUnnamed: true, pedigreeNotes: '' });
-      if (created) navigate(`/studio/horse/${created.id}`);
+      const created = await addHorse({ name: '', isUnnamed: true, pedigreeNotes: '' });
+      if (!created) return;
+      // Re-read first: POST /api/horses links the creator itself when a member
+      // registers a horse, and adding the same edge again would list them twice.
+      await fetchParties(true);
+      await ensureConnection(
+        usePartyStore.getState().parties,
+        created.id,
+        partyId,
+        activeRole,
+        addParty,
+      );
+      navigate(`/studio/horse/${created.id}`);
     } finally {
       setAdding(false);
     }

@@ -9,7 +9,7 @@
  * Analysis and Interviews — were the SAME PAGE under different `?section=` params.
  * See navbar/config.tsx.
  *
- * The staff links keep their position at the right-hand end of this row, past the
+ * The admin links keep their position at the right-hand end of this row, past the
  * spacer, unchanged.
  */
 import { Link } from 'react-router-dom';
@@ -22,12 +22,12 @@ interface DesktopMenuProps {
   activeDropdown: string | null;
   setActiveDropdown: (value: string | null) => void;
   isSectionActive: (section: NavSection) => boolean;
-  staff: boolean;
+  admin: boolean;
   pathname: string;
 }
 
-/** The staff link's own styling, kept separate from the section links above. */
-const staffLinkClass = (active: boolean) =>
+/** The admin link's own styling, kept separate from the section links above. */
+const adminLinkClass = (active: boolean) =>
   cn(
     'flex items-center gap-1.5 px-3 py-2.5 text-[12px] uppercase tracking-[0.08em] font-semibold transition-colors border-b-2 flex-shrink-0',
     active
@@ -39,7 +39,7 @@ export function DesktopMenu({
   activeDropdown,
   setActiveDropdown,
   isSectionActive,
-  staff,
+  admin,
   pathname,
 }: DesktopMenuProps) {
   // Which of the six an admin has switched on. Subscribed, so flipping a switch
@@ -103,7 +103,7 @@ export function DesktopMenu({
             );
           })}
 
-          {/* Spacer, then the staff links — same place as always. */}
+          {/* Spacer, then the admin links — same place as always. */}
           <div className="flex-1" />
 
           {/* A "Studio" link sat here, pointing at /podcast/workflow. Podcast
@@ -112,10 +112,10 @@ export function DesktopMenu({
               one of them a redirect, is the duplication this header row exists to
               have less of. */}
 
-          {staff && (
+          {admin && (
             <Link
               to="/production-system"
-              className={staffLinkClass(pathname === '/production-system')}
+              className={adminLinkClass(pathname === '/production-system')}
               style={
                 pathname === '/production-system'
                   ? { borderBottomColor: 'hsl(var(--brand-accent))' }

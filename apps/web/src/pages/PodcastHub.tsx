@@ -164,7 +164,7 @@ export default function PodcastHub() {
                 <div className="w-16 h-16 rounded-full bg-primary/10 flex items-center justify-center mx-auto mb-4">
                   <Mic size={28} className="text-primary" />
                 </div>
-                {/* The production CTA is staff-only — the Campaign Engine screen
+                {/* The production CTA is admin-only — the Campaign Engine screen
                     behind it needs an admin role and the podcast module, and
                     redirects a reader home. */}
                 <h3 className="font-[family-name:var(--font-display)] text-xl font-bold text-foreground mb-2">

@@ -29,7 +29,8 @@ async function listHorses(): Promise<unknown> {
     usePartyStore.getState().fetchParties(),
   ]);
   const horses = useHorseStore.getState().horses;
-  const conn = connectionResolver(buildRegister(usePeopleStore.getState().people, usePartyStore.getState().parties));
+  // Connections come off the EDGES, which already carry the person's name.
+  const conn = connectionResolver(usePartyStore.getState().parties);
   const list = horses.slice(0, 200).map((h) => ({ id: h.id, name: h.name, trainer: conn(h).trainer || '' }));
   // Also surface the list to the user as an on-screen, read-only reference box.
   useStoryStudioUi.getState().setHorseOptions(list);

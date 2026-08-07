@@ -27,6 +27,32 @@ router.get('/', async (req, res) => {
   res.json(visible.map(project));
 });
 
+/**
+ * Connection fields that used to live ON the horse.
+ *
+ * A connection is a party EDGE — `{ personId, role, horseId }` in `parties`.
+ * These arrays were a SECOND copy of the same fact, and because both writers
+ * were accepted neither was authoritative: a trainer added through the Horse
+ * form and one added through the connections panel landed in different places.
+ *
+ * Stripped at RUNTIME, not just removed from the type below: both handlers
+ * spread `...body` wholesale, so a type alone would document the rule while the
+ * server kept writing whatever a client sent.
+ */
+const CONNECTION_FIELDS = [
+  'ownerIds',
+  'trainerIds',
+  'jockeyIds',
+  'breederIds',
+  'bloodstockAgentIds',
+  'syndicateManagerIds',
+  'personnelIds',
+] as const;
+
+function stripConnectionFields(doc: Record<string, unknown>): void {
+  for (const field of CONNECTION_FIELDS) delete doc[field];
+}
+
 router.post('/', async (req, res) => {
   const body = req.body as Partial<{
     name: string;
@@ -44,13 +70,6 @@ router.post('/', async (req, res) => {
     damYob: number;
     damSire: string;
     damDam: string;
-    ownerIds: string[];
-    trainerIds: string[];
-    jockeyIds: string[];
-    breederIds: string[];
-    bloodstockAgentIds: string[];
-    syndicateManagerIds: string[];
-    personnelIds: string[];
     careerRecord: string;
     careerWinnings: number;
     lastTenForm: string;
@@ -90,6 +109,7 @@ router.post('/', async (req, res) => {
     updatedAt: now,
   };
   delete (doc as { id?: unknown }).id;
+  stripConnectionFields(doc);
 
   const id = await db.collection('horses').insertOne(doc);
 
@@ -149,13 +169,6 @@ router.put('/:id', async (req, res) => {
     damYob: number;
     damSire: string;
     damDam: string;
-    ownerIds: string[];
-    trainerIds: string[];
-    jockeyIds: string[];
-    breederIds: string[];
-    bloodstockAgentIds: string[];
-    syndicateManagerIds: string[];
-    personnelIds: string[];
     careerRecord: string;
     careerWinnings: number;
     lastTenForm: string;
@@ -173,6 +186,7 @@ router.put('/:id', async (req, res) => {
   const update: Record<string, unknown> = { ...body, updatedAt: now };
   delete (update as { id?: unknown }).id;
   delete (update as { createdByUserId?: unknown }).createdByUserId; // never client-settable
+  stripConnectionFields(update); // connections are edges — see CONNECTION_FIELDS
   if (!staff) delete (update as { verificationStatus?: unknown }).verificationStatus; // members can't self-verify
   const updated_flag = await db.collection('horses').updateOne(req.params.id, update);
   if (!updated_flag) {

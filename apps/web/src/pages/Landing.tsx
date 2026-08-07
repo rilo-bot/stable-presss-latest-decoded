@@ -38,6 +38,8 @@ export default function Landing() {
   // === auto fetch-on-mount (backend planner) ===
   const fetchHorses = useHorseStore((s) => s.fetchHorses);
   const fetchParties = usePartyStore((s) => s.fetchParties);
+  /** Raw edges — a horse's connections come from these, not the joined register. */
+  const partyEdges = usePartyStore((s) => s.parties);
   const fetchArticles = useArticleStore((s) => s.fetchArticles);
   const fetchPodcastEpisodes = usePodcastStore((s) => s.fetchPodcastEpisodes);
   const fetchIssues = useIssueStore((s) => s.fetchIssues);
@@ -89,7 +91,7 @@ export default function Landing() {
   // Its own slice, not the `items` array /blog and the newsroom share — see the
   // note on `latest` in stores/blogStore.ts.
   const latestBlogs = useBlogStore((s) => s.latest);
-  const horseConn = useMemo(() => connectionResolver(parties ?? []), [parties]);
+  const horseConn = useMemo(() => connectionResolver(partyEdges), [partyEdges]);
   const currentUser = useAuthStore((s) => s.currentUser);
 
   const [subscribeEmail, setSubscribeEmail] = useState('');
@@ -229,7 +231,7 @@ export default function Landing() {
               featuredArticles={featuredArticles}
               horses={horses}
               horseConn={horseConn}
-              isStaff={isAdmin(currentUser)}
+              isAdmin={isAdmin(currentUser)}
             />
 
             {/* Each block below is one public section, so each goes with its
@@ -263,7 +265,7 @@ export default function Landing() {
         </div>
       </div>
 
-      <LandingFooter hasUser={!!currentUser} isStaff={isAdmin(currentUser)} sponsors={sponsors} />
+      <LandingFooter hasUser={!!currentUser} isAdmin={isAdmin(currentUser)} sponsors={sponsors} />
     </div>
   );
 }

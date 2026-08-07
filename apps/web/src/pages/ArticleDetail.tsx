@@ -45,6 +45,8 @@ export default function ArticleDetail() {
 
   const fetchHorses = useHorseStore((s) => s.fetchHorses);
   const fetchParties = usePartyStore((s) => s.fetchParties);
+  /** Raw edges — a horse's connections come from these, not the joined register. */
+  const partyEdges = usePartyStore((s) => s.parties);
   const fetchArticles = useArticleStore((s) => s.fetchArticles);
   useEffect(() => {
     fetchHorses();
@@ -58,7 +60,7 @@ export default function ArticleDetail() {
   const horses = useHorseStore((s) => s.horses);
   const parties = useRegister();
   const currentUser = useAuthStore((s) => s.currentUser);
-  const horseConn = useMemo(() => connectionResolver(parties), [parties]);
+  const horseConn = useMemo(() => connectionResolver(partyEdges), [partyEdges]);
 
   const article = useMemo(() => articles.find((a) => a.id === id), [articles, id]);
 

@@ -1,6 +1,14 @@
 import { useState, useEffect, useMemo } from 'react';
 import { useHorseStore } from '@/stores/horseStore';
+import { usePartyStore } from '@/stores/partyStore';
 import { useRegister } from '@/lib/register';
+import {
+  connectionsForHorse,
+  emptyConnectionMap,
+  reconcileHorseConnections,
+  type ConnectionMap,
+} from '@/lib/horseConnections';
+import type { PartyRole } from '@/types/party';
 import type { Horse } from '@/types/horse';
 import { Button } from '@/components/ui/button';
 import { X, Share as HorseIcon, Save, Trash, RotateCcw } from 'lucide-react';
@@ -16,16 +24,23 @@ import {
   EditorialSection,
 } from './horse-form/sections';
 
-type ConnectFields = Partial<Pick<Horse,
-  'ownerIds' | 'trainerIds' | 'jockeyIds' | 'breederIds' | 'bloodstockAgentIds' | 'syndicateManagerIds' | 'personnelIds'>>;
+/**
+ * Pre-link when creating: role → PERSON ids. A member registering their own
+ * horse arrives with themselves already filled into their own role.
+ *
+ * This was `Partial<Pick<Horse, 'ownerIds' | …>>` — connection fields ON the
+ * horse. They no longer exist; a connection is a party edge, so the form
+ * collects them separately and writes them after the horse has an id.
+ */
+export type ConnectFields = Partial<Record<PartyRole, string[]>>;
 
 interface HorseFormProps {
   open: boolean;
   onClose: () => void;
   editHorse?: Horse | null;
-  /** Pre-select this party as owner when creating (member self-registration). */
+  /** Pre-select this person as owner when creating (member self-registration). */
   defaultOwnerId?: string;
-  /** Role-aware pre-link when creating (e.g. a trainer member → { trainerIds:[id] }). */
+  /** Role-aware pre-link when creating (e.g. a trainer member → { trainer: [id] }). */
   defaultConnect?: ConnectFields;
   /** Member self-service mode: relax the owner/trainer requirement (self-link is enough). */
   memberMode?: boolean;
@@ -35,12 +50,32 @@ export function HorseForm({ open, onClose, editHorse, defaultOwnerId, defaultCon
   const addHorse = useHorseStore((s) => s.addHorse);
   const updateHorse = useHorseStore((s) => s.updateHorse);
   const removeHorse = useHorseStore((s) => s.removeHorse);
+  const parties = usePartyStore((s) => s.parties);
+  const addParty = usePartyStore((s) => s.addParty);
+  const removeParty = usePartyStore((s) => s.removeParty);
+  const fetchParties = usePartyStore((s) => s.fetchParties);
   const allParties = useRegister();
 
   const [form, setForm] = useState<FormData>(empty());
+  // Connections live OUTSIDE `form`: they are edges in the register, not fields
+  // on the horse, and they save on their own round trip.
+  const [connections, setConnections] = useState<ConnectionMap>(emptyConnectionMap());
   const [saving, setSaving] = useState(false);
   const [confirmDelete, setConfirmDelete] = useState(false);
   const [draftRestored, setDraftRestored] = useState(false);
+
+  const setConnection = (role: PartyRole, ids: string[]) =>
+    setConnections((prev) => ({ ...prev, [role]: ids }));
+
+  /** The pre-link a caller asked for, as a full map. */
+  const seededConnections = (): ConnectionMap => {
+    const map = emptyConnectionMap();
+    if (defaultOwnerId) map.owner = [defaultOwnerId];
+    for (const [role, ids] of Object.entries(defaultConnect ?? {})) {
+      if (ids?.length) map[role as PartyRole] = [...ids];
+    }
+    return map;
+  };
 
   // Drafting is scoped to the entry context (staff full-entry vs member self-service).
   const draftKey = `horse:${memberMode ? 'member' : 'staff'}`;
@@ -80,14 +115,6 @@ export function HorseForm({ open, onClose, editHorse, defaultOwnerId, defaultCon
               microchip: editHorse.microchip ?? '',
               brandFreeze: editHorse.brandFreeze ?? '',
               passportNumber: editHorse.passportNumber ?? '',
-              // Party IDs
-              ownerIds: editHorse.ownerIds ?? [],
-              trainerIds: editHorse.trainerIds ?? [],
-              jockeyIds: editHorse.jockeyIds ?? [],
-              breederIds: editHorse.breederIds ?? [],
-              bloodstockAgentIds: editHorse.bloodstockAgentIds ?? [],
-              syndicateManagerIds: editHorse.syndicateManagerIds ?? [],
-              personnelIds: editHorse.personnelIds ?? [],
               careerRecord: editHorse.careerRecord ?? '',
               careerWinnings: editHorse.careerWinnings,
               lastTenForm: editHorse.lastTenForm ?? '',
@@ -101,17 +128,19 @@ export function HorseForm({ open, onClose, editHorse, defaultOwnerId, defaultCon
           : {
               ...empty(),
               ...(draft ?? {}),
-              // Keep the member's own pre-link intact even when a draft is restored.
-              ...(defaultOwnerId ? { ownerIds: [defaultOwnerId] } : {}),
-              ...(defaultConnect ?? {}),
             }
       );
+      // Editing: the horse's CURRENT edges. Creating: whatever pre-link the
+      // caller asked for. A restored draft never carries connections — they are
+      // register rows, so a stale draft could otherwise resurrect a link that
+      // was deleted while the draft sat in localStorage.
+      setConnections(editHorse ? connectionsForHorse(parties, editHorse.id) : seededConnections());
       setConfirmDelete(false);
       setSaving(false);
     }
     // draftKey is derived from memberMode; loadDraft is stable.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [open, editHorse, defaultOwnerId, defaultConnect]);
+  }, [open, editHorse, defaultOwnerId, defaultConnect, parties]);
 
   const setField = (field: keyof FormData, value: string | number | boolean | string[] | undefined) =>
     setForm((prev) => ({ ...prev, [field]: value }));
@@ -130,12 +159,29 @@ export function HorseForm({ open, onClose, editHorse, defaultOwnerId, defaultCon
 
   const discardDraft = () => {
     clearDraft();
-    setForm({
-      ...empty(),
-      ...(defaultOwnerId ? { ownerIds: [defaultOwnerId] } : {}),
-      ...(defaultConnect ?? {}),
-    });
+    setForm(empty());
+    setConnections(seededConnections());
     setDraftRestored(false);
+  };
+
+  /**
+   * Write the connections as register edges.
+   *
+   * A SEPARATE round trip from saving the horse, because they are separate
+   * records — the horse must exist first, so a new horse reconciles against the
+   * id it was just given. A failure here is reported but does not fail the save:
+   * the horse is already stored, and claiming otherwise would be a lie.
+   */
+  const saveConnections = async (horseId: string, against: typeof parties = parties) => {
+    const { failed } = await reconcileHorseConnections(horseId, connections, against, {
+      addParty,
+      removeParty,
+    });
+    if (failed > 0) {
+      toast.warning(
+        `The horse was saved, but ${failed} connection${failed !== 1 ? 's' : ''} could not be updated. Check the connections panel.`,
+      );
+    }
   };
 
   const handleSubmit = async (e: React.FormEvent) => {
@@ -147,17 +193,14 @@ export function HorseForm({ open, onClose, editHorse, defaultOwnerId, defaultCon
     }
 
     // Owner/trainer are required for STAFF entry (a full record). Members self-
-    // register with just their own party linked (via defaultConnect), so the
+    // register with just their own edge linked (via defaultConnect), so the
     // requirement is relaxed in memberMode.
-    const hasOwner = (form.ownerIds ?? []).length > 0;
-    const hasTrainer = (form.trainerIds ?? []).length > 0;
-
-    if (!memberMode && !hasOwner) {
-      toast.error('At least one owner is required. Add owners in the Parties Production System first.');
+    if (!memberMode && connections.owner.length === 0) {
+      toast.error('At least one owner is required. Add owners in the People register first.');
       return;
     }
-    if (!memberMode && !hasTrainer) {
-      toast.error('At least one trainer is required. Add trainers in the Parties Production System first.');
+    if (!memberMode && connections.trainer.length === 0) {
+      toast.error('At least one trainer is required. Add trainers in the People register first.');
       return;
     }
 
@@ -170,10 +213,16 @@ export function HorseForm({ open, onClose, editHorse, defaultOwnerId, defaultCon
 
       if (editHorse) {
         await updateHorse(editHorse.id, form);
+        await saveConnections(editHorse.id);
         toast.success(`${displayName} has been updated.`);
       } else {
         const created = await addHorse(form);
         if (!created) return; // store already surfaced the error
+        // Re-read the register first: POST /api/horses links the creator itself
+        // when a member registers a horse, and reconciling against a stale list
+        // would add that same edge a second time.
+        await fetchParties(true);
+        await saveConnections(created.id, usePartyStore.getState().parties);
         clearDraft();
         setDraftRestored(false);
         toast.success(`${displayName} has been added to the stables.`);
@@ -282,8 +331,8 @@ export function HorseForm({ open, onClose, editHorse, defaultOwnerId, defaultCon
             <PedigreeSection form={form} setField={setField} />
 
             <ConnectionsSection
-              form={form}
-              setField={setField}
+              connections={connections}
+              setConnection={setConnection}
               allParties={allParties}
               ownerParties={ownerParties}
               trainerParties={trainerParties}

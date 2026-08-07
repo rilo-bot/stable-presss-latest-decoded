@@ -7,10 +7,11 @@ import { RoleConnectionsRail } from '@/components/profile/RoleConnectionsRail';
 import { AddHorseChoice } from '@/components/AddHorseChoice';
 import { DeleteConfirmDialog } from '../components/DeleteConfirmDialog';
 import { useHorseStore } from '@/stores/horseStore';
+import { usePartyStore } from '@/stores/partyStore';
 import { cn } from '@/lib/utils';
 import type { Horse } from '@/types/horse';
 import type { RegisterPerson } from '@/lib/register';
-import type { connectionResolver } from '@/lib/horseConnections';
+import { connectionsForHorse, type connectionResolver } from '@/lib/horseConnections';
 
 interface HorseProductionSystemProps {
   horses: Horse[];
@@ -50,6 +51,10 @@ export function HorseProductionSystem({
   const safeHorses = horses ?? [];
   const navigate = useNavigate();
   const addHorse = useHorseStore((s) => s.addHorse);
+  // The register EDGES. The owner/breeder/trainer/jockey columns used to read
+  // `horse.ownerIds` and friends — the second copy of a connection. Those fields
+  // are gone, so the columns resolve from the edges like everything else.
+  const partyEdges = usePartyStore((s) => s.parties);
   const [chooser, setChooser] = useState(false);
 
   // Index parties once so owner/breeder cells can render each linked person as a
@@ -209,16 +214,16 @@ export function HorseProductionSystem({
                           </div>
                         </td>
                         <td className="px-4 py-3">
-                          {renderPartyLinks(horse.ownerIds)}
+                          {renderPartyLinks(connectionsForHorse(partyEdges, horse.id).owner)}
                         </td>
                         <td className="px-4 py-3">
-                          {renderPartyLinks(horse.breederIds)}
+                          {renderPartyLinks(connectionsForHorse(partyEdges, horse.id).breeder)}
                         </td>
                         <td className="px-4 py-3">
-                          {renderPartyLinks(horse.trainerIds)}
+                          {renderPartyLinks(connectionsForHorse(partyEdges, horse.id).trainer)}
                         </td>
                         <td className="px-4 py-3">
-                          {renderPartyLinks(horse.jockeyIds)}
+                          {renderPartyLinks(connectionsForHorse(partyEdges, horse.id).jockey)}
                         </td>
                         <td className="px-4 py-3">
                           {horse.country ? (

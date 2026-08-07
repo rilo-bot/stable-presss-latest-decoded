@@ -221,7 +221,9 @@ export function HorseProfile({ horseId, mode, onBack }: HorseProfileProps) {
   const goHorse = (hid: string) => navigate(isEdit ? `/studio/horse/${hid}` : `/horses/${hid}`);
 
   const dossierFlags = [
-    horseLinks.length > 0 || (horse.ownerIds?.length ?? 0) > 0,
+    // "Has connections" — one representation now, so the second half of this
+    // test (`horse.ownerIds?.length`) went with the field it read.
+    horseLinks.length > 0,
     !!horse.dob,
     !!(horse.sex || horse.colour),
     !!(horse.sire || horse.dam),

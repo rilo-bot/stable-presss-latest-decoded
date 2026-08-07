@@ -1,4 +1,6 @@
 import type { RegisterPerson } from '@/lib/register';
+import type { ConnectionMap } from '@/lib/horseConnections';
+import type { PartyRole } from '@/types/party';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Textarea } from '@/components/ui/textarea';
@@ -343,9 +345,14 @@ export function PedigreeSection({ form, setField }: { form: FormData; setField: 
 /* ════════════════════════════
     SECTION 3 — Connections & Personnel
     ════════════════════════════ */
+/**
+ * Connections are party EDGES, not fields on the horse, so this section does
+ * NOT read or write `form`. It edits a role → person-ids map that HorseForm
+ * holds separately and reconciles against the register after the horse saves.
+ */
 export function ConnectionsSection({
-  form,
-  setField,
+  connections,
+  setConnection,
   allParties,
   ownerParties,
   trainerParties,
@@ -354,8 +361,8 @@ export function ConnectionsSection({
   agentParties,
   syndMgrParties,
 }: {
-  form: FormData;
-  setField: SetField;
+  connections: ConnectionMap;
+  setConnection: (role: PartyRole, ids: string[]) => void;
   allParties: RegisterPerson[];
   ownerParties: RegisterPerson[];
   trainerParties: RegisterPerson[];
@@ -388,8 +395,8 @@ export function ConnectionsSection({
           <PartyPicker
             label="Owner(s)"
             roleFilter="owner"
-            selectedIds={form.ownerIds ?? []}
-            onChange={(ids) => setField('ownerIds', ids)}
+            selectedIds={connections.owner}
+            onChange={(ids) => setConnection('owner', ids)}
             allParties={allParties}
             required
             hint={`${ownerParties.length} owner${ownerParties.length !== 1 ? 's' : ''} in your database. Select all that apply.`}
@@ -398,8 +405,8 @@ export function ConnectionsSection({
           <PartyPicker
             label="Syndicate Manager(s)"
             roleFilter="syndicate manager"
-            selectedIds={form.syndicateManagerIds ?? []}
-            onChange={(ids) => setField('syndicateManagerIds', ids)}
+            selectedIds={connections['syndicate manager']}
+            onChange={(ids) => setConnection('syndicate manager', ids)}
             allParties={allParties}
             hint={syndMgrParties.length > 0 ? `${syndMgrParties.length} syndicate manager${syndMgrParties.length !== 1 ? 's' : ''} available.` : undefined}
           />
@@ -412,8 +419,8 @@ export function ConnectionsSection({
           <PartyPicker
             label="Trainer(s)"
             roleFilter="trainer"
-            selectedIds={form.trainerIds ?? []}
-            onChange={(ids) => setField('trainerIds', ids)}
+            selectedIds={connections.trainer}
+            onChange={(ids) => setConnection('trainer', ids)}
             allParties={allParties}
             required
             hint={`${trainerParties.length} trainer${trainerParties.length !== 1 ? 's' : ''} in your database.`}
@@ -427,8 +434,8 @@ export function ConnectionsSection({
           <PartyPicker
             label="Jockey(s) / Rider(s)"
             roleFilter="jockey"
-            selectedIds={form.jockeyIds ?? []}
-            onChange={(ids) => setField('jockeyIds', ids)}
+            selectedIds={connections.jockey}
+            onChange={(ids) => setConnection('jockey', ids)}
             allParties={allParties}
             hint={jockeyParties.length > 0 ? `${jockeyParties.length} jockey${jockeyParties.length !== 1 ? 's' : ''} available.` : undefined}
           />
@@ -441,8 +448,8 @@ export function ConnectionsSection({
           <PartyPicker
             label="Breeder(s)"
             roleFilter="breeder"
-            selectedIds={form.breederIds ?? []}
-            onChange={(ids) => setField('breederIds', ids)}
+            selectedIds={connections.breeder}
+            onChange={(ids) => setConnection('breeder', ids)}
             allParties={allParties}
             hint={breederParties.length > 0 ? `${breederParties.length} breeder${breederParties.length !== 1 ? 's' : ''} available.` : undefined}
           />
@@ -455,8 +462,8 @@ export function ConnectionsSection({
           <PartyPicker
             label="Bloodstock Agent(s)"
             roleFilter="bloodstock agent"
-            selectedIds={form.bloodstockAgentIds ?? []}
-            onChange={(ids) => setField('bloodstockAgentIds', ids)}
+            selectedIds={connections['bloodstock agent']}
+            onChange={(ids) => setConnection('bloodstock agent', ids)}
             allParties={allParties}
             hint={agentParties.length > 0 ? `${agentParties.length} agent${agentParties.length !== 1 ? 's' : ''} available.` : undefined}
           />
@@ -464,8 +471,8 @@ export function ConnectionsSection({
           <PartyPicker
             label="Personnel"
             roleFilter="personnel"
-            selectedIds={form.personnelIds ?? []}
-            onChange={(ids) => setField('personnelIds', ids)}
+            selectedIds={connections.personnel}
+            onChange={(ids) => setConnection('personnel', ids)}
             allParties={allParties}
             hint="Vets, farriers, strappers, trackwork riders — all parties with the Personnel role."
           />

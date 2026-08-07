@@ -288,7 +288,7 @@ export default function NewsIndex() {
               </div>
               {/* Staff get the newsroom; readers get somewhere they can actually
                   go. This sent every anonymous visitor to /production-system,
-                  which is RequireStaff and redirects them home. */}
+                  which is RequireAdmin and redirects them home. */}
               <h3 className="font-[family-name:var(--font-display)] text-lg font-bold text-foreground mb-2">
                 {staff
                   ? 'The press stands ready. No dispatches have been filed.'

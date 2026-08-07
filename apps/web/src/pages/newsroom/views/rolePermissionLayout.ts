@@ -17,7 +17,8 @@
 // be the grantable checkbox that gated entry; it has been removed from the
 // catalogue entirely. Being on the team IS Campaign Engine access — anyone added
 // from the Production System can open it, and the role decides only what they find
-// inside (`isStaffIdentity` in apps/server/src/lib/identity.ts). So there is no
+// inside (an account is an admin when `users.roleId` is set — see
+// apps/server/src/lib/collections.ts). So there is no
 // prerequisite for this layout to teach, and no way to build a role that cannot
 // sign in.
 //

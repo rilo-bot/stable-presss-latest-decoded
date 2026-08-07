@@ -5,7 +5,7 @@
  * role badge, Sign Out button) sitting beside a SECOND header row that carried
  * Dashboard, My Profile, My Organisation, Campaign Engine, Site Content, Verify
  * Claims and Podcast Studio as 10px links. Between them the public site header
- * was 112px tall and offered a reader up to nine account and staff links before
+ * was 112px tall and offered a reader up to nine account and admin links before
  * they had read a headline — with Sign Out permanently on screen.
  *
  * All of it lives here now, behind one click. The masthead strip that held the
@@ -25,15 +25,15 @@ import type { AuthUser } from '@/stores/authStore';
 export interface AccountLink {
   label: string;
   to: string;
-  /** Staff tools are grouped below the member links. */
-  staff?: boolean;
+  /** Admin tools are grouped below the member links. */
+  admin?: boolean;
 }
 
 interface UserMenuProps {
   currentUser: AuthUser | null;
   accountLabel: string;
   handleLogout: () => void;
-  /** Member + staff destinations, already permission-filtered by NavBar. */
+  /** Member + admin destinations, already permission-filtered by NavBar. */
   accountLinks: AccountLink[];
 }
 
@@ -86,8 +86,8 @@ export function UserMenu({ currentUser, accountLabel, handleLogout, accountLinks
     );
   }
 
-  const memberLinks = accountLinks.filter((l) => !l.staff);
-  const staffLinks = accountLinks.filter((l) => l.staff);
+  const memberLinks = accountLinks.filter((l) => !l.admin);
+  const adminLinks = accountLinks.filter((l) => l.admin);
 
   return (
     <div className="hidden md:flex items-center gap-3">
@@ -140,13 +140,13 @@ export function UserMenu({ currentUser, accountLabel, handleLogout, accountLinks
               </Link>
             ))}
 
-            {staffLinks.length > 0 && (
+            {adminLinks.length > 0 && (
               <>
                 <div className="my-1 border-t border-border/40" />
                 <p className="px-4 pb-1 pt-1.5 text-[10px] font-semibold uppercase tracking-[0.12em] text-muted-foreground">
-                  Staff
+                  Admin
                 </p>
-                {staffLinks.map((link) => (
+                {adminLinks.map((link) => (
                   <Link
                     key={link.to}
                     to={link.to}

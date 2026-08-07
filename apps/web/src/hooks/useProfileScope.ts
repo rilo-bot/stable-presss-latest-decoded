@@ -73,24 +73,15 @@ export function useProfileScope(subject: ProfileSubject | null): ProfileScope {
       }
     });
 
-    // Fold in the legacy direct id-array fields from each in-scope horse.
-    scopedHorses.forEach((h) => {
-      (Object.keys(ROLE_BINDINGS) as PartyRole[]).forEach((role) => {
-        const arr = h[ROLE_BINDINGS[role].horseField] as string[] | undefined;
-        if (!Array.isArray(arr)) return;
-        arr.forEach((personId) => {
-          if (acc[role].has(personId)) return;
-          const person = personById(personId);
-          if (person) acc[role].set(personId, { party: person, isCurrent: true });
-        });
-      });
-    });
+    // The direct id-array fields on each horse were folded in here as well —
+    // the second representation of a connection. They no longer exist, so the
+    // edges above are the whole picture.
 
     (Object.keys(acc) as PartyRole[]).forEach((role) => {
       tiles[role] = Array.from(acc[role].values());
     });
     return tiles;
-  }, [horseIds, scopedHorses, parties, register]);
+  }, [horseIds, parties, register]);
 
   // ── 3. central career summary aggregated across the set ──
   const summary = useMemo<CentralSummary>(() => {

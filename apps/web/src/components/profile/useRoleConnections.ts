@@ -6,18 +6,16 @@
  * points at an existing person or creates them in `people` first, then writes
  * the edge. There is no link table and no dates.
  *
- * A connection can still live in EITHER place: an edge, or the legacy direct
- * id-array on the horse (ownerIds, trainerIds…) that the staff Horse form
- * writes and the server still stores. Both are folded in so details entered in
- * either place show on the public page. Legacy ids have no edge row, so they
- * come back marked `legacy` and are read-only here.
+ * A connection used to be able to live in EITHER place — an edge, or the direct
+ * id-array on the horse (`ownerIds`, `trainerIds`, …) that the staff Horse form
+ * wrote — so this hook folded both together and marked the array-only ones
+ * read-only. The arrays are gone and the Horse form writes edges too, so every
+ * entry here is a real edge and every entry is editable.
  */
 import { toast } from 'sonner';
 import { usePartyStore } from '@/stores/partyStore';
 import { usePeopleStore } from '@/stores/peopleStore';
-import { useHorseStore } from '@/stores/horseStore';
 import { useRegister, type RegisterPerson } from '@/lib/register';
-import { ROLE_BINDINGS } from '@/lib/profile/roleMap';
 import type { RoleDef, Entry, AddPayload } from '@/components/profile/RoleConnectionBox';
 
 export interface RoleConnections {
@@ -34,32 +32,15 @@ export function useRoleConnections(horseId: string): RoleConnections {
   const removeParty = usePartyStore((s) => s.removeParty);
   const addPerson = usePeopleStore((s) => s.addPerson);
   const updatePerson = usePeopleStore((s) => s.updatePerson);
-  const horse = useHorseStore((s) => s.horses.find((h) => h.id === horseId));
   const people = useRegister();
 
   const personById = (id: string) => people.find((p) => p.id === id);
   const horseEdges = parties.filter((p) => p.horseId === horseId);
 
-  const entriesFor = (def: RoleDef): Entry[] => {
-    const seen = new Set<string>();
-    const out: Entry[] = [];
-
-    for (const edge of horseEdges) {
-      if (edge.role !== def.role) continue;
-      seen.add(edge.personId);
-      out.push({ id: edge.id, party: personById(edge.personId), legacy: false });
-    }
-
-    // Fold in the legacy id-array field, skipping anyone already edged above.
-    const legacyIds = (horse?.[ROLE_BINDINGS[def.role].horseField] as string[] | undefined) ?? [];
-    for (const personId of legacyIds) {
-      if (seen.has(personId)) continue;
-      seen.add(personId);
-      out.push({ id: `legacy:${def.role}:${personId}`, party: personById(personId), legacy: true });
-    }
-
-    return out;
-  };
+  const entriesFor = (def: RoleDef): Entry[] =>
+    horseEdges
+      .filter((edge) => edge.role === def.role)
+      .map((edge) => ({ id: edge.id, party: personById(edge.personId) }));
 
   const onAdd = async (def: RoleDef, payload: AddPayload) => {
     const name = payload.name.trim();

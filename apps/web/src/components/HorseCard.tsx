@@ -27,7 +27,7 @@ interface HorseCardProps {
 export function HorseCard({ horse, className }: HorseCardProps) {
   const navigate = useNavigate();
   const parties = useRegister();
-  const conn = connectionResolver(parties)(horse);
+  const conn = connectionResolver(usePartyStore((s) => s.parties))(horse);
   const imageSrc = horse.imageUrl?.trim() ? horse.imageUrl : null;
   // Set when the real photo fails to load, so the frame replaces it.
   const [imageFailed, setImageFailed] = useState(false);

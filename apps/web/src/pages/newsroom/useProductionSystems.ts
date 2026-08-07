@@ -24,6 +24,8 @@ import { useRegister, useLoadRegister, type RegisterPerson } from '@/lib/registe
 export function useProductionSystems() {
   // === Store subscriptions + fetch-on-mount ===
   const fetchParties = usePartyStore((s) => s.fetchParties);
+  /** Raw edges — a horse's connections come from these, not the joined register. */
+  const partyEdges = usePartyStore((s) => s.parties);
   useEffect(() => {
     fetchParties();
   }, [fetchParties]);
@@ -33,7 +35,7 @@ export function useProductionSystems() {
   useLoadRegister();
   const parties = useRegister();
   const removeParty = usePartyStore((s) => s.removeParty);
-  const horseConn = useMemo(() => connectionResolver(parties ?? []), [parties]);
+  const horseConn = useMemo(() => connectionResolver(partyEdges), [partyEdges]);
 
   const mediaItems = useMediaStore((s) => s.items);
   const fetchMediaItems = useMediaStore((s) => s.fetchItems);
