@@ -40,16 +40,48 @@ access they genuinely had.
 | `GET /api/staff` | 403 |
 | `POST /api/horses` | 403 — the registers are really gated now |
 
+## PRODUCTION MIGRATED — 2026-08-11
+
+Deployed and live. All six accounts verified: 3 superadmins (55 permissions), 3
+magazine users (4). Confirmed working in the browser, including a role change made
+through the Team screen on the new model.
+
+**Production was TWO generations behind, not one** — still on `staffRoleSlug`, with
+role definitions keyed by `slug`, no `adminRoles` collection and no `isSuper` on any
+role. `migrate-admin-roles` would have matched zero users, written zero links, and
+then stamped `isAdmin: false` on everyone (its readers query is `{roleId: null}`, and
+a missing field matches null). Every admin would have lost access. Caught by
+inspecting first; that script was never run against prod.
+
+What ran instead, in this order:
+
+1. `clone-db stable-press-prod-data stable-press-prebackup-copy` — snapshot
+2. `migrate-legacy-staff --apply` — additive; live site unaffected throughout
+3. **deploy**
+4. `migrate-permissions --apply` — 6 roles rewritten
+5. restart
+6. `migrate-legacy-staff --apply --finish` — legacy fields removed
+
+The user document is now exactly eight fields:
+`_id · email · createdAt · updatedAt · tokenVersion · lastLogin · name · isAdmin`.
+
+### Two failures worth remembering
+
+- **Stale `slug_1` unique index.** Unsetting `slug` made every role index as `null`;
+  the first succeeded, the second threw E11000, leaving users cleaned and roles
+  half-cleaned. `migrate-legacy-staff` now drops that index first and is re-runnable.
+- **`roles: ['reader']` and `status` were nearly left behind** on a "not sure" —
+  both had zero readers. The party-role axis is derived from the `parties`
+  collection by `derivedRoles()`, so that array read like a source of truth and
+  wasn't one.
+
 ### Still to do
 
-1. **Migrate production** — `npm run migrate:permissions` (dry run first), then
-   `--apply`, then **restart the API**: `roleRegistry` caches definitions, and an
-   un-restarted process strips ids missing from its own compiled catalogue.
-   Deploying the code without migrating is survivable but not tidy — `projectRole`
-   maps legacy ids on read, so roles resolve correctly while the stored rows are stale.
-2. **Nothing has been opened in a browser.** All verification was curl + tests.
-3. `LEGACY_PERMISSION_ALIASES` and `scripts/migrate-permissions.ts` come out once prod
-   has been migrated.
+1. **Unset `SETUP_SECRET` on Render** and deal with the live `@decodedventures.com`
+   superadmin invite (see docs note below).
+2. Drop `stable-press-prebackup-copy` and `stable-press-rehearsal` once settled.
+3. `LEGACY_PERMISSION_ALIASES` can come out of the catalogue now that prod is
+   migrated — with `migrate-permissions.ts` and `migrate-legacy-staff.ts`.
 **Supersedes the permission half of:** docs/DYNAMIC-RBAC-PLAN.md (DB-defined roles stand)
 **Related:** docs/RBAC-UI-REVIEW.md, docs/CRM-MODULES-PERMISSIONS-REVIEW.md
 
