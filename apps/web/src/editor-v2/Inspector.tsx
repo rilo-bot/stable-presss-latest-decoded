@@ -8,6 +8,7 @@
 import { useEffect, useRef, useState, type ReactNode } from 'react';
 import { toast } from 'sonner';
 import { useEditorStore } from './store';
+import { ShimmerText } from './BuildProgress';
 import type { MagazineElement } from './model';
 import * as api from './api';
 import type { MediaAsset } from './api';
@@ -16,7 +17,7 @@ import { ICON_NAMES, resolveIcon } from '@/lib/iconRegistry';
 import {
   MousePointerClick, Type, Image as ImageIcon, QrCode, Square, Shapes,
   AlignLeft, AlignCenter, AlignRight, ArrowUpToLine, FoldVertical, ArrowDownToLine, Trash2,
-  Sliders, Images, Loader2, Upload, Copy, BringToFront, SendToBack,
+  Sliders, Images, Upload, Copy, BringToFront, SendToBack,
 } from 'lucide-react';
 
 const KIND_META = {
@@ -242,8 +243,8 @@ function ElementPanel({ el }: { el: MagazineElement }) {
                 disabled={uploading}
                 className="flex w-full items-center justify-center gap-2 rounded-sm border border-white/15 bg-white/5 px-3 py-2 text-xs font-semibold text-white hover:bg-white/10 disabled:opacity-50"
               >
-                {uploading ? <Loader2 size={13} className="animate-spin" /> : <Upload size={13} />}
-                {uploading ? 'Uploading…' : el.image.url ? 'Upload a replacement' : 'Upload from computer'}
+                <Upload size={13} />
+                {uploading ? <ShimmerText>Uploading…</ShimmerText> : el.image.url ? 'Upload a replacement' : 'Upload from computer'}
               </button>
               <p className="mt-1.5 text-[10px] leading-relaxed text-white/40">
                 Or pick an existing photo in the <b>Assets</b> tab, or paste a URL below.
@@ -416,8 +417,16 @@ function AssetsTab() {
 
   if (loading) {
     return (
-      <div className="flex h-full items-center justify-center text-white/40">
-        <Loader2 size={16} className="mr-2 animate-spin" /> Loading media…
+      <div className="p-3">
+        <p className="mb-2 text-[12px] text-white/40" role="status" aria-live="polite">
+          <ShimmerText>Loading your media</ShimmerText>
+        </p>
+        {/* Thumb-shaped placeholders in the real grid, so the panel doesn't jump. */}
+        <div className="grid grid-cols-3 gap-1.5" aria-hidden="true">
+          {[0, 1, 2, 3, 4, 5].map((i) => (
+            <div key={i} className="aspect-square rounded-sm border border-white/10 bg-white/[0.03]" />
+          ))}
+        </div>
       </div>
     );
   }

@@ -108,6 +108,35 @@ function gatedScreens(): Set<string> {
 
 const gated = gatedScreens()
 const screenOf = (id: PermissionAction) => id.slice(0, id.lastIndexOf('.'))
+const verbOf = (id: PermissionAction) => id.slice(id.lastIndexOf('.') + 1)
+
+/**
+ * A METHOD-MAPPING GATE CANNOT REACH `publish`, so it is not proof of one.
+ *
+ * `verbForMethod` yields view (GET), create (POST to the collection), delete
+ * (DELETE) or edit (everything else) — 'publish' is not in its range. Crediting a
+ * screen's whole verb list to that one gate therefore marked every `.publish` as
+ * enforced on the strength of a check that could never fire. That is exactly how
+ * `magazine.publish` sat green in this report while its only appearance in server
+ * code chose an icon in the share dialog, and a role with Publish deliberately
+ * unticked could put an edition on the public newsstand.
+ *
+ * So a `.publish` must be proven on its own: either the literal id appears in
+ * server code, or an explicit two-argument gate names the verb.
+ */
+const isMethodUnreachable = (id: PermissionAction) => verbOf(id) === 'publish'
+
+/** `can(req.account, 'magazine', 'publish')` — the verb as a literal, not a variable. */
+function explicitVerbGate(id: PermissionAction): boolean {
+  return references(`'${screenOf(id)}', '${verbOf(id)}'`, SERVER_SRC, [CATALOGUE_FILE]) > 0
+}
+
+/** The one question: is there real proof this permission is checked server-side? */
+function isServerEnforced(r: Row): boolean {
+  if (r.server > 0) return true
+  if (isMethodUnreachable(r.id)) return explicitVerbGate(r.id)
+  return gated.has(screenOf(r.id))
+}
 
 interface Row {
   id: PermissionAction
@@ -126,8 +155,8 @@ const rows: Row[] = PERMISSION_CATALOGUE.map((p) => ({
 // Buckets are MUTUALLY EXCLUSIVE and must sum to rows.length — an id that falls
 // through every printed bucket is exactly the thing this script exists to catch,
 // so the totals are asserted rather than trusted.
-const serverEnforced = rows.filter((r) => r.server > 0 || gated.has(screenOf(r.id)))
-const rest = rows.filter((r) => !(r.server > 0 || gated.has(screenOf(r.id))))
+const serverEnforced = rows.filter(isServerEnforced)
+const rest = rows.filter((r) => !isServerEnforced(r))
 const moduleGate = rest.filter((r) => r.module)
 const webOnly = rest.filter((r) => !r.module && r.web > 0)
 const unenforced = rest.filter((r) => !r.module && r.web === 0)

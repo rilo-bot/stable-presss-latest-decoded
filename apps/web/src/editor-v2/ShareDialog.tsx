@@ -7,13 +7,16 @@
 // those pages. Share everything with everyone and every page needs approving; a
 // solo owner with no collaborators needs none.
 //
-// Their editor/contributor CAPABILITY is derived server-side from their staff
-// role — the owner chooses the pages, never the powers. Owner-only.
+// A share grants ONE capability: edit these pages, and submit them for approval.
+// There is no per-magazine role to choose — publishing is a staff permission
+// (`magazine.publish`, enforced on the publish routes) and belongs to the owner,
+// not to a share. Owner-only.
 
 import { useEffect, useMemo, useState } from 'react';
-import { X, Users, Loader2, ShieldCheck, Pencil, Trash2, AlertTriangle, Check } from 'lucide-react';
+import { X, Users, Pencil, Trash2, AlertTriangle, Check } from 'lucide-react';
 import { toast } from 'sonner';
 import { useEditorStore } from './store';
+import { ShimmerText } from './BuildProgress';
 import * as api from './api';
 import type { StaffEntry, PageSummary, V2Collaborator } from './api';
 
@@ -255,10 +258,14 @@ export function ShareDialog({ onClose }: { onClose: () => void }) {
                 return (
                   <div key={c.userId} className="rounded-sm">
                     <div className="flex items-center gap-2 rounded-sm px-2 py-1.5 text-xs hover:bg-white/5">
-                      {c.role === 'editor' ? <ShieldCheck size={13} className="flex-shrink-0 text-emerald-300" /> : <Pencil size={13} className="flex-shrink-0 text-sky-300" />}
+                      {/* One icon, because there is one kind of collaborator. The
+                          shield-vs-pencil "Editor / Contributor" split was removed:
+                          it gated nothing anywhere, so it promised powers that did
+                          not exist. What a share actually decides is the PAGES. */}
+                      <Pencil size={13} className="flex-shrink-0 text-sky-300" />
                       <span className="min-w-0 flex-1 truncate">
                         <span className="font-semibold">{c.displayName || c.email}</span>
-                        <span className="text-white/40"> · {c.role === 'editor' ? 'Editor' : 'Contributor'} · {scopeLabel(c)}</span>
+                        <span className="text-white/40"> · can edit {scopeLabel(c)}</span>
                       </span>
                       <button
                         onClick={() => (isEditing ? setEditing(null) : startEdit(c))}
@@ -308,7 +315,7 @@ export function ShareDialog({ onClose }: { onClose: () => void }) {
                           disabled={busy}
                           className="flex items-center gap-1.5 rounded-sm bg-sky-500 px-2.5 py-1 text-[11px] font-semibold text-white hover:bg-sky-600 disabled:opacity-50"
                         >
-                          {busy ? <Loader2 size={12} className="animate-spin" /> : <Check size={12} />} Save pages
+                          <Check size={12} /> {busy ? <ShimmerText>Saving…</ShimmerText> : 'Save pages'}
                         </button>
                       </div>
                     )}
@@ -322,7 +329,7 @@ export function ShareDialog({ onClose }: { onClose: () => void }) {
           <p className="mb-1.5 text-[10px] font-bold uppercase tracking-[0.12em] text-white/40">Add a staff member</p>
           {loadState === 'loading' ? (
             <p className="flex items-center gap-1.5 text-xs text-white/45">
-              <Loader2 size={12} className="animate-spin" /> Loading staff…
+              <ShimmerText>Loading the staff list</ShimmerText>
             </p>
           ) : loadState === 'error' ? (
             <div className="text-xs text-white/60">
@@ -378,7 +385,7 @@ export function ShareDialog({ onClose }: { onClose: () => void }) {
                 disabled={busy || !selectedEmail}
                 className="flex w-full items-center justify-center gap-1.5 rounded-sm bg-sky-500 px-3 py-2 text-xs font-semibold text-white hover:bg-sky-600 disabled:opacity-50"
               >
-                {busy ? <Loader2 size={13} className="animate-spin" /> : <Users size={13} />} Share &amp; email link
+                <Users size={13} /> {busy ? <ShimmerText>Sharing…</ShimmerText> : <>Share &amp; email link</>}
               </button>
               <p className="mt-1.5 text-[10px] leading-relaxed text-white/35">
                 Only pages someone is assigned to need approving before you publish.

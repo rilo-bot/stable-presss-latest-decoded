@@ -32,8 +32,8 @@ import { notifyShared } from '../../lib/notifyShare.js';
 import { notifySubmitted, notifyReviewed, notifyPageRemoved } from '../../lib/notifyReview.js';
 import { pageNumbersLabel } from '../../lib/pageLabels.js';
 import { magazinePath } from '../../lib/invites.js';
-import { withIdentityDefaults, type IdentityUser } from '../../lib/identity.js';
-import { identityCan, resolveAccount } from '../../lib/effectiveAccess.js';
+import { withIdentityDefaults } from '../../lib/identity.js';
+import { resolveAccount } from '../../lib/effectiveAccess.js';
 import { normalizeElements, normalizeElementPatch } from '../../lib/magazineV2/writePipeline.js';
 import { MAX_ELEMENTS_PER_PAGE, type MagazineElement } from '../../lib/magazineV2/model.js';
 import { isAgentConfigured } from '../../lib/agent/provider.js';
@@ -1073,7 +1073,21 @@ function coverUrlFromPages(pages: any[]): string {
   return coverUrlOfPage(pages[0]);
 }
 
-// publish (or republish) — owner only. Freezes selected pages into `issues`.
+/**
+ * publish (or republish) — the owner, AND only with `magazine.publish`.
+ *
+ * THE SECOND CHECK IS NEW, AND IT IS THE ONE THE PERMISSION IS NAMED AFTER. The
+ * router-level gate maps HTTP method → verb, and that mapping can only ever produce
+ * view/create/edit/delete — so `POST /publish` was arriving as an *edit*, and
+ * `magazine.publish` was enforced NOWHERE. Its single appearance in server code
+ * picked an icon in the share dialog. A role with Magazine Edit and the Publish box
+ * deliberately UNTICKED could put an edition on the public newsstand; the console
+ * said otherwise. (Podcast already does this properly — see the `podcast.publish`
+ * transition gate in routes/podcastEpisodes.)
+ *
+ * `can()` is used, not `canOn()`: ownership is already established above, and this
+ * asks the unscoped question "may this role publish magazines at all".
+ */
 router.post('/issues/:id/publish', async (req, res) => {
   const uid = req.account!.id;
   const doc = await loadIssue(req.params.id);
@@ -1083,6 +1097,10 @@ router.post('/issues/:id/publish', async (req, res) => {
   }
   if (!isOwner(roleOnMagazine(doc, uid))) {
     res.status(403).json({ error: 'Only the owner can publish this magazine.' });
+    return;
+  }
+  if (!can(req.account, 'magazine', 'publish')) {
+    res.status(403).json({ error: 'You do not have permission to publish magazines. Ask an administrator to take this one live.' });
     return;
   }
   // SERIALISED per issue, and re-checked inside the lock.
@@ -1208,6 +1226,12 @@ router.post('/issues/:id/unpublish', async (req, res) => {
     res.status(403).json({ error: 'Only the owner can unpublish this magazine.' });
     return;
   }
+  // Same verb as publish: taking an edition off the newsstand is a distribution
+  // decision, and someone who cannot put it up should not be able to pull it down.
+  if (!can(req.account, 'magazine', 'publish')) {
+    res.status(403).json({ error: 'You do not have permission to publish or unpublish magazines.' });
+    return;
+  }
   const now = new Date().toISOString();
   const publishedIssueId = typeof doc.publishedIssueId === 'string' ? doc.publishedIssueId : '';
   if (publishedIssueId) {
@@ -1247,15 +1271,16 @@ router.patch('/issues/:id/pages/:pageId/select', async (req, res) => {
   res.json({ pages: (await pagesFor(doc._id)).map((p) => pageSummary(p, doc)) });
 });
 
-// ── Collaborators (Share) — owner only, mirrors the v1 magazines API ─────────
-// Manage/edit capability is derived from the collaborator's STAFF role; the
-// sharer only chooses WHICH pages they may edit ('all' or specific page ids).
+// ── Collaborators (Share) — owner only ──────────────────────────────────────
+// A share decides ONE thing: which pages they may edit ('all' or specific page
+// ids). That choice is also what puts a page in REVIEW scope, so it is the input
+// to the approval flow, not a convenience. There is no per-magazine role.
 
-// Per-magazine collaborator badge (MagRole), not a staff role — grants nothing
-// on its own. Derived from a permission because `user.roles[]` no longer carries
-// staff slugs; see the twin in routes/magazines.ts.
-const magRoleForStaff = async (identity: IdentityUser): Promise<'editor' | 'contributor'> =>
-  (await identityCan(identity, 'magazine.publish')) ? 'editor' : 'contributor';
+// NOTE: `magRoleForStaff` is gone. It read `magazine.publish` to stamp a
+// collaborator as 'editor' or 'contributor' — a badge its own comment admitted
+// "grants nothing on its own", and which the share dialog nonetheless rendered as
+// a shield and the word "Editor". The permission now gates the publish routes for
+// real (see POST /publish), and a non-owner with access is simply a collaborator.
 
 // add / update a collaborator (by email) — staff accounts only
 router.post('/issues/:id/collaborators', async (req, res) => {
@@ -1298,7 +1323,6 @@ router.post('/issues/:id/collaborators', async (req, res) => {
     userId: acct.id,
     email: acct.email,
     displayName: acct.name,
-    role: await magRoleForStaff(acct),
     pageIds,
   };
   const others = collaboratorsOf(doc).filter((c) => c.userId !== acct.id);

@@ -90,7 +90,6 @@ const collab = (over: Record<string, unknown>) => ({
   userId: 'u1',
   email: 'a@x.com',
   displayName: 'A',
-  role: 'contributor',
   pageIds: ['p1'],
   ...over,
 });

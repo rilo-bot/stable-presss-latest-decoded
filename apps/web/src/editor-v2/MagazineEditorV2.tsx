@@ -9,7 +9,7 @@
 import { useEffect, useRef, useState } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import { toast } from 'sonner';
-import { ArrowLeft, Undo2, Redo2, Plus, Minus, Copy, Trash2, ChevronLeft, ChevronRight, ChevronDown, Sparkles, Loader2, Wand2, WandSparkles, RotateCcw, ImageIcon, Globe, ExternalLink, Send, Users, EyeOff, ClipboardList, Lock, RefreshCw } from 'lucide-react';
+import { ArrowLeft, Undo2, Redo2, Plus, Minus, Copy, Trash2, ChevronLeft, ChevronRight, ChevronDown, Sparkles, Wand2, WandSparkles, RotateCcw, ImageIcon, Globe, ExternalLink, Send, Users, EyeOff, ClipboardList, Lock, RefreshCw } from 'lucide-react';
 import { useEditorStore } from './store';
 import { useStudioChrome } from '@/stores/studioChromeStore';
 import { EditorCanvas } from './EditorCanvas';
@@ -20,6 +20,7 @@ import { AttachmentPreviewPane } from './AttachmentPreviewPane';
 import { PublishDialog } from './PublishDialog';
 import { ShareDialog } from './ShareDialog';
 import { ReviewBoard } from './ReviewBoard';
+import { BuildProgress, BuildBanner, ShimmerText } from './BuildProgress';
 import { columnOf, COLUMN_LABEL, COLUMN_TONE, awaitingOwner, submittablePages, publishBlockedReason, readOnlyReason } from './review';
 import type { ElementType, MagazineElement } from './model';
 
@@ -133,9 +134,12 @@ export default function MagazineEditorV2() {
   };
 
   if (s.loading) {
+    // No issue document yet, so there are no counts: explicit title, the
+    // 'finishing' lines, and the INDETERMINATE track. A determinate bar here
+    // would be inventing a proportion out of nothing.
     return (
-      <div className="fixed inset-0 z-[60] flex items-center justify-center bg-[#0b1220] text-white/60">
-        <Loader2 className="mr-2 animate-spin" size={18} /> Loading studio…
+      <div className="fixed inset-0 z-[60] bg-[#0b1220] text-white">
+        <BuildProgress issue={null} title="Opening the studio" />
       </div>
     );
   }
@@ -170,9 +174,9 @@ export default function MagazineEditorV2() {
   const lockedReason = readOnlyReason(s.issue, currentSummary);
 
   // Still being built by "Build with AI" / import — pages stream in live below.
+  // The counts that used to live here now belong to buildStatus.ts, which is also
+  // where the rule about when they may be trusted is written down.
   const building = s.generating || s.issue?.status === 'processing';
-  const buildTotal = s.issue?.pagesTotal ?? 0;
-  const buildDone = Math.min(s.issue?.pagesProcessed ?? s.pages.length, buildTotal || Infinity);
 
   return (
     <div className="fixed inset-0 z-[60] flex flex-col bg-[#0b1220]">
@@ -279,8 +283,10 @@ export default function MagazineEditorV2() {
 
               {/* AI text pass — Fill (write empty + tighten) / Adjust (tighten) */}
               <div className="mx-0.5 h-5 w-px bg-white/10" />
+              {/* Busy = the WORD shimmers, the icon holds still. A spinner in a
+                  13px button is a grey smudge; a shimmering label is legible. */}
               <button className={ghost} disabled={s.formatBusy || !s.page} onClick={() => void s.runFormat('fill')} title="Fill empty boxes & tighten crowded text (AI)">
-                {s.formatBusy ? <Loader2 size={13} className="animate-spin" /> : <Wand2 size={13} />} Fill
+                <Wand2 size={13} /> {s.formatBusy ? <ShimmerText>Filling…</ShimmerText> : 'Fill'}
               </button>
               <button className={ghost} disabled={s.formatBusy || !s.page} onClick={() => void s.runFormat('adjust')} title="Tighten crowded text so it reads at a comfortable size (AI)">
                 <WandSparkles size={13} /> Adjust
@@ -331,8 +337,15 @@ export default function MagazineEditorV2() {
                   // unapproved edition, so the hover has to say which pages and why.
                   title={publishBlocked || 'Publish this magazine to Bulletins'}
                 >
-                  {s.publishing ? <Loader2 size={13} className="animate-spin" /> : <Send size={13} />}
-                  {s.publishing ? 'Publishing…' : isPublished ? 'Republish' : 'Publish'} <ChevronDown size={12} />
+                  <Send size={13} />
+                  {s.publishing ? (
+                    <ShimmerText>Publishing…</ShimmerText>
+                  ) : isPublished ? (
+                    'Republish'
+                  ) : (
+                    'Publish'
+                  )}{' '}
+                  <ChevronDown size={12} />
                 </button>
                 {publishMenuOpen && !s.publishing && (
                   <div className="absolute right-0 top-full z-50 mt-1 w-60 overflow-hidden rounded-md border border-white/15 bg-[#0d1626] shadow-xl">
@@ -413,14 +426,12 @@ export default function MagazineEditorV2() {
         </div>
       </div>
 
-      {/* Live-build banner — pages stream in below as the AI composes them. */}
-      {building && (
-        <div className="flex items-center gap-2 border-b border-[var(--gold-bright)]/25 bg-[var(--gold-bright)]/10 px-4 py-1.5 text-[11px] text-[var(--gold-bright)]">
-          <Loader2 size={12} className="animate-spin" />
-          <span className="font-medium">{s.issue?.stage || 'Building your magazine'}{buildTotal ? ` — ${buildDone} of ${buildTotal} pages` : '…'}</span>
-          <span className="text-white/45">pages appear as they’re ready — you can start editing the finished ones</span>
-        </div>
-      )}
+      {/* Live-build banner — pages stream in below as the AI composes them.
+          `isAdding` matters: an "add more pages" run leaves pagesProcessed and
+          pagesTotal at the PREVIOUS run's values, so this used to sit at
+          "8 of 8 pages" — a completed bar — for the whole time it was working.
+          BuildBanner shows the indeterminate track for that case instead. */}
+      {building && <BuildBanner issue={s.issue} isAdding={s.generating} arrivedPages={s.pages.length} />}
 
       {/* Post-generation nudge — the first pass is a short preview; offer more. */}
       {!building && s.justGenerated && s.canManage() && (
@@ -504,7 +515,7 @@ export default function MagazineEditorV2() {
                   onClick={() => setPagesAiOpen((v) => !v)}
                   title="Add on-theme pages with AI"
                 >
-                  {s.generating ? <Loader2 size={13} className="animate-spin" /> : <Sparkles size={13} />} Pages
+                  <Sparkles size={13} /> {s.generating ? <ShimmerText>Building…</ShimmerText> : 'Pages'}
                 </button>
               </>
             )}
@@ -559,11 +570,19 @@ export default function MagazineEditorV2() {
           <div className="min-h-0 flex-1 overflow-auto bg-[#0b1220]">
             {s.page ? (
               <EditorCanvas />
-            ) : (
-              <div className="flex h-full flex-col items-center justify-center gap-3 text-white/50">
-                <Loader2 size={22} className="animate-spin" style={{ color: 'var(--gold-bright)' }} />
-                <div className="text-sm">{building ? 'Designing your first page…' : 'No page yet'}</div>
+            ) : building ? (
+              // The main event: nothing to edit yet, so this screen is what the
+              // user watches. Full facts — counter, bar, one tile per page.
+              <div className="h-full text-white">
+                <BuildProgress
+                  issue={s.issue}
+                  isAdding={s.generating}
+                  arrivedPages={s.pages.length}
+                  hint="Pages appear here as they’re finished — you can start editing the early ones while the rest are still being built."
+                />
               </div>
+            ) : (
+              <div className="flex h-full items-center justify-center text-sm text-white/40">No page yet</div>
             )}
           </div>
         </div>

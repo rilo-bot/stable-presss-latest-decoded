@@ -5,8 +5,9 @@
 // newsstand with scope 'selected'. Owner-only.
 
 import { useState } from 'react';
-import { X, CheckSquare, Square, Send, Loader2, AlertTriangle } from 'lucide-react';
+import { X, CheckSquare, Square, Send, AlertTriangle } from 'lucide-react';
 import { useEditorStore } from './store';
+import { ShimmerText } from './BuildProgress';
 import { publishBlockers, publishBlockedReason, columnOf, COLUMN_LABEL } from './review';
 
 export function PublishDialog({ onClose, onPublished }: { onClose: () => void; onPublished: (publishedIssueId: string) => void }) {
@@ -123,8 +124,8 @@ export function PublishDialog({ onClose, onPublished }: { onClose: () => void; o
             title={blocked || undefined}
             className="ml-auto flex items-center justify-center gap-1.5 rounded-sm bg-emerald-500 px-3 py-2 text-xs font-semibold text-white hover:bg-emerald-600 disabled:opacity-50"
           >
-            {publishing ? <Loader2 size={13} className="animate-spin" /> : <Send size={13} />}
-            {publishing ? 'Publishing…' : `Publish ${selectedCount} page${selectedCount !== 1 ? 's' : ''}`}
+            <Send size={13} />
+            {publishing ? <ShimmerText>Publishing…</ShimmerText> : `Publish ${selectedCount} page${selectedCount !== 1 ? 's' : ''}`}
           </button>
         </div>
       </div>

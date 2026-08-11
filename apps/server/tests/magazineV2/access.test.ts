@@ -24,7 +24,7 @@ import {
   needsRepublish,
   pageEditedSincePublish,
 } from '../../src/lib/magazineV2/review.js';
-import { canViewPage, canEditPage, pageEditBlock } from '../../src/lib/magazineV2/access.js';
+import { canViewPage, canEditPage, pageEditBlock, roleOnMagazine } from '../../src/lib/magazineV2/access.js';
 
 const OWNER = 'u_owner';
 const SAM = 'u_sam';
@@ -35,7 +35,7 @@ const issue = (over: Record<string, unknown> = {}) => ({
   _id: 'm1',
   ownerId: OWNER,
   status: 'ready',
-  collaborators: [{ userId: SAM, email: 's@x.com', displayName: 'Sam', role: 'contributor', pageIds: ['p1'] }],
+  collaborators: [{ userId: SAM, email: 's@x.com', displayName: 'Sam', pageIds: ['p1'] }],
   ...over,
 });
 
@@ -112,6 +112,29 @@ test('pageEditedSincePublish marks only the pages a republish would change', () 
   assert.equal(pageEditedSincePublish(i, {}), false, 'unknown is not "changed"');
 });
 
+// ── there are exactly TWO magazine roles ──────────────────────────────────────
+
+test('a magazine role is owner or collaborator — never a stored badge', () => {
+  // 'editor' used to be a third value, stamped from `magazine.publish` at share
+  // time. It gated nothing (every check is `!== null` or isOwner) and only ever
+  // rendered a shield in the share dialog. Publishing is gated by the permission
+  // on the publish routes now, so membership is the whole fact here.
+  assert.equal(roleOnMagazine(issue(), OWNER), 'owner');
+  assert.equal(roleOnMagazine(issue(), SAM), 'collaborator');
+  assert.equal(roleOnMagazine(issue(), STRANGER), null);
+});
+
+test('a legacy stored role is IGNORED, not trusted', () => {
+  // Documents written before the removal still carry `role: 'editor'`. Reading it
+  // back would resurrect the fiction — and worse, an 'editor' string would fail
+  // `isOwner` while looking authoritative in a log.
+  const legacy = issue({
+    collaborators: [{ userId: SAM, email: 's@x.com', displayName: 'Sam', role: 'editor', pageIds: 'all' }],
+  });
+  assert.equal(roleOnMagazine(legacy, SAM), 'collaborator');
+  assert.equal(canEditPage(legacy, SAM, 'p9', page({ _id: 'p9' })), true, 'still a normal collaborator');
+});
+
 // ── canViewPage vs canEditPage — the split that protects submitted work ───────
 
 test('a collaborator can still READ a page they have submitted', () => {
@@ -162,7 +185,7 @@ test('a missing page document does not accidentally block an assigned editor', (
 
 test("an 'all'-scoped collaborator is gated by review like anyone else", () => {
   const i = issue({
-    collaborators: [{ userId: SAM, email: 's@x.com', displayName: 'Sam', role: 'editor', pageIds: 'all' }],
+    collaborators: [{ userId: SAM, email: 's@x.com', displayName: 'Sam', pageIds: 'all' }],
   });
   assert.equal(pageEditBlock(i, SAM, 'p7', page({ review: 'in_progress' })), null);
   assert.equal(pageEditBlock(i, SAM, 'p7', page({ review: 'submitted' })), 'page-submitted');

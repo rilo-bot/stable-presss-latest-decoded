@@ -25,7 +25,7 @@ const solo = { _id: 'm1', ownerId: 'u_owner', collaborators: [] };
 const shared = (pageIds: string[] | 'all') => ({
   _id: 'm1',
   ownerId: 'u_owner',
-  collaborators: [{ userId: SAM, email: 's@x.com', displayName: 'Sam', role: 'contributor', pageIds }],
+  collaborators: [{ userId: SAM, email: 's@x.com', displayName: 'Sam', pageIds }],
 });
 
 /** Pages p1..pN; number = position + 1, matching the editor's page rail. */

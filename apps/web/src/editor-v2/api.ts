@@ -26,7 +26,10 @@ async function parse<T>(res: Response): Promise<T> {
   return body as T;
 }
 
-export type MagRole = 'owner' | 'editor' | 'contributor';
+/** Owner or not. `'editor'` used to be a third value that granted nothing — see
+ *  the note on V2Collaborator. Publishing is a STAFF permission
+ *  (`magazine.publish`), enforced on the publish routes, not a magazine role. */
+export type MagRole = 'owner' | 'collaborator';
 
 export interface IssueSummary {
   id: string;
@@ -152,7 +155,9 @@ export interface V2Collaborator {
   userId: string;
   email: string;
   displayName: string;
-  role: 'editor' | 'contributor';
+  /** The ONLY thing a share decides. There is no per-magazine role: the `role`
+   *  field ('editor' | 'contributor') was removed because it gated nothing and
+   *  only ever rendered a capability the holder didn't have. */
   pageIds: string[] | 'all';
 }
 /** A row of /api/staff/directory. The field is `name` — NOT `displayName`, which

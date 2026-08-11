@@ -157,11 +157,23 @@ raster).
 
 [magazineV2/access.ts](apps/server/src/lib/magazineV2/access.ts) — not multi-tenant; owner + collaborators.
 
-- **owner** — everything: settings, structure, publish, share, delete.
-- **collaborator** (`editor` | `contributor`) — edits only the page ids assigned to them, or `'all'`.
+- **owner** — everything: settings, structure, share, delete. Publishing additionally requires the
+  **staff** permission `magazine.publish` (see below).
+- **collaborator** — edits only the page ids assigned to them, or `'all'`. That's the whole role.
 
-The magazine role is a *badge*; edit capability derives from the collaborator's **staff** role
-(`magRoleForStaff` resolves `content.draft.edit_any` → `editor`, else `contributor`).
+`MagRole` is `'owner' | 'collaborator'` and is **derived from membership**, never read off the
+collaborator row.
+
+> **Corrected 2026-08-12.** There used to be a third value, `'editor'`, stamped onto a collaborator at
+> share time from their `magazine.publish` permission. It gated **nothing** — every role check in the
+> router is either `!== null` or `isOwner` — and its only effect was a green shield and the word "Editor"
+> in the share dialog, snapshotted and never recomputed. Worse, `magazine.publish` was enforced *nowhere
+> else*: the router's method → verb gate can only produce view/create/edit/delete, so `POST …/publish`
+> arrived as an **edit**, and a role with Magazine Edit and the Publish box unticked could put an edition
+> on the public newsstand. The badge is gone, `magRoleForStaff` is deleted, and both `POST …/publish` and
+> `POST …/unpublish` now check `can(req.account, 'magazine', 'publish')`. Legacy documents keep their
+> `role` key; nothing reads it. `check-permission-enforcement.ts` no longer credits a `.publish`
+> permission to a method-mapping gate, since that gate can never reach the verb.
 
 **Share-only visibility:** `GET /issues` filters on `roleOnMagazine(doc, uid) !== null`. A magazine you
 weren't shared into does not appear and 404s by id. View scope == edit scope: a page-scoped collaborator
@@ -763,7 +775,7 @@ scroll locked, global Stablehand launcher suppressed), on a dark `#0b1220` / `#0
 │ ← │ Title            [Shared with you]  🌐Live      ↶↷ │ −100%+ │ Add: text image     │
 │    shape qr icon │ ✨Fill ✨Adjust │ 🖼Cover ↺Reset 👥Share │ [Publish ▾] View 🗑 │ ✨AI │
 ├───────────────────────────────────────────────────────────────────────────────────────┤
-│ ⟳ Designing the issue — 3 of 8 pages   pages appear as they're ready…                  │  ← live build
+│ 3 of 8 pages built   Placing your photographs      ▓▓▓░░░░  pages appear as ready      │  ← live build
 ├──────────────┬──┬──────────────────────────────────────────────┬──┬───────────────────┤
 │ Chat │Uploads│  │ 1(12) 2(9) [3(14)] ‹ › ⧉ 🗑  + ✨Pages       │  │ Element │ Assets  │
 │              │  ├──────────────────────────────────────────────┤  ├───────────────────┤
@@ -860,6 +872,42 @@ Every change is an undoable `commit(id, patch, before)`; the inspector makes **n
 
 `CoverPicker` (explicit URL / a page's image / auto-derive), `PublishDialog` (per-page selection),
 `ShareDialog` (staff picker + page assignment).
+
+### 10.7 Waiting states — shimmer, not spin
+
+[buildStatus.ts](apps/web/src/editor-v2/buildStatus.ts) (pure) +
+[BuildProgress.tsx](apps/web/src/editor-v2/BuildProgress.tsx) + `.shimmer-text` in
+[index.css](apps/web/src/index.css). Every waiting surface in the studio was a spinning circle; a spinner
+says the app is alive but never what is happening, and after ten seconds it reads as a hang.
+
+**The rule: never claim progress the server did not report.** The build emits four real signals, polled
+every ~1.5 s — `status`, `stage`, `pagesProcessed`/`pagesTotal`, and the pages themselves streaming in.
+The headline, the bar and the page tiles come from those; the 48 rotating lines are flavour, each pool
+written to be true of its phase (planning decides title/palette/fonts/order, composing draws boxes and
+places photos, digitizing lifts text off the page). No line names a page number or a percentage.
+
+| Phase (from `stage`) | Bar | Why |
+|---|---|---|
+| `Designing the issue` · `Preparing to digitize` · unknown | **indeterminate** | nothing countable exists yet |
+| `Designing pages` · `Digitizing pages`, `done < total` | **determinate**, real counts | the counter is moving |
+| `done >= total` while still processing | **indeterminate** | the counter is stale, and a full bar is worse than none |
+| "add more pages" run (`isAdding`) | **indeterminate** | that path never bumps `pagesProcessed` |
+
+That last row was a live bug: the old banner read `⟳ Designing pages — 8 of 8 pages` for the entire
+duration of an add-pages run, because the counters still held the previous run's values.
+
+`pagesProcessed` is a **count of finished pages, not a cursor** — pages compose concurrently
+(`mapWithConcurrency`), so "building page 3" would be a guess and "3 of 10 built" is a fact.
+
+Two more details worth keeping: `.shimmer-text` hides glyphs with `-webkit-text-fill-color`, not `color`,
+so the gradient can be built from `currentColor` and one class works on the dark studio, the light library
+and a gold banner. And the **live region carries the phase, not the count** — announcing every page would
+be up to 120 interruptions per build, so the count is reachable via the progressbar's `aria-valuenow`
+instead. Under `prefers-reduced-motion` the shimmer resolves to plain text and the bars stop moving;
+nothing was ever carried by the animation alone.
+
+Spinners remain in exactly two places — the mic and send buttons — where there is no label for the
+shimmer to live on.
 
 ---
 

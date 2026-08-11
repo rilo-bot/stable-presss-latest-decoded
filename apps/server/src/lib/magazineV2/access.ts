@@ -14,13 +14,27 @@
 
 import { reviewOf } from './review.js';
 
-export type MagRole = 'owner' | 'editor' | 'contributor';
+/**
+ * TWO roles, because there were only ever two.
+ *
+ * There used to be a third, `'editor'`, stamped on a collaborator at share time from
+ * their `magazine.publish` permission. It gated NOTHING: every role check in the
+ * router is either `!== null` (any access) or `isOwner`, so an 'editor' and a
+ * 'contributor' could do exactly the same things. Its only effect was a green shield
+ * and the word "Editor" in the share dialog — a capability claim with no capability
+ * behind it, and a stale one, since it was snapshotted and never recomputed when a
+ * staff role changed.
+ *
+ * Publishing is now gated by `magazine.publish` on the publish routes themselves,
+ * which is where a permission of that name belongs. Legacy documents keep their
+ * `role` key; nothing reads it.
+ */
+export type MagRole = 'owner' | 'collaborator';
 
 export interface V2Collaborator {
   userId: string;
   email: string;
   displayName: string;
-  role: 'editor' | 'contributor';
   pageIds: string[] | 'all';
 }
 
@@ -32,8 +46,9 @@ export function collaboratorsOf(doc: IssueDoc): V2Collaborator[] {
 
 export function roleOnMagazine(doc: IssueDoc, userId: string): MagRole | null {
   if (doc.ownerId === userId) return 'owner';
-  const c = collaboratorsOf(doc).find((x) => x.userId === userId);
-  return c ? c.role : null;
+  // Derived from membership, NOT read off the collaborator row. The stored `role`
+  // was the fiction described above; being in the array is the whole fact.
+  return collaboratorsOf(doc).some((x) => x.userId === userId) ? 'collaborator' : null;
 }
 
 export const isOwner = (role: MagRole | null): boolean => role === 'owner';

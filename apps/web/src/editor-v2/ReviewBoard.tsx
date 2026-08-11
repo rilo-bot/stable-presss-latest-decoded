@@ -14,8 +14,9 @@
 // explanation of what changed since is the failure mode of every workflow board.
 
 import { useMemo, useState } from 'react';
-import { X, ClipboardList, Check, Undo2, Send, Loader2, AlertTriangle, User } from 'lucide-react';
+import { X, ClipboardList, Check, Undo2, Send, AlertTriangle, User } from 'lucide-react';
 import { useEditorStore } from './store';
+import { ShimmerText } from './BuildProgress';
 import {
   columnOf,
   COLUMN_ORDER,
@@ -250,8 +251,8 @@ export function ReviewBoard({ onClose }: { onClose: () => void }) {
                     disabled={reviewBusy || pickedIds.length === 0}
                     className="flex items-center justify-center gap-1.5 rounded-sm bg-emerald-500 px-3 py-1.5 text-[11px] font-semibold text-white hover:bg-emerald-600 disabled:opacity-40"
                   >
-                    {reviewBusy ? <Loader2 size={12} className="animate-spin" /> : <Check size={12} />}
-                    Approve{pickedIds.length > 0 ? ` ${pickedIds.length}` : ''}
+                    <Check size={12} />
+                    {reviewBusy ? <ShimmerText>Approving…</ShimmerText> : `Approve${pickedIds.length > 0 ? ` ${pickedIds.length}` : ''}`}
                   </button>
                   <button
                     onClick={() => void run('changes')}
@@ -267,8 +268,8 @@ export function ReviewBoard({ onClose }: { onClose: () => void }) {
                   disabled={reviewBusy || pickedIds.length === 0}
                   className="flex items-center justify-center gap-1.5 rounded-sm bg-sky-500 px-3 py-1.5 text-[11px] font-semibold text-white hover:bg-sky-600 disabled:opacity-40"
                 >
-                  {reviewBusy ? <Loader2 size={12} className="animate-spin" /> : <Send size={12} />}
-                  Submit{pickedIds.length > 0 ? ` ${pickedIds.length}` : ''}
+                  <Send size={12} />
+                  {reviewBusy ? <ShimmerText>Submitting…</ShimmerText> : `Submit${pickedIds.length > 0 ? ` ${pickedIds.length}` : ''}`}
                 </button>
               )}
               {pickedIds.length === 0 && (
