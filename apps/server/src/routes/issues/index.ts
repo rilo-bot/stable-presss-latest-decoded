@@ -108,7 +108,10 @@ router.get('/:id/pdf', async (req, res) => {
     return;
   }
   const staff = isAdmin(req.account);
-  if (doc.unpublishedAt && !staff) {
+  // Unpublished issues are non-public. Grouped into one flag so the three uses below
+  // can't drift apart.
+  const nonPublic = Boolean(doc.unpublishedAt);
+  if (nonPublic && !staff) {
     res.status(404).json({ error: 'Not found' });
     return;
   }
@@ -116,13 +119,16 @@ router.get('/:id/pdf', async (req, res) => {
   const url = `${WEB_PUBLIC_URL}/bulletins/${req.params.id}`;
   // Forward the caller's token only when it's needed to render a non-public issue.
   const auth = req.headers.authorization;
-  const token = doc.unpublishedAt && staff && auth?.startsWith('Bearer ')
+  const token = nonPublic && staff && auth?.startsWith('Bearer ')
     ? auth.slice('Bearer '.length)
     : undefined;
   // Content-addressed cache key: a frozen issue only changes when republished
-  // (version/updatedAt bump). Unpublished previews are rendered with the caller's
-  // token, so don't share their output across the public cache — bypass it.
-  const cacheKey = doc.unpublishedAt ? '' : `${req.params.id}:${doc.version ?? 1}:${doc.updatedAt ?? ''}`;
+  // (version/updatedAt bump). Non-public renders use the caller's token, so don't
+  // share their output across the public cache — bypass it.
+  //
+  // Republishing overwrites this document IN PLACE, so the `version` bump is what
+  // keeps a stale render from being served for fresh content. Load-bearing.
+  const cacheKey = nonPublic ? '' : `${req.params.id}:${doc.version ?? 1}:${doc.updatedAt ?? ''}`;
 
   // ?refresh=1 forces a fresh render (e.g. after fixing artwork) and replaces
   // the cached copy.

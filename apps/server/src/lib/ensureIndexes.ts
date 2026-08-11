@@ -34,6 +34,10 @@ const INDEX_SPECS: IndexSpec[] = [
   { collection: COL.media, keys: { magazineId: 1, deletedAt: 1 } },
   // Per-magazine chat thread. Grows unbounded, so it must not scan.
   { collection: COL.chat, keys: { magazineId: 1, deletedAt: 1, createdAt: -1 } },
+  // The review audit trail is APPEND-ONLY and never pruned, so it only grows. Every
+  // read is one magazine's rows newest-first — without this, opening the trail scans
+  // every review event ever recorded, for every magazine.
+  { collection: COL.reviews, keys: { magazineId: 1, deletedAt: 1, at: -1 } },
   // Issue library list: served newest-first by updatedAt.
   { collection: COL.magazines, keys: { deletedAt: 1, updatedAt: -1 } },
   // Blogs: public index (published, newest first) and the staff list.

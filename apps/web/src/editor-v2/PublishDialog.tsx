@@ -5,10 +5,12 @@
 // newsstand with scope 'selected'. Owner-only.
 
 import { useState } from 'react';
-import { X, CheckSquare, Square, Send, Loader2 } from 'lucide-react';
+import { X, CheckSquare, Square, Send, Loader2, AlertTriangle } from 'lucide-react';
 import { useEditorStore } from './store';
+import { publishBlockers, publishBlockedReason, columnOf, COLUMN_LABEL } from './review';
 
 export function PublishDialog({ onClose, onPublished }: { onClose: () => void; onPublished: (publishedIssueId: string) => void }) {
+  const issue = useEditorStore((s) => s.issue);
   const pages = useEditorStore((s) => s.pages);
   const setPageSelected = useEditorStore((s) => s.setPageSelected);
   const publish = useEditorStore((s) => s.publish);
@@ -17,6 +19,12 @@ export function PublishDialog({ onClose, onPublished }: { onClose: () => void; o
   const total = pages.length;
   const selectedCount = pages.filter((p) => p.selectedForPublish).length;
   const allSelected = total > 0 && selectedCount === total;
+  // The approval gate, live against the ticks in this dialog. Unticking a blocking
+  // page clears the block on the spot — which is what makes the message's own advice
+  // ("leave them out of this edition") something you can actually act on here.
+  const blocked = publishBlockedReason(issue, pages, 'selected');
+  const { waiting, stale } = publishBlockers(issue, pages, 'selected');
+  const blockingIds = new Set([...waiting, ...stale].map((p) => p.id));
 
   const setAll = (sel: boolean) => {
     for (const p of pages) if (p.selectedForPublish !== sel) void setPageSelected(p.id, sel);
@@ -62,28 +70,45 @@ export function PublishDialog({ onClose, onPublished }: { onClose: () => void; o
           </button>
         </div>
 
+        {/* Why this selection can't publish yet — stated once, above the list, with
+            the blocking pages marked in it. */}
+        {blocked && (
+          <div className="flex items-start gap-2 border-b border-amber-400/25 bg-amber-400/10 px-4 py-2 text-[11px] text-amber-200">
+            <AlertTriangle size={12} className="mt-[1px] flex-shrink-0" />
+            <span>{blocked} Approve them on the review board, or untick them here.</span>
+          </div>
+        )}
+
         {/* Page list */}
         <div className="flex-1 overflow-y-auto p-2">
-          {pages.map((p) => (
-            <label
-              key={p.id}
-              className={
-                'flex cursor-pointer items-center gap-2.5 rounded-sm px-2.5 py-2 text-xs hover:bg-white/5 ' +
-                (p.selectedForPublish ? 'text-white' : 'text-white/55')
-              }
-            >
-              <input
-                type="checkbox"
-                checked={p.selectedForPublish}
-                onChange={(e) => void setPageSelected(p.id, e.target.checked)}
-                className="accent-emerald-500"
-              />
-              <span className="tabular-nums text-white/40">{String(p.index + 1).padStart(2, '0')}</span>
-              <span className="truncate">
-                Page {p.index + 1} · {p.elementCount} element{p.elementCount !== 1 ? 's' : ''}
-              </span>
-            </label>
-          ))}
+          {pages.map((p) => {
+            const isBlocking = blockingIds.has(p.id);
+            return (
+              <label
+                key={p.id}
+                className={
+                  'flex cursor-pointer items-center gap-2.5 rounded-sm px-2.5 py-2 text-xs hover:bg-white/5 ' +
+                  (p.selectedForPublish ? 'text-white' : 'text-white/55')
+                }
+              >
+                <input
+                  type="checkbox"
+                  checked={p.selectedForPublish}
+                  onChange={(e) => void setPageSelected(p.id, e.target.checked)}
+                  className="accent-emerald-500"
+                />
+                <span className="tabular-nums text-white/40">{String(p.index + 1).padStart(2, '0')}</span>
+                <span className="truncate">
+                  Page {p.index + 1} · {p.elementCount} element{p.elementCount !== 1 ? 's' : ''}
+                </span>
+                {isBlocking && (
+                  <span className="ml-auto flex-shrink-0 rounded-full border border-amber-400/30 bg-amber-400/10 px-1.5 py-0.5 text-[10px] text-amber-200">
+                    {p.approvalStale ? 'needs re-approval' : COLUMN_LABEL[columnOf(p)]}
+                  </span>
+                )}
+              </label>
+            );
+          })}
         </div>
 
         {/* Footer */}
@@ -94,7 +119,8 @@ export function PublishDialog({ onClose, onPublished }: { onClose: () => void; o
           <button
             type="button"
             onClick={() => void doPublish()}
-            disabled={publishing || selectedCount === 0}
+            disabled={publishing || selectedCount === 0 || !!blocked}
+            title={blocked || undefined}
             className="ml-auto flex items-center justify-center gap-1.5 rounded-sm bg-emerald-500 px-3 py-2 text-xs font-semibold text-white hover:bg-emerald-600 disabled:opacity-50"
           >
             {publishing ? <Loader2 size={13} className="animate-spin" /> : <Send size={13} />}

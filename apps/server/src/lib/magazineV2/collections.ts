@@ -37,4 +37,15 @@ export const COL = {
   /** Persistent per-magazine assistant chat thread (page-tagged, paginated) —
    *  so the conversation survives reloads instead of living only in memory. */
   chat: 'magazineChatV2',
+  /**
+   * The submissions/approval AUDIT TRAIL — one row per review transition
+   * (submit / approve / request-changes), append-only.
+   *
+   * Its own collection rather than an array on the page: page documents already
+   * ship `elements[]` on every fetch and are the heaviest objects in the system,
+   * so growing them with history would tax every editor load. It also survives
+   * the page — a row written just before a submitted page is deleted keeps the
+   * record of who submitted what.
+   */
+  reviews: 'magazineReviewsV2',
 } as const;

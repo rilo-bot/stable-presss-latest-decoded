@@ -1,6 +1,323 @@
-# Magazine v2 — submissions, approval, and immutable published editions
+# Magazine v2 — submissions, approval, and republishing
 
-**Status: PLANNED.** Nothing built. Decisions below are locked unless marked open.
+**Status: S1–S5 BUILT 2026-08-11, then the EDITION MODEL WAS REVERSED.** Decisions below are locked unless
+marked open. Read the reversal first — several sections further down describe a design that no longer exists.
+
+---
+
+## ⛔ REVERSED 2026-08-11 — no versions, one status instead
+
+**The user dropped the v1/v2 immutable-edition idea.** Editing a published magazine does not create a
+version, and publishing does not fork a snapshot. What replaced it:
+
+| Was (S2 + S4) | Now |
+|---|---|
+| A published magazine was **read-only** (`draft-closed` on six content doors) | **Freely editable.** Publishing locks nothing |
+| `POST …/revision` unlocked it and bumped `draftVersion` | **Endpoint removed.** Nothing needs unlocking |
+| Publish **inserted one `issues` doc per edition**, stamping the old one `supersededAt` | Publish **overwrites the same snapshot**, as it did before S4 |
+| `publishedIssueIds` history, `GET …/editions`, v1↔v2 compare | All gone |
+| Divergence between draft and live edition was **prevented** | Divergence is **reported**: `needs_republish` |
+
+**The problem versioning was solving does not disappear** — the moment you edit a published magazine, the
+draft says one thing and readers see another. Editions hid that behind a version; now it is surfaced as a
+status and cleared by one click of **Republish**.
+
+### `needs_republish` is DERIVED, not stored
+
+This is the part worth defending. A stored flag would have to be flipped by every write path that can
+change published content, and there are at least six of those (element CRUD, page structure, reset, publish
+selection, extraction confirm, per-page retry). One missed path and the studio quietly claims a magazine is
+in sync when it is not — the same class of bug as gating one door and calling the building locked.
+
+So it is computed from timestamps: `status === 'published' && (magazine.updatedAt > publishedAt || any
+page.updatedAt > publishedAt)`. Publish sets `updatedAt` to the same instant as `publishedAt`, so a freshly
+published magazine reads as in sync. Nothing to keep in step, nothing to drift.
+
+Per page, the same comparison answers "would a republish change this one?" (`editedSincePublish`), which the
+page rail shows on hover — so the header's warning is traceable to specific pages.
+
+**The client adds a third source**, OR'd with the server's: element writes return only `{element, rev}`, so
+without a local "I have edited since I loaded this" flag the studio would keep saying *in sync* through an
+entire editing session on a published magazine — the one moment the warning has to be right. The server's
+per-page flag is kept as a backstop: if a write path ever fails to mark it, the warning appears on the next
+load rather than never.
+
+### Two open questions this reversal CLOSED
+
+- **Public bulletin links no longer break.** One snapshot means the id never changes, so shared and indexed
+  `/bulletins/:id` URLs keep working across republishes.
+- **Reader reactions and comments survive**, for the same reason — they target that unchanging id.
+
+### What survived from S4
+
+The publish **approval gate** (`lib/magazineV2/publishGate.ts`), the `withIssueLock` around publish, and the
+delete confirmation — though the last one is now "this magazine is live on Bulletins" rather than a count of
+editions. The snapshot still records `pages[].rev` as provenance of what readers were given.
+
+### Kept the old shape where reverting would have been worse
+
+`version` still increments on each republish, because the PDF cache key is `${id}:${version}:${updatedAt}` —
+without the bump a republished edition could serve the previous render.
+
+---
+
+## S5 — what shipped
+
+The flow became reachable. Everything here is **pure UI over data S3/S4 already put on the wire** —
+no new endpoint, no new server code.
+
+| | Result |
+|---|---|
+| New module | `editor-v2/review.ts` — the four-from-three column derivation, review scope, the publish gate and the read-only reason, all as pure functions |
+| The board | `editor-v2/ReviewBoard.tsx` — four columns, one modal, **both roles**: owner approves / sends back, collaborator submits |
+| Store | `submitPages` / `approvePages` / `requestChanges`, each setting `pages` from the server's reply and reporting `skipped` + email failures rather than hiding them |
+| Header | a `v2 · revising` chip (only once there's more than one version to confuse), **`N awaiting you`** for the owner, **`Submit for review`** for a collaborator |
+| Publish | disabled **with a reason**, per scope — a full edition and a selected edition are gated separately |
+| Page rail | a coloured state dot per page + the full state, round and last note on hover |
+| Read-only | an amber banner naming *why* this page won't take edits, with a link to the board |
+| Verified | server · worker · web typecheck exit 0; 115 tests; server build exit 0; **web production build exit 0** |
+
+### Decisions and one defect
+
+- **Four columns from three stored states.** "Needs changes" is `in_progress AND reviewRound > 0`,
+  derived in `columnOf`. Storage stays at three values; the board reads the way people think.
+- **A stale approval stays in Approved** with an amber "edited after approval" strip, rather than
+  jumping back to Submitted. The cause matters, and moving the card would hide it.
+- **The solo-owner case says so out loud.** With no collaborators the board explains that nothing
+  needs approving, instead of showing four empty columns that imply forgotten work.
+- **Defect found in my own S5 code:** `publishBlockers` filtered on `selectedForPublish`, but a
+  `'full'` publish includes **every** page whatever its flag. Publish would have looked enabled and
+  then 409'd on the default path — the exact silent failure the disabled state exists to prevent.
+  Now judged per scope, so one unapproved page can block "full" while "selected" stays open.
+
+### Known gap
+
+`editor-v2/review.ts` mirrors two server rules — `isInReviewScope` and `publishApprovalBlock` — and
+**nothing tests the mirror**, because the repo has no web test harness (tests are `apps/server/tests`
+only). Drift would make the UI promise something the API refuses. Mitigating factors: the server is
+still the enforcement, so the failure mode is a 409 with an honest message rather than bad data, and
+both rules are one-liners with their server twin named in a comment.
+
+## Cross-phase review of S1–S4 (2026-08-11)
+
+A read of every changed line, after all four phases were in, looking for what the per-phase
+checks missed. **Five defects fixed, one product decision surfaced.**
+
+### Fixed
+
+1. **`POST /publish` had no serialisation — and S4 made that dangerous.** While publishing
+   overwrote one snapshot a double-click was near-harmless: both calls wrote the same document.
+   Once a publish can *insert* an edition, two concurrent calls both read `status:'revising'`,
+   both insert, and the newsstand carries **two live editions of one magazine** — only one of them
+   recorded in `publishedIssueIds`, leaving the other an orphan nothing can ever retire. Now inside
+   `withIssueLock` with the state re-read and re-checked *inside* the lock. It also shares the
+   structural-op lock, so a publish can no longer freeze a snapshot mid-reorder.
+2. **`applyAllProposals` claimed success over refusals.** Its keep-going `catch {}` swallowed
+   every failure and then toasted "Applied the assistant's changes." Harmless when the only
+   failures were bugs; a lie now that a page op can be *legitimately* refused (submitted page,
+   published draft). Failures are counted and reported, and a `remove-page` proposal on a
+   submitted page routes through the store's `deletePage` so the owner still gets the warning
+   instead of a silent no-op — the assistant asking on their behalf is no reason to skip it.
+3. **Mail subject-header injection surface.** Magazine titles are only `.trim()`ed, so a newline
+   reaches the `subject` line, which is a mail header. Both transports happen to encode subjects
+   safely, but that is their choice, not ours — and S3 added three more templates over the same
+   path. Control characters are now stripped centrally in `send()`, which also fixes the
+   pre-existing share email.
+4. **The draft-closed refusal told contributors to do something they cannot.** "Create a revision
+   to make changes" is not an instruction a contributor can follow. One shared
+   `DRAFT_CLOSED_MESSAGE` now names the owner, so it is true for both audiences and still
+   actionable for the one who can act.
+5. Two smaller ones already noted in the S3/S4 sections: the page-removed email could tell an
+   `'all'`-scoped collaborator they had submitted someone else's page, and the submit reply
+   returned the unfiltered page list to a page-scoped collaborator.
+
+### Verified clean
+
+- **Every `pageSummary` response was audited for scope.** Thirteen call sites: two creates and
+  nine owner-only routes, plus `GET /issues/:id` and `POST …/pages/submit`, both of which go
+  through `visiblePages`. The notes and `submittedBy` added in S3 leak nowhere.
+- Route shapes don't shadow: `/pages/submit` etc. differ from `/pages/:pageId/…` in segment count,
+  and `PATCH …/pages/reorder` was already the same pattern.
+- Email HTML escapes every interpolated value (`esc`), including notes and display names.
+- `GET …/editions` is safe for a page-scoped collaborator: a published edition's title and page
+  count are public on the newsstand anyway.
+
+### Known, accepted
+
+- **A revision cannot be abandoned.** The only way out of `revising` is to publish. Not harmful —
+  the live edition stays live — but there is no way back. That is S6's "Discard revision".
+- **`approve` on 120 pages is 120 CAS updates + 120 audit inserts, sequentially.** Bounded and
+  correct, but slow; the db wrapper has no `insertMany`. Same "load-everything" pattern the deep
+  review already records for v2.
+- **`loadReviewCtx` + the response each load every page with its elements.** Two full loads per
+  review call. Consistent with the rest of v2; the wrapper offers no projection.
+**Migrations are deliberately NOT run yet** — the user will perform them once every phase is done. Everything
+shipped so far works on untouched documents through read-through defaults.
+
+## S4 — what shipped
+
+Publishing stopped overwriting one snapshot and started inserting **one document per edition**.
+
+| | Result |
+|---|---|
+| Publish | insert-per-edition + `supersededAt` on the one it replaces + `publishedIssueIds` history + `draftVersion` converged on the edition number |
+| Snapshot | `pages[].rev` frozen in, so a later revision can say exactly which pages changed |
+| The gate | `lib/magazineV2/publishGate.ts` — every included page must be approved-and-fresh **or** out of review scope (`isInReviewScope`, the solo-owner rule) |
+| Newsstand | `supersededAt: null` added to `GET /api/issues` (**and** to the index it is served by), plus get-one and the PDF route |
+| Other readers fixed | the newsroom dashboard totals, the reactions "how many bulletins" count, and the assistant's `listBulletins` — each would have counted a republished magazine twice |
+| New endpoint | `GET /issues/:id/editions` — version, publishedAt, pageCount, live/superseded/hidden |
+| Delete | refuses a magazine with editions unless `?confirm=1`, names the count and the versions, then removes **every** edition (soft) |
+| Web | `getEditions` + `deleteIssue(id, confirm)` and the confirm wired through `remove()` |
+| Tests | **11 new** (`tests/magazineV2/publishGate.test.ts`), **115 passing** overall |
+| Typecheck / build | server · worker · web exit 0; server build exit 0; `check:permissions` 0 unenforced |
+
+### The two decisions that took the most care
+
+**A new edition is created only when `status === 'revising'`** — the owner's own explicit act. The obvious
+alternative, "is `draftVersion` greater than the live edition's `version`?", is **wrong on legacy data**:
+republishing used to bump `version` in place, so an existing edition can already be at v7 while `draftVersion`
+reads 1, and a revision would then quietly overwrite the live edition instead of superseding it. Publishing
+also now writes `draftVersion = editionVersion`, so that legacy divergence self-heals after one publish.
+
+**Unpublish no longer clobbers an open revision.** It used to set `status: 'ready'` unconditionally. With the
+rule above, that would silently cancel the revision *and* make the next publish overwrite v1 with v2's content
+— destroying an edition the history still claims exists. Hiding the live edition and reworking the next one are
+independent acts, so they are now independent in code.
+
+Ordering also matters inside publish: the new edition is **inserted before** the old one is superseded. The
+worst case is then two live editions for a few milliseconds, which the newsstand tolerates; the reverse
+ordering risks a magazine with *no* live edition, which is an outage.
+
+### ⚠ Public bulletin links break on republish (found in the cross-phase review)
+
+Superseded editions 404 for readers — that was the decision ("viewable by staff, not the public").
+But neither of us was thinking about **links already out in the world** when we made it. Under
+in-place republishing a shared or indexed `/bulletins/:id` URL kept working and simply showed the
+newer content. Now v2 gets a *new id*, and every existing link to v1 dies the moment v2 publishes.
+
+Options:
+1. **Redirect readers to the live edition.** Store `supersededBy: <newId>` where we already stamp
+   `supersededAt`, and have the reader route follow it. Keeps every old link working, keeps v1
+   staff-readable for the compare view. My recommendation.
+2. **Let superseded editions stay publicly readable at their own URL.** Arguably the truest form of
+   "immutable editions" — v1 is a real artifact — but a reader following an old link would then be
+   reading a stale magazine with no hint that a newer one exists.
+3. Accept the 404. Simple, and wrong for anyone who shared a link.
+
+Not built, because it is a product decision about what readers see.
+
+### ⚠ One consequence that needs a decision (not yet built)
+
+**Reader reactions do not follow a magazine across editions.** Reactions and comments target the *published
+issue id*, and each edition is now a new document — so publishing v2 makes a bulletin's reaction counts appear
+to reset to zero, and v1's reactions become unreachable along with v1. Republishing in place used to keep them.
+
+Three options, in order of my preference:
+1. **Re-point reactions/comments at the new edition on publish.** Matches the expectation "my bulletin has 40
+   reactions"; loses the (unasked-for) record of which edition a reaction was left on. No index collision — the
+   new id is unique, so `{targetType, targetId, userId}` stays satisfied.
+2. **Aggregate across a magazine's editions when displaying.** Most correct, most work; needs a magazine-level
+   key that `reactions` does not currently have.
+3. **Accept per-edition reactions.** Defensible under "immutable editions", but it will read as data loss.
+
+Nothing here is urgent until a magazine is actually republished after a revision. Flagged rather than chosen,
+because it changes stored reader data either way.
+
+---
+
+## S3 — what shipped
+
+The flow itself: a collaborator submits, the owner approves or sends work back, and every
+transition is recorded and emailed.
+
+| | Result |
+|---|---|
+| Endpoints | `POST …/pages/submit`, `…/pages/approve`, `…/pages/request-changes`, `GET …/reviews` |
+| Audit trail | `COL.reviews` = `magazineReviewsV2`, append-only, **plus its index** `{magazineId, deletedAt, at:-1}` |
+| Transition rules | `reviewIs` (the CAS filter) + `reviewTransitionError` (who may do what) in `review.ts` |
+| Emails | `lib/notifyReview.ts` + three templates; **batched by recipient** — approving 8 pages split between 2 people sends 2 emails, each naming only that person's pages |
+| Page naming | `lib/pageLabels.ts` — one formatter, now also used by the share email so the two can't drift |
+| Agent role-gate | `runPageAgent({ canEditStructure })` **omits** the four page-structure tools for non-owners (§12.1) |
+| Delete-submitted | 409 naming who submitted it → `?confirm=1` goes through; audit row written **before** the delete; the submitter is emailed |
+| Web | `submitPages` / `approvePages` / `requestPageChanges` / `getReviews` in api.ts, and the delete-confirm wired into the store |
+| DB writes | still **zero** migration — new page fields are written only when a transition happens |
+| Tests | **13 new** (`tests/magazineV2/submissions.test.ts`), **104 passing** overall |
+| Typecheck / build | server · worker · web all exit 0; server build exit 0; `check:permissions` 0 unenforced |
+
+### Decisions made while building
+
+- **`submitNote` is a NEW field, separate from the plan's single `reviewNote`.** One field would
+  have the resubmit's "done" overwrite the owner's "fix the headline", and the board would then
+  attribute the wrong words to the owner. `reviewNote` stays the owner's; approving with no note
+  deliberately clears it (the feedback is resolved), and the audit trail keeps every note anyway.
+- **`request-changes` doubles as REOPEN**, accepting `approved` as well as `submitted`. Every
+  blocked edit tells the collaborator to "ask the owner to reopen it" — without this that message
+  points at a door that doesn't exist.
+- **A stale approval can be re-approved.** Approved at rev 5 then edited to rev 7 is untrustworthy,
+  so approve must be able to refresh `approvedAtRev` or the page is stuck un-publishable.
+- **Approve pins `rev` in its CAS; submit does not.** `approvedAtRev` is the entire basis of
+  staleness, so recording a rev the page has moved past would publish unreviewed content under an
+  "approved" badge. Submit has no such payload, and failing it on the submitter's own autosave
+  would just be flaky.
+- **`GET …/reviews` is tighter than the plan's "any member":** a page-scoped collaborator sees only
+  rows for pages shared with them, because everywhere else in this router an unshared page is a 404.
+  Accepted consequence: after a page is deleted its id is pruned from assignments, so the
+  `page-removed` row is visible to the owner only — the collaborator gets the email instead.
+- **No `GET …/board` endpoint.** `GET /issues/:id` already returns `collaborators` plus a
+  `pageSummary` per visible page carrying `review`, `reviewRound`, `approvalStale`, both notes and
+  `submittedBy`/`submittedAt`. A board endpoint today would be a second name for data that already
+  ships; S5 is pure UI.
+- **The owner cannot submit** (400, `reason: 'owner-does-not-submit'`), per §12. §7's table said
+  "collaborator (or owner)"; the later decision wins.
+
+### Verification pass — four defects found in my own S3 code
+
+1. **`MAX_REVIEW_BATCH` was 100 while `MAX_PAGES_PER_ISSUE` is 120**, so "approve everything" on a
+   full issue would have been refused. Now derived from the page cap rather than a guessed round number.
+2. **The page-removed email would have lied.** Recipients came from `assigneesOfPage`, and an
+   `'all'`-scoped collaborator is an assignee of *every* page — so they'd be told "a page you had
+   submitted was removed" about someone else's submission. Now narrowed to `page.submittedBy`.
+3. **The submit reply leaked the whole page list.** It returned `pagesFor(...)` unfiltered to a
+   page-scoped collaborator, while every other read they get goes through `visiblePages`.
+4. **A growing collection with no index.** The audit trail is append-only and never pruned, and
+   every read filters `magazineId` and sorts by `at` — without an index that is a full scan over
+   every magazine's history, forever.
+
+---
+
+## S1 + S2 — what shipped
+
+| | Result |
+|---|---|
+| New module | `lib/magazineV2/review.ts` — the review axis + runtime-default accessors |
+| Access split | `canViewPage` (assignment) vs `pageEditBlock`/`canEditPage` (assignment + review + draft-open) |
+| The lock | Element writes, the AI agent and Fill/Adjust all refuse a submitted/approved page for non-owners, and refuse **any** edit while published |
+| The key | `POST /issues/:id/revision` — owner-only, `published → revising`, `draftVersion++` |
+| Web | `createRevision` in api + store, a **Create revision** button, and a **Live edition** link that survives into `revising` |
+| DB writes | **zero** — every new field is optional with a read-through default |
+| Tests | **17 new** (`tests/magazineV2/access.test.ts`), 91 passing overall |
+| Typecheck / build | server · worker · web all exit 0; server build exit 0 |
+
+### Verification pass — five bugs found in the first cut, all fixed
+
+A route-by-route audit of every endpoint against its content gate turned up five real defects in my own S1/S2 work:
+
+1. **The lock covered element writes only.** `requireOwnedIssue` gates the five structural routes (add page, duplicate, delete, reorder, AI-generate) on `isBusy` alone, so the owner could restructure a published magazine — diverging the draft from the live edition just as surely as an element edit. `reset` and the publish-selection toggle had the same gap.
+2. **`POST /publish` was a back door.** It checked owner + `isBusy` only, and `selectedPageIds` rewrites *which* pages the live edition contains — so the public page set could change with no revision. Now refused while published; `revising` and `ready` still pass.
+3. **`confirm-upload` and `pages/:pageId/retry` bypassed everything.** Both re-run extraction, which **rewrites page elements** — the most sweeping content change in the system — and neither checked draft state. `confirm-upload` did not check `isBusy` either, so a double call could start two extractions of the same issue.
+4. **A lost-update race on `collaborators`.** The page-delete prune computed the new collaborator array from a magazine document loaded *outside* `withIssueLock`, so a share landing between the load and the write would be silently dropped. Now re-read inside the lock, for the same reason the pages already are.
+5. **A rejected write left its optimistic edit on screen.** Element writes paint locally first, and `handleWriteError` only reverted when the 409 carried a `page` body — which a state block does not. The canvas kept showing an edit the server refused, so the user believed it had saved. Now a `reason`-bearing 409 re-fetches the stored page and discards the local change.
+
+Plus one hardening: `POST /revision` uses `updateOneIf(id, {status:'published'}, …)` rather than a blind write, so two concurrent clicks cannot both bump the version and land on v3.
+
+**Six content doors now go through `refuseIfDraftClosed`** — structural ops (via `requireOwnedIssue`), `reset`, publish-selection, `publish`, `confirm-upload` and per-page `retry` — plus `pageEditBlock` on every element/agent/format write. *Published means frozen* is now true of content, not just of elements.
+
+**Deliberately deferred from S1:** no indexes yet (nothing queries the review fields until S3's board) and no unused accessors — `isApprovedAndFresh` and `editionIdsOf` exist because S4 needs them and they are cheap to test now, but nothing speculative beyond that.
+
+**Known UI gap until S5:** the header shows `Create revision` and the live-edition link, but there is no per-page review badge yet — `pageSummary` already returns `review`, `reviewRound` and `approvalStale` for it.
+
+---
+
 **Date:** 2026-08-11 · **Branch:** `feature/blogs`
 **Depends on:** nothing. **Blocks:** `docs/MAGAZINE-V2-QUALITY-PLAN.md` should land *after* this, because this changes the data model and that plan does not.
 **Reference:** `docs/MAGAZINE-BUILDER-V2-TECHNICAL.md` (verified accurate).
@@ -173,7 +490,23 @@ issues (snapshot)
 magazineReviewsV2  NEW collection — the audit trail
 ```
 
-**Migration is a non-destructive backfill:** for every magazine with a `publishedIssueId`, set `publishedIssueIds = [thatId]` and `draftVersion = (edition.version ?? 1)`. Existing pages default to `review: 'in_progress'`. Nothing is rewritten or deleted, and every existing read path keeps working because `publishedIssueId` keeps its meaning.
+### 6.4 No migration — runtime defaults instead
+
+**Decided: there is no migration script.** Every new field is optional and every read tolerates its absence, so existing documents work untouched:
+
+| Field | Read as |
+|---|---|
+| `page.review` | `page.review ?? 'in_progress'` |
+| `page.approvedAtRev` | `?? null` (⇒ never approved ⇒ nothing to go stale) |
+| `page.reviewRound` | `?? 0` |
+| `magazine.draftVersion` | `?? (liveEdition?.version ?? 1)` |
+| `magazine.publishedIssueIds` | `?? (publishedIssueId ? [publishedIssueId] : [])` |
+| `edition.supersededAt` | `?? null` (⇒ the sole edition is live) |
+| `snapshotPage.rev` | `undefined` ⇒ "changed since v1" is unknown, so show nothing rather than a wrong badge |
+
+One helper per field, used everywhere — never an inline `??` scattered across call sites, or they will drift. This is the same drop-invalid/degrade-never-fail discipline the rest of v2 already follows, and it means S1 ships with **zero database writes**.
+
+The one consequence to accept: a magazine published *before* this lands has no `snapshotPage.rev`, so its first revision cannot show per-page "changed since v1" badges. It recovers on the next publish. Fine — and better than a migration that guesses.
 
 **A bonus:** the PDF cache key is `${id}:${version}:${updatedAt}`. With one document per edition the ids differ, so cache correctness gets *simpler*, not harder.
 
@@ -279,11 +612,11 @@ Each page in the vertical stack gets one badge: `submitted` / `approved` / `need
 
 | Phase | Scope | Why here |
 |---|---|---|
-| **S1** | Schema + migration backfill + `review` on pages, defaulted. No behaviour change. | Everything else reads it; ships invisibly. |
-| **S2** | `canEditPage` gains the review + draft-open conditions; `isDraftOpen`. **Closes the edit-after-publish hole.** | The correctness fix. Small, high value, independent of any UI. |
-| **S3** | Submit / approve / request-changes endpoints + `magazineReviewsV2` + emails + **role-gate the agent's page tools** (§12.1). | The flow itself, testable by API before any UI. |
-| **S4** | Publish → immutable editions: insert-per-edition, `supersededAt`, `publishedIssueIds`, snapshot `pages[].rev`, the approval gate, **newsstand filter fix (§11)**. | Depends on S1/S3; the riskiest server change. |
-| **S5** | Board + header version chips + per-page badges. | The visible half. |
+| **S1** ✅ | Field accessors + runtime defaults (§6.4) and the stale-`pageIds` cleanup (§11.6). **No migration, no behaviour change.** | Everything else reads through these helpers; shipped with zero DB writes. |
+| **S2** ✅ | The access split, the draft-open lock on every content door, and `POST /revision` as its key. **Closed the edit-after-publish hole.** | The correctness fix. Shipped with the minimal web wiring so the lock is never a dead end. |
+| **S3** ✅ | Submit / approve / request-changes endpoints + `magazineReviewsV2` + emails + **role-gate the agent's page tools** (§12.1) + the delete-submitted warn/notify. | The flow itself, testable by API before any UI. |
+| **S4** ✅ | Publish → immutable editions: insert-per-edition, `supersededAt`, `publishedIssueIds`, snapshot `pages[].rev`, the approval gate, **newsstand filter fix (§11)**, `GET …/editions`, the delete guard. | Depends on S1/S3; the riskiest server change. |
+| **S5** ✅ | Board + header version chips + per-page badges + the Submit button + publish-disabled-with-a-reason + the read-only banner. | The visible half. |
 | **S6** | Versions panel + compare view + Overview attention list. | Highest polish, lowest risk. |
 
 S2 alone is worth shipping early — it closes a live hole regardless of when the rest lands.
@@ -297,6 +630,8 @@ S2 alone is worth shipping early — it closes a live hole regardless of when th
 3. **Republish semantics get stricter.** Editing a published magazine now requires an explicit revision. That is the point, but it is a behaviour change for anyone used to the current silent overwrite — worth a one-line note in the UI the first time.
 4. **`isBusy` interaction.** "Add more pages" runs while `processing`; new pages must land `review: 'in_progress'` and unassigned, so a mid-flight generation can't inject unreviewed pages into an otherwise-approved issue.
 5. **Email volume.** A per-page approve on eight pages must send *one* email, not eight. Batch by recipient.
+6. **Stale `collaborators[].pageIds` after a page delete.** Verified: `DELETE …/pages/:pageId` removes the page and reindexes, but **never prunes that id from any collaborator's assignment**. Harmless today (a stale id simply never matches a page, so `canEditPage` returns false for something that no longer exists) but the board and the share dialog would report "3 pages assigned" when one is gone. **Fixed in S1** by pruning the id inside the same `withIssueLock` block.
+7. **Deleting a page a collaborator has submitted** — *decided: allow, but warn and notify.* The owner confirms a dialog naming who submitted it, and the collaborator is emailed that their submitted page was removed. The audit row is written before the delete so the trail survives the page.
 
 ---
 

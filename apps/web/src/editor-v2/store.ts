@@ -76,6 +76,7 @@ interface EditorState {
   justGenerated: boolean; // a from-scratch generation just finished this session (offer "add more pages")
   formatBusy: boolean; // a Fill/Adjust text pass is running
   publishing: boolean; // a publish/unpublish call is in flight
+  reviewBusy: boolean; // a submit/approve/request-changes call is in flight
   undoStack: UndoEntry[];
   redoStack: UndoEntry[];
 
@@ -133,6 +134,28 @@ interface EditorState {
    *  flagged pages) → returns the public Bulletins issue id, or null on failure. */
   publish: (scope: 'full' | 'selected') => Promise<string | null>;
   unpublish: () => Promise<void>;
+  /**
+   * The draft has diverged from the live edition, so a republish is needed.
+   *
+   * Two sources, OR'd: what the server derived when the magazine was loaded, and
+   * whether we have written anything ourselves since. The local half matters because
+   * element writes return only `{element, rev}` — without it the studio would keep
+   * saying "in sync" through a whole editing session on a published magazine, which is
+   * the one moment the warning has to be right.
+   */
+  needsRepublish: () => boolean;
+  /** Set by every successful write; cleared on load and on publish. */
+  editedSinceLoad: boolean;
+
+  // ── Submissions & approval (the review axis) ──
+  // A submission is an EVENT over a set of pages, so all three take pageIds[] and
+  // resolve to a single toast naming the pages that actually moved.
+  /** Collaborator: send assigned pages to the owner for review. */
+  submitPages: (pageIds: string[], note?: string) => Promise<boolean>;
+  /** Owner: approve pages, recording the rev they were approved at. */
+  approvePages: (pageIds: string[], note?: string) => Promise<boolean>;
+  /** Owner: send pages back (doubles as reopen). `note` is required by the server. */
+  requestChanges: (pageIds: string[], note: string) => Promise<boolean>;
   /** Re-fetch issue meta (collaborators, publish state) without reloading pages. */
   refreshIssue: () => Promise<void>;
   /** While an issue is still generating (status 'processing'), poll and reveal
@@ -166,6 +189,8 @@ export const useEditorStore = create<EditorState>((set, get) => ({
   justGenerated: false,
   formatBusy: false,
   publishing: false,
+  reviewBusy: false,
+  editedSinceLoad: false,
   undoStack: [],
   redoStack: [],
   chat: [],
@@ -183,7 +208,10 @@ export const useEditorStore = create<EditorState>((set, get) => ({
 
   load: async (id) => {
     stopGenPoll();
-    set({ loading: true, error: null, issueId: id, generating: false, justGenerated: false, currentPageId: null, page: null, chat: [], proposals: [], proposalsPageId: null });
+    // editedSinceLoad resets here: the freshly-loaded `issue.needsRepublish` is the
+    // server's own answer, so carrying a stale local flag across a reload would keep
+    // claiming changes that were already published.
+    set({ loading: true, error: null, issueId: id, generating: false, justGenerated: false, currentPageId: null, page: null, chat: [], proposals: [], proposalsPageId: null, editedSinceLoad: false });
     try {
       const { issue, pages } = await api.getIssue(id);
       set({ issue, pages, loading: false, undoStack: [], redoStack: [], selectedId: null });
@@ -263,6 +291,7 @@ export const useEditorStore = create<EditorState>((set, get) => ({
             : st.page,
           undoStack: beforeEl ? [...st.undoStack.slice(-59), { pageId, elementId, before: beforeEl, after: element }] : st.undoStack,
           redoStack: [],
+          editedSinceLoad: true,
         }));
       } catch (e) {
         // A stale rev (an AI/format write or a collaborator landed first) must NOT
@@ -290,6 +319,7 @@ export const useEditorStore = create<EditorState>((set, get) => ({
       set((st) => ({
         page: st.page ? { ...st.page, rev, elements: [...st.page.elements, element] } : st.page,
         selectedId: element.id,
+        editedSinceLoad: true,
       }));
       return element.id;
     } catch (e) {
@@ -306,6 +336,7 @@ export const useEditorStore = create<EditorState>((set, get) => ({
       set((st) => ({
         page: st.page ? { ...st.page, rev, elements: st.page.elements.filter((e) => e.id !== elementId) } : st.page,
         selectedId: st.selectedId === elementId ? null : st.selectedId,
+        editedSinceLoad: true,
       }));
     } catch (e) {
       handleWriteError(e, set, get);
@@ -369,7 +400,7 @@ export const useEditorStore = create<EditorState>((set, get) => ({
     if (!s.issueId) return;
     try {
       const { pages } = await api.addPage(s.issueId);
-      set({ pages });
+      set({ pages, editedSinceLoad: true });
     } catch (e) {
       toast.error(e instanceof Error ? e.message : 'Failed to add page');
     }
@@ -421,7 +452,7 @@ export const useEditorStore = create<EditorState>((set, get) => ({
     if (!s.issueId) return;
     try {
       const { pages } = await api.duplicatePage(s.issueId, pageId);
-      set({ pages });
+      set({ pages, editedSinceLoad: true });
     } catch (e) {
       toast.error(e instanceof Error ? e.message : 'Failed to duplicate');
     }
@@ -430,11 +461,30 @@ export const useEditorStore = create<EditorState>((set, get) => ({
   deletePage: async (pageId) => {
     const s = get();
     if (!s.issueId) return;
+    const issueId = s.issueId;
+    const finish = async (pages: PageSummary[]) => {
+      set({ pages, editedSinceLoad: true });
+      if (get().currentPageId === pageId && pages[0]) await get().openPage(pages[0].id);
+    };
     try {
-      const { pages } = await api.deletePage(s.issueId, pageId);
-      set({ pages });
-      if (s.currentPageId === pageId && pages[0]) await get().openPage(pages[0].id);
+      const { pages } = await api.deletePage(issueId, pageId);
+      await finish(pages);
     } catch (e) {
+      // A page a collaborator has SUBMITTED is refused first time round, naming who
+      // submitted it, so the owner can't discard someone's work without being told.
+      // The server's own sentence is what we show — it already names the page and the
+      // people — and confirming retries with ?confirm=1. Without this the refusal
+      // would be a dead end: a lock with no key.
+      if (e instanceof ApiError && e.status === 409 && e.body?.reason === 'page-submitted') {
+        if (!window.confirm(`${e.message}\n\nDelete it anyway? They'll be emailed about it.`)) return;
+        try {
+          const { pages } = await api.deletePage(issueId, pageId, true);
+          await finish(pages);
+        } catch (err) {
+          toast.error(err instanceof Error ? err.message : 'Failed to delete page');
+        }
+        return;
+      }
       toast.error(e instanceof Error ? e.message : 'Failed to delete page');
     }
   },
@@ -444,7 +494,7 @@ export const useEditorStore = create<EditorState>((set, get) => ({
     if (!s.issueId) return;
     try {
       const { pages } = await api.reorderPages(s.issueId, from, to);
-      set({ pages });
+      set({ pages, editedSinceLoad: true });
     } catch (e) {
       toast.error(e instanceof Error ? e.message : 'Failed to reorder');
     }
@@ -478,11 +528,26 @@ export const useEditorStore = create<EditorState>((set, get) => ({
   remove: async () => {
     const s = get();
     if (!s.issueId) return false;
+    const issueId = s.issueId;
     try {
-      await api.deleteIssue(s.issueId);
+      await api.deleteIssue(issueId);
       toast.success('Magazine deleted.');
       return true;
     } catch (e) {
+      // Deleting a LIVE magazine also takes the bulletin off the public newsstand,
+      // which isn't obvious from a button in the studio — so the server refuses the
+      // first attempt and says so. Show its sentence, then confirm through.
+      if (e instanceof ApiError && e.status === 409 && e.body?.reason === 'is-live') {
+        if (!window.confirm(`${e.message}\n\nDelete it anyway? This cannot be undone.`)) return false;
+        try {
+          await api.deleteIssue(issueId, true);
+          toast.success('Magazine deleted, and removed from Bulletins.');
+          return true;
+        } catch (err) {
+          toast.error(err instanceof Error ? err.message : 'Delete failed');
+          return false;
+        }
+      }
       toast.error(e instanceof Error ? e.message : 'Delete failed');
       return false;
     }
@@ -536,7 +601,7 @@ export const useEditorStore = create<EditorState>((set, get) => ({
     set({ pages: s.pages.map((p) => (p.id === pageId ? { ...p, selectedForPublish: selected } : p)) });
     try {
       const { pages } = await api.setPageSelected(s.issueId, pageId, selected);
-      set({ pages });
+      set({ pages, editedSinceLoad: true });
     } catch (e) {
       set({ pages: s.pages }); // roll back
       toast.error(e instanceof Error ? e.message : 'Could not update the page selection');
@@ -550,16 +615,102 @@ export const useEditorStore = create<EditorState>((set, get) => ({
     if (!s.issueId || s.publishing) return null;
     set({ publishing: true });
     try {
-      const { issue, publishedIssueId } = await api.publishIssue(s.issueId, scope);
-      // Refresh page summaries too (selectedForPublish may have changed server-side).
-      const { pages } = await api.getIssue(s.issueId);
-      set({ issue, pages });
+      const { publishedIssueId } = await api.publishIssue(s.issueId, scope);
+      // Re-read the whole issue rather than trusting the publish reply: `needsRepublish`
+      // is derived from the pages, and only GET /issues/:id carries them. Refreshing the
+      // summaries also picks up any selectedForPublish the server changed.
+      const fresh = await api.getIssue(s.issueId);
+      set({ issue: fresh.issue, pages: fresh.pages, editedSinceLoad: false });
       return publishedIssueId;
     } catch (e) {
       toast.error(e instanceof Error ? e.message : 'Publish failed');
       return null;
     } finally {
       set({ publishing: false });
+    }
+  },
+
+  needsRepublish: () => {
+    const s = get();
+    if (s.issue?.status !== 'published') return false;
+    // THREE sources, any of which is enough:
+    //  1. what the server derived from timestamps when the magazine loaded;
+    //  2. any page it flagged as edited since the snapshot — a backstop, so if a write
+    //     path ever forgets (3), the warning appears on the next load instead of never;
+    //  3. our own writes this session, because element writes return no page summary
+    //     and this is the one moment the warning has to be immediate.
+    return s.issue.needsRepublish === true || s.pages.some((p) => p.editedSincePublish) || s.editedSinceLoad;
+  },
+
+  // ── Submissions & approval ────────────────────────────────────────────────
+  //
+  // All three share the same shape, and the same discipline about honesty:
+  //  • `pages` comes back from the server, so the board reflects what was STORED,
+  //    not what we hoped for — a partially-applied batch shows as such.
+  //  • the toast names the pages that actually moved (`label`, phrased server-side)
+  //    and reports `skipped` rather than hiding it.
+  //  • email failure is REPORTED, never fatal: the transition is already committed,
+  //    so "approved, but we couldn't email them" is the truth and the user needs it.
+  submitPages: async (pageIds, note) => {
+    const s = get();
+    if (!s.issueId || pageIds.length === 0 || s.reviewBusy) return false;
+    set({ reviewBusy: true });
+    try {
+      const r = await api.submitPages(s.issueId, pageIds, note);
+      set({ pages: r.pages });
+      // Re-open the current page so its read-only state takes effect immediately —
+      // submitting locks it, and a canvas that still looks editable would invite
+      // edits the server then refuses.
+      if (s.currentPageId && pageIds.includes(s.currentPageId)) await get().openPage(s.currentPageId);
+      const what = r.label || `${r.submitted} page${r.submitted === 1 ? '' : 's'}`;
+      if (r.emailed) toast.success(`Sent ${what} for review — the owner has been emailed.`);
+      else toast.success(`Sent ${what} for review.${r.emailError ? ` (Couldn't email the owner: ${r.emailError})` : ''}`);
+      if (r.skipped > 0) toast.message(`${r.skipped} page${r.skipped === 1 ? '' : 's'} had already moved on.`);
+      return true;
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : 'Could not submit those pages');
+      return false;
+    } finally {
+      set({ reviewBusy: false });
+    }
+  },
+
+  approvePages: async (pageIds, note) => {
+    const s = get();
+    if (!s.issueId || pageIds.length === 0 || s.reviewBusy) return false;
+    set({ reviewBusy: true });
+    try {
+      const r = await api.approvePages(s.issueId, pageIds, note);
+      set({ pages: r.pages });
+      const what = r.label || `${r.approved} page${r.approved === 1 ? '' : 's'}`;
+      toast.success(`Approved ${what}.${r.emailed ? '' : ' (Nobody was emailed.)'}`);
+      if (r.emailErrors?.length) toast.message(`Couldn't email: ${r.emailErrors.join('; ')}`);
+      if (r.skipped > 0) toast.message(`${r.skipped} page${r.skipped === 1 ? '' : 's'} changed while you were reviewing — reload to see them.`);
+      return true;
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : 'Could not approve those pages');
+      return false;
+    } finally {
+      set({ reviewBusy: false });
+    }
+  },
+
+  requestChanges: async (pageIds, note) => {
+    const s = get();
+    if (!s.issueId || pageIds.length === 0 || !note.trim() || s.reviewBusy) return false;
+    set({ reviewBusy: true });
+    try {
+      const r = await api.requestPageChanges(s.issueId, pageIds, note.trim());
+      set({ pages: r.pages });
+      const what = r.label || `${r.returned} page${r.returned === 1 ? '' : 's'}`;
+      toast.success(`Sent ${what} back with your note.${r.emailed ? '' : ' (Nobody was emailed.)'}`);
+      if (r.emailErrors?.length) toast.message(`Couldn't email: ${r.emailErrors.join('; ')}`);
+      return true;
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : 'Could not send those pages back');
+      return false;
+    } finally {
+      set({ reviewBusy: false });
     }
   },
 
@@ -676,6 +827,14 @@ export const useEditorStore = create<EditorState>((set, get) => ({
     const idMap = new Map<string, string>();
     const isPageKind = (k: AgentProposal['kind']) => k === 'add-page' || k === 'remove-page' || k === 'reorder-page' || k === 'generate-pages';
 
+    // Refusals are COUNTED, not just survived. Each loop keeps going after a failure
+    // (one bad proposal shouldn't strand the rest), but the toast at the end has to
+    // reflect what actually happened: since the submissions flow landed, a page op can
+    // legitimately be refused — a submitted page, a published draft — and reporting
+    // "Applied the assistant's changes" over a swallowed 409 tells the user their
+    // magazine changed when it did not.
+    let refused = 0;
+
     // 1) Element edits on the current page (rev-guarded CRUD; add → id remap).
     for (const p of s.proposals.filter((x) => !isPageKind(x.kind))) {
       try {
@@ -688,7 +847,7 @@ export const useEditorStore = create<EditorState>((set, get) => ({
           await get().deleteElement(idMap.get(p.elementId) ?? p.elementId);
         }
       } catch {
-        /* keep applying the rest */
+        refused++;
       }
     }
 
@@ -700,28 +859,44 @@ export const useEditorStore = create<EditorState>((set, get) => ({
       try {
         if (p.kind === 'add-page') {
           const { pages } = await api.addPage(issueId, p.atIndex);
-          set({ pages });
+          set({ pages, editedSinceLoad: true });
         } else if (p.kind === 'reorder-page' && p.from != null && p.to != null) {
           const { pages } = await api.reorderPages(issueId, p.from, p.to);
-          set({ pages });
+          set({ pages, editedSinceLoad: true });
         } else if (p.kind === 'remove-page' && p.targetIndex != null) {
           const target = get().pages[p.targetIndex];
           if (target && get().pages.length > 1) {
-            const { pages } = await api.deletePage(issueId, target.id);
-            set({ pages });
-            if (get().currentPageId === target.id && pages[0]) await get().openPage(pages[0].id);
+            // Deleting a SUBMITTED page is refused first time with a 409 naming who
+            // submitted it. Route it through the store's own deletePage so the owner
+            // gets that confirmation dialog instead of a silent no-op — the assistant
+            // asking on their behalf is no reason to skip the warning.
+            if (target.review === 'submitted') {
+              const before = get().pages.length;
+              await get().deletePage(target.id);
+              if (get().pages.length === before) refused++;
+            } else {
+              const { pages } = await api.deletePage(issueId, target.id);
+              set({ pages, editedSinceLoad: true });
+              if (get().currentPageId === target.id && pages[0]) await get().openPage(pages[0].id);
+            }
           }
         } else if (p.kind === 'generate-pages' && p.count) {
           // Only one generation run per apply (they can't overlap while processing).
           deferGenerate = { count: p.count, topic: p.topic, atIndex: p.atIndex };
         }
       } catch {
-        /* keep applying the rest */
+        refused++;
       }
     }
 
     set({ proposals: [], proposalsPageId: null });
-    toast.success('Applied the assistant’s changes.');
+    if (refused > 0) {
+      toast.warning(
+        `Applied what I could — ${refused} change${refused === 1 ? '' : 's'} ${refused === 1 ? 'was' : 'were'} refused.`,
+      );
+    } else {
+      toast.success('Applied the assistant’s changes.');
+    }
     if (deferGenerate) await get().generatePages(deferGenerate.count, deferGenerate.topic, deferGenerate.atIndex);
   },
 
@@ -739,6 +914,26 @@ function handleWriteError(e: unknown, set: any, get: any) {
     const stillThere = Array.isArray(fresh.elements) && fresh.elements.some((x: MagazineElement) => x.id === keep);
     set({ page: fresh, selectedId: stillThere ? keep : null });
     toast.message('This page was updated elsewhere — reloaded the latest.');
+    return;
+  }
+  // A STATE block (page-submitted / page-approved) carries a `reason`
+  // and no page body. Writes are optimistic — updateLocal already painted the change —
+  // so without re-reading the stored page the canvas would keep showing an edit the
+  // server refused, and the user would believe it saved. Re-fetch to discard it.
+  if (e instanceof ApiError && e.status === 409 && typeof e.body?.reason === 'string') {
+    const { issueId, page } = get();
+    if (issueId && page) {
+      const pageId = page.id as string;
+      void api
+        .getPage(issueId, pageId)
+        .then((stored) => {
+          if (get().page?.id === pageId) set({ page: stored });
+        })
+        .catch(() => {
+          /* the toast below already told them; leave state alone */
+        });
+    }
+    toast.error(e.message);
     return;
   }
   toast.error(e instanceof Error ? e.message : 'Save failed');

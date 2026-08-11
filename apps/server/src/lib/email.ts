@@ -66,11 +66,27 @@ interface Message {
 }
 
 /**
+ * A subject line is a MAIL HEADER, and several templates interpolate user-controlled
+ * text into it (a magazine title, a person's display name). Titles are only trimmed
+ * on the way in, so a newline can reach here — and a newline in a header is how header
+ * injection works. Both transports happen to encode subjects safely today, but that is
+ * their choice, not ours: strip the control characters once, centrally, so no template
+ * has to remember. Also capped, because some providers reject very long subjects.
+ */
+function headerSafe(subject: string): string {
+  // Control characters only. The class must NOT contain a space-to-hyphen range or
+  // a bare hyphen, or it would rewrite ordinary punctuation in a magazine title.
+  // eslint-disable-next-line no-control-regex
+  return subject.replace(/[\u0000-\u001f\u007f]+/g, ' ').trim().slice(0, 200)
+}
+
+/**
  * Dispatch: Resend first, then SMTP. Throws on a genuine provider failure (after
  * the fallback is exhausted); returns { delivered: false } only when NOTHING is
  * configured at all.
  */
-async function send({ to, subject, text, html, kind }: Message): Promise<{ delivered: boolean }> {
+async function send({ to, subject: rawSubject, text, html, kind }: Message): Promise<{ delivered: boolean }> {
+  const subject = headerSafe(rawSubject)
   // Primary: Resend.
   if (hasResend) {
     try {
@@ -236,6 +252,135 @@ export async function sendMagazineShareEmail(opts: {
           <span style="word-break:break-all;color:${MUTED}">${esc(magazineUrl)}</span>
         </p>`,
       footer: "You'll be asked to sign in first if you aren't already.",
+    }),
+  })
+}
+
+// ── Magazine submissions & review ───────────────────────────────────────────
+//
+// Three notifications around the per-page review flow. All follow the share
+// email's shape: the state change is ALREADY committed when these run, so they
+// report delivery rather than gating anything, and they NAME the pages (via
+// `pageNumbersLabel`) instead of counting them — "pages 4, 5 and 6" is something
+// the recipient can act on without opening the magazine first.
+
+/** A note is optional on submit/approve and required on request-changes; render
+ *  it as a quote block so it reads as the person's words, not our copy. */
+function quote(note: string): string {
+  return `<blockquote style="margin:0 0 24px;padding:12px 16px;border-left:3px solid #e2e7f0;background:#f8fafc;font-size:14px;line-height:1.6;color:${MUTED};white-space:pre-wrap">${esc(note)}</blockquote>`
+}
+
+/** To the OWNER: a collaborator has sent pages for review. */
+export async function sendMagazineSubmittedEmail(opts: {
+  to: string
+  magazineTitle: string
+  submittedBy: string
+  magazineUrl: string
+  /** Already phrased, e.g. "pages 4, 5 and 6". */
+  pages: string
+  note?: string
+}): Promise<{ delivered: boolean }> {
+  const { to, magazineTitle, submittedBy, magazineUrl, pages, note } = opts
+  return send({
+    to,
+    kind: 'magazine submitted',
+    subject: `${submittedBy} submitted ${pages} of "${magazineTitle}" for review`,
+    text:
+      `${submittedBy} has submitted ${pages} of "${magazineTitle}" for your review.\n\n` +
+      (note ? `Their note:\n${note}\n\n` : '') +
+      `Review it: ${magazineUrl}`,
+    html: layout({
+      heading: 'Pages are waiting for your review',
+      body: `
+        <p style="font-size:14px;line-height:1.6;color:${MUTED};margin:0 0 20px">
+          <strong>${esc(submittedBy)}</strong> submitted <strong>${esc(pages)}</strong> of
+          <strong>&ldquo;${esc(magazineTitle)}&rdquo;</strong> for review.
+        </p>
+        ${note ? quote(note) : ''}
+        <p style="margin:0 0 8px">${button(magazineUrl, 'Review the pages')}</p>`,
+      footer: 'You are getting this because you own this magazine.',
+    }),
+  })
+}
+
+/** To the COLLABORATOR: the owner has approved, or sent pages back. */
+export async function sendMagazineReviewedEmail(opts: {
+  to: string
+  magazineTitle: string
+  reviewedBy: string
+  magazineUrl: string
+  pages: string
+  decision: 'approved' | 'changes-requested'
+  note?: string
+}): Promise<{ delivered: boolean }> {
+  const { to, magazineTitle, reviewedBy, magazineUrl, pages, decision, note } = opts
+  const approved = decision === 'approved'
+  const headline = approved ? `${reviewedBy} approved ${pages}` : `${reviewedBy} asked for changes to ${pages}`
+  return send({
+    to,
+    kind: `magazine ${approved ? 'approved' : 'changes requested'}`,
+    subject: `${headline} of "${magazineTitle}"`,
+    text:
+      `${headline} of "${magazineTitle}".\n\n` +
+      (note ? `Their note:\n${note}\n\n` : '') +
+      (approved
+        ? 'No further action is needed from you.\n\n'
+        : 'Those pages are editable again, so you can make the changes and resubmit.\n\n') +
+      `Open it: ${magazineUrl}`,
+    html: layout({
+      heading: approved ? 'Your pages were approved' : 'Changes were requested',
+      body: `
+        <p style="font-size:14px;line-height:1.6;color:${MUTED};margin:0 0 20px">
+          <strong>${esc(reviewedBy)}</strong> ${approved ? 'approved' : 'asked for changes to'}
+          <strong>${esc(pages)}</strong> of <strong>&ldquo;${esc(magazineTitle)}&rdquo;</strong>.
+        </p>
+        ${note ? quote(note) : ''}
+        <p style="font-size:13px;line-height:1.6;color:${FAINT};margin:0 0 24px">
+          ${approved
+            ? 'Nothing more is needed from you — the owner will publish when the whole issue is ready.'
+            : 'Those pages are editable again, so you can make the changes and submit them once more.'}
+        </p>
+        <p style="margin:0 0 8px">${button(magazineUrl, approved ? 'Open the magazine' : 'Make the changes')}</p>`,
+      footer: 'You are getting this because these pages are shared with you.',
+    }),
+  })
+}
+
+/**
+ * To the COLLABORATOR: a page they had submitted was deleted by the owner.
+ *
+ * Sent because the alternative is silence — their work simply vanishes and the
+ * next thing they see is a magazine with one fewer page and no explanation.
+ */
+export async function sendMagazinePageRemovedEmail(opts: {
+  to: string
+  magazineTitle: string
+  removedBy: string
+  magazineUrl: string
+  pages: string
+}): Promise<{ delivered: boolean }> {
+  const { to, magazineTitle, removedBy, magazineUrl, pages } = opts
+  return send({
+    to,
+    kind: 'magazine page removed',
+    subject: `${removedBy} removed ${pages} of "${magazineTitle}"`,
+    text:
+      `${removedBy} removed ${pages} of "${magazineTitle}" — a page you had submitted for review.\n\n` +
+      `It is no longer part of the magazine, so there is nothing waiting on you.\n\n` +
+      `Open the magazine: ${magazineUrl}`,
+    html: layout({
+      heading: 'A page you submitted was removed',
+      body: `
+        <p style="font-size:14px;line-height:1.6;color:${MUTED};margin:0 0 20px">
+          <strong>${esc(removedBy)}</strong> removed <strong>${esc(pages)}</strong> of
+          <strong>&ldquo;${esc(magazineTitle)}&rdquo;</strong> — a page you had submitted for review.
+        </p>
+        <p style="font-size:13px;line-height:1.6;color:${FAINT};margin:0 0 24px">
+          It is no longer part of the magazine, so nothing is waiting on you. If that looks like a
+          mistake, talk to whoever owns the magazine.
+        </p>
+        <p style="margin:0 0 8px">${button(magazineUrl, 'Open the magazine')}</p>`,
+      footer: 'You are getting this because the page was shared with you.',
     }),
   })
 }

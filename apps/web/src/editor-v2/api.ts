@@ -48,10 +48,26 @@ export interface PageSummary {
   index: number;
   width: number;
   height: number;
+  /** EXTRACTION state (pending/extracted/reviewed/failed) — not human review. */
   status: string;
   rev: number;
   selectedForPublish: boolean;
   elementCount: number;
+  /** The human REVIEW axis. Absent from older servers, hence optional. */
+  review?: 'in_progress' | 'submitted' | 'approved';
+  /** Times sent back. > 0 with review 'in_progress' is the board's "Needs changes". */
+  reviewRound?: number;
+  /** Approved, but edited since — the approval can no longer be trusted. */
+  approvalStale?: boolean;
+  /** Touched since the live edition was frozen, so a republish would change it. */
+  editedSincePublish?: boolean;
+  /** The collaborator's own words when they submitted. */
+  submitNote?: string;
+  /** The owner's last feedback. Cleared when the page is approved. */
+  reviewNote?: string;
+  /** userId — resolve the name against `IssueMeta.collaborators`. */
+  submittedBy?: string | null;
+  submittedAt?: string | null;
 }
 
 export interface IssueMeta {
@@ -69,6 +85,14 @@ export interface IssueMeta {
   publishedIssueId?: string | null;
   /** Staff shared into this magazine (owner manages via the Share dialog). */
   collaborators?: V2Collaborator[];
+  /**
+   * The draft has changed since the live edition was frozen, so a republish would
+   * change what readers see. Derived server-side from timestamps; only meaningful on
+   * a response that carried the pages (GET /issues/:id).
+   */
+  needsRepublish?: boolean;
+  publishedAt?: string;
+  updatedAt?: string;
   // present while generating (status 'processing')
   pagesProcessed?: number;
   pagesTotal?: number;
@@ -99,7 +123,12 @@ export const renameIssue = (id: string, title: string) =>
 // id whose image becomes the cover. Owner only.
 export const setCover = (id: string, cover: { coverImage?: string; coverPageId?: string }) =>
   authFetch(`${BASE}/issues/${id}`, { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(cover) }).then(parse<IssueMeta>);
-export const deleteIssue = (id: string) => authFetch(`${BASE}/issues/${id}`, { method: 'DELETE' }).then(parse<{ success: boolean }>);
+/** Deleting a magazine that is LIVE on Bulletins is refused with a 409 carrying
+ *  `reason: 'is-live'`, because it takes the bulletin down too; `confirm` retries. */
+export const deleteIssue = (id: string, confirm = false) =>
+  authFetch(`${BASE}/issues/${id}${confirm ? '?confirm=1' : ''}`, { method: 'DELETE' }).then(
+    parse<{ success: boolean }>,
+  );
 // Publish freezes pages into the shared Bulletins collection (shown on the
 // public newsstand as a magazine); unpublish hides that edition again.
 // scope 'full' = every page; 'selected' = only pages with selectedForPublish.
@@ -151,8 +180,65 @@ export const addPage = (id: string, index?: number) =>
   authFetch(`${BASE}/issues/${id}/pages`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ index }) }).then(parse<{ pages: PageSummary[] }>);
 export const duplicatePage = (id: string, pageId: string) =>
   authFetch(`${BASE}/issues/${id}/pages/${pageId}/duplicate`, { method: 'POST' }).then(parse<{ pages: PageSummary[] }>);
-export const deletePage = (id: string, pageId: string) =>
-  authFetch(`${BASE}/issues/${id}/pages/${pageId}`, { method: 'DELETE' }).then(parse<{ pages: PageSummary[] }>);
+/** A page a collaborator has SUBMITTED is refused with a 409 carrying
+ *  `reason: 'page-submitted'` and who submitted it; `confirm` retries through it. */
+export const deletePage = (id: string, pageId: string, confirm = false) =>
+  authFetch(`${BASE}/issues/${id}/pages/${pageId}${confirm ? '?confirm=1' : ''}`, { method: 'DELETE' }).then(
+    parse<{ pages: PageSummary[] }>,
+  );
+
+// ── Submissions & approval (per-page review axis) ──
+// A submission is an EVENT over a set of pages, so every call takes pageIds[].
+export interface ReviewResult {
+  pages: PageSummary[];
+  skipped: number;
+  /** "pages 4, 5 and 6" — already phrased, so a toast can name what moved. */
+  label: string;
+  emailed?: boolean | number;
+  emailError?: string;
+  emailErrors?: string[];
+}
+export const submitPages = (id: string, pageIds: string[], note?: string) =>
+  authFetch(`${BASE}/issues/${id}/pages/submit`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ pageIds, note }),
+  }).then(parse<ReviewResult & { submitted: number }>);
+export const approvePages = (id: string, pageIds: string[], note?: string) =>
+  authFetch(`${BASE}/issues/${id}/pages/approve`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ pageIds, note }),
+  }).then(parse<ReviewResult & { approved: number }>);
+/** `note` is REQUIRED by the server — sending work back without saying why. */
+export const requestPageChanges = (id: string, pageIds: string[], note: string) =>
+  authFetch(`${BASE}/issues/${id}/pages/request-changes`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ pageIds, note }),
+  }).then(parse<ReviewResult & { returned: number }>);
+
+export interface ReviewEntry {
+  id: string;
+  pageId: string;
+  pageNumber: number | null;
+  action: 'submit' | 'approve' | 'request-changes' | 'page-removed' | string;
+  from: string | null;
+  to: string | null;
+  actorName: string;
+  note: string;
+  at: string;
+}
+/** The audit trail, NEWEST first. `before` is an ISO cursor for older rows. */
+export const getReviews = (id: string, opts?: { limit?: number; before?: string }) => {
+  const q = new URLSearchParams();
+  if (opts?.limit) q.set('limit', String(opts.limit));
+  if (opts?.before) q.set('before', opts.before);
+  const qs = q.toString();
+  return authFetchRetry(`${BASE}/issues/${id}/reviews${qs ? `?${qs}` : ''}`).then(
+    parse<{ reviews: ReviewEntry[]; hasMore: boolean; oldestAt: string | null }>,
+  );
+};
 export const reorderPages = (id: string, from: number, to: number) =>
   authFetch(`${BASE}/issues/${id}/pages/reorder`, { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ from, to }) }).then(parse<{ pages: PageSummary[] }>);
 // Add on-theme AI pages (matches the issue's saved palette/fonts). Returns 202;

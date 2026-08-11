@@ -35,10 +35,14 @@ And one operational fact: the chat collection has exactly **one index** (`{magaz
 
 ```
 magazineThreadsV2  NEW
-  magazineId, userId          the creator — and the only reader
+  magazineId
+  userId                      the creator — the only writer
+  userName                    denormalised, so the owner's grouped list needs no join
+                              (mirrors `ownerName` on magazinesV2)
   title                       auto-derived from the first message, editable
   startedOnPageId/Index       a hint about where it began, NOT a constraint
   lastMessageAt, messageCount denormalised for the list, no per-thread count query
+  legacy                      true only for the migrated flat log
   archivedAt, deletedAt       soft
   createdAt, updatedAt
 
@@ -47,17 +51,37 @@ magazineChatV2  EXISTING, gains
   userId                      who wrote it
 ```
 
+**Access, in one place:**
+
+| Action | Who |
+|---|---|
+| read a thread + its messages | its creator, **or the magazine owner** |
+| send a turn into it | its **creator only** |
+| rename / archive / delete | its **creator only** |
+| anything else | 404 |
+
 Three deliberate decisions:
 
-**Threads are private.** The owner does not read a collaborator's AI chat, and vice versa. This is the point of the change, but it is also the right *separation*: an AI chat is a working scratchpad, and the shared channel for editorial conversation is the submissions flow's `reviewNote` — feedback that needs to be seen belongs to a review, not buried in someone's chat log. Access follows the repo convention: a thread you do not own **404s**, it does not 403.
+**Threads are per user, and the OWNER can read all of them.** A collaborator sees only their own; the magazine owner sees everyone's. Anyone else's thread **404s** (repo convention — never reveal existence with a 403).
+
+The upside of this is real: an owner approving page 4 can read what the contributor was actually trying to do, which is review context that the submissions flow's `reviewNote` alone does not carry. Two consequences follow, and both are load-bearing:
+
+- **The owner reads; only the creator writes.** The owner must not send a turn into someone else's thread. The agent is a 1:1 assistant with no notion of multiple participants — a second voice mid-thread would land in the creator's next prompt, and staged proposals are applied by whoever is looking at them under *their* page permissions. So: read-only for the owner, and the composer is disabled with the reason shown. Rename, archive and delete stay with the creator.
+- **The collaborator must be told.** A scratchpad someone *believes* is private but is not is worse than one that is openly visible. The panel carries a permanent one-line disclosure — *"the magazine owner can see your threads"* — not buried in a tooltip. This is the cost of the decision and it is paid honestly rather than hidden.
+
+Editorial feedback that needs to be *acted on* still belongs in the submissions flow's `reviewNote`, not in a chat log the owner happens to read. Reading a thread is context; a review note is an instruction.
 
 **Threads may span pages; each turn records its own page.** The agent is per-page, but a train of thought is not ("keep the voice we used on page 2"). What made T-c a bug was *other people's* and *unrelated* turns, not your own continuity. So a thread crosses pages, and the prompt **labels each turn with its page** — `[p4] make the headline bigger` — so the model knows what "it" referred to two turns ago.
 
 **Only that thread's history is sent.** This is the actual M3 fix: the request carries `threadId`, and the server assembles history from that thread alone, still capped at 30 × 4,000.
 
-### 2.1 Legacy history
+### 2.1 Legacy history — a synthesised thread, not a migration
 
-Existing messages have no `userId`, so they **cannot be attributed** — the data was never captured, and guessing would be worse than admitting it. Migration: per magazine, move all existing messages into one thread titled **"Earlier conversation"**, owned by the magazine owner, flagged `legacy: true` and rendered **read-only** with a one-line explanation. Non-destructive, honest, and it stops the flat log from being the default surface.
+Existing messages have no `userId`, so they **cannot be attributed** — the data was never captured, and guessing would be worse than admitting it.
+
+**No migration script** (same decision as the submissions plan §6.4). Messages with **no `threadId`** are served as a *virtual* thread: the threads list synthesises one row per magazine titled **"Earlier conversation"**, visible to the owner, flagged `legacy: true` and **read-only**, and `GET …/threads/legacy/messages` queries `{ magazineId, threadId: null }`. Zero database writes, and the flat log stops being the default surface.
+
+Read-only is not just a UI state here — there is genuinely nothing sensible to append to a conversation whose participants are unknown. The composer explains that in one line.
 
 ---
 
@@ -67,16 +91,17 @@ Reusing the `before`-cursor pagination pattern that `GET /issues/:id/chat` alrea
 
 | Endpoint | Effect |
 |---|---|
-| `GET /issues/:id/threads` | **My** threads, newest activity first: id, title, page hint, `messageCount`, `lastMessageAt`, archived. Plus the legacy thread for the owner. |
-| `POST /issues/:id/threads` | Create. Optional `title`, optional `startedOnPageId`. Returns the thread. |
-| `PATCH /issues/:id/threads/:threadId` | Rename, or archive/unarchive. Creator only. |
+| `GET /issues/:id/threads` | A collaborator gets **their own**; the **owner gets everyone's**, each row carrying `userId` + `userName` so the UI can group by person. Newest activity first: id, title, page hint, `messageCount`, `lastMessageAt`, archived, `mine: boolean`. |
+| `POST /issues/:id/threads` | Create, always owned by the caller. Optional `title`, optional `startedOnPageId`. |
+| `PATCH /issues/:id/threads/:threadId` | Rename, archive/unarchive. **Creator only** — the owner reading a thread cannot retitle or bury it. |
 | `DELETE /issues/:id/threads/:threadId` | Soft-delete the thread **and its messages**. Creator only. |
-| `GET /issues/:id/threads/:threadId/messages` | Paginated, `before` cursor, oldest→newest. Creator only. |
-| `POST …/pages/:pageId/agent` | **Changed:** takes `threadId`. Persists both turns into it, and sends only its history. A missing/foreign `threadId` creates a fresh thread rather than erroring — degrade, never fail. |
+| `GET /issues/:id/threads/:threadId/messages` | Paginated, `before` cursor, oldest→newest. Creator **or owner**. |
+| `POST …/pages/:pageId/agent` | **Changed:** takes `threadId`. Persists both turns into it and sends only its history. **Rejects a thread the caller did not create**, even for the owner — reading is not writing. A missing `threadId` creates a fresh thread rather than erroring (degrade, never fail). |
 | `GET /issues/:id/chat` | **Kept, deprecated.** Returns the legacy thread only, so nothing breaks mid-deploy. Remove once the web client ships. |
 
 Indexes to add in `ensureIndexes.ts`:
-- `magazineThreadsV2`: `{ magazineId: 1, userId: 1, deletedAt: 1, lastMessageAt: -1 }`
+- `magazineThreadsV2`: `{ magazineId: 1, userId: 1, deletedAt: 1, lastMessageAt: -1 }` — serves a collaborator's own list.
+- `magazineThreadsV2`: `{ magazineId: 1, deletedAt: 1, lastMessageAt: -1 }` — serves the owner's all-threads list without scanning.
 - `magazineChatV2`: `{ threadId: 1, deletedAt: 1, createdAt: 1 }` — the new hot path, alongside the existing magazine index.
 
 **The dangling-tool-call rule still applies.** A client tool that never returns a result permanently bricks a conversation; all five agent routes repair history server-side, and thread history must go through the same repair. Threads make this *better*, not worse: a bricked conversation is now something the user can abandon in one click instead of a dead magazine chat.
@@ -104,7 +129,7 @@ The AI panel is docked left with two tabs, **Chat** and **Uploads(n)**. Add a th
 └──────────────────────────────────────┘
 ```
 
-Opening the switcher:
+Opening the switcher — **a collaborator** sees only their own:
 
 ```
 ┌──────────────────────────────────────┐
@@ -114,11 +139,46 @@ Opening the switcher:
 │   Stat page rewrite         p5 · 1h   │
 │   Photo choices             p3 · yest │
 ├──────────────────────────────────────┤
-│   Earlier conversation   read-only    │  ← the migrated legacy log
-├──────────────────────────────────────┤
 │   Archived (2)                      ▸ │
+├──────────────────────────────────────┤
+│ ⓘ The magazine owner can see your     │  ← permanent, not a tooltip
+│   threads.                            │
 └──────────────────────────────────────┘
 ```
+
+**The owner** sees everyone's, grouped by person — flat would be a soup:
+
+```
+┌──────────────────────────────────────┐
+│ + New thread                          │
+├──────────────────────────────────────┤
+│ MINE                                  │
+│ ● Cover headline options    p1 · 2m   │
+│   Contents rewrite          p2 · 3h   │
+├──────────────────────────────────────┤
+│ SAM PATEL                     3 pages │
+│   Feature deck options      p4 · 20m  │
+│   Photo choices             p5 · 1h   │
+├──────────────────────────────────────┤
+│ PRIYA R                       2 pages │
+│   Gallery captions          p6 · yest │
+├──────────────────────────────────────┤
+│   Earlier conversation   read-only    │  ← the migrated legacy log
+├──────────────────────────────────────┤
+│   Archived (4)                      ▸ │
+└──────────────────────────────────────┘
+```
+
+Reading someone else's thread swaps the composer for a clear read-only state:
+
+```
+├──────────────────────────────────────┤
+│ 👁 Viewing Sam's thread — read-only.   │
+│    Leave feedback on the page instead. │  ← links to request-changes
+└──────────────────────────────────────┘
+```
+
+That last line is deliberate: it points the owner at the channel that actually *does* something (the submissions flow's review note) rather than letting them type into a conversation the contributor owns.
 
 Details that matter:
 
@@ -144,7 +204,7 @@ Details that matter:
 
 | Phase | Scope |
 |---|---|
-| **T1** | `magazineThreadsV2` + `threadId`/`userId` on messages + the legacy-migration script + indexes. No behaviour change; `GET /chat` still works. |
+| **T1** | `magazineThreadsV2` + `threadId`/`userId` written on new messages + the synthesised legacy thread (§2.1) + indexes. **No migration.** No behaviour change; `GET /chat` still works. |
 | **T2** | Thread CRUD endpoints; the agent route takes `threadId` and sends only that thread's history. **M3 is fixed here.** Page-tagged turns in the prompt. |
 | **T3** | The panel: switcher, `+ New`, auto-title, page tags, thread-scoped proposal discard. |
 | **T4** | Archive / rename / delete, the archived section, the read-only legacy thread, and the soft-delete TTL. |
@@ -153,9 +213,15 @@ T1 and T2 are server-only and shippable before any UI — with `GET /chat` kept,
 
 ---
 
-## 7. Open
+## 7. Decided
 
-1. **Should the owner be able to read collaborators' threads?** Recommend **no** — a scratchpad people expect to be private, with the review note as the deliberate shared channel. Easy to add later; hard to take back once people have written in it assuming privacy.
-2. **Should a thread be shareable on purpose** ("show this conversation to the owner")? A natural follow-up, but not v1 — and it needs the answer to (1) first.
-3. **Cap on threads per user per magazine?** Recommend none, with archive as the pressure valve. Revisit if the list gets unusable.
-4. **Do attachments follow the thread?** Uploads currently live in the magazine-wide media/Uploads library and are reachable by anyone with access. Recommend leaving that alone — a *file* added to the magazine is a shared asset even if the conversation about it is private. Worth confirming this is the intent, since it is the one place privacy is deliberately not carried through.
+- **Store `userId`** on threads and on every message, from T1.
+- **Per-user threads. The owner reads everyone's; everyone else reads only their own.**
+- **Reading is not writing** — only a thread's creator can send a turn into it, rename it, archive it or delete it. Enforced on the agent route, not just hidden in the UI.
+- **Collaborators are told**, permanently and in the panel, that the owner can see their threads.
+
+## 8. Still open
+
+1. **Cap on threads per user per magazine?** Recommend none, with archive as the pressure valve. Revisit if the list gets unusable.
+2. **Do attachments follow the thread?** Uploads currently live in the magazine-wide media/Uploads library, reachable by anyone with access. Recommend leaving that alone — a *file* added to the magazine is a shared asset even if the conversation about it is private. Worth confirming, since it is the one place the privacy model deliberately does not carry through.
+3. **Should the owner's own threads be visible to collaborators?** By the rule above, no — "owner sees all" is one-directional. Confirm that is the intent, since it is the asymmetry someone will eventually ask about.

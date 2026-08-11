@@ -172,7 +172,15 @@ sees *only* their pages (`visiblePages` mirrors `editablePageIds`).
 ## 4. API surface
 
 Mounted at **`/api/magazinesV2`** with a 30 MB JSON limit
-([routes/index.ts:92](apps/server/src/routes/index.ts#L92)). **35 endpoints.**
+([routes/index.ts:92](apps/server/src/routes/index.ts#L92)). **39 endpoints** — 35 originally, plus
+`POST …/pages/submit`, `…/pages/approve`, `…/pages/request-changes` and `GET …/reviews` from
+docs/MAGAZINE-V2-SUBMISSIONS-PLAN.md.
+
+**Publishing still overwrites ONE snapshot per magazine.** An immutable-edition model
+(insert-per-edition, `supersededAt`, a v1/v2 history, `POST …/revision`, `GET …/editions`) was built
+and then reversed — so the public id never changes, reader reactions stay attached to it, and a
+published magazine stays editable. Editing one is reported as `needs_republish`, derived from
+timestamps, not prevented.
 
 ### 4.1 Gate chain (in order)
 
@@ -635,7 +643,13 @@ user turn ──▶ generateText (stepCountIs 16, 90s abort)
                                      generate-pages → deferred to the polling flow
 ```
 
-### 9.2 Tools (15)
+### 9.2 Tools (15 for the owner, 11 for everyone else)
+
+The four page-structure tools (`add_page`, `add_content_pages`, `remove_page`,
+`reorder_pages`) are **omitted from the tool list** when the caller is not the owner
+(`runPageAgent({ canEditStructure })`). Omitting beats refusing: the model can't offer
+what it can't see, so it says "only the owner can add pages" instead of staging a
+proposal that the owner-only endpoint 403s and the client's keep-going `catch` swallows.
 
 | Tool | Effect |
 | --- | --- |
