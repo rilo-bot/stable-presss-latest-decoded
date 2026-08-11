@@ -223,7 +223,7 @@ function Column({
   // allows only with the permission that stage demands — so the button is only
   // offered when the viewer actually holds it.
   const needed = enterPermission(stage.status);
-  const canAddHere = can('content.draft.create') && (needed === null || can(needed));
+  const canAddHere = can('stories.create') && (needed === null || can(needed));
 
   return (
     <section

@@ -79,11 +79,11 @@ export function RaceCard({ race, userTip, onTipped }: RaceCardProps) {
 
     setIsSubmitting(true);
     // Ensure profile exists before placing
-    await getOrCreateProfile(currentUser.id, currentUser.displayName);
+    await getOrCreateProfile(currentUser.id, currentUser.name);
 
     const result = await placeTip(
       currentUser.id,
-      currentUser.displayName,
+      currentUser.name,
       race.id,
       selectedEntrant,
       wagerNum

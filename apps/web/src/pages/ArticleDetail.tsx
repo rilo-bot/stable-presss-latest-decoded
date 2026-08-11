@@ -23,9 +23,7 @@ import {
   Sparkles,
 } from 'lucide-react';
 import { useAuthStore } from '@/stores/authStore';
-import { canViewPremium } from '@/rbac/can';
 import { canEditArticle } from '@/lib/permissions';
-import { Paywall } from '@/components/Paywall';
 import { ReactionBar } from '@/components/ReactionBar';
 import { CommentsSection } from '@/components/comments/CommentsSection';
 import { useReactionStore } from '@/stores/reactionStore';
@@ -37,6 +35,7 @@ import { InlineEdit } from './article-detail/InlineEdit';
 import { SelectableField } from './article-detail/SelectableField';
 import { useArticleStudioUi } from '@/stores/articleStudioUiStore';
 import { ArticleStudioPanel } from '@/agent/article/ArticleStudioPanel';
+import { useRegister } from '@/lib/register';
 
 export default function ArticleDetail() {
   // All hooks run unconditionally, before any early return (Rules of Hooks):
@@ -46,6 +45,8 @@ export default function ArticleDetail() {
 
   const fetchHorses = useHorseStore((s) => s.fetchHorses);
   const fetchParties = usePartyStore((s) => s.fetchParties);
+  /** Raw edges — a horse's connections come from these, not the joined register. */
+  const partyEdges = usePartyStore((s) => s.parties);
   const fetchArticles = useArticleStore((s) => s.fetchArticles);
   useEffect(() => {
     fetchHorses();
@@ -57,9 +58,9 @@ export default function ArticleDetail() {
   const articlesLoaded = useArticleStore((s) => s.loaded);
   const updateArticle = useArticleStore((s) => s.updateArticle);
   const horses = useHorseStore((s) => s.horses);
-  const parties = usePartyStore((s) => s.parties);
+  const parties = useRegister();
   const currentUser = useAuthStore((s) => s.currentUser);
-  const horseConn = useMemo(() => connectionResolver(parties), [parties]);
+  const horseConn = useMemo(() => connectionResolver(partyEdges), [partyEdges]);
 
   const article = useMemo(() => articles.find((a) => a.id === id), [articles, id]);
 
@@ -95,7 +96,7 @@ export default function ArticleDetail() {
   // Closing the page closes the studio so it never lingers on another route.
   useEffect(() => () => useArticleStudioUi.getState().close(), []);
 
-  const canEdit = canEditArticle(article?.author ?? '', currentUser?.displayName);
+  const canEdit = canEditArticle(article?.author ?? '', currentUser?.name);
 
   const startEditing = () => {
     if (!article) return;
@@ -210,15 +211,6 @@ export default function ArticleDetail() {
   const live = isLive(article);
 
   const paragraphs = splitIntoParagraphs(article.summary ?? '');
-
-  // Premium gate (entitlement axis) — independent of roles. Defaults to free/ungated.
-  //
-  // `article.locked` is the server saying it already cut the body down to its
-  // teaser (lib/paywall.ts); the local check is the same decision made from the
-  // same two inputs. EITHER is enough to show the gate, so the two can never
-  // combine into a truncated story rendered as if it were whole — which is what
-  // a bare client-side check would have produced if the tiers ever disagreed.
-  const locked = article.locked === true || !canViewPremium(currentUser, article.minTier);
 
   return (
     <div className="min-h-screen bg-background">
@@ -583,17 +575,17 @@ export default function ArticleDetail() {
                   {paragraphs[0].slice(1)}
                 </p>
 
-                {locked ? (
-                  /* Premium gate — first paragraph above is the free teaser. */
-                  <Paywall requiredTier={article.minTier ?? 'premium'} />
-                ) : (
-                  /* The rest of the story.
+                {(
+                  /* The rest of the story. A published story is readable in
+                   * full by anyone — the tier gate that used to cut it to a
+                   * teaser here is gone with subscriptions.
                    *
-                   * There was a "pull quote" here: it took the story's SECOND
-                   * paragraph, wrapped it in quotation marks and attributed it to
-                   * the byline. Nothing in it was ever a quotation — readers were
-                   * shown words the author never said in quotes, and the
-                   * paragraph then vanished from the body copy where it belonged.
+                   * There was a "pull quote" here too: it took the story's
+                   * SECOND paragraph, wrapped it in quotation marks and
+                   * attributed it to the byline. Nothing in it was ever a
+                   * quotation — readers were shown words the author never said
+                   * in quotes, and the paragraph then vanished from the body
+                   * copy where it belonged.
                    */
                   <div className="space-y-5">
                     {paragraphs.slice(1).map((para, idx) => (
@@ -688,7 +680,7 @@ export default function ArticleDetail() {
                 against an unpublished story — so without this the scale looked
                 usable and answered every click with an error. An offer that
                 cannot be taken reads as a broken feature, not a closed one. */}
-            {!locked && isLive(article) && (
+            {isLive(article) && (
               <>
                 <ReactionBar
                   targetType="story"

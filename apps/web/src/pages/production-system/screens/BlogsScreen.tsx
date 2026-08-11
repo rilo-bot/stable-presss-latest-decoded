@@ -226,9 +226,9 @@ export default function BlogsScreen() {
   const navigate = useNavigate();
   const { items, total, hasMore, listLoading, listError, fetchList, loadMore, removeBlog, setPublished } =
     useBlogStore();
-  const canCreate = useCan('blog.create');
-  const canDelete = useCan('blog.delete');
-  const canPublish = useCan('blog.publish');
+  const canCreate = useCan('blogs.create');
+  const canDelete = useCan('blogs.delete');
+  const canPublish = useCan('blogs.publish');
 
   const [tab, setTab] = useState<Tab>('all');
   const [search, setSearch] = useState('');

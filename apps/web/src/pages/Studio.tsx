@@ -6,7 +6,7 @@
  */
 import { useParams, Navigate, useNavigate } from 'react-router-dom';
 import { useAuthStore } from '@/stores/authStore';
-import { canManageParty, isStaff } from '@/rbac/can';
+import { canManageParty, isAdmin } from '@/rbac/can';
 import { PartyProfile } from '@/components/profile/PartyProfile';
 
 export default function Studio() {
@@ -15,7 +15,7 @@ export default function Studio() {
   const currentUser = useAuthStore((s) => s.currentUser);
 
   if (!id) return <Navigate to="/dashboard" replace />;
-  if (!canManageParty(currentUser, id) && !isStaff(currentUser)) {
+  if (!canManageParty(currentUser, id) && !isAdmin(currentUser)) {
     return <Navigate to={`/parties/${id}`} replace />;
   }
 

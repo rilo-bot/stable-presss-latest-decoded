@@ -3,19 +3,20 @@ import { useNavigate } from 'react-router-dom';
 import { Plus, Search, Eye, Link, ChevronDown, X, Trash2 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { EmptyState } from '@/components/EmptyState';
-import { HorsePartyLinkPanel } from '@/components/HorsePartyLinkPanel';
+import { RoleConnectionsRail } from '@/components/profile/RoleConnectionsRail';
 import { AddHorseChoice } from '@/components/AddHorseChoice';
 import { DeleteConfirmDialog } from '../components/DeleteConfirmDialog';
 import { useHorseStore } from '@/stores/horseStore';
+import { usePartyStore } from '@/stores/partyStore';
 import { cn } from '@/lib/utils';
 import type { Horse } from '@/types/horse';
-import type { Party } from '@/types/party';
-import type { connectionResolver } from '@/lib/horseConnections';
+import type { RegisterPerson } from '@/lib/register';
+import { connectionsForHorse, type connectionResolver } from '@/lib/horseConnections';
 
 interface HorseProductionSystemProps {
   horses: Horse[];
   filteredHorses: Horse[];
-  parties: Party[];
+  parties: RegisterPerson[];
   horseSearch: string;
   setHorseSearch: (v: string) => void;
   expandedHorseId: string | null;
@@ -50,6 +51,10 @@ export function HorseProductionSystem({
   const safeHorses = horses ?? [];
   const navigate = useNavigate();
   const addHorse = useHorseStore((s) => s.addHorse);
+  // The register EDGES. The owner/breeder/trainer/jockey columns used to read
+  // `horse.ownerIds` and friends — the second copy of a connection. Those fields
+  // are gone, so the columns resolve from the edges like everything else.
+  const partyEdges = usePartyStore((s) => s.parties);
   const [chooser, setChooser] = useState(false);
 
   // Index parties once so owner/breeder cells can render each linked person as a
@@ -63,7 +68,7 @@ export function HorseProductionSystem({
   const renderPartyLinks = (ids?: string[]) => {
     const linked = (ids ?? [])
       .map((id) => partyById.get(id))
-      .filter((p): p is Party => Boolean(p));
+      .filter((p): p is RegisterPerson => Boolean(p));
     if (linked.length === 0) {
       return <span className="text-muted-foreground/40 text-sm">—</span>;
     }
@@ -209,16 +214,16 @@ export function HorseProductionSystem({
                           </div>
                         </td>
                         <td className="px-4 py-3">
-                          {renderPartyLinks(horse.ownerIds)}
+                          {renderPartyLinks(connectionsForHorse(partyEdges, horse.id).owner)}
                         </td>
                         <td className="px-4 py-3">
-                          {renderPartyLinks(horse.breederIds)}
+                          {renderPartyLinks(connectionsForHorse(partyEdges, horse.id).breeder)}
                         </td>
                         <td className="px-4 py-3">
-                          {renderPartyLinks(horse.trainerIds)}
+                          {renderPartyLinks(connectionsForHorse(partyEdges, horse.id).trainer)}
                         </td>
                         <td className="px-4 py-3">
-                          {renderPartyLinks(horse.jockeyIds)}
+                          {renderPartyLinks(connectionsForHorse(partyEdges, horse.id).jockey)}
                         </td>
                         <td className="px-4 py-3">
                           {horse.country ? (
@@ -289,9 +294,17 @@ export function HorseProductionSystem({
                                   <X size={13} />
                                 </button>
                               </div>
-                              <HorsePartyLinkPanel
+                              {/* Was HorsePartyLinkPanel, which read the deleted
+                                  horsePartyLinks table. Connections are party
+                                  edges now, and this rail is the one component
+                                  that renders them. */}
+                              <RoleConnectionsRail
                                 horseId={horse.id}
-                                horseName={horse.name}
+                                editable
+                                onOpenParty={(personId) => navigate(`/parties/${personId}`)}
+                                reportsActive={false}
+                                onOpenReports={() => navigate(`/studio/horse/${horse.id}`)}
+                                footer={null}
                               />
                             </div>
                           </td>

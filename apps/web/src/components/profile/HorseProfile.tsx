@@ -15,7 +15,6 @@ import {
 } from 'lucide-react';
 import { useHorseStore } from '@/stores/horseStore';
 import { usePartyStore } from '@/stores/partyStore';
-import { useHorsePartyLinkStore } from '@/stores/horsePartyLinkStore';
 import { useAuthStore } from '@/stores/authStore';
 import { canManageHorse } from '@/rbac/can';
 import { useProfileScope } from '@/hooks/useProfileScope';
@@ -35,7 +34,7 @@ import { OnboardingGuide, type GuideStep } from '@/components/profile/Onboarding
 import { OnboardingComplete } from '@/components/profile/OnboardingComplete';
 import { OnboardingFocus } from '@/components/profile/OnboardingFocus';
 import { StudioField } from '@/components/profile/StudioField';
-import { RoleConnectionBox, roleDefByRel } from '@/components/profile/RoleConnectionBox';
+import { RoleConnectionBox, roleDefByRole } from '@/components/profile/RoleConnectionBox';
 import { useRoleConnections } from '@/components/profile/useRoleConnections';
 import { ProfileAgentPanel, StudioLauncher } from '@/agent/profile/ProfileAgentPanel';
 import { useProfileAgentUi, type ProfileContext } from '@/stores/profileAgentUiStore';
@@ -73,7 +72,7 @@ const STEP_ICONS: Record<string, React.ReactNode> = {
 };
 
 /** Snapshot the horse's editable fields + connection counts for the AI assistant. */
-function buildHorseContext(horse: Horse, links: { relationship_type: string }[]): ProfileContext {
+function buildHorseContext(horse: Horse, links: { role: string }[]): ProfileContext {
   // Mirrors the editable field set advertised in the server profile prompt
   // (lib/agent/profilePrompt.ts HORSE_FIELDS) so the agent never proposes a field
   // it cannot see as empty, and can fill every field it is told it may edit.
@@ -92,7 +91,7 @@ function buildHorseContext(horse: Horse, links: { relationship_type: string }[])
   };
   const emptyFields = Object.entries(f).filter(([, v]) => !v.trim()).map(([k]) => k);
   const counts: Record<string, number> = {};
-  links.forEach((l) => { counts[l.relationship_type] = (counts[l.relationship_type] ?? 0) + 1; });
+  links.forEach((l) => { counts[l.role] = (counts[l.role] ?? 0) + 1; });
   const roleBoxes = Object.entries(counts).map(([role, count]) => ({ role, count }));
   return { entityKind: 'horse', entityId: horse.id, name: horse.isUnnamed ? 'Un-Named' : (horse.name || 'New Horse'), fields: f, emptyFields, roleBoxes };
 }
@@ -111,8 +110,8 @@ export function HorseProfile({ horseId, mode, onBack }: HorseProfileProps) {
   const fetchHorses = useHorseStore((s) => s.fetchHorses);
   const updateHorse = useHorseStore((s) => s.updateHorse);
   const fetchParties = usePartyStore((s) => s.fetchParties);
-  const allLinks = useHorsePartyLinkStore((s) => s.links);
-  const linksLoaded = useHorsePartyLinkStore((s) => s.loaded);
+  const parties = usePartyStore((s) => s.parties);
+  const linksLoaded = usePartyStore((s) => s.loaded);
   const currentUser = useAuthStore((s) => s.currentUser);
   const conn = useRoleConnections(horseId);
 
@@ -125,7 +124,7 @@ export function HorseProfile({ horseId, mode, onBack }: HorseProfileProps) {
   useEffect(() => { setAddOpen(false); }, [activeModule]);
 
   const horse = useMemo(() => horses.find((h) => h.id === horseId), [horses, horseId]);
-  const editable = canManageHorse(currentUser, horseId, { horses, links: allLinks });
+  const editable = canManageHorse(currentUser, horseId, { parties, horses });
 
   const subject = useMemo(
     () => (horse ? ({ kind: 'horse', horse } as const) : null),
@@ -133,7 +132,7 @@ export function HorseProfile({ horseId, mode, onBack }: HorseProfileProps) {
   );
   const scope = useProfileScope(subject);
 
-  const horseLinks = useMemo(() => allLinks.filter((l) => l.horse_id === horseId), [allLinks, horseId]);
+  const horseLinks = useMemo(() => parties.filter((p) => p.horseId === horseId), [parties, horseId]);
 
   // Keep the AI assistant's context in sync with the open horse (edit mode only).
   const setAgentContext = useProfileAgentUi((s) => s.setContext);
@@ -162,11 +161,11 @@ export function HorseProfile({ horseId, mode, onBack }: HorseProfileProps) {
   const onbAllDone = useMemo(() => {
     if (!horse || mode !== 'edit' || !editable) return false;
     const ok = (done: boolean, key: string) => done || skipped.has(key);
-    const linked = (rel: string) => horseLinks.some((l) => l.relationship_type === rel);
+    const linked = (role: string) => horseLinks.some((l) => l.role === role);
     return ok(!!horse.imageUrl, 'photo')
       && ok(!!(horse.sex && horse.colour && horse.dob), 'basics')
       && ok(!!(horse.sire || horse.dam), 'pedigree')
-      && CONNECTION_STEPS.every((c) => ok(linked(c.rel), c.key));
+      && CONNECTION_STEPS.every((c) => ok(linked(c.role), c.key));
   }, [horse, horseLinks, mode, editable, skipped]);
   // Celebrate only a GENUINE completion during this session — i.e. a
   // loaded-but-incomplete profile that then becomes complete. Without the
@@ -222,7 +221,9 @@ export function HorseProfile({ horseId, mode, onBack }: HorseProfileProps) {
   const goHorse = (hid: string) => navigate(isEdit ? `/studio/horse/${hid}` : `/horses/${hid}`);
 
   const dossierFlags = [
-    horseLinks.length > 0 || (horse.ownerIds?.length ?? 0) > 0,
+    // "Has connections" — one representation now, so the second half of this
+    // test (`horse.ownerIds?.length`) went with the field it read.
+    horseLinks.length > 0,
     !!horse.dob,
     !!(horse.sex || horse.colour),
     !!(horse.sire || horse.dam),
@@ -237,7 +238,7 @@ export function HorseProfile({ horseId, mode, onBack }: HorseProfileProps) {
   // Photo → basics → pedigree, then ONE step per left-rail party (owners,
   // breeders, trainers… walked one by one). Any step can be Skipped (persisted
   // per horse); skipped counts as resolved. Racing is no longer a step.
-  const hasRel = (rel: string) => horseLinks.some((l) => l.relationship_type === rel);
+  const hasRole = (role: string) => horseLinks.some((l) => l.role === role);
   const onbSteps: OnbStep[] = [
     { key: 'photo', label: 'Photo', hint: 'Upload a clear photo of the horse.', done: !!horse.imageUrl, skipped: skipped.has('photo'), anchorId: 'onb-photo', icon: STEP_ICONS.photo },
     { key: 'basics', label: 'Basics', hint: 'Add sex, colour and the foaling date.', done: !!(horse.sex && horse.colour && horse.dob), skipped: skipped.has('basics'), anchorId: 'onb-identity', icon: STEP_ICONS.basics },
@@ -246,9 +247,9 @@ export function HorseProfile({ horseId, mode, onBack }: HorseProfileProps) {
       key: c.key,
       label: c.label,
       hint: `Link the ${c.noun} — optional, skip if it doesn’t apply.`,
-      done: hasRel(c.rel),
+      done: hasRole(c.role),
       skipped: skipped.has(c.key),
-      anchorId: `onb-conn-${c.rel}`,
+      anchorId: `onb-conn-${c.role}`,
       icon: ROLE_ICON[c.role],
     })),
   ];
@@ -291,7 +292,7 @@ export function HorseProfile({ horseId, mode, onBack }: HorseProfileProps) {
   const dismissGuide = () => { setGuideDismissed(true); persistGuideDismissed(horseId, true); };
   const isActive = (key: string) => showGuide && activeKey === key;
   // When the active step is a connection, glow + point at that left-rail box.
-  const activeConnRel = CONNECTION_STEPS.find((c) => c.key === activeKey)?.rel ?? null;
+  const activeConnRole = CONNECTION_STEPS.find((c) => c.key === activeKey)?.role ?? null;
   const guideSteps: GuideStep[] = onbSteps.map((s) => ({
     key: s.key,
     label: s.label,
@@ -344,10 +345,10 @@ export function HorseProfile({ horseId, mode, onBack }: HorseProfileProps) {
     }
     if (key === 'basics') return <IdentityCard title="Identity" fields={idFields} editable />;
     if (key === 'pedigree') return <IdentityCard title="Pedigree" fields={pedFields} editable />;
-    const rel = CONNECTION_STEPS.find((c) => c.key === key)?.rel;
-    const def = rel ? roleDefByRel[rel] : null;
+    const role = CONNECTION_STEPS.find((c) => c.key === key)?.role;
+    const def = role ? roleDefByRole[role] : null;
     if (!def) return null;
-    return <RoleConnectionBox def={def} entries={conn.entriesFor(def)} editable parties={conn.parties} defaultAdding onOpenParty={(pid) => navigate(`/parties/${pid}`)} onAdd={conn.onAdd} onSaveDates={conn.onSaveDates} onRemove={conn.onRemove} />;
+    return <RoleConnectionBox def={def} entries={conn.entriesFor(def)} editable defaultAdding onOpenParty={(pid) => navigate(`/parties/${pid}`)} onAdd={conn.onAdd} onRemove={conn.onRemove} />;
   };
 
   const racingFields: FieldDescriptor[] = [
@@ -543,7 +544,7 @@ export function HorseProfile({ horseId, mode, onBack }: HorseProfileProps) {
         reportsActive={activeModule === 'reports'}
         onOpenReports={() => openModule('reports')}
         footer={allHorsesButton}
-        spotlightRel={showGuide ? activeConnRel : null}
+        spotlightRole={showGuide ? activeConnRole : null}
       />
     </div>
   );
@@ -626,7 +627,7 @@ export function HorseProfile({ horseId, mode, onBack }: HorseProfileProps) {
                 title={(activeKey && HORSE_COACH[activeKey]?.title) || activeStep?.label || ''}
                 tips={activeKey ? HORSE_COACH[activeKey]?.tips : undefined}
                 content={activeKey ? focusContent(activeKey) : null}
-                boxKey={activeConnRel ? `conn:${activeConnRel}` : activeKey}
+                boxKey={activeConnRole ? `conn:${activeConnRole}` : activeKey}
                 originId={activeStep?.anchorId}
                 skippable
                 onSkip={() => { if (activeKey) skipStep(activeKey); }}

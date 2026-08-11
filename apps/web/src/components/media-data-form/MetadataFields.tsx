@@ -1,6 +1,6 @@
 import { X, Plus, Newspaper, ChevronDown, Check, Search } from 'lucide-react';
 import { Input } from '@/components/ui/input';
-import type { Party } from '@/types/party';
+import type { RegisterPerson } from '@/lib/register';
 import type { Article } from '@/types/article';
 import { serifStyle } from './constants';
 
@@ -17,9 +17,9 @@ interface MetadataFieldsProps {
   setPublishedDate: (v: string) => void;
 
   // Featured parties
-  allParties: Party[];
+  allParties: RegisterPerson[];
   featuredPartyIds: string[];
-  filteredParties: Party[];
+  filteredParties: RegisterPerson[];
   toggleParty: (id: string) => void;
   partyDropOpen: boolean;
   setPartyDropOpen: React.Dispatch<React.SetStateAction<boolean>>;

@@ -3,6 +3,10 @@ import express from 'express'
 import cors from 'cors'
 import { db } from './lib/db.js'
 import { storage } from './lib/storage.js'
+import { seedRoles } from './lib/seedRoles.js'
+// Every route mount — and every body-parser limit and RBAC gate that goes with
+// it — lives in routes/index.ts. This file is app setup only.
+import apiRouter from './routes/index.js'
 
 // ── Environment validation ──
 const isProd = process.env.PROD === 'true'
@@ -38,197 +42,34 @@ process.on('uncaughtException', (err) => {
 const app = express()
 const PORT = process.env.PORT ? parseInt(process.env.PORT) : 3001
 
+// Render (and every other PaaS here) terminates TLS at a load balancer, so
+// without this `req.ip` is the BALANCER for every caller — and lib/rateLimit.ts
+// falls back to `req.ip` whenever there is no account. Every anonymous bucket
+// (sign-in codes, invite redemption, the guest assistant) was therefore ONE
+// global allowance shared by all visitors at once: legitimate users 429'd each
+// other, and no limit isolated an abuser. `1` = trust exactly one proxy hop.
+app.set('trust proxy', 1)
+
 app.use(cors({ origin: '*' }))
-// 2 MB JSON limit: large file bytes now go straight to S3 via presigned PUT
-// (see routes/uploads.ts), so request bodies only carry metadata + the small
-// compressed thumbnails that still persist inline. The Express default (100 KB)
-// was silently 413-ing those; 2 MB is a comfortable headroom without inviting
-// multi-MB base64 payloads back into Mongo.
-//
-// Exception: /api/issues + /api/magazines aggregate a whole magazine and, in
-// local dev (no S3), embed inline data-URL images — so they parse their bodies
-// with a larger limit at their own mount points below. /api/agent chats now
-// carry inline data-URL file attachments (images/PDFs the user hands the AI), so
-// they get the larger parser too. The global parser must skip all three here,
-// otherwise it would 413 the large body first.
-const jsonSmall = express.json({ limit: '2mb' })
-// Attachments are downscaled (images) or capped (PDFs ≤ 8 MB) client-side, but
-// the whole conversation — including prior turns' attachments — is re-sent each
-// turn, so allow comfortable headroom. express.json only parses application/json,
-// so the editor's raw /ingest and voice's raw /transcribe bodies pass through.
-const jsonAgent = express.json({ limit: '30mb' })
-app.use((req, res, next) => {
-  if (
-    req.path.startsWith('/api/issues') ||
-    req.path.startsWith('/api/magazinesV2') ||
-    req.path.startsWith('/api/blogs') ||
-    req.path.startsWith('/api/agent')
-  )
-    return next()
-  return jsonSmall(req, res, next)
-})
 
 // ── Request logging ──
+// The path is captured HERE, not read inside the `finish` handler. Express
+// rewrites `req.url` (and therefore `req.path`) to be relative to whichever
+// router is currently handling the request, and `finish` fires while that is
+// still true — so reading it late logged `/blogs/abc` instead of
+// `/api/blogs/abc`. `originalUrl` is never rewritten; the query string is
+// dropped so ids and tokens don't end up in the logs.
 app.use((req, res, next) => {
   const start = Date.now()
+  const path = req.originalUrl.split('?')[0]
   res.on('finish', () => {
-    console.log(`[api] ${req.method} ${req.path} → ${res.statusCode} (${Date.now() - start}ms)`)
+    console.log(`[api] ${req.method} ${path} → ${res.statusCode} (${Date.now() - start}ms)`)
   })
   next()
 })
 
-// Health check
-app.get('/api/health', (_req, res) => {
-  res.json({ status: 'ok', db: 'mongodb' })
-})
-
-// --- Add your API routes below ---
-
-// === auto-mounted routers (backend planner) ===
-import { authedWriteGate, staffWriteGate, articlesWriteGate, blogsWriteGate, horseScopedWriteGate, partyScopedWriteGate, issuesGate } from './lib/rbac.js'
-import authRouter from './routes/auth.js'
-import adminRouter from './routes/admin.js'
-import staffRouter from './routes/staff.js'
-import invitesRouter from './routes/invites.js'
-import rolesRouter from './routes/roles.js'
-import { seedRoles } from './lib/seedRoles.js'
-import subscriptionRouter from './routes/subscription.js'
-import partyClaimsRouter from './routes/partyClaims.js'
-import organisationsRouter from './routes/organisations.js'
-import notificationsRouter from './routes/notifications.js'
-import articlesRouter from './routes/articles.js'
-import blogsRouter from './routes/blogs.js'
-import horsesRouter from './routes/horses.js'
-import horsePartyLinksRouter from './routes/horsePartyLinks.js'
-import partiesRouter from './routes/parties.js'
-import podcastEpisodesRouter from './routes/podcastEpisodes.js'
-import racesRouter from './routes/races.js'
-import tipsRouter from './routes/tips.js'
-import salesRouter from './routes/sales.js'
-import reportsRouter from './routes/reports.js'
-import mediaItemsRouter from './routes/mediaItems.js'
-import racingEntriesRouter from './routes/racingEntries.js'
-import tipperProfilesRouter from './routes/tipperProfiles.js'
-import tippingRouter from './routes/tipping.js'
-import uploadsRouter from './routes/uploads.js'
-import issuesRouter from './routes/issues.js'
-import magazinesV2Router from './routes/magazinesV2.js'
-import sponsorsRouter from './routes/sponsors.js'
-import breakingNewsRouter from './routes/breakingNews.js'
-import siteSettingsRouter from './routes/siteSettings.js'
-import metricsRouter from './routes/metrics.js'
-import agentRouter from './routes/agent.js'
-import agentEditorRouter from './routes/agentEditor.js'
-import agentProfileRouter from './routes/agentProfile.js'
-import agentStoryRouter from './routes/agentStory.js'
-import agentBlogRouter from './routes/agentBlog.js'
-import agentArticleRouter from './routes/agentArticle.js'
-import agentVoiceRouter from './routes/agentVoice.js'
-import agentComposeRouter from './routes/agentCompose.js'
-import agentInstantRouter from './routes/agentInstant.js'
-import newsroomRouter from './routes/newsroom.js'
-import reactionsRouter from './routes/reactions.js'
-import commentsRouter from './routes/comments.js'
-import analyticsRouter from './routes/analytics.js'
-
-// Reads stay public (the public website needs them). Writes are gated by role:
-//   - articles  → editorial matrix (create / edit_own w/ author match / edit_any)
-//   - horse-centric data (horses, links, sales, reports, media, racing entries)
-//     → staff OR a member with an authorised relationship to the target horse
-//       (horseScopedWriteGate). Members create/manage only their own horses.
-//   - parties, races → staff-only (org party creation flows via /organisations)
-//   - tipping (tips, tipperProfiles) → any authenticated user (readers participate)
-// auth + podcastEpisodes keep their own finer-grained rules.
-app.use('/api/auth', authRouter)
-app.use('/api/admin', adminRouter)               // secret-gated first-admin seed
-app.use('/api/staff', staffRouter)               // admin-only staff grant/revoke
-app.use('/api/invites', invitesRouter)           // PUBLIC: invite-link lookup (no account yet)
-app.use('/api/roles', rolesRouter)               // admin-only custom roles + permission catalogue
-app.use('/api/subscription', subscriptionRouter) // self-service tier (manual, no billing yet)
-app.use('/api/partyClaims', partyClaimsRouter)   // self-gated (attachAccount inside)
-app.use('/api/organisations', organisationsRouter) // self-gated (attachAccount inside)
-app.use('/api/notifications', notificationsRouter)  // self-gated (attachAccount inside)
-app.use('/api/podcastEpisodes', podcastEpisodesRouter)
-app.use('/api/articles', articlesWriteGate, articlesRouter)
-// Blogs — block-based posts with their own media pool. Public read (live posts
-// only; the gate attaches the account optionally so staff also see drafts),
-// writes gated on the `blog.*` permission axis. A post carries its whole block
-// list and, in local dev with no S3, inline data-URL images, so it needs more
-// headroom than the global 2 MB cap — the global parser skips this prefix above.
-app.use('/api/blogs', express.json({ limit: '10mb' }), blogsWriteGate, blogsRouter)
-app.use('/api/horses', horseScopedWriteGate({ collection: 'horses', idIsHorse: true, optionalGet: true }), horsesRouter)
-app.use('/api/horsePartyLinks', horseScopedWriteGate({ collection: 'horsePartyLinks' }), horsePartyLinksRouter)
-app.use('/api/parties', partyScopedWriteGate, partiesRouter)
-app.use('/api/races', staffWriteGate, racesRouter)
-app.use('/api/tips', authedWriteGate, tipsRouter)
-app.use('/api/sales', horseScopedWriteGate({ collection: 'sales' }), salesRouter)
-app.use('/api/reports', horseScopedWriteGate({ collection: 'reports', optionalGet: true }), reportsRouter)
-app.use('/api/mediaItems', horseScopedWriteGate({ collection: 'mediaItems' }), mediaItemsRouter)
-app.use('/api/racingEntries', horseScopedWriteGate({ collection: 'racingEntries' }), racingEntriesRouter)
-app.use('/api/tipperProfiles', authedWriteGate, tipperProfilesRouter)
-// Race resolution credits winners server-side (clients never write balances).
-app.use('/api/tipping', authedWriteGate, tippingRouter)
-app.use('/api/uploads', uploadsRouter)         // presigned S3 PUT URLs (auth inside)
-// Published magazine issues. Public read (incl. unpublished for staff), staff
-// write. A frozen issue aggregates a whole magazine's pages; in local dev its
-// images are inline data URLs, so it needs more headroom than the global 2 MB
-// body cap (in deployment, page images are S3 URLs and bodies stay small).
-app.use('/api/issues', express.json({ limit: '30mb' }), issuesGate, issuesRouter)
-// Magazine Builder v2 (free-form element model) — self-gated inside the router
-// (feature flag → staff → per-magazine owner/collaborator → write rate limit).
-// Behind MAGAZINE_V2; invisible (404) until enabled. Large body cap because a
-// page's element payload can carry inline data-URL images in local dev. The
-// global JSON parser skips the '/api/magazinesV2' prefix, so this mount's own
-// parser is what runs. See docs/MAGAZINE-BUILDER-V2.md.
-app.use('/api/magazinesV2', express.json({ limit: '30mb' }), magazinesV2Router)
-// Public landing-page content: read is public, writes are staff-only.
-app.use('/api/sponsors', staffWriteGate, sponsorsRouter)
-app.use('/api/breakingNews', staffWriteGate, breakingNewsRouter)
-// Website customisation — which of the six public sections the site shows.
-// Read is public (the navbar renders it for signed-out readers); the write gates
-// itself on `settings.manage` inside the router, so no gate is applied here.
-app.use('/api/site-settings', siteSettingsRouter)
-// Computed site metrics — public, read-only (no writes).
-app.use('/api/metrics', metricsRouter)
-// Reader reactions on blogs, blog parts, stories and bulletin issues. Self-gated
-// inside the router: counts are public, writes need an account and are rate
-// limited, and "reactable = readable" is re-derived from the target's own record
-// rather than trusted from the client. See docs/REACTIONS-PLAN.md.
-app.use('/api/reactions', reactionsRouter)
-// Reader comments on the same three surfaces (stories, blog posts, editions —
-// NOT blog parts; see COMMENT_TARGET_TYPES for why the discussion is about the
-// piece). Self-gated the same way, and the visibility gate is `assertReactable`
-// itself rather than a copy of it: commentable = reactable = readable. The
-// moderation endpoints inside enforce `comments.moderate`. See
-// docs/COMMENTS-PLAN.md.
-app.use('/api/comments', commentsRouter)
-// Staff analytics over those reactions — self-gated on `analytics.view` inside
-// the router, which is what makes that permission server-enforced rather than a
-// sidebar rule the browser observes.
-app.use('/api/analytics', analyticsRouter)
-// Production System dashboard — staff-only, role-scoped summary + AI brief.
-app.use('/api/newsroom', newsroomRouter)
-// AI concierge ("the Stablehand"). Read-only tools, RBAC-scoped to the caller
-// (attachAccountOptional inside the route); answers stream back to the browser.
-// Editor route is mounted first (more specific path) so /editor/* resolves here.
-app.use('/api/agent/editor', jsonAgent, agentEditorRouter)  // in-editor Studio Assistant (client-executed editor tools)
-app.use('/api/agent/profile', jsonAgent, agentProfileRouter) // in-profile Stable Studio assistant (client-executed, staged proposals)
-app.use('/api/agent/story', jsonAgent, agentStoryRouter)    // Story Studio — writes & files a story draft (client-executed tools)
-// Blog Studio — writes, revises, publishes and deletes blog posts. Every tool is
-// client-executed, so all writes go back through /api/blogs and its RBAC gate.
-app.use('/api/agent/blog', jsonAgent, agentBlogRouter)
-app.use('/api/agent/article', jsonAgent, agentArticleRouter) // Article Studio — edits one open article in place (client-executed tools)
-app.use('/api/agent/voice', jsonAgent, agentVoiceRouter)    // OpenAI STT/TTS for the concierge (key stays server-side)
-// AI field-composer for form fields (✨ button). Signed-in + rate limited INSIDE
-// the router — it was reachable anonymously, which spent the model key for free.
-app.use('/api/agent/compose', jsonAgent, agentComposeRouter)
-// Instant — capture-to-draft. Staff-only + rate-limited INSIDE the router (unlike
-// the older agent routes, which attach the account optionally): it is the most
-// expensive model surface here and there is still no token metering.
-app.use('/api/agent/instant', jsonAgent, agentInstantRouter)
-app.use('/api/agent', jsonAgent, agentRouter)
-// === end auto-mounted routers ===
-
+// ── API routes ──
+app.use('/api', apiRouter)
 
 // ── Error handler ──
 app.use((err: Error, _req: express.Request, res: express.Response, _next: express.NextFunction) => {

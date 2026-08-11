@@ -23,9 +23,14 @@ import { authFetch } from '@/lib/api';
 import type { RecordShare } from '@/types/sharing';
 import { toast } from 'sonner';
 
+/**
+ * A row of /api/staff/directory. The field is `name`. `RecordShare` below DOES
+ * carry `displayName` — the two shapes sit side by side in this dialog, so keep
+ * them straight: reading `displayName` here renders every colleague as an email.
+ */
 interface StaffOption {
   userId: string;
-  displayName: string;
+  name: string;
   email: string;
 }
 
@@ -132,7 +137,7 @@ export function RecordShareDialog({
               </option>
               {candidates.map((c) => (
                 <option key={c.userId} value={c.email}>
-                  {c.displayName || c.email}
+                  {c.name || c.email}
                 </option>
               ))}
             </select>

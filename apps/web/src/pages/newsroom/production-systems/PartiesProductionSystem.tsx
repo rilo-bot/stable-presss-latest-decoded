@@ -3,22 +3,22 @@ import { Button } from '@/components/ui/button';
 import { EmptyState } from '@/components/EmptyState';
 import { Users } from 'lucide-react';
 import { cn } from '@/lib/utils';
-import type { Party } from '@/types/party';
 import { PARTY_ROLE_LABELS } from '@/types/party';
 import { ROLE_COLORS } from '../constants';
 import { DeleteConfirmDialog } from '../components/DeleteConfirmDialog';
+import type { RegisterPerson } from '@/lib/register';
 
 interface PartiesProductionSystemProps {
-  safeParties: Party[];
-  filteredParties: Party[];
+  safeParties: RegisterPerson[];
+  filteredParties: RegisterPerson[];
   partySearch: string;
   setPartySearch: (v: string) => void;
-  onOpenPartyForm: (party?: Party) => void;
-  onPartyDelete: (party: Party) => void;
+  onOpenPartyForm: (party?: RegisterPerson) => void;
+  onPartyDelete: (party: RegisterPerson) => void;
   partyDeleteConfirm: boolean;
-  partyDeleteTarget: Party | null;
+  partyDeleteTarget: RegisterPerson | null;
   setPartyDeleteConfirm: (v: boolean) => void;
-  setPartyDeleteTarget: (v: Party | null) => void;
+  setPartyDeleteTarget: (v: RegisterPerson | null) => void;
   confirmPartyDelete: () => void;
 }
 
@@ -45,7 +45,7 @@ export function PartiesProductionSystem({
           onClick={() => onOpenPartyForm()}
         >
           <Plus size={13} />
-          Add Party
+          Add RegisterPerson
         </Button>
       </div>
 
@@ -68,7 +68,7 @@ export function PartiesProductionSystem({
           icon={Users}
           heading="No parties registered yet."
           description="Add owners, trainers, jockeys and other racing connections to build your industry directory. Parties can be linked to thoroughbred profiles and editorial coverage."
-          ctaLabel="Add Your First Party"
+          ctaLabel="Add Your First RegisterPerson"
           onCta={() => onOpenPartyForm()}
           size="lg"
         />
@@ -87,7 +87,7 @@ export function PartiesProductionSystem({
         <div className="border border-border/60 rounded-sm overflow-hidden bg-card">
           <div className="px-4 py-2.5 border-b border-border/40 bg-muted/30 flex items-center justify-between">
             <p className="text-[12px] uppercase tracking-[0.12em] font-bold text-muted-foreground">
-              Party Records
+              RegisterPerson Records
             </p>
             <span className="text-[12px] text-muted-foreground tabular-nums">
               {filteredParties.length} {filteredParties.length === 1 ? 'party' : 'parties'}
@@ -97,7 +97,7 @@ export function PartiesProductionSystem({
             <table className="w-full text-sm min-w-[700px]">
               <thead>
                 <tr className="border-b border-border/40 bg-muted/20">
-                  {['Party', 'Type', 'Roles', 'Location', 'Since', 'Actions'].map((h) => (
+                  {['RegisterPerson', 'Type', 'Roles', 'Location', 'Since', 'Actions'].map((h) => (
                     <th
                       key={h}
                       className="text-left px-4 py-2.5 text-[12px] uppercase tracking-[0.1em] text-muted-foreground font-semibold"
@@ -109,7 +109,7 @@ export function PartiesProductionSystem({
               </thead>
               <tbody>
                 {filteredParties.map((party, idx) => {
-                  const yearsActive = party.started_year ? currentYear - party.started_year : null;
+                  const yearsActive = party.startedYear ? currentYear - party.startedYear : null;
                   return (
                     <tr
                       key={party.id}
@@ -120,9 +120,9 @@ export function PartiesProductionSystem({
                     >
                       <td className="px-4 py-3 max-w-[200px]">
                         <div className="flex items-center gap-2.5">
-                          {party.photo ? (
+                          {party.imageUrl ? (
                             <img
-                              src={party.photo}
+                              src={party.imageUrl}
                               alt={party.name}
                               crossOrigin="anonymous"
                               className="w-7 h-7 rounded-full object-cover flex-shrink-0 border border-border/40"
@@ -170,25 +170,25 @@ export function PartiesProductionSystem({
                         </div>
                       </td>
                       <td className="px-4 py-3">
-                        {party.base_location ? (
+                        {party.baseLocation ? (
                           <div className="flex items-center gap-1 text-sm text-muted-foreground">
                             <MapPin size={10} className="flex-shrink-0 text-primary/50" />
-                            <span className="truncate max-w-[120px]">{party.base_location}</span>
+                            <span className="truncate max-w-[120px]">{party.baseLocation}</span>
                           </div>
-                        ) : party.country_of_birth ? (
+                        ) : party.countryOfBirth ? (
                           <div className="flex items-center gap-1 text-sm text-muted-foreground">
                             <Globe size={10} className="flex-shrink-0 text-primary/50" />
-                            <span className="truncate max-w-[120px]">{party.country_of_birth}</span>
+                            <span className="truncate max-w-[120px]">{party.countryOfBirth}</span>
                           </div>
                         ) : (
                           <span className="text-muted-foreground/40 text-sm">—</span>
                         )}
                       </td>
                       <td className="px-4 py-3">
-                        {party.started_year ? (
+                        {party.startedYear ? (
                           <div className="flex items-center gap-1 text-sm text-muted-foreground">
                             <CalendarDays size={10} className="flex-shrink-0 text-primary/50" />
-                            <span>{party.started_year}</span>
+                            <span>{party.startedYear}</span>
                             {yearsActive !== null && yearsActive > 0 && (
                               <span className="text-primary font-semibold">·{yearsActive}y</span>
                             )}

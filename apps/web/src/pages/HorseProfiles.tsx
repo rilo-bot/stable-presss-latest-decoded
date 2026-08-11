@@ -4,7 +4,7 @@ import { useHorseStore } from '@/stores/horseStore';
 import { usePartyStore } from '@/stores/partyStore';
 import { useFollowStore } from '@/stores/followStore';
 import { useAuthStore } from '@/stores/authStore';
-import { isStaff } from '@/rbac/can';
+import { isAdmin } from '@/rbac/can';
 import { connectionResolver } from '@/lib/horseConnections';
 import { HorseCard } from '@/components/HorseCard';
 import { HorseSkeletonCard } from '@/components/SkeletonCard';
@@ -12,11 +12,14 @@ import { EmptyState } from '@/components/EmptyState';
 import { Input } from '@/components/ui/input';
 import { Search, Plus, Heart, ChevronRight } from 'lucide-react';
 import { motion } from 'framer-motion';
+import { useRegister } from '@/lib/register';
 
 export default function HorseProfiles() {
   // === auto fetch-on-mount (backend planner) ===
   const fetchHorses = useHorseStore((s) => s.fetchHorses);
   const fetchParties = usePartyStore((s) => s.fetchParties);
+  /** Raw edges — a horse's connections come from these, not the joined register. */
+  const partyEdges = usePartyStore((s) => s.parties);
   useEffect(() => {
     fetchHorses();
     fetchParties();
@@ -24,10 +27,10 @@ export default function HorseProfiles() {
   // === end auto fetch-on-mount ===
 
   const horses = useHorseStore((s) => s.horses);
-  const parties = usePartyStore((s) => s.parties);
+  const parties = useRegister();
   const navigate = useNavigate();
   const [query, setQuery] = useState('');
-  const staff = isStaff(useAuthStore((s) => s.currentUser));
+  const staff = isAdmin(useAuthStore((s) => s.currentUser));
 
   // Real fetch state, not a timer.
   //
@@ -51,7 +54,7 @@ export default function HorseProfiles() {
   const filtered = useMemo(() => {
     const q = query.toLowerCase().trim();
     if (!q) return safeHorses;
-    const conn = connectionResolver(parties ?? []);
+    const conn = connectionResolver(partyEdges);
     return safeHorses.filter((h) => {
       const c = conn(h);
       return (
@@ -61,7 +64,7 @@ export default function HorseProfiles() {
         c.owner.toLowerCase().includes(q)
       );
     });
-  }, [safeHorses, query, parties]);
+  }, [safeHorses, query, partyEdges]);
 
   return (
     <div className="max-w-7xl mx-auto px-4 md:px-8 py-10">
@@ -161,7 +164,7 @@ export default function HorseProfiles() {
         </div>
       ) : safeHorses.length === 0 ? (
         /* Empty stables — no horses added via Production System yet */
-        /* The newsroom CTA is staff-only — /production-system is RequireStaff and
+        /* The newsroom CTA is admin-only — /production-system is RequireAdmin and
            redirects a reader home. A reader is told what the page is for instead. */
         <EmptyState
           icon={staff ? Plus : Search}

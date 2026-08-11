@@ -11,17 +11,20 @@ import { Clock, Check, Plus, Loader2, Users, Camera, ClipboardList, Warehouse, C
 import { toast } from 'sonner';
 import { useAuthStore } from '@/stores/authStore';
 import { usePartyStore } from '@/stores/partyStore';
+import { usePeopleStore } from '@/stores/peopleStore';
+import { useRegister, useLoadRegister } from '@/lib/register';
 import { useHorseStore } from '@/stores/horseStore';
-import { useHorsePartyLinkStore } from '@/stores/horsePartyLinkStore';
+
 import { useMemberOnboardingStore } from '@/stores/memberOnboardingStore';
-import { canManageParty } from '@/rbac/can';
-import { horsesLinkedToParty } from '@/rbac/scope';
+import { canManagePerson } from '@/rbac/can';
+import { horsesForPerson } from '@/rbac/scope';
 import { useProfileScope } from '@/hooks/useProfileScope';
 import { ROLE_BINDINGS, PROFILE_ROLES, resolveActiveRole } from '@/lib/profile/roleMap';
 import {
   PARTY_ROLE_LABELS, PERSONNEL_SUBTYPES, PERSONNEL_SUBTYPE_LABELS, getStartedYearLabel,
 } from '@/types/party';
-import type { Party, PersonnelSubtype } from '@/types/party';
+import type { PersonnelSubtype, Person } from '@/types/party';
+import type { RegisterPerson } from '@/lib/register';
 import type { Horse } from '@/types/horse';
 import { COUNTRY_OPTIONS } from '@/components/horse-form/constants';
 import { loadSkippedSteps, persistSkippedSteps, loadGuideDismissed, persistGuideDismissed } from '@/lib/profile/onboardingSkips';
@@ -43,17 +46,18 @@ import { ProfileAgentPanel, StudioLauncher } from '@/agent/profile/ProfileAgentP
 import { useProfileAgentUi, type ProfileContext } from '@/stores/profileAgentUiStore';
 import { DossierMeter } from '@/components/DossierMeter';
 import { AskAgentButton } from '@/components/AskAgentButton';
-import { HorseForm } from '@/components/HorseForm';
+import { HorseForm, type ConnectFields } from '@/components/HorseForm';
+import { ensureConnection } from '@/lib/horseConnections';
 import { AddHorseChoice } from '@/components/AddHorseChoice';
 
 type Mode = 'view' | 'edit';
 
-/** Snapshot the party's editable fields for the AI assistant. */
-function buildPartyContext(party: Party, horseCount: number): ProfileContext {
+/** Snapshot the person's editable fields for the AI assistant. */
+function buildPartyContext(party: RegisterPerson, horseCount: number): ProfileContext {
   const f: Record<string, string> = {
-    name: party.name ?? '', profession: party.profession ?? '', base_location: party.base_location ?? '',
-    date_of_birth: party.date_of_birth ?? '', country_of_birth: party.country_of_birth ?? '',
-    started_year: party.started_year != null ? String(party.started_year) : '',
+    name: party.name ?? '', profession: party.profession ?? '', baseLocation: party.baseLocation ?? '',
+    dateOfBirth: party.dateOfBirth ?? '', countryOfBirth: party.countryOfBirth ?? '',
+    startedYear: party.startedYear != null ? String(party.startedYear) : '',
   };
   const emptyFields = Object.entries(f).filter(([, v]) => !v.trim()).map(([k]) => k);
   return { entityKind: 'party', entityId: party.id, name: party.name || 'Your profile', fields: f, emptyFields, roleBoxes: [{ role: 'horses', count: horseCount }] };
@@ -92,13 +96,18 @@ export function PartyProfile({ partyId, mode, onBack }: PartyProfileProps) {
   const [searchParams, setSearchParams] = useSearchParams();
   const currentUser = useAuthStore((s) => s.currentUser);
 
+  // The page is PERSON-central: who they are comes from `people`, and the roles
+  // and horses they are attached to come from their party edges. `useRegister`
+  // is the join, so this screen reads one object rather than stitching two.
+  const register = useRegister();
+  useLoadRegister();
   const parties = usePartyStore((s) => s.parties);
   const fetchParties = usePartyStore((s) => s.fetchParties);
-  const updateParty = usePartyStore((s) => s.updateParty);
+  const addParty = usePartyStore((s) => s.addParty);
+  const updatePerson = usePeopleStore((s) => s.updatePerson);
   const horses = useHorseStore((s) => s.horses);
   const fetchHorses = useHorseStore((s) => s.fetchHorses);
   const addHorse = useHorseStore((s) => s.addHorse);
-  const links = useHorsePartyLinkStore((s) => s.links);
   const partiesLoaded = usePartyStore((s) => s.loaded);
   const horsesLoaded = useHorseStore((s) => s.loaded);
   const dismissedWelcome = useMemberOnboardingStore((s) => !!s.dismissedByUser[currentUser?.id ?? '']);
@@ -116,8 +125,8 @@ export function PartyProfile({ partyId, mode, onBack }: PartyProfileProps) {
   // Reset any open module when the subject / role changes.
   useEffect(() => { setActiveModule(null); }, [partyId, searchParams.get('role')]);
 
-  const party = useMemo(() => parties.find((p) => p.id === partyId), [parties, partyId]);
-  const editable = canManageParty(currentUser, partyId);
+  const party = useMemo(() => register.find((p) => p.id === partyId), [register, partyId]);
+  const editable = canManagePerson(currentUser, partyId);
 
   const activeRole = useMemo(
     () => resolveActiveRole(party?.roles ?? [], mode === 'view' ? searchParams.get('role') : null),
@@ -131,9 +140,9 @@ export function PartyProfile({ partyId, mode, onBack }: PartyProfileProps) {
   const scope = useProfileScope(subject);
 
   const myHorses = useMemo(() => {
-    const linked = new Set(horsesLinkedToParty(partyId, { horses, links }));
+    const linked = new Set(horsesForPerson(partyId, { parties, horses }));
     return horses.filter((h) => linked.has(h.id) || h.createdByUserId === currentUser?.id);
-  }, [horses, links, partyId, currentUser]);
+  }, [horses, parties, partyId, currentUser]);
 
   // Keep the AI assistant's context in sync with the open party (edit mode only).
   const setAgentContext = useProfileAgentUi((s) => s.setContext);
@@ -162,8 +171,8 @@ export function PartyProfile({ partyId, mode, onBack }: PartyProfileProps) {
   const onbAllDone = useMemo(() => {
     if (!party || mode !== 'edit' || !editable) return false;
     const ok = (done: boolean, key: string) => done || skipped.has(key);
-    return ok(!!party.photo, 'photo')
-      && ok(!!(party.profession && party.base_location), 'details')
+    return ok(!!party.imageUrl, 'photo')
+      && ok(!!(party.profession && party.baseLocation), 'details')
       && ok(myHorses.length > 0, 'horses');
   }, [party, mode, editable, myHorses, skipped]);
   // Celebrate only a genuine in-session completion (see HorseProfile): require a
@@ -196,32 +205,46 @@ export function PartyProfile({ partyId, mode, onBack }: PartyProfileProps) {
   const roles = party.roles ?? [];
   const roleLabel = ROLE_BINDINGS[activeRole]?.label ?? (mode === 'edit' ? 'Member' : 'Profile');
   const partyName = party.name || (mode === 'edit' ? 'Your name' : 'Profile');
-  const isUnverified = party.verificationStatus === 'unverified';
+  // A person with no role edge yet is "not in the register" rather than
+  // "unverified" — verification is gone, so the only question left is whether
+  // anything actually connects them to the sport.
+  const isUnverified = roles.length === 0;
   const isEdit = mode === 'edit';
-  const subtypes = party.personnel_subtype ?? [];
-  const set = (patch: Partial<Party>) => updateParty(partyId, patch);
+  const subtypes = party.personnelSubtype ?? [];
+  const set = (patch: Partial<Person>) => updatePerson(partyId, patch);
 
   const toggleSubtype = (s: PersonnelSubtype) => {
     const next = subtypes.includes(s) ? subtypes.filter((x) => x !== s) : [...subtypes, s];
-    void set({ personnel_subtype: next });
+    void set({ personnelSubtype: next });
   };
 
-  // Link the new horse to THIS party under the role the studio is centred on, so
+  // Link the new horse to THIS person under the role the studio is centred on, so
   // the creator shows in the matching connection box (a trainer in Trainers, not
-  // Owners). The server reads this *Ids field to pick the link's relationship.
-  const selfConnect = (): Partial<Horse> => {
-    const c: Partial<Horse> = {};
-    (c as Record<string, string[]>)[ROLE_BINDINGS[activeRole].horseField] = [partyId];
-    return c;
-  };
+  // Owners).
+  //
+  // This used to be a `Partial<Horse>` setting the matching `*Ids` array, saved
+  // with the horse in one request. Those fields are gone — the link is a party
+  // EDGE, so it is written separately, after the horse has an id.
+  const selfConnect = (): ConnectFields => ({ [activeRole]: [partyId] });
 
   // Photo-first path: create an un-named draft (foal / yearling) with no name and
   // jump into its studio — naming is never a hard gate.
   const onAddUnnamedFoal = async () => {
     setAdding(true);
     try {
-      const created = await addHorse({ ...selfConnect(), name: '', isUnnamed: true, pedigreeNotes: '' });
-      if (created) navigate(`/studio/horse/${created.id}`);
+      const created = await addHorse({ name: '', isUnnamed: true, pedigreeNotes: '' });
+      if (!created) return;
+      // Re-read first: POST /api/horses links the creator itself when a member
+      // registers a horse, and adding the same edge again would list them twice.
+      await fetchParties(true);
+      await ensureConnection(
+        usePartyStore.getState().parties,
+        created.id,
+        partyId,
+        activeRole,
+        addParty,
+      );
+      navigate(`/studio/horse/${created.id}`);
     } finally {
       setAdding(false);
     }
@@ -239,17 +262,17 @@ export function PartyProfile({ partyId, mode, onBack }: PartyProfileProps) {
   const dossierFlags = [
     horseCount > 0,
     relTiles.length > 0,
-    !!party.photo,
+    !!party.imageUrl,
     !!party.profession,
-    !!party.base_location,
-    !!party.date_of_birth,
+    !!party.baseLocation,
+    !!party.dateOfBirth,
   ];
   const dossierFilled = dossierFlags.filter(Boolean).length;
 
   // ── Onboarding step guide (edit mode; self-hides once complete) ──
   const onbSteps: OnbStep[] = [
-    { key: 'photo', label: 'Photo', hint: 'Upload a profile photo.', done: !!party.photo, skipped: skipped.has('photo'), anchorId: 'onb-identity', icon: STEP_ICONS.photo },
-    { key: 'details', label: 'Details', hint: 'Add your profession and base location.', done: !!(party.profession && party.base_location), skipped: skipped.has('details'), anchorId: 'onb-identity', icon: STEP_ICONS.details },
+    { key: 'photo', label: 'Photo', hint: 'Upload a profile photo.', done: !!party.imageUrl, skipped: skipped.has('photo'), anchorId: 'onb-identity', icon: STEP_ICONS.photo },
+    { key: 'details', label: 'Details', hint: 'Add your profession and base location.', done: !!(party.profession && party.baseLocation), skipped: skipped.has('details'), anchorId: 'onb-identity', icon: STEP_ICONS.details },
     { key: 'horses', label: 'Horses', hint: 'Register the horses in your stable.', done: horseCount > 0, skipped: skipped.has('horses'), anchorId: 'onb-horses', icon: STEP_ICONS.horses },
   ];
   const scrollToAnchor = (id?: string) => { if (id) document.getElementById(id)?.scrollIntoView({ behavior: 'smooth', block: 'center' }); };
@@ -316,7 +339,7 @@ export function PartyProfile({ partyId, mode, onBack }: PartyProfileProps) {
   const openHorse = (hid: string) => navigate(isEdit ? `/studio/horse/${hid}` : `/horses/${hid}`);
 
   // ── Identity fields (read-only in view, editable in edit) ──
-  const age = calcAge(party.date_of_birth);
+  const age = calcAge(party.dateOfBirth);
   const today = new Date().toISOString().split('T')[0];
   const roleChipsRow = (
     <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline', borderBottom: '1px solid var(--parchment-shadow)', paddingBottom: 6, marginBottom: 6, gap: 8 }}>
@@ -335,21 +358,21 @@ export function PartyProfile({ partyId, mode, onBack }: PartyProfileProps) {
         { label: 'Full name', value: party.name ?? '', onSave: (v) => set({ name: v.trim() }) },
         { label: 'Role', value: '', render: roleChipsRow },
         { label: 'Profession', value: party.profession ?? '', onSave: (v) => set({ profession: v.trim() || undefined }) },
-        { label: 'Date of birth', type: 'date', value: party.date_of_birth ?? '', displayValue: party.date_of_birth ? `${fmtDate(party.date_of_birth)}${age !== null ? ` · ${age}y` : ''}` : '', onSave: (v) => set({ date_of_birth: v || undefined }), max: today },
-        { label: 'Country of birth', type: 'select', options: COUNTRY_OPTIONS, value: party.country_of_birth ?? '', onSave: (v) => set({ country_of_birth: v.trim() || undefined }) },
-        { label: 'Base location', value: party.base_location ?? '', onSave: (v) => set({ base_location: v.trim() || undefined }) },
-        { label: getStartedYearLabel(roles), type: 'number', value: party.started_year ? String(party.started_year) : '', displayValue: party.started_year ? `${party.started_year} · ${CURRENT_YEAR - party.started_year}y` : '', onSave: (v) => set({ started_year: v ? parseInt(v, 10) : undefined }), min: 1900, max: CURRENT_YEAR },
+        { label: 'Date of birth', type: 'date', value: party.dateOfBirth ?? '', displayValue: party.dateOfBirth ? `${fmtDate(party.dateOfBirth)}${age !== null ? ` · ${age}y` : ''}` : '', onSave: (v) => set({ dateOfBirth: v || undefined }), max: today },
+        { label: 'Country of birth', type: 'select', options: COUNTRY_OPTIONS, value: party.countryOfBirth ?? '', onSave: (v) => set({ countryOfBirth: v.trim() || undefined }) },
+        { label: 'Base location', value: party.baseLocation ?? '', onSave: (v) => set({ baseLocation: v.trim() || undefined }) },
+        { label: getStartedYearLabel(roles), type: 'number', value: party.startedYear ? String(party.startedYear) : '', displayValue: party.startedYear ? `${party.startedYear} · ${CURRENT_YEAR - party.startedYear}y` : '', onSave: (v) => set({ startedYear: v ? parseInt(v, 10) : undefined }), min: 1900, max: CURRENT_YEAR },
       ]
     : [
         // Reference order — DOB · Age · Country · Profession show by default
         // (collapsibleAfter={4}); Base · Started · Role expand on demand. Each is
         // spread-guarded so missing data is omitted, never faked.
-        ...(party.date_of_birth ? [{ label: 'Date of Birth', value: fmtDate(party.date_of_birth) }] : []),
+        ...(party.dateOfBirth ? [{ label: 'Date of Birth', value: fmtDate(party.dateOfBirth) }] : []),
         ...(age !== null ? [{ label: 'Age', value: `${age} yrs old` }] : []),
-        ...(party.country_of_birth ? [{ label: 'Country of Birth', value: party.country_of_birth }] : []),
+        ...(party.countryOfBirth ? [{ label: 'Country of Birth', value: party.countryOfBirth }] : []),
         ...(party.profession ? [{ label: 'Profession', value: party.profession }] : []),
-        ...(party.base_location ? [{ label: 'Base', value: party.base_location }] : []),
-        ...(party.started_year ? [{ label: getStartedYearLabel(roles), value: String(party.started_year) }] : []),
+        ...(party.baseLocation ? [{ label: 'Base', value: party.baseLocation }] : []),
+        ...(party.startedYear ? [{ label: getStartedYearLabel(roles), value: String(party.startedYear) }] : []),
         { label: 'Role', value: roleLabel },
       ];
 
@@ -357,7 +380,7 @@ export function PartyProfile({ partyId, mode, onBack }: PartyProfileProps) {
   // action, not a fillable box → a CTA that opens the existing add-horse chooser.
   const focusContent = (key: string): React.ReactNode => {
     if (key === 'photo') {
-      return <PortraitFrame src={party.photo} alt={partyName} editable kind="party" onUpload={(url) => set({ photo: url })} containerStyle={{ height: 'clamp(200px, 36vh, 340px)', minHeight: 200 }} label={!party.photo ? 'Add a photo' : undefined} />;
+      return <PortraitFrame src={party.imageUrl} alt={partyName} editable kind="party" onUpload={(url) => set({ imageUrl: url })} containerStyle={{ height: 'clamp(200px, 36vh, 340px)', minHeight: 200 }} label={!party.imageUrl ? 'Add a photo' : undefined} />;
     }
     if (key === 'details') return <IdentityCard title="Identity" fields={identityFields} editable />;
     if (key === 'horses') {
@@ -435,7 +458,7 @@ export function PartyProfile({ partyId, mode, onBack }: PartyProfileProps) {
   );
   const crest = (
     <div className="sku-gold-card">
-      <OrnateCrest name={partyName} subtitle={[roleLabel, party.profession, party.base_location].filter(Boolean).join(' · ')} />
+      <OrnateCrest name={partyName} subtitle={[roleLabel, party.profession, party.baseLocation].filter(Boolean).join(' · ')} />
       {!isEdit && switchableRoles.length > 1 && (
         <div style={{ background: 'rgba(26,51,34,0.6)', borderTop: '1px solid var(--gold-dark)', padding: '7px 12px', display: 'flex', alignItems: 'center', gap: 6, flexWrap: 'wrap' }}>
           <span style={{ fontSize: '0.52rem', textTransform: 'uppercase', letterSpacing: '0.12em', color: 'var(--gold-mid)', ...serifStyle }}>View as:</span>
@@ -490,11 +513,11 @@ export function PartyProfile({ partyId, mode, onBack }: PartyProfileProps) {
         <div id="onb-identity" style={{ display: 'grid', gridTemplateColumns: '0.95fr 1.05fr', gap: 14, alignItems: 'stretch' }}>
           <IdentityCard title={identityTitle} fields={identityFields} editable={editable} className={isActive('details') ? 'onb-spotlight' : undefined} />
           <PortraitFrame
-            src={party.photo}
+            src={party.imageUrl}
             alt={partyName}
             editable={editable}
             kind="party"
-            onUpload={(url) => set({ photo: url })}
+            onUpload={(url) => set({ imageUrl: url })}
             containerStyle={{ minHeight: 200 }}
             caption={portraitCaption}
             className={isActive('photo') ? 'onb-spotlight' : undefined}
@@ -505,7 +528,7 @@ export function PartyProfile({ partyId, mode, onBack }: PartyProfileProps) {
             box — the crest already carries the name + role. */
         <div id="onb-identity">
           <PortraitFrame
-            src={party.photo}
+            src={party.imageUrl}
             alt={partyName}
             editable={false}
             kind="party"

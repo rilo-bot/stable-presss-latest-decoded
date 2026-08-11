@@ -7,7 +7,7 @@ export default function CompensationScreen() {
     <>
       <CompensationView
         articles={s.articles ?? []}
-        currentUserDisplayName={s.currentUser?.displayName}
+        currentUserDisplayName={s.currentUser?.name}
         onNavigate={s.goToModule}
         onNewInColumn={s.handleNewInColumn}
         onOpenStudio={s.handleOpenStudio}

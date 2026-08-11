@@ -68,7 +68,7 @@ function OwnerDataBox({ def, parties, onOpenParty }: { def: BoxDef; parties: Pan
                     <Avatar src={partyPhoto(e.party)} alt={e.party.name} size={30} radius={2} icon={icon} />
                     <span style={{ flex: 1, minWidth: 0 }}>
                       <span style={{ display: 'block', fontSize: '0.72rem', fontWeight: 700, color: 'var(--forest-deep)', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{e.party.name}</span>
-                      <span style={{ display: 'block', fontSize: '0.56rem', color: 'var(--parchment-label)' }}>{e.party.base_location || e.party.profession || (def.role ? PARTY_ROLE_LABELS[def.role] : '')}</span>
+                      <span style={{ display: 'block', fontSize: '0.56rem', color: 'var(--parchment-label)' }}>{e.party.baseLocation || e.party.profession || (def.role ? PARTY_ROLE_LABELS[def.role] : '')}</span>
                     </span>
                     <ChevronRight size={13} style={{ color: 'var(--gold-mid)', flexShrink: 0 }} />
                   </button>

@@ -14,6 +14,7 @@ import { toast } from 'sonner';
 import { MarkdownMessage } from '@/components/MarkdownMessage';
 import { useAutoGrowTextarea } from '@/lib/useAutoGrowTextarea';
 import { uploadImage } from '@/lib/upload';
+import { useCanUpload } from '@/lib/permissions';
 import { useArticleStore } from '@/stores/articleStore';
 import { useArticleStudioUi } from '@/stores/articleStudioUiStore';
 import { useStudioChrome } from '@/stores/studioChromeStore';
@@ -40,6 +41,11 @@ export function ArticleStudioPanel() {
   const [input, setInput] = useState('');
   const [uploading, setUploading] = useState(false);
   const fileRef = useRef<HTMLInputElement>(null);
+  // Editing an article and uploading a file are separate powers: a role can
+  // hold `content.draft.edit_any` and no media permission at all, and the
+  // upload endpoint refuses it. Don't offer the button in that case — the
+  // stock-photo path below still works, since it only sets a URL.
+  const canUploadPhoto = useCanUpload('media');
   const busy = status === 'submitted' || status === 'streaming';
   const scrollRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLTextAreaElement>(null);
@@ -247,17 +253,21 @@ export function ArticleStudioPanel() {
 
       {/* Composer */}
       <form onSubmit={(e) => { e.preventDefault(); send(input); }} className="flex items-center gap-2 border-t border-white/10 px-2.5 py-2">
-        <input ref={fileRef} type="file" accept="image/*" className="sr-only" onChange={(e) => void onAttach(e.target.files?.[0])} aria-label="Upload a hero photo" />
-        <button
-          type="button"
-          onClick={() => fileRef.current?.click()}
-          disabled={uploading}
-          aria-label="Upload a hero photo"
-          title="Upload a hero photo"
-          className="flex h-8 w-8 flex-shrink-0 items-center justify-center rounded-full border border-white/15 text-white/60 transition-colors hover:bg-white/10 disabled:opacity-50"
-        >
-          {uploading ? <Loader2 size={14} className="animate-spin" /> : <Paperclip size={14} />}
-        </button>
+        {canUploadPhoto && (
+          <>
+            <input ref={fileRef} type="file" accept="image/*" className="sr-only" onChange={(e) => void onAttach(e.target.files?.[0])} aria-label="Upload a hero photo" />
+            <button
+              type="button"
+              onClick={() => fileRef.current?.click()}
+              disabled={uploading}
+              aria-label="Upload a hero photo"
+              title="Upload a hero photo"
+              className="flex h-8 w-8 flex-shrink-0 items-center justify-center rounded-full border border-white/15 text-white/60 transition-colors hover:bg-white/10 disabled:opacity-50"
+            >
+              {uploading ? <Loader2 size={14} className="animate-spin" /> : <Paperclip size={14} />}
+            </button>
+          </>
+        )}
         <textarea
           ref={inputRef}
           value={input}

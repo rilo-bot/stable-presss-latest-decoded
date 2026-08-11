@@ -1,87 +1,75 @@
-// ---------------------------------------------------------------------------
-// Effective access — the ONE place that answers "what may this account do?".
+// The ONE place that answers "what may this account do?".
 //
-// An AccountUser is an IdentityUser whose role slugs have been resolved through
-// the registry into a flat permission/module set. Only `resolveAccount` (called
-// by attachAccount) can produce one, so a route physically cannot run a
-// permission check against an unresolved user — that is a compile error, not a
-// silent allow.
-//
-// Superadmin short-circuits BEFORE any lookup. It never consults the registry,
-// so an empty, stale, or corrupted `roles` collection cannot lock it out.
-//
-// Permissions are the union across EVERY role the account holds. There is no
-// ranking and no "primary role" — that concept caused the old collapse bug
-// where podcast_producer + editor silently dropped every producer permission.
-//
-// See docs/DYNAMIC-RBAC-PLAN.md §1.
-// ---------------------------------------------------------------------------
+// Only resolveAccount() produces an AccountUser, so a route cannot run a
+// permission check against an unresolved user — that is a compile error.
 
 import { db } from './db.js'
-import { ORG_MEMBERSHIPS, PARTY_MEMBERSHIPS } from './membership.js'
-import { isStaffIdentity } from './identity.js'
-import type { IdentityUser, OrgMembership, PartyClaim, Role, RoleSlug } from './identity.js'
-import { SUPERADMIN_SLUG, rolesForSlugs, type RoleDoc } from './roleRegistry.js'
+import { ORG_MEMBERS, PARTIES } from './collections.js'
+import { loadPeople } from './people.js'
+import type { IdentityUser, OrgMemberRow, PartyRow, Role } from './identity.js'
+import { SUPERADMIN_ROLE_NAME, getRole, linkForUser, type RoleDoc } from './roleRegistry.js'
 import {
   ALL_WORKFLOW_STAGES,
   MODULE_CATALOGUE,
   PERMISSION_CATALOGUE,
+  permissionId,
   type PermissionAction,
+  type RoleScopes,
+  type Verb,
 } from './permissionCatalogue.js'
 
-/** An identity whose roles have been resolved. Required for every auth check. */
 export interface AccountUser extends IdentityUser {
-  /** True when the account holds the immutable superadmin role. */
+  /** Party rows this account has claimed — racing identities AND horse links. */
+  parties: PartyRow[]
+  orgMembers: OrgMemberRow[]
   isSuperAdmin: boolean
-  /**
-   * Union of every held role's permissions. NOT consulted for a superadmin —
-   * accountCan short-circuits first, so this may legitimately be empty for one
-   * whose role row is missing.
-   */
+  /** May be empty for a superadmin: accountCan short-circuits before reading it. */
   permissions: ReadonlySet<PermissionAction>
-  /** Union of every held role's navigation surfaces. */
+  /**
+   * Per-screen reach of the verbs that act on an existing record. Absent means
+   * 'own' — the safe default, and the reason a role that has never been given a
+   * scope cannot accidentally edit everyone's work.
+   */
+  scopes: RoleScopes
   modules: ReadonlySet<string>
-  /** Union of every held role's visible workflow stages. */
   workflowStages: ReadonlySet<string>
-  /** The resolved role docs, for display and for the client payload. */
-  roleDocs: RoleDoc[]
-}
-
-/** Cheap, synchronous, DB-free superadmin test. */
-export function hasSuperAdminSlug(staffRoles: RoleSlug[] | undefined): boolean {
-  return !!staffRoles && staffRoles.includes(SUPERADMIN_SLUG)
+  /**
+   * The ONE role this account holds, or null.
+   *
+   * Was `roleDocs: RoleDoc[]`, left over from a model that allowed several — so
+   * every caller indexed `[0]`, which reads like "the first of many" when it is
+   * "the only one". One admin, one role.
+   */
+  role: RoleDoc | null
 }
 
 /**
- * Resolve an identity into an AccountUser.
+ * Three concurrent indexed queries: the party edges, the org memberships, and
+ * the `adminRoles` link that says which role this account holds. The role
+ * DEFINITION then comes off the registry cache, not the database.
  *
- * P2 KEYSTONE (docs/USER-MODEL-PLAN.md §4). The two 1:many membership axes now
- * come from their own collections instead of embedded arrays on the user document.
- * `AccountUser` keeps its exact previous SHAPE, which is what makes this cheap:
- * every consumer — lib/scope.ts, orgRoleIn, routes/horses.ts, every agent file,
- * toClientUser and therefore the whole web app — reads the same field names and
- * needed no change at all.
+ * `isAdmin` GATES the role lookup rather than being derived from it. A normal
+ * reader has no link row to find, so `linkForUser` is skipped entirely — and an
+ * account whose `isAdmin` write failed after its link row landed resolves to no
+ * permissions at all, which is the fail-closed half of the write ordering in
+ * roleRegistry.ts.
  *
- * COST: the staff axis and its permissions still cost ZERO extra queries — the
- * slug rides on the user document already fetched, and the role registry is an
- * in-process cache. The two membership lookups are equality matches on indexed
- * fields issued CONCURRENTLY, so this is one extra network round trip.
- *
- * Deliberately NOT cached on the user document: a denormalised snapshot is exactly
- * what produced the hand-synced `roles[]` array and its drift.
+ * An admin whose role ROW was deleted keeps `isAdmin: true` and holds nothing —
+ * still visible in the roster so someone can repair them.
  */
 export async function resolveAccount(identity: IdentityUser): Promise<AccountUser> {
-  const isSuperAdmin = hasSuperAdminSlug(identity.staffRoles)
-
   const permissions = new Set<PermissionAction>()
   const modules = new Set<string>()
   const workflowStages = new Set<string>()
 
-  const [roleDocs, memberships] = await Promise.all([
-    rolesForSlugs(identity.staffRoles),
-    loadMemberships(identity.id),
+  const [parties, orgMembers, link] = await Promise.all([
+    loadParties(identity.id),
+    loadOrgMembers(identity.id),
+    identity.isAdmin ? linkForUser(identity.id) : null,
   ])
-  for (const role of roleDocs) {
+
+  const role = link ? ((await getRole(link.roleId)) ?? null) : null
+  if (role) {
     for (const p of role.permissions) permissions.add(p)
     for (const m of role.modules) modules.add(m)
     for (const s of role.workflowStages) workflowStages.add(s)
@@ -89,68 +77,56 @@ export async function resolveAccount(identity: IdentityUser): Promise<AccountUse
 
   return {
     ...identity,
-    ...memberships,
-    isSuperAdmin,
+    parties,
+    orgMembers,
+    isSuperAdmin: role?.isSuper === true,
     permissions,
+    scopes: role?.scopes ?? {},
     modules,
     workflowStages,
-    roleDocs,
+    role,
   }
 }
 
-/**
- * The two membership axes for one user, read from the edge collections and shaped
- * back into the arrays every existing consumer expects.
- *
- * Rejected claims are loaded too: the account payload shows a member why a claim
- * failed, and `manageablePartyIds` filters by status itself rather than assuming
- * the list is pre-filtered.
- */
-/** Only reachable for a row written before `claimId` existed. */
-function warnMissingClaimId(rowId: unknown): string {
-  console.warn(
-    `[rbac] partyMemberships row ${String(rowId)} has no claimId — verify/reject cannot ` +
-      'resolve it. Run: npx tsx scripts/migrate-user-model.ts --apply',
-  )
-  return String(rowId)
-}
-
-async function loadMemberships(
-  userId: string,
-): Promise<Pick<IdentityUser, 'partyClaims' | 'orgMemberships'>> {
-  if (!userId) return { partyClaims: [], orgMemberships: [] }
-  const [partyRows, orgRows] = await Promise.all([
-    db.collection(PARTY_MEMBERSHIPS).find({ userId }),
-    db.collection(ORG_MEMBERSHIPS).find({ userId }),
-  ])
-  return {
-    partyClaims: partyRows.map((r) => ({
-      // The client sends this id back to verify/reject, and findClaim() looks it up
-      // by `claimId` — so falling back to the row's _id produces an id that resolves
-      // to NOTHING. Warn rather than fail silently: the row is readable, but that
-      // claim cannot be actioned until the backfill gives it a claimId.
-      id: String(r.claimId || warnMissingClaimId(r._id)),
-      partyId: String(r.partyId),
-      role: r.role as PartyClaim['role'],
-      status: r.status as PartyClaim['status'],
-      evidenceUrl: r.evidenceKey ? String(r.evidenceKey) : undefined,
-      verifiedBy: r.verifiedBy ? String(r.verifiedBy) : undefined,
-      verifierType: r.verifierType as PartyClaim['verifierType'],
-      verifiedAt: r.verifiedAt ? String(r.verifiedAt) : undefined,
-      rejectionReason: r.rejectionReason ? String(r.rejectionReason) : undefined,
-      selfRegistered: r.selfRegistered !== false,
-    })),
-    orgMemberships: orgRows.map((r) => ({
-      orgId: String(r.orgId),
-      orgRole: r.orgRole as OrgMembership['orgRole'],
-    })),
-  }
+async function loadParties(userId: string): Promise<PartyRow[]> {
+  if (!userId) return []
+  const rows = await db.collection(PARTIES).find({ userId })
+  return toPartyRows(rows)
 }
 
 /**
- * THE authorization check. Superadmin is answered without touching the
- * resolved set at all, so it holds even if its role row is missing.
+ * Project party edges with their person joined in — ONE extra query for the
+ * whole batch, however many edges there are.
  */
+export async function toPartyRows(rows: Array<Record<string, any>>): Promise<PartyRow[]> {
+  const people = await loadPeople(rows.map((r) => (r.personId ? String(r.personId) : undefined)))
+  return rows.map((r) => {
+    const person = people.get(String(r.personId))
+    return {
+      id: String(r._id ?? r.id),
+      personId: String(r.personId ?? ''),
+      name: person?.name ?? '',
+      imageUrl: person?.imageUrl,
+      role: r.role as PartyRow['role'],
+      taken: r.taken === true,
+      userId: r.userId ? String(r.userId) : undefined,
+      orgId: r.orgId ? String(r.orgId) : undefined,
+      horseId: r.horseId ? String(r.horseId) : undefined,
+    }
+  })
+}
+
+async function loadOrgMembers(userId: string): Promise<OrgMemberRow[]> {
+  if (!userId) return []
+  const rows = await db.collection(ORG_MEMBERS).find({ userId })
+  return rows.map((r) => ({
+    id: String(r._id),
+    orgId: String(r.orgId),
+    role: r.role as OrgMemberRow['role'],
+  }))
+}
+
+/** THE authorization check. Superadmin short-circuits before any lookup. */
 export function accountCan(
   account: AccountUser | undefined,
   action: PermissionAction,
@@ -160,35 +136,6 @@ export function accountCan(
   return account.permissions.has(action)
 }
 
-/**
- * Permission check for an identity that is NOT the request's own account —
- * "may this OTHER person be added as a collaborator?", for example. Resolves
- * through the cached registry, so it costs a Map lookup.
- *
- * Prefer `accountCan(req.account, …)` for the caller's own permissions.
- */
-export async function identityCan(
-  identity: IdentityUser,
-  action: PermissionAction,
-): Promise<boolean> {
-  return accountCan(await resolveAccount(identity), action)
-}
-
-/**
- * Filter a list of identities down to those holding a permission. Resolves the
- * registry ONCE for the whole list rather than per row.
- */
-export async function identitiesWith<T extends IdentityUser>(
-  identities: T[],
-  action: PermissionAction,
-): Promise<T[]> {
-  const resolved = await Promise.all(
-    identities.map(async (i) => ({ i, ok: await identityCan(i, action) })),
-  )
-  return resolved.filter((r) => r.ok).map((r) => r.i)
-}
-
-/** True if the account has ANY of the given permissions. */
 export function accountCanAny(
   account: AccountUser | undefined,
   actions: PermissionAction[],
@@ -196,92 +143,112 @@ export function accountCanAny(
   return actions.some((a) => accountCan(account, a))
 }
 
-/** May the account open this navigation surface? */
 export function accountCanOpenModule(account: AccountUser | undefined, moduleId: string): boolean {
   if (!account) return false
   if (account.isSuperAdmin) return true
   return account.modules.has(moduleId)
 }
 
+// ── Screen × verb ───────────────────────────────────────────────────────────
+
+/**
+ * Does this account hold `<screen>.<verb>` at all?
+ *
+ * The shape every route should use — `can(account, 'stories', 'edit')` reads as
+ * the question being asked, and a typo in either half is a compile error.
+ */
+export function can(account: AccountUser | undefined, screen: string, verb: Verb): boolean {
+  return accountCan(account, permissionId(screen, verb))
+}
+
+/**
+ * …and does SCOPE allow it on THIS record?
+ *
+ * Scope narrows the three verbs that act on something that already exists. With
+ * 'all' the holder reaches everyone's work; with 'own' — the default, applied
+ * whenever a role has never been given a scope — only their own.
+ *
+ * `owns` is passed in rather than guessed here because ownership is not one
+ * thing: a story matches on `createdByUserId` OR a byline, while a blog post
+ * matches on `createdByUserId` only (its byline is free text, so it is not an
+ * identity claim). See `ownsArticle` in rbac.ts.
+ */
+export function canOn(
+  account: AccountUser | undefined,
+  screen: string,
+  verb: Verb,
+  owns: boolean,
+): boolean {
+  if (!account) return false
+  if (account.isSuperAdmin) return true
+  if (!can(account, screen, verb)) return false
+  return scopeFor(account, screen) === 'all' || owns
+}
+
+/** 'own' unless the role says otherwise. Superadmin always reaches everything. */
+export function scopeFor(account: AccountUser | undefined, screen: string): 'own' | 'all' {
+  if (!account) return 'own'
+  if (account.isSuperAdmin) return 'all'
+  return account.scopes[screen] === 'all' ? 'all' : 'own'
+}
+
+/** Permission check for an identity other than the request's own account. */
+export async function identityCan(
+  identity: IdentityUser,
+  action: PermissionAction,
+): Promise<boolean> {
+  return accountCan(await resolveAccount(identity), action)
+}
+
 // ── Client payload ──────────────────────────────────────────────────────────
 
-export interface ClientAccess {
+interface ClientAccess {
   permissions: PermissionAction[]
+  /** Same shape the server checks with, so the UI can hide what it cannot do. */
+  scopes: RoleScopes
   modules: string[]
   workflowStages: string[]
   isSuperAdmin: boolean
-  roles: Array<{ slug: string; label: string; color?: string; icon?: string }>
+  roles: Array<{ name: string; label: string; color?: string; icon?: string }>
 }
 
-/**
- * The static `roles[]` axis, computed from verified party memberships.
- *
- * 'reader' is the floor every account holds (RBAC.md §4.1). A party role joins the
- * list only once VERIFIED — a pending claim grants provisional scope over your own
- * records but is not a racing identity you may advertise.
- */
 function derivedRoles(account: AccountUser): Role[] {
-  const roles = new Set<Role>(['reader'])
-  for (const c of account.partyClaims) {
-    if (c.status === 'verified') roles.add(c.role)
-  }
-  return [...roles]
+  return [...new Set(account.parties.map((p) => p.role))]
 }
 
-/**
- * JSON-safe projection of an AccountUser for the web app. Sets don't serialize,
- * and the resolved role docs carry more than the client needs — so serialization
- * goes through here rather than spreading `req.account` into a response.
- */
 export function toClientUser(account: AccountUser): Record<string, unknown> {
-  // Superadmin is derived from the CATALOGUE, not from its role row. accountCan
-  // short-circuits before any lookup, so the server grants everything even when
-  // that row is missing — reading the row here would hand the client an empty
-  // payload in exactly that case, leaving a superadmin with no sidebar on a
-  // platform that considers them omnipotent.
-  const superRoles = account.roleDocs.length
-    ? account.roleDocs
-    : [{ slug: SUPERADMIN_SLUG, label: 'Superadmin', color: undefined, icon: 'ShieldCheck' }]
-
-  // `newsroom.access` is not in the catalogue and no role can hold it — holding a
-  // staff role IS newsroom access (see identity.ts `isStaffIdentity`). It is
-  // emitted here as a DERIVED flag so the browser keeps asking one question
-  // (`RequireStaff` → `can('newsroom.access')`) instead of learning a second way
-  // to test the same fact. Without this line every staff route in the SPA would
-  // bounce to the public site.
-  const implicit: PermissionAction[] =
-    account.isSuperAdmin || isStaffIdentity(account) ? ['newsroom.access'] : []
+  // A superadmin falls back to the catalogue, not its role row: accountCan grants
+  // everything even when that row is missing, so reading it would hand them an
+  // empty payload in exactly that case.
+  const shown = account.role
+    ? [account.role]
+    : account.isSuperAdmin
+      ? [{ name: SUPERADMIN_ROLE_NAME, label: 'Superadmin', color: undefined, icon: 'ShieldCheck' }]
+      : []
 
   const access: ClientAccess = {
     permissions: account.isSuperAdmin
-      ? [...implicit, ...PERMISSION_CATALOGUE.map((p) => p.id)]
-      : [...implicit, ...account.permissions],
+      ? PERMISSION_CATALOGUE.map((p) => p.id)
+      : [...account.permissions],
+    scopes: account.scopes,
     modules: account.isSuperAdmin ? MODULE_CATALOGUE.map((m) => m.id) : [...account.modules],
     workflowStages: account.isSuperAdmin ? [...ALL_WORKFLOW_STAGES] : [...account.workflowStages],
     isSuperAdmin: account.isSuperAdmin,
-    roles: (account.isSuperAdmin ? superRoles : account.roleDocs).map((r) => ({
-      slug: r.slug,
-      label: r.label,
-      color: r.color,
-      icon: r.icon,
-    })),
+    // Still an ARRAY on the wire (the client renders badges from it) but it can
+    // now only ever hold zero or one entry.
+    roles: shown.map((r) => ({ name: r.name, label: r.label, color: r.color, icon: r.icon })),
   }
 
   return {
     id: account.id,
     email: account.email,
-    displayName: account.displayName,
+    name: account.name,
     createdAt: account.createdAt,
-    // DERIVED, not stored. `roles[]` was a hand-synced cache of 'reader' + verified
-    // party roles, kept in step by one manual line in routes/partyClaims.ts — a
-    // second source of truth that any new code path could forget to update.
-    // Computing it here keeps `currentUser.roles` and `useHasRole` working on the
-    // client while the stored duplicate goes away. See docs/USER-MODEL-PLAN.md §4.
+    isAdmin: account.isAdmin,
+    lastLogin: account.lastLogin,
     roles: derivedRoles(account),
-    staffRoles: account.staffRoles,
-    subscriptionTier: account.subscriptionTier,
-    partyClaims: account.partyClaims,
-    orgMemberships: account.orgMemberships,
+    parties: account.parties,
+    orgMembers: account.orgMembers,
     access,
   }
 }

@@ -27,12 +27,25 @@ export function useBlogChatSession() {
     transport,
     sendAutomaticallyWhen: lastAssistantMessageIsCompleteWithToolCalls,
     onToolCall: async ({ toolCall }) => {
-      if (!isBlogClientTool(toolCall.toolName)) return;
+      // ALWAYS answer. `onToolCall` only fires for tools the server declared
+      // without an `execute`, so every call that arrives here is ours to run — and
+      // one that goes unanswered does not just fail, it poisons the conversation:
+      // the dangling call is re-sent with every later message and the server throws
+      // MissingToolResultsError on all of them until the user starts a new chat.
+      //
+      // This used to `return` early for any name missing from the executor's
+      // hardcoded list, which made adding a tool server-side without updating that
+      // list a silent chat-killer. `executeBlogTool` already reports an unknown
+      // name as a normal failed result, so let it.
       let output: unknown;
       try {
         output = await executeBlogTool(toolCall.toolName, toolCall.input);
       } catch (e) {
         output = { ok: false, error: e instanceof Error ? e.message : String(e) };
+      }
+      if (!isBlogClientTool(toolCall.toolName)) {
+        // Worth knowing about: it still gets a result, but the tool is unwired.
+        console.warn(`[blog-studio] ran an unregistered tool: ${toolCall.toolName}`);
       }
       addToolResultRef.current?.({ tool: toolCall.toolName, toolCallId: toolCall.toolCallId, output });
     },

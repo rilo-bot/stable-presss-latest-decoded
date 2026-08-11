@@ -7,8 +7,8 @@
  * `articlesWriteGate` authorised *editing the article*, not the *transition* —
  * so anyone holding `content.draft.edit_own` could PUT `status: 'published'` on
  * their own story and self-publish, skipping approval entirely. The permissions
- * that were supposed to gate that (`content.approve`, `content.schedule`,
- * `content.publish`) were only ever checked in the browser.
+ * that were supposed to gate that (`stories.publish`, `stories.publish`,
+ * `stories.publish`) were only ever checked in the browser.
  */
 import type { PermissionAction } from './permissionCatalogue.js'
 
@@ -47,19 +47,19 @@ export interface Move {
 
 /** Every legal move out of each stage, and the permission it demands. */
 const MOVES: Record<ArticleStatus, Move[]> = {
-  draft: [{ to: 'submitted', label: 'Submit', permission: 'content.submit' }],
+  draft: [{ to: 'submitted', label: 'Submit', permission: 'stories.edit' }],
   submitted: [
-    { to: 'approved', label: 'Approve', permission: 'content.approve' },
-    { to: 'draft', label: 'Request changes', permission: 'content.send_revision' },
+    { to: 'approved', label: 'Approve', permission: 'stories.publish' },
+    { to: 'draft', label: 'Request changes', permission: 'stories.edit' },
   ],
   approved: [
-    { to: 'scheduled', label: 'Schedule', permission: 'content.schedule' },
-    { to: 'published', label: 'Publish now', permission: 'content.publish' },
-    { to: 'submitted', label: 'Send back', permission: 'content.send_revision' },
+    { to: 'scheduled', label: 'Schedule', permission: 'stories.publish' },
+    { to: 'published', label: 'Publish now', permission: 'stories.publish' },
+    { to: 'submitted', label: 'Send back', permission: 'stories.edit' },
   ],
   scheduled: [
-    { to: 'published', label: 'Publish', permission: 'content.publish' },
-    { to: 'approved', label: 'Unschedule', permission: 'content.schedule' },
+    { to: 'published', label: 'Publish', permission: 'stories.publish' },
+    { to: 'approved', label: 'Unschedule', permission: 'stories.publish' },
   ],
   published: [],
 }
@@ -77,20 +77,20 @@ export function findMove(from: ArticleStatus, to: ArticleStatus): Move | undefin
  * The permission that authorises putting a story INTO a stage, regardless of
  * where it came from. Used on create, where there is no "from" to check a
  * transition against. `draft` is null: anyone who may create a story may create
- * a draft, which is what `content.draft.create` already gates.
+ * a draft, which is what `stories.create` already gates.
  */
 export function enterPermission(to: ArticleStatus): PermissionAction | null {
   switch (to) {
     case 'draft':
       return null
     case 'submitted':
-      return 'content.submit'
+      return 'stories.edit'
     case 'approved':
-      return 'content.approve'
+      return 'stories.publish'
     case 'scheduled':
-      return 'content.schedule'
+      return 'stories.publish'
     case 'published':
-      return 'content.publish'
+      return 'stories.publish'
   }
 }
 

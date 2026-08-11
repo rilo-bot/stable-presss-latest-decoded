@@ -8,7 +8,7 @@
 // ---------------------------------------------------------------------------
 
 import { db } from './db.js'
-import { PARTY_MEMBERSHIPS } from './membership.js'
+import { PARTIES } from './collections.js'
 
 export type NotificationType = 'horse_link' | 'claim_verified' | 'claim_rejected' | 'org_join'
 
@@ -31,14 +31,3 @@ export async function createNotification(n: NotificationInput): Promise<void> {
   })
 }
 
-/**
- * User ids whose VERIFIED claim attaches them to this party — i.e. the
- * account(s) "behind" a party record, who should hear about changes to it.
- */
-export async function usersForParty(partyId: string): Promise<string[]> {
-  // P2: one indexed lookup on {partyId, status}. Was a full users scan, run on
-  // EVERY horse-link write. A person may hold several roles on the same party, so
-  // de-duplicate — two verified rows (owner + jockey) are one recipient.
-  const rows = await db.collection(PARTY_MEMBERSHIPS).find({ partyId, status: 'verified' })
-  return [...new Set(rows.map((r) => String(r.userId)))]
-}

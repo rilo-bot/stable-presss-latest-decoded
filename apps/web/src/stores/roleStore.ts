@@ -14,24 +14,31 @@ export interface PermissionMeta {
   description: string;
 }
 
-/** One navigation surface a role can be given access to. */
-export interface ModuleMeta {
+export type Verb = 'view' | 'create' | 'edit' | 'delete' | 'publish';
+
+/**
+ * ONE ROW OF THE GRID — a screen, and the verbs it supports.
+ *
+ * This is the whole shape the console needs: `verbs` says which columns this row
+ * draws, so a row can never offer a checkbox the server would ignore. Mirrors
+ * SCREEN_CATALOGUE in apps/server/src/lib/permissionCatalogue.ts.
+ */
+export interface ScreenMeta {
   id: string;
   label: string;
   section: string;
-  requiresPermission?: string;
-}
-
-/** One Kanban column a role can be given visibility of. */
-export interface WorkflowStageMeta {
-  id: string;
-  label: string;
+  verbs: Verb[];
+  /** Records here have an author, so the Own/All control applies. */
+  scoped?: boolean;
+  /** This screen shows another screen's records; its actions use THAT screen's verbs. */
+  lensOver?: string;
+  description: string;
 }
 
 /** A role as stored in the database. Every role in the platform is one of these. */
 export interface Role {
   id: string;
-  slug: string;
+  name: string;
   label: string;
   description?: string;
   color?: string;
@@ -41,6 +48,9 @@ export interface Role {
   /** Superadmin — cannot be edited or deleted. */
   isImmutable: boolean;
   permissions: string[];
+  /** Per-screen reach of view/edit/delete. Absent means 'own'. */
+  scopes: Record<string, 'own' | 'all'>;
+  /** DERIVED server-side from each `<id>.view`; read-only here. */
   modules: string[];
   workflowStages: string[];
   createdAt: string;
@@ -54,20 +64,22 @@ export interface RoleDraft {
   color?: string;
   icon?: string;
   permissions: string[];
-  modules: string[];
-  workflowStages: string[];
+  scopes: Record<string, 'own' | 'all'>;
 }
 
 interface Result {
   ok: boolean;
   error?: string;
-  slug?: string;
+  name?: string;
 }
 
 interface Catalogue {
+  /** The grid: one entry per row, in sidebar order. */
+  screens: ScreenMeta[];
+  /** Column order. */
+  verbs: Verb[];
+  /** The flat list, for anything that still renders ids rather than the grid. */
   permissions: PermissionMeta[];
-  modules: ModuleMeta[];
-  workflowStages: WorkflowStageMeta[];
 }
 
 interface RoleState {
@@ -78,11 +90,11 @@ interface RoleState {
   fetchCatalogue: () => Promise<void>;
   fetchRoles: () => Promise<void>;
   createRole: (draft: RoleDraft) => Promise<Result>;
-  updateRole: (slug: string, draft: RoleDraft) => Promise<Result>;
-  deleteRole: (slug: string) => Promise<Result>;
+  updateRole: (name: string, draft: RoleDraft) => Promise<Result>;
+  deleteRole: (name: string) => Promise<Result>;
   /** One role per person — this REPLACES whatever they held, it doesn't add. */
-  assignRole: (slug: string, userId: string) => Promise<Result>;
-  unassignRole: (slug: string, userId: string) => Promise<Result>;
+  assignRole: (name: string, userId: string) => Promise<Result>;
+  unassignRole: (name: string, userId: string) => Promise<Result>;
 }
 
 async function readError(res: Response, fallback: string): Promise<string> {
@@ -136,15 +148,15 @@ export const useRoleStore = create<RoleState>((set, get) => ({
       if (!res.ok) return { ok: false, error: await readError(res, 'Could not create the role.') };
       const data = await res.json().catch(() => null);
       await get().fetchRoles();
-      return { ok: true, slug: data?.role?.slug };
+      return { ok: true, name: data?.role?.name };
     } catch {
       return { ok: false, error: 'Network error. Please try again.' };
     }
   },
 
-  updateRole: async (slug, draft) => {
+  updateRole: async (name, draft) => {
     try {
-      const res = await authFetch(`/api/roles/${slug}`, {
+      const res = await authFetch(`/api/roles/${name}`, {
         method: 'PUT',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(draft),
@@ -158,9 +170,9 @@ export const useRoleStore = create<RoleState>((set, get) => ({
     }
   },
 
-  deleteRole: async (slug) => {
+  deleteRole: async (name) => {
     try {
-      const res = await authFetch(`/api/roles/${slug}`, { method: 'DELETE' });
+      const res = await authFetch(`/api/roles/${name}`, { method: 'DELETE' });
       if (!res.ok) return { ok: false, error: await readError(res, 'Could not delete the role.') };
       await get().fetchRoles();
       await refreshSession();
@@ -170,9 +182,9 @@ export const useRoleStore = create<RoleState>((set, get) => ({
     }
   },
 
-  assignRole: async (slug, userId) => {
+  assignRole: async (name, userId) => {
     try {
-      const res = await authFetch(`/api/roles/${slug}/assign`, {
+      const res = await authFetch(`/api/roles/${name}/assign`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ userId }),
@@ -186,9 +198,9 @@ export const useRoleStore = create<RoleState>((set, get) => ({
     }
   },
 
-  unassignRole: async (slug, userId) => {
+  unassignRole: async (name, userId) => {
     try {
-      const res = await authFetch(`/api/roles/${slug}/assign/${userId}`, { method: 'DELETE' });
+      const res = await authFetch(`/api/roles/${name}/assign/${userId}`, { method: 'DELETE' });
       if (!res.ok) return { ok: false, error: await readError(res, 'Could not remove the role.') };
       await get().fetchRoles();
       await refreshSession();

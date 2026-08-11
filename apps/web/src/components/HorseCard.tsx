@@ -5,6 +5,7 @@ import type { Horse } from '@/types/horse';
 import { useNavigate } from 'react-router-dom';
 import { usePartyStore } from '@/stores/partyStore';
 import { connectionResolver } from '@/lib/horseConnections';
+import { useRegister } from '@/lib/register';
 
 /* No fallback photograph.
  *
@@ -25,8 +26,8 @@ interface HorseCardProps {
 
 export function HorseCard({ horse, className }: HorseCardProps) {
   const navigate = useNavigate();
-  const parties = usePartyStore((s) => s.parties);
-  const conn = connectionResolver(parties)(horse);
+  const parties = useRegister();
+  const conn = connectionResolver(usePartyStore((s) => s.parties))(horse);
   const imageSrc = horse.imageUrl?.trim() ? horse.imageUrl : null;
   // Set when the real photo fails to load, so the frame replaces it.
   const [imageFailed, setImageFailed] = useState(false);

@@ -158,7 +158,7 @@ interface CommentState {
     body: string,
     emoji: EmojiKey,
   ) => Promise<boolean>;
-  /** Delete your own (or anyone's, with `comments.moderate`). */
+  /** Delete your own (or anyone's, with `comments.edit`). */
   remove: (targetType: CommentTargetType, targetId: string, id: string) => Promise<boolean>;
   /** Flag one for an editor. Idempotent on the server. */
   report: (targetType: CommentTargetType, targetId: string, id: string) => Promise<boolean>;

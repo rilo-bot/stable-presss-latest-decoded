@@ -3,7 +3,7 @@ import { isLive } from '@/types/article';
 import { Link, useSearchParams } from 'react-router-dom';
 import { useArticleStore } from '@/stores/articleStore';
 import { useAuthStore } from '@/stores/authStore';
-import { isStaff } from '@/rbac/can';
+import { isAdmin } from '@/rbac/can';
 import { ArticleSkeletonCard } from '@/components/SkeletonCard';
 import { EmptyState } from '@/components/EmptyState';
 import { cn } from '@/lib/utils';
@@ -35,7 +35,7 @@ export default function NewsIndex() {
   const [searchParams, setSearchParams] = useSearchParams();
   const articles = useArticleStore((s) => s.articles);
   // Decides which empty-state CTA to show — newsroom, or reader-facing.
-  const staff = isStaff(useAuthStore((s) => s.currentUser));
+  const staff = isAdmin(useAuthStore((s) => s.currentUser));
 
   const categoryParam = searchParams.get('category') ?? null;
   const sectionParam = searchParams.get('section') ?? null;
@@ -288,7 +288,7 @@ export default function NewsIndex() {
               </div>
               {/* Staff get the newsroom; readers get somewhere they can actually
                   go. This sent every anonymous visitor to /production-system,
-                  which is RequireStaff and redirects them home. */}
+                  which is RequireAdmin and redirects them home. */}
               <h3 className="font-[family-name:var(--font-display)] text-lg font-bold text-foreground mb-2">
                 {staff
                   ? 'The press stands ready. No dispatches have been filed.'

@@ -86,7 +86,7 @@ export default function TippingRing() {
   // Ensure profile exists for logged-in user
   useEffect(() => {
     if (currentUser) {
-      getOrCreateProfile(currentUser.id, currentUser.displayName);
+      getOrCreateProfile(currentUser.id, currentUser.name);
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [currentUser?.id]);

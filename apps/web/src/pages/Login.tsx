@@ -20,17 +20,20 @@ export default function Login() {
   const [emailError, setEmailError] = useState('');
   const [otpError, setOtpError] = useState('');
 
-  const requestLoginOtp = useAuthStore((s) => s.requestLoginOtp);
+  const requestOtp = useAuthStore((s) => s.requestOtp);
   const verifyOtp = useAuthStore((s) => s.verifyOtp);
   const navigate = useNavigate();
   const location = useLocation();
 
   const digitRefs = useRef<(HTMLInputElement | null)[]>([]);
+  const otpHeadingRef = useRef<HTMLHeadingElement | null>(null);
 
-  // Focus first OTP input when step changes
+  // Focus the new HEADING, not digit 1. Landing straight in an unlabelled text
+  // box announces nothing; the heading announces "Check your inbox" plus the
+  // line naming the address, and Tab reaches the inputs from there.
   useEffect(() => {
     if (step === 'otp') {
-      setTimeout(() => digitRefs.current[0]?.focus(), 80);
+      setTimeout(() => otpHeadingRef.current?.focus(), 80);
     }
   }, [step]);
 
@@ -50,7 +53,7 @@ export default function Login() {
     }
     setEmailError('');
     setLoading(true);
-    const result = await requestLoginOtp(email.trim());
+    const result = await requestOtp(email.trim());
     setLoading(false);
     if (result.ok) {
       setOtpPreview(result.devCode ?? null);
@@ -132,7 +135,7 @@ export default function Login() {
     setOtpDigits(['', '', '', '', '', '']);
     setOtpError('');
     setLoading(true);
-    const result = await requestLoginOtp(email.trim());
+    const result = await requestOtp(email.trim());
     setLoading(false);
     if (result.ok) {
       setOtpPreview(result.devCode ?? null);
@@ -178,9 +181,9 @@ export default function Login() {
         <div className="w-full max-w-sm">
           {/* Masthead (mobile) */}
           <div className="lg:hidden text-center mb-8">
-            <h1 className="font-[family-name:var(--font-display)] text-2xl font-bold text-foreground">
+            <p className="font-[family-name:var(--font-display)] text-2xl font-bold text-foreground">
               Stable Press
-            </h1>
+            </p>
             <p className="text-xs text-muted-foreground uppercase tracking-[0.12em] mt-1">
               Racing Journal
             </p>
@@ -190,9 +193,9 @@ export default function Login() {
           {step === 'email' && (
             <>
               <div className="mb-8">
-                <h2 className="font-[family-name:var(--font-display)] text-2xl font-bold text-foreground mb-1">
+                <h1 className="font-[family-name:var(--font-display)] text-2xl font-bold text-foreground mb-1">
                   Welcome back
-                </h2>
+                </h1>
                 <div className="h-px w-full bg-foreground/10 mt-3 mb-4" />
                 <p className="text-sm text-muted-foreground">
                   Enter your email and we'll send you a one-time sign-in code.
@@ -227,10 +230,11 @@ export default function Login() {
                         emailError ? 'border-destructive focus-visible:ring-destructive' : ''
                       )}
                       aria-describedby={emailError ? 'email-error' : undefined}
+                      aria-invalid={emailError ? true : undefined}
                     />
                   </div>
                   {emailError && (
-                    <p id="email-error" className="text-xs text-destructive mt-1">
+                    <p id="email-error" role="alert" className="text-xs text-destructive mt-1">
                       {emailError}
                     </p>
                   )}
@@ -239,6 +243,7 @@ export default function Login() {
                 <Button
                   type="submit"
                   disabled={loading}
+                  aria-busy={loading}
                   className="w-full bg-primary text-primary-foreground hover:bg-primary/90 gap-2"
                 >
                   {loading ? 'Sending code…' : 'Send My Code'}
@@ -274,9 +279,13 @@ export default function Login() {
                   <ArrowRight size={12} className="rotate-180" />
                   Back
                 </button>
-                <h2 className="font-[family-name:var(--font-display)] text-2xl font-bold text-foreground mb-1">
+                <h1
+                  ref={otpHeadingRef}
+                  tabIndex={-1}
+                  className="font-[family-name:var(--font-display)] text-2xl font-bold text-foreground mb-1 outline-none"
+                >
                   Check your inbox
-                </h2>
+                </h1>
                 <div className="h-px w-full bg-foreground/10 mt-3 mb-4" />
                 <p className="text-sm text-muted-foreground">
                   We sent a 6-digit code to{' '}
@@ -318,6 +327,9 @@ export default function Login() {
                         onChange={(e) => handleOtpDigitChange(i, e.target.value)}
                         onKeyDown={(e) => handleOtpKeyDown(i, e)}
                         aria-label={`Digit ${i + 1}`}
+                        autoComplete={i === 0 ? 'one-time-code' : 'off'}
+                        aria-invalid={otpError ? true : undefined}
+                        aria-describedby={otpError ? 'login-otp-error' : undefined}
                         className={cn(
                           'w-11 h-14 text-center text-xl font-bold font-mono rounded-md border bg-background transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-ring',
                           otpError
@@ -329,13 +341,16 @@ export default function Login() {
                     ))}
                   </div>
                   {otpError && (
-                    <p className="text-xs text-destructive mt-1">{otpError}</p>
+                    <p id="login-otp-error" role="alert" className="text-xs text-destructive mt-1">
+                      {otpError}
+                    </p>
                   )}
                 </div>
 
                 <Button
                   type="submit"
                   disabled={loading || otpDigits.some((d) => d === '')}
+                  aria-busy={loading}
                   className="w-full bg-primary text-primary-foreground hover:bg-primary/90"
                 >
                   {loading ? 'Verifying…' : 'Sign In'}

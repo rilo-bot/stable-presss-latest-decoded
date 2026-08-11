@@ -84,7 +84,6 @@ const LIMITS: Record<string, number> = {
   partTitle: 200,
 };
 
-const TIERS = ['free', 'standard', 'premium'] as const;
 
 function tooLong(name: string, value: string, max: number): string | null {
   return value.length > max
@@ -166,14 +165,6 @@ export function applySetField(postId: string, field: string, value: string): Bri
       if (!text) return fail('A post needs a byline. Give a name rather than clearing it.');
       patchPost({ author: { ...blog.author, name: text } });
       return done('byline');
-    }
-    case 'tier': {
-      const tier = text.toLowerCase();
-      if (!(TIERS as readonly string[]).includes(tier)) {
-        return fail(`Who-can-read-it must be one of ${TIERS.join(', ')}.`);
-      }
-      patchPost({ minTier: tier as (typeof TIERS)[number] });
-      return done(`who can read it (${tier})`);
     }
     case 'seo.metaTitle':
     case 'seo.metaDescription': {

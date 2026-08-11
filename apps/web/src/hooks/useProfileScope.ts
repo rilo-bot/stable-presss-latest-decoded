@@ -1,20 +1,19 @@
 import { useMemo, useEffect } from 'react';
 import { useHorseStore } from '@/stores/horseStore';
 import { usePartyStore } from '@/stores/partyStore';
-import { useHorsePartyLinkStore } from '@/stores/horsePartyLinkStore';
 import { useRacingEntryStore } from '@/stores/racingEntryStore';
-import { isCurrentLink } from '@/types/horsePartyLink';
+import { useRegister, useLoadRegister } from '@/lib/register';
 import type { PartyRole } from '@/types/party';
 import type { Horse } from '@/types/horse';
 import { ROLE_BINDINGS } from '@/lib/profile/roleMap';
-import { horsesInScopeForParty } from '@/rbac/scope';
+import { horsesForPersonInRole } from '@/rbac/scope';
 import type { PanelParty, ProfileSubject, CentralSummary } from '@/lib/profile/types';
 
 export interface ProfileScope {
   /** The set of horses every record module draws from. */
   horseIds: string[];
   horses: Horse[];
-  /** Parties linked to ANY in-scope horse, grouped by role, deduped, current-first. */
+  /** People connected to ANY in-scope horse, grouped by role and deduped. */
   relationshipTiles: Record<PartyRole, PanelParty[]>;
   summary: CentralSummary;
 }
@@ -26,27 +25,27 @@ const EMPTY_TILES = (): Record<PartyRole, PanelParty[]> => ({
 
 /**
  * Resolves the universal scope for a profile subject. Horse-central is the
- * degenerate 1-horse case of party-central: both produce a `horseIds` set that
+ * degenerate 1-horse case of person-central: both produce a `horseIds` set that
  * drives every record module, plus relationship tiles gathered across that set.
  */
 export function useProfileScope(subject: ProfileSubject | null): ProfileScope {
   const horses = useHorseStore((s) => s.horses);
-  const allParties = usePartyStore((s) => s.parties);
-  const allLinks = useHorsePartyLinkStore((s) => s.links);
-  const fetchLinks = useHorsePartyLinkStore((s) => s.fetchHorsePartyLinks);
+  const parties = usePartyStore((s) => s.parties);
   const allEntries = useRacingEntryStore((s) => s.entries);
   const fetchEntries = useRacingEntryStore((s) => s.fetchEntries);
+  const register = useRegister();
+  useLoadRegister();
 
-  useEffect(() => { fetchLinks(); fetchEntries(); }, [fetchLinks, fetchEntries]);
+  useEffect(() => { fetchEntries(); }, [fetchEntries]);
 
   // ── 1. horseIds in scope ──
-  // Party-central scope now comes from the shared pure resolver (rbac/scope.ts),
+  // Person-central scope comes from the shared pure resolver (rbac/scope.ts),
   // the same one the permission engine uses, so display and access never diverge.
   const horseIds = useMemo<string[]>(() => {
     if (!subject) return [];
     if (subject.kind === 'horse') return [subject.horse.id];
-    return horsesInScopeForParty(subject.party.id, subject.role, { horses, links: allLinks });
-  }, [subject, allLinks, horses]);
+    return horsesForPersonInRole(subject.party.id, subject.role, { parties, horses });
+  }, [subject, parties, horses]);
 
   const scopedHorses = useMemo(
     () => horses.filter((h) => horseIds.includes(h.id)),
@@ -57,56 +56,32 @@ export function useProfileScope(subject: ProfileSubject | null): ProfileScope {
   const relationshipTiles = useMemo(() => {
     const tiles = EMPTY_TILES();
     const idSet = new Set(horseIds);
-    // role → map(party_id → PanelParty) for dedup across horses
+    // role → map(personId → PanelParty), deduped across horses
     const acc: Record<PartyRole, Map<string, PanelParty>> = {
       owner: new Map(), trainer: new Map(), jockey: new Map(), breeder: new Map(),
       'bloodstock agent': new Map(), 'syndicate manager': new Map(), personnel: new Map(),
     };
-    const relToRole: Record<string, PartyRole> = {
-      ownership: 'owner', training: 'trainer', riding: 'jockey',
-      'bred-by': 'breeder', agent: 'bloodstock agent', personnel: 'personnel',
-    };
+    const personById = (id: string) => register.find((p) => p.id === id);
 
-    allLinks.forEach((l) => {
-      if (!idSet.has(l.horse_id)) return;
-      const party = allParties.find((p) => p.id === l.party_id);
-      if (!party) return;
-      const current = isCurrentLink(l);
-      const place = (role: PartyRole) => {
-        const m = acc[role];
-        const existing = m.get(party.id);
-        if (existing) {
-          if (current) existing.isCurrent = true;
-        } else {
-          m.set(party.id, { party, startDate: l.start_date, endDate: l.end_date, context: l.context, isCurrent: current });
-        }
-      };
-      const role = relToRole[l.relationship_type];
-      if (role) place(role);
-      // A party may also carry the syndicate-manager role regardless of link type.
-      if (party.roles.includes('syndicate manager')) place('syndicate manager');
+    // The edge IS the relationship — its `role` is the tile it belongs in.
+    parties.forEach((edge) => {
+      if (!edge.horseId || !idSet.has(edge.horseId)) return;
+      const person = personById(edge.personId);
+      if (!person) return;
+      if (!acc[edge.role].has(person.id)) {
+        acc[edge.role].set(person.id, { party: person, isCurrent: true });
+      }
     });
 
-    // Fold in legacy direct id-array fields from each in-scope horse.
-    scopedHorses.forEach((h) => {
-      (Object.keys(ROLE_BINDINGS) as PartyRole[]).forEach((role) => {
-        const field = ROLE_BINDINGS[role].horseField;
-        const arr = h[field] as string[] | undefined;
-        if (!Array.isArray(arr)) return;
-        arr.forEach((pid) => {
-          if (acc[role].has(pid)) return;
-          const party = allParties.find((p) => p.id === pid);
-          if (party) acc[role].set(pid, { party, isCurrent: true });
-        });
-      });
-    });
+    // The direct id-array fields on each horse were folded in here as well —
+    // the second representation of a connection. They no longer exist, so the
+    // edges above are the whole picture.
 
     (Object.keys(acc) as PartyRole[]).forEach((role) => {
-      tiles[role] = Array.from(acc[role].values())
-        .sort((a, b) => (b.isCurrent ? 1 : 0) - (a.isCurrent ? 1 : 0));
+      tiles[role] = Array.from(acc[role].values());
     });
     return tiles;
-  }, [horseIds, scopedHorses, allLinks, allParties]);
+  }, [horseIds, parties, register]);
 
   // ── 3. central career summary aggregated across the set ──
   const summary = useMemo<CentralSummary>(() => {
@@ -117,19 +92,19 @@ export function useProfileScope(subject: ProfileSubject | null): ProfileScope {
       if (h.currentRating !== undefined && (topRating === undefined || h.currentRating > topRating)) topRating = h.currentRating;
     });
 
-    // Wins: count finished entries placed 1st across the set. For jockey/trainer
-    // subjects, scope to entries where this party is the jockey/trainer.
-    let partyId: string | undefined;
+    // Wins: finished entries placed 1st across the set. For a jockey or trainer
+    // subject, narrow to entries where THEY were the jockey/trainer.
+    let personId: string | undefined;
     let winRole: 'jockey' | 'trainer' | undefined;
     if (subject?.kind === 'party') {
-      if (subject.role === 'jockey') { partyId = subject.party.id; winRole = 'jockey'; }
-      else if (subject.role === 'trainer') { partyId = subject.party.id; winRole = 'trainer'; }
+      if (subject.role === 'jockey') { personId = subject.party.id; winRole = 'jockey'; }
+      else if (subject.role === 'trainer') { personId = subject.party.id; winRole = 'trainer'; }
     }
     const wins = allEntries.filter((e) => {
       if (!idSet.has(e.horse_id)) return false;
       if (e.finish_position !== 1) return false;
-      if (winRole === 'jockey' && partyId) return e.jockey_id === partyId;
-      if (winRole === 'trainer' && partyId) return e.trainer_id === partyId;
+      if (winRole === 'jockey' && personId) return e.jockey_id === personId;
+      if (winRole === 'trainer' && personId) return e.trainer_id === personId;
       return true;
     }).length;
 

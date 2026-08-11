@@ -16,10 +16,12 @@ import {
 } from '@/components/ui/dialog';
 import { PartyForm } from '@/components/PartyForm';
 import { usePartyStore } from '@/stores/partyStore';
+import { useRegister, useLoadRegister } from '@/lib/register';
 import { useAuthStore } from '@/stores/authStore';
-import { isStaff, canManageParty } from '@/rbac/can';
-import type { Party, PartyRole } from '@/types/party';
+import { isAdmin, canManageParty } from '@/rbac/can';
+import type { PartyRole } from '@/types/party';
 import { PARTY_ROLE_LABELS } from '@/types/party';
+import type { RegisterPerson } from '@/lib/register';
 
 /* ── Role colour map ─────────────────────────────── */
 const ROLE_COLORS: Record<PartyRole, string> = {
@@ -32,18 +34,18 @@ const ROLE_COLORS: Record<PartyRole, string> = {
   personnel: 'bg-muted text-muted-foreground border-border',
 };
 
-/* ── Party card ─────────────────────────────────── */
-function PartyCard({ party, onEdit, onDelete, onOpen, canManage }: { party: Party; onEdit: () => void; onDelete: () => void; onOpen: () => void; canManage: boolean }) {
+/* ── RegisterPerson card ─────────────────────────────────── */
+function PartyCard({ party, onEdit, onDelete, onOpen, canManage }: { party: RegisterPerson; onEdit: () => void; onDelete: () => void; onOpen: () => void; canManage: boolean }) {
   const currentYear = new Date().getFullYear();
-  const yearsActive = party.started_year ? currentYear - party.started_year : null;
+  const yearsActive = party.startedYear ? currentYear - party.startedYear : null;
 
   return (
     <div onClick={onOpen} role="link" tabIndex={0} onKeyDown={(e) => { if (e.key === 'Enter') onOpen(); }} className="bg-card border border-border/60 rounded-md overflow-hidden flex flex-col hover:border-primary/40 hover:shadow-sm transition-all group cursor-pointer focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring">
       {/* Photo / Avatar area */}
       <div className="relative bg-muted/30 h-40 flex items-center justify-center overflow-hidden">
-        {party.photo ? (
+        {party.imageUrl ? (
           <img
-            src={party.photo}
+            src={party.imageUrl}
             alt={party.name}
             crossOrigin="anonymous"
             className="w-full h-full object-cover group-hover:scale-[1.02] transition-transform duration-300"
@@ -108,25 +110,25 @@ function PartyCard({ party, onEdit, onDelete, onOpen, canManage }: { party: Part
         </div>
 
         {/* Extra meta row */}
-        {(party.base_location || party.country_of_birth || party.started_year) && (
+        {(party.baseLocation || party.countryOfBirth || party.startedYear) && (
           <div className="mt-1 flex flex-col gap-1 border-t border-border/40 pt-2">
-            {party.base_location && (
+            {party.baseLocation && (
               <div className="flex items-center gap-1.5 text-[11px] text-muted-foreground">
                 <MapPin size={10} className="flex-shrink-0 text-primary/60" />
-                <span className="truncate">{party.base_location}</span>
+                <span className="truncate">{party.baseLocation}</span>
               </div>
             )}
-            {party.country_of_birth && (
+            {party.countryOfBirth && (
               <div className="flex items-center gap-1.5 text-[11px] text-muted-foreground">
                 <Globe size={10} className="flex-shrink-0 text-primary/60" />
-                <span className="truncate">{party.country_of_birth}</span>
+                <span className="truncate">{party.countryOfBirth}</span>
               </div>
             )}
-            {party.started_year && (
+            {party.startedYear && (
               <div className="flex items-center gap-1.5 text-[11px] text-muted-foreground">
                 <CalendarDays size={10} className="flex-shrink-0 text-primary/60" />
                 <span>
-                  Since {party.started_year}
+                  Since {party.startedYear}
                   {yearsActive !== null && yearsActive > 0 && (
                     <span className="ml-1 text-primary font-semibold">· {yearsActive}y</span>
                   )}
@@ -142,7 +144,7 @@ function PartyCard({ party, onEdit, onDelete, onOpen, canManage }: { party: Part
 
 /* ── Delete confirm dialog ─────────────────────── */
 function DeleteConfirm({ party, open, onOpenChange, onConfirm }: {
-  party: Party | null;
+  party: RegisterPerson | null;
   open: boolean;
   onOpenChange: (o: boolean) => void;
   onConfirm: () => void;
@@ -165,7 +167,7 @@ function DeleteConfirm({ party, open, onOpenChange, onConfirm }: {
             <Button variant="outline" type="button">Cancel</Button>
           </DialogClose>
           <Button variant="destructive" type="button" onClick={onConfirm}>
-            Remove Party
+            Remove RegisterPerson
           </Button>
         </DialogFooter>
       </DialogContent>
@@ -193,7 +195,7 @@ const FILTER_ROLES: Array<{ value: PartyRole | 'all'; label: string }> = [
  * breeders are based across the globe." It plotted none of them, and could not:
  * no party id, coordinate or location ever reached it.
  *
- * `party.base_location` is real and is already shown on every card. A map of our
+ * `party.baseLocation` is real and is already shown on every card. A map of our
  * people has to be built from that field (geocoded, with a pin per party); until
  * it is, an embed that looks like one is worse than no map at all. */
 
@@ -206,20 +208,20 @@ export default function Parties() {
   }, [fetchParties]);
   // === end auto fetch-on-mount ===
 
-  const parties = usePartyStore((s) => s.parties);
+  const parties = useRegister();
   const removeParty = usePartyStore((s) => s.removeParty);
   const navigate = useNavigate();
   // Mirrors the server's partyScopedWriteGate so the UI only offers writes that
   // would be accepted. This page is public — see the note on PartyCard.
   const currentUser = useAuthStore((s) => s.currentUser);
-  const staff = isStaff(currentUser);
+  const staff = isAdmin(currentUser);
 
   const [query, setQuery] = useState('');
   const [roleFilter, setRoleFilter] = useState<PartyRole | 'all'>('all');
 
   const [formOpen, setFormOpen] = useState(false);
-  const [editParty, setEditParty] = useState<Party | undefined>(undefined);
-  const [deleteTarget, setDeleteTarget] = useState<Party | null>(null);
+  const [editParty, setEditParty] = useState<RegisterPerson | undefined>(undefined);
+  const [deleteTarget, setDeleteTarget] = useState<RegisterPerson | null>(null);
   const [deleteOpen, setDeleteOpen] = useState(false);
 
   const safeParties = parties ?? [];
@@ -233,12 +235,12 @@ export default function Parties() {
     });
   }, [safeParties, query, roleFilter]);
 
-  const openEdit = (party: Party) => {
+  const openEdit = (party: RegisterPerson) => {
     setEditParty(party);
     setFormOpen(true);
   };
 
-  const openDelete = (party: Party) => {
+  const openDelete = (party: RegisterPerson) => {
     setDeleteTarget(party);
     setDeleteOpen(true);
   };
@@ -288,7 +290,7 @@ export default function Parties() {
             {staff && (
               <Button onClick={handleAddClick} size="sm" className="gap-1.5">
                 <Plus size={14} />
-                Add Party
+                Add RegisterPerson
               </Button>
             )}
           </div>
@@ -352,7 +354,7 @@ export default function Parties() {
           {staff && (
             <Button onClick={handleAddClick} className="gap-2">
               <Plus size={15} />
-              Add Your First Party
+              Add Your First RegisterPerson
             </Button>
           )}
         </div>

@@ -30,9 +30,6 @@ export const FEATURE_GUIDES: Record<string, string> = {
   'manage-stable':
     'Your Dashboard → My Stable shows the horses you can manage. Open one in the Horse Studio to edit its profile, connections, media, racing entries, sales and reports — the studio has its own assistant that can update details with you. You can only edit horses you are currently linked to (or that you registered).',
 
-  'upgrade-plan':
-    'Some articles and content are premium. Plans are free, standard and premium. Open your Dashboard → Your Plan to switch tiers. (Billing is handled separately; the selector sets your access level.)',
-
   tipping:
     'The Tipping Ring is a free virtual-coin tipping game — no real money. Open Tipping, pick a race, choose a horse and stake some coins. Your balance, record and the leaderboard update as races resolve. You need a (free) account to place tips.',
 
@@ -56,10 +53,7 @@ export const FEATURE_GUIDES: Record<string, string> = {
     `Stable Press has AI studios — each surface has its own assistant that does the work with you. Story Studio (Production System): tell it your story and it writes & files the draft. ${BUILDER} (Production System): build a bulletin from an AI brief, an imported PDF/DOCX or blank, with an in-editor assistant. Horse Studio (Dashboard → My Stable → open a horse): edit your horse's profile with an assistant. Profile Studio (Dashboard → your profile): complete your own party profile with an assistant. Writers editing an article also get an assistant right on the article page. Ask me to open any of them.`,
 
   organisations:
-    'An organisation (syndicate, stud, stable or agency) groups members and the parties/horses it manages under one umbrella. Create one during sign-up (choose Organisation) or manage it from My Organisation: invite members, add managed parties, and verify members’ role claims for parties your organisation controls.',
-
-  'verify-claims':
-    'Administrators review pending racing-role claims under Verify Claims; organisation owners/managers can verify claims for parties their organisation controls from My Organisation. Approving a claim activates the role for that member.',
+    'An organisation (syndicate, stud, stable or agency) groups members and the register entries it fields under one umbrella. Create one during sign-up (choose Organisation) or manage it from My Organisation: add members as owner, manager or member, and field people in the register under the org.',
 
   contact:
     'I can help right here on any page — just ask. For account or content matters that need a person, point staff to the Production System, and members to their Dashboard where most self-service options live.',

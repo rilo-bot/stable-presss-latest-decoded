@@ -3,7 +3,7 @@ import { Link, useNavigate, useLocation } from 'react-router-dom';
 import { cn } from '@/lib/utils';
 import { useAuthStore } from '@/stores/authStore';
 import { can } from '@/lib/permissions';
-import { isStaff, primaryPartyId } from '@/rbac/can';
+import { isAdmin, primaryPartyId } from '@/rbac/can';
 import { ChevronDown, ChevronUp, Menu, X } from 'lucide-react';
 import { toast } from 'sonner';
 import { type NavSection } from './navbar/config';
@@ -58,14 +58,14 @@ export function NavBar() {
     };
   }, [collapsed]);
 
-  const staff = isStaff(currentUser);
-  const accountLabel = staff ? 'Staff' : 'Member';
+  const admin = isAdmin(currentUser);
+  const accountLabel = admin ? 'Admin' : 'Member';
   const myPartyId = primaryPartyId(currentUser);
 
   // The account dropdown's contents.
   //
   // These were separate 10px links strung across the deleted masthead strip, on
-  // the PUBLIC site header, so a reader met up to nine account and staff links
+  // the PUBLIC site header, so a reader met up to nine account and admin links
   // before a single headline. Same permission checks, same destinations; one click
   // away rather than always on screen. See navbar/UserMenu.tsx.
   //
@@ -78,13 +78,13 @@ export function NavBar() {
     ? [
         { label: 'Dashboard', to: '/dashboard' },
         ...(myPartyId ? [{ label: 'My Profile', to: `/parties/${myPartyId}` }] : []),
-        ...(currentUser.orgMemberships && currentUser.orgMemberships.length > 0
-          ? [{ label: 'My Organisation', to: `/orgs/${currentUser.orgMemberships[0].orgId}` }]
+        ...(currentUser.orgMembers && currentUser.orgMembers.length > 0
+          ? [{ label: 'My Organisation', to: `/orgs/${currentUser.orgMembers[0].orgId}` }]
           : []),
-        ...(staff ? [{ label: 'Site Content', to: '/site-content', staff: true }] : []),
-        ...(can('platform.admin')
-          ? [{ label: 'Verify Claims', to: '/claims', staff: true }]
-          : []),
+        ...(admin ? [{ label: 'Site Content', to: '/site-content', admin: true }] : []),
+        // No "Verify Claims": /claims went with claim verification itself.
+        // Claiming a register entry takes effect immediately, so there is no
+        // queue — and the link outlived the route, landing admins on the 404.
       ]
     : [];
 
@@ -173,7 +173,7 @@ export function NavBar() {
           stack of up to seven role-conditional links at 10px: Subscribe,
           Dashboard, My Profile, My Organisation, Campaign Engine, Site Content,
           Verify Claims, Podcast Studio — so the PUBLIC site header offered nine
-          account and staff links before a reader reached a headline. Three of them
+          account and admin links before a reader reached a headline. Three of them
           already appeared elsewhere in this same header (Subscribe as a gold button
           one row down; Campaign Engine and Podcast Studio in the section row). The
           personal ones are in the account dropdown now (navbar/UserMenu.tsx); the
@@ -248,7 +248,7 @@ export function NavBar() {
         activeDropdown={activeDropdown}
         setActiveDropdown={setActiveDropdown}
         isSectionActive={isSectionActive}
-        staff={staff}
+        admin={admin}
         pathname={location.pathname}
       />
 
@@ -271,7 +271,7 @@ export function NavBar() {
         <MobileMenu
           currentUser={currentUser}
           accountLabel={accountLabel}
-          staff={staff}
+          admin={admin}
           pathname={location.pathname}
           setMobileOpen={setMobileOpen}
           handleLogout={handleLogout}

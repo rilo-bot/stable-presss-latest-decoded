@@ -45,14 +45,22 @@ import {
   isModuleId,
   isPermissionAction,
   isWorkflowStage,
-  type SeedRoleSlug,
+  type SeedRoleName,
 } from '../src/lib/permissionCatalogue.js'
-import { SUPERADMIN_SLUG, bustRoleCache } from '../src/lib/roleRegistry.js'
+import { ROLES, bustRoleCache } from '../src/lib/roleRegistry.js'
 
 const APPLY = process.argv.includes('--apply')
 
-/** The roles whose documented contract is "every permission, always". */
-const HOLDS_EVERYTHING = new Set([SUPERADMIN_SLUG, 'administrator'])
+/**
+ * The roles whose documented contract is "every permission, always".
+ *
+ * Superadmin is matched on the `isSuper` FIELD, not on being named "superadmin":
+ * role names are editable at runtime, so a rename would otherwise drop the one
+ * role that must hold everything out of this reconciliation entirely.
+ */
+function holdsEverything(role: Record<string, unknown>, name: string): boolean {
+  return role.isSuper === true || name === 'administrator'
+}
 
 const ALL_PERMISSIONS = PERMISSION_CATALOGUE.map((p) => p.id)
 const ALL_MODULES = MODULE_CATALOGUE.map((m) => m.id)
@@ -71,7 +79,9 @@ const asArray = (v: unknown): string[] =>
   Array.isArray(v) ? v.filter((x): x is string => typeof x === 'string') : []
 
 async function main(): Promise<void> {
-  const roles = await db.collection('roles').find()
+  // ROLES holds the DEFINITIONS; adminRoles is the user→role link.
+  // Hardcoded, this script silently found zero rows and reported "in sync".
+  const roles = await db.collection(ROLES).find()
   console.log(
     `catalogue: ${ALL_PERMISSIONS.length} permissions, ${ALL_MODULES.length} modules, ` +
       `${ALL_WORKFLOW_STAGES.length} stages`,
@@ -81,7 +91,8 @@ async function main(): Promise<void> {
   const changes: Change[] = []
 
   for (const role of roles) {
-    const slug = String(role.slug)
+    // `name`, not `slug` — a role is identified by its name now.
+    const slug = String(role.name)
     const permissions = asArray(role.permissions)
     const modules = asArray(role.modules)
     const stages = asArray(role.workflowStages)
@@ -109,7 +120,7 @@ async function main(): Promise<void> {
     let nextStages = keptStages
 
     // 2. Top up the everything-roles.
-    if (HOLDS_EVERYTHING.has(slug)) {
+    if (holdsEverything(role, slug)) {
       const havePerms = new Set(keptPermissions)
       const haveMods = new Set(keptModules)
       const haveStages = new Set(keptStages)
@@ -128,7 +139,7 @@ async function main(): Promise<void> {
       // from `editor` keeps that decision; what this recovers is a module whose
       // `requiresPermission` changed after the role row was written.
       const haveMods = new Set(keptModules)
-      const shouldHave = builtinModulesFor(slug as SeedRoleSlug)
+      const shouldHave = builtinModulesFor(slug as SeedRoleName)
       change.addedModules = shouldHave.filter((m) => !haveMods.has(m))
       if (change.addedModules.length > 0) {
         nextModules = ALL_MODULES.filter((m) => haveMods.has(m) || change.addedModules.includes(m))
@@ -158,7 +169,7 @@ async function main(): Promise<void> {
     if (change.addedStages.length) console.log(`   + stages     : ${change.addedStages.join(', ')}`)
 
     if (APPLY) {
-      await db.collection('roles').updateOne(String(role._id), {
+      await db.collection(ROLES).updateOne(String(role._id), {
         permissions: nextPermissions,
         modules: nextModules,
         workflowStages: nextStages,

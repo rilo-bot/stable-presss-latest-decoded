@@ -12,9 +12,11 @@
 import { tool, type ToolSet } from 'ai'
 import { z } from 'zod'
 import { db } from '../db.js'
-import { articleTeaser, tierAllows } from '../paywall.js'
-import { canAccessNewsroom } from '../rbac.js'
-import { visibleHorseIds, manageablePartyIds, horsesLinkedToParty } from '../scope.js'
+import { isAdmin } from '../rbac.js'
+import { ORGANISATIONS, PARTIES, PEOPLE } from '../collections.js'
+import { loadPerson, projectPerson } from '../people.js'
+import { toPartyRows } from '../effectiveAccess.js'
+import { visibleHorseIds, manageablePartyIds } from '../scope.js'
 import type { AccountUser } from '../identity.js'
 import { FEATURE_GUIDES, GUIDE_TOPICS } from './guides.js'
 import { getCapabilities } from './capabilities.js'
@@ -55,17 +57,13 @@ function horseCard(h: Doc) {
 
 /**
  * Horses this account may see, mirroring routes/horses.ts GET exactly:
- * staff see all; everyone else sees verified horses plus their own
+ * admins see all; everyone else sees verified horses plus their own
  * created/authorised ones.
  */
 async function visibleHorses(account?: AccountUser): Promise<Doc[]> {
   const horses = await db.collection('horses').find()
-  if (canAccessNewsroom(account)) return horses
-  let allowed = new Set<string>()
-  if (account) {
-    const links = await db.collection('horsePartyLinks').find()
-    allowed = new Set(visibleHorseIds(account, { horses, links }))
-  }
+  if (isAdmin(account)) return horses
+  const allowed = new Set<string>(account ? await visibleHorseIds(account) : [])
   return horses.filter(
     (h) =>
       h.verificationStatus !== 'unverified' ||
@@ -74,17 +72,16 @@ async function visibleHorses(account?: AccountUser): Promise<Doc[]> {
   )
 }
 
-/** Parties this account may see, mirroring routes/parties.ts GET exactly. */
-async function visibleParties(account?: AccountUser): Promise<Doc[]> {
-  const parties = await db.collection('parties').find()
-  if (canAccessNewsroom(account)) return parties
-  const own = new Set<string>(account ? manageablePartyIds(account) : [])
-  return parties.filter(
-    (p) =>
-      p.verificationStatus !== 'unverified' ||
-      (account ? p.createdByUserId === account.id : false) ||
-      own.has(idOf(p)),
-  )
+/**
+ * Parties this account may see, mirroring routes/parties.ts GET exactly.
+ *
+ * The register is PUBLIC — that is how someone finds the row that represents
+ * them so they can claim it. There is no verified/unverified split any more, so
+ * there is nothing left to filter; `userId` is what the route strips, and no
+ * tool here returns it.
+ */
+async function visibleParties(_account?: AccountUser): Promise<Doc[]> {
+  return db.collection(PARTIES).find()
 }
 
 const LIVE_ARTICLE_STATUSES = ['published', 'newsletter', 'bulletin']
@@ -99,22 +96,13 @@ const SELF_PORT = process.env.PORT ? parseInt(process.env.PORT, 10) : 3001
 const SELF_BASE = `http://127.0.0.1:${SELF_PORT}`
 
 export function buildTools(account?: AccountUser, authHeader?: string): ToolSet {
-  const staff = canAccessNewsroom(account)
+  const staff = isAdmin(account)
 
-  // ── The premium paywall, for the two tools that read a story body ─────────
-  //
-  // These tools `execute` on the SERVER — unlike the Studio tools, which are
-  // declared without `execute` and run through the browser against the same
-  // gated REST endpoints a human hits. That difference is why they need the
-  // paywall spelled out here: nothing else is standing between them and the
-  // collection, so `searchArticles` and `getArticle` used to hand a free-tier
-  // reader the whole of a premium story for the asking. See lib/paywall.ts.
-
-  /** May this reader have the full body of `a`? Staff always may. */
-  const readerMayRead = (a: Doc) => staff || tierAllows(account?.subscriptionTier, a.minTier)
-
-  /** The body of `a` as this reader is entitled to see it. */
-  const bodyFor = (a: Doc) => (readerMayRead(a) ? a.summary : articleTeaser(a.summary))
+  // NO TIER GATING. Subscriptions are gone, so a published story is readable in
+  // full by anyone who can see it at all — the `isLiveArticle` / `staff` check
+  // above is the whole of the rule. These two tools `execute` on the SERVER, so
+  // they used to re-implement the paywall themselves; there is no longer one to
+  // re-implement. See routes/blogs/visibility.ts for the same removal.
 
   // Call one of our own endpoints AS the current user. The route's gate decides
   // if it is allowed — the agent never bypasses a permission check.
@@ -141,7 +129,7 @@ export function buildTools(account?: AccountUser, authHeader?: string): ToolSet 
   return {
     myAccount: tool({
       description:
-        "The signed-in reader's own profile: roles, subscription tier, their racing-role claims (and verification status), organisations, and the horses they can manage (their stable). Use this to personalise guidance. Returns signedIn:false for guests.",
+        "The signed-in reader's own profile: whether they are an admin, the racing identities they have claimed, their organisations, and the horses they can manage (their stable). Use this to personalise guidance. Returns signedIn:false for guests.",
       inputSchema: z.object({}),
       execute: async () => {
         if (!account) {
@@ -150,26 +138,23 @@ export function buildTools(account?: AccountUser, authHeader?: string): ToolSet 
             note: 'This reader is a guest. Most personal features unlock with a free account.',
           }
         }
-        const parties = await db.collection('parties').find()
-        const partyName = (pid: string) =>
-          parties.find((p) => idOf(p) === pid)?.name ?? 'a party'
-        const links = await db.collection('horsePartyLinks').find()
-        const horses = await db.collection('horses').find()
-        const stableIds = new Set(visibleHorseIds(account, { horses, links }))
+        const [horses, orgs] = await Promise.all([
+          db.collection('horses').find(),
+          db.collection(ORGANISATIONS).find(),
+        ])
+        const orgName = (orgId: string) =>
+          orgs.find((o) => idOf(o) === orgId)?.name ?? 'an organisation'
+        const stableIds = new Set(await visibleHorseIds(account))
         return {
           signedIn: true,
-          name: account.displayName || account.email,
-          roles: account.roles,
-          canAccessNewsroom: staff,
-          subscriptionTier: account.subscriptionTier,
-          racingClaims: account.partyClaims.map((c) => ({
-            party: partyName(c.partyId),
-            role: c.role,
-            status: c.status,
-          })),
-          organisations: account.orgMemberships.map((m) => ({
-            organisation: partyName(m.orgId),
-            role: m.orgRole,
+          name: account.name || account.email,
+          isAdmin: staff,
+          // A claimed party row IS the racing identity — one row per role, no
+          // verification step, so there is no status to report.
+          racingIdentities: account.parties.map((p) => ({ party: p.name, role: p.role })),
+          organisations: account.orgMembers.map((m) => ({
+            organisation: orgName(m.orgId),
+            role: m.role,
           })),
           stable: horses
             .filter((h) => stableIds.has(idOf(h)))
@@ -225,31 +210,16 @@ export function buildTools(account?: AccountUser, authHeader?: string): ToolSet 
           note: 'That horse is not in this reader\'s view (it may be unverified or private). Suggest searching the public register, or — if it is their own horse — claiming the matching racing role from the Dashboard.',
         }
         if (!horse) return notFound
-        const links = await db.collection('horsePartyLinks').find(horseIdMatch(horseId))
-        const authorised = account ? new Set(visibleHorseIds(account, { horses: [horse], links })) : new Set<string>()
+        // Connections are `parties` edges carrying this horseId - one indexed
+        // query, plus one to resolve the people behind them.
+        const links = await toPartyRows(await db.collection(PARTIES).find({ horseId }))
+        const authorised = account ? new Set(await visibleHorseIds(account)) : new Set<string>()
         const visible =
           staff ||
           horse.verificationStatus !== 'unverified' ||
           (account ? horse.createdByUserId === account.id : false) ||
           authorised.has(idOf(horse))
         if (!visible) return notFound
-
-        // Resolve names for ONLY the parties this horse links to, applying the same
-        // visibility rule routes/parties.ts GET uses (unverified parties stay hidden
-        // unless the reader is staff / their owner / a manager).
-        const own = new Set<string>(account ? manageablePartyIds(account) : [])
-        const isPartyVisible = (p: Doc) =>
-          p.verificationStatus !== 'unverified' ||
-          (account ? p.createdByUserId === account.id : false) ||
-          own.has(idOf(p))
-        const partyIds = [...new Set(links.map((l) => String(l.party_id)))]
-        const partyDocs = (
-          await Promise.all(partyIds.map((pid) => db.collection('parties').findById(pid)))
-        ).filter((p): p is NonNullable<typeof p> => p !== null)
-        const partyName = (pid: string) => {
-          const p = partyDocs.find((x) => idOf(x) === pid)
-          return p && isPartyVisible(p) ? p.name : undefined
-        }
 
         // Child collections: match horse_id + cap in Mongo. aggregate() does NOT
         // auto-filter soft-deletes, so match deletedAt:null explicitly (find() would).
@@ -268,10 +238,10 @@ export function buildTools(account?: AccountUser, authHeader?: string): ToolSet 
         ])
         return {
           horse: horseCard(horse),
-          connections: links.slice(0, 50).map((l) => ({
-            party: partyName(String(l.party_id)) ?? 'a party',
-            relationship: l.relationship_type,
-            current: !l.end_date,
+          connections: links.slice(0, 50).map((p) => ({
+            party: p.name || 'a party',
+            relationship: p.role,
+            claimed: p.taken,
           })),
           racingEntries,
           sales,
@@ -290,19 +260,41 @@ export function buildTools(account?: AccountUser, authHeader?: string): ToolSet 
         limit: z.number().optional(),
       }),
       execute: async ({ query, role, limit }) => {
-        let parties = await visibleParties(account)
-        if (query) parties = parties.filter((p) => matches(p.name, query) || matches(p.base_location, query))
-        if (role) parties = parties.filter((p) => Array.isArray(p.roles) && p.roles.some((r: string) => matches(r, role)))
+        // A "party" to a reader is a PERSON. The roles they fill are their edges
+        // in the register, so both collections are read and folded together.
+        const [peopleDocs, edges] = await Promise.all([
+          db.collection(PEOPLE).find(),
+          db.collection(PARTIES).find(),
+        ])
+        const rolesByPerson = new Map<string, Set<string>>()
+        for (const e of edges) {
+          const key = String(e.personId ?? '')
+          if (!key) continue
+          if (!rolesByPerson.has(key)) rolesByPerson.set(key, new Set())
+          rolesByPerson.get(key)!.add(String(e.role))
+        }
+
+        let people = peopleDocs.map(projectPerson)
+        if (query) {
+          people = people.filter(
+            (p) => matches(p.name, query) || matches(p.baseLocation, query) || matches(p.profession, query),
+          )
+        }
+        if (role) {
+          people = people.filter((p) =>
+            [...(rolesByPerson.get(p.id) ?? [])].some((r) => matches(r, role)),
+          )
+        }
         return {
-          count: parties.length,
-          parties: parties.slice(0, clamp(limit, 10, 25)).map((p) => ({
-            id: idOf(p),
+          count: people.length,
+          parties: people.slice(0, clamp(limit, 10, 25)).map((p) => ({
+            id: p.id,
             name: p.name,
-            type: p.party_type,
-            roles: p.roles,
-            location: p.base_location,
-            country: p.country,
-            since: p.started_year,
+            roles: [...(rolesByPerson.get(p.id) ?? [])],
+            profession: p.profession,
+            location: p.baseLocation,
+            country: p.countryOfBirth,
+            since: p.startedYear,
           })),
         }
       },
@@ -313,21 +305,30 @@ export function buildTools(account?: AccountUser, authHeader?: string): ToolSet 
         "A party's profile plus the horses they are connected to that this reader can see. Returns notFound if the party is not visible to them.",
       inputSchema: z.object({ partyId: z.string() }),
       execute: async ({ partyId }) => {
-        const party = (await visibleParties(account)).find((p) => idOf(p) === partyId)
-        if (!party) return { notFound: true }
+        // Accepts a person id OR an edge id: the reader-facing "party" is the
+        // person, but a link elsewhere in the app may point at one of the edges.
+        let person = await loadPerson(partyId)
+        if (!person) {
+          const edge = await db.collection(PARTIES).findById(partyId)
+          person = await loadPerson(edge?.personId ? String(edge.personId) : undefined)
+        }
+        if (!person) return { notFound: true }
+
+        // Every edge for this person — one indexed query. Their horses and the
+        // roles they fill both fall out of it.
+        const edges = await db.collection(PARTIES).find({ personId: person.id })
+        const connectedIds = new Set(edges.filter((e) => e.horseId).map((e) => String(e.horseId)))
         const horses = await visibleHorses(account)
-        const links = await db.collection('horsePartyLinks').find()
-        const connectedIds = new Set(horsesLinkedToParty(partyId, { horses, links }))
         return {
           party: {
-            id: idOf(party),
-            name: party.name,
-            type: party.party_type,
-            roles: party.roles,
-            profession: party.profession,
-            location: party.base_location,
-            country: party.country,
-            since: party.started_year,
+            id: person.id,
+            name: person.name,
+            roles: [...new Set(edges.map((e) => String(e.role)))],
+            profession: person.profession,
+            location: person.baseLocation,
+            since: person.startedYear,
+            claimed: edges.some((e) => e.taken === true),
+            organisationIds: [...new Set(edges.filter((e) => e.orgId).map((e) => String(e.orgId)))],
           },
           connectedHorses: horses
             .filter((h) => connectedIds.has(idOf(h)))
@@ -358,8 +359,7 @@ export function buildTools(account?: AccountUser, authHeader?: string): ToolSet 
           articles: articles.slice(0, clamp(limit, 10, 25)).map((a) => ({
             id: idOf(a),
             title: a.title,
-            summary: bodyFor(a),
-            locked: !readerMayRead(a) || undefined,
+            summary: a.summary,
             author: a.author,
             category: a.category,
             status: a.status,
@@ -372,7 +372,7 @@ export function buildTools(account?: AccountUser, authHeader?: string): ToolSet 
 
     getArticle: tool({
       description:
-        'A single article by id (body + metadata). Returns notFound if it is not published and the reader is not staff. A premium story the reader is not subscribed to comes back with `locked: true` and only its opening paragraph — tell them it is subscriber-only rather than guessing at the rest.',
+        'A single article by id (body + metadata). Returns notFound if it is not published and the reader is not an admin.',
       inputSchema: z.object({ articleId: z.string() }),
       execute: async ({ articleId }) => {
         const a = await db.collection('articles').findById(articleId)
@@ -380,9 +380,7 @@ export function buildTools(account?: AccountUser, authHeader?: string): ToolSet 
         return {
           id: idOf(a),
           title: a.title,
-          summary: bodyFor(a),
-          locked: !readerMayRead(a) || undefined,
-          minTier: a.minTier,
+          summary: a.summary,
           author: a.author,
           category: a.category,
           status: a.status,
@@ -424,7 +422,7 @@ export function buildTools(account?: AccountUser, authHeader?: string): ToolSet 
         return {
           leaderboard: profiles.slice(0, clamp(limit, 10, 25)).map((p, i) => ({
             rank: i + 1,
-            tipster: p.displayName,
+            tipster: p.name,
             balance: p.balance,
             wins: p.wins,
             tips: p.totalTips,
@@ -502,7 +500,7 @@ export function buildTools(account?: AccountUser, authHeader?: string): ToolSet 
         "'production-system' is the staff CMS — pass `screen` to land on a specific screen. " +
         "Pair navigation with a short note on what to do once there. Don't send a non-staff reader to a staff-only surface (production-system, story-studio, blog-studio" +
         (MAGAZINE_V2_ENABLED ? ', magazine-v2' : '') +
-        ", site-content, claims) — guide them instead; horse-studio/profile-studio only for records the member manages.",
+        ", site-content) — guide them instead; horse-studio/profile-studio only for records the member manages.",
       inputSchema: z.object({
         to: z
           .enum([
@@ -511,7 +509,10 @@ export function buildTools(account?: AccountUser, authHeader?: string): ToolSet 
             // not offering it — it would navigate a reader off the site.
             'home', 'news', 'bulletins', 'horses', 'parties', 'tipping', 'podcast',
             'dashboard', 'production-system', 'story-studio', 'blog-studio', 'horse-studio', 'profile-studio',
-            'site-content', 'claims', 'login', 'signup',
+            // No 'claims': /claims was removed with claim verification. Claiming
+            // a register entry takes effect immediately, so the queue it pointed
+            // at no longer exists — offering it would navigate an admin to a 404.
+            'site-content', 'login', 'signup',
             'horse', 'party', 'article', 'bulletin', 'organisation',
             // The staff Magazine Builder home; with an id, that magazine's editor.
             ...(MAGAZINE_V2_ENABLED ? (['magazine-v2'] as const) : []),
@@ -587,7 +588,7 @@ export function buildTools(account?: AccountUser, authHeader?: string): ToolSet 
               const res = await selfApi('POST', '/api/articles', {
                 title,
                 summary: summary ?? '',
-                author: account!.displayName,
+                author: account!.name,
                 status: 'draft',
               })
               if (!res.ok) {

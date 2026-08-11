@@ -1,33 +1,25 @@
 /**
- * RBAC — role taxonomy (the "what you are" axis).
+ * RBAC — the role taxonomy.
  *
- * THE STAFF/EDITORIAL ROLE UNION IS GONE. Those six slugs
- * (contributor/editor/legal_reviewer/podcast_producer/publisher/administrator)
- * used to be a TypeScript union here, which made a database-defined role
- * literally untypeable. They are now rows in the server's `roles` collection,
- * referenced by slug, and what they grant arrives on the session as
- * `user.access` — see stores/authStore.ts and lib/permissions.ts.
+ * There are two categories of account: users, and admins. An admin role is a
+ * ROW in the server's `adminRoles` collection, so it is not typeable here —
+ * what it grants arrives on the session as `user.access`, and whether the
+ * account is an admin at all arrives as `user.isAdmin`.
  *
  * What remains here are the two axes that are deliberately STATIC, because they
  * are bound to real domain machinery rather than to job descriptions:
  *
- *   PartyRole — racing identities, bound to horsePartyLinks + claim verification
+ *   PartyRole — a row in the racing register, one per person × role × horse
  *   OrgRole   — membership within a single organisation
  *
- * See RBAC.md §4 and docs/DYNAMIC-RBAC-PLAN.md. Mirrored server-side in
- * apps/server/src/lib/identity.ts.
+ * Mirrored server-side in apps/server/src/lib/identity.ts.
  */
 import type { PartyRole } from '@/types/party';
 
 export type { PartyRole };
 
-export type ReaderRole = 'reader';
-
 /** Org-membership roles — meaningful only WITHIN one organisation. */
-export type OrgRole = 'org_owner' | 'org_manager' | 'org_member';
+export type OrgRole = 'owner' | 'manager' | 'member';
 
-/**
- * Roles stored in user.roles[] — the STATIC axis only.
- * Dynamic staff roles live in `user.staffRoles[]` as slugs.
- */
-export type Role = ReaderRole | PartyRole;
+/** What `user.roles[]` carries: the static racing axis only. */
+export type Role = PartyRole;

@@ -32,14 +32,14 @@ export function CreateEpisodeDialog({
   const [form, setForm] = useState({
     title: '',
     description: '',
-    host: currentUser?.displayName ?? '',
+    host: currentUser?.name ?? '',
     season: 1,
     episodeNumber: 1,
     durationSeconds: 0,
     audioUrl: '',
     coverUrl: '',
     relatedArticleIds: [] as string[],
-    producedBy: currentUser?.displayName ?? '',
+    producedBy: currentUser?.name ?? '',
   });
 
   const [saving, setSaving] = useState(false);
@@ -64,14 +64,14 @@ export function CreateEpisodeDialog({
     setForm({
       title: '',
       description: '',
-      host: currentUser?.displayName ?? '',
+      host: currentUser?.name ?? '',
       season: 1,
       episodeNumber: 1,
       durationSeconds: 0,
       audioUrl: '',
       coverUrl: '',
       relatedArticleIds: [],
-      producedBy: currentUser?.displayName ?? '',
+      producedBy: currentUser?.name ?? '',
     });
   };
 

@@ -1,9 +1,10 @@
-import type { Party, PartyRole } from '@/types/party';
+import type { PartyRole } from '@/types/party';
 import type { Horse } from '@/types/horse';
+import type { RegisterPerson } from '@/lib/register';
 
 /** A party resolved for a profile tile, with relationship dating. */
 export interface PanelParty {
-  party: Party;
+  party: RegisterPerson;
   startDate?: string;
   endDate?: string | null;
   context?: string;
@@ -13,7 +14,7 @@ export interface PanelParty {
 /** The subject a profile page centralises on. */
 export type ProfileSubject =
   | { kind: 'horse'; horse: Horse }
-  | { kind: 'party'; party: Party; role: PartyRole };
+  | { kind: 'party'; party: RegisterPerson; role: PartyRole };
 
 /** Aggregate career numbers shown in the central summary strip. */
 export interface CentralSummary {

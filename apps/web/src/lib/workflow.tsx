@@ -93,10 +93,10 @@ export interface Move {
  * card's primary button.
  */
 export const FORWARD_MOVE: Record<ArticleStatus, Move | null> = {
-  draft: { to: 'submitted', label: 'Submit', permission: 'content.submit' },
-  submitted: { to: 'approved', label: 'Approve', permission: 'content.approve' },
-  approved: { to: 'scheduled', label: 'Schedule', permission: 'content.schedule' },
-  scheduled: { to: 'published', label: 'Publish', permission: 'content.publish' },
+  draft: { to: 'submitted', label: 'Submit', permission: 'stories.edit' },
+  submitted: { to: 'approved', label: 'Approve', permission: 'stories.publish' },
+  approved: { to: 'scheduled', label: 'Schedule', permission: 'stories.publish' },
+  scheduled: { to: 'published', label: 'Publish', permission: 'stories.publish' },
   published: null,
 };
 
@@ -107,14 +107,14 @@ export const FORWARD_MOVE: Record<ArticleStatus, Move | null> = {
 export const OTHER_MOVES: Record<ArticleStatus, Move[]> = {
   draft: [],
   submitted: [
-    { to: 'draft', label: 'Request changes', permission: 'content.send_revision', back: true },
+    { to: 'draft', label: 'Request changes', permission: 'stories.edit', back: true },
   ],
   approved: [
-    { to: 'published', label: 'Publish now', permission: 'content.publish' },
-    { to: 'submitted', label: 'Send back', permission: 'content.send_revision', back: true },
+    { to: 'published', label: 'Publish now', permission: 'stories.publish' },
+    { to: 'submitted', label: 'Send back', permission: 'stories.edit', back: true },
   ],
   scheduled: [
-    { to: 'approved', label: 'Unschedule', permission: 'content.schedule', back: true },
+    { to: 'approved', label: 'Unschedule', permission: 'stories.publish', back: true },
   ],
   published: [],
 };
@@ -138,15 +138,15 @@ export function findMove(from: ArticleStatus, to: ArticleStatus): Move | undefin
 /**
  * The permission that authorises putting a story INTO a stage, regardless of
  * where it came from. Mirrors `enterPermission` on the server, which enforces it
- * on create. `draft` is null: `content.draft.create` already covers that.
+ * on create. `draft` is null: `stories.create` already covers that.
  */
 export function enterPermission(to: ArticleStatus): PermissionAction | null {
   switch (to) {
     case 'draft': return null;
-    case 'submitted': return 'content.submit';
-    case 'approved': return 'content.approve';
-    case 'scheduled': return 'content.schedule';
-    case 'published': return 'content.publish';
+    case 'submitted': return 'stories.edit';
+    case 'approved': return 'stories.publish';
+    case 'scheduled': return 'stories.publish';
+    case 'published': return 'stories.publish';
   }
 }
 

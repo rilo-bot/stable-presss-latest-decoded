@@ -25,19 +25,30 @@ import { cn } from '@/lib/utils';
 import { roleSummary, useAssignedRoles } from '@/lib/roleDisplay';
 import type { AuthUser } from '@/stores/authStore';
 import type { Horse } from '@/types/horse';
-import type { Party } from '@/types/party';
+import type { RegisterPerson } from '@/lib/register';
 import type { MediaItem } from '@/types/mediaItem';
 import type { RacingEntry } from '@/types/racingEntry';
 
-import { navPath } from '../../newsroom/constants';
+import { SIDE_NAV, navPath } from '../../newsroom/constants';
 import type { SideNavItem } from '../../newsroom/constants';
 
-const SECTIONS = ['Workspace', 'Content', 'Stables', 'Management'] as const;
+/**
+ * Section order, DERIVED from SIDE_NAV rather than listed here.
+ *
+ * This was a hardcoded `['Workspace', 'Content', 'Stables', 'Management']`, and
+ * renaming the sections in SIDE_NAV silently deleted three of them from the
+ * rail: any row whose section was not in this array rendered nowhere, with no
+ * error — a superadmin lost Stories, Community and Personal entirely.
+ *
+ * Deriving it means the sidebar has ONE source of order, the same way the
+ * permission grid has one source of rows.
+ */
+const SECTIONS: string[] = [...new Set(SIDE_NAV.map((i) => i.section).filter((s): s is string => !!s))];
 
 export interface NavCounts {
   pendingReview: number;
   horses: Horse[];
-  safeParties: Party[];
+  safeParties: RegisterPerson[];
   mediaItems: MediaItem[];
   racingEntries: RacingEntry[];
 }
@@ -55,13 +66,15 @@ function navBadge(item: SideNavItem, counts: NavCounts) {
   switch (item.id) {
     case 'editor-hub':
       return pendingReview > 0 ? pendingReview : null;
+    // The register ids lost their "-production-system" tails when they became
+    // permission prefixes; a stale id here costs a count badge, silently.
     case 'horses':
       return horses.length || null;
-    case 'parties':
+    case 'people':
       return safeParties.length || null;
-    case 'media-production-system':
+    case 'media-records':
       return mediaItems.length || null;
-    case 'racing-production-system':
+    case 'racing-records':
       return racingEntries.length || null;
     default:
       return null;
@@ -245,7 +258,7 @@ function NavAccount({
 
   if (!currentUser) return null;
 
-  const initial = currentUser.displayName.charAt(0).toUpperCase();
+  const initial = currentUser.name.charAt(0).toUpperCase();
   const roleText = assignedRoles.length ? roleSummary(assignedRoles) : 'No role assigned';
 
   return (
@@ -282,7 +295,7 @@ function NavAccount({
           'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary-foreground/60',
           collapsed && 'justify-center border-transparent bg-transparent p-1',
         )}
-        title={collapsed ? `${currentUser.displayName} — ${roleText}` : undefined}
+        title={collapsed ? `${currentUser.name} — ${roleText}` : undefined}
       >
         <span
           className="flex h-8 w-8 flex-shrink-0 items-center justify-center rounded-full text-[12px] font-bold text-primary-foreground"
@@ -294,7 +307,7 @@ function NavAccount({
           <>
             <span className="min-w-0 flex-1">
               <span className="block truncate text-[13px] font-semibold leading-tight text-primary-foreground">
-                {currentUser.displayName}
+                {currentUser.name}
               </span>
               <span className="block truncate text-[11px] leading-tight text-primary-foreground/60">
                 {roleText}

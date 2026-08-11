@@ -76,24 +76,11 @@ function RolePill({ role, slug }: { role: RoleRecord | undefined; slug: string }
   );
 }
 
-/**
- * The one role that decides what a member can do.
- *
- * Assignment replaces rather than stacks, so `staffRoles` holds a single slug in
- * anything created since. Older rows can still carry two; superadmin wins there
- * because it short-circuits every permission check anyway — showing anything
- * else as the headline role would misdescribe their access.
- */
-function primaryRole(held: string[]): string | undefined {
-  return held.find((s) => s === 'superadmin') ?? held[0];
-}
-
 function MemberRow({
-  user, roles, bySlug, busy, isSelf, readOnly, onAssign, onResend, onRemove,
+  user, roles, busy, isSelf, readOnly, onAssign, onResend, onRemove,
 }: {
   user: StaffUser;
   roles: RoleRecord[];
-  bySlug: (slug: string) => RoleRecord | undefined;
   busy: boolean;
   /** You can't remove yourself — the server refuses, so don't offer it. */
   isSelf: boolean;
@@ -108,14 +95,13 @@ function MemberRow({
   onResend: (user: StaffUser) => void;
   onRemove: (user: StaffUser) => void;
 }) {
-  const held = user.staffRoles ?? [];
-  const current = primaryRole(held);
-  const role = current ? bySlug(current) : undefined;
+  // One role, already resolved by the server with its label/colour/icon — no
+  // lookup against the roles list, so a role the console hasn't loaded yet still
+  // renders correctly. `current` is the name the <select> matches on.
+  const role = user.role ?? undefined;
+  const current = role?.name;
   const color = roleColor(role);
-  // Legacy rows only — nothing can create these now. Named explicitly so the
-  // admin knows a second role is in play and that picking one clears it.
-  const extras = held.filter((s) => s !== current);
-  const name = user.displayName || user.email;
+  const name = user.name || user.email;
 
   return (
     <li className="px-4 py-3 flex items-start gap-3">
@@ -153,7 +139,7 @@ function MemberRow({
               >
                 {!current && <option value="">No role — no access</option>}
                 {roles.map((r) => (
-                  <option key={r.slug} value={r.slug} className="text-foreground bg-background">
+                  <option key={r.name} value={r.name} className="text-foreground bg-background">
                     {r.label}
                   </option>
                 ))}
@@ -183,15 +169,6 @@ function MemberRow({
           )}
         </div>
 
-        {extras.length > 0 && (
-          <p className="text-[12px] text-muted-foreground/70 flex items-start gap-1.5">
-            <AlertTriangle size={11} className="flex-shrink-0 mt-0.5" />
-            <span>
-              Also holds {extras.map((s) => bySlug(s)?.label ?? s).join(', ')} from before roles
-              became single{readOnly ? '.' : ' — choosing a role above clears it.'}
-            </span>
-          </p>
-        )}
       </div>
     </li>
   );
@@ -337,7 +314,7 @@ export function TeamManagementView({
     const r = await removeMember(confirmRemove.userId);
     setRemoving(false);
     if (r.ok) {
-      toast.success(`${confirmRemove.displayName || confirmRemove.email} was removed from the team.`);
+      toast.success(`${confirmRemove.name || confirmRemove.email} was removed from the team.`);
       setConfirmRemove(null);
     } else {
       toast.error(r.error ?? 'Could not remove them.');
@@ -350,17 +327,17 @@ export function TeamManagementView({
 
   // Default the invite dropdown to the first role once they load.
   useEffect(() => {
-    if (!teamRole && roles.length > 0) setTeamRole(roles[0].slug);
+    if (!teamRole && roles.length > 0) setTeamRole(roles[0].name);
   }, [roles, teamRole, setTeamRole]);
 
-  const bySlug = (slug: string) => roles.find((r) => r.slug === slug);
+  const bySlug = (slug: string) => roles.find((r) => r.name === slug);
 
   // Members first (they can be acted on), then invitations. Within each group,
   // alphabetical — so the list doesn't reshuffle as invites are sent.
   const rows = useMemo<Row[]>(
     () => [
       ...[...teamStaff]
-        .sort((a, b) => (a.displayName || a.email).localeCompare(b.displayName || b.email))
+        .sort((a, b) => (a.name || a.email).localeCompare(b.name || b.email))
         .map((user): Row => ({ kind: 'member', key: `u:${user.userId}`, user })),
       ...[...teamPending]
         .sort((a, b) => a.email.localeCompare(b.email))
@@ -435,7 +412,7 @@ export function TeamManagementView({
           >
             {roles.length === 0 && <option value="">No roles defined</option>}
             {roles.map((r) => (
-              <option key={r.slug} value={r.slug}>{r.label}</option>
+              <option key={r.name} value={r.name}>{r.label}</option>
             ))}
           </select>
           <Button
@@ -497,7 +474,6 @@ export function TeamManagementView({
                   key={row.key}
                   user={row.user}
                   roles={roles}
-                  bySlug={bySlug}
                   busy={roleBusy === row.user.userId}
                   isSelf={row.user.userId === myId}
                   readOnly={readOnly}
@@ -526,7 +502,7 @@ export function TeamManagementView({
         <DialogContent className="max-w-md rounded-sm">
           <DialogHeader>
             <DialogTitle>
-              Remove {confirmRemove?.displayName || confirmRemove?.email}?
+              Remove {confirmRemove?.name || confirmRemove?.email}?
             </DialogTitle>
             <DialogDescription>
               They lose every newsroom permission immediately. Their account, bylines and

@@ -2,7 +2,7 @@ import { useMemo, useEffect } from 'react';
 import { motion } from 'framer-motion';
 import { usePodcastStore } from '@/stores/podcastStore';
 import { useAuthStore } from '@/stores/authStore';
-import { isStaff } from '@/rbac/can';
+import { isAdmin } from '@/rbac/can';
 import { PodcastPlayer } from '@/components/PodcastPlayer';
 import {Mic, LoaderCircle} from 'lucide-react';
 import { Link } from 'react-router-dom';
@@ -19,7 +19,7 @@ export default function PodcastHub() {
   const activeEpisodeId = usePodcastStore((s) => s.activeEpisodeId);
   const setActiveEpisode = usePodcastStore((s) => s.setActiveEpisode);
   // Decides whether the empty state offers the producer workflow or a reader link.
-  const staff = isStaff(useAuthStore((s) => s.currentUser));
+  const staff = isAdmin(useAuthStore((s) => s.currentUser));
 
   // Only show published episodes on the public hub
   const publishedEpisodes = useMemo(
@@ -164,8 +164,8 @@ export default function PodcastHub() {
                 <div className="w-16 h-16 rounded-full bg-primary/10 flex items-center justify-center mx-auto mb-4">
                   <Mic size={28} className="text-primary" />
                 </div>
-                {/* The production CTA is staff-only — the Campaign Engine screen
-                    behind it needs `newsroom.access` and the podcast module, and
+                {/* The production CTA is admin-only — the Campaign Engine screen
+                    behind it needs an admin role and the podcast module, and
                     redirects a reader home. */}
                 <h3 className="font-[family-name:var(--font-display)] text-xl font-bold text-foreground mb-2">
                   The microphones are live.

@@ -1,122 +1,120 @@
 /**
- * Stable Press — Role Permission System
+ * Stable Press — permissions, client side.
  *
- * `can(action)` is the gate every UI affordance goes through.
+ * ONE ROW PER SCREEN, ONE COLUMN PER VERB. Every id is `<screen>.<verb>`, so
+ * `can('stories.edit')` reads as the question being asked. The union below
+ * MIRRORS `PermissionAction` in apps/server/src/lib/permissionCatalogue.ts and
+ * must stay in step with it — the server is the one that decides.
  *
  * THERE IS NO LOCAL ROLE MATRIX. Roles are rows in a database that a superadmin
  * edits at runtime, so the client cannot know what a role grants — it can only
- * be told. Every answer comes from `currentUser.access`, which the server
- * resolves as the union across every role the user holds.
+ * be told. Every answer comes from `currentUser.access`.
  *
  * Consequences worth knowing:
- *   - `can()` takes only an action. It used to take a role as well, which was
- *     the single highest-ranked one — so a user holding podcast_producer +
- *     editor silently lost every producer-only permission.
  *   - No access payload means NO permissions. Fails closed by construction.
  *   - This is a UI-affordance gate, never a security boundary. The server
  *     enforces the same permissions independently on every route.
+ *   - SCOPE ('own' | 'all') decides whose records a verb reaches. `can()` answers
+ *     "may they at all"; `canOn()` answers "…and on THIS record". A screen list
+ *     wants `can`; an edit button on someone else's story wants `canOn`.
  *
- * Reactivity: call sites read `currentUser` from the store and so re-render
- * when the session refreshes. `useCan` subscribes explicitly and is preferred
- * in new code.
+ * Reactivity: call sites read `currentUser` from the store and so re-render when
+ * the session refreshes. `useCan` subscribes explicitly and is preferred in new
+ * code.
  */
 
 import { useAuthStore } from '@/stores/authStore';
+import type { UploadKind } from '@/lib/upload';
 
 // ── Action catalogue ────────────────────────────────────────────────────────
 
 export type PermissionAction =
-  // Content
-  | 'content.draft.create'          // Create a new draft
-  | 'content.draft.edit_own'        // Edit own drafts only
-  | 'content.draft.edit_any'        // Edit any article
-  | 'content.submit'                // Submit draft → editorial queue
-  | 'content.editorial_review'      // Move into / out of editorial review
-  | 'content.send_revision'         // Send article back for revision
-  | 'content.approve'               // Approve content
-  // `content.legal_review`, `content.compliance` and `content.publisher_review`
-  // were here. They were the per-department gates of the retired twelve-status
-  // workflow and nothing ever checked them — approval is one step now.
-  // `content.newsletter` and `content.bulletin` were here too. They gated the
-  // `channels` axis, which is gone: a published story is news. /bulletins is the
-  // magazine newsstand, and the /newsletter page went with the axis — nothing in
-  // the app sends email beyond sign-in OTPs.
-  | 'content.schedule'              // Schedule for publication
-  | 'content.publish'               // Publish content
+  // Stories — the news pipeline
+  | 'stories.view'
+  | 'stories.create'
+  | 'stories.edit'
+  | 'stories.delete'
+  | 'stories.publish'
+  // Lenses over the same records. They carry `view` ONLY: every action taken
+  // inside them is checked against the Stories verbs above, so that a screen
+  // cannot become a way around the permission that governs the work.
+  | 'workflow.view'
+  | 'pipeline.view'
+  | 'editor-hub.view'
+  | 'instant.view'
+  // Blogs — a separate axis from Stories, two states (draft/published)
+  | 'blogs.view'
+  | 'blogs.create'
+  | 'blogs.edit'
+  | 'blogs.delete'
+  | 'blogs.publish'
+  // Magazines. NEW — magazines had no permission at all before, so every staff
+  // member could build, share and delete an edition.
+  | 'magazine.view'
+  | 'magazine.create'
+  | 'magazine.edit'
+  | 'magazine.delete'
+  | 'magazine.publish'
+  // Podcast — was THIRTEEN ids for one section
+  | 'podcast.view'
+  | 'podcast.create'
+  | 'podcast.edit'
+  | 'podcast.delete'
+  | 'podcast.publish'
+  // Stables — the four registers. They used to ride on `content.draft.create`,
+  // so "may start a story draft" decided who could edit the horse register.
+  | 'horses.view'
+  | 'horses.create'
+  | 'horses.edit'
+  | 'horses.delete'
+  | 'people.view'
+  | 'people.create'
+  | 'people.edit'
+  | 'people.delete'
+  | 'media-records.view'
+  | 'media-records.create'
+  | 'media-records.edit'
+  | 'media-records.delete'
+  | 'racing-records.view'
+  | 'racing-records.create'
+  | 'racing-records.edit'
+  | 'racing-records.delete'
+  // Community. No `comments.create` — leaving a comment needs no grant, and
+  // editing your own is ownership. Edit hides and restores; Delete removes.
+  | 'comments.view'
+  | 'comments.edit'
+  | 'comments.delete'
+  | 'emoji-analytics.view'
+  // Management. Team: Create = invite, Edit = change a role, Delete = remove.
+  | 'team.view'
+  | 'team.create'
+  | 'team.edit'
+  | 'team.delete'
+  | 'roles.view'
+  | 'roles.create'
+  | 'roles.edit'
+  | 'roles.delete'
+  | 'analytics.view'
+  | 'settings.view'
+  | 'settings.edit';
 
-  // Blogs — a separate axis from Stories. Two states (draft/published), so there
-  // is no submit/approve/schedule here. Mirrors PERMISSION_CATALOGUE on the
-  // server; see docs/BLOG-SYSTEM-PLAN.md §4.2.
-  | 'blog.create'                   // Start a new blog post
-  | 'blog.edit_own'                 // Edit posts they created
-  | 'blog.edit_any'                 // Edit anyone's post
-  | 'blog.publish'                  // Put a post live, or take it down
-  | 'blog.delete'                   // Delete a post
+/**
+ * Screens with no row in the grid: Overview is the general tab, and the two
+ * Personal screens only ever show your own things, so gating them would be
+ * theatre. Mirrors ALWAYS_ON_MODULES on the server.
+ */
+export const ALWAYS_ON_MODULES = ['overview', 'my-assets', 'compensation'];
 
-  // Media
-  | 'media.upload_own'              // Upload / manage personal media assets
-  | 'media.manage_all'              // Manage all media assets
-
-  // Compensation
-  | 'compensation.view_own'         // View own payout history
-
-  // Workflow board visibility is the `workflowStages` axis on the role, NOT a
-  // permission — `workflow.view_all_columns` / `workflow.view_own_columns` were
-  // removed because nothing consulted them. See the RESERVED note in
-  // apps/server/src/lib/permissionCatalogue.ts.
-
-  // Platform access — replace the old hardcoded role-family tests.
-  // `newsroom.access` is NOT grantable: it is absent from the server catalogue and
-  // emitted as a derived flag for every account holding a staff role. Being on the
-  // team is Campaign Engine access; the role decides what is inside it.
-  | 'newsroom.access'               // Is staff (derived, never ticked)
-  | 'platform.admin'                // Platform-wide override (was: is administrator)
-  | 'roles.manage'                  // Create roles, set permissions, assign them
-  | 'claims.verify'                 // Verify/reject party claims (split out of platform.admin)
-
-  // Team & admin
-  | 'team.view'                     // Read the staff roster (Team screen, read-only)
-  | 'team.manage'                   // Invite / remove team members, assign roles
-  | 'settings.view'                 // View newsroom settings
-  | 'settings.manage'               // Show/hide public sections (Website Customisation)
-  | 'analytics.view'                // View analytics dashboard
-
-  // Reader comments. ONE permission, not a create/edit/delete axis: leaving a
-  // comment needs no permission at all, and an author editing or deleting their
-  // own is ownership rather than a grant. The only grantable power is acting on
-  // OTHER people's comments. Mirrors PERMISSION_CATALOGUE on the server; see
-  // docs/COMMENTS-PLAN.md §6.
-  | 'comments.moderate'             // Hide, restore or remove anyone's comment
-
-  // ── Podcast workflow permissions ──────────────────────────────────────────
-  | 'podcast.manage'                // Broad podcast management (admin shorthand)
-  | 'podcast.episode.create'        // Create a new episode draft
-  | 'podcast.episode.edit_own'      // Edit own episode drafts
-  | 'podcast.episode.edit_any'      // Edit any episode (editors / admins)
-  | 'podcast.audio.upload'          // Upload / attach audio file to episode
-  | 'podcast.guests.manage'         // Add / remove guests on an episode
-  | 'podcast.episode.schedule'      // Set a publish date (move → Scheduled)
-  | 'podcast.episode.submit_review' // Submit episode for approval
-  | 'podcast.episode.approve'       // Approve an episode (move → Published)
-  | 'podcast.episode.publish'       // Publish episode & push to channels
-  | 'podcast.distribution.manage'   // Toggle distribution channels per episode
-  | 'podcast.episode.delete'        // Delete a draft or unpublished episode
-  | 'podcast.read_all';             // See unpublished episodes, not just live ones
-
-// The local role→permission matrix that used to live here is GONE. Roles are
-// rows in the database now, so the only correct answer comes from the server-
-// resolved set on the session (see authStore.ResolvedAccess).
-
+export type Scope = 'own' | 'all';
 
 // ── Public API ──────────────────────────────────────────────────────────────
 
 /**
  * Does the signed-in user hold this permission?
  *
- * Answered ENTIRELY from `currentUser.access`, the set the server resolved by
- * unioning every role the user holds. There is no client-side fallback: a role
- * is a database row, so guessing locally could only ever be wrong. No access
- * payload means no permissions — fail closed.
+ * Answered ENTIRELY from `currentUser.access`, which the server resolved. There
+ * is no client-side fallback: a role is a database row, so guessing locally
+ * could only ever be wrong. No access payload means no permissions.
  */
 export function can(action: PermissionAction): boolean {
   const access = useAuthStore.getState().currentUser?.access;
@@ -129,15 +127,54 @@ export function useCan(action: PermissionAction): boolean {
 }
 
 /**
- * May the user open this navigation surface? Modules are the coarse axis a
- * superadmin ticks per role; actions are the fine one. Fails closed.
+ * How far a screen's verbs reach. 'own' is the default and the safe one: a role
+ * that has never been given a scope cannot touch anyone else's work.
+ */
+export function scopeFor(screen: string): Scope {
+  const access = useAuthStore.getState().currentUser?.access;
+  if (!access) return 'own';
+  if (access.isSuperAdmin) return 'all';
+  return access.scopes?.[screen] === 'all' ? 'all' : 'own';
+}
+
+/**
+ * …and may they do it to THIS record?
+ *
+ * `owns` is passed in rather than worked out here because ownership is not one
+ * thing: a story matches on byline, a blog post on its creator id. Mirrors
+ * `canOn` on the server, which is the check that actually counts.
+ */
+export function canOn(action: PermissionAction, owns: boolean): boolean {
+  if (!can(action)) return false;
+  const screen = action.slice(0, action.lastIndexOf('.'));
+  return scopeFor(screen) === 'all' || owns;
+}
+
+/** "…anyone's, not just my own." */
+export function canAnyones(action: PermissionAction): boolean {
+  return canOn(action, false);
+}
+
+/**
+ * May the user open this navigation surface?
+ *
+ * DERIVED from `<module>.view` now — the module list on the wire is built from
+ * exactly that, so the sidebar cannot disagree with the permissions the way a
+ * separately-ticked module array could.
  */
 export function canOpenModule(moduleId: string): boolean {
+  if (ALWAYS_ON_MODULES.includes(moduleId)) return !!useAuthStore.getState().currentUser;
   const access = useAuthStore.getState().currentUser?.access;
   return access ? access.modules.includes(moduleId) : false;
 }
 
-/** Kanban columns this user may see — the third axis, was `allowedStatuses`. */
+/**
+ * Kanban columns this user may see.
+ *
+ * Every column, for anyone who can open the board: which CARDS appear is the
+ * Stories scope, and which TRANSITIONS are allowed is the verb. The per-role
+ * `workflowStages` axis is gone.
+ */
 export function visibleWorkflowStages(): string[] {
   return useAuthStore.getState().currentUser?.access?.workflowStages ?? [];
 }
@@ -157,43 +194,68 @@ export function canAny(actions: PermissionAction[]): boolean {
   return actions.some(can);
 }
 
+// ── Uploads ─────────────────────────────────────────────────────────────────
+
+/**
+ * What each upload KIND requires. A MIRROR of KIND_PERMISSIONS in
+ * apps/server/src/routes/uploads/index.ts.
+ *
+ * UPLOADING IS NOT A POWER OF ITS OWN — it is part of editing the thing the file
+ * belongs to. `media.upload_own` used to be a grant in its own right, which is
+ * how a role holding `content.draft.edit_any` could open the Article Studio,
+ * attach a hero photo, and be told it lacked permission to upload media files.
+ *
+ * An empty list means "any signed-in account": the identity/self-service kinds,
+ * and `misc`, which is your own file drawer.
+ */
+const UPLOAD_KIND_PERMISSIONS: Record<UploadKind, PermissionAction[]> = {
+  evidence: [],
+  avatar: [],
+  party: [],
+  horse: [],
+  misc: [],
+  media: ['stories.edit'],
+  blog: ['blogs.edit'],
+  podcast: ['podcast.edit'],
+};
+
+/**
+ * May the signed-in user upload this kind of file? Reactive, so an affordance
+ * appears the moment a role gains the permission. Hide the control rather than
+ * disabling it: a disabled paperclip explains nothing.
+ */
+export function useCanUpload(kind: UploadKind): boolean {
+  return useAuthStore((s) => {
+    const needed = UPLOAD_KIND_PERMISSIONS[kind];
+    if (needed.length === 0) return !!s.currentUser;
+    const held = s.currentUser?.access?.permissions;
+    return held ? needed.some((p) => held.includes(p)) : false;
+  });
+}
+
 // ── Ownership-scoped helpers ────────────────────────────────────────────────
 
 /**
- * Can the user edit this specific article? `edit_any` wins outright; otherwise
- * `edit_own` requires the byline to match.
+ * May the user edit this specific story? Scope 'all' wins outright; scope 'own'
+ * requires the byline to match.
  */
 export function canEditArticle(
   articleAuthor: string,
   currentUserDisplayName: string | null | undefined
 ): boolean {
-  if (can('content.draft.edit_any')) return true;
-  if (can('content.draft.edit_own')) {
-    return articleAuthor === currentUserDisplayName;
-  }
-  return false;
+  return canOn('stories.edit', !!currentUserDisplayName && articleAuthor === currentUserDisplayName);
 }
 
-/**
- * Returns true if the current user can edit a specific podcast episode.
- * Podcast producers can edit their own; editors/admins can edit any.
- */
+/** Same question for a podcast episode, matched on its producer. */
 export function canEditEpisode(
   episodeProducer: string | undefined,
   currentUserDisplayName: string | null | undefined
 ): boolean {
-  if (can('podcast.episode.edit_any')) return true;
-  if (can('podcast.episode.edit_own')) {
-    return episodeProducer === currentUserDisplayName;
-  }
-  return false;
+  return canOn('podcast.edit', !!currentUserDisplayName && episodeProducer === currentUserDisplayName);
 }
 
 // ── Podcast workflow helpers ─────────────────────────────────────────────────
 
-/**
- * Returns the allowed next statuses the role can move an episode to.
- */
 export type EpisodeStatus =
   | 'draft'
   | 'audio_uploaded'
@@ -203,32 +265,20 @@ export type EpisodeStatus =
   | 'in_review'
   | 'published';
 
+/** Which statuses the role may move an episode to from here. */
 export function allowedNextStatuses(currentStatus: EpisodeStatus): EpisodeStatus[] {
-
   const transitions: Record<EpisodeStatus, { status: EpisodeStatus; permission: PermissionAction }[]> = {
-    draft: [
-      { status: 'audio_uploaded', permission: 'podcast.audio.upload' },
-    ],
-    audio_uploaded: [
-      { status: 'guests_added', permission: 'podcast.guests.manage' },
-    ],
-    guests_added: [
-      { status: 'description_written', permission: 'podcast.episode.edit_own' },
-    ],
-    description_written: [
-      { status: 'scheduled', permission: 'podcast.episode.schedule' },
-    ],
-    scheduled: [
-      { status: 'in_review', permission: 'podcast.episode.submit_review' },
-    ],
+    draft: [{ status: 'audio_uploaded', permission: 'podcast.edit' }],
+    audio_uploaded: [{ status: 'guests_added', permission: 'podcast.edit' }],
+    guests_added: [{ status: 'description_written', permission: 'podcast.edit' }],
+    description_written: [{ status: 'scheduled', permission: 'podcast.publish' }],
+    scheduled: [{ status: 'in_review', permission: 'podcast.edit' }],
     in_review: [
-      { status: 'published', permission: 'podcast.episode.approve' },
-      { status: 'scheduled', permission: 'podcast.episode.approve' }, // send back
+      { status: 'published', permission: 'podcast.publish' },
+      { status: 'scheduled', permission: 'podcast.publish' }, // send back
     ],
     published: [], // terminal
   };
 
-  return transitions[currentStatus]
-    .filter((t) => can(t.permission))
-    .map((t) => t.status);
+  return transitions[currentStatus].filter((t) => can(t.permission)).map((t) => t.status);
 }

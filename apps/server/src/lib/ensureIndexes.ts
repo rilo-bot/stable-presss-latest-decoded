@@ -1,21 +1,16 @@
-// ---------------------------------------------------------------------------
-// Startup index bootstrap.
-//
-// The app previously created NO indexes, so every find()/claimOne() was a
-// collection scan that grew with total data volume (see
-// docs/MAGAZINE-V2-SCALABILITY-REVIEW.md, risk #1). This runs once per process
-// right after the Mongo connection is established (see db.ts) and is fully
-// idempotent — createIndex is a no-op when an index with the same derived name
-// already exists, so it's safe on every boot. In MongoDB 4.2+ index builds are
-// non-blocking, so this does not stall reads.
-//
-// Every key set includes `deletedAt` because db.ts folds `deletedAt: null` into
-// every find()/updateOne()/claimOne() query, so an index that omits it can't
-// fully serve those queries.
-// ---------------------------------------------------------------------------
-
 import type { Db } from 'mongodb'
 import { COL } from './magazineV2/collections.js'
+import {
+  ADMIN_ROLES,
+  INVITES,
+  ORGANISATIONS,
+  ORG_MEMBERS,
+  OTPS,
+  PARTIES,
+  PEOPLE,
+  ROLES,
+  USERS,
+} from './collections.js'
 
 interface IndexSpec {
   collection: string
@@ -29,158 +24,106 @@ interface IndexSpec {
 }
 
 const INDEX_SPECS: IndexSpec[] = [
-  // Page reads: pagesFor() does find({ magazineId }) ordered by `index`. Hit on
-  // every issue load, page GET, status poll, publish, and structural op.
+  // Page reads, ordered by index. Hit on every issue load and structural op.
   { collection: COL.pages, keys: { magazineId: 1, deletedAt: 1, index: 1 } },
-  // Worker queue: claimOne({ status: 'queued' }) sorted by createdAt (hot path,
-  // polled ~every 2s per worker) and the idle sweep's find({ status: 'running' }).
+  // Worker queue: claimOne({ status: queued }) by createdAt. Polled every ~2s.
   { collection: COL.jobs, keys: { status: 1, deletedAt: 1, createdAt: 1 } },
-  // Reap finished jobs. Nothing ever deleted a `done` job, so the queue was
-  // append-only for the life of the deployment — every issue ever generated left a
-  // permanent row behind. `expireAfterSeconds: 0` means "expire exactly at the time
-  // in the field", and the worker only stamps `expiresAt` once a job is terminal
-  // (see terminalStamp() in apps/worker/src/queue.ts), so a queued or running job
-  // has no such field and can never be collected no matter how long it takes.
-  //
-  // This is a HARD delete by the server's TTL monitor, not the soft delete used
-  // everywhere else — correct here, because a finished job is disposable
-  // infrastructure and its outcome has already been written onto the magazine.
+  // TTL reap of finished jobs. The worker stamps expiresAt only when terminal.
   { collection: COL.jobs, keys: { expiresAt: 1 }, options: { expireAfterSeconds: 0 } },
   // Per-magazine media library: find({ magazineId }).
   { collection: COL.media, keys: { magazineId: 1, deletedAt: 1 } },
-  // Per-magazine chat thread: match { magazineId } + range/sort on createdAt for
-  // the paginated GET /issues/:id/chat (grows unbounded, so it must not scan).
+  // Per-magazine chat thread. Grows unbounded, so it must not scan.
   { collection: COL.chat, keys: { magazineId: 1, deletedAt: 1, createdAt: -1 } },
   // Issue library list: served newest-first by updatedAt.
   { collection: COL.magazines, keys: { deletedAt: 1, updatedAt: -1 } },
-  // Blogs. The public index sorts published posts newest-first, and the staff
-  // list sorts everything by last touched — both run through aggregate() with a
-  // $skip/$limit, so they must not scan.
+  // Blogs: public index (published, newest first) and the staff list.
   { collection: 'blogs', keys: { deletedAt: 1, status: 1, publishedAt: -1 } },
   { collection: 'blogs', keys: { deletedAt: 1, updatedAt: -1 } },
   { collection: 'blogs', keys: { tags: 1, deletedAt: 1 } },
   // Retired slugs still resolve (301), so this lookup is on the public read path.
   { collection: 'blogs', keys: { slugHistory: 1, deletedAt: 1 } },
   // ── Stories & the public newsstand ──
-  //
-  // Deliberately NOT one index per collection. Most registers (horses, parties,
-  // horsePartyLinks, podcastEpisodes, breakingNews, sponsors) are read with a bare
-  // `find()` and no filter at all — the screens genuinely list everything. An index
-  // cannot make an unfiltered scan cheaper, so adding one there would be decoration
-  // that costs write throughput and buys nothing. What those routes actually need is
-  // pagination; until they have it, the scan is the honest cost. `organisations` is
-  // only ever read by id, which `_id_` already serves. Indexes below exist ONLY
-  // where a query really filters or sorts.
-  //
-  // articles: reconcileStories() runs find({ status: 'scheduled' }) and the legacy
-  // heal runs find({ status: { $nin: … } }) on the way into the list route, and the
-  // public list now filters status server-side (routes/articles.ts). One index on
-  // status serves all three.
   { collection: 'articles', keys: { status: 1, deletedAt: 1 } },
-  // The published-issue newsstand: GET /api/issues matches { unpublishedAt: null }
-  // and sorts publishedAt desc (an aggregate, so `deletedAt` is matched explicitly).
-  // Equality keys first, then the sort key, so one index serves both. The staff
-  // ?includeUnpublished=1 path drops the unpublishedAt equality and therefore sorts
-  // in memory — acceptable: it is opt-in, authenticated, and small.
+  // The published-issue newsstand. Equality keys first, then the sort key.
   { collection: COL.published, keys: { deletedAt: 1, unpublishedAt: 1, publishedAt: -1 } },
-  // One member's notification list — per-user and unbounded, so it must not scan
-  // the whole collection to find a single reader's rows.
+  // One member's notification list. Per-user and unbounded.
   { collection: 'notifications', keys: { recipientUserId: 1, deletedAt: 1 } },
-  // "Does this member already have a tipper profile" — checked on the create path
-  // and read on every tipping screen.
+  // Does this member already have a tipper profile?
   { collection: 'tipperProfiles', keys: { userId: 1, deletedAt: 1 } },
-  // A slug is a post's public identity — uniqueness is enforced in the database,
-  // not just by uniqueSlug(), because two concurrent creates would both pass an
-  // application-level check. PARTIAL on deletedAt:null for the same reason the
-  // roles index below is: deletes are soft, and a tombstone must not hold its
-  // slug hostage forever.
+  // A slug is a post public identity. PARTIAL, because deletes are soft.
   {
     collection: 'blogs',
     keys: { slug: 1 },
     options: { unique: true, partialFilterExpression: { deletedAt: null } },
   },
   // User lookup by email (collaborator-add and auth paths).
-  //
-  // UNIQUE, for exactly the reason the blogs.slug index above is: signup checks
-  // for an existing address at the application level (routes/auth.ts), and two
-  // concurrent signups for the same address would both pass it. Duplicate users
-  // make `find({ email })[0]` arbitrary, so sign-in, invite-apply and org
-  // member-add could each pick a different row for one person.
-  // Partial on deletedAt:null because deletes are soft.
-  //
-  // If the collection ALREADY holds duplicates this build fails — ensureIndexes
-  // runs under Promise.allSettled, so it logs and the other indexes still apply.
-  // `scripts/migrate-user-model.ts --check` reports duplicate emails so they can
-  // be merged first. See docs/AUTH-RBAC-REVIEW.md M6.
   {
-    collection: 'users',
+    collection: USERS,
     keys: { email: 1 },
     options: { unique: true, partialFilterExpression: { deletedAt: null } },
   },
-  // The staff axis is a scalar field on the user (docs/USER-MODEL-PLAN.md §1.2), so
-  // the roster, assignee counts, superadmin-holder count and "is this person staff"
-  // are all one indexed lookup instead of the full-collection scans they are today.
-  { collection: 'users', keys: { staffRoleSlug: 1, deletedAt: 1 } },
-  // Sign-in reads the newest OTP for an address on an UNAUTHENTICATED, unthrottled
-  // endpoint, and `deleteOne` is a soft delete — so this collection only grows and
-  // every request scanned all of it. See docs/AUTH-RBAC-REVIEW.md M7.
-  { collection: 'otps', keys: { email: 1, deletedAt: 1, createdAt: -1 } },
-  // ── Membership edges (docs/USER-MODEL-PLAN.md §3) ──
-  // Unique keys are PARTIAL on deletedAt:null: the reconciler in lib/membership.ts
-  // soft-deletes rows that leave the user document, and a tombstone must not stop
-  // the same (user, party, role) being re-created later.
+  // Sign-in reads the newest OTP for an address, on an unauthenticated route.
+  { collection: OTPS, keys: { email: 1, deletedAt: 1, createdAt: -1 } },
+  // The admin roster: find({ isAdmin: true }).
+  { collection: USERS, keys: { isAdmin: 1, deletedAt: 1 } },
+  // ONE ROLE PER ADMIN. This index IS the rule — a second link row for the same
+  // person is rejected by the database rather than by a check someone can forget.
+  //
+  // PARTIAL, and that is load-bearing: `db.deleteOne` SOFT-deletes, so revoking a
+  // role leaves a tombstoned link row behind. Without the filter that tombstone
+  // keeps occupying `userId`, and re-granting a role to the same person throws
+  // E11000 — which Express 4 does not forward from an async handler, so the
+  // request hangs forever rather than erroring. Verified: a `{deletedAt: null}`
+  // partial filter DOES cover documents missing the field, and DOES exclude ones
+  // where it is set, which is exactly the behaviour needed here.
   {
-    collection: 'partyMemberships',
-    keys: { userId: 1, partyId: 1, role: 1 },
+    collection: ADMIN_ROLES,
+    keys: { userId: 1 },
+    // `userId: {$exists: true}` as well as the soft-delete filter, because
+    // `adminRoles` can legitimately hold rows WITHOUT a userId: during a
+    // migration run with --keep-legacy it still carries the old role
+    // DEFINITIONS, and every one of those would index as `userId: null` — so the
+    // second definition collides with the first and the index cannot be built.
+    // Verified by rehearsing the migration against a scratch database.
+    options: {
+      unique: true,
+      partialFilterExpression: { userId: { $exists: true }, deletedAt: null },
+    },
+  },
+  // "Who holds this role?" — the assignee tally and role deletion.
+  { collection: ADMIN_ROLES, keys: { roleId: 1 } },
+  // A role NAME is unique, enforced in the database. PARTIAL: deletes are soft.
+  {
+    collection: ROLES,
+    keys: { name: 1 },
     options: { unique: true, partialFilterExpression: { deletedAt: null } },
   },
-  // The verification queue: filter by status, oldest first, PAGINATED — which the
-  // embedded array could not support at all.
-  { collection: 'partyMemberships', keys: { status: 1, deletedAt: 1, createdAt: 1 } },
-  // Verify/reject resolve by the original embedded claim id, which is what the web
-  // app sends. Not unique: a soft-deleted row keeps its claimId, and re-adding the
-  // same claim is legal.
-  { collection: 'partyMemberships', keys: { claimId: 1, deletedAt: 1 } },
-  // "Who is behind this party" (lib/notify.ts usersForParty, on every horse-link write).
-  { collection: 'partyMemberships', keys: { partyId: 1, status: 1, deletedAt: 1 } },
-  // Scope resolution, on every authenticated request once P2 lands.
-  { collection: 'partyMemberships', keys: { userId: 1, status: 1, deletedAt: 1 } },
+  // parties. NOT unique: unclaimed rows have no userId, and one person may hold
+  // the same role on two horses.
+  { collection: PARTIES, keys: { userId: 1, deletedAt: 1 } },
+  // Scope resolution reads these on every authenticated request (lib/scope.ts).
+  { collection: PARTIES, keys: { orgId: 1, deletedAt: 1 } },
+  { collection: PARTIES, keys: { horseId: 1, deletedAt: 1 } },
+  // The unclaimed register: "who can I claim?" filtered by role.
+  { collection: PARTIES, keys: { taken: 1, role: 1, deletedAt: 1 } },
+  // Every read that shows a party name joins the person in through this.
+  { collection: PARTIES, keys: { personId: 1, deletedAt: 1 } },
+  // people. Names are how the register is searched and sorted.
+  { collection: PEOPLE, keys: { name: 1, deletedAt: 1 } },
   {
-    collection: 'orgMemberships',
+    collection: ORG_MEMBERS,
     keys: { userId: 1, orgId: 1 },
     options: { unique: true, partialFilterExpression: { deletedAt: null } },
   },
-  // One org's member list (routes/organisations.ts, currently a full users scan).
-  { collection: 'orgMemberships', keys: { orgId: 1, deletedAt: 1 } },
-  { collection: 'orgMemberships', keys: { userId: 1, deletedAt: 1 } },
-  // Invite links resolve by token hash on an unauthenticated route — the one
-  // lookup an anonymous caller can trigger, so it must not scan.
-  { collection: 'pendingStaffGrants', keys: { tokenHash: 1 } },
-  { collection: 'pendingStaffGrants', keys: { email: 1 } },
-  // Dynamic RBAC: slug is the key stored on every user, so it must be unique.
-  // Enforced in the database, not just in the create/rename handler — two
-  // concurrent creates would otherwise both pass the application-level check.
-  //
-  // PARTIAL on `deletedAt: null`, because deletes here are soft. A plain unique
-  // index keeps a tombstoned row occupying its slug forever, so deleting a role
-  // and creating another with the same name fails with E11000. The filter also
-  // covers docs where `deletedAt` is absent entirely, matching how db.ts reads.
-  {
-    collection: 'roles',
-    keys: { slug: 1 },
-    options: { unique: true, partialFilterExpression: { deletedAt: null } },
-  },
+  // One org's member list.
+  { collection: ORG_MEMBERS, keys: { orgId: 1, deletedAt: 1 } },
+  { collection: ORG_MEMBERS, keys: { userId: 1, deletedAt: 1 } },
+  // The organisation a member belongs to, and who owns it.
+  { collection: ORGANISATIONS, keys: { ownerUserId: 1, deletedAt: 1 } },
+  // Invite links resolve by token hash on an unauthenticated route.
+  { collection: INVITES, keys: { tokenHash: 1 } },
+  { collection: INVITES, keys: { email: 1 } },
   // ── Reactions (docs/REACTIONS-PLAN.md) ──
-  // NOTE: none of these carry `deletedAt`, unlike every index above. Reactions
-  // are the one collection that opts OUT of the soft-delete convention and go
-  // through lib/reactions.ts + rawCollection() instead of db.collection().
-  //
-  // This index is not an optimisation — it IS the "one reaction per reader"
-  // rule. Enforced application-side only, two taps in flight at once would each
-  // pass the check and write a row, and every count the dashboard prints would
-  // silently stop being a count of people. Plain UNIQUE with no partial filter,
-  // precisely because clearing a reaction REMOVES the row rather than stamping
-  // it — a tombstone would hold the key and block the reader's next pick.
   {
     collection: 'reactions',
     keys: { targetType: 1, targetId: 1, userId: 1 },
@@ -188,44 +131,23 @@ const INDEX_SPECS: IndexSpec[] = [
   },
   // The count aggregation for one target.
   { collection: 'reactions', keys: { targetType: 1, targetId: 1 } },
-  // Every part of a post in ONE query instead of N+1 — a post may carry up to
-  // 20 parts, each its own reaction target.
+  // Every part of a post in ONE query instead of N+1.
   { collection: 'reactions', keys: { parentId: 1 } },
   // The analytics date window.
   { collection: 'reactions', keys: { createdAt: -1 } },
   // ── Comments (docs/COMMENTS-PLAN.md) ──
-  //
-  // Unlike `reactions` above, comments DO carry `deletedAt` in every key set:
-  // they go through the normal `db.collection()` wrapper and its soft delete,
-  // because a comment is a paragraph somebody wrote rather than a single field
-  // re-entered in one click, and a moderation decision should stay reversible.
-  //
-  // The thread read: match one target, newest first, cursor-paginated on
-  // createdAt. Equality keys first, then the sort key, so ONE index serves the
-  // match, the sort and the `createdAt: { $lt: cursor }` range together.
   { collection: 'comments', keys: { targetType: 1, targetId: 1, deletedAt: 1, createdAt: -1 } },
-  // The moderation queue's working list: reported-and-still-visible, most
-  // reported first. Without this, opening the queue scans every comment ever
-  // left — the one screen that grows with the whole platform's conversation.
+  // The moderation queue: reported-and-still-visible, most reported first.
   { collection: 'comments', keys: { deletedAt: 1, status: 1, reportCount: -1 } },
   // "Everything, newest first" — the queue's `all` filter and the hidden list.
   { collection: 'comments', keys: { deletedAt: 1, createdAt: -1 } },
-  // ONE REPORT PER READER PER COMMENT. Like the reactions unique index, this is
-  // not an optimisation — it IS the rule, and `reportCount` is only a count of
-  // PEOPLE because of it. Two taps racing each other would otherwise each pass
-  // the application-level check and write a row, and the number a moderator
-  // triages on would quietly stop meaning what it says.
-  //
-  // PARTIAL on `deletedAt: null`, unlike reactions' plain unique index, because
-  // reports go through the soft-delete wrapper: a tombstoned report must not
-  // hold the key and block the same reader reporting a restored comment again.
+  // ONE REPORT PER READER PER COMMENT. This IS the rule, not an optimisation.
   {
     collection: 'commentReports',
     keys: { commentId: 1, userId: 1 },
     options: { unique: true, partialFilterExpression: { deletedAt: null } },
   },
-  // Recounting a comment's reports after each new one, and the "have I already
-  // reported these?" lookup for a whole page of a thread.
+  // Recount a comment reports, and "have I already reported these?".
   { collection: 'commentReports', keys: { commentId: 1, deletedAt: 1 } },
   { collection: 'commentReports', keys: { userId: 1, deletedAt: 1 } },
 ]

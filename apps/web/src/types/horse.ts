@@ -37,36 +37,18 @@ export interface Horse {
   brandFreeze?: string;
   passportNumber?: string;
 
-  /* ── Section 3: Connections & Personnel — Party ID references ── */
-  /**
-   * Party IDs for owners (role: 'owner'). Replaces legacy `owner` string.
-   * Multiple owners / syndicate members allowed.
+  /* ── Section 3: Connections & Personnel ──
+   *
+   * NOT STORED ON THE HORSE. A connection is a party EDGE
+   * (`{ personId, role, horseId }`) and lives in the register.
+   *
+   * `ownerIds` / `trainerIds` / `jockeyIds` / `breederIds` /
+   * `bloodstockAgentIds` / `syndicateManagerIds` / `personnelIds` used to sit
+   * here as well, and the server accepted writes to both representations — so
+   * the same fact had two homes and neither won. Read them with
+   * `connectionsForHorse`, write them with `reconcileHorseConnections`, both in
+   * lib/horseConnections.ts.
    */
-  ownerIds?: string[];
-  /**
-   * Party IDs for trainers (role: 'trainer').
-   */
-  trainerIds?: string[];
-  /**
-   * Party IDs for jockeys / riders (role: 'jockey').
-   */
-  jockeyIds?: string[];
-  /**
-   * Party IDs for breeders (role: 'breeder').
-   */
-  breederIds?: string[];
-  /**
-   * Party IDs for bloodstock agents (role: 'bloodstock agent').
-   */
-  bloodstockAgentIds?: string[];
-  /**
-   * Party IDs for syndicate managers (role: 'syndicate manager').
-   */
-  syndicateManagerIds?: string[];
-  /**
-   * Party IDs for any personnel (role: 'personnel') — vets, farriers, strappers, etc.
-   */
-  personnelIds?: string[];
 
   /* ── Section 4: Racing Summary ── */
   careerRecord?: string;

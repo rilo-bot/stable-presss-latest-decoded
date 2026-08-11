@@ -46,7 +46,7 @@ export default function PodcastScreen() {
 
   const episodes = usePodcastStore((s) => s.episodes);
   const deleteEpisode = usePodcastStore((s) => s.deleteEpisode);
-  const displayName = useAuthStore((s) => s.currentUser?.displayName);
+  const displayName = useAuthStore((s) => s.currentUser?.name);
 
   const [createOpen, setCreateOpen] = useState(false);
   const [selectedEpisode, setSelectedEpisode] = useState<PodcastEpisode | null>(null);
@@ -55,12 +55,9 @@ export default function PodcastScreen() {
   const [deleting, setDeleting] = useState(false);
 
   const hasPodcastAccess =
-    can('podcast.manage') ||
-    can('podcast.episode.create') ||
-    can('podcast.episode.approve') ||
-    can('podcast.episode.edit_any');
+    can('podcast.view');
 
-  const canCreate = can('podcast.episode.create');
+  const canCreate = can('podcast.create');
 
   const filteredEpisodes = useMemo(() => {
     const base =

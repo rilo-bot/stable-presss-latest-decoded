@@ -75,14 +75,8 @@ export const empty = (): FormData => ({
   microchip: '',
   brandFreeze: '',
   passportNumber: '',
-  // Party ID arrays
-  ownerIds: [],
-  trainerIds: [],
-  jockeyIds: [],
-  breederIds: [],
-  bloodstockAgentIds: [],
-  syndicateManagerIds: [],
-  personnelIds: [],
+  // Connections are NOT here. They are party edges, held in their own state by
+  // HorseForm and saved separately — see lib/horseConnections.ts.
   careerRecord: '',
   careerWinnings: undefined,
   lastTenForm: '',

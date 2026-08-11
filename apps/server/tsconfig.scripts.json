@@ -1,0 +1,30 @@
+// Typechecking for `scripts/`, which tsconfig.json deliberately does not build.
+//
+// The build compiles `src` only (rootDir: src → dist), so the operational
+// scripts — grant-superadmin, sync-role-catalogue, sweep-orphan-objects,
+// check-permission-enforcement, clean-user-model — were never typechecked at
+// all. `npm run build` passed with broken imports sitting inside them.
+//
+// That is not theoretical: grant-superadmin.ts, the documented LOCKOUT RECOVERY
+// path, imported three symbols that no longer existed. Under tsx's ESM→CJS
+// interop a missing named import is `undefined` rather than an error, so it ran,
+// queried on `undefined`, matched every user, and reported success having
+// written nothing.
+//
+// This project emits nothing — it exists purely so `tsc` reads those files.
+// Run it with `npm run check:types`.
+{
+  "extends": "./tsconfig.json",
+  "compilerOptions": {
+    "noEmit": true,
+    "declaration": false,
+    "rootDir": ".",
+    // The build emits CommonJS, but these scripts are never built — tsx runs the
+    // TypeScript directly, as ES modules. check-permission-enforcement.ts uses
+    // `import.meta.url` and works fine there; only a CommonJS `module` setting
+    // rejects it. Modelling how they actually execute is the point.
+    "module": "ESNext",
+    "moduleResolution": "Node"
+  },
+  "include": ["src", "scripts"]
+}

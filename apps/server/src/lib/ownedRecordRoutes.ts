@@ -12,7 +12,9 @@
 import { Router } from 'express'
 import { db } from './db.js'
 import { attachAccount } from './auth.js'
-import { isStaffIdentity, withIdentityDefaults } from './identity.js'
+import { withIdentityDefaults } from './identity.js'
+import { isAdmin } from './rbac.js'
+import { resolveAccount } from './effectiveAccess.js'
 import {
   canManageRecord,
   canViewRecord,
@@ -24,7 +26,7 @@ import {
   type RecordShare,
 } from './recordSharing.js'
 
-type WithMongoId = { _id: string; [key: string]: unknown }
+import type { WithMongoId } from './project.js'
 
 export interface OwnedRecordOptions {
   /** Mongo collection name. */
@@ -164,13 +166,14 @@ export function ownedRecordRouter(opts: OwnedRecordOptions): Router {
       res.status(404).json({ error: 'No account with that email.' })
       return
     }
-    const identity = withIdentityDefaults({ id: target._id, ...target })
-    // Sharing cannot be a back door into the newsroom — the recipient must
-    // already be allowed in. Synchronous now: newsroom access is "holds a staff
-    // role", a field on the document already fetched, so there is no registry
-    // lookup to await.
-    if (!isStaffIdentity(identity)) {
-      res.status(400).json({ error: 'That person does not have newsroom access, so they cannot be added.' })
+    // RESOLVED, not read off the user document. Sharing cannot be a back door
+    // into the newsroom — the recipient must already be allowed in — and
+    // `users.isAdmin` is a denormalised copy of the `admins` row that can be
+    // stale. This used to pass a bare `IdentityUser`, which has no
+    // `isSuperAdmin` at all, so the check silently collapsed to the raw flag.
+    const identity = await resolveAccount(withIdentityDefaults({ id: target._id, ...target }))
+    if (!isAdmin(identity)) {
+      res.status(400).json({ error: 'That person is not an admin, so they cannot be added.' })
       return
     }
     if (identity.id === found.createdByUserId) {
@@ -185,7 +188,7 @@ export function ownedRecordRouter(opts: OwnedRecordOptions): Router {
     const share: RecordShare = {
       userId: identity.id,
       email: identity.email,
-      displayName: identity.displayName,
+      displayName: identity.name,
       sharedAt: new Date().toISOString(),
       sharedBy: req.account!.id,
     }

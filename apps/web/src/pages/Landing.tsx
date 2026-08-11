@@ -12,7 +12,7 @@ import { useBreakingNewsStore } from '@/stores/breakingNewsStore';
 import { useSponsorStore } from '@/stores/sponsorStore';
 import { useMetricsStore } from '@/stores/metricsStore';
 import { useBlogStore } from '@/stores/blogStore';
-import { isStaff } from '@/rbac/can';
+import { isAdmin } from '@/rbac/can';
 import { TrendingUp, Users, BookOpen, Award } from 'lucide-react';
 import { usePageMeta } from '@/lib/usePageMeta';
 // The same category taxonomy /news filters on, so the front page's
@@ -28,6 +28,7 @@ import { LandingBulletins } from './landing/LandingBulletins';
 import { LandingSidebar } from './landing/LandingSidebar';
 import { LandingPodcast } from './landing/LandingPodcast';
 import { LandingFooter } from './landing/LandingFooter';
+import { useRegister } from '@/lib/register';
 
 /* ── Component ────────────────────────────────────────── */
 
@@ -37,6 +38,8 @@ export default function Landing() {
   // === auto fetch-on-mount (backend planner) ===
   const fetchHorses = useHorseStore((s) => s.fetchHorses);
   const fetchParties = usePartyStore((s) => s.fetchParties);
+  /** Raw edges — a horse's connections come from these, not the joined register. */
+  const partyEdges = usePartyStore((s) => s.parties);
   const fetchArticles = useArticleStore((s) => s.fetchArticles);
   const fetchPodcastEpisodes = usePodcastStore((s) => s.fetchPodcastEpisodes);
   const fetchIssues = useIssueStore((s) => s.fetchIssues);
@@ -79,7 +82,7 @@ export default function Landing() {
   // Real loading state — drives the skeleton until articles actually arrive.
   const articlesLoading = useArticleStore((s) => !s.loaded && !s.error);
   const horses = useHorseStore((s) => s.horses);
-  const parties = usePartyStore((s) => s.parties);
+  const parties = useRegister();
   const episodes = usePodcastStore((s) => s.episodes);
   const issues = useIssueStore((s) => s.issues);
   const breakingItems = useBreakingNewsStore((s) => s.items);
@@ -88,7 +91,7 @@ export default function Landing() {
   // Its own slice, not the `items` array /blog and the newsroom share — see the
   // note on `latest` in stores/blogStore.ts.
   const latestBlogs = useBlogStore((s) => s.latest);
-  const horseConn = useMemo(() => connectionResolver(parties ?? []), [parties]);
+  const horseConn = useMemo(() => connectionResolver(partyEdges), [partyEdges]);
   const currentUser = useAuthStore((s) => s.currentUser);
 
   const [subscribeEmail, setSubscribeEmail] = useState('');
@@ -228,7 +231,7 @@ export default function Landing() {
               featuredArticles={featuredArticles}
               horses={horses}
               horseConn={horseConn}
-              isStaff={isStaff(currentUser)}
+              isAdmin={isAdmin(currentUser)}
             />
 
             {/* Each block below is one public section, so each goes with its
@@ -262,7 +265,7 @@ export default function Landing() {
         </div>
       </div>
 
-      <LandingFooter hasUser={!!currentUser} isStaff={isStaff(currentUser)} sponsors={sponsors} />
+      <LandingFooter hasUser={!!currentUser} isAdmin={isAdmin(currentUser)} sponsors={sponsors} />
     </div>
   );
 }

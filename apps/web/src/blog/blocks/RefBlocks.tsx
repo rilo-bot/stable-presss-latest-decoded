@@ -13,7 +13,7 @@
 import { Link } from 'react-router-dom';
 import { cn } from '@/lib/utils';
 import { useHorseStore } from '@/stores/horseStore';
-import { usePartyStore } from '@/stores/partyStore';
+import { useRegister } from '@/lib/register';
 import { useArticleStore } from '@/stores/articleStore';
 import { PARTY_ROLE_LABELS } from '@/types/party';
 import { ArrowUpRight, FileText, User } from 'lucide-react';
@@ -95,17 +95,20 @@ export function HorseCardBlockView({ horseId }: { horseId: string }) {
 }
 
 export function PartyCardBlockView({ partyId }: { partyId: string }) {
-  const party = usePartyStore((s) => s.parties.find((p) => p.id === partyId));
+  // `partyId` is a PERSON id — a reference card points at who someone is, not at
+  // one of their role edges. The register join supplies the roles to list.
+  const register = useRegister();
+  const party = register.find((p) => p.id === partyId);
   if (!party) return <RefMissing label="This profile is no longer available." />;
 
-  const meta = party.roles?.map((r) => PARTY_ROLE_LABELS[r] ?? r).join(' · ');
+  const meta = party.roles.map((r) => PARTY_ROLE_LABELS[r] ?? r).join(' · ');
   return (
     <RefCard
       to={`/parties/${party.id}`}
       eyebrow="Profile"
       title={party.name}
       meta={meta || undefined}
-      thumb={party.photo}
+      thumb={party.imageUrl}
       thumbAlt={party.name}
       fallbackIcon={<User size={20} />}
     />

@@ -18,7 +18,7 @@ interface LandingFeaturedArticlesProps {
   horses: Horse[];
   horseConn: (horse: Horse) => HorseConnections;
   /** Staff see newsroom CTAs in empty states; readers get reader-facing ones. */
-  isStaff: boolean;
+  isAdmin: boolean;
 }
 
 export function LandingFeaturedArticles({
@@ -27,7 +27,7 @@ export function LandingFeaturedArticles({
   featuredArticles,
   horses,
   horseConn,
-  isStaff,
+  isAdmin,
 }: LandingFeaturedArticlesProps) {
   // TWO sections in one component — News and Horses — so the switches are read
   // here rather than passed down: Landing.tsx cannot drop one half of a fragment.
@@ -73,23 +73,23 @@ export function LandingFeaturedArticles({
         ) : (
           /* Two audiences, two empty states. This told every anonymous visitor to
              "head to the newsroom and file your first dispatch" and pointed them at
-             /production-system — a RequireStaff route that bounces them straight
+             /production-system — a RequireAdmin route that bounces them straight
              home. A reader is told the truth and offered somewhere to go that
              exists for them. */
           <EmptyState
             icon={PenLine}
             heading={
-              isStaff
+              isAdmin
                 ? 'The press stands ready. No dispatches have been filed.'
                 : 'No stories have been published yet.'
             }
             description={
-              isStaff
+              isAdmin
                 ? 'Published stories will appear here. Head to the newsroom to file your first dispatch.'
                 : 'The desk is still working on the first edition. The blog and the podcast are already open.'
             }
-            ctaLabel={isStaff ? 'Go to Newsroom' : 'Read the blog'}
-            ctaHref={isStaff ? '/production-system' : '/blog'}
+            ctaLabel={isAdmin ? 'Go to Newsroom' : 'Read the blog'}
+            ctaHref={isAdmin ? '/production-system' : '/blog'}
           />
         )}
       </section>
@@ -190,7 +190,7 @@ export function LandingFeaturedArticles({
                 The stables await their first thoroughbred.
               </p>
               {/* "Add a profile" is an editor's action; a reader cannot add one. */}
-              {isStaff && (
+              {isAdmin && (
                 <Link
                   to="/horses"
                   className="mt-3 inline-flex items-center gap-1 text-[12px] font-semibold text-primary hover:text-primary/80 transition-colors"

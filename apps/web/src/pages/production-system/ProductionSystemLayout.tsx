@@ -49,6 +49,8 @@ import { useProductionSystemState } from './useProductionSystemState';
  * Settings have nothing to do with filing copy — the old page showed the button
  * on all of them via a negated condition, so Settings offered to file a story.
  */
+// SLUGS, not module ids — this is matched against the URL segment below, and
+// All Stories is `id: 'stories'` at `slug: 'all-stories'`.
 const STORY_SCREENS = new Set(['overview', 'workflow', 'pipeline', 'all-stories', 'editor-hub']);
 
 /**
@@ -137,7 +139,7 @@ export default function ProductionSystemLayout() {
 
   const title = activeItem?.label ?? 'Production System';
   const actions =
-    STORY_SCREENS.has(slug) && can('content.draft.create') ? (
+    STORY_SCREENS.has(slug) && can('stories.create') ? (
       <FileStoryButton onOpenStudio={state.handleOpenStudio} onNewInColumn={state.handleNewInColumn} />
     ) : undefined;
 

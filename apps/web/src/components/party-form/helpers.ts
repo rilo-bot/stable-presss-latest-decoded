@@ -1,4 +1,5 @@
-import type { Party, PartyRole } from '@/types/party';
+import type { PartyRole } from '@/types/party';
+import type { RegisterPerson } from '@/lib/register';
 
 /* ─────────────────────────────────────────────
    Props
@@ -7,7 +8,7 @@ export interface PartyFormProps {
   open: boolean;
   onOpenChange: (open: boolean) => void;
   /** When supplied, the form operates in edit mode. */
-  party?: Party;
+  party?: RegisterPerson;
   /**
    * When supplied (and not in edit mode), the form opens with this role
    * pre-selected so the user does not have to pick it manually.

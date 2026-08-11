@@ -19,7 +19,7 @@ import type { PublicNavKey } from '@/types/siteSettings';
 interface MobileMenuProps {
   currentUser: AuthUser | null;
   accountLabel: string;
-  staff: boolean;
+  admin: boolean;
   pathname: string;
   setMobileOpen: (value: boolean) => void;
   handleLogout: () => void;
@@ -28,7 +28,7 @@ interface MobileMenuProps {
 export function MobileMenu({
   currentUser,
   accountLabel,
-  staff,
+  admin,
   pathname,
   setMobileOpen,
   handleLogout,
@@ -171,7 +171,7 @@ export function MobileMenu({
             from the rail below the Production System link rather than from the
             public site's menu. */}
 
-        {staff && (
+        {admin && (
           <Link
             to="/production-system"
             onClick={() => setMobileOpen(false)}
@@ -199,7 +199,7 @@ export function MobileMenu({
           <div className="space-y-2">
             <div className="flex items-center gap-2 px-3 py-2">
               <User size={14} className="text-primary" />
-              <span className="text-sm text-foreground font-medium">{currentUser.displayName}</span>
+              <span className="text-sm text-foreground font-medium">{currentUser.name}</span>
               <NotificationBell tone="light" />
               <span
                 className="text-[10px] uppercase tracking-wider px-1.5 py-0.5 rounded-full font-bold ml-auto"

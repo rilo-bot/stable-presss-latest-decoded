@@ -2,31 +2,37 @@
 // Capability resolver — the SINGLE source of truth for "what can this account
 // do right now", derived straight from the RBAC layer (rbac.ts + scope.ts).
 //
-// Two shapes, one logic:
-//   - summariseCapabilities()  — cheap, synchronous, account-only. Injected into
-//     every agent system prompt so guidance is exact ("you can do X here; Y needs
-//     a verified trainer claim") instead of generic.
-//   - getCapabilities()        — DB-backed, structured Capability[] for the
-//     `whatCanIDo` tool and (Phase D) the Production System dashboard quick
-//     actions. Same rules, richer detail (stable size, pending claims, where).
+// ONE RULE TABLE, TWO RENDERINGS.
 //
-// It NEVER grants anything — it only DESCRIBES the gates the REST routes already
-// enforce. So it can drift no further than the gates themselves.
+//   CAPABILITY_RULES        the rules, written once
+//   getCapabilities()       renders them as structured Capability[] for the
+//                           `whatCanIDo` tool and the dashboard quick actions
+//   summariseCapabilities() renders the SAME rules as prose for the agent system
+//                           prompts — cheap and synchronous, no DB
+//
+// It used to be two hand-written copies of the same logic, and they had already
+// drifted: the prose knew about the blog permissions and the structured list did
+// not mention blogs at all. A rule added below now shows up in both.
+//
+// This file NEVER grants anything — it only DESCRIBES the gates the REST routes
+// already enforce. So it can drift no further than the gates themselves.
 // ---------------------------------------------------------------------------
 
 import { db } from '../db.js'
 import { MAGAZINE_V2_ENABLED } from '../magazineV2/config.js'
-import { canAccessNewsroom, isPlatformAdmin, contentCan } from '../rbac.js'
-import { accountCan } from '../effectiveAccess.js'
+import { isAdmin, isPlatformAdmin } from '../rbac.js'
+import { accountCan, canOn } from '../effectiveAccess.js'
+
+/**
+ * "…anyone's, not just my own." `canOn` with `owns: false` asks exactly that: it
+ * passes only when the role holds the verb AND its scope is 'all'.
+ */
+const canAny = (account: Parameters<typeof accountCan>[0], screen: string, verb: 'edit' | 'delete') =>
+  canOn(account, screen, verb, false)
 import { manageablePartyIds, visibleHorseIds } from '../scope.js'
 import type { AccountUser } from '../identity.js'
 
-export type CapabilityCategory =
-  | 'account'
-  | 'racing'
-  | 'editorial'
-  | 'organisation'
-  | 'subscription'
+type CapabilityCategory = 'account' | 'racing' | 'editorial' | 'organisation'
 
 export interface Capability {
   /** Stable id (also a good quick-action key for the dashboard). */
@@ -42,180 +48,281 @@ export interface Capability {
 
 export interface CapabilityReport {
   signedIn: boolean
-  identity: {
-    name?: string
-    roles: string[]
-    canAccessNewsroom: boolean
-    isPlatformAdmin: boolean
-    subscriptionTier?: string
-  }
+  identity: { name?: string; isAdmin: boolean; isPlatformAdmin: boolean }
   /** Concrete counts that make guidance specific. */
-  stable: { manageableHorses: number; manageableParties: number; pendingClaims: number }
-  organisations: Array<{ orgId: string; orgRole: string }>
+  stable: { manageableHorses: number; manageableParties: number }
+  organisations: Array<{ orgId: string; role: string }>
   capabilities: Capability[]
 }
 
-// Capability-based, not role-based: these used to test for hardcoded slugs
-// ('publisher', 'editor', 'legal_reviewer', 'administrator'), which no longer
-// exist as a fixed set. They now follow whatever a superadmin configures.
 // The staff magazine surface: the free-form Magazine Builder (v2) when the
 // MAGAZINE_V2 flag is on, else the legacy template Magazine Studio.
 const MAGAZINE_SURFACE = MAGAZINE_V2_ENABLED ? 'Magazine Builder' : 'Magazine Studio'
 
-const isPublisher = (a: AccountUser) => accountCan(a, 'content.publish')
-const isReviewer = (a: AccountUser) => accountCan(a, 'content.editorial_review')
+/**
+ * Everything a rule is allowed to look at.
+ *
+ * `horses` is `null` when the caller could not afford the query — that is the
+ * prompt path, which is synchronous by design. A rule that needs the number must
+ * cope with not having it rather than triggering a read.
+ */
+interface Ctx {
+  account: AccountUser
+  admin: boolean
+  platformAdmin: boolean
+  parties: number
+  horses: number | null
+}
 
-/** The capability list for a signed-in account. Pure: needs only the account + counts. */
-function buildCapabilities(
-  account: AccountUser,
-  counts: { manageableHorses: number; manageableParties: number },
-): Capability[] {
-  const staff = canAccessNewsroom(account)
-  const admin = isPlatformAdmin(account)
-  const hasParty = counts.manageableParties > 0
-  const premium = account.subscriptionTier === 'premium'
-  const orgManage = account.orgMemberships.some(
-    (m) => m.orgRole === 'org_owner' || m.orgRole === 'org_manager',
-  )
+interface Rule {
+  id: string
+  label: string
+  category: CapabilityCategory
+  where?: string
+  /** Omit the rule entirely — e.g. editorial rows for a non-admin. */
+  when?: (c: Ctx) => boolean
+  allowed: (c: Ctx) => boolean
+  /** Extra context when allowed, or the unlock path when blocked. */
+  reason?: (c: Ctx) => string | undefined
+  /** Shown to signed-out visitors. A rule without one is hidden from guests. */
+  guestReason?: string
+}
 
-  const caps: Capability[] = [
-    // ── Racing / member self-service ──
-    { id: 'follow-horse', label: 'Follow a horse', category: 'racing', allowed: true, where: 'Horses' },
-    { id: 'place-tip', label: 'Place a tip', category: 'racing', allowed: true, where: 'Tipping Ring' },
-    {
-      id: 'register-horse',
-      label: 'Register a horse',
-      category: 'racing',
-      allowed: true,
-      reason: 'It joins your stable and stays hidden from the public until staff verify it.',
-      where: 'Dashboard → My Stable',
-    },
-    {
-      id: 'claim-role',
-      label: 'Claim a racing role',
-      category: 'racing',
-      allowed: true,
-      reason: 'Owner, trainer, jockey, breeder, agent, syndicate manager or personnel — staff verify it, then editing unlocks.',
-      where: 'Dashboard → Racing Roles',
-    },
-    {
-      id: 'manage-stable',
-      label: 'Manage your stable',
-      category: 'racing',
-      allowed: counts.manageableHorses > 0,
-      reason:
-        counts.manageableHorses > 0
-          ? `You manage ${counts.manageableHorses} horse(s).`
-          : 'Claim a racing role or register a horse first — then your stable unlocks.',
-      where: 'Dashboard → My Stable',
-    },
-    {
-      id: 'edit-own-party',
-      label: 'Edit your own party profile',
-      category: 'racing',
-      allowed: hasParty,
-      reason: hasParty
-        ? `You manage ${counts.manageableParties} party profile(s).`
-        : 'Claiming a racing role mints your party profile — then it becomes editable.',
-      where: 'Profile Studio',
-    },
+// Capability-based, not role-based: these used to test for hardcoded slugs
+// ('publisher', 'editor', 'legal_reviewer', 'administrator'), which no longer
+// exist as a fixed set. They follow whatever a superadmin configures.
+const CAPABILITY_RULES: Rule[] = [
+  // ── Anyone ────────────────────────────────────────────────────────────────
+  {
+    id: 'browse',
+    label: 'Browse public horses, parties, news, bulletins & the podcast',
+    category: 'account',
+    allowed: () => true,
+  },
 
-    // ── Subscription ──
-    {
-      id: 'read-premium',
-      label: 'Read premium articles',
-      category: 'subscription',
-      allowed: premium,
-      reason: premium ? 'Your plan includes premium content.' : 'Switch to the premium plan to unlock it.',
-      where: 'Dashboard → Your Plan',
-    },
-  ]
+  // ── Racing / self-service ─────────────────────────────────────────────────
+  {
+    id: 'follow-horse',
+    label: 'Follow a horse',
+    category: 'racing',
+    where: 'Horses',
+    allowed: () => true,
+    guestReason: 'Create a free account to follow horses.',
+  },
+  {
+    id: 'place-tip',
+    label: 'Place a tip',
+    category: 'racing',
+    where: 'Tipping Ring',
+    allowed: () => true,
+    guestReason: 'Tipping needs a free account.',
+  },
+  {
+    id: 'register-horse',
+    label: 'Register a horse',
+    category: 'racing',
+    where: 'Dashboard → My Stable',
+    allowed: () => true,
+    reason: () => 'It joins your stable and stays hidden from the public until staff verify it.',
+    guestReason: 'Create a free account to register a horse.',
+  },
+  {
+    id: 'claim-role',
+    label: 'Claim a racing identity',
+    category: 'racing',
+    where: 'Dashboard → Racing Roles',
+    allowed: () => true,
+    // No verification step: claiming a register entry takes effect immediately,
+    // so this must not promise an approval that never comes.
+    reason: () =>
+      'Find yourself in the register — owner, trainer, jockey, breeder, agent, syndicate manager or personnel — and claim it. It is yours straight away.',
+    guestReason: 'Create a free account, then claim your identity from the Dashboard.',
+  },
+  {
+    id: 'manage-stable',
+    label: 'Manage your stable',
+    category: 'racing',
+    where: 'Dashboard → My Stable',
+    allowed: (c) => c.horses === null || c.horses > 0,
+    reason: (c) =>
+      c.horses === null
+        ? undefined
+        : c.horses > 0
+          ? `You manage ${c.horses} horse(s).`
+          : 'Claim a racing identity or register a horse first — then your stable unlocks.',
+  },
+  {
+    id: 'edit-own-party',
+    label: 'Edit your own party profile',
+    category: 'racing',
+    where: 'Profile Studio',
+    allowed: (c) => c.parties > 0,
+    reason: (c) =>
+      c.parties > 0
+        ? `You hold ${c.parties} party profile(s).`
+        : 'Claiming a racing identity is what makes a profile yours to edit.',
+  },
 
-  // ── Editorial (staff only) ──
-  if (staff) {
-    caps.push(
-      {
-        id: 'create-draft',
-        label: 'Create a story draft',
-        category: 'editorial',
-        allowed: contentCan(account, 'content.draft.create'),
-        reason: contentCan(account, 'content.draft.create')
-          ? undefined
-          : 'Your editorial role does not include drafting — an editor can assign you.',
-        where: 'Production System → Workflow Board → File a Story (manual, or the AI Story Studio)',
-      },
-      {
-        id: 'edit-any-story',
-        label: 'Edit any story',
-        category: 'editorial',
-        allowed: contentCan(account, 'content.draft.edit_any'),
-        reason: contentCan(account, 'content.draft.edit_any') ? undefined : 'Reserved for editors, legal reviewers and publishers.',
-        where: 'Production System → All Stories',
-      },
-      {
-        id: 'review-story',
-        label: 'Review stories',
-        category: 'editorial',
-        allowed: isReviewer(account),
-        reason: isReviewer(account) ? undefined : 'Reserved for editors, legal reviewers and administrators.',
-        where: 'Production System → Editor Hub',
-      },
-      {
-        id: 'publish-story',
-        label: 'Publish & distribute stories',
-        category: 'editorial',
-        allowed: isPublisher(account),
-        reason: isPublisher(account) ? undefined : 'Publishing is reserved for publishers and administrators.',
-        where: 'Production System → Workflow Board',
-      },
-      {
-        id: 'manage-bulletins',
-        label: 'Build & publish bulletins',
-        category: 'editorial',
-        allowed: true,
-        where: `Production System → ${MAGAZINE_SURFACE}`,
-      },
-      {
-        id: 'manage-racing-data',
-        label: 'Edit racing data (horses, parties, media, entries)',
-        category: 'editorial',
-        allowed: true,
-        where: 'Production System → Horses / People / Media Records / Racing Records',
-      },
-      {
-        id: 'verify-claims',
-        label: 'Verify racing-role claims',
-        category: 'editorial',
-        allowed: admin,
-        reason: admin ? undefined : 'Administrators verify claims globally; org owners/managers verify claims for their own parties.',
-        where: 'Verify Claims',
-      },
-      {
-        id: 'manage-team',
-        label: 'Manage the team',
-        category: 'editorial',
-        allowed: admin,
-        reason: admin ? undefined : 'Reserved for administrators.',
-        where: 'Production System → Team Members',
-      },
-    )
-  }
+  // ── Editorial (admins only) ───────────────────────────────────────────────
+  {
+    id: 'create-draft',
+    label: 'Create a story draft',
+    category: 'editorial',
+    where: 'Production System → Workflow Board → File a Story (manual, or the AI Story Studio)',
+    when: (c) => c.admin,
+    allowed: (c) => accountCan(c.account, 'stories.create'),
+    reason: (c) =>
+      accountCan(c.account, 'stories.create')
+        ? undefined
+        : 'Your role does not include drafting — an administrator can grant it.',
+  },
+  {
+    id: 'edit-any-story',
+    label: 'Edit any story',
+    category: 'editorial',
+    where: 'Production System → All Stories',
+    when: (c) => c.admin,
+    allowed: (c) => canAny(c.account, 'stories', 'edit'),
+    reason: (c) =>
+      canAny(c.account, 'stories', 'edit') ? undefined : 'You can edit your own stories only.',
+  },
+  {
+    id: 'review-story',
+    label: 'Review stories',
+    category: 'editorial',
+    where: 'Production System → Editor Hub',
+    when: (c) => c.admin,
+    allowed: (c) => accountCan(c.account, 'stories.edit'),
+    reason: (c) =>
+      accountCan(c.account, 'stories.edit') ? undefined : 'Reserved for editors and administrators.',
+  },
+  {
+    id: 'publish-story',
+    label: 'Publish & distribute stories',
+    category: 'editorial',
+    where: 'Production System → Workflow Board',
+    when: (c) => c.admin,
+    allowed: (c) => accountCan(c.account, 'stories.publish'),
+    reason: (c) =>
+      accountCan(c.account, 'stories.publish') ? undefined : 'Publishing is reserved for publishers and administrators.',
+  },
+  // Blogs are a SEPARATE permission axis from stories (blog.* vs content.*).
+  // They were missing from the structured list entirely, so the dashboard never
+  // showed the Blogs module while the prompt happily described it.
+  {
+    id: 'write-blog',
+    label: 'Write blog posts',
+    category: 'editorial',
+    where: 'Production System → Blogs',
+    when: (c) => c.admin,
+    allowed: (c) => accountCan(c.account, 'blogs.create'),
+    reason: (c) => (accountCan(c.account, 'blogs.create') ? undefined : 'Your role does not include the Blogs module.'),
+  },
+  {
+    id: 'edit-any-blog',
+    label: 'Edit any blog post',
+    category: 'editorial',
+    where: 'Production System → Blogs',
+    when: (c) => c.admin,
+    allowed: (c) => canAny(c.account, 'blogs', 'edit'),
+    reason: (c) => (canAny(c.account, 'blogs', 'edit') ? undefined : 'You can edit your own posts only.'),
+  },
+  {
+    id: 'publish-blog',
+    label: 'Publish blog posts',
+    category: 'editorial',
+    where: 'Production System → Blogs',
+    when: (c) => c.admin,
+    allowed: (c) => accountCan(c.account, 'blogs.publish'),
+    reason: (c) =>
+      accountCan(c.account, 'blogs.publish') ? undefined : 'An editor with blog publishing rights takes it live.',
+  },
+  {
+    id: 'manage-bulletins',
+    label: 'Build & publish bulletins',
+    category: 'editorial',
+    where: `Production System → ${MAGAZINE_SURFACE}`,
+    when: (c) => c.admin,
+    // Magazines used to be `allowed: () => true` because they had NO permission
+    // at all — every staff member could build and share one. They have a row now.
+    allowed: (c) => accountCan(c.account, 'magazine.view'),
+    reason: (c) =>
+      accountCan(c.account, 'magazine.view') ? undefined : 'Your role does not include the Magazine Builder.',
+  },
+  {
+    id: 'manage-racing-data',
+    label: 'Edit racing data (horses, parties, media, entries)',
+    category: 'editorial',
+    where: 'Production System → Horses / People / Media Records / Racing Records',
+    when: (c) => c.admin,
+    // The four registers are their own rows now, rather than riding on
+    // `content.draft.create` — "may start a story draft" was what decided who
+    // could edit the horse register.
+    allowed: (c) => accountCan(c.account, 'horses.edit'),
+    reason: (c) =>
+      accountCan(c.account, 'horses.edit') ? undefined : 'Your role can read the registers but not change them.',
+  },
+  {
+    id: 'manage-team',
+    label: 'Manage the team',
+    category: 'editorial',
+    where: 'Production System → Team Members',
+    when: (c) => c.admin,
+    allowed: (c) => accountCan(c.account, 'team.edit'),
+    reason: (c) => (accountCan(c.account, 'team.edit') ? undefined : 'Reserved for administrators.'),
+  },
 
-  // ── Organisation ──
-  if (account.orgMemberships.length) {
-    caps.push({
-      id: 'manage-org',
-      label: 'Manage your organisation',
-      category: 'organisation',
-      allowed: orgManage,
-      reason: orgManage
-        ? 'Invite members, add managed parties, verify members’ claims.'
+  // ── Organisation ──────────────────────────────────────────────────────────
+  {
+    id: 'manage-org',
+    label: 'Manage your organisation',
+    category: 'organisation',
+    where: 'My Organisation',
+    when: (c) => c.account.orgMembers.length > 0,
+    allowed: (c) => c.account.orgMembers.some((m) => m.role === 'owner' || m.role === 'manager'),
+    reason: (c) =>
+      c.account.orgMembers.some((m) => m.role === 'owner' || m.role === 'manager')
+        ? 'Invite members and register the parties the organisation holds.'
         : 'You are a member — owners and managers run the organisation.',
-      where: 'My Organisation',
-    })
-  }
+  },
+]
 
-  return caps
+/** Build the context every rule reads. `horses: null` = "not looked up". */
+function contextFor(account: AccountUser, horses: number | null): Ctx {
+  return {
+    account,
+    admin: isAdmin(account),
+    platformAdmin: isPlatformAdmin(account),
+    parties: manageablePartyIds(account).length,
+    horses,
+  }
+}
+
+/** Apply the rule table to one account. */
+function evaluate(ctx: Ctx): Capability[] {
+  return CAPABILITY_RULES.filter((r) => !r.when || r.when(ctx)).map((r) => {
+    const allowed = r.allowed(ctx)
+    return {
+      id: r.id,
+      label: r.label,
+      category: r.category,
+      allowed,
+      reason: r.reason?.(ctx),
+      where: r.where,
+    }
+  })
+}
+
+/** The same table, as seen by a signed-out visitor. */
+function guestCapabilities(): Capability[] {
+  return CAPABILITY_RULES.filter((r) => r.id === 'browse' || r.guestReason).map((r) => ({
+    id: r.id,
+    label: r.label,
+    category: r.category,
+    allowed: r.id === 'browse',
+    reason: r.guestReason,
+    where: r.guestReason ? 'Sign up' : undefined,
+  }))
 }
 
 /** DB-backed, structured capability report (for the whatCanIDo tool + dashboard). */
@@ -223,98 +330,66 @@ export async function getCapabilities(account?: AccountUser): Promise<Capability
   if (!account) {
     return {
       signedIn: false,
-      identity: { roles: ['guest'], canAccessNewsroom: false, isPlatformAdmin: false },
-      stable: { manageableHorses: 0, manageableParties: 0, pendingClaims: 0 },
+      identity: { isAdmin: false, isPlatformAdmin: false },
+      stable: { manageableHorses: 0, manageableParties: 0 },
       organisations: [],
-      capabilities: [
-        { id: 'browse', label: 'Browse public horses, parties, news, bulletins & the podcast', category: 'account', allowed: true },
-        { id: 'follow-horse', label: 'Follow a horse', category: 'racing', allowed: false, reason: 'Create a free account to follow horses.', where: 'Sign up' },
-        { id: 'place-tip', label: 'Place a tip', category: 'racing', allowed: false, reason: 'Tipping needs a free account.', where: 'Sign up' },
-        { id: 'claim-role', label: 'Claim a racing role', category: 'racing', allowed: false, reason: 'Create a free account, then claim your role from the Dashboard.', where: 'Sign up' },
-      ],
+      capabilities: guestCapabilities(),
     }
   }
 
-  const partyIds = manageablePartyIds(account)
-  const [horses, links] = await Promise.all([
-    db.collection('horses').find(),
-    db.collection('horsePartyLinks').find(),
-  ])
-  const manageableHorses = canAccessNewsroom(account)
-    ? horses.length
-    : visibleHorseIds(account, { horses, links }).length
-  const pendingClaims = account.partyClaims.filter((c) => c.status === 'pending').length
+  // An admin's number is the whole register; everyone else's comes from their own
+  // claimed party rows and their orgs. Only the ADMIN branch needs the collection,
+  // so the non-admin path no longer loads every horse to count a handful.
+  const horses = isAdmin(account)
+    ? await db.collection('horses').count()
+    : (await visibleHorseIds(account)).length
+  const ctx = contextFor(account, horses)
 
   return {
     signedIn: true,
     identity: {
-      name: account.displayName || account.email,
-      roles: account.roles,
-      canAccessNewsroom: canAccessNewsroom(account),
-      isPlatformAdmin: isPlatformAdmin(account),
-      subscriptionTier: account.subscriptionTier,
+      name: account.name || account.email,
+      isAdmin: ctx.admin,
+      isPlatformAdmin: ctx.platformAdmin,
     },
-    stable: { manageableHorses, manageableParties: partyIds.length, pendingClaims },
-    organisations: account.orgMemberships.map((m) => ({ orgId: m.orgId, orgRole: m.orgRole })),
-    capabilities: buildCapabilities(account, { manageableHorses, manageableParties: partyIds.length }),
+    stable: { manageableHorses: horses, manageableParties: ctx.parties },
+    organisations: account.orgMembers.map((m) => ({ orgId: m.orgId, role: m.role })),
+    capabilities: evaluate(ctx),
   }
 }
 
 /**
- * Cheap, synchronous capability summary for the system prompt. Account-only (no
- * DB) so prompt building stays fast and side-effect free. Counts that need the DB
- * (exact stable size) are deliberately omitted here — the model can call
- * `whatCanIDo` when it needs them.
+ * The SAME rules as prose, for the agent system prompts.
+ *
+ * Synchronous and DB-free so prompt building stays fast — which is why the
+ * stable count is absent here (`horses: null`) and the model is told to call
+ * `whatCanIDo` when it needs the number.
  */
 export function summariseCapabilities(account?: AccountUser): string {
+  const caps = account ? evaluate(contextFor(account, null)) : guestCapabilities()
+  const can: string[] = []
+  const gated: string[] = []
+  for (const c of caps) {
+    if (c.id === 'browse') continue
+    if (c.allowed) can.push(c.reason ? `${c.label} — ${c.reason}` : c.label)
+    else gated.push(c.reason ? `${c.label} → ${c.reason}` : c.label)
+  }
+
   if (!account) {
     return [
       'CAPABILITIES — this reader is a GUEST.',
       'CAN now: browse all public horses, parties, news, bulletins, the podcast and the tipping leaderboard.',
-      'NEEDS a free account: follow horses, place tips, claim a racing role, manage a stable, edit any profile.',
+      `NEEDS a free account: ${gated.join('; ')}.`,
       'When something they want needs an account, warmly point them to Sign up / Log in — never as a scold.',
     ].join('\n')
   }
 
-  const staff = canAccessNewsroom(account)
-  const admin = isPlatformAdmin(account)
-  const partyIds = manageablePartyIds(account)
-  const can: string[] = ['follow horses', 'place tips', 'register a horse (joins their stable, hidden until staff verify)']
-  const gated: string[] = []
-
-  if (partyIds.length) can.push(`edit their own party profile (${partyIds.length})`)
-  else gated.push('editing a party profile → claim a racing role from the Dashboard to mint it')
-
-  const pending = account.partyClaims.filter((c) => c.status === 'pending')
-  if (pending.length) gated.push(`${pending.length} racing-role claim(s) pending staff verification (read-only until verified)`)
-
-  if (account.subscriptionTier !== 'premium') gated.push('premium articles → switch plan on Dashboard → Your Plan')
-
-  if (staff) {
-    can.push('work in the Production System (the staff CMS)', `build & publish bulletins in the ${MAGAZINE_SURFACE}`)
-    if (contentCan(account, 'content.draft.create')) can.push('create story drafts')
-    if (contentCan(account, 'content.draft.edit_any')) can.push('edit any story')
-    if (isReviewer(account)) can.push('review stories')
-    if (isPublisher(account)) can.push('publish & distribute stories')
-    // Blogs are a separate permission axis from stories (blog.* vs content.*), and
-    // were missing here entirely — so the assistant did not know the Blogs module
-    // existed and could not point anyone at it.
-    if (accountCan(account, 'blog.create')) can.push('write blog posts (longform, in the Blogs module)')
-    if (accountCan(account, 'blog.edit_any')) can.push('edit any blog post')
-    if (accountCan(account, 'blog.publish')) can.push('publish blog posts')
-    else if (accountCan(account, 'blog.create')) gated.push('publishing a blog post → an editor with blog publishing rights')
-    if (admin) can.push('verify racing-role claims', 'manage the team')
-    else gated.push('verifying claims & managing the team → administrator only')
-  }
-
-  const orgManage = account.orgMemberships.filter((m) => m.orgRole === 'org_owner' || m.orgRole === 'org_manager')
-  if (orgManage.length) can.push(`manage their organisation(s) (${orgManage.length})`)
-
+  const identities = account.parties.map((p) => p.role)
   return [
     'CAPABILITIES (use these to guide precisely — offer the EXACT next step, never a generic answer).',
-    `Roles: ${account.roles.join(', ') || 'reader'}. Subscription: ${account.subscriptionTier}.`,
+    `Account: ${isAdmin(account) ? 'ADMIN' : 'user'}${identities.length ? `, racing identities: ${[...new Set(identities)].join(', ')}` : ', no racing identity claimed'}.`,
     `CAN now: ${can.join('; ')}.`,
     gated.length ? `GATED (always offer the unlock path): ${gated.join('; ')}.` : 'Nothing is gated for this reader right now.',
     'For exact stable counts or a full breakdown, call the whatCanIDo tool.',
-  ].filter(Boolean).join('\n')
+  ].join('\n')
 }

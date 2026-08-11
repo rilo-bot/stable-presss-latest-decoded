@@ -57,7 +57,6 @@ function describePage(pathname: string): PageContext {
     studio: 'Profile Studio',
     newsroom: 'Newsroom',
     'site-content': 'Site Content',
-    claims: 'Verify Claims',
   };
   const entityType: Record<string, string> = {
     horses: 'horse',
@@ -156,7 +155,6 @@ function navPathFor(to: string, id?: string, screen?: string): string | null {
     case 'horse-studio': return id ? `/studio/horse/${id}` : '/dashboard';
     case 'profile-studio': return id ? `/studio/${id}` : '/dashboard';
     case 'site-content': return '/site-content';
-    case 'claims': return '/claims';
     case 'login': return '/login';
     case 'signup': return '/signup';
     case 'horse': return id ? `/horses/${id}` : '/horses';
@@ -227,7 +225,7 @@ export function AgentWidget() {
       const { to, id, screen } = (toolCall.input ?? {}) as { to?: string; id?: string; screen?: string };
       // Opening the Story Studio drawer is gated the same way its button is —
       // don't pop a drawer the user can't file from.
-      if (to === 'story-studio' && !can('content.draft.create')) {
+      if (to === 'story-studio' && !can('stories.create')) {
         addToolResultRef.current?.({
           tool: 'navigateTo',
           toolCallId: toolCall.toolCallId,
@@ -235,7 +233,7 @@ export function AgentWidget() {
         });
         return;
       }
-      if (to === 'blog-studio' && !can('blog.create')) {
+      if (to === 'blog-studio' && !can('blogs.create')) {
         addToolResultRef.current?.({
           tool: 'navigateTo',
           toolCallId: toolCall.toolCallId,

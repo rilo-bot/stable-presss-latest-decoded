@@ -4,8 +4,8 @@
 // EVERY tool here is CLIENT-EXECUTED — declared without `execute`. That is not a
 // style choice, it is the security model: the browser runs each one through
 // `useBlogStore` (apps/web/src/agent/blog/blogToolExecutor.ts), which calls the
-// REST endpoints behind `blogsWriteGate`. So `blog.create`, `blog.edit_own`,
-// `blog.edit_any`, `blog.publish` and `blog.delete` are still enforced by the
+// REST endpoints behind `blogsWriteGate`. So `blogs.create`, `blog.edit_own`,
+// `blog.edit_any`, `blogs.publish` and `blogs.delete` are still enforced by the
 // server that owns them, and a model that decides to delete a post it was not
 // allowed to touch simply gets a 403 back as a tool result. Same rationale as
 // articleTools.ts.
@@ -26,7 +26,6 @@ import { BodyItemSchema } from './instantPrompt.js'
 import { isStockConfigured, searchStockPhotos } from '../stock.js'
 import { buildTools } from './tools.js'
 
-const TIERS = ['free', 'standard', 'premium'] as const
 
 /**
  * The record-lookup tools the Blog Studio borrows from the general agent.
@@ -104,7 +103,6 @@ export function buildBlogTools(account?: AccountUser, authHeader?: string): Tool
         body: BodySchema,
         category: z.string().optional().describe('A short section label, e.g. "Bloodstock", "Racing", "Opinion".'),
         tags: z.array(z.string()).optional().describe('Two to six lowercase topic tags.'),
-        minTier: z.enum(TIERS).describe('Who can read it: the tier the user chose.'),
         metaTitle: z
           .string()
           .optional()
@@ -130,7 +128,6 @@ export function buildBlogTools(account?: AccountUser, authHeader?: string): Tool
         excerpt: z.string().optional(),
         category: z.string().optional(),
         tags: z.array(z.string()).optional().describe('The COMPLETE new tag list — it replaces the old one.'),
-        minTier: z.enum(TIERS).optional(),
         metaTitle: z.string().optional().describe('Search/browser-tab title, ≤60 chars. Pass an empty string to clear it.'),
         metaDescription: z
           .string()
@@ -161,7 +158,7 @@ export function buildBlogTools(account?: AccountUser, authHeader?: string): Tool
     // retargeted would edit the wrong piece of writing.
     setBlogField: tool({
       description:
-        'Set ONE input on the post open in the editor. `field` must be an id from the editor field list you were given (`title`, `subtitle`, `excerpt`, `category`, `tags`, `byline`, `tier`, `seo.metaTitle`, `seo.metaDescription`, `cover`, `thumbnail`, `part:<id>.title`, `media:<id>.alt`). Values are plain text: tags comma-separated, `tier` one of free/standard/premium, `cover`/`thumbnail` the id of a photo ALREADY attached to the post. Body writing is NOT settable here — use insertBlogContent / replaceBlogSelection so it goes in as real blocks. Returns { ok, changed } or { ok: false, error }.',
+        'Set ONE input on the post open in the editor. `field` must be an id from the editor field list you were given (`title`, `subtitle`, `excerpt`, `category`, `tags`, `byline`, `seo.metaTitle`, `seo.metaDescription`, `cover`, `thumbnail`, `part:<id>.title`, `media:<id>.alt`). Values are plain text: tags comma-separated, `cover`/`thumbnail` the id of a photo ALREADY attached to the post. Body writing is NOT settable here — use insertBlogContent / replaceBlogSelection so it goes in as real blocks. Returns { ok, changed } or { ok: false, error }.',
       inputSchema: z.object({
         id: z.string().describe('The post id — must be the one open in the editor.'),
         field: z.string().describe('A field id from the editor field list.'),

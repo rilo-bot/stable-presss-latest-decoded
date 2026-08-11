@@ -1,85 +1,52 @@
 /**
  * RBAC — the permission engine (client).
  *
- * Composes the three checks from RBAC.md:
- *   - staff/editorial  → the existing matrix in lib/permissions.ts
- *   - party/org racing → verified role + relationship SCOPE (scope.ts)
- *   - premium content  → entitlement only (entitlement.ts)
+ * Two axes, and only two:
+ *   - ADMIN      → `user.isAdmin` plus the server-resolved action set
+ *   - RACING     → the party edges the account has claimed, and their scope
  *
- * These are the building blocks the dashboards, guards, and Production Systems call. The
- * server mirrors the enforcing subset in apps/server/src/lib/rbac.ts.
+ * These are the building blocks the dashboards, guards, and Production Systems
+ * call. The server enforces the same rules independently on every route — this
+ * is a UI-affordance gate, never a security boundary.
  */
 import type { AuthUser } from '@/stores/authStore';
-import { can as staffCan } from '@/lib/permissions';
+import { can as adminCan } from '@/lib/permissions';
 import type { PermissionAction } from '@/lib/permissions';
-import { horsesLinkedToParty, type ScopeData } from './scope';
-import { canViewContent, type SubscriptionTier } from './entitlement';
+import { horsesForOrgs, type ScopeData } from './scope';
 import type { OrgRole } from './roles';
 
 /**
- * True if the user can reach newsroom tooling.
+ * Holds an admin role — the ONE test for reaching Campaign Engine tooling.
  *
- * "Holds any staff role" again — but read off the session rather than a hardcoded
- * slug list, because roles are database rows. The server emits `newsroom.access`
- * for exactly the accounts holding a staff role, so this asks the same question it
- * always did. It only ever answers for the SIGNED-IN user (permissions are
- * resolved onto the active session); the `user` argument is kept so the ~15 call
- * sites read naturally and still short-circuit when signed out.
+ * Server-derived from `users.roleId`, so it cannot disagree with the role the
+ * account actually holds. This used to ask for a `newsroom.access` permission,
+ * which the server removed from the catalogue: being on the team IS access, and
+ * the role decides only what is inside.
  */
-export function isStaff(user: AuthUser | null | undefined): boolean {
-  return !!user && staffCan('newsroom.access');
+export function isAdmin(user: AuthUser | null | undefined): boolean {
+  return user?.isAdmin === true;
 }
 
-/** Party record ids the user can act through (verified claims only). */
-export function verifiedPartyIds(user: AuthUser | null | undefined): string[] {
-  return (user?.partyClaims ?? [])
-    .filter((c) => c.status === 'verified')
-    .map((c) => c.partyId);
+/** Party edge ids the account has claimed. A claim IS the identity. */
+export function myPartyIds(user: AuthUser | null | undefined): string[] {
+  return (user?.parties ?? []).map((p) => p.id);
 }
 
-/** Party record ids whose claim is still awaiting verification (any pending). */
-export function pendingPartyIds(user: AuthUser | null | undefined): string[] {
-  return (user?.partyClaims ?? [])
-    .filter((c) => c.status === 'pending')
-    .map((c) => c.partyId);
+/** The people the account is — usually one, occasionally more for an agency. */
+export function myPersonIds(user: AuthUser | null | undefined): string[] {
+  return [...new Set((user?.parties ?? []).map((p) => p.personId).filter(Boolean))];
 }
 
 /**
- * Party record ids the user may ACT THROUGH (write). A claim qualifies when it's
- * verified, OR pending but self-registered — provisional access to one's own
- * party. A pending claim on a pre-existing party stays view-only (not included).
+ * An admin permission. The `user` argument is vestigial — permissions are
+ * resolved server-side onto the active session, so this always answers for the
+ * signed-in user. Kept only to short-circuit when signed out.
  */
-export function manageablePartyIds(user: AuthUser | null | undefined): string[] {
-  return (user?.partyClaims ?? [])
-    .filter((c) => c.status === 'verified' || (c.status === 'pending' && c.selfRegistered !== false))
-    .map((c) => c.partyId);
-}
-
-/**
- * True if the user holds a provisional (pending self-registered) party — editable
- * now. `selfRegistered` unset counts as self-registered: every dashboard claim is
- * a self-registration, so only an explicit `false` (claiming a pre-existing party)
- * opts out.
- */
-export function hasProvisionalParty(user: AuthUser | null | undefined): boolean {
-  return (user?.partyClaims ?? []).some((c) => c.status === 'pending' && c.selfRegistered !== false);
-}
-
-/** True if the user has at least one role claim still in the verification stage. */
-export function hasPendingClaim(user: AuthUser | null | undefined): boolean {
-  return (user?.partyClaims ?? []).some((c) => c.status === 'pending');
-}
-
-/**
- * Staff/editorial permission. The `user` argument is vestigial — permissions
- * are resolved server-side onto the active session, so this always answers for
- * the signed-in user. It is kept only to short-circuit when signed out.
- */
-export function canStaff(
+export function canAdmin(
   user: AuthUser | null | undefined,
   action: PermissionAction,
 ): boolean {
-  return !!user && staffCan(action);
+  return !!user && adminCan(action);
 }
 
 /** The org role the user holds within a given organisation, if any. */
@@ -87,12 +54,17 @@ export function orgRoleIn(
   user: AuthUser | null | undefined,
   orgId: string,
 ): OrgRole | undefined {
-  return (user?.orgMemberships ?? []).find((m) => m.orgId === orgId)?.orgRole;
+  return (user?.orgMembers ?? []).find((m) => m.orgId === orgId)?.role;
+}
+
+/** Horse ids reached through the account's own claimed edges. */
+function ownHorseIds(user: AuthUser | null | undefined): string[] {
+  return (user?.parties ?? []).filter((p) => p.horseId).map((p) => p.horseId!);
 }
 
 /**
- * Horse ids the user may SEE — horses linked to any party they hold, plus horses
- * of ANY organisation they belong to (whatever their role in it), plus horses they
+ * Horse ids the user may SEE — horses on any edge they hold, plus horses of any
+ * organisation they belong to whatever their role in it, plus horses they
  * created themselves.
  *
  * Mirrors `visibleHorseIds` in apps/server/src/lib/scope.ts.
@@ -101,70 +73,29 @@ export function authorisedHorseIds(
   user: AuthUser | null | undefined,
   data: ScopeData,
 ): string[] {
-  return horseIdsFor(user, data, (user?.orgMemberships ?? []).map((m) => m.orgId));
+  if (!user) return [];
+  const orgIds = (user.orgMembers ?? []).map((m) => m.orgId);
+  return [...new Set([...ownHorseIds(user), ...horsesForOrgs(orgIds, data)])];
 }
 
 /**
- * Horse ids the user may WRITE. Same as the visible set EXCEPT that an org grants
- * reach only when the user OWNS or MANAGES it — a plain `org_member` may see the
- * org's horses but not edit them (RBAC.md §4.3).
+ * Horse ids the user may WRITE. Same as the visible set EXCEPT that an org
+ * grants reach only when the user OWNS or MANAGES it — a plain member may see
+ * the org's horses but not edit them.
  *
- * Mirrors `writableHorseIds` in apps/server/src/lib/scope.ts. Read and write scope
- * used to be one function on both sides, which over-granted on the server and made
- * this client offer edit affordances that the server now (correctly) refuses.
+ * Mirrors `writableHorseIds` in apps/server/src/lib/scope.ts. Read and write
+ * scope used to be one function, which made this client offer edit affordances
+ * the server then refused.
  */
 export function writableHorseIds(
   user: AuthUser | null | undefined,
   data: ScopeData,
 ): string[] {
-  return horseIdsFor(
-    user,
-    data,
-    (user?.orgMemberships ?? [])
-      .filter((m) => m.orgRole === 'org_owner' || m.orgRole === 'org_manager')
-      .map((m) => m.orgId),
-  );
-}
-
-function horseIdsFor(
-  user: AuthUser | null | undefined,
-  data: ScopeData,
-  orgIds: string[],
-): string[] {
   if (!user) return [];
-  const partyIds = [...manageablePartyIds(user), ...orgIds];
-  const ids = new Set<string>();
-  partyIds.forEach((pid) =>
-    horsesLinkedToParty(pid, data, { currentOnly: true }).forEach((h) => ids.add(h)),
-  );
-  // Horses the user created via self-registration — they manage these even before
-  // a party link or claim verification exists (mirrors the server gate).
-  data.horses.forEach((h) => {
-    if (h.createdByUserId && h.createdByUserId === user.id) ids.add(h.id);
-  });
-  return Array.from(ids);
-}
-
-/**
- * Horse ids the user may PREVIEW read-only — the authorised set PLUS horses linked
- * to a party whose claim is still pending AND NOT self-registered (i.e. claiming a
- * pre-existing party). That preview scope is view-only: it never feeds
- * canManageHorse, so writes stay gated to `authorisedHorseIds`. Self-registered
- * pending parties already grant full provisional access, so they're not preview.
- */
-export function previewHorseIds(
-  user: AuthUser | null | undefined,
-  data: ScopeData,
-): string[] {
-  if (!user) return [];
-  const ids = new Set(authorisedHorseIds(user, data));
-  const manageable = new Set(manageablePartyIds(user));
-  pendingPartyIds(user)
-    .filter((pid) => !manageable.has(pid))
-    .forEach((pid) =>
-      horsesLinkedToParty(pid, data, { currentOnly: true }).forEach((h) => ids.add(h)),
-    );
-  return Array.from(ids);
+  const orgIds = (user.orgMembers ?? [])
+    .filter((m) => m.role === 'owner' || m.role === 'manager')
+    .map((m) => m.orgId);
+  return [...new Set([...ownHorseIds(user), ...horsesForOrgs(orgIds, data)])];
 }
 
 /** Can the user view an "authorised-only" record (private report, vet) for this horse? */
@@ -173,49 +104,47 @@ export function canViewAuthorisedRecord(
   horseId: string,
   data: ScopeData,
 ): boolean {
-  if (isStaff(user)) return true;
+  if (isAdmin(user)) return true;
   return authorisedHorseIds(user, data).includes(horseId);
 }
 
 /**
- * Can the user edit this horse's racing data? Staff (Production System), or a
- * current linked party, or an org they own/manage.
- *
- * Uses the WRITE set — `authorisedHorseIds` (visibility) would show an Edit button
- * to a plain org member whose PUT the server rejects.
+ * Can the user edit this horse's racing data? An admin, a current linked edge,
+ * or an org they own/manage.
  */
 export function canManageHorse(
   user: AuthUser | null | undefined,
   horseId: string,
   data: ScopeData,
 ): boolean {
-  if (isStaff(user)) return true;
+  if (isAdmin(user)) return true;
   return writableHorseIds(user, data).includes(horseId);
 }
 
-/**
- * Can the user edit this party's profile? Staff, or the account that manages it —
- * a verified OR provisional (pending self-registered) claim. Their own party
- * identity is the hub of their self-service, editable from the moment they
- * register (provisional) through verification (public).
- */
+/** Can the user edit this party edge? An admin, or whoever claimed it. */
 export function canManageParty(
   user: AuthUser | null | undefined,
   partyId: string,
 ): boolean {
-  if (isStaff(user)) return true;
-  return manageablePartyIds(user).includes(partyId);
+  if (isAdmin(user)) return true;
+  return myPartyIds(user).includes(partyId);
 }
 
-/** The user's primary party id (first manageable claim), if any — their profile hub. */
-export function primaryPartyId(user: AuthUser | null | undefined): string | undefined {
-  return manageablePartyIds(user)[0];
-}
-
-/** Premium content gating — entitlement axis only, independent of roles. */
-export function canViewPremium(
+/** Can the user edit this person's profile? An admin, or the person themselves. */
+export function canManagePerson(
   user: AuthUser | null | undefined,
-  minTier: SubscriptionTier | undefined,
+  personId: string,
 ): boolean {
-  return canViewContent(user?.subscriptionTier, minTier);
+  if (isAdmin(user)) return true;
+  return myPersonIds(user).includes(personId);
+}
+
+/** The user's primary party edge, if any — their profile hub. */
+export function primaryPartyId(user: AuthUser | null | undefined): string | undefined {
+  return myPartyIds(user)[0];
+}
+
+/** The user's own person id — whose profile "Edit my profile" opens. */
+export function primaryPersonId(user: AuthUser | null | undefined): string | undefined {
+  return myPersonIds(user)[0];
 }

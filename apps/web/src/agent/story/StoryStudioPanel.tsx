@@ -17,6 +17,7 @@ import { MarkdownMessage } from '@/components/MarkdownMessage';
 import { useStoryStudioUi } from '@/stores/storyStudioUiStore';
 import { useStudioChrome } from '@/stores/studioChromeStore';
 import { uploadImage } from '@/lib/upload';
+import { useCanUpload } from '@/lib/permissions';
 import { useStoryChatSession, messageText } from './useStoryChatSession';
 import { useVoiceChat } from '@/agent/voice/useVoiceChat';
 import { useAutoGrowTextarea } from '@/lib/useAutoGrowTextarea';
@@ -45,6 +46,10 @@ export function StoryStudioPanel() {
   const [uploading, setUploading] = useState(false);
   const fileRef = useRef<HTMLInputElement>(null);
   const attachFileRef = useRef<HTMLInputElement>(null);
+  // The lead photo goes to S3, so it needs a media permission — writing a
+  // story does not grant one. The generic 📎 below is unaffected: those files
+  // are read by the assistant, never uploaded.
+  const canUploadPhoto = useCanUpload('media');
   const busy = status === 'submitted' || status === 'streaming';
   const scrollRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLTextAreaElement>(null);
@@ -229,17 +234,21 @@ export function StoryStudioPanel() {
       <AttachmentBar attachments={attach.attachments} onRemove={attach.remove} busy={attach.busy} tone="dark" />
       <form onSubmit={(e) => { e.preventDefault(); send(input); }} className="flex items-center gap-2 px-2.5 py-2">
         {/* Lead photo — becomes the published article's lead image */}
-        <input ref={fileRef} type="file" accept="image/*" className="sr-only" onChange={(e) => void onAttach(e.target.files?.[0])} aria-label="Attach the story's lead photo" />
-        <button
-          type="button"
-          onClick={() => fileRef.current?.click()}
-          disabled={uploading}
-          aria-label="Attach the story's lead photo"
-          title="Attach the story's lead photo"
-          className="flex h-8 w-8 flex-shrink-0 items-center justify-center rounded-full border border-white/15 text-white/60 transition-colors hover:bg-white/10 disabled:opacity-50"
-        >
-          {uploading ? <Loader2 size={14} className="animate-spin" /> : <ImageIcon size={14} />}
-        </button>
+        {canUploadPhoto && (
+          <>
+            <input ref={fileRef} type="file" accept="image/*" className="sr-only" onChange={(e) => void onAttach(e.target.files?.[0])} aria-label="Attach the story's lead photo" />
+            <button
+              type="button"
+              onClick={() => fileRef.current?.click()}
+              disabled={uploading}
+              aria-label="Attach the story's lead photo"
+              title="Attach the story's lead photo"
+              className="flex h-8 w-8 flex-shrink-0 items-center justify-center rounded-full border border-white/15 text-white/60 transition-colors hover:bg-white/10 disabled:opacity-50"
+            >
+              {uploading ? <Loader2 size={14} className="animate-spin" /> : <ImageIcon size={14} />}
+            </button>
+          </>
+        )}
         {/* Generic attach — images/PDFs for the assistant to read */}
         <input
           ref={attachFileRef}

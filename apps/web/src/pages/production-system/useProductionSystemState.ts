@@ -15,7 +15,7 @@ import { useNavigate } from 'react-router-dom';
 import { toast } from 'sonner';
 
 import { articleToast } from '@/components/Toast';
-import { can, canEditArticle } from '@/lib/permissions';
+import { can, canAny, canAnyones, canEditArticle } from '@/lib/permissions';
 import { roleColor, roleSummary } from '@/lib/roleDisplay';
 import { WORKFLOW_STAGES, findMove } from '@/lib/workflow';
 import type { Move } from '@/lib/workflow';
@@ -102,16 +102,16 @@ export function useProductionSystemState() {
 
   // Behavioural branches are permissions, not role-name equality.
   // `isContributor` means "can only touch their own drafts".
-  const isContributor = !can('content.draft.edit_any');
-  const isEditor = can('content.editorial_review');
+  const isContributor = !canAnyones('stories.edit');
+  const isEditor = can('stories.edit');
   // READ and WRITE are separate powers on the roster. `team.view` alone opens the
   // Team screen read-only; `team.manage` is what turns the controls on. Mirrors
   // the split in routes/staff.ts, which gates GET on view and writes on manage.
-  const canManageTeam = can('team.manage');
+  const canManageTeam = canAny(['team.create', 'team.edit', 'team.delete']);
   const canViewTeam = can('team.view') || canManageTeam;
   // Distinct from team.manage: /api/roles enforces roles.manage, so the console
   // must ask for the same thing the server does.
-  const canManageRoles = can('roles.manage');
+  const canManageRoles = canAny(['roles.create', 'roles.edit', 'roles.delete']);
 
   const onGrantStaff = async () => {
     if (!teamEmail.trim() || !teamRole) return;
@@ -155,7 +155,7 @@ export function useProductionSystemState() {
       ARTICLE_STATUSES.map((s) => [s, [] as Article[]]),
     ) as Record<ArticleStatus, Article[]>;
     const visibleArticles = isContributor
-      ? (articles ?? []).filter((a) => a.author === currentUser?.displayName)
+      ? (articles ?? []).filter((a) => a.author === currentUser?.name)
       : (articles ?? []);
     for (const article of visibleArticles) {
       // An unrecognised status falls into Draft so the story is at least
@@ -166,7 +166,7 @@ export function useProductionSystemState() {
       else map.draft.push(article);
     }
     return map;
-  }, [articles, isContributor, currentUser?.displayName]);
+  }, [articles, isContributor, currentUser?.name]);
 
   // Kanban visibility is the third role axis, ticked per role by a superadmin.
   const stageIds = currentUser?.access?.workflowStages ?? [];
@@ -253,13 +253,13 @@ export function useProductionSystemState() {
   };
 
   const handleEdit = (article: Article) => {
-    if (!canEditArticle(article.author, currentUser?.displayName)) return;
+    if (!canEditArticle(article.author, currentUser?.name)) return;
     setEditArticle(article);
     setFormOpen(true);
   };
 
   const handleDelete = (article: Article) => {
-    if (!canEditArticle(article.author, currentUser?.displayName)) return;
+    if (!canEditArticle(article.author, currentUser?.name)) return;
     setDeleteTarget(article);
   };
 
@@ -276,7 +276,7 @@ export function useProductionSystemState() {
   };
 
   const handleNewInColumn = (status: ArticleStatus) => {
-    if (!can('content.draft.create')) return;
+    if (!can('stories.create')) return;
     setEditArticle(null);
     setDefaultStatus(status);
     setFormOpen(true);
@@ -284,7 +284,7 @@ export function useProductionSystemState() {
 
   // Open the Story Studio AI drawer (same gate as filing a story manually).
   const handleOpenStudio = () => {
-    if (!can('content.draft.create')) return;
+    if (!can('stories.create')) return;
     useStoryStudioUi.getState().setOpen(true);
   };
 
@@ -302,7 +302,7 @@ export function useProductionSystemState() {
 
   const totalStories = (articles ?? []).length;
   const myStories = isContributor
-    ? (articles ?? []).filter((a) => a.author === currentUser?.displayName).length
+    ? (articles ?? []).filter((a) => a.author === currentUser?.name).length
     : totalStories;
   // One review queue now — the editorial/legal/compliance/publisher gates that
   // used to be counted alongside Submitted are gone.
@@ -313,7 +313,7 @@ export function useProductionSystemState() {
 
   const filteredArticles = useMemo(() => {
     const base = isContributor
-      ? (articles ?? []).filter((a) => a.author === currentUser?.displayName)
+      ? (articles ?? []).filter((a) => a.author === currentUser?.name)
       : (articles ?? []);
     if (!searchQuery.trim()) return base;
     const q = searchQuery.toLowerCase();
@@ -323,7 +323,7 @@ export function useProductionSystemState() {
         a.author.toLowerCase().includes(q) ||
         (a.category ?? '').toLowerCase().includes(q),
     );
-  }, [articles, searchQuery, isContributor, currentUser?.displayName]);
+  }, [articles, searchQuery, isContributor, currentUser?.name]);
 
   return {
     // identity / capability

@@ -13,7 +13,7 @@ export default function AllStoriesScreen() {
       filteredArticles={s.filteredArticles}
       onNewInColumn={s.handleNewInColumn}
       onOpenStudio={s.handleOpenStudio}
-      currentUserDisplayName={s.currentUser?.displayName}
+      currentUserDisplayName={s.currentUser?.name}
       onEdit={s.handleEdit}
     />
   );

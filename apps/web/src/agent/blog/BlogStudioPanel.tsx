@@ -27,6 +27,7 @@ import { MarkdownMessage } from '@/components/MarkdownMessage';
 import { useBlogStudioUi } from '@/stores/blogStudioUiStore';
 import { useStudioChrome } from '@/stores/studioChromeStore';
 import { uploadImage } from '@/lib/upload';
+import { useCanUpload } from '@/lib/permissions';
 import { useBlogChatSession, messageText } from './useBlogChatSession';
 import { useVoiceChat } from '@/agent/voice/useVoiceChat';
 import { useAutoGrowTextarea } from '@/lib/useAutoGrowTextarea';
@@ -158,6 +159,9 @@ export function BlogStudioPanel() {
   const [uploading, setUploading] = useState(false);
   const fileRef = useRef<HTMLInputElement>(null);
   const attachFileRef = useRef<HTMLInputElement>(null);
+  // The cover goes to S3 under `kind: 'blog'`, which the server allows for
+  // `blogs.create` OR `media.upload_own` — not for a role that merely edits.
+  const canUploadCover = useCanUpload('blog');
   const busy = status === 'submitted' || status === 'streaming';
   const scrollRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLTextAreaElement>(null);
@@ -200,6 +204,15 @@ export function BlogStudioPanel() {
   const send = (text: string) => {
     const t = text.trim();
     if ((!t && !attach.hasAttachments) || busy || attach.busy) return;
+    // A parked confirmation is a tool call still waiting on a click. Sending now
+    // would put a tool call with no result into the history, and from then on EVERY
+    // message in this conversation fails server-side (MissingToolResultsError) —
+    // the chat is dead until "New chat". So the card has to be answered first, and
+    // it is right there with both buttons on it.
+    if (useBlogStudioUi.getState().pendingConfirm) {
+      toast.info('Answer the card above first — yes or no.');
+      return;
+    }
     void sendMessage(
       attach.hasAttachments ? { text: t, files: attachmentsToFileParts(attach.attachments) } : { text: t },
     );
@@ -381,17 +394,21 @@ export function BlogStudioPanel() {
         <AttachmentBar attachments={attach.attachments} onRemove={attach.remove} busy={attach.busy} tone="dark" />
         <form onSubmit={(e) => { e.preventDefault(); send(input); }} className="flex items-center gap-2 px-2.5 py-2">
           {/* Cover photo — becomes the post's cover image */}
-          <input ref={fileRef} type="file" accept="image/*" className="sr-only" onChange={(e) => void onAttach(e.target.files?.[0])} aria-label="Attach the post's cover photo" />
-          <button
-            type="button"
-            onClick={() => fileRef.current?.click()}
-            disabled={uploading}
-            aria-label="Attach the post's cover photo"
-            title="Attach the post's cover photo"
-            className="flex h-8 w-8 flex-shrink-0 items-center justify-center rounded-full border border-white/15 text-white/60 transition-colors hover:bg-white/10 disabled:opacity-50"
-          >
-            {uploading ? <Loader2 size={14} className="animate-spin" /> : <ImageIcon size={14} />}
-          </button>
+          {canUploadCover && (
+            <>
+              <input ref={fileRef} type="file" accept="image/*" className="sr-only" onChange={(e) => void onAttach(e.target.files?.[0])} aria-label="Attach the post's cover photo" />
+              <button
+                type="button"
+                onClick={() => fileRef.current?.click()}
+                disabled={uploading}
+                aria-label="Attach the post's cover photo"
+                title="Attach the post's cover photo"
+                className="flex h-8 w-8 flex-shrink-0 items-center justify-center rounded-full border border-white/15 text-white/60 transition-colors hover:bg-white/10 disabled:opacity-50"
+              >
+                {uploading ? <Loader2 size={14} className="animate-spin" /> : <ImageIcon size={14} />}
+              </button>
+            </>
+          )}
           {/* Generic attach — images/PDFs for the assistant to read */}
           <input
             ref={attachFileRef}
