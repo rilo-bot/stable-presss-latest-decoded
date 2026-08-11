@@ -34,9 +34,9 @@ export default function StepDetails({
   return (
     <>
       <div className="mb-8">
-        <h2 className="font-[family-name:var(--font-display)] text-2xl font-bold text-foreground mb-1">
+        <h1 className="font-[family-name:var(--font-display)] text-2xl font-bold text-foreground mb-1">
           Join the journal
-        </h2>
+        </h1>
         <div className="h-px w-full bg-foreground/10 mt-3 mb-4" />
         <p className="text-sm text-muted-foreground">
           Tell us who you are and we will send a verification code to confirm your email.

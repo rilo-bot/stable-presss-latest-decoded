@@ -2,7 +2,7 @@ import { Router } from 'express';
 import type { Request } from 'express';
 import { db } from '../../lib/db.js';
 import { attachAccount, attachAccountOptional } from '../../lib/auth.js';
-import { accountCan } from '../../lib/effectiveAccess.js';
+import { accountCan, canOn } from '../../lib/effectiveAccess.js';
 import type { PermissionAction } from '../../lib/permissionCatalogue.js';
 import { project, type WithMongoId } from '../../lib/project.js';
 
@@ -59,14 +59,14 @@ function ownsEpisode(doc: Record<string, unknown>, req: Request): boolean {
 // ── List — drafts/unpublished are visible only to podcast roles ──────────────
 router.get('/', attachAccountOptional, async (req, res) => {
   const items = await db.collection('podcastEpisodes').find();
-  const seesAll = accountCan(req.account, 'podcast.read_all');
+  const seesAll = accountCan(req.account, 'podcast.view');
   const visible = seesAll ? items : items.filter((e) => e.status === 'published');
   res.json(visible.map(project));
 });
 
 // ── Create — producers/admins only ───────────────────────────────────────────
 router.post('/', attachAccount, async (req, res) => {
-  if (!accountCan(req.account, 'podcast.episode.create')) {
+  if (!accountCan(req.account, 'podcast.create')) {
     res.status(403).json({ error: 'You do not have permission to create episodes.' });
     return;
   }
@@ -84,7 +84,7 @@ router.post('/', attachAccount, async (req, res) => {
   // Creating straight into a published state would walk past `statusPermission`
   // entirely — the same hole blogs and articles each had to close.
   const wanted = typeof body.status === 'string' ? body.status : 'draft';
-  if (wanted !== 'draft' && !accountCan(req.account, 'podcast.manage')) {
+  if (wanted !== 'draft' && !accountCan(req.account, 'podcast.edit')) {
     const needed = statusPermission('draft', wanted);
     if (needed && !accountCan(req.account, needed)) {
       res.status(403).json({ error: `You cannot create an episode as ${wanted}.` });
@@ -114,32 +114,32 @@ router.post('/', attachAccount, async (req, res) => {
  * The catalogue advertises "may upload audio", "may manage guests", "may manage
  * distribution" and "may schedule" as separate powers, but this route used to
  * collapse them into one `edit_own`/`edit_any` check — so anyone who could edit an
- * episode could do all four, and granting only `podcast.audio.upload` granted
+ * episode could do all four, and granting only `podcast.edit` granted
  * nothing at all. See docs/CRM-MODULES-PERMISSIONS-REVIEW.md §4.2.
  *
- * `podcast.manage` is the umbrella: holding it satisfies any of these.
+ * `podcast.edit` is the umbrella: holding it satisfies any of these.
  */
 const FIELD_PERMISSIONS: Array<{ fields: string[]; permission: PermissionAction; what: string }> = [
-  { fields: ['audioUrl', 'durationSeconds'], permission: 'podcast.audio.upload', what: 'change the audio' },
-  { fields: ['guests'], permission: 'podcast.guests.manage', what: 'manage guests' },
-  { fields: ['distributionChannels'], permission: 'podcast.distribution.manage', what: 'change distribution' },
-  { fields: ['scheduledFor'], permission: 'podcast.episode.schedule', what: 'schedule episodes' },
+  { fields: ['audioUrl', 'durationSeconds'], permission: 'podcast.edit', what: 'change the audio' },
+  { fields: ['guests'], permission: 'podcast.edit', what: 'manage guests' },
+  { fields: ['distributionChannels'], permission: 'podcast.edit', what: 'change distribution' },
+  { fields: ['scheduledFor'], permission: 'podcast.publish', what: 'schedule episodes' },
 ];
 
 /** Which permission a status MOVE requires, or null when it needs no special power. */
 function statusPermission(from: string, to: string): PermissionAction | null {
   if (to === from) return null;
   // Publish and approve are DIFFERENT powers. Publishing used to be gated on
-  // `podcast.episode.approve`, which meant granting approve silently granted
-  // publish, and `podcast.episode.publish` was enforced nowhere at all.
-  if (to === 'published') return 'podcast.episode.publish';
-  if (to === 'in_review') return 'podcast.episode.submit_review';
+  // `podcast.publish`, which meant granting approve silently granted
+  // publish, and `podcast.publish` was enforced nowhere at all.
+  if (to === 'published') return 'podcast.publish';
+  if (to === 'in_review') return 'podcast.edit';
   if (to === 'scheduled') {
     // Coming out of review is an approval; scheduling your own draft is not.
-    return from === 'in_review' ? 'podcast.episode.approve' : 'podcast.episode.schedule';
+    return from === 'in_review' ? 'podcast.publish' : 'podcast.publish';
   }
   // Pulling a live episode back down is an approval-grade act.
-  if (from === 'published') return 'podcast.episode.approve';
+  if (from === 'published') return 'podcast.publish';
   return null;
 }
 
@@ -156,14 +156,12 @@ router.put('/:id', attachAccount, async (req, res) => {
   }
 
   const isOwn = ownsEpisode(existing, req);
-  const umbrella = accountCan(account, 'podcast.manage');
 
-  // 1. May they touch this episode AT ALL?
-  const mayEdit =
-    umbrella ||
-    accountCan(account, 'podcast.episode.edit_any') ||
-    (accountCan(account, 'podcast.episode.edit_own') && isOwn);
-  if (!mayEdit) {
+  // 1. May they touch this episode AT ALL? One verb, and SCOPE decides whether
+  //    it reaches everyone's episodes or only their own — the three separate
+  //    ids this used to weigh (manage / edit_any / edit_own) said the same
+  //    thing in three ways and could disagree.
+  if (!canOn(account, 'podcast', 'edit', isOwn)) {
     res.status(403).json({ error: 'You do not have permission to modify this episode.' });
     return;
   }
@@ -172,7 +170,7 @@ router.put('/:id', attachAccount, async (req, res) => {
   const from = typeof existing.status === 'string' ? existing.status : 'draft';
   if (typeof body.status === 'string') {
     const needed = statusPermission(from, body.status);
-    if (needed && !umbrella && !accountCan(account, needed)) {
+    if (needed && !accountCan(account, needed)) {
       res.status(403).json({ error: `You do not have permission to move this episode to ${body.status}.` });
       return;
     }
@@ -185,7 +183,7 @@ router.put('/:id', attachAccount, async (req, res) => {
     const touched = rule.fields.some(
       (f) => f in body && JSON.stringify((body as Record<string, unknown>)[f]) !== JSON.stringify(existing[f]),
     );
-    if (touched && !umbrella && !accountCan(account, rule.permission)) {
+    if (touched && !accountCan(account, rule.permission)) {
       res.status(403).json({ error: `You do not have permission to ${rule.what}.` });
       return;
     }
@@ -224,10 +222,8 @@ router.delete('/:id', attachAccount, async (req, res) => {
   }
 
   const isOwn = ownsEpisode(existing, req);
-  const allowed =
-    (accountCan(account, 'podcast.episode.delete') || accountCan(account, 'podcast.manage')) &&
-    existing.status !== 'published' &&
-    (isOwn || accountCan(account, 'podcast.episode.edit_any') || accountCan(account, 'podcast.manage'));
+  // A live episode is not deletable by anyone — take it down first.
+  const allowed = existing.status !== 'published' && canOn(account, 'podcast', 'delete', isOwn);
   if (!allowed) {
     res.status(403).json({ error: 'You do not have permission to delete this episode.' });
     return;

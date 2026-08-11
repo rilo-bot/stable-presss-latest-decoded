@@ -8,32 +8,12 @@
 
 import { Router } from 'express'
 import { db } from '../../lib/db.js'
-import { signToken } from '../../lib/auth.js'
-import { newUserFields, withIdentityDefaults } from '../../lib/identity.js'
-import { resolveAccount, toClientUser } from '../../lib/effectiveAccess.js'
+import { findOrCreateUser, issueSession, markSignedIn } from '../../lib/session.js'
 
 import { rateLimit } from '../../lib/rateLimit.js'
 import { findInviteByToken, sanitizeRedirect } from '../../lib/invites.js'
 import { INVITES, USERS } from '../../lib/collections.js'
 import { assignRole, getRoles, roleOfUser } from '../../lib/roleRegistry.js'
-import { project, type WithMongoId } from '../../lib/project.js'
-
-
-/** The db layer's document type isn't exported, so borrow it from findById. */
-type UserDoc = Awaited<ReturnType<ReturnType<typeof db.collection>['findById']>>
-
-/** "jane.fitzgerald@x.com" -> "Jane Fitzgerald". A starting point; renameable. */
-function nameFromEmail(email: string): string {
-  const local = email.split('@')[0] ?? ''
-  const words = local
-    .split(/[._\-+]+/)
-    .filter(Boolean)
-    // Strip a trailing disambiguator ("jane.f2") rather than title-casing digits.
-    .map((w) => w.replace(/\d+$/, ''))
-    .filter(Boolean)
-    .map((w) => w.charAt(0).toUpperCase() + w.slice(1))
-  return words.join(' ').slice(0, 80) || email.slice(0, 80)
-}
 
 const router = Router()
 
@@ -85,22 +65,10 @@ router.post('/:token/accept', rateLimit('invite-accept', 20, 5 * 60_000), async 
   }
 
   const email = String(invite.email)
-  let userDoc: UserDoc = (await db.collection(USERS).find({ email }))[0] ?? null
-
-  if (!userDoc) {
-    const sent = typeof req.body?.name === 'string' ? req.body.name.trim().slice(0, 80) : ''
-    const id = await db.collection(USERS).insertOne({
-      email,
-      name: sent || nameFromEmail(email),
-      createdAt: new Date().toISOString(),
-      ...newUserFields(),
-    })
-    userDoc = await db.collection(USERS).findById(id)
-    if (!userDoc) {
-      res.status(500).json({ error: 'Could not create your account. Please try again.' })
-      return
-    }
-  }
+  // Same account creator as sign-in: a new account starts with no role, and the
+  // invited role is applied deliberately, just below.
+  const sent = typeof req.body?.name === 'string' ? req.body.name : undefined
+  const { user: userDoc } = await findOrCreateUser(email, sent)
 
   // ONE ROLE PER PERSON, so this REPLACES rather than appends — matching
   // `POST /api/roles/:slug/assign` and the existing-account branch of
@@ -118,17 +86,15 @@ router.post('/:token/accept', rateLimit('invite-accept', 20, 5 * 60_000), async 
   const siblings = await db.collection(INVITES).find({ email })
   await Promise.all(siblings.map((row) => db.collection(INVITES).deleteOne(row._id)))
 
+  // Re-read so the session reflects the role just applied.
+  //
+  // `markSignedIn` because redeeming an invite IS a sign-in — this was the one
+  // door that issued a session without stamping `lastLogin`, so everyone who
+  // joined by link read as "never signed in" on the Team screen until their
+  // next OTP login. Same order as /auth/verify: stamp, then issue.
   const fresh = await db.collection(USERS).findById(String(userDoc._id))
-  const identity = withIdentityDefaults(project(fresh ?? userDoc))
-  const session = signToken({
-    sub: identity.id,
-    email: identity.email,
-    v: typeof (fresh ?? userDoc).tokenVersion === 'number' ? (fresh ?? userDoc).tokenVersion : 0,
-  })
-
   res.json({
-    token: session,
-    user: toClientUser(await resolveAccount(identity)),
+    ...(await issueSession(await markSignedIn(fresh ?? userDoc))),
     redirectTo: sanitizeRedirect(invite.redirectTo),
   })
 })

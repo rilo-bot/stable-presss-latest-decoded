@@ -44,9 +44,9 @@ export default function StepOtp({
           <ArrowRight size={12} className="rotate-180" />
           Back
         </button>
-        <h2 className="font-[family-name:var(--font-display)] text-2xl font-bold text-foreground mb-1">
+        <h1 className="font-[family-name:var(--font-display)] text-2xl font-bold text-foreground mb-1">
           Confirm your email
-        </h2>
+        </h1>
         <div className="h-px w-full bg-foreground/10 mt-3 mb-4" />
         <p className="text-sm text-muted-foreground">
           We sent a 6-digit code to{' '}
@@ -88,6 +88,9 @@ export default function StepOtp({
                 onChange={(e) => onDigitChange(i, e.target.value)}
                 onKeyDown={(e) => onKeyDown(i, e)}
                 aria-label={`Digit ${i + 1}`}
+                autoComplete={i === 0 ? 'one-time-code' : 'off'}
+                aria-invalid={otpError ? true : undefined}
+                aria-describedby={otpError ? 'signup-otp-error' : undefined}
                 className={cn(
                   'w-11 h-14 text-center text-xl font-bold font-mono rounded-md border bg-background transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-ring',
                   otpError
@@ -99,13 +102,16 @@ export default function StepOtp({
             ))}
           </div>
           {otpError && (
-            <p className="text-xs text-destructive mt-1">{otpError}</p>
+            <p id="signup-otp-error" role="alert" className="text-xs text-destructive mt-1">
+              {otpError}
+            </p>
           )}
         </div>
 
         <Button
           type="submit"
           disabled={loading || otpDigits.some((d) => d === '')}
+          aria-busy={loading}
           className="w-full bg-primary text-primary-foreground hover:bg-primary/90"
         >
           {loading ? 'Creating your account…' : 'Verify & Create Account'}

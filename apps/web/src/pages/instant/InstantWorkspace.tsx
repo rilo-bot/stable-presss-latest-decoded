@@ -5,8 +5,8 @@
  * capture step with its button spinning, not a separate screen, so the photos and
  * the voice note stay visible while the AI reads them.
  *
- * Permissions: the two modes need DIFFERENT permissions — `content.draft.create`
- * to file a story, `blog.create` to file a post — so they are gated
+ * Permissions: the two modes need DIFFERENT permissions — `stories.create`
+ * to file a story, `blogs.create` to file a post — so they are gated
  * independently and the toggle only offers what the user can actually save. A
  * single module-level gate would have hidden the whole screen from a blog-only
  * author, or shown them a Story mode whose save always 403s.
@@ -68,8 +68,8 @@ function SavedPanel() {
 export function InstantWorkspace() {
   const { step, mode, saved, setMode, reset } = useInstantStore();
   const navigate = useNavigate();
-  const canStory = useCan('content.draft.create');
-  const canBlog = useCan('blog.create');
+  const canStory = useCan('stories.create');
+  const canBlog = useCan('blogs.create');
 
   const allowedModes: InstantMode[] = [
     ...(canStory ? (['story'] as const) : []),

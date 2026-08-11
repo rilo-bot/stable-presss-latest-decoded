@@ -5,7 +5,7 @@
 //
 //  1. Writes carry `baseUpdatedAt` and 409 on a stale save. Two people editing
 //     one post with last-write-wins silently destroys work.
-//  2. `blog.publish` is checked on EVERY path that can set status to published —
+//  2. `blogs.publish` is checked on EVERY path that can set status to published —
 //     POST, PUT and /publish alike — because any one of them left ungated is a
 //     way around the other two.
 // ---------------------------------------------------------------------------
@@ -51,7 +51,7 @@ router.post('/', async (req, res) => {
   // that let a contributor self-publish a story before the workflow was enforced.
   let status: BlogStatus = 'draft'
   if (isBlogStatus(body.status) && body.status === 'published') {
-    if (!accountCan(account, 'blog.publish')) {
+    if (!accountCan(account, 'blogs.publish')) {
       res.status(403).json({ error: 'You cannot publish blog posts.' })
       return
     }
@@ -175,7 +175,7 @@ router.put('/:id', async (req, res) => {
   // Publishing through PUT is allowed but still gated; the dedicated /publish
   // endpoint exists for the common case.
   if (isBlogStatus(body.status) && body.status !== found.status) {
-    if (!accountCan(account, 'blog.publish')) {
+    if (!accountCan(account, 'blogs.publish')) {
       res.status(403).json({
         error: body.status === 'published' ? 'You cannot publish blog posts.' : 'You cannot unpublish blog posts.',
       })
@@ -219,7 +219,7 @@ router.put('/:id', async (req, res) => {
 /** POST /api/blogs/:id/publish — { published: boolean }. */
 router.post('/:id/publish', async (req, res) => {
   const account = req.account!
-  if (!accountCan(account, 'blog.publish')) {
+  if (!accountCan(account, 'blogs.publish')) {
     res.status(403).json({ error: 'You cannot publish blog posts.' })
     return
   }

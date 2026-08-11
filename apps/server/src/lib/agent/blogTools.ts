@@ -4,8 +4,8 @@
 // EVERY tool here is CLIENT-EXECUTED — declared without `execute`. That is not a
 // style choice, it is the security model: the browser runs each one through
 // `useBlogStore` (apps/web/src/agent/blog/blogToolExecutor.ts), which calls the
-// REST endpoints behind `blogsWriteGate`. So `blog.create`, `blog.edit_own`,
-// `blog.edit_any`, `blog.publish` and `blog.delete` are still enforced by the
+// REST endpoints behind `blogsWriteGate`. So `blogs.create`, `blog.edit_own`,
+// `blog.edit_any`, `blogs.publish` and `blogs.delete` are still enforced by the
 // server that owns them, and a model that decides to delete a post it was not
 // allowed to touch simply gets a 403 back as a tool result. Same rationale as
 // articleTools.ts.

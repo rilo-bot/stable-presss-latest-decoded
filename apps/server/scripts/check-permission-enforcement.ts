@@ -43,13 +43,23 @@ const WEB_UNION_FILE = path.join('lib', 'permissions.ts')
 /**
  * Count references to a literal `'id'` under `root`, excluding the files that
  * merely declare it. Uses git's grep so it honours .gitignore and stays fast.
+ *
+ * WHY THIS IS NOT ENOUGH ON ITS OWN. Gates now map the HTTP METHOD to a verb —
+ * `can(account, 'horses', verbForMethod(req.method))` — so `'horses.delete'`
+ * never appears as a literal anywhere even though DELETE is fully gated. Grep
+ * cannot see a string that is assembled at runtime, so `gatedScreens` below
+ * looks for the gate DECLARATION instead. The method → verb mapping itself is
+ * one shared helper with tests (tests/permissions.test.ts).
  */
-function references(id: string, root: string, excludes: string[]): number {
+function references(needle: string, root: string, excludes: string[]): number {
+  // A bare id is matched as `'id'`; a longer form (see gatedScreens) already
+  // carries its own quotes and is matched verbatim.
+  const pattern = needle.includes("'") ? needle : `'${needle}'`
   let out = ''
   try {
     out = execFileSync(
       'git',
-      ['grep', '-l', '--fixed-strings', `'${id}'`, '--', root],
+      ['grep', '-l', '--fixed-strings', pattern, '--', root],
       { encoding: 'utf8', cwd: root },
     )
   } catch {
@@ -62,9 +72,42 @@ function references(id: string, root: string, excludes: string[]): number {
     .filter((file) => !excludes.some((ex) => file.includes(ex))).length
 }
 
-const moduleGated = new Set<PermissionAction>(
-  MODULE_CATALOGUE.map((m) => m.requiresPermission).filter((p): p is PermissionAction => !!p),
-)
+/**
+ * `<screen>.view` IS the navigation gate, by construction: the sidebar is
+ * derived from it (`modulesForPermissions`) and ProductionSystemLayout enforces
+ * it per URL. So a `.view` with no other reference is legitimately enforced.
+ *
+ * This is STRICTER than the old rule it replaces, which whitelisted whichever id
+ * a module happened to name in `requiresPermission` — including write verbs like
+ * `roles.manage`. Now: every verb that is not `view` must appear in SERVER code
+ * or the check fails.
+ */
+const isNavGate = (id: PermissionAction) => id.endsWith('.view')
+
+/**
+ * Screens whose verbs are enforced by a method-mapping gate.
+ *
+ * Proven, not declared: a screen counts only when server code contains one of
+ * the gate forms below with that screen's id as a LITERAL. Deleting the gate
+ * deletes the proof, and the check fails.
+ */
+function gatedScreens(): Set<string> {
+  const found = new Set<string>()
+  for (const screen of new Set(PERMISSION_CATALOGUE.map((p) => p.id.slice(0, p.id.lastIndexOf('.'))))) {
+    const forms = [
+      `screen: '${screen}'`, //        adminGate / horseScopedWriteGate option
+      `screen ?? '${screen}'`, //      the default in horseScopedWriteGate
+      `, '${screen}', `, //            can(account, 'stories', verb)
+      `(account, '${screen}'`, //      staffMay(account, 'people', …)
+      `(req.account, '${screen}'`,
+    ]
+    if (forms.some((f) => references(f, SERVER_SRC, [CATALOGUE_FILE]) > 0)) found.add(screen)
+  }
+  return found
+}
+
+const gated = gatedScreens()
+const screenOf = (id: PermissionAction) => id.slice(0, id.lastIndexOf('.'))
 
 interface Row {
   id: PermissionAction
@@ -77,14 +120,14 @@ const rows: Row[] = PERMISSION_CATALOGUE.map((p) => ({
   id: p.id,
   server: references(p.id, SERVER_SRC, [CATALOGUE_FILE]),
   web: references(p.id, WEB_SRC, [WEB_UNION_FILE]),
-  module: moduleGated.has(p.id),
+  module: isNavGate(p.id),
 }))
 
 // Buckets are MUTUALLY EXCLUSIVE and must sum to rows.length — an id that falls
 // through every printed bucket is exactly the thing this script exists to catch,
 // so the totals are asserted rather than trusted.
-const serverEnforced = rows.filter((r) => r.server > 0)
-const rest = rows.filter((r) => r.server === 0)
+const serverEnforced = rows.filter((r) => r.server > 0 || gated.has(screenOf(r.id)))
+const rest = rows.filter((r) => !(r.server > 0 || gated.has(screenOf(r.id))))
 const moduleGate = rest.filter((r) => r.module)
 const webOnly = rest.filter((r) => !r.module && r.web > 0)
 const unenforced = rest.filter((r) => !r.module && r.web === 0)

@@ -21,7 +21,14 @@
 import { db } from '../db.js'
 import { MAGAZINE_V2_ENABLED } from '../magazineV2/config.js'
 import { isAdmin, isPlatformAdmin } from '../rbac.js'
-import { accountCan } from '../effectiveAccess.js'
+import { accountCan, canOn } from '../effectiveAccess.js'
+
+/**
+ * "…anyone's, not just my own." `canOn` with `owns: false` asks exactly that: it
+ * passes only when the role holds the verb AND its scope is 'all'.
+ */
+const canAny = (account: Parameters<typeof accountCan>[0], screen: string, verb: 'edit' | 'delete') =>
+  canOn(account, screen, verb, false)
 import { manageablePartyIds, visibleHorseIds } from '../scope.js'
 import type { AccountUser } from '../identity.js'
 
@@ -163,9 +170,9 @@ const CAPABILITY_RULES: Rule[] = [
     category: 'editorial',
     where: 'Production System → Workflow Board → File a Story (manual, or the AI Story Studio)',
     when: (c) => c.admin,
-    allowed: (c) => accountCan(c.account, 'content.draft.create'),
+    allowed: (c) => accountCan(c.account, 'stories.create'),
     reason: (c) =>
-      accountCan(c.account, 'content.draft.create')
+      accountCan(c.account, 'stories.create')
         ? undefined
         : 'Your role does not include drafting — an administrator can grant it.',
   },
@@ -175,9 +182,9 @@ const CAPABILITY_RULES: Rule[] = [
     category: 'editorial',
     where: 'Production System → All Stories',
     when: (c) => c.admin,
-    allowed: (c) => accountCan(c.account, 'content.draft.edit_any'),
+    allowed: (c) => canAny(c.account, 'stories', 'edit'),
     reason: (c) =>
-      accountCan(c.account, 'content.draft.edit_any') ? undefined : 'Reserved for editors and publishers.',
+      canAny(c.account, 'stories', 'edit') ? undefined : 'You can edit your own stories only.',
   },
   {
     id: 'review-story',
@@ -185,9 +192,9 @@ const CAPABILITY_RULES: Rule[] = [
     category: 'editorial',
     where: 'Production System → Editor Hub',
     when: (c) => c.admin,
-    allowed: (c) => accountCan(c.account, 'content.editorial_review'),
+    allowed: (c) => accountCan(c.account, 'stories.edit'),
     reason: (c) =>
-      accountCan(c.account, 'content.editorial_review') ? undefined : 'Reserved for editors and administrators.',
+      accountCan(c.account, 'stories.edit') ? undefined : 'Reserved for editors and administrators.',
   },
   {
     id: 'publish-story',
@@ -195,9 +202,9 @@ const CAPABILITY_RULES: Rule[] = [
     category: 'editorial',
     where: 'Production System → Workflow Board',
     when: (c) => c.admin,
-    allowed: (c) => accountCan(c.account, 'content.publish'),
+    allowed: (c) => accountCan(c.account, 'stories.publish'),
     reason: (c) =>
-      accountCan(c.account, 'content.publish') ? undefined : 'Publishing is reserved for publishers and administrators.',
+      accountCan(c.account, 'stories.publish') ? undefined : 'Publishing is reserved for publishers and administrators.',
   },
   // Blogs are a SEPARATE permission axis from stories (blog.* vs content.*).
   // They were missing from the structured list entirely, so the dashboard never
@@ -208,8 +215,8 @@ const CAPABILITY_RULES: Rule[] = [
     category: 'editorial',
     where: 'Production System → Blogs',
     when: (c) => c.admin,
-    allowed: (c) => accountCan(c.account, 'blog.create'),
-    reason: (c) => (accountCan(c.account, 'blog.create') ? undefined : 'Your role does not include the Blogs module.'),
+    allowed: (c) => accountCan(c.account, 'blogs.create'),
+    reason: (c) => (accountCan(c.account, 'blogs.create') ? undefined : 'Your role does not include the Blogs module.'),
   },
   {
     id: 'edit-any-blog',
@@ -217,8 +224,8 @@ const CAPABILITY_RULES: Rule[] = [
     category: 'editorial',
     where: 'Production System → Blogs',
     when: (c) => c.admin,
-    allowed: (c) => accountCan(c.account, 'blog.edit_any'),
-    reason: (c) => (accountCan(c.account, 'blog.edit_any') ? undefined : 'You can edit your own posts only.'),
+    allowed: (c) => canAny(c.account, 'blogs', 'edit'),
+    reason: (c) => (canAny(c.account, 'blogs', 'edit') ? undefined : 'You can edit your own posts only.'),
   },
   {
     id: 'publish-blog',
@@ -226,9 +233,9 @@ const CAPABILITY_RULES: Rule[] = [
     category: 'editorial',
     where: 'Production System → Blogs',
     when: (c) => c.admin,
-    allowed: (c) => accountCan(c.account, 'blog.publish'),
+    allowed: (c) => accountCan(c.account, 'blogs.publish'),
     reason: (c) =>
-      accountCan(c.account, 'blog.publish') ? undefined : 'An editor with blog publishing rights takes it live.',
+      accountCan(c.account, 'blogs.publish') ? undefined : 'An editor with blog publishing rights takes it live.',
   },
   {
     id: 'manage-bulletins',
@@ -236,7 +243,11 @@ const CAPABILITY_RULES: Rule[] = [
     category: 'editorial',
     where: `Production System → ${MAGAZINE_SURFACE}`,
     when: (c) => c.admin,
-    allowed: () => true,
+    // Magazines used to be `allowed: () => true` because they had NO permission
+    // at all — every staff member could build and share one. They have a row now.
+    allowed: (c) => accountCan(c.account, 'magazine.view'),
+    reason: (c) =>
+      accountCan(c.account, 'magazine.view') ? undefined : 'Your role does not include the Magazine Builder.',
   },
   {
     id: 'manage-racing-data',
@@ -244,7 +255,12 @@ const CAPABILITY_RULES: Rule[] = [
     category: 'editorial',
     where: 'Production System → Horses / People / Media Records / Racing Records',
     when: (c) => c.admin,
-    allowed: () => true,
+    // The four registers are their own rows now, rather than riding on
+    // `content.draft.create` — "may start a story draft" was what decided who
+    // could edit the horse register.
+    allowed: (c) => accountCan(c.account, 'horses.edit'),
+    reason: (c) =>
+      accountCan(c.account, 'horses.edit') ? undefined : 'Your role can read the registers but not change them.',
   },
   {
     id: 'manage-team',
@@ -252,8 +268,8 @@ const CAPABILITY_RULES: Rule[] = [
     category: 'editorial',
     where: 'Production System → Team Members',
     when: (c) => c.admin,
-    allowed: (c) => accountCan(c.account, 'team.manage'),
-    reason: (c) => (accountCan(c.account, 'team.manage') ? undefined : 'Reserved for administrators.'),
+    allowed: (c) => accountCan(c.account, 'team.edit'),
+    reason: (c) => (accountCan(c.account, 'team.edit') ? undefined : 'Reserved for administrators.'),
   },
 
   // ── Organisation ──────────────────────────────────────────────────────────

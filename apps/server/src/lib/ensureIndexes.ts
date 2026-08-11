@@ -8,6 +8,7 @@ import {
   OTPS,
   PARTIES,
   PEOPLE,
+  ROLES,
   USERS,
 } from './collections.js'
 
@@ -63,8 +64,31 @@ const INDEX_SPECS: IndexSpec[] = [
   },
   // Sign-in reads the newest OTP for an address, on an unauthenticated route.
   { collection: OTPS, keys: { email: 1, deletedAt: 1, createdAt: -1 } },
-  // The admin axis in ONE field: roster, assignee tally, and role deletion.
-  { collection: USERS, keys: { roleId: 1, deletedAt: 1 } },
+  // The admin roster: find({ isAdmin: true }).
+  { collection: USERS, keys: { isAdmin: 1, deletedAt: 1 } },
+  // ONE ROLE PER ADMIN. This index IS the rule — a second link row for the same
+  // person is rejected by the database rather than by a check someone can forget.
+  //
+  // PARTIAL, and that is load-bearing: `db.deleteOne` SOFT-deletes, so revoking a
+  // role leaves a tombstoned link row behind. Without the filter that tombstone
+  // keeps occupying `userId`, and re-granting a role to the same person throws
+  // E11000 — which Express 4 does not forward from an async handler, so the
+  // request hangs forever rather than erroring. Verified: a `{deletedAt: null}`
+  // partial filter DOES cover documents missing the field, and DOES exclude ones
+  // where it is set, which is exactly the behaviour needed here.
+  {
+    collection: ADMIN_ROLES,
+    keys: { userId: 1 },
+    options: { unique: true, partialFilterExpression: { deletedAt: null } },
+  },
+  // "Who holds this role?" — the assignee tally and role deletion.
+  { collection: ADMIN_ROLES, keys: { roleId: 1 } },
+  // A role NAME is unique, enforced in the database. PARTIAL: deletes are soft.
+  {
+    collection: ROLES,
+    keys: { name: 1 },
+    options: { unique: true, partialFilterExpression: { deletedAt: null } },
+  },
   // parties. NOT unique: unclaimed rows have no userId, and one person may hold
   // the same role on two horses.
   { collection: PARTIES, keys: { userId: 1, deletedAt: 1 } },
@@ -90,12 +114,6 @@ const INDEX_SPECS: IndexSpec[] = [
   // Invite links resolve by token hash on an unauthenticated route.
   { collection: INVITES, keys: { tokenHash: 1 } },
   { collection: INVITES, keys: { email: 1 } },
-  // A role NAME is unique, enforced in the database. PARTIAL: deletes are soft.
-  {
-    collection: ADMIN_ROLES,
-    keys: { name: 1 },
-    options: { unique: true, partialFilterExpression: { deletedAt: null } },
-  },
   // ── Reactions (docs/REACTIONS-PLAN.md) ──
   {
     collection: 'reactions',

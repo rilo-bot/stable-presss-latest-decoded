@@ -13,8 +13,8 @@
  * so, because "hide Blog" reads like it might delete something.
  *
  * PERMISSIONS. `settings.view` opens this screen and shows the switches;
- * `settings.manage` is what lets you move one. Both a superadmin and the
- * administrator role hold `settings.manage` — the former by short-circuit, the
+ * `settings.edit` is what lets you move one. Both a superadmin and the
+ * administrator role hold `settings.edit` — the former by short-circuit, the
  * latter because its permission list is materialised from the whole catalogue —
  * and any custom role can be granted it from Roles & Permissions. The server
  * enforces the same split on PUT /api/site-settings/public-nav; this is only the
@@ -38,7 +38,7 @@ function WebsiteCustomisation() {
   const saved = useSiteSettingsStore((s) => s.publicNav);
   const saving = useSiteSettingsStore((s) => s.saving);
   const savePublicNav = useSiteSettingsStore((s) => s.savePublicNav);
-  const mayManage = useCan('settings.manage');
+  const mayManage = useCan('settings.edit');
 
   const [draft, setDraft] = useState<PublicNavVisibility>(saved);
 

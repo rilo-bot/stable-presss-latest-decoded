@@ -58,14 +58,14 @@ export function EpisodeDetailPanel({
   const [deleting, setDeleting] = useState(false);
 
   const isOwn = canEditEpisode(liveEpisode.producedBy, currentUser?.name);
-  const canAdvanceToAudio = can('podcast.audio.upload') && liveEpisode.status === 'draft' && isOwn;
-  const canAdvanceToGuests = can('podcast.guests.manage') && liveEpisode.status === 'audio_uploaded' && isOwn;
-  const canAdvanceToDesc = (can('podcast.episode.edit_own') || can('podcast.episode.edit_any')) && liveEpisode.status === 'guests_added' && isOwn;
-  const canAdvanceToScheduled = can('podcast.episode.schedule') && liveEpisode.status === 'description_written' && isOwn;
-  const canSubmitReview = can('podcast.episode.submit_review') && liveEpisode.status === 'scheduled' && isOwn;
-  const canApprove = can('podcast.episode.approve') && liveEpisode.status === 'in_review';
+  const canAdvanceToAudio = can('podcast.edit') && liveEpisode.status === 'draft' && isOwn;
+  const canAdvanceToGuests = can('podcast.edit') && liveEpisode.status === 'audio_uploaded' && isOwn;
+  const canAdvanceToDesc = can('podcast.edit') && liveEpisode.status === 'guests_added' && isOwn;
+  const canAdvanceToScheduled = can('podcast.publish') && liveEpisode.status === 'description_written' && isOwn;
+  const canSubmitReview = can('podcast.edit') && liveEpisode.status === 'scheduled' && isOwn;
+  const canApprove = can('podcast.publish') && liveEpisode.status === 'in_review';
   // Shared with the card on the Podcast screen, and it mirrors the route's own
-  // three clauses — the local version here missed `podcast.manage`, so an admin
+  // three clauses — the local version here missed `podcast.edit`, so an admin
   // whose role held the umbrella but neither edit power was refused a button the
   // server would have honoured.
   const canDelete = canDeleteEpisode(liveEpisode, currentUser?.name);

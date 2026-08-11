@@ -29,10 +29,21 @@ import type { RegisterPerson } from '@/lib/register';
 import type { MediaItem } from '@/types/mediaItem';
 import type { RacingEntry } from '@/types/racingEntry';
 
-import { navPath } from '../../newsroom/constants';
+import { SIDE_NAV, navPath } from '../../newsroom/constants';
 import type { SideNavItem } from '../../newsroom/constants';
 
-const SECTIONS = ['Workspace', 'Content', 'Stables', 'Management'] as const;
+/**
+ * Section order, DERIVED from SIDE_NAV rather than listed here.
+ *
+ * This was a hardcoded `['Workspace', 'Content', 'Stables', 'Management']`, and
+ * renaming the sections in SIDE_NAV silently deleted three of them from the
+ * rail: any row whose section was not in this array rendered nowhere, with no
+ * error — a superadmin lost Stories, Community and Personal entirely.
+ *
+ * Deriving it means the sidebar has ONE source of order, the same way the
+ * permission grid has one source of rows.
+ */
+const SECTIONS: string[] = [...new Set(SIDE_NAV.map((i) => i.section).filter((s): s is string => !!s))];
 
 export interface NavCounts {
   pendingReview: number;
@@ -55,13 +66,15 @@ function navBadge(item: SideNavItem, counts: NavCounts) {
   switch (item.id) {
     case 'editor-hub':
       return pendingReview > 0 ? pendingReview : null;
+    // The register ids lost their "-production-system" tails when they became
+    // permission prefixes; a stale id here costs a count badge, silently.
     case 'horses':
       return horses.length || null;
-    case 'parties':
+    case 'people':
       return safeParties.length || null;
-    case 'media-production-system':
+    case 'media-records':
       return mediaItems.length || null;
-    case 'racing-production-system':
+    case 'racing-records':
       return racingEntries.length || null;
     default:
       return null;

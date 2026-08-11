@@ -31,10 +31,10 @@ import { MongoClient } from 'mongodb'
 
 /** story permission already held → blog permission to grant */
 const IMPLIES: Record<string, string> = {
-  'content.draft.create': 'blog.create',
+  'stories.create': 'blogs.create',
   'content.draft.edit_own': 'blog.edit_own',
   'content.draft.edit_any': 'blog.edit_any',
-  'content.publish': 'blog.publish',
+  'stories.publish': 'blogs.publish',
 }
 
 /**
@@ -65,7 +65,7 @@ function grantsFor(held: string[]): string[] {
   for (const [story, blog] of Object.entries(IMPLIES)) {
     if (has.has(story)) out.add(blog)
   }
-  if (has.has(DELETE_IMPLIED_BY)) out.add('blog.delete')
+  if (has.has(DELETE_IMPLIED_BY)) out.add('blogs.delete')
   // Only keep what isn't already there, so the plan reads as a real diff.
   return [...out].filter((p) => !has.has(p))
 }
@@ -97,7 +97,7 @@ async function main(): Promise<void> {
     const modules = asStrings(role.modules)
 
     const newPerms = role.isImmutable
-      ? ['blog.create', 'blog.edit_own', 'blog.edit_any', 'blog.publish', 'blog.delete'].filter(
+      ? ['blogs.create', 'blog.edit_own', 'blog.edit_any', 'blogs.publish', 'blogs.delete'].filter(
           (p) => !held.includes(p),
         )
       : grantsFor(held)

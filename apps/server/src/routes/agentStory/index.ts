@@ -10,7 +10,8 @@
 
 import { Router } from 'express'
 import { streamText, convertToModelMessages, stepCountIs, type UIMessage } from 'ai'
-import { attachAccountOptional } from '../../lib/auth.js'
+import { attachAccount } from '../../lib/auth.js'
+import { rateLimit } from '../../lib/rateLimit.js'
 import { getAgentModel, isAgentConfigured } from '../../lib/agent/provider.js'
 import { repairToolResults } from '../../lib/agent/repairMessages.js'
 import { buildStorySystemPrompt, type StoryContext } from '../../lib/agent/storyPrompt.js'
@@ -18,7 +19,11 @@ import { buildStoryTools } from '../../lib/agent/storyTools.js'
 
 const router = Router()
 
-router.post('/chat', attachAccountOptional, async (req, res) => {
+// SIGNED IN + rate limited. This is a STAFF STUDIO — it edits content the caller
+// must already be signed in to reach — yet it ran on `attachAccountOptional`, so an
+// anonymous caller could spend the model key with no account to meter it against.
+// Matches what agentCompose and agentInstant already do.
+router.post('/chat', attachAccount, rateLimit('agent-story', 30, 60_000), async (req, res) => {
   if (!isAgentConfigured()) {
     res.status(503).json({ error: 'The Story Studio assistant is resting — OPENROUTER_API_KEY is not configured on the server.' })
     return

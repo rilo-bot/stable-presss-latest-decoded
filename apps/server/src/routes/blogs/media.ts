@@ -5,7 +5,7 @@
 // GATING NOTE. Every route here is a write with MORE THAN ONE path segment, and
 // `blogsWriteGate` (lib/rbac.ts) reads that as "editing this post" rather than
 // "creating one" — so they run through `blogEditGate` and need edit rights on
-// this specific post, never `blog.create`. Adding a route here with a single
+// this specific post, never `blogs.create`. Adding a route here with a single
 // segment would change which permission guards it.
 // ---------------------------------------------------------------------------
 

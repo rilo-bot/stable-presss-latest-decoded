@@ -146,11 +146,15 @@ router.use('/horses', horseScopedWriteGate({ collection: 'horses', idIsHorse: tr
 // person you have claimed, and the edges you have claimed.
 router.use('/people', personScopedWriteGate, peopleRouter)
 router.use('/parties', partyScopedWriteGate, partiesRouter)
-router.use('/races', adminGate(), racesRouter)
-router.use('/sales', horseScopedWriteGate({ collection: 'sales' }), salesRouter)
-router.use('/reports', horseScopedWriteGate({ collection: 'reports', optionalGet: true }), reportsRouter)
-router.use('/mediaItems', horseScopedWriteGate({ collection: 'mediaItems' }), mediaItemsRouter)
-router.use('/racingEntries', horseScopedWriteGate({ collection: 'racingEntries' }), racingEntriesRouter)
+// `screen` names the register row in the permission grid that governs each of
+// these for STAFF (a member acting on a record they claimed is unaffected — see
+// staffMay in lib/rbac.ts). Sales and reports hang off a horse, so they are the
+// Horses register; media items and race entries are their own.
+router.use('/races', adminGate({ screen: 'racing-records' }), racesRouter)
+router.use('/sales', horseScopedWriteGate({ collection: 'sales', screen: 'horses' }), salesRouter)
+router.use('/reports', horseScopedWriteGate({ collection: 'reports', optionalGet: true, screen: 'horses' }), reportsRouter)
+router.use('/mediaItems', horseScopedWriteGate({ collection: 'mediaItems', screen: 'media-records' }), mediaItemsRouter)
+router.use('/racingEntries', horseScopedWriteGate({ collection: 'racingEntries', screen: 'racing-records' }), racingEntriesRouter)
 
 // ── Editorial & publishing ──
 router.use('/articles', articlesWriteGate, articlesRouter)
@@ -170,7 +174,7 @@ router.use('/sponsors', adminGate(), sponsorsRouter)
 router.use('/breakingNews', adminGate(), breakingNewsRouter)
 // Website customisation — which of the six public sections the site shows.
 // Read is public (the navbar renders it for signed-out readers); the write gates
-// itself on `settings.manage` inside the router, so no gate is applied here.
+// itself on `settings.edit` inside the router, so no gate is applied here.
 router.use('/site-settings', siteSettingsRouter)
 // Computed site metrics — public, read-only (no writes).
 router.use('/metrics', metricsRouter)
@@ -183,7 +187,7 @@ router.use('/reactions', reactionsRouter)
 // NOT blog parts; see COMMENT_TARGET_TYPES for why the discussion is about the
 // piece). Self-gated the same way, and the visibility gate is `assertReactable`
 // itself rather than a copy of it: commentable = reactable = readable. The
-// moderation endpoints inside enforce `comments.moderate`. See docs/COMMENTS-PLAN.md.
+// moderation endpoints inside enforce `comments.edit`. See docs/COMMENTS-PLAN.md.
 router.use('/comments', commentsRouter)
 // Staff analytics over those reactions — self-gated on `analytics.view` inside
 // the router, which is what makes that permission server-enforced rather than a

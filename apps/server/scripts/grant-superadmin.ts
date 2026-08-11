@@ -38,11 +38,11 @@ import {
   assignRole,
   bustRoleCache,
   getRole,
-  getRoles,
+  listRoles,
   roleOfUser,
   type RoleDoc,
 } from '../src/lib/roleRegistry.js'
-import { newUserFields } from '../src/lib/identity.js'
+import { findOrCreateUser } from '../src/lib/session.js'
 import { seedRoles } from '../src/lib/seedRoles.js'
 
 const args = process.argv.slice(2)
@@ -58,7 +58,7 @@ const email = args.find((a) => !a.startsWith('--'))?.trim().toLowerCase()
  * invisible to the one tool that exists to find them.
  */
 async function superadmins(): Promise<Array<{ id: string; email: string; role: string }>> {
-  const holders = await db.collection(USERS).find({ roleId: { $ne: null } })
+  const holders = await db.collection(USERS).find({ isAdmin: true })
   const out: Array<{ id: string; email: string; role: string }> = []
   for (const u of holders) {
     const role = await roleOfUser(u)
@@ -80,7 +80,10 @@ async function listHolders(): Promise<void> {
 
 /** The role to grant: an existing `isSuper` row, else the seeded one by name. */
 async function superRole(): Promise<RoleDoc | null> {
-  for (const role of new Set((await getRoles()).values())) {
+  // listRoles() is already de-duplicated. This used to iterate the registry map
+  // wrapped in a `new Set(...)`, which worked only because both the id key and
+  // the name key pointed at the SAME object — a detail nothing guaranteed.
+  for (const role of await listRoles()) {
     if (role.isSuper) return role
   }
   return (await getRole(SUPERADMIN_ROLE_NAME)) ?? null
@@ -157,14 +160,11 @@ async function main(): Promise<void> {
     return
   }
 
-  const id = await db.collection(USERS).insertOne({
-    email,
-    name: email.split('@')[0],
-    createdAt: now,
-    updatedAt: now,
-    ...newUserFields(),
-  })
-  await assignRole(String(id), role.id)
+  // Same account creator as every other path, so this script cannot rot away
+  // from the real user shape again — which is exactly how it broke last time.
+  const { user: fresh } = await findOrCreateUser(email)
+  const id = String(fresh._id)
+  await assignRole(id, role.id)
   bustRoleCache()
 
   const after = await roleOfUser(await db.collection(USERS).findById(id))

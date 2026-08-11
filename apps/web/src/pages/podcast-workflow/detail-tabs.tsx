@@ -40,7 +40,7 @@ export function OverviewTab({
   handleDelete: () => void;
 }) {
   const canEdit =
-    (can('podcast.episode.edit_own') || can('podcast.episode.edit_any')) && isOwn;
+    can('podcast.edit') && isOwn;
   return (
     <>
       {canEdit ? (
@@ -78,7 +78,7 @@ export function OverviewTab({
         <p className="text-[10px] uppercase tracking-[0.08em] text-muted-foreground mb-2">
           Description
         </p>
-        {(can('podcast.episode.edit_own') || can('podcast.episode.edit_any')) && isOwn ? (
+        {can('podcast.edit') && isOwn ? (
           <div className="space-y-2">
             <Textarea
               value={descEdit}
@@ -190,7 +190,7 @@ export function GuestsTab({
                   )}
                 </div>
               </div>
-              {can('podcast.guests.manage') && isOwn && (
+              {can('podcast.edit') && isOwn && (
                 <button
                   aria-label={`Remove ${guest.name}`}
                   onClick={() => {
@@ -207,7 +207,7 @@ export function GuestsTab({
         </div>
       )}
 
-      {can('podcast.guests.manage') && isOwn && (
+      {can('podcast.edit') && isOwn && (
         <div className="border border-border rounded-sm p-4 bg-card space-y-3">
           <p className="text-[10px] uppercase tracking-[0.08em] text-muted-foreground">
             Add Guest
@@ -299,7 +299,7 @@ export function DistributionTab({
           // (edit_any, or your own via edit_own). Gate on isOwn so the toggle
           // isn't enabled into a silent 403 for other producers' episodes.
           const canToggle =
-            can('podcast.distribution.manage') && isOwn && liveEpisode.status !== 'published';
+            can('podcast.edit') && isOwn && liveEpisode.status !== 'published';
           return (
             <button
               key={ch.id}
@@ -376,7 +376,7 @@ export function ReviewTab({
         </p>
       </div>
 
-      {can('podcast.episode.approve') ? (
+      {can('podcast.publish') ? (
         <div className="space-y-3">
           <Textarea
             value={reviewNote}
@@ -396,7 +396,7 @@ export function ReviewTab({
         </div>
       )}
 
-      {liveEpisode.status === 'in_review' && can('podcast.episode.approve') && (
+      {liveEpisode.status === 'in_review' && can('podcast.publish') && (
         <div className="flex gap-2 pt-2">
           <Button
             className="flex-1 bg-primary text-primary-foreground"

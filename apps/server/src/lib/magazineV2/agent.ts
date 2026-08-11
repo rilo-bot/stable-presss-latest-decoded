@@ -158,6 +158,10 @@ function buildTools(ctx: AgentCtx, dims: { width: number; height: number }) {
   const stageUpdate = (elementId: string, patch: Record<string, unknown>, summary: string) => {
     const el = find(ctx, elementId);
     if (!el) return { ok: false as const, error: `No element #${elementId} on this page.` };
+    // A locked element is refused HERE rather than staged and rejected on apply:
+    // the element CRUD now 403s a locked write, so staging one would hand the user
+    // a proposal that silently fails in "Apply all". Telling the model lets it say so.
+    if (el.locked === true) return { ok: false as const, error: `Element #${elementId} is locked — ask the user to unlock it first.` };
     // Mutate the working copy (one-level merge) so later tools compose.
     const base: Record<string, unknown> = { ...el, ...patch };
     for (const k of ['text', 'image', 'shape', 'qr'] as const) {
@@ -341,6 +345,7 @@ function buildTools(ctx: AgentCtx, dims: { width: number; height: number }) {
       execute: async ({ elementId }) => {
         const el = find(ctx, elementId);
         if (!el) return { ok: false, error: `No element #${elementId}.` };
+        if (el.locked === true) return { ok: false, error: `Element #${elementId} is locked — ask the user to unlock it first.` };
         const summary = `Deleted the ${elLabel(el)}`;
         ctx.working = ctx.working.filter((e) => e.id !== elementId);
         ctx.proposals.push({ id: pid(ctx), kind: 'delete', elementId, summary });
@@ -357,18 +362,24 @@ function buildTools(ctx: AgentCtx, dims: { width: number; height: number }) {
       execute: async ({ elementId, query }) => {
         const el = find(ctx, elementId);
         if (!el || el.type !== 'text') return { ok: false, error: 'Not a text element.' };
+        if (el.locked === true) return { ok: false, error: `Element #${elementId} is locked — ask the user to unlock it first.` };
         if (!isStockConfigured()) return { ok: false, error: 'Stock photos are not configured on this server.' };
         const ratio = el.w / Math.max(1, el.h);
         const orientation: StockOrientation = ratio > 1.2 ? 'landscape' : ratio < 0.85 ? 'portrait' : 'square';
         const stored = await fetchAndStoreStock({ query, orientation }, { magazineId: ctx.magazineId, pageIndex: ctx.pageIndex });
         if (!stored) return { ok: false, error: 'No photo found for that query.' };
-        ctx.working = ctx.working.filter((e) => e.id !== elementId);
-        ctx.proposals.push({ id: pid(ctx), kind: 'delete', elementId, summary: `Removed the ${elLabel(el)} text` });
+        // Build the REPLACEMENT before staging the delete. The delete used to be
+        // pushed (and ctx.working mutated) first, so a normalizeElements miss here
+        // returned an error with the delete already staged — applying that turn
+        // removed the user's text and put nothing in its place. Either both
+        // proposals are staged or neither is.
         const [clean] = normalizeElements(
           [{ type: 'image', x: el.x, y: el.y, w: el.w, h: el.h, source: 'ai-agent', image: { url: stored.url, assetId: stored.assetId, alt: stored.alt, fit: 'cover' } }],
           dims,
         );
         if (!clean) return { ok: false, error: 'Could not place the photo.' };
+        ctx.working = ctx.working.filter((e) => e.id !== elementId);
+        ctx.proposals.push({ id: pid(ctx), kind: 'delete', elementId, summary: `Removed the ${elLabel(el)} text` });
         const tempId = `tmp_${pid(ctx)}`;
         clean.id = tempId;
         ctx.working.push(clean);

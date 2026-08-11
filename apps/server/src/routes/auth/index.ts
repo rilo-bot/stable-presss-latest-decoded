@@ -1,14 +1,38 @@
+// Sign in. TWO ENDPOINTS, no branching:
+//
+//   POST /api/auth/start   { email, name? }  → email a one-time code
+//   POST /api/auth/verify  { email, code }   → consume it, return a session
+//   GET  /api/auth/me                        → the live account for a token
+//
+// THERE IS NO LOGIN/SIGNUP DISTINCTION. It used to take `mode: 'login' |
+// 'signup'` from the client and store a `purpose` on the OTP row, then branch at
+// both ends: `login` 404'd an unknown address, `signup` 409'd a known one. Two
+// modes × two endpoints was four paths through what is one question — does the
+// person hold this mailbox? — and the answer is the same either way.
+//
+// Whether an account exists is now decided ONCE, at verify time, by
+// findOrCreateUser. Two consequences worth knowing:
+//   - `name` is optional. Sent by the signup screen, omitted by the sign-in
+//     screen, and an account created without one gets a name derived from the
+//     address (renameable in profile).
+//   - This endpoint no longer says whether an address is registered. That oracle
+//     ("No account found with that email address.") was a free account-existence
+//     probe on an unauthenticated route.
+//
+// SIGNING IN NEVER GRANTS A ROLE. A pending-invite lookup used to run right here
+// and apply a role at first sign-in — an implicit privilege change on the one
+// path that must stay boring. It also skipped the superadmin guard that the
+// invite route applies to the very same operation. Roles arrive from an admin
+// action or from redeeming an invite link, and from nowhere else.
+
 import { Router } from 'express';
 import { db } from '../../lib/db.js';
-import { genOtp, hashOtp, signToken, attachAccount } from '../../lib/auth.js';
+import { genOtp, hashOtp, attachAccount } from '../../lib/auth.js';
 import { sendOtpEmail, isEmailConfigured } from '../../lib/email.js';
-import { withIdentityDefaults, newUserFields } from '../../lib/identity.js';
-import { resolveAccount, toClientUser } from '../../lib/effectiveAccess.js';
-import { assignRole, getRoles } from '../../lib/roleRegistry.js';
-import { isExpired } from '../../lib/invites.js';
-import { INVITES, OTPS, USERS } from '../../lib/collections.js';
-import { project, type WithMongoId } from '../../lib/project.js';
-
+import { toClientUser } from '../../lib/effectiveAccess.js';
+import { findOrCreateUser, issueSession, markSignedIn, revokeAllSessions } from '../../lib/session.js';
+import { rateLimit } from '../../lib/rateLimit.js';
+import { OTPS } from '../../lib/collections.js';
 
 const OTP_TTL_MS = (Number(process.env.OTP_TTL_MINUTES) || 10) * 60 * 1000;
 const RESEND_COOLDOWN_MS = 30 * 1000;
@@ -27,6 +51,21 @@ if (DEV_OTP_CODE) {
 
 const router = Router();
 
+// Both of these are unauthenticated and both are expensive: `start` sends real
+// email to an arbitrary address, `verify` is the brute-force surface. Keyed by
+// IP (there is no account yet), which requires `trust proxy` in index.ts —
+// without it every anonymous caller shares the load balancer's address and these
+// become one global bucket. `rateLimit` ignores GET, so /me is unaffected.
+//
+// Separate buckets, because one shared allowance would let a normal sign-in
+// exhaust itself: request a code, mistype twice, resend, verify.
+// 8, not 5: a household or office shares one public address, and a real sign-in
+// can legitimately spend three or four (request, no email yet, resend, resend)
+// before anyone has done anything wrong. Still caps a single host at 32 mails an
+// hour, which is what this is actually for.
+const startLimit = rateLimit('auth-start', 8, 15 * 60_000);
+const verifyLimit = rateLimit('auth-verify', 15, 15 * 60_000);
+
 function normalizeEmail(email: unknown): string {
   return typeof email === 'string' ? email.trim().toLowerCase() : '';
 }
@@ -43,52 +82,35 @@ async function clearOtps(email: string): Promise<void> {
   await Promise.all(rows.map((r) => db.collection(OTPS).deleteOne(r._id)));
 }
 
-// ── Step 1: request a code ───────────────────────────────────────────────────
-router.post('/request-otp', async (req, res) => {
+async function storeOtp(email: string, code: string, name: string): Promise<void> {
+  await clearOtps(email);
+  const now = new Date();
+  await db.collection(OTPS).insertOne({
+    email,
+    codeHash: hashOtp(code),
+    // Carried through to account creation at verify time. Ignored entirely when
+    // the address turns out to already have an account.
+    name: name || undefined,
+    attempts: 0,
+    expiresAt: new Date(now.getTime() + OTP_TTL_MS).toISOString(),
+    createdAt: now.toISOString(),
+  });
+}
+
+// ── Step 1: ask for a code ───────────────────────────────────────────────────
+router.post(['/start', '/request-otp'], startLimit, async (req, res) => {
   const email = normalizeEmail(req.body?.email);
-  const mode = req.body?.mode === 'signup' ? 'signup' : 'login';
   if (!email || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
     res.status(400).json({ error: 'A valid email address is required.' });
     return;
   }
+  const name = typeof req.body?.name === 'string' ? req.body.name.trim().slice(0, 80) : '';
 
-  const existingUsers = await db.collection(USERS).find({ email });
-  const user = existingUsers[0] ?? null;
-
-  // SIGNUP TAKES A NAME AND AN EMAIL. Nothing else. Becoming an admin means
-  // users.roleId, which only an existing admin can set, so no role is read here.
-  let pendingUser: { email: string; name: string } | undefined;
-  if (mode === 'login') {
-    if (!user) {
-      res.status(404).json({ error: 'No account found with that email address.' });
-      return;
-    }
-  } else {
-    if (user) {
-      res.status(409).json({ error: 'An account with this email already exists.' });
-      return;
-    }
-    const name = typeof req.body?.name === 'string' ? req.body.name.trim() : '';
-    if (!name) {
-      res.status(400).json({ error: 'Please enter your name.' });
-      return;
-    }
-    pendingUser = { email, name };
-  }
+  // NO account lookup here. See the header — that is what made this two flows.
 
   // Dev bypass: fixed code, no email, no cooldown. Gated solely on DEV_OTP_CODE.
   if (DEV_OTP_CODE) {
-    await clearOtps(email);
-    const now = new Date();
-    await db.collection(OTPS).insertOne({
-      email,
-      codeHash: hashOtp(DEV_OTP_CODE),
-      purpose: mode,
-      pendingUser,
-      attempts: 0,
-      expiresAt: new Date(now.getTime() + OTP_TTL_MS).toISOString(),
-      createdAt: now.toISOString(),
-    });
+    await storeOtp(email, DEV_OTP_CODE, name);
     res.json({ ok: true, devCode: DEV_OTP_CODE });
     return;
   }
@@ -102,25 +124,14 @@ router.post('/request-otp', async (req, res) => {
 
   // Fail CLOSED: never fall back to the fixed dev code when email is unconfigured.
   if (IS_PROD && !isEmailConfigured()) {
-    console.error('[auth] request-otp refused: PROD=true but email is not configured (need RESEND_API_KEY + RESEND_FROM_EMAIL, or SMTP_HOST + SMTP_FROM).');
+    console.error('[auth] start refused: PROD=true but email is not configured (need RESEND_API_KEY + RESEND_FROM_EMAIL, or SMTP_HOST + SMTP_FROM).');
     res.status(503).json({ error: 'Sign-in is temporarily unavailable. Please try again later.' });
     return;
   }
 
-  await clearOtps(email);
-
   // Outside production only (guarded above): a fixed code, so no inbox is needed.
   const code = isEmailConfigured() ? genOtp() : '123456';
-  const now = new Date();
-  await db.collection(OTPS).insertOne({
-    email,
-    codeHash: hashOtp(code),
-    purpose: mode,
-    pendingUser,
-    attempts: 0,
-    expiresAt: new Date(now.getTime() + OTP_TTL_MS).toISOString(),
-    createdAt: now.toISOString(),
-  });
+  await storeOtp(email, code, name);
 
   try {
     await sendOtpEmail(email, code);
@@ -136,8 +147,8 @@ router.post('/request-otp', async (req, res) => {
   res.json(body);
 });
 
-// ── Step 2: verify the code → issue a JWT ────────────────────────────────────
-router.post('/verify-otp', async (req, res) => {
+// ── Step 2: spend the code → a session ───────────────────────────────────────
+router.post(['/verify', '/verify-otp'], verifyLimit, async (req, res) => {
   const email = normalizeEmail(req.body?.email);
   const code = typeof req.body?.code === 'string' ? req.body.code.trim() : '';
   if (!email || !code) {
@@ -166,78 +177,32 @@ router.post('/verify-otp', async (req, res) => {
     return;
   }
 
-  // Valid — consume the OTP.
+  // Valid — consume it before anything else, so a code is spendable exactly once.
   await clearOtps(email);
 
-  let userDoc;
-  if (otp.purpose === 'signup') {
-    const pending = otp.pendingUser as { email: string; name: string } | undefined;
-    if (!pending) {
-      res.status(400).json({ error: 'Signup details missing. Please start again.' });
-      return;
-    }
-    // Guard against a race where the account was created since request-otp.
-    const dupes = await db.collection(USERS).find({ email });
-    if (dupes[0]) {
-      userDoc = dupes[0];
-    } else {
-      const id = await db.collection(USERS).insertOne({
-        email: pending.email,
-        name: pending.name,
-        createdAt: new Date().toISOString(),
-        ...newUserFields(),
-      });
-      userDoc = await db.collection(USERS).findById(id);
-    }
-  } else {
-    const rows = await db.collection(USERS).find({ email });
-    userDoc = rows[0] ?? null;
-  }
-
-  if (!userDoc) {
-    res.status(404).json({ error: 'Account not found. Please sign up first.' });
-    return;
-  }
-
-  // Apply any role pre-granted to this email. The role must still exist and the
-  // invite must not have expired, or the 14-day window would be cosmetic.
-  let finalDoc = userDoc;
-  const grants = await db.collection(INVITES).find({ email });
-  if (grants.length > 0) {
-    const known = await getRoles();
-    // ONE role per user, so the LAST valid invite wins.
-    let granted: string | null = null;
-    for (const g of grants) {
-      if (isExpired(g)) continue;
-      const role = typeof g.role === 'string' ? known.get(g.role) : undefined;
-      if (role) granted = role.id;
-    }
-
-
-    if (granted) await assignRole(String(finalDoc._id), granted);
-    await Promise.all(grants.map((g) => db.collection(INVITES).deleteOne(g._id)));
-    const refreshed = await db.collection(USERS).findById(finalDoc._id);
-    if (refreshed) finalDoc = refreshed;
-  }
-
-  // The ONLY writer of lastLogin, and only after every gate above has passed.
-  const now = new Date().toISOString();
-  await db.collection(USERS).updateOne(String(finalDoc._id), { lastLogin: now });
-  finalDoc = { ...finalDoc, lastLogin: now };
-
-  // The JWT carries NO role data: authorization is read live on every request.
-  const identity = withIdentityDefaults(project(finalDoc));
-  const token = signToken({
-    sub: identity.id,
-    email: identity.email,
-    v: typeof finalDoc.tokenVersion === 'number' ? finalDoc.tokenVersion : 0,
-  });
-  res.json({ token, user: toClientUser(await resolveAccount(identity)) });
+  // The whole of "is this a signup or a sign-in?", in one call. A new account is
+  // created holding no role at all.
+  const { user } = await findOrCreateUser(email, typeof otp.name === 'string' ? otp.name : undefined);
+  res.json(await issueSession(await markSignedIn(user)));
 });
 
 // ── Session check — validate a persisted token, return the live account ───────
 router.get('/me', attachAccount, (req, res) => {
   res.json({ user: toClientUser(req.account!) });
+});
+
+/**
+ * Sign out everywhere — the ONLY way to revoke an already-issued token.
+ *
+ * The caller's CURRENT token dies with the rest, so the client must clear its
+ * session after this: the very next request with it answers 401. That is the
+ * point, and it is what makes "someone has my laptop" recoverable without
+ * deleting the account.
+ */
+router.post('/sign-out-everywhere', attachAccount, async (req, res) => {
+  const version = await revokeAllSessions(req.account!.id);
+  console.warn(`[auth] all sessions revoked for ${req.account!.email} (tokenVersion → ${version})`);
+  res.json({ ok: true });
 });
 
 export default router;

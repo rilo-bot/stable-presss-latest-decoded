@@ -55,12 +55,9 @@ export default function PodcastScreen() {
   const [deleting, setDeleting] = useState(false);
 
   const hasPodcastAccess =
-    can('podcast.manage') ||
-    can('podcast.episode.create') ||
-    can('podcast.episode.approve') ||
-    can('podcast.episode.edit_any');
+    can('podcast.view');
 
-  const canCreate = can('podcast.episode.create');
+  const canCreate = can('podcast.create');
 
   const filteredEpisodes = useMemo(() => {
     const base =

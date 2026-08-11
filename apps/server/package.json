@@ -8,9 +8,13 @@
     "start": "node dist/index.js",
     "check:types": "tsc --noEmit -p tsconfig.scripts.json",
     "check:permissions": "tsx scripts/check-permission-enforcement.ts",
+    "check:admins": "tsx scripts/check-admins.ts",
+    "migrate:admin-roles": "tsx scripts/migrate-admin-roles.ts",
+    "migrate:permissions": "tsx scripts/migrate-permissions.ts",
     "sync:roles": "tsx scripts/sync-role-catalogue.ts",
     "grant:superadmin": "tsx scripts/grant-superadmin.ts",
-    "sweep:orphans": "tsx scripts/sweep-orphan-objects.ts"
+    "sweep:orphans": "tsx scripts/sweep-orphan-objects.ts",
+    "test": "tsx --test tests/**/*.test.ts"
   },
   "dependencies": {
     "@aws-sdk/client-s3": "^3.700.0",

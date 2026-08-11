@@ -47,7 +47,7 @@ import {
   isWorkflowStage,
   type SeedRoleName,
 } from '../src/lib/permissionCatalogue.js'
-import { ADMIN_ROLES, bustRoleCache } from '../src/lib/roleRegistry.js'
+import { ROLES, bustRoleCache } from '../src/lib/roleRegistry.js'
 
 const APPLY = process.argv.includes('--apply')
 
@@ -79,9 +79,9 @@ const asArray = (v: unknown): string[] =>
   Array.isArray(v) ? v.filter((x): x is string => typeof x === 'string') : []
 
 async function main(): Promise<void> {
-  // ADMIN_ROLES, not 'roles': the collection was renamed with the user model.
+  // ROLES holds the DEFINITIONS; adminRoles is the user→role link.
   // Hardcoded, this script silently found zero rows and reported "in sync".
-  const roles = await db.collection(ADMIN_ROLES).find()
+  const roles = await db.collection(ROLES).find()
   console.log(
     `catalogue: ${ALL_PERMISSIONS.length} permissions, ${ALL_MODULES.length} modules, ` +
       `${ALL_WORKFLOW_STAGES.length} stages`,
@@ -169,7 +169,7 @@ async function main(): Promise<void> {
     if (change.addedStages.length) console.log(`   + stages     : ${change.addedStages.join(', ')}`)
 
     if (APPLY) {
-      await db.collection(ADMIN_ROLES).updateOne(String(role._id), {
+      await db.collection(ROLES).updateOne(String(role._id), {
         permissions: nextPermissions,
         modules: nextModules,
         workflowStages: nextStages,

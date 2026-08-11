@@ -58,18 +58,22 @@ export interface OrgMemberRow {
 }
 
 /**
- * The stored user shape. `roleId` → `adminRoles._id`, and setting it is what makes
- * an account an admin — there is no separate flag to keep in sync.
+ * The stored user shape.
+ *
+ * `isAdmin` is the CATEGORY — true means this account is staff. WHICH role they
+ * hold is not here: it is the one `adminRoles` row pointing at them, so a normal
+ * reader carries no role reference of any kind.
  *
  * Cannot be used for an authorization check: `accountCan` takes an `AccountUser`,
- * which only `resolveAccount` produces.
+ * which only `resolveAccount` produces — and resolveAccount is what reads the
+ * link row. A bare IdentityUser knows the category and nothing about permissions.
  */
 export interface IdentityUser {
   id: string
   name: string
   email: string
   createdAt: string
-  roleId: string | null
+  isAdmin: boolean
   lastLogin: string | null
 }
 
@@ -79,13 +83,16 @@ export function withIdentityDefaults(raw: Record<string, any>): IdentityUser {
     name: String(raw.name ?? ''),
     email: String(raw.email ?? ''),
     createdAt: String(raw.createdAt ?? ''),
-    roleId: raw.roleId ? String(raw.roleId) : null,
+    // Strict `=== true`: a missing field, a legacy string, or a stray truthy
+    // value must never read as staff.
+    isAdmin: raw.isAdmin === true,
     lastLogin: typeof raw.lastLogin === 'string' && raw.lastLogin ? raw.lastLogin : null,
   }
 }
 
-export function newUserFields(): Pick<IdentityUser, 'roleId' | 'lastLogin'> {
-  return { roleId: null, lastLogin: null }
+/** A brand-new account is never staff and holds no link row. */
+export function newUserFields(): Pick<IdentityUser, 'isAdmin' | 'lastLogin'> {
+  return { isAdmin: false, lastLogin: null }
 }
 
 export type { AccountUser } from './effectiveAccess.js'

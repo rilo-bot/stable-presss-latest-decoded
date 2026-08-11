@@ -635,7 +635,7 @@ user turn ──▶ generateText (stepCountIs 16, 90s abort)
                                      generate-pages → deferred to the polling flow
 ```
 
-### 9.2 Tools (14)
+### 9.2 Tools (15)
 
 | Tool | Effect |
 | --- | --- |

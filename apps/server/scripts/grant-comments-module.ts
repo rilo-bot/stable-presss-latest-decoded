@@ -1,5 +1,5 @@
 /**
- * Give existing roles the `comments.moderate` permission and the
+ * Give existing roles the `comments.edit` permission and the
  * `comment-moderation` module.
  *
  *   npx tsx scripts/grant-comments-module.ts            # dry run, prints a plan
@@ -18,7 +18,7 @@
  * another reader's comment". That makes it a real privilege change, so it is
  * deliberately narrow:
  *
- *   • A role gets it only if it already holds `content.publish` — the power to put
+ *   • A role gets it only if it already holds `stories.publish` — the power to put
  *     words in front of the public is the honest prerequisite for deciding which
  *     of the public's words stay up. In practice that is editors and
  *     administrators, and not contributors.
@@ -39,9 +39,9 @@ import 'dotenv/config'
 import { MongoClient } from 'mongodb'
 
 const MODULE = 'comment-moderation'
-const PERMISSION = 'comments.moderate'
+const PERMISSION = 'comments.edit'
 /** Holding this is what makes a role eligible. See the note above. */
-const PREREQUISITE = 'content.publish'
+const PREREQUISITE = 'stories.publish'
 
 interface RoleRow {
   _id: unknown

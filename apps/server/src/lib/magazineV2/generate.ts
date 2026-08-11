@@ -676,6 +676,29 @@ function makeUserPhotoPool(photos: UserPhoto[]) {
 }
 type UserPhotoPool = ReturnType<typeof makeUserPhotoPool>;
 
+/**
+ * Load a magazine's user-UPLOADED images and wrap them in a shared claim pool, or
+ * undefined when there are none. Shared by both generation entry points (a whole
+ * issue, and "add pages matching theme") so neither can drift from the "user photos
+ * come first" rule — which is exactly what happened while add-pages built no pool.
+ * Call this ONCE per run, before fanning out, so all page composers share it.
+ */
+async function loadUserPhotoPool(magazineId: string): Promise<UserPhotoPool | undefined> {
+  const media = (await db.collection(COL.media).find({ magazineId })) as {
+    _id: string;
+    url?: string;
+    alt?: string;
+    kind?: string;
+    source?: string;
+  }[];
+  const photos: UserPhoto[] = media
+    .filter((m) => m.source === 'upload' && m.kind !== 'doc' && typeof m.url === 'string' && !!m.url)
+    .map((m) => ({ url: m.url as string, assetId: String(m._id), alt: m.alt ?? '' }));
+  if (photos.length === 0) return undefined;
+  console.log(`[magazineV2] magazine ${magazineId}: placing ${photos.length} uploaded photo(s) first`);
+  return makeUserPhotoPool(photos);
+}
+
 /** Anything a composer can claim a user photo from (the shared pool, or a
  *  per-page allocator over it). */
 interface PhotoClaimer {
@@ -1299,18 +1322,7 @@ export async function generateMagazineIssue(issueId: string, brief: string, page
     // The user's OWN uploaded photos (from the media library) — generation places
     // these FIRST, topping up with AI/stock only once they run out. Loaded AFTER
     // planning so any images still uploading when the job was enqueued have landed.
-    const media = (await db.collection(COL.media).find({ magazineId: issueId })) as {
-      _id: string;
-      url?: string;
-      alt?: string;
-      kind?: string;
-      source?: string;
-    }[];
-    const userPhotos: UserPhoto[] = media
-      .filter((m) => m.source === 'upload' && m.kind !== 'doc' && typeof m.url === 'string' && !!m.url)
-      .map((m) => ({ url: m.url as string, assetId: String(m._id), alt: m.alt ?? '' }));
-    const photoPool = userPhotos.length > 0 ? makeUserPhotoPool(userPhotos) : undefined;
-    if (photoPool) console.log(`[magazineV2] issue "${plan.title}": placing ${photoPool.size} uploaded photo(s) first`);
+    const photoPool = await loadUserPhotoPool(issueId);
 
     let done = 0;
     let coverImage = '';
@@ -1388,8 +1400,15 @@ export async function generateMorePages(
       .sort((a, b) => a.index - b.index);
     const total = existing.length + specs.length;
 
+    // The user's OWN uploaded photos come first here too. This call used to omit the
+    // pool entirely (the parameter is optional, so it failed silently), which meant
+    // "add pages matching theme" always went AI-image → stock → tinted block and
+    // never placed a photo the user had uploaded — unlike generateMagazineIssue.
+    // Resolved BEFORE the fan-out so every page composer shares one pool.
+    const photoPool = await loadUserPhotoPool(issueId);
+
     const composed = await mapWithConcurrency(specs, GEN_PAGE_CONCURRENCY, (page, i) =>
-      composeOnePage(plan, page, opts.atIndex + i + 1, total, { magazineId: issueId, pageIndex: opts.atIndex + i }),
+      composeOnePage(plan, page, opts.atIndex + i + 1, total, { magazineId: issueId, pageIndex: opts.atIndex + i }, undefined, photoPool),
     );
 
     // Insert new pages (temp indexes), then splice their ids in at atIndex.

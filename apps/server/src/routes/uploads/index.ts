@@ -48,31 +48,33 @@ const ALLOWED_KINDS = new Set(['party', 'horse', 'media', 'evidence', 'avatar', 
 /**
  * WHAT EACH UPLOAD KIND REQUIRES.
  *
- * Uploading is not one power. Both endpoints below used to require nothing but a
- * valid session, which meant `media.upload_own` and `media.manage_all` restricted
- * nothing at all: any signed-in reader could mint a presigned S3 PUT URL or push
- * 500 MB of video through `/direct`. See docs/CRM-MODULES-PERMISSIONS-REVIEW.md §4.1.
+ * UPLOADING IS NOT A POWER OF ITS OWN. It is part of editing the thing the file
+ * belongs to — a hero photo is a property of the story, so whoever may edit the
+ * story may set it. `media.upload_own` / `media.manage_all` are gone for exactly
+ * that reason: they dated from a standalone media library, uploads then grew into
+ * every editor, and the permission never followed. What that produced was a role
+ * holding `content.draft.edit_any` opening the Article Studio, attaching a hero
+ * photo, and being told it lacked permission to upload media files.
  *
- * An empty array means "any signed-in account", and that is deliberate for the
- * four identity/self-service kinds — a member proving who they are, or managing a
- * horse or party they already control, is not a newsroom media action and gating
- * it on a staff permission would break the claim flow outright.
+ * The old table already carried the fix in miniature — its `blog` row accepted
+ * `blog.create`, because an author who cannot upload cannot write a post. Every
+ * row works that way now.
  *
- * Otherwise ANY of the listed permissions is enough. Several kinds list a second
- * permission because the primary one is not held by the roles that legitimately
- * do the work: the seeded `editor` may edit any episode but was never granted
- * `podcast.audio.upload`, and a blog-only author role would hold `blog.create`
- * without `media.upload_own`.
+ * An empty array means "any signed-in account". That is deliberate for the four
+ * identity/self-service kinds — a member proving who they are, or managing a
+ * horse they already control, is not a newsroom media action — and for `misc`,
+ * which is the My Media Assets drawer: your own files, so there is nothing to
+ * grant. Every path is still rate-limited and size-capped below.
  */
 const KIND_PERMISSIONS: Record<string, PermissionAction[]> = {
   evidence: [], // proving your OWN identity — pre-verification, by definition
   avatar: [],   // your own profile picture
   party: [],    // member self-service on a party they manage
   horse: [],    // member self-service on a horse they manage
-  media: ['media.upload_own', 'media.manage_all'],
-  blog: ['media.upload_own', 'blog.create'],
-  podcast: ['podcast.audio.upload', 'podcast.episode.edit_any'],
-  misc: ['media.upload_own'],
+  media: ['stories.edit'],
+  blog: ['blogs.edit'],
+  podcast: ['podcast.edit'],
+  misc: [], // your own file drawer — My Media Assets needs no grant
 }
 
 /** The requested kind, or 'misc' — which FAILS CLOSED (it needs a permission). */

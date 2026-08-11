@@ -143,7 +143,7 @@ export default function BlogEditorScreen() {
     adoptServerVersion, selectField, selectedFieldId,
   } = useComposerStore();
 
-  const canPublish = useCan('blog.publish');
+  const canPublish = useCan('blogs.publish');
   const [loading, setLoading] = useState(true);
   const [notFound, setNotFound] = useState(false);
   const [coverPickerOpen, setCoverPickerOpen] = useState(false);

@@ -1,12 +1,12 @@
 // ---------------------------------------------------------------------------
-// Website customisation — GET is public, PUT needs `settings.manage`.
+// Website customisation — GET is public, PUT needs `settings.edit`.
 //
 // The GET has to be open: the public navbar renders this for signed-out readers,
 // so gating it would leave every guest looking at the default six tabs while the
 // site's own settings said otherwise. It exposes nothing but six booleans that
 // are already visible in the markup.
 //
-// The PUT is the reason `settings.manage` is back in the permission catalogue.
+// The PUT is the reason `settings.edit` is back in the permission catalogue.
 // It was removed when the Settings screen was static text — a checkbox that
 // governed nothing — with a note in permissionCatalogue.ts to re-add it in the
 // same commit as the endpoint that enforces it. This is that endpoint.
@@ -30,7 +30,7 @@ import {
 const router = Router()
 
 const requireManageSettings = (req: Request, res: Response, next: NextFunction): void => {
-  if (!accountCan(req.account, 'settings.manage')) {
+  if (!accountCan(req.account, 'settings.edit')) {
     res.status(403).json({ error: 'You do not have permission to change website settings.' })
     return
   }
@@ -42,7 +42,7 @@ router.get('/', async (_req, res) => {
   res.json({ publicNav: await readPublicNav() })
 })
 
-// write — `settings.manage`
+// write — `settings.edit`
 router.put('/public-nav', attachAccount, requireManageSettings, async (req, res) => {
   const body = (req.body ?? {}) as { publicNav?: unknown }
   if (typeof body.publicNav !== 'object' || body.publicNav === null || Array.isArray(body.publicNav)) {

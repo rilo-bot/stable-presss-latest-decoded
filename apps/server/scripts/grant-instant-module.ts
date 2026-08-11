@@ -14,8 +14,8 @@
  *
  * No PERMISSION is granted here, and that is deliberate. Instant creates nothing
  * of its own: its two modes save through `POST /api/articles` and
- * `POST /api/blogs`, which already demand `content.draft.create` and
- * `blog.create`. So the only thing a role needs is the surface, and it is only
+ * `POST /api/blogs`, which already demand `stories.create` and
+ * `blogs.create`. So the only thing a role needs is the surface, and it is only
  * worth having if the role can already file one of the two. A role with neither
  * permission gets no module — it would open onto the screen's own
  * "no draft permissions" state, which is honest but pointless.
@@ -31,7 +31,7 @@ import { MongoClient } from 'mongodb'
 const INSTANT_MODULE = 'instant'
 
 /** Holding EITHER of these means Instant has somewhere to save to. */
-const ENABLING_PERMISSIONS = ['content.draft.create', 'blog.create']
+const ENABLING_PERMISSIONS = ['stories.create', 'blogs.create']
 
 interface RoleRow {
   _id: unknown

@@ -22,11 +22,22 @@ export function apiUrl(path: string): string {
  * auth store (it imports apiUrl from here) is harmless — neither side touches
  * the other during module init.
  */
-export function authFetch(path: string, init: RequestInit = {}): Promise<Response> {
+export async function authFetch(path: string, init: RequestInit = {}): Promise<Response> {
   const token = useAuthStore.getState().token;
   const headers = new Headers(init.headers);
   if (token) headers.set('Authorization', `Bearer ${token}`);
-  return fetch(apiUrl(path), { ...init, headers });
+  const res = await fetch(apiUrl(path), { ...init, headers });
+
+  // A token that stops being accepted mid-session ends the session HERE.
+  //
+  // `verifySession()` only runs on app load, so before this an expired or
+  // revoked token left the persisted `currentUser.access` rendering the whole
+  // admin shell — sidebar, modules, every affordance — against an API refusing
+  // every call. The user saw empty lists and silent failures rather than "please
+  // sign in". Guarded on `token`, so a public read that 401s for its own reasons
+  // cannot clear a session that was never established.
+  if (res.status === 401 && token) useAuthStore.getState().logout();
+  return res;
 }
 
 /**

@@ -1,9 +1,10 @@
 import { Router } from 'express';
 import crypto from 'crypto';
 import { db } from '../../lib/db.js';
-import { withIdentityDefaults, newUserFields } from '../../lib/identity.js';
+import { withIdentityDefaults } from '../../lib/identity.js';
 import { USERS } from '../../lib/collections.js';
-import { SUPERADMIN_ROLE_NAME, assignRole, getRole, superadminCount } from '../../lib/roleRegistry.js';
+import { findOrCreateUser, findUserByEmail } from '../../lib/session.js';
+import { SUPERADMIN_ROLE_NAME, assignRole, getRole, roleOfUser, superadminCount } from '../../lib/roleRegistry.js';
 import { rateLimit } from '../../lib/rateLimit.js';
 import { seedRoles } from '../../lib/seedRoles.js';
 
@@ -70,10 +71,10 @@ router.post('/seed', seedLimit, async (req, res) => {
   }
 
   const now = new Date().toISOString();
-  const existing = (await db.collection(USERS).find({ email }))[0];
+  const existing = await findUserByEmail(email);
 
   if (existing) {
-    const previousRole = existing.roleId ? await getRole(String(existing.roleId)) : null;
+    const previousRole = await roleOfUser(existing);
 
     await assignRole(String(existing._id), superRole.id);
     const fresh = await db.collection(USERS).findById(existing._id);
@@ -93,14 +94,9 @@ router.post('/seed', seedLimit, async (req, res) => {
     return;
   }
 
-  const id = await db.collection(USERS).insertOne({
-    email,
-    name,
-    createdAt: now,
-    updatedAt: now,
-    ...newUserFields(),
-  });
-  await assignRole(String(id), superRole.id);
+  const { user: fresh } = await findOrCreateUser(email, name);
+  const id = String(fresh._id);
+  await assignRole(id, superRole.id);
   const doc = await db.collection(USERS).findById(id);
   console.warn(
     `[admin] SUPERADMIN GRANTED to NEW account ${email} (id ${String(id)}) ` +

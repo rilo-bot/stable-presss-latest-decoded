@@ -19,7 +19,7 @@
 /**
  * Two states, deliberately. Blogs do NOT use the five-stage article workflow
  * (`lib/workflow.ts`): there is no review queue and no per-move transition
- * table, just a field guarded by `blog.publish`. See BLOG-SYSTEM-PLAN §3.5 —
+ * table, just a field guarded by `blogs.publish`. See BLOG-SYSTEM-PLAN §3.5 —
  * the consequences (no review step, absent from the kanban board) are accepted.
  */
 export const BLOG_STATUSES = ['draft', 'published'] as const;

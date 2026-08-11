@@ -36,9 +36,5 @@ export function isLive(doc: Record<string, unknown>, now = Date.now()): boolean 
 
 /** May this caller see posts that aren't live? */
 export function canSeeDrafts(req: { account?: Parameters<typeof accountCan>[0] }): boolean {
-  return (
-    isAdmin(req.account) ||
-    accountCan(req.account, 'blog.edit_any') ||
-    accountCan(req.account, 'blog.create')
-  )
+  return isAdmin(req.account) || accountCan(req.account, 'blogs.view')
 }

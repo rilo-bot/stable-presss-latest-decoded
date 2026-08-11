@@ -45,12 +45,10 @@ type Account = Parameters<typeof accountCan>[0];
  * editorial notes attached to them?
  */
 function canSeePipeline(account: Account): boolean {
-  return (
-    isAdmin(account) ||
-    accountCan(account, 'content.draft.edit_any') ||
-    accountCan(account, 'content.draft.edit_own') ||
-    accountCan(account, 'content.draft.create')
-  );
+  // `stories.view` is the honest question now: it is what opening the Stories
+  // screen requires, and scope decides whose drafts come back (see the query
+  // filter at the list endpoint), not whether any do.
+  return isAdmin(account) || accountCan(account, 'stories.view');
 }
 
 /**
@@ -361,11 +359,11 @@ router.put('/:id', async (req, res) => {
   // A story in Scheduled must carry one; leaving the stage drops it. Setting or
   // re-timing a slot is the scheduler's call — but merely editing the copy of an
   // already-scheduled story is not, so an editor can still fix a typo without
-  // holding `content.schedule`.
+  // holding `stories.publish`.
   if (to === 'scheduled') {
     const entering = from !== 'scheduled';
     const retiming = body.scheduledFor !== undefined;
-    if ((entering || retiming) && !accountCan(req.account, 'content.schedule')) {
+    if ((entering || retiming) && !accountCan(req.account, 'stories.publish')) {
       res.status(403).json({ error: 'You cannot schedule stories.' });
       return;
     }

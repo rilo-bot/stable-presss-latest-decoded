@@ -337,7 +337,7 @@ export default function App() {
                 redirect below. */}
             <Route path="podcast" element={<PodcastScreen />} />
             {/* The comment desk — reported comments, hide/restore/delete. Gated on
-                `comments.moderate`, which the endpoints behind it enforce too. */}
+                `comments.edit`, which the endpoints behind it enforce too. */}
             <Route path="comments" element={<CommentModerationScreen />} />
             <Route path="editor-hub" element={<EditorHubScreen />} />
             <Route path="my-assets" element={<MyAssetsScreen />} />

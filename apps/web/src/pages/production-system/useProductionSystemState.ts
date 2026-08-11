@@ -15,7 +15,7 @@ import { useNavigate } from 'react-router-dom';
 import { toast } from 'sonner';
 
 import { articleToast } from '@/components/Toast';
-import { can, canEditArticle } from '@/lib/permissions';
+import { can, canAny, canAnyones, canEditArticle } from '@/lib/permissions';
 import { roleColor, roleSummary } from '@/lib/roleDisplay';
 import { WORKFLOW_STAGES, findMove } from '@/lib/workflow';
 import type { Move } from '@/lib/workflow';
@@ -102,16 +102,16 @@ export function useProductionSystemState() {
 
   // Behavioural branches are permissions, not role-name equality.
   // `isContributor` means "can only touch their own drafts".
-  const isContributor = !can('content.draft.edit_any');
-  const isEditor = can('content.editorial_review');
+  const isContributor = !canAnyones('stories.edit');
+  const isEditor = can('stories.edit');
   // READ and WRITE are separate powers on the roster. `team.view` alone opens the
   // Team screen read-only; `team.manage` is what turns the controls on. Mirrors
   // the split in routes/staff.ts, which gates GET on view and writes on manage.
-  const canManageTeam = can('team.manage');
+  const canManageTeam = canAny(['team.create', 'team.edit', 'team.delete']);
   const canViewTeam = can('team.view') || canManageTeam;
   // Distinct from team.manage: /api/roles enforces roles.manage, so the console
   // must ask for the same thing the server does.
-  const canManageRoles = can('roles.manage');
+  const canManageRoles = canAny(['roles.create', 'roles.edit', 'roles.delete']);
 
   const onGrantStaff = async () => {
     if (!teamEmail.trim() || !teamRole) return;
@@ -276,7 +276,7 @@ export function useProductionSystemState() {
   };
 
   const handleNewInColumn = (status: ArticleStatus) => {
-    if (!can('content.draft.create')) return;
+    if (!can('stories.create')) return;
     setEditArticle(null);
     setDefaultStatus(status);
     setFormOpen(true);
@@ -284,7 +284,7 @@ export function useProductionSystemState() {
 
   // Open the Story Studio AI drawer (same gate as filing a story manually).
   const handleOpenStudio = () => {
-    if (!can('content.draft.create')) return;
+    if (!can('stories.create')) return;
     useStoryStudioUi.getState().setOpen(true);
   };
 

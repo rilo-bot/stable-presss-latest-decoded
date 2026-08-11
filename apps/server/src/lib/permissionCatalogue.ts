@@ -1,173 +1,367 @@
+// THE PERMISSION MODEL — one row per screen, one column per verb.
+//
+// Every id is `<screen>.<verb>`, so knowing the screen and the verb is enough to
+// know the id. There is nothing to memorise and nothing to look up.
+//
+//   view · create · edit · delete          + publish, only where something goes live
+//
+// A screen declares which verbs it SUPPORTS. Pipeline Map is a picture of work
+// that already exists, so it supports `view` and nothing else — and the console
+// renders the other columns as a dash rather than an unticked box, because an
+// admin should never be offered a decision that cannot take effect.
+//
+// WHAT THIS REPLACED (see docs/RBAC-SIMPLIFICATION-PLAN.md):
+//   38 permissions + 24 modules + 5 workflow stages = 67 decisions per role,
+//   across three lists that could contradict each other — a role could hold
+//   `content.publish` with the `workflow` module unticked and own a power it had
+//   no screen to use. Now there is ONE list, and the sidebar IS that list.
+//
+// TWO RULES HOLD THE MODEL TOGETHER:
+//
+//   1. THE LENS RULE. Workflow Board, Pipeline Map, Editor Hub and Instant
+//      Capture show records that belong to ANOTHER screen. They support `view`
+//      only, and every action taken inside them is enforced with the OWNING
+//      screen's verb — Instant Capture's save checks `stories.create` or
+//      `blogs.create`. Without this a lens is a bypass: `instant.create` would
+//      mint stories for someone who holds no `stories.create`.
+//
+//   2. ANY VERB IMPLIES VIEW. You cannot act on a screen you cannot open, so
+//      `normalisePermissions` adds the `view` of any screen the role can act on.
+//      The console shows this by ticking and locking the View box.
+//
+// Ownership is NOT a second set of ids. `edit_own` / `edit_any` pairs were six
+// ids for three decisions; there is now one Edit id plus a per-screen SCOPE
+// ('own' | 'all') on the role. See `RoleScopes` below and `canOn` in
+// effectiveAccess.ts.
 
-/** The roles a fresh install is seeded with, besides `superadmin`. Nothing */
+/** The roles a fresh install is seeded with, besides `superadmin`. */
 export type SeedRoleName = 'contributor' | 'editor' | 'administrator'
 
+// ── Verbs ───────────────────────────────────────────────────────────────────
+
+export const VERBS = ['view', 'create', 'edit', 'delete', 'publish'] as const
+export type Verb = (typeof VERBS)[number]
+
+/** Verbs that act on an EXISTING record, so scope can narrow them to your own. */
+export const SCOPED_VERBS: Verb[] = ['view', 'edit', 'delete']
+
+/** How wide a screen's scoped verbs reach. Defaults to the safer 'own'. */
+export type Scope = 'own' | 'all'
+export type RoleScopes = Record<string, Scope>
+
 // ── Actions ─────────────────────────────────────────────────────────────────
+//
+// Listed explicitly rather than built as a template-literal type: a computed
+// `${Screen}.${Verb}` would also admit `pipeline.delete`, which does not exist.
 
 export type PermissionAction =
-  // Content
-  | 'content.draft.create'
-  | 'content.draft.edit_own'
-  | 'content.draft.edit_any'
-  | 'content.submit'
-  | 'content.editorial_review'
-  | 'content.send_revision'
-  | 'content.approve'
-  | 'content.schedule'
-  | 'content.publish'
-  // Blogs — a separate axis from Stories on purpose. Publishing a blog is a
-  // different power from publishing a news story, and keeping them apart is
-  // what lets blogging be opened to member/guest authors later as a role
-  // change rather than a code change. See docs/BLOG-SYSTEM-PLAN.md §4.2.
-  | 'blog.create'
-  | 'blog.edit_own'
-  | 'blog.edit_any'
-  | 'blog.publish'
-  | 'blog.delete'
-  // Media
-  | 'media.upload_own'
-  | 'media.manage_all'
-  // Compensation
-  | 'compensation.view_own'
-  // Platform access
-  | 'platform.admin'
-  | 'roles.manage'
-  // Team & admin
+  // Stories
+  | 'stories.view'
+  | 'stories.create'
+  | 'stories.edit'
+  | 'stories.delete'
+  | 'stories.publish'
+  | 'workflow.view'
+  | 'pipeline.view'
+  | 'editor-hub.view'
+  | 'blogs.view'
+  | 'blogs.create'
+  | 'blogs.edit'
+  | 'blogs.delete'
+  | 'blogs.publish'
+  | 'instant.view'
+  | 'magazine.view'
+  | 'magazine.create'
+  | 'magazine.edit'
+  | 'magazine.delete'
+  | 'magazine.publish'
+  | 'podcast.view'
+  | 'podcast.create'
+  | 'podcast.edit'
+  | 'podcast.delete'
+  | 'podcast.publish'
+  // Stables
+  | 'horses.view'
+  | 'horses.create'
+  | 'horses.edit'
+  | 'horses.delete'
+  | 'people.view'
+  | 'people.create'
+  | 'people.edit'
+  | 'people.delete'
+  | 'media-records.view'
+  | 'media-records.create'
+  | 'media-records.edit'
+  | 'media-records.delete'
+  | 'racing-records.view'
+  | 'racing-records.create'
+  | 'racing-records.edit'
+  | 'racing-records.delete'
+  // Community
+  | 'comments.view'
+  | 'comments.edit'
+  | 'comments.delete'
+  | 'emoji-analytics.view'
+  // Management
   | 'team.view'
-  | 'team.manage'
-  | 'settings.view'
-  // Re-added with the endpoint that enforces it: PUT /api/site-settings/public-nav.
-  // See the RESERVED block below for why it was gone.
-  | 'settings.manage'
+  | 'team.create'
+  | 'team.edit'
+  | 'team.delete'
+  | 'roles.view'
+  | 'roles.create'
+  | 'roles.edit'
+  | 'roles.delete'
   | 'analytics.view'
-  // Reader comments. ONE permission, not a create/edit/delete axis: leaving a
-  // comment needs no permission at all (any signed-in reader may), and an author
-  // editing or deleting their own is ownership rather than a grant. The only
-  // grantable power is acting on OTHER people's comments — hide, restore, remove
-  // — which is a single editorial job. See docs/COMMENTS-PLAN.md §6.
-  | 'comments.moderate'
-  // Podcast
-  | 'podcast.manage'
-  | 'podcast.episode.create'
-  | 'podcast.episode.edit_own'
-  | 'podcast.episode.edit_any'
-  | 'podcast.audio.upload'
-  | 'podcast.guests.manage'
-  | 'podcast.episode.schedule'
-  | 'podcast.episode.submit_review'
-  | 'podcast.episode.approve'
-  | 'podcast.episode.publish'
-  | 'podcast.distribution.manage'
-  | 'podcast.episode.delete'
-  | 'podcast.read_all'
+  | 'settings.view'
+  | 'settings.edit'
 
-export interface PermissionMeta {
-  id: PermissionAction
-  /** Full sentence-case name. Used in tooltips and audit copy. */
+// ── Screens ─────────────────────────────────────────────────────────────────
+
+export interface ScreenMeta {
+  /** Permission prefix AND the module id the console/sidebar key off. */
+  id: string
   label: string
+  /** Sidebar section. Rows render grouped by this, in the order below. */
+  section: string
+  /** Which columns this row shows. Anything absent renders as a dash. */
+  verbs: Verb[]
+  /** Records here have an author, so the scope control applies. */
+  scoped?: boolean
   /**
-   * The RESOURCE this action operates on — one row in the admin permission
-   * grid. Rows are rendered in first-seen order, so the order of this array is
-   * the order of the screen.
+   * This screen is a LENS over another screen's records (rule 1 above). The
+   * value names the screen whose verbs its actions must be checked against —
+   * documentation for the reader and the enforcement rule for the router.
    */
-  resource: string
-  /**
-   * The action alone, with the resource stripped out ("Create", not "Create
-   * drafts"). This is the checkbox caption; the row already says what it acts
-   * on, so repeating it just makes the grid unreadable.
-   */
-  short: string
+  lensOver?: string
+  /** One line for the console. */
   description: string
 }
 
 /**
- * Every grantable action, ordered as the admin grid renders it: one row per
- * resource, one checkbox per action within it.
+ * The eighteen screens, in sidebar order. This array IS the sidebar and IS the
+ * permission grid; apps/web/src/pages/newsroom/constants.tsx mirrors it —
+ * including `section`, which orders both the rail and the grid's row groups.
+ *
+ * Overview, My Media Assets and My Compensation are deliberately ABSENT. They
+ * only ever show your own things, so gating them would be theatre — every staff
+ * member gets them. See `ALWAYS_ON_MODULES`.
  */
-export const PERMISSION_CATALOGUE: PermissionMeta[] = [
-  // Platform access.
-  //
-  // There is no 'newsroom.access' here, and no equivalent. Opening the admin app
-  // is `isAdmin` — the account CATEGORY, the presence of an `admins` row — not a
-  // grantable permission. A role only decides what an admin finds INSIDE.
-  //
-  // 'claims.verify' is gone too. It guarded a verification step that no longer
-  // exists: a `parties` row is claimed or unclaimed, and claiming it is immediate.
-  // Leaving a permission in the catalogue that nothing enforces is exactly what
-  // `npm run check:permissions` exists to catch.
-  { id: 'platform.admin', label: 'Platform administration', resource: 'Platform Access', short: 'Administration', description: 'Manage every organisation, override ownership, read private records.' },
-  { id: 'roles.manage', label: 'Manage roles', resource: 'Platform Access', short: 'Manage roles', description: 'Create roles, set their permissions, and assign them.' },
+export const SCREEN_CATALOGUE: ScreenMeta[] = [
+  // ── Stories ───────────────────────────────────────────────────────────────
+  // The news pipeline and the three lenses onto it. Nothing else lives here:
+  // a story moves through five stages, which is what these screens are for.
+  {
+    id: 'stories',
+    label: 'All Stories',
+    section: 'Stories',
+    verbs: ['view', 'create', 'edit', 'delete', 'publish'],
+    scoped: true,
+    description: 'News stories, from first draft to published.',
+  },
+  {
+    id: 'workflow',
+    label: 'Workflow Board',
+    section: 'Stories',
+    verbs: ['view'],
+    lensOver: 'stories',
+    description: 'The kanban view of stories. Moving a card enforces the Stories verbs.',
+  },
+  {
+    id: 'pipeline',
+    label: 'Pipeline Map',
+    section: 'Stories',
+    verbs: ['view'],
+    lensOver: 'stories',
+    description: 'A read-only map of where work sits.',
+  },
+  {
+    id: 'editor-hub',
+    label: 'Editor Hub',
+    section: 'Stories',
+    verbs: ['view'],
+    lensOver: 'stories',
+    description: 'The review queue, assignments and scheduling, in one place.',
+  },
+  // ── Content ───────────────────────────────────────────────────────────────
+  // The other things the newsroom makes. Separate from Stories because a story
+  // moves through a five-stage pipeline and these do not — a post is draft or
+  // live, an edition is built and shared, an episode is produced.
+  {
+    id: 'blogs',
+    label: 'Blogs',
+    section: 'Content',
+    verbs: ['view', 'create', 'edit', 'delete', 'publish'],
+    scoped: true,
+    description: 'Blog posts — two states, draft and published.',
+  },
+  {
+    id: 'instant',
+    label: 'Instant Capture',
+    section: 'Content',
+    verbs: ['view'],
+    lensOver: 'stories',
+    description: 'Photo + voice capture. Saving enforces Stories or Blogs Create.',
+  },
+  {
+    id: 'magazine',
+    label: 'Magazine Builder',
+    section: 'Content',
+    verbs: ['view', 'create', 'edit', 'delete', 'publish'],
+    scoped: true,
+    description: 'Build and share magazine editions.',
+  },
+  {
+    id: 'podcast',
+    label: 'Podcast',
+    section: 'Content',
+    verbs: ['view', 'create', 'edit', 'delete', 'publish'],
+    scoped: true,
+    description: 'Episodes, guests, audio and distribution.',
+  },
 
-  // Stories
-  { id: 'content.draft.create', label: 'Create drafts', resource: 'Stories', short: 'Create', description: 'Start a new story draft.' },
-  { id: 'content.draft.edit_own', label: 'Edit own drafts', resource: 'Stories', short: 'Edit own', description: 'Edit stories they authored.' },
-  { id: 'content.draft.edit_any', label: 'Edit any story', resource: 'Stories', short: 'Edit any', description: 'Edit stories written by anyone.' },
-  { id: 'content.submit', label: 'Submit for review', resource: 'Stories', short: 'Submit', description: 'Push a draft into the editorial queue.' },
+  // ── Stables ───────────────────────────────────────────────────────────────
+  {
+    id: 'horses',
+    label: 'Horses',
+    section: 'Stables',
+    verbs: ['view', 'create', 'edit', 'delete'],
+    description: 'The horse register.',
+  },
+  {
+    id: 'people',
+    label: 'People',
+    section: 'Stables',
+    verbs: ['view', 'create', 'edit', 'delete'],
+    description: 'The people register — owners, trainers, jockeys.',
+  },
+  {
+    id: 'media-records',
+    label: 'Media Records',
+    section: 'Stables',
+    verbs: ['view', 'create', 'edit', 'delete'],
+    description: 'The shared media library.',
+  },
+  {
+    id: 'racing-records',
+    label: 'Racing Records',
+    section: 'Stables',
+    verbs: ['view', 'create', 'edit', 'delete'],
+    description: 'Meetings, races and results.',
+  },
 
-  // Editorial
-  { id: 'content.editorial_review', label: 'Editorial review', resource: 'Editorial', short: 'Review', description: 'Move stories in and out of editorial review.' },
-  { id: 'content.send_revision', label: 'Send back for revision', resource: 'Editorial', short: 'Send back', description: 'Return a story to its author.' },
-  { id: 'content.approve', label: 'Approve content', resource: 'Editorial', short: 'Approve', description: 'Approve a story for publication.' },
+  // ── Community ─────────────────────────────────────────────────────────────
+  {
+    id: 'comments',
+    label: 'Comments',
+    section: 'Community',
+    // No Create: leaving a comment needs no grant, and editing your own is
+    // ownership. The grantable job is acting on OTHER people's words — Edit
+    // hides and restores, Delete removes.
+    verbs: ['view', 'edit', 'delete'],
+    description: "The moderation queue for readers' comments.",
+  },
+  {
+    id: 'emoji-analytics',
+    label: 'Emoji Analytics',
+    section: 'Community',
+    verbs: ['view'],
+    description: 'Reader sentiment from the reaction bars.',
+  },
 
-  // Publishing.
-  { id: 'content.schedule', label: 'Schedule publication', resource: 'Publishing', short: 'Schedule', description: 'Set a future publish date.' },
-  { id: 'content.publish', label: 'Publish', resource: 'Publishing', short: 'Publish', description: 'Push a story live.' },
-
-  // Blogs — two states (draft/published), so there is no submit/approve/schedule
-  // row here the way Stories has one.
-  { id: 'blog.create', label: 'Create blog posts', resource: 'Blogs', short: 'Create', description: 'Start a new blog post.' },
-  { id: 'blog.edit_own', label: 'Edit own blog posts', resource: 'Blogs', short: 'Edit own', description: 'Edit blog posts they authored.' },
-  { id: 'blog.edit_any', label: 'Edit any blog post', resource: 'Blogs', short: 'Edit any', description: 'Edit blog posts written by anyone.' },
-  { id: 'blog.publish', label: 'Publish blog posts', resource: 'Blogs', short: 'Publish', description: 'Put a blog post live, or take it back down.' },
-  { id: 'blog.delete', label: 'Delete blog posts', resource: 'Blogs', short: 'Delete', description: 'Delete a blog post.' },
-
-  // Media
-  { id: 'media.upload_own', label: 'Upload own media', resource: 'Media', short: 'Upload own', description: 'Upload and manage personal media assets.' },
-  { id: 'media.manage_all', label: 'Manage all media', resource: 'Media', short: 'Manage all', description: 'Manage the full shared media library.' },
-
-  // Workflow board — DELIBERATELY EMPTY.
-  //
-  // `workflow.view_all_columns` and `workflow.view_own_columns` lived here and
-  // were checked by nothing: which columns a role sees is the `workflowStages`
-  // axis, which is real per-role config with its own checkbox column in the
-  // Roles console. The two permissions were the pre-dynamic-RBAC vestige of the
-  // same idea, so they offered an admin a choice that could not take effect.
-  // Removed rather than wired — wiring them would create a second source of
-  // truth for column visibility. Role rows still holding the ids simply no
-  // longer match a catalogue entry (see scripts/sync-role-catalogue.ts).
-
-  // Podcast
-  { id: 'podcast.manage', label: 'Manage podcast', resource: 'Podcast', short: 'Manage', description: 'Broad podcast management.' },
-  { id: 'podcast.episode.create', label: 'Create episodes', resource: 'Podcast', short: 'Create', description: 'Start a new episode draft.' },
-  { id: 'podcast.episode.edit_own', label: 'Edit own episodes', resource: 'Podcast', short: 'Edit own', description: 'Edit episodes they produced.' },
-  { id: 'podcast.episode.edit_any', label: 'Edit any episode', resource: 'Podcast', short: 'Edit any', description: 'Edit episodes produced by anyone.' },
-  { id: 'podcast.audio.upload', label: 'Upload audio', resource: 'Podcast', short: 'Upload audio', description: 'Attach audio files to an episode.' },
-  { id: 'podcast.guests.manage', label: 'Manage guests', resource: 'Podcast', short: 'Guests', description: 'Add and remove episode guests.' },
-  { id: 'podcast.episode.schedule', label: 'Schedule episodes', resource: 'Podcast', short: 'Schedule', description: 'Set an episode publish date.' },
-  { id: 'podcast.episode.submit_review', label: 'Submit episode for review', resource: 'Podcast', short: 'Submit', description: 'Send an episode for approval.' },
-  { id: 'podcast.episode.approve', label: 'Approve episodes', resource: 'Podcast', short: 'Approve', description: 'Approve or return an episode.' },
-  { id: 'podcast.episode.publish', label: 'Publish episodes', resource: 'Podcast', short: 'Publish', description: 'Push an episode live.' },
-  { id: 'podcast.distribution.manage', label: 'Manage distribution', resource: 'Podcast', short: 'Distribution', description: 'Toggle per-episode distribution channels.' },
-  { id: 'podcast.episode.delete', label: 'Delete episodes', resource: 'Podcast', short: 'Delete', description: 'Delete a draft or unpublished episode.' },
-  { id: 'podcast.read_all', label: 'See unpublished episodes', resource: 'Podcast', short: 'See drafts', description: 'View drafts, not just published episodes.' },
-
-  // Compensation
-  { id: 'compensation.view_own', label: 'View own payouts', resource: 'Compensation', short: 'View own', description: 'See their own payout history.' },
-
-  // Team & settings
-  { id: 'team.view', label: 'View team', resource: 'Team & Settings', short: 'View team', description: 'See the staff roster.' },
-  { id: 'team.manage', label: 'Manage team & roles', resource: 'Team & Settings', short: 'Manage team', description: 'Invite staff, create roles, assign permissions.' },
-  { id: 'settings.view', label: 'View settings', resource: 'Team & Settings', short: 'View settings', description: 'Open newsroom settings.' },
-  // The Settings screen is no longer static text: Website Customisation writes
-  { id: 'settings.manage', label: 'Change website settings', resource: 'Team & Settings', short: 'Change settings', description: 'Show or hide public sections of the website (News, Blog, Horses, Directory, Podcast, Bulletins).' },
-  { id: 'analytics.view', label: 'View analytics', resource: 'Team & Settings', short: 'Analytics', description: 'Open the analytics dashboard.' },
-  // Its own resource row rather than one more checkbox under Team & Settings:
-  // working a comment queue is a shift somebody takes, and it is the one power
-  // here that acts on words a reader wrote in public.
-  { id: 'comments.moderate', label: 'Moderate reader comments', resource: 'Comments', short: 'Moderate', description: "Hide, restore or remove other people's comments on stories, blog posts and editions." },
+  // ── Management ────────────────────────────────────────────────────────────
+  {
+    id: 'team',
+    label: 'Team Members',
+    section: 'Management',
+    // Create = invite, Edit = change someone's role, Delete = remove from staff.
+    verbs: ['view', 'create', 'edit', 'delete'],
+    description: 'The staff roster and invitations.',
+  },
+  {
+    id: 'roles',
+    label: 'Roles & Permissions',
+    section: 'Management',
+    verbs: ['view', 'create', 'edit', 'delete'],
+    description: 'Define what each role may do. The most dangerous row here.',
+  },
+  {
+    id: 'analytics',
+    label: 'Analytics',
+    section: 'Management',
+    verbs: ['view'],
+    description: 'Production and audience numbers.',
+  },
+  {
+    id: 'settings',
+    label: 'Settings',
+    section: 'Management',
+    verbs: ['view', 'edit'],
+    description: 'Newsroom and public-website settings.',
+  },
 ]
 
-// ── RESERVED ids — removed from the catalogue, not forgotten ────────────────
+/**
+ * Screens every staff member gets, with no row in the grid: Overview is the
+ * general tab, and the two Personal screens only ever show your own things.
+ */
+export const ALWAYS_ON_MODULES = ['overview', 'my-assets', 'compensation'] as const
+
+export const SCREEN_BY_ID = new Map(SCREEN_CATALOGUE.map((s) => [s.id, s]))
+
+export function isScreenId(v: unknown): v is string {
+  return typeof v === 'string' && SCREEN_BY_ID.has(v)
+}
+
+/** Screens whose records have an author — the scope control applies to these. */
+export const SCOPED_SCREENS: string[] = SCREEN_CATALOGUE.filter((s) => s.scoped).map((s) => s.id)
+
+export function screenSupports(screenId: string, verb: Verb): boolean {
+  return SCREEN_BY_ID.get(screenId)?.verbs.includes(verb) === true
+}
+
+export function permissionId(screenId: string, verb: Verb): PermissionAction {
+  return `${screenId}.${verb}` as PermissionAction
+}
+
+// ── The flat catalogue (derived) ────────────────────────────────────────────
+
+export interface PermissionMeta {
+  id: PermissionAction
+  /** Full sentence-case name, for tooltips and audit copy. */
+  label: string
+  /** The screen this acts on — one row of the grid. */
+  resource: string
+  /** The column caption. The row already says what it acts on. */
+  short: string
+  description: string
+}
+
+const VERB_LABEL: Record<Verb, string> = {
+  view: 'View',
+  create: 'Create',
+  edit: 'Edit',
+  delete: 'Delete',
+  publish: 'Publish',
+}
+
+const VERB_SENTENCE: Record<Verb, (label: string) => string> = {
+  view: (l) => `Open ${l} and read what is there.`,
+  create: (l) => `Add something new in ${l}.`,
+  edit: (l) => `Change existing records in ${l}.`,
+  delete: (l) => `Remove records from ${l}.`,
+  publish: (l) => `Put ${l} content live, or take it back down.`,
+}
+
+/** Every grantable action, in grid order: screen by screen, verb by verb. */
+export const PERMISSION_CATALOGUE: PermissionMeta[] = SCREEN_CATALOGUE.flatMap((screen) =>
+  screen.verbs.map((verb) => ({
+    id: permissionId(screen.id, verb),
+    label: `${VERB_LABEL[verb]} — ${screen.label}`,
+    resource: screen.label,
+    short: VERB_LABEL[verb],
+    description: VERB_SENTENCE[verb](screen.label),
+  })),
+)
 
 const ACTION_IDS = new Set<string>(PERMISSION_CATALOGUE.map((p) => p.id))
 
@@ -175,77 +369,131 @@ export function isPermissionAction(v: unknown): v is PermissionAction {
   return typeof v === 'string' && ACTION_IDS.has(v)
 }
 
-// ── Modules (navigation surfaces) ───────────────────────────────────────────
+// ── Legacy ids ──────────────────────────────────────────────────────────────
+
+/**
+ * Old id → the new ids it becomes, applied when a role is READ.
+ *
+ * `scripts/migrate-permissions.ts` rewrites the stored rows; this exists so the
+ * app is correct the moment it deploys, before the migration has run, and so a
+ * role row written by an older process cannot silently lose access. Remove both
+ * this map and the migration once prod has been migrated (P6).
+ *
+ * Three old ids resolve to NOTHING on purpose:
+ *   media.upload_own      an upload is part of editing what it attaches to
+ *   compensation.view_own seeing your own payouts is not a grant
+ *   platform.admin        that is `role.isSuper`, which short-circuits already
+ */
+export const LEGACY_PERMISSION_ALIASES: Record<string, PermissionAction[]> = {
+  'content.draft.create': ['stories.create'],
+  'content.draft.edit_own': ['stories.edit'],
+  'content.draft.edit_any': ['stories.edit'],
+  'content.submit': ['stories.edit'],
+  'content.editorial_review': ['stories.edit', 'editor-hub.view'],
+  'content.send_revision': ['stories.edit'],
+  'content.approve': ['stories.publish'],
+  'content.schedule': ['stories.publish'],
+  'content.publish': ['stories.publish'],
+  'blog.create': ['blogs.create', 'blogs.view'],
+  'blog.edit_own': ['blogs.edit'],
+  'blog.edit_any': ['blogs.edit'],
+  'blog.publish': ['blogs.publish'],
+  'blog.delete': ['blogs.delete'],
+  'media.upload_own': [],
+  'media.manage_all': ['media-records.edit'],
+  'compensation.view_own': [],
+  'platform.admin': [],
+  'roles.manage': ['roles.view', 'roles.create', 'roles.edit', 'roles.delete'],
+  'team.manage': ['team.view', 'team.create', 'team.edit', 'team.delete'],
+  'settings.manage': ['settings.edit'],
+  'analytics.view': ['analytics.view', 'emoji-analytics.view'],
+  'comments.moderate': ['comments.view', 'comments.edit', 'comments.delete'],
+  'podcast.manage': ['podcast.edit'],
+  'podcast.episode.create': ['podcast.create'],
+  'podcast.episode.edit_own': ['podcast.edit'],
+  'podcast.episode.edit_any': ['podcast.edit'],
+  'podcast.audio.upload': ['podcast.edit'],
+  'podcast.guests.manage': ['podcast.edit'],
+  'podcast.episode.schedule': ['podcast.publish'],
+  'podcast.episode.submit_review': ['podcast.edit'],
+  'podcast.episode.approve': ['podcast.publish'],
+  'podcast.episode.publish': ['podcast.publish'],
+  'podcast.distribution.manage': ['podcast.edit'],
+  'podcast.episode.delete': ['podcast.delete'],
+  'podcast.read_all': ['podcast.view'],
+}
+
+/**
+ * The scope an OLD role implied. `edit_any` meant everyone's work; `edit_own`
+ * meant your own. A role holding neither keeps the default 'own'.
+ */
+export const LEGACY_SCOPE_ALL: Record<string, string> = {
+  'content.draft.edit_any': 'stories',
+  'blog.edit_any': 'blogs',
+  'podcast.episode.edit_any': 'podcast',
+  'podcast.read_all': 'podcast',
+}
+
+/**
+ * Resolve a stored permission array: map legacy ids, drop unknown ones, and
+ * apply rule 2 (any verb implies that screen's `view`).
+ */
+export function normalisePermissions(raw: unknown): PermissionAction[] {
+  if (!Array.isArray(raw)) return []
+  const out = new Set<PermissionAction>()
+  for (const entry of raw) {
+    if (typeof entry !== 'string') continue
+    if (isPermissionAction(entry)) {
+      out.add(entry)
+      continue
+    }
+    for (const mapped of LEGACY_PERMISSION_ALIASES[entry] ?? []) out.add(mapped)
+  }
+  // Rule 2: any verb implies view.
+  for (const id of [...out]) {
+    const screenId = id.slice(0, id.lastIndexOf('.'))
+    const view = permissionId(screenId, 'view')
+    if (isPermissionAction(view)) out.add(view)
+  }
+  return PERMISSION_CATALOGUE.filter((p) => out.has(p.id)).map((p) => p.id)
+}
+
+/** Resolve a stored scope map, keeping only screens that have scoped records. */
+export function normaliseScopes(raw: unknown, permissions: readonly string[] = []): RoleScopes {
+  const out: RoleScopes = {}
+  if (raw && typeof raw === 'object') {
+    for (const [screenId, value] of Object.entries(raw as Record<string, unknown>)) {
+      if (SCOPED_SCREENS.includes(screenId) && (value === 'own' || value === 'all')) {
+        out[screenId] = value
+      }
+    }
+  }
+  // A role row written before scopes existed carries its intent in its old
+  // permission ids — `content.draft.edit_any` meant "everyone's".
+  for (const [legacyId, screenId] of Object.entries(LEGACY_SCOPE_ALL)) {
+    if (!out[screenId] && permissions.includes(legacyId)) out[screenId] = 'all'
+  }
+  return out
+}
+
+// ── Modules (the sidebar), DERIVED ──────────────────────────────────────────
+//
+// There is no module axis on a role any more: a nav entry appears when the role
+// holds that screen's `view`. These two helpers keep the wire payload's
+// `modules` array — which the web sidebar already reads — working unchanged.
 
 export interface ModuleMeta {
   id: string
   label: string
   section: string
-  /**
-   * The action the built-in matrix uses to decide visibility. `undefined` means
-   * every staff member sees it today. Custom roles ignore this and use their own
-   * explicit module list — it exists so built-in roles keep their exact current
-   * navigation without a second hand-maintained table.
-   */
-  requiresPermission?: PermissionAction
 }
 
-/** Mirrors SIDE_NAV + EDITOR_TABS in apps/web/src/pages/newsroom/constants.tsx. */
+/** Mirrors SIDE_NAV in apps/web/src/pages/newsroom/constants.tsx. */
 export const MODULE_CATALOGUE: ModuleMeta[] = [
   { id: 'overview', label: 'Overview', section: 'Workspace' },
-  { id: 'workflow', label: 'Workflow Board', section: 'Workspace' },
-  { id: 'pipeline', label: 'Pipeline Map', section: 'Workspace' },
-  { id: 'all-stories', label: 'All Stories', section: 'Content' },
-  { id: 'blogs', label: 'Blogs', section: 'Content', requiresPermission: 'blog.create' },
-  // Instant carries NO requiresPermission on purpose: its two modes need
-  // different permissions (content.draft.create for a story, blog.create for a
-  // post) and a module row holds only one. The screen gates each mode itself, so
-  // a blog-only author still gets the surface. See docs/INSTANT-CAPTURE-PLAN.md §5.1.
-  { id: 'instant', label: 'Instant Capture', section: 'Content' },
-  { id: 'magazine-v2', label: 'Magazine Builder', section: 'Content' },
-  // Podcast production. `podcast.read_all` rather than one of the producing
-  // powers: this row decides which BUILT-IN roles get the surface (see
-  // builtinModulesFor) and "can see episodes that aren't live" is the honest
-  // prerequisite for opening the screen at all — it is what GET / keys on. The
-  // screen needs any of four powers to do anything, and a module row holds one,
-  // so it gates the rest itself. Same posture as `instant`.
-  { id: 'podcast', label: 'Podcast', section: 'Content', requiresPermission: 'podcast.read_all' },
-  { id: 'editor-hub', label: 'Editor Hub', section: 'Content', requiresPermission: 'content.editorial_review' },
-  { id: 'my-assets', label: 'My Media Assets', section: 'Content', requiresPermission: 'media.upload_own' },
-  { id: 'compensation', label: 'My Compensation', section: 'Content', requiresPermission: 'compensation.view_own' },
-  { id: 'horses', label: 'Horses Management', section: 'Stables', requiresPermission: 'content.draft.create' },
-  { id: 'parties', label: 'People Management', section: 'Stables', requiresPermission: 'content.draft.create' },
-  { id: 'media-production-system', label: 'Media Records', section: 'Stables', requiresPermission: 'content.draft.create' },
-  { id: 'racing-production-system', label: 'Racing Data', section: 'Stables', requiresPermission: 'content.draft.create' },
-  // team.view, NOT team.manage. Gating the surface on `manage` made `team.view`
-  // ("See the staff roster") a permission that granted nothing at all: the
-  // seeded editor role holds it and still had no Team screen. The screen is now
-  // readable with `team.view` and its write controls are gated on `team.manage`
-  // — both here and in routes/staff.ts, which applies the same split.
-  { id: 'team', label: 'Team Members', section: 'Management', requiresPermission: 'team.view' },
-  // roles.manage, NOT team.manage — /api/roles enforces roles.manage, so gating
-  // the surface on anything looser shows a console whose every call 403s.
-  { id: 'roles', label: 'Roles & Permissions', section: 'Management', requiresPermission: 'roles.manage' },
-  { id: 'analytics', label: 'Analytics', section: 'Management', requiresPermission: 'analytics.view' },
-  // Reader sentiment — same permission as Analytics; see SIDE_NAV for why it is a
-  // row of its own. Role rows written before this module existed need
-  // scripts/grant-emoji-analytics-module.ts (seedRoles is insert-only).
-  { id: 'emoji-analytics', label: 'Emoji Analytics', section: 'Management', requiresPermission: 'analytics.view' },
-  // The comment queue. In `Content` rather than `Management` because it is a desk
-  // somebody works through, next to the stories and posts the comments are on —
-  // not a report an editor reads once a week. Role rows written before this
-  // module existed need scripts/grant-comments-module.ts (seedRoles is
-  // insert-only), and the API must be RESTARTED after this line ships or
-  // roleRegistry strips the id out of every role on every request.
-  { id: 'comment-moderation', label: 'Comments', section: 'Content', requiresPermission: 'comments.moderate' },
-  { id: 'settings', label: 'Settings', section: 'Management', requiresPermission: 'settings.view' },
-
-  // Editor Hub tabs — gated the same way, one level down.
-  { id: 'review-queue', label: 'Review Queue', section: 'Editor Hub', requiresPermission: 'content.editorial_review' },
-  { id: 'assignments', label: 'Assignments', section: 'Editor Hub', requiresPermission: 'content.draft.edit_any' },
-  { id: 'scheduling', label: 'Scheduling', section: 'Editor Hub', requiresPermission: 'content.schedule' },
-  { id: 'media-library', label: 'Media Library', section: 'Editor Hub', requiresPermission: 'media.manage_all' },
-  { id: 'horse-records', label: 'Horse Records', section: 'Editor Hub', requiresPermission: 'media.manage_all' },
+  ...SCREEN_CATALOGUE.map((s) => ({ id: s.id, label: s.label, section: s.section })),
+  { id: 'my-assets', label: 'My Media Assets', section: 'Personal' },
+  { id: 'compensation', label: 'My Compensation', section: 'Personal' },
 ]
 
 const MODULE_IDS = new Set<string>(MODULE_CATALOGUE.map((m) => m.id))
@@ -254,25 +502,27 @@ export function isModuleId(v: unknown): v is string {
   return typeof v === 'string' && MODULE_IDS.has(v)
 }
 
-// ── Workflow stages (the third checkbox axis) ───────────────────────────────
+/** Every module a permission set opens: the always-on ones, plus each `.view`. */
+export function modulesForPermissions(permissions: Iterable<string>): string[] {
+  const out = new Set<string>(ALWAYS_ON_MODULES)
+  for (const id of permissions) {
+    if (id.endsWith('.view')) out.add(id.slice(0, -'.view'.length))
+  }
+  return MODULE_CATALOGUE.filter((m) => out.has(m.id)).map((m) => m.id)
+}
+
+// ── Workflow stages ─────────────────────────────────────────────────────────
+//
+// Still the five states a story moves through — but no longer a per-role axis.
+// The board shows every column to anyone holding `workflow.view`; which CARDS
+// appear is the Stories scope, and which TRANSITIONS are allowed is
+// `stories.edit` / `stories.publish`.
 
 export interface WorkflowStageMeta {
   id: string
   label: string
 }
 
-/**
- * Five stages, matching ARTICLE_STATUSES in lib/workflow.ts.
- *
- * Was twelve. The four per-department review gates (editorial_review,
- * legal_review, compliance, publisher_review) collapsed into one approval step;
- * `revision` became a `changesRequested` flag on a Draft; and newsletter/bulletin
- * were never workflow stages at all — they were distribution, and now live in
- * the article's `channels`.
- *
- * Roles store stage ids in `workflowStages`. Retired ids are REMAPPED on read by
- * `normaliseWorkflowStages` rather than by a migration — see the note there.
- */
 export const WORKFLOW_STAGE_CATALOGUE: WorkflowStageMeta[] = [
   { id: 'draft', label: 'Draft' },
   { id: 'submitted', label: 'Submitted' },
@@ -289,84 +539,83 @@ export function isWorkflowStage(v: unknown): v is string {
 
 export const ALL_WORKFLOW_STAGES: string[] = WORKFLOW_STAGE_CATALOGUE.map((s) => s.id)
 
-/**
- * Retired stage id → the surviving stage that absorbed it.
- *
- * The four review gates became one approval step, `revision` became a flag on a
- * Draft, and newsletter/bulletin turned out to be distribution rather than
- * stages at all.
- */
-const RETIRED_STAGES: Record<string, string> = {
-  editorial_review: 'submitted',
-  legal_review: 'submitted',
-  compliance: 'submitted',
-  publisher_review: 'approved',
-  revision: 'draft',
-  newsletter: 'published',
-  bulletin: 'published',
-  archived: 'published',
-}
-
-/** Resolve a role's `workflowStages` to current ids. */
-export function normaliseWorkflowStages(raw: unknown): string[] {
-  if (!Array.isArray(raw)) return []
-  const out = new Set<string>()
-  for (const entry of raw) {
-    if (typeof entry !== 'string') continue
-    const id = isWorkflowStage(entry) ? entry : RETIRED_STAGES[entry]
-    if (id) out.add(id)
-  }
-  return WORKFLOW_STAGE_CATALOGUE.filter((s) => out.has(s.id)).map((s) => s.id)
-}
-
-// ── Built-in role matrix ────────────────────────────────────────────────────
+// ── Built-in roles ──────────────────────────────────────────────────────────
 
 export const BUILTIN_ROLE_PERMISSIONS: Record<SeedRoleName, PermissionAction[]> = {
-  contributor: [
-    'content.draft.create',
-    'content.draft.edit_own',
-    'content.submit',
-    // Blogs: may write, may not put live. Mirrors the story posture.
-    'blog.create',
-    'blog.edit_own',
-    'media.upload_own',
-    'compensation.view_own',
-  ],
+  // Writes, and sees the desk. Cannot put anything live, cannot delete, and
+  // scope keeps every scoped verb on their OWN work.
+  contributor: normalisePermissions([
+    'stories.view',
+    'stories.create',
+    'stories.edit',
+    'workflow.view',
+    'pipeline.view',
+    'blogs.view',
+    'blogs.create',
+    'blogs.edit',
+    'instant.view',
+    'horses.view',
+    'people.view',
+    'media-records.view',
+    'racing-records.view',
+  ]),
 
-  editor: [
-    'content.draft.create',
-    'content.draft.edit_own',
-    'content.draft.edit_any',
-    'content.submit',
-    'content.editorial_review',
-    'content.send_revision',
-    'content.approve',
-    'content.schedule',
-    'content.publish',
-    'blog.create',
-    'blog.edit_own',
-    'blog.edit_any',
-    'blog.publish',
-    'blog.delete',
-    'media.upload_own',
-    'media.manage_all',
-    'team.view',
+  // Runs the desk: everyone's work, plus publishing, deleting and the queues.
+  editor: normalisePermissions([
+    'stories.view',
+    'stories.create',
+    'stories.edit',
+    'stories.delete',
+    'stories.publish',
+    'workflow.view',
+    'pipeline.view',
+    'editor-hub.view',
+    'blogs.view',
+    'blogs.create',
+    'blogs.edit',
+    'blogs.delete',
+    'blogs.publish',
+    'instant.view',
+    'magazine.view',
+    'magazine.create',
+    'magazine.edit',
+    'magazine.publish',
+    'podcast.view',
+    'podcast.create',
+    'podcast.edit',
+    'podcast.publish',
+    'horses.view',
+    'horses.create',
+    'horses.edit',
+    'people.view',
+    'people.create',
+    'people.edit',
+    'media-records.view',
+    'media-records.create',
+    'media-records.edit',
+    'racing-records.view',
+    'racing-records.create',
+    'racing-records.edit',
+    // The comment desk belongs to the editor. A contributor writes; deciding
+    // what stays up under someone else's byline is an editorial call.
+    'comments.view',
+    'comments.edit',
+    'comments.delete',
+    'emoji-analytics.view',
     'analytics.view',
-    // The comment desk belongs to the editor. A contributor writes; deciding what
-    // stays up under someone else's byline is an editorial call, so it does NOT
-    // go in the contributor list.
-    'comments.moderate',
+    'team.view',
     'settings.view',
-    'podcast.episode.edit_any',
-    'podcast.episode.approve',
-    'podcast.episode.publish',
-    'podcast.distribution.manage',
-    'podcast.read_all',
-  ],
+  ]),
 
-  // Administrator holds everything, always. Derived rather than listed so a new
-  // action can never be accidentally withheld from admins.
+  // Everything, always. Derived so a new action can never be withheld by
+  // forgetting to add it here.
   administrator: PERMISSION_CATALOGUE.map((p) => p.id),
+}
+
+export const BUILTIN_ROLE_SCOPES: Record<SeedRoleName, RoleScopes> = {
+  contributor: { stories: 'own', blogs: 'own', magazine: 'own', podcast: 'own' },
+  editor: { stories: 'all', blogs: 'all', magazine: 'all', podcast: 'all' },
+  administrator: { stories: 'all', blogs: 'all', magazine: 'all', podcast: 'all' },
 }
 
 export const BUILTIN_ROLE_LABELS: Record<SeedRoleName, string> = {
@@ -375,14 +624,7 @@ export const BUILTIN_ROLE_LABELS: Record<SeedRoleName, string> = {
   administrator: 'Administrator',
 }
 
-/**
- * Modules a built-in role sees — derived from the module's `requiresPermission`
- * so this exactly reproduces today's sidebar filtering. Custom roles do NOT go
- * through here; they carry an explicit, admin-ticked module list.
- */
+/** The sidebar a built-in role gets — derived, like every other role's. */
 export function builtinModulesFor(role: SeedRoleName): string[] {
-  const held = new Set<string>(BUILTIN_ROLE_PERMISSIONS[role])
-  return MODULE_CATALOGUE.filter((m) => !m.requiresPermission || held.has(m.requiresPermission)).map(
-    (m) => m.id,
-  )
+  return modulesForPermissions(BUILTIN_ROLE_PERMISSIONS[role])
 }

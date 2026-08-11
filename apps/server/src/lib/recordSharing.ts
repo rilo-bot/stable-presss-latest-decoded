@@ -58,9 +58,15 @@ export function ownershipFields(account: AccountUser): {
   }
 }
 
-/** Unrestricted visibility. Admin and superadmin only. */
+/**
+ * Unrestricted visibility — reads private records regardless of who owns them.
+ *
+ * Was the `platform.admin` permission, which had two call sites and meant
+ * "superadmin" in both. `isSuper` says that already, and says it without a
+ * catalogue entry someone could tick onto a narrow role by accident.
+ */
 function seesEverything(account: AccountUser | undefined): boolean {
-  return accountCan(account, 'platform.admin')
+  return account?.isSuperAdmin === true
 }
 
 function isCreator(account: AccountUser | undefined, doc: OwnedRecord): boolean {

@@ -43,9 +43,9 @@ const router = Router();
  * machine hit 429 after four writes between them.
  *
  * `attachAccountOptional` here costs nothing extra: the write routes below still
- * carry `attachAccount`, which is idempotent (it returns early when `req.account`
- * is already set) and still 401s when there is no valid token. GETs pay the same
- * lookup they always did.
+ * carry `attachAccount`, and BOTH forms are idempotent (they return early when
+ * `req.account` is already set) while `attachAccount` still 401s when there is no
+ * valid token. GETs pay the same lookup they always did.
  *
  * NOTE: `routes/reactions.ts` has the identical shape and therefore the identical
  * behaviour — its 60/minute is per IP, not per account. Not changed here; flagged
@@ -73,8 +73,15 @@ function handle(fn: (req: Request, res: Response) => Promise<void>) {
   }
 }
 
-/** Whoever is asking may work the queue. Never inferred from the client. */
-const canModerate = (req: Request): boolean => accountCan(req.account, 'comments.moderate')
+/**
+ * Whoever is asking may work the queue. Never inferred from the client.
+ *
+ * Two verbs where `comments.moderate` was one, and the split is the honest one:
+ * HIDING leaves a tombstone so the thread still parses, DELETING removes the
+ * comment from it entirely. The UI already offered them as separate actions.
+ */
+const canModerate = (req: Request): boolean => accountCan(req.account, 'comments.edit')
+const canRemoveAny = (req: Request): boolean => accountCan(req.account, 'comments.delete')
 
 // ── Moderation ──────────────────────────────────────────────────────────────
 //
@@ -167,9 +174,9 @@ router.post('/:id/report', attachAccount, handle(async (req, res) => {
  * an offset, so a comment posted while someone is reading page 1 cannot make page
  * 2 repeat a row and skip another.
  */
-// No `attachAccountOptional` here — the router-level one above already ran, and
-// unlike `attachAccount` it is NOT idempotent, so listing it again would cost a
-// second user lookup on every thread read.
+// No `attachAccountOptional` here — the router-level one above already ran.
+// (It is idempotent now, so re-listing it would be harmless rather than a second
+// user lookup per thread read. Still redundant, so still omitted.)
 router.get('/', handle(async (req, res) => {
   const targetType = req.query.targetType
   const targetId = typeof req.query.targetId === 'string' ? req.query.targetId : ''
@@ -244,17 +251,17 @@ router.patch('/:id', attachAccount, handle(async (req, res) => {
 }))
 
 /**
- * DELETE /api/comments/:id — your own, or anyone's with `comments.moderate`.
+ * DELETE /api/comments/:id — your own, or anyone's with `comments.delete`.
  *
- * A moderator deleting rather than hiding is the stronger action and is offered
- * separately in the UI: hiding leaves a tombstone so the thread still parses,
- * deleting removes the comment from it entirely.
+ * Deleting someone else's comment is the stronger action, so it takes the
+ * stronger verb: a role that may hide and restore does not automatically get to
+ * remove. Deleting your OWN needs nothing — that is ownership.
  */
 router.delete('/:id', attachAccount, handle(async (req, res) => {
   const result = await deleteComment({
     id: String(req.params.id ?? ''),
     account: req.account!,
-    canModerate: canModerate(req),
+    canModerate: canRemoveAny(req),
   })
   if (!result.ok) {
     res.status(result.status).json({ error: result.error })

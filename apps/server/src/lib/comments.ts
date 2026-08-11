@@ -494,7 +494,7 @@ export async function editComment(input: {
 }
 
 /**
- * Delete a comment. The author's own, or anyone's with `comments.moderate`.
+ * Delete a comment. The author's own, or anyone's with `comments.edit`.
  *
  * A SOFT delete — `deletedAt`, through the normal wrapper — unlike a reaction,
  * which hard-deletes because a unique index would otherwise collide with its own
@@ -535,7 +535,7 @@ export async function deleteComment(input: {
  * moderation queue sorts on; the rows are what make it auditable.
  *
  * Reporting does NOT hide anything. A hide is an editorial decision made by a
- * person with `comments.moderate`; an auto-hide at N reports is a brigade's
+ * person with `comments.edit`; an auto-hide at N reports is a brigade's
  * delete button.
  */
 export async function reportComment(input: {
@@ -575,7 +575,7 @@ export async function reportComment(input: {
 // ── Moderation ──────────────────────────────────────────────────────────────
 
 /**
- * Hide or restore a comment. `comments.moderate` only; enforced in the route.
+ * Hide or restore a comment. `comments.edit` only; enforced in the route.
  *
  * `hiddenReason` is required on a hide and is for the moderation log, not the
  * reader — the public tombstone says an editor removed it and nothing more.

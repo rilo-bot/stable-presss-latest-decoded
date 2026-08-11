@@ -15,7 +15,7 @@ import { generateText } from 'ai'
 import { db } from '../../lib/db.js'
 import { attachAccount } from '../../lib/auth.js'
 import { isAdmin, isPlatformAdmin } from '../../lib/rbac.js'
-import { accountCan } from '../../lib/effectiveAccess.js'
+import { accountCan, scopeFor } from '../../lib/effectiveAccess.js'
 import { getCapabilities } from '../../lib/agent/capabilities.js'
 import { getAgentModel, isAgentConfigured } from '../../lib/agent/provider.js'
 import type { AccountUser } from '../../lib/identity.js'
@@ -32,8 +32,8 @@ const LIVE_STATUSES = ['published']
 // "Needs your attention" is driven by what the caller can ACT on. These used to
 // hardcode role slugs, which meant a superadmin-created role could never surface
 // a queue no matter what it was granted.
-const canReview = (a: AccountUser) => accountCan(a, 'content.editorial_review')
-const canPublish = (a: AccountUser) => accountCan(a, 'content.publish')
+const canReview = (a: AccountUser) => accountCan(a, 'stories.edit')
+const canPublish = (a: AccountUser) => accountCan(a, 'stories.publish')
 
 export interface NeedItem {
   id: string
@@ -54,15 +54,41 @@ export interface NeedItem {
   where: string
 }
 
-/** The role-scoped dashboard summary. Pure aggregation over live collections. */
+/**
+ * The role-scoped dashboard summary — and the ONE resolver the AI brief reads.
+ *
+ * EVERY NUMBER HERE IS A COUNT OF WHAT THIS READER CAN SEE. That is not a nicety:
+ * the summary is fed to the model that writes the Overview brief, and a count
+ * assembled from everything and trimmed afterwards leaks in the wording — "3
+ * stories are awaiting approval" tells you they exist even when you may open
+ * none of them. So the filtering happens HERE, before anything is counted, and
+ * the page and the brief both read the result.
+ *
+ * Two axes do the filtering:
+ *   `<screen>.view`  may they open the screen at all — no view, no numbers
+ *   scope            'own' narrows the story set to their own byline
+ */
 async function buildNewsroomSummary(account: AccountUser) {
-  const [articles, horses, parties, races, issues] = await Promise.all([
-    db.collection('articles').find(),
-    db.collection('horses').find(),
-    db.collection('parties').find(),
-    db.collection('races').find(),
-    db.collection('issues').find(),
+  const seesStories = accountCan(account, 'stories.view')
+  const seesHorses = accountCan(account, 'horses.view')
+  const seesPeople = accountCan(account, 'people.view')
+  const seesRacing = accountCan(account, 'racing-records.view')
+  const seesMagazines = accountCan(account, 'magazine.view')
+
+  const [allArticles, horses, parties, races, issues] = await Promise.all([
+    seesStories ? db.collection('articles').find() : [],
+    seesHorses ? db.collection('horses').find() : [],
+    seesPeople ? db.collection('parties').find() : [],
+    seesRacing ? db.collection('races').find() : [],
+    seesMagazines ? db.collection('issues').find() : [],
   ])
+
+  // Scope 'own' means the pipeline totals are THEIR pipeline. A contributor
+  // should not learn the size of the desk's queue from a dashboard.
+  const articles =
+    scopeFor(account, 'stories') === 'all'
+      ? allArticles
+      : allArticles.filter((a) => a.author === account.name || a.createdByUserId === account.id)
 
   const byStatus: Record<string, number> = {}
   for (const a of articles) byStatus[String(a.status)] = (byStatus[String(a.status)] ?? 0) + 1
@@ -114,16 +140,19 @@ async function buildNewsroomSummary(account: AccountUser) {
   }
   const myDrafts = countMine('draft')
   if (myDrafts) needs.push({ id: 'my-drafts', label: 'Your drafts in progress', count: myDrafts, where: 'workflow' })
+  // These three are already zero for a reader without the matching `.view` —
+  // the collection was never fetched — so the guard is the fetch above, not a
+  // second condition here that could drift from it.
   if (unverifiedHorses) needs.push({ id: 'verify-horses', label: 'Unverified horses to review', count: unverifiedHorses, where: 'horses' })
-  if (unclaimedParties) needs.push({ id: 'unclaimed-parties', label: 'Register entries nobody has claimed', count: unclaimedParties, where: 'parties' })
-  if (issuesInProgress) needs.push({ id: 'finish-bulletins', label: 'Bulletins in progress', count: issuesInProgress, where: 'magazine-v2' })
+  if (unclaimedParties) needs.push({ id: 'unclaimed-parties', label: 'Register entries nobody has claimed', count: unclaimedParties, where: 'people' })
+  if (issuesInProgress) needs.push({ id: 'finish-bulletins', label: 'Bulletins in progress', count: issuesInProgress, where: 'magazine' })
 
   return {
     generatedFor: {
       name: account.name || account.email,
       // The AI brief describes the reader's editorial job, so it wants their
       // and would have made every brief say "roles: reader".
-      roles: account.roleDocs.map((r) => r.label),
+      roles: account.role ? [account.role.label] : [],
       isPlatformAdmin: isPlatformAdmin(account),
     },
     stories: {
@@ -176,9 +205,17 @@ router.post('/brief', async (req, res) => {
       system:
         'You are the editor-in-chief of Stable Press writing a short daily Production System brief for a colleague. ' +
         'Open by greeting them by first name. In 2–4 warm, specific sentences, tell them what most needs their attention ' +
-        'today and the single best next action, using the real numbers provided. Refer to pages by name (In Review, ' +
-        'Workflow Board, Magazine Studio, Verify Claims, the Production Systems). If nothing needs attention, say so ' +
-        'cheerfully. Plain prose only — no markdown, no lists, no headings. Never invent numbers beyond what is given.',
+        'today and the single best next action, using the real numbers provided. Refer to pages by the names they ' +
+        'actually carry: All Stories, Workflow Board, Pipeline Map, Editor Hub, Blogs, Instant Capture, Magazine Builder, ' +
+        'Podcast, Horses, People, Media Records, Racing Records, Comments. If nothing needs attention, say so cheerfully. ' +
+        'Plain prose only — no markdown, no lists, no headings.\n\n' +
+        // The summary has ALREADY been filtered to what this reader may open, so
+        // the rule the model needs is simply: nothing beyond it. Mentioning a
+        // queue that is absent would tell them it exists, which is the leak the
+        // scoping exists to prevent.
+        'THE SUMMARY IS THE WHOLE WORLD. It contains only what this colleague is allowed to see. Never invent a number, ' +
+        'never mention a screen or a queue that does not appear in it, and never imply there is more you are not showing. ' +
+        'If a section is missing or empty, that part of the newsroom is simply not theirs.',
       prompt: `Here is today's live summary for ${summary.generatedFor.name} (roles: ${summary.generatedFor.roles.join(', ')}):\n${JSON.stringify(summary)}\n\nWrite the brief.`,
     })
     res.json({ brief: text.trim() })

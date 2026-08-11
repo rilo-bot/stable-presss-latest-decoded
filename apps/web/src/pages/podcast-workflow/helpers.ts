@@ -1,6 +1,6 @@
 // ── Helpers ──────────────────────────────────────────────────────────────────
 
-import { can, canEditEpisode } from '@/lib/permissions';
+import { can, canAnyones, canEditEpisode } from '@/lib/permissions';
 import type { PodcastEpisode } from '@/types/podcast';
 
 /**
@@ -18,15 +18,13 @@ export function canDeleteEpisode(
   episode: Pick<PodcastEpisode, 'status' | 'producedBy'>,
   currentUserDisplayName: string | null | undefined,
 ): boolean {
-  const mayDelete = can('podcast.episode.delete') || can('podcast.manage');
+  const mayDelete = can('podcast.delete') || can('podcast.edit');
   if (!mayDelete) return false;
   // A published episode has to come down before it can be removed — the route
   // refuses outright rather than unpublishing on your behalf.
   if (episode.status === 'published') return false;
   return (
-    can('podcast.manage') ||
-    can('podcast.episode.edit_any') ||
-    canEditEpisode(episode.producedBy, currentUserDisplayName)
+    canAnyones('podcast.edit') || canEditEpisode(episode.producedBy, currentUserDisplayName)
   );
 }
 

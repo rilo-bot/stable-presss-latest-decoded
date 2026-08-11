@@ -48,9 +48,14 @@ export interface AssignedRole {
  * because roles are rows in a database that a superadmin edits at runtime.
  */
 export interface ResolvedAccess {
-  /** Granted action ids, e.g. 'content.publish'. */
+  /** Granted action ids, e.g. 'stories.publish'. */
   permissions: string[];
-  /** Navigation surfaces the user may open, e.g. 'analytics'. */
+  /**
+   * How far each screen's verbs reach: 'own' (the default) or 'all'. This is
+   * what replaced the `edit_own` / `edit_any` pairs — one verb, plus a scope.
+   */
+  scopes: Record<string, 'own' | 'all'>;
+  /** Navigation surfaces the user may open — DERIVED from each `<id>.view`. */
   modules: string[];
   /** Kanban columns the user may see. */
   workflowStages: string[];
@@ -96,6 +101,8 @@ function hydrateUser(raw: any, previous?: AuthUser | null): AuthUser {
   const access: ResolvedAccess | undefined = rawAccess
     ? {
         permissions: Array.isArray(rawAccess.permissions) ? rawAccess.permissions : [],
+        scopes:
+          rawAccess.scopes && typeof rawAccess.scopes === 'object' ? rawAccess.scopes : {},
         modules: Array.isArray(rawAccess.modules) ? rawAccess.modules : [],
         workflowStages: Array.isArray(rawAccess.workflowStages) ? rawAccess.workflowStages : [],
         isSuperAdmin: rawAccess.isSuperAdmin === true,
@@ -138,15 +145,19 @@ interface AuthState {
   currentUser: AuthUser | null;
   token: string | null;
 
-  /** Step 1 — Login: ask the server to email a one-time code. */
-  requestLoginOtp: (email: string) => Promise<OtpRequestResult>;
   /**
-   * Step 1 — Signup: register pending details and ask for a code.
+   * Step 1 — ask the server to email a one-time code. LOGIN AND SIGNUP BOTH.
    *
-   * Signup takes a name and an email, and nothing else. Becoming an admin means
-   * `users.roleId`, which only an existing admin can set.
+   * There is no `mode`: the server decides whether this address needs an account
+   * when the code is spent, so the two screens differ only in whether they pass
+   * `name` (and an account created without one gets a name derived from the
+   * address). Was `requestLoginOtp` + `requestSignupOtp`, which differed by one
+   * field and a string literal.
+   *
+   * Signing up grants NO role. Becoming an admin means `users.roleId`, which only
+   * an existing admin can set.
    */
-  requestSignupOtp: (email: string, name: string) => Promise<OtpRequestResult>;
+  requestOtp: (email: string, name?: string) => Promise<OtpRequestResult>;
   /** Step 2 — Verify the code; on success stores the user + JWT. */
   verifyOtp: (email: string, code: string) => Promise<VerifyResult>;
   /**
@@ -182,23 +193,9 @@ export const useAuthStore = create<AuthState>()(
       currentUser: null,
       token: null,
 
-      requestLoginOtp: async (email) => {
+      requestOtp: async (email, name) => {
         try {
-          const { data } = await postJson('/api/auth/request-otp', { email, mode: 'login' });
-          if (data?.ok) return { ok: true, devCode: data.devCode };
-          return { ok: false, error: data?.error ?? 'Could not send a code. Please try again.' };
-        } catch {
-          return { ok: false, error: 'Network error. Please check your connection and try again.' };
-        }
-      },
-
-      requestSignupOtp: async (email, name) => {
-        try {
-          const { data } = await postJson('/api/auth/request-otp', {
-            email,
-            mode: 'signup',
-            name,
-          });
+          const { data } = await postJson('/api/auth/start', name ? { email, name } : { email });
           if (data?.ok) return { ok: true, devCode: data.devCode };
           return { ok: false, error: data?.error ?? 'Could not send a code. Please try again.' };
         } catch {
@@ -208,7 +205,7 @@ export const useAuthStore = create<AuthState>()(
 
       verifyOtp: async (email, code) => {
         try {
-          const { data } = await postJson('/api/auth/verify-otp', { email, code });
+          const { data } = await postJson('/api/auth/verify', { email, code });
           if (data?.token && data?.user) {
             set({ currentUser: hydrateUser(data.user), token: data.token as string });
             return { ok: true };
@@ -261,8 +258,23 @@ export const useAuthStore = create<AuthState>()(
       // (was partyClaims), `orgMembers` (was orgMemberships), and the
       // subscription tier / staffRoles axes are gone. A v4 session would hydrate
       // with a blank name and no register rows, so reset instead.
-      version: 5,
-      migrate: () => ({ currentUser: null, token: null }),
+      // v6: every permission id changed shape (`content.draft.edit_any` →
+      // `stories.edit` + a scope). A v5 session would render its sidebar and its
+      // buttons from ids the server no longer issues.
+      //
+      // The TOKEN is still valid, so this does NOT sign anyone out — it drops
+      // only the resolved access, which `verifySession()` refetches on boot.
+      // Until it lands, `can()` sees no payload and answers false, so the app
+      // fails closed rather than showing affordances from a stale grant.
+      version: 6,
+      migrate: (persisted, from) => {
+        if (from < 5) return { currentUser: null, token: null };
+        const s = (persisted ?? {}) as { currentUser?: AuthUser | null; token?: string | null };
+        return {
+          token: s.token ?? null,
+          currentUser: s.currentUser ? { ...s.currentUser, access: undefined } : null,
+        };
+      },
       partialize: (s) => ({ currentUser: s.currentUser, token: s.token }),
     }
   )

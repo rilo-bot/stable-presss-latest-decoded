@@ -1,4 +1,4 @@
-// Roles: CRUD over `adminRoles`, plus assigning them.
+// Roles: CRUD over `roles` (the definitions), plus assigning them via `adminRoles`.
 //
 //   isImmutable (superadmin)  cannot be edited or deleted, ever
 //   isSystem    (seeded)      cannot be DELETED, but may be freely edited
@@ -7,30 +7,27 @@ import { Router } from 'express'
 import type { NextFunction, Request, Response } from 'express'
 import { db } from '../../lib/db.js'
 import { attachAccount } from '../../lib/auth.js'
-import { ADMIN_ROLES, USERS } from '../../lib/collections.js'
+import { ROLES } from '../../lib/collections.js'
 import { canManageRoles, canManageTeam, canViewTeam } from '../../lib/rbac.js'
+import { findUserById, grantRoleTo, revokeRoleFrom } from '../../lib/roleGrant.js'
 import {
   SUPERADMIN_ROLE_NAME,
   bustRoleCache,
-  checkSuperadminLoss,
-  denyRoleGrant,
-  assignRole,
   assigneeCounts,
-  clearRole,
+  listRoles,
   clearRoleEverywhere,
   getRoles,
   projectRole,
-  roleOfUser,
   type RoleDoc,
 } from '../../lib/roleRegistry.js'
 import {
-  MODULE_CATALOGUE,
   PERMISSION_CATALOGUE,
-  WORKFLOW_STAGE_CATALOGUE,
-  isModuleId,
-  isPermissionAction,
-  isWorkflowStage,
+  SCREEN_CATALOGUE,
+  VERBS,
+  normalisePermissions,
+  normaliseScopes,
   type PermissionAction,
+  type RoleScopes,
 } from '../../lib/permissionCatalogue.js'
 import type { AccountUser } from '../../lib/effectiveAccess.js'
 
@@ -80,8 +77,7 @@ interface RoleBody {
   color?: string
   icon?: string
   permissions: PermissionAction[]
-  modules: string[]
-  workflowStages: string[]
+  scopes: RoleScopes
 }
 
 /** Validate + normalize the writable body of a role. */
@@ -100,10 +96,30 @@ function readRoleBody(body: unknown): RoleBody | { error: string } {
         : undefined,
     color: typeof b.color === 'string' && /^(#[0-9a-fA-F]{6}|hsl\([^)]{1,60}\))$/.test(b.color) ? b.color : undefined,
     icon: typeof b.icon === 'string' && /^[A-Za-z]{1,32}$/.test(b.icon) ? b.icon : undefined,
-    permissions: Array.isArray(b.permissions) ? b.permissions.filter(isPermissionAction) : [],
-    modules: Array.isArray(b.modules) ? b.modules.filter(isModuleId) : [],
-    workflowStages: Array.isArray(b.workflowStages) ? b.workflowStages.filter(isWorkflowStage) : [],
+    // normalisePermissions also applies "any verb implies view", so a console
+    // that somehow sent Edit without View still stores a coherent role.
+    permissions: normalisePermissions(b.permissions),
+    scopes: normaliseScopes(b.scopes),
   }
+}
+
+/**
+ * You cannot DEFINE a role holding access you do not hold yourself.
+ *
+ * THE FIX FOR THE ESCALATION. `denyRoleGrant` applies exactly this rule when
+ * deciding who may HOLD a role, but the define path had no equivalent — so a
+ * narrow `roles.manage` holder could PUT their own role with `platform.admin`
+ * added and hold it on their very next request, because permissions resolve
+ * live. Creating a role had the same gap: `POST /` would mint anything, and only
+ * the assign step pushed back.
+ *
+ * A superadmin is exempt — they already hold everything by short-circuit.
+ */
+function denyAmplification(actor: AccountUser, next: PermissionAction[]): string | null {
+  if (actor.isSuperAdmin) return null
+  const missing = next.filter((p) => !actor.permissions.has(p))
+  if (missing.length === 0) return null
+  return `You cannot grant access you do not hold yourself: ${missing.join(', ')}.`
 }
 
 /** Would this edit strip the actor's own roles.manage? A superadmin is exempt. */
@@ -113,25 +129,30 @@ function wouldSelfLockOut(
   nextPermissions: PermissionAction[],
 ): boolean {
   if (actor.isSuperAdmin) return false
-  if (actor.roleDocs[0]?.id !== roleId) return false
-  return !nextPermissions.includes('roles.manage')
+  if (actor.role?.id !== roleId) return false
+  return !nextPermissions.includes('roles.edit')
 }
 
-// ── Catalogue the admin UI renders checkboxes from ───────────────────────────
+// ── The grid the console renders ─────────────────────────────────────────────
+//
+// `screens` is the whole shape now: one row per screen, carrying the verbs it
+// supports. The console needs nothing else to draw the grid, and a row can never
+// offer a checkbox the server would ignore. `permissions` stays for anything
+// still rendering a flat list.
 router.get('/catalogue', (_req, res) => {
   res.json({
+    screens: SCREEN_CATALOGUE,
+    verbs: VERBS,
     permissions: PERMISSION_CATALOGUE,
-    modules: MODULE_CATALOGUE,
-    workflowStages: WORKFLOW_STAGE_CATALOGUE,
   })
 })
 
 // ── List every role ──────────────────────────────────────────────────────────
 router.get('/', async (_req, res) => {
-  const [roles, counts] = await Promise.all([getRoles(), assigneeCounts()])
-  // The registry is keyed by BOTH id and name, so iterating yields each twice.
-  const distinct = [...new Map([...roles.values()].map((r) => [r.id, r])).values()]
-  const out = distinct
+  // listRoles(), not getRoles(): the registry map keys each role under BOTH its
+  // id and its name, so iterating that would yield every role twice.
+  const [roles, counts] = await Promise.all([listRoles(), assigneeCounts()])
+  const out = roles
     .map((r) => ({ ...r, assigneeCount: counts.get(r.id) ?? 0 }))
     .sort((a, b) => {
       // Superadmin first, then the rest of the system roles, then custom.
@@ -162,9 +183,14 @@ router.post('/', requireDefineRoles, async (req, res) => {
     res.status(409).json({ error: 'A role with that name already exists.' })
     return
   }
+  const amplified = denyAmplification(req.account!, parsed.permissions)
+  if (amplified) {
+    res.status(403).json({ error: amplified })
+    return
+  }
 
   const now = new Date().toISOString()
-  const id = await db.collection(ADMIN_ROLES).insertOne({
+  const id = await db.collection(ROLES).insertOne({
     name,
     label: parsed.label,
     description: parsed.description,
@@ -175,14 +201,13 @@ router.post('/', requireDefineRoles, async (req, res) => {
     // Only the seeded superadmin is ever isSuper; isImmutable stops it being edited in.
     isSuper: false,
     permissions: parsed.permissions,
-    modules: parsed.modules,
-    workflowStages: parsed.workflowStages,
+    scopes: parsed.scopes,
     createdBy: req.account!.id,
     createdAt: now,
     updatedAt: now,
   })
   bustRoleCache()
-  const created = await db.collection(ADMIN_ROLES).findById(id)
+  const created = await db.collection(ROLES).findById(id)
   res.status(201).json({ role: { ...projectRole(created!), assigneeCount: 0 } })
 })
 
@@ -204,6 +229,11 @@ router.put('/:name', requireDefineRoles, async (req, res) => {
     res.status(400).json({ error: parsed.error })
     return
   }
+  const amplified = denyAmplification(req.account!, parsed.permissions)
+  if (amplified) {
+    res.status(403).json({ error: amplified })
+    return
+  }
   if (wouldSelfLockOut(req.account!, current.id, parsed.permissions)) {
     res.status(409).json({
       error:
@@ -212,19 +242,18 @@ router.put('/:name', requireDefineRoles, async (req, res) => {
     return
   }
 
-  // users.roleId references _id, never the name, so a rename needs no re-pointing.
-  await db.collection(ADMIN_ROLES).updateOne(current.id, {
+  // adminRoles.roleId references _id, never the name, so a rename needs no re-pointing.
+  await db.collection(ROLES).updateOne(current.id, {
     label: parsed.label,
     description: parsed.description,
     color: parsed.color,
     icon: parsed.icon ?? current.icon ?? 'Shield',
     permissions: parsed.permissions,
-    modules: parsed.modules,
-    workflowStages: parsed.workflowStages,
+    scopes: parsed.scopes,
     updatedAt: new Date().toISOString(),
   })
   bustRoleCache()
-  const fresh = await db.collection(ADMIN_ROLES).findById(current.id)
+  const fresh = await db.collection(ROLES).findById(current.id)
   res.json({ role: projectRole(fresh!) })
 })
 
@@ -241,15 +270,15 @@ router.delete('/:name', requireDefineRoles, async (req, res) => {
     })
     return
   }
-  if (!req.account!.isSuperAdmin && req.account!.roleDocs[0]?.id === current.id) {
+  if (!req.account!.isSuperAdmin && req.account!.role?.id === current.id) {
     res.status(409).json({ error: 'You cannot delete a role you currently hold.' })
     return
   }
 
-  // Unassign FIRST: a roleId pointing at a deleted role leaves an admin holding
+  // Unassign FIRST: a link row pointing at a deleted role leaves an admin holding
   // nothing, and no screen shows them as broken.
   const unassigned = await clearRoleEverywhere(current.id)
-  await db.collection(ADMIN_ROLES).deleteOne(current.id)
+  await db.collection(ROLES).deleteOne(current.id)
   bustRoleCache()
   res.json({ ok: true, unassigned })
 })
@@ -263,37 +292,19 @@ router.post('/:name/assign', requireAssignRoles, async (req, res) => {
     res.status(404).json({ error: 'Role not found.' })
     return
   }
-  // Reads isSuper, not the name: the name is editable.
-  if (role.isSuper && !req.account!.isSuperAdmin) {
-    res.status(403).json({ error: 'Only a superadmin can grant the superadmin role.' })
-    return
-  }
   const userId = typeof req.body?.userId === 'string' ? req.body.userId : ''
-  const target = userId ? await db.collection(USERS).findById(userId) : null
+  const target = await findUserById(userId)
   if (!target) {
     res.status(404).json({ error: 'Team member not found.' })
     return
   }
-  const denied = denyRoleGrant(req.account!, role, userId === req.account!.id)
-  if (denied) {
-    res.status(403).json({ error: denied })
-    return
-  }
-  const held = await roleOfUser(target)
-  if (held?.id === role.id) {
-    res.status(409).json({ error: 'That member already holds this role.' })
-    return
-  }
 
-  // Replacing TAKES AWAY the old role, so the superadmin guard fires here too.
-  const blocked = await checkSuperadminLoss(req.account!, held?.isSuper === true && !role.isSuper)
-  if (blocked) {
-    res.status(403).json({ error: blocked })
+  // The SAME guard sequence `POST /api/staff` runs — one operation, two doors.
+  const outcome = await grantRoleTo(req.account!, target, role)
+  if (!outcome.ok) {
+    res.status(outcome.status).json({ error: outcome.error })
     return
   }
-
-  // Single writer: the `admins` row and `users.isAdmin` cannot half-apply.
-  await assignRole(userId, role.id)
   res.status(201).json({ ok: true, role: { name: role.name, label: role.label } })
 })
 
@@ -303,32 +314,20 @@ router.delete('/:name/assign/:userId', requireAssignRoles, async (req, res) => {
     res.status(404).json({ error: 'Role not found.' })
     return
   }
-  const userId = String(req.params.userId)
-  const target = await db.collection(USERS).findById(userId)
+  const target = await findUserById(String(req.params.userId))
   if (!target) {
     res.status(404).json({ error: 'Team member not found.' })
     return
   }
-  // Same self-service problem as granting: it is how you drop your own restriction.
-  if (userId === req.account!.id) {
-    res.status(403).json({ error: 'You cannot change your own role. Ask another administrator.' })
-    return
-  }
 
-  // One helper answers for every path; this route used to skip the actor check.
-  const held = await roleOfUser(target)
-  const blocked = await checkSuperadminLoss(req.account!, role.isSuper && held?.isSuper === true)
-  if (blocked) {
-    res.status(403).json({ error: blocked })
+  // `role` is passed as the EXPECTED holding: this door revokes one named role,
+  // so a member who now holds something else is a no-op rather than an error —
+  // and must not lose whatever they DO hold.
+  const outcome = await revokeRoleFrom(req.account!, target, role)
+  if (!outcome.ok) {
+    res.status(outcome.status).json({ error: outcome.error })
     return
   }
-  // A no-op, not an error - but it must not revoke whatever they DO hold.
-  if (held?.id !== role.id) {
-    res.json({ ok: true })
-    return
-  }
-
-  await clearRole(userId)
   res.json({ ok: true })
 })
 

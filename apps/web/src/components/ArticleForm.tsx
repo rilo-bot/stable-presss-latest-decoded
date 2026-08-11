@@ -23,7 +23,7 @@ import { loadDraft, useFormDraft } from '@/hooks/useFormDraft';
 import type { Article } from '@/types/article';
 import type { ArticleStatus } from '@/types/article';
 import { enterPermission, movesFrom, stageMeta } from '@/lib/workflow';
-import { can } from '@/lib/permissions';
+import { can, canAnyones } from '@/lib/permissions';
 import { X, Check, Lock, Newspaper, BarChart2, Mic, RotateCcw, Mail, Radio, Globe, Clock, Tag as TagIcon } from 'lucide-react';
 import { toast } from 'sonner';
 import { useRegister } from '@/lib/register';
@@ -157,7 +157,9 @@ export function ArticleForm({
   const [saving, setSaving] = useState(false);
   const [draftRestored, setDraftRestored] = useState(false);
 
-  const isContributor = !can('content.draft.edit_any');
+  // 'Contributor' is not a role name here — it means 'may only touch their own
+  // work', which is now the Stories scope rather than a second permission id.
+  const isContributor = !canAnyones('stories.edit');
   const statusOptions = stageChoices(editArticle);
 
   // Contributors always get their display name auto-filled as byline

@@ -97,9 +97,9 @@ export default function OverviewScreen() {
 
   const instantPath = resolveWhere('instant');
   const blogsPath = resolveWhere('blogs');
-  const magazinePath = resolveWhere('magazine-v2');
+  const magazinePath = resolveWhere('magazine');
   const startTiles: StartTile[] = ([
-    instantPath && canAny(['content.draft.create', 'blog.create'])
+    instantPath && canAny(['stories.create', 'blogs.create'])
       ? {
           key: 'instant',
           icon: <Zap size={16} />,
@@ -109,7 +109,7 @@ export default function OverviewScreen() {
           to: instantPath,
         }
       : null,
-    blogsPath && can('blog.create')
+    blogsPath && can('blogs.create')
       ? {
           key: 'blogs',
           icon: <PenLine size={16} />,
@@ -118,7 +118,9 @@ export default function OverviewScreen() {
           to: blogsPath,
         }
       : null,
-    magazinePath
+    // Magazines have a permission now — this tile used to render for every staff
+    // member because there was nothing to check.
+    magazinePath && can('magazine.create')
       ? {
           key: 'magazine',
           icon: <BookOpen size={16} />,

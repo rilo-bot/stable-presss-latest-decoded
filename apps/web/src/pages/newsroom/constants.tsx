@@ -70,12 +70,10 @@ export interface SideNavItem {
   editorOnly?: boolean;
   badge?: string;
   /**
-   * URL segment under PS_BASE. Deliberately NOT always equal to `id`: role
-   * permissions are stored in the database against the module `id`
-   * (server MODULE_CATALOGUE), so ids are frozen, while two of them
-   * ('media-production-system', 'racing-production-system') make for
-   * unreadable URLs. RBAC keeps resolving on `id`; only the address bar
-   * uses `slug`.
+   * URL segment under PS_BASE. Usually equal to `id` now — the ids ARE the
+   * permission prefixes (`<id>.view` opens this row), so they were renamed to
+   * read well in both places. `slug` survives for the two rows whose URL and id
+   * still differ.
    */
   slug: string;
   /** Absolute route, for items that leave the sidebar's own screens. */
@@ -87,75 +85,99 @@ export function navPath(item: SideNavItem): string {
   return item.href ?? `${PS_BASE}/${item.slug}`;
 }
 
+/**
+ * THE SIDEBAR IS THE PERMISSION GRID.
+ *
+ * One row per screen, and `requiresPermission` is always that row's own
+ * `<id>.view` — which is also the row the Roles console draws. There is no
+ * separate module list to keep in step any more: the server derives
+ * `access.modules` from exactly these `.view` ids, so a nav entry and the
+ * permission that opens it cannot disagree.
+ *
+ * SIX SECTIONS, and the grouping is the product's, not the code's:
+ *   Workspace  Overview — the general tab, no permission, everyone lands here
+ *   Stories    the news pipeline and the three lenses onto it. Only this — a
+ *              story moves through five stages, which is what these are for
+ *   Content    the other things the newsroom makes: blogs, instant captures,
+ *              magazine editions, podcast episodes
+ *   Stables    the four registers
+ *   Community  reader-facing signal — moderation and sentiment
+ *   Management the admin desk
+ *   Personal   your own things. No permission: they only ever show YOUR files
+ *              and YOUR payouts, so gating them would be theatre.
+ *
+ * `section` is DERIVED into the rail's group order (ProductionSystemNav) and
+ * into the Roles console's row groups (via the server's SCREEN_CATALOGUE), so
+ * the order here is the order in both places.
+ *
+ * Ids match the server's SCREEN_CATALOGUE, including the two renamed for
+ * readability ('media-production-system' → 'media-records',
+ * 'racing-production-system' → 'racing-records'); the migration rewrites stored
+ * role rows, and `slug` still carries any URL that differs.
+ */
 export const SIDE_NAV: SideNavItem[] = [
   { id: 'overview', label: 'Overview', icon: <LayoutDashboard size={15} />, section: 'Workspace', slug: 'overview' },
-  { id: 'workflow', label: 'Workflow Board', icon: <LayoutDashboard size={15} />, section: 'Workspace', slug: 'workflow' },
-  { id: 'pipeline', label: 'Pipeline Map', icon: <ArrowRight size={15} />, section: 'Workspace', slug: 'pipeline' },
-  { id: 'all-stories', label: 'All Stories', icon: <FileText size={15} />, section: 'Content', slug: 'all-stories' },
-  { id: 'blogs', label: 'Blogs', icon: <PenLine size={15} />, section: 'Content', slug: 'blogs', requiresPermission: 'blog.create' },
-  /* No `requiresPermission`: Instant's two modes need different permissions
-     (content.draft.create for a story, blog.create for a post) and this row
-     holds one. The screen gates each mode itself, so a blog-only author still
-     gets the surface. Mirrors MODULE_CATALOGUE on the server. */
-  { id: 'instant', label: 'Instant', icon: <Zap size={15} />, section: 'Content', slug: 'instant', badge: 'New' },
-  // { id: 'drafts', label: 'Drafts', icon: <FileText size={15} />, section: 'Content' },
-  // { id: 'review', label: 'In Review', icon: <Eye size={15} />, section: 'Content' },
-  // {
-  //   id: 'bulletin-templates',
-  //   label: 'Magazine Studio',
-  //   icon: <BookOpen size={15} />,
-  //   section: 'Content',
-  //   badge: 'New',
-  // },
 
+  // ── Stories ───────────────────────────────────────────────────────────────
+  { id: 'stories', label: 'All Stories', icon: <FileText size={15} />, section: 'Stories', slug: 'all-stories', requiresPermission: 'stories.view' },
+  { id: 'workflow', label: 'Workflow Board', icon: <LayoutDashboard size={15} />, section: 'Stories', slug: 'workflow', requiresPermission: 'workflow.view' },
+  { id: 'pipeline', label: 'Pipeline Map', icon: <ArrowRight size={15} />, section: 'Stories', slug: 'pipeline', requiresPermission: 'pipeline.view' },
   {
-    id: 'magazine-v2',
+    id: 'editor-hub',
+    label: 'Editor Hub',
+    icon: <Edit size={15} />,
+    section: 'Stories',
+    slug: 'editor-hub',
+    requiresPermission: 'editor-hub.view',
+    editorOnly: true,
+  },
+  // ── Content ───────────────────────────────────────────────────────────────
+  /* The other things the newsroom makes. Apart from Stories because a story
+     moves through a five-stage pipeline and these do not: a post is draft or
+     live, an edition is built and shared, an episode is produced. */
+  { id: 'blogs', label: 'Blogs', icon: <PenLine size={15} />, section: 'Content', slug: 'blogs', requiresPermission: 'blogs.view' },
+  /* Instant is a LENS: it opens with its own view, but saving is checked against
+     Stories Create or Blogs Create depending on where the capture is filed. The
+     screen must not become a way around the permission that governs the work. */
+  { id: 'instant', label: 'Instant Capture', icon: <Zap size={15} />, section: 'Content', slug: 'instant', requiresPermission: 'instant.view', badge: 'New' },
+  {
+    id: 'magazine',
     label: 'Magazine Builder',
     icon: <Layers size={15} />,
     section: 'Content',
     slug: 'magazine-v2',
     href: `${PS_BASE}/magazine-v2`,
+    requiresPermission: 'magazine.view',
   },
   /* Podcast lived at /podcast/workflow inside the PUBLIC site chrome — the last
      staff surface outside the Campaign Engine, reachable only from a link in the
-     account dropdown. `requiresPermission` here is decorative (the rail filters
-     on the module list); the server's MODULE_CATALOGUE row is what decides which
-     built-in roles get it. */
-  { id: 'podcast', label: 'Podcast', icon: <Mic size={15} />, section: 'Content', slug: 'podcast', requiresPermission: 'podcast.read_all' },
-  {
-    id: 'editor-hub',
-    label: 'Editor Hub',
-    icon: <Edit size={15} />,
-    section: 'Content',
-    slug: 'editor-hub',
-    requiresPermission: 'content.editorial_review',
-    editorOnly: true,
-  },
-  /* The comment desk. In `Content` rather than `Management` because it is a queue
-     somebody works through, next to the stories and posts the comments are on —
-     not a report an editor reads once a week. `requiresPermission` here is
-     decorative (the rail filters on the module list); MODULE_CATALOGUE's
-     `comment-moderation` row is what decides which built-in roles get it, and
-     roles written before it existed need scripts/grant-comments-module.ts. */
-  { id: 'comment-moderation', label: 'Comments', icon: <MessageSquare size={15} />, section: 'Content', slug: 'comments', requiresPermission: 'comments.moderate' },
-  { id: 'my-assets', label: 'My Media Assets', icon: <Image size={15} />, section: 'Content', slug: 'my-assets', requiresPermission: 'media.upload_own' },
-  { id: 'compensation', label: 'My Compensation', icon: <DollarSign size={15} />, section: 'Content', slug: 'compensation', requiresPermission: 'compensation.view_own' },
+     account dropdown. */
+  { id: 'podcast', label: 'Podcast', icon: <Mic size={15} />, section: 'Content', slug: 'podcast', requiresPermission: 'podcast.view' },
+
+  // ── Stables ───────────────────────────────────────────────────────────────
   /* One naming rule across the four registers: name what the register holds.
      Horses and people are entities; media and racing entries are records. No
      "Management" — that's system-speak, not what anyone calls these screens. */
-  { id: 'horses', label: 'Horses', icon: <Star size={15} />, section: 'Stables', slug: 'horses', requiresPermission: 'content.draft.create' },
-  { id: 'parties', label: 'People', icon: <Users size={15} />, section: 'Stables', slug: 'people', requiresPermission: 'content.draft.create' },
-  { id: 'media-production-system', label: 'Media Records', icon: <File size={15} />, section: 'Stables', slug: 'media-records', requiresPermission: 'content.draft.create' },
-  { id: 'racing-production-system', label: 'Racing Records', icon: <Flag size={15} />, section: 'Stables', slug: 'racing-records', requiresPermission: 'content.draft.create' },
-  { id: 'team', label: 'Team Members', icon: <Users size={15} />, section: 'Management', slug: 'team', requiresPermission: 'team.manage' },
-  { id: 'roles', label: 'Roles & Permissions', icon: <Shield size={15} />, section: 'Management', slug: 'roles', requiresPermission: 'roles.manage' },
+  { id: 'horses', label: 'Horses', icon: <Star size={15} />, section: 'Stables', slug: 'horses', requiresPermission: 'horses.view' },
+  { id: 'people', label: 'People', icon: <Users size={15} />, section: 'Stables', slug: 'people', requiresPermission: 'people.view' },
+  { id: 'media-records', label: 'Media Records', icon: <File size={15} />, section: 'Stables', slug: 'media-records', requiresPermission: 'media-records.view' },
+  { id: 'racing-records', label: 'Racing Records', icon: <Flag size={15} />, section: 'Stables', slug: 'racing-records', requiresPermission: 'racing-records.view' },
+
+  // ── Community ─────────────────────────────────────────────────────────────
+  /* Moderation and sentiment together: both are the readers talking back, and an
+     editor works them in the same sitting. */
+  { id: 'comments', label: 'Comments', icon: <MessageSquare size={15} />, section: 'Community', slug: 'comments', requiresPermission: 'comments.view' },
+  { id: 'emoji-analytics', label: 'Emoji Analytics', icon: <SmilePlus size={15} />, section: 'Community', slug: 'emoji-analytics', requiresPermission: 'emoji-analytics.view' },
+
+  // ── Management ────────────────────────────────────────────────────────────
+  { id: 'team', label: 'Team Members', icon: <Users size={15} />, section: 'Management', slug: 'team', requiresPermission: 'team.view' },
+  { id: 'roles', label: 'Roles & Permissions', icon: <Shield size={15} />, section: 'Management', slug: 'roles', requiresPermission: 'roles.view' },
   { id: 'analytics', label: 'Analytics', icon: <BarChart2 size={15} />, section: 'Management', slug: 'analytics', requiresPermission: 'analytics.view' },
-  /* Its own row rather than a tab inside Analytics: reader sentiment is a
-     different question from production throughput, and it is the one screen an
-     editor opens to decide what to commission next. Same permission — a role
-     that can see the numbers can see all of them. */
-  { id: 'emoji-analytics', label: 'Emoji Analytics', icon: <SmilePlus size={15} />, section: 'Management', slug: 'emoji-analytics', requiresPermission: 'analytics.view' },
   { id: 'settings', label: 'Settings', icon: <Settings size={15} />, section: 'Management', slug: 'settings', requiresPermission: 'settings.view' },
+
+  // ── Personal ──────────────────────────────────────────────────────────────
+  { id: 'my-assets', label: 'My Media Assets', icon: <Image size={15} />, section: 'Personal', slug: 'my-assets' },
+  { id: 'compensation', label: 'My Compensation', icon: <DollarSign size={15} />, section: 'Personal', slug: 'compensation' },
 ];
 
 /**
@@ -204,34 +226,34 @@ export const EDITOR_TABS: EditorTabConfig[] = [
     label: 'Review Queue',
     icon: <Inbox size={14} />,
     description: 'Editorial review of submitted drafts',
-    permission: 'content.editorial_review',
+    permission: 'stories.edit',
   },
   {
     id: 'assignments',
     label: 'Assignments',
     icon: <UserCheck size={14} />,
     description: 'Content assignment & modification',
-    permission: 'content.draft.edit_any',
+    permission: 'stories.edit',
   },
   {
     id: 'scheduling',
     label: 'Scheduling',
     icon: <CalendarClock size={14} />,
     description: 'Scheduled publishing capabilities',
-    permission: 'content.schedule',
+    permission: 'stories.publish',
   },
   {
     id: 'media-library',
     label: 'Media Library',
     icon: <FolderOpen size={14} />,
     description: 'Full media asset management',
-    permission: 'media.manage_all',
+    permission: 'media-records.edit',
   },
   {
     id: 'horse-records',
     label: 'Horse Records',
     icon: <File size={14} />,
     description: 'Sales & document records for horse profiles',
-    permission: 'media.manage_all',
+    permission: 'media-records.edit',
   },
 ];

@@ -11,6 +11,7 @@
 
 import express, { Router } from 'express'
 import { attachAccountOptional } from '../../lib/auth.js'
+import { rateLimit } from '../../lib/rateLimit.js'
 import { isVoiceConfigured, transcribeAudio, synthesizeSpeech } from '../../lib/agent/voice.js'
 
 const router = Router()
@@ -21,10 +22,22 @@ router.get('/status', (_req, res) => {
 
 // express.raw at the route level: the global json parser ignores audio/* bodies,
 // so the stream reaches here intact as a Buffer.
+// PUBLIC on purpose — the concierge widget renders for signed-out visitors
+// (App.tsx mounts it globally), so requiring an account here would remove a
+// public feature rather than close a hole.
+//
+// It had NO rate limit at all, which made it the most expensive anonymous
+// surface in the API: every call is an OpenAI STT round trip on our key, with a
+// 25 MB body allowance. attachAccountOptional runs FIRST so a signed-in caller
+// is metered per account rather than sharing an IP bucket.
+const transcribeLimit = rateLimit('agent-voice-stt', 20, 60_000)
+const speakLimit = rateLimit('agent-voice-tts', 40, 60_000)
+
 router.post(
   '/transcribe',
   express.raw({ type: () => true, limit: '25mb' }),
   attachAccountOptional,
+  transcribeLimit,
   async (req, res) => {
     if (!isVoiceConfigured()) {
       res.status(503).json({ error: 'Voice is resting — OPENAI_API_KEY is not configured on the server.' })
@@ -45,7 +58,7 @@ router.post(
   },
 )
 
-router.post('/speak', attachAccountOptional, async (req, res) => {
+router.post('/speak', attachAccountOptional, speakLimit, async (req, res) => {
   if (!isVoiceConfigured()) {
     res.status(503).json({ error: 'Voice is resting — OPENAI_API_KEY is not configured on the server.' })
     return

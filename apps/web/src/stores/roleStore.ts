@@ -14,18 +14,25 @@ export interface PermissionMeta {
   description: string;
 }
 
-/** One navigation surface a role can be given access to. */
-export interface ModuleMeta {
+export type Verb = 'view' | 'create' | 'edit' | 'delete' | 'publish';
+
+/**
+ * ONE ROW OF THE GRID — a screen, and the verbs it supports.
+ *
+ * This is the whole shape the console needs: `verbs` says which columns this row
+ * draws, so a row can never offer a checkbox the server would ignore. Mirrors
+ * SCREEN_CATALOGUE in apps/server/src/lib/permissionCatalogue.ts.
+ */
+export interface ScreenMeta {
   id: string;
   label: string;
   section: string;
-  requiresPermission?: string;
-}
-
-/** One Kanban column a role can be given visibility of. */
-export interface WorkflowStageMeta {
-  id: string;
-  label: string;
+  verbs: Verb[];
+  /** Records here have an author, so the Own/All control applies. */
+  scoped?: boolean;
+  /** This screen shows another screen's records; its actions use THAT screen's verbs. */
+  lensOver?: string;
+  description: string;
 }
 
 /** A role as stored in the database. Every role in the platform is one of these. */
@@ -41,6 +48,9 @@ export interface Role {
   /** Superadmin — cannot be edited or deleted. */
   isImmutable: boolean;
   permissions: string[];
+  /** Per-screen reach of view/edit/delete. Absent means 'own'. */
+  scopes: Record<string, 'own' | 'all'>;
+  /** DERIVED server-side from each `<id>.view`; read-only here. */
   modules: string[];
   workflowStages: string[];
   createdAt: string;
@@ -54,8 +64,7 @@ export interface RoleDraft {
   color?: string;
   icon?: string;
   permissions: string[];
-  modules: string[];
-  workflowStages: string[];
+  scopes: Record<string, 'own' | 'all'>;
 }
 
 interface Result {
@@ -65,9 +74,12 @@ interface Result {
 }
 
 interface Catalogue {
+  /** The grid: one entry per row, in sidebar order. */
+  screens: ScreenMeta[];
+  /** Column order. */
+  verbs: Verb[];
+  /** The flat list, for anything that still renders ids rather than the grid. */
   permissions: PermissionMeta[];
-  modules: ModuleMeta[];
-  workflowStages: WorkflowStageMeta[];
 }
 
 interface RoleState {

@@ -42,6 +42,14 @@ process.on('uncaughtException', (err) => {
 const app = express()
 const PORT = process.env.PORT ? parseInt(process.env.PORT) : 3001
 
+// Render (and every other PaaS here) terminates TLS at a load balancer, so
+// without this `req.ip` is the BALANCER for every caller — and lib/rateLimit.ts
+// falls back to `req.ip` whenever there is no account. Every anonymous bucket
+// (sign-in codes, invite redemption, the guest assistant) was therefore ONE
+// global allowance shared by all visitors at once: legitimate users 429'd each
+// other, and no limit isolated an abuser. `1` = trust exactly one proxy hop.
+app.set('trust proxy', 1)
+
 app.use(cors({ origin: '*' }))
 
 // ── Request logging ──

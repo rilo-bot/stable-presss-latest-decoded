@@ -247,13 +247,26 @@ export function validateElements(
     const o = (item && typeof item === 'object' ? item : {}) as Record<string, unknown>;
     const type = ELEMENT_TYPES.includes(o.type as ElementType) ? (o.type as ElementType) : null;
     if (!type) continue; // unknown element kind — drop, don't fail the page
+    const w = clampNum(o.w, MIN_SIZE, page.width, Math.min(200, page.width));
+    const h = clampNum(o.h, MIN_SIZE, page.height, Math.min(80, page.height));
     const el: MagazineElement = {
       id: typeof o.id === 'string' && o.id ? o.id.slice(0, 64) : genId(),
       type,
-      x: clampNum(o.x, 0, page.width, 0),
-      y: clampNum(o.y, 0, page.height, 0),
-      w: clampNum(o.w, MIN_SIZE, page.width, Math.min(200, page.width)),
-      h: clampNum(o.h, MIN_SIZE, page.height, Math.min(80, page.height)),
+      // Keep the whole BOX inside the page, not just its origin. x/y and w/h are
+      // clamped against the page independently, so `{x: 1200, w: 1275}` on a 1275px
+      // page used to validate cleanly and store an element running off the edge —
+      // breaking the contract writePipeline advertises ("geometry is clamped to the
+      // page"), which every caller trusts. validatePageLayout catches out-of-bounds
+      // boxes but only runs inside generation, never on a manual/agent write.
+      //
+      // The ORIGIN is pulled back rather than the box shrunk: shrinking a text box
+      // re-wraps its copy and would fight refitText later in this same pipeline,
+      // whereas moving parks a dragged element flush against the edge — which is
+      // also what the user expects. w ≤ page.width, so this is never negative.
+      x: Math.min(clampNum(o.x, 0, page.width, 0), page.width - w),
+      y: Math.min(clampNum(o.y, 0, page.height, 0), page.height - h),
+      w,
+      h,
       rotation: clampNum(o.rotation, -180, 180, 0),
       zIndex: Math.round(clampNum(o.zIndex, 0, 9999, 0)),
       locked: o.locked === true,

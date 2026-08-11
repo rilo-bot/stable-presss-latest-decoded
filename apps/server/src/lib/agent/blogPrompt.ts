@@ -21,7 +21,7 @@
 // ---------------------------------------------------------------------------
 
 import type { AccountUser } from '../identity.js'
-import { accountCan } from '../effectiveAccess.js'
+import { accountCan, canOn } from '../effectiveAccess.js'
 import { summariseCapabilities } from './capabilities.js'
 
 /** Mirror of the client BlogContext blob (sent each turn in the request body). */
@@ -158,11 +158,12 @@ function editorLines(editor?: BlogEditorCtx): string[] {
 
 export function buildBlogSystemPrompt(account: AccountUser | undefined, ctx?: BlogContext): string {
   // Derived server-side. A client cannot widen these by lying in BlogContext.
-  const canCreate = accountCan(account, 'blog.create')
-  const canEditAny = accountCan(account, 'blog.edit_any')
-  const canEditOwn = accountCan(account, 'blog.edit_own')
-  const canPublish = accountCan(account, 'blog.publish')
-  const canDelete = accountCan(account, 'blog.delete')
+  const canCreate = accountCan(account, 'blogs.create')
+  // One verb; SCOPE is what separates "anyone's" from "my own".
+  const canEditAny = canOn(account, 'blogs', 'edit', false)
+  const canEditOwn = accountCan(account, 'blogs.edit')
+  const canPublish = accountCan(account, 'blogs.publish')
+  const canDelete = accountCan(account, 'blogs.delete')
 
   const mode = ctx?.mode === 'post' ? 'post' : 'desk'
   const postTitle = str(ctx?.postTitle, 200)

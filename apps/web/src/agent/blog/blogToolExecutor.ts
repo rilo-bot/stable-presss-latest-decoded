@@ -3,8 +3,8 @@
  *
  * This file IS the security boundary's client half. Every tool runs here and goes
  * through `useBlogStore`, which calls the REST endpoints behind `blogsWriteGate` —
- * so `blog.create`, `blog.edit_own`, `blog.edit_any`, `blog.publish` and
- * `blog.delete` are enforced by the server, and a model that tries something the
+ * so `blogs.create`, `blog.edit_own`, `blog.edit_any`, `blogs.publish` and
+ * `blogs.delete` are enforced by the server, and a model that tries something the
  * user cannot do gets a 403 back as a tool result and has to say so.
  *
  * ── Two things here are easy to get wrong ──

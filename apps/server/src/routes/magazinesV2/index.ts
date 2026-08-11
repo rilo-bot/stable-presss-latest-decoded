@@ -20,7 +20,7 @@ import crypto from 'crypto';
 import { Router, type RequestHandler } from 'express';
 import { db } from '../../lib/db.js';
 import { attachAccount } from '../../lib/auth.js';
-import { isAdmin } from '../../lib/rbac.js';
+import { can, isAdmin } from '../../lib/rbac.js';
 import { MAGAZINE_V2_ENABLED, PAGE_W, PAGE_H, MAX_PAGES_PER_ISSUE, MAX_SOURCE_BYTES, ALLOWED_SOURCE_MIME, sourceExtForMime, MAX_IMAGE_BYTES, ALLOWED_IMAGE_MIME, imageExtFor } from '../../lib/magazineV2/config.js';
 import { COL } from '../../lib/magazineV2/collections.js';
 import { rateLimit } from '../../lib/rateLimit.js';
@@ -76,9 +76,28 @@ router.use((_req, res, next) => {
   next();
 });
 router.use(attachAccount);
+/**
+ * Staff, AND the Magazine Builder verb for what they are doing.
+ *
+ * `isAdmin` alone was the whole gate until now — magazines had no permission in
+ * the catalogue at all, so every staff member could build, edit, delete and share
+ * an edition regardless of role. (Open High in
+ * docs/RBAC-STAFF-CAMPAIGN-ENGINE-REVIEW.md.)
+ *
+ * Method → verb, which is the honest mapping for a router whose writes are all
+ * edits of an issue: only POST /issues actually CREATES one, and the per-issue
+ * ownership check (`roleOnMagazine`) still runs underneath — this decides whether
+ * the role may touch magazines at all, not which magazines.
+ */
 router.use((req, res, next) => {
   if (!isAdmin(req.account)) {
     res.status(403).json({ error: 'Staff access required.' });
+    return;
+  }
+  const isCreate = req.method === 'POST' && /^\/issues\/?$/.test(req.url.split('?')[0]!);
+  const verb = req.method === 'GET' ? 'view' : req.method === 'DELETE' ? 'delete' : isCreate ? 'create' : 'edit';
+  if (!can(req.account, 'magazine', verb)) {
+    res.status(403).json({ error: `You do not have permission to ${verb} magazines.` });
     return;
   }
   next();
@@ -1079,7 +1098,7 @@ router.patch('/issues/:id/pages/:pageId/select', async (req, res) => {
 // on its own. Derived from a permission because `user.roles[]` no longer carries
 // staff slugs; see the twin in routes/magazines.ts.
 const magRoleForStaff = async (identity: IdentityUser): Promise<'editor' | 'contributor'> =>
-  (await identityCan(identity, 'content.draft.edit_any')) ? 'editor' : 'contributor';
+  (await identityCan(identity, 'magazine.publish')) ? 'editor' : 'contributor';
 
 // add / update a collaborator (by email) — staff accounts only
 router.post('/issues/:id/collaborators', async (req, res) => {
@@ -1398,6 +1417,21 @@ async function loadEditablePage(req: any, res: any): Promise<{ issue: Doc; page:
   return { issue, page };
 }
 
+/**
+ * A locked element refuses edits and deletion. `locked` was declared on the model
+ * (both server and web) but honoured NOWHERE — the CRUD, the agent's tools and the
+ * canvas all ignored it, so the flag was inert while validateElements faithfully
+ * stored it. An ignored guard is worse than an absent one.
+ *
+ * UNLOCKING is always allowed: a patch that sets `locked: false` passes through, so
+ * an element can never be stranded (there is no lock affordance in the inspector
+ * yet, so today this is only reachable via the API).
+ */
+function isLockedAgainst(stored: MagazineElement, partial?: Record<string, unknown>): boolean {
+  if (stored.locked !== true) return false;
+  return !(partial && partial.locked === false);
+}
+
 /** Parse & require an integer `rev` from the body (concurrency token). */
 function requireRev(req: any, res: any): number | null {
   const rev = Number(req.body?.rev);
@@ -1477,6 +1511,10 @@ router.patch('/issues/:id/pages/:pageId/elements/:elementId', async (req, res) =
     return;
   }
   const partial = (req.body?.patch && typeof req.body.patch === 'object' ? req.body.patch : {}) as Record<string, unknown>;
+  if (isLockedAgainst(els[idx]!, partial)) {
+    res.status(403).json({ error: 'That element is locked. Unlock it first.' });
+    return;
+  }
   const updated = normalizeElementPatch(els[idx]!, partial, pageDims(page));
   if (!updated) {
     res.status(400).json({ error: 'Invalid element patch' });
@@ -1506,11 +1544,16 @@ router.delete('/issues/:id/pages/:pageId/elements/:elementId', async (req, res) 
     return;
   }
   const els: MagazineElement[] = Array.isArray(page.elements) ? page.elements : [];
-  const next = els.filter((e) => e.id !== req.params.elementId);
-  if (next.length === els.length) {
+  const victim = els.find((e) => e.id === req.params.elementId);
+  if (!victim) {
     res.status(404).json({ error: 'Element not found' });
     return;
   }
+  if (isLockedAgainst(victim)) {
+    res.status(403).json({ error: 'That element is locked. Unlock it first.' });
+    return;
+  }
+  const next = els.filter((e) => e.id !== req.params.elementId);
   const now = new Date().toISOString();
   const ok = await db.collection(COL.pages).updateOneIf(page._id, { rev }, { elements: next, rev: rev + 1, updatedAt: now });
   if (!ok) {

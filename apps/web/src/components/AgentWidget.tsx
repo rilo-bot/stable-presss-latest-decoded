@@ -225,7 +225,7 @@ export function AgentWidget() {
       const { to, id, screen } = (toolCall.input ?? {}) as { to?: string; id?: string; screen?: string };
       // Opening the Story Studio drawer is gated the same way its button is —
       // don't pop a drawer the user can't file from.
-      if (to === 'story-studio' && !can('content.draft.create')) {
+      if (to === 'story-studio' && !can('stories.create')) {
         addToolResultRef.current?.({
           tool: 'navigateTo',
           toolCallId: toolCall.toolCallId,
@@ -233,7 +233,7 @@ export function AgentWidget() {
         });
         return;
       }
-      if (to === 'blog-studio' && !can('blog.create')) {
+      if (to === 'blog-studio' && !can('blogs.create')) {
         addToolResultRef.current?.({
           tool: 'navigateTo',
           toolCallId: toolCall.toolCallId,

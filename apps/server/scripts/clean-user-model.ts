@@ -11,10 +11,20 @@ import { MongoClient } from 'mongodb'
 
 const APPLY = process.argv.includes('--apply')
 
-/** Fields deleted from `users`. The model is name, email, roleId, lastLogin. */
+/**
+ * Fields deleted from `users`. The model is name, email, isAdmin, lastLogin.
+ *
+ * ⚠ `isAdmin` and the `roles` collection were on these lists until the link
+ * model landed — running the old version of this script now would strip the
+ * admin flag off every account and DROP the role definitions. If you are
+ * cherry-picking an old copy of this file, don't.
+ *
+ * `roleId` is here because it moved to `adminRoles.roleId`; run
+ * `migrate:admin-roles` FIRST, which reads it, then this to clear it up.
+ */
 const DEAD_USER_FIELDS = [
   'displayName',
-  'isAdmin',
+  'roleId',
   'roles',
   'staffRoles',
   'staffRoleSlug',
@@ -24,9 +34,9 @@ const DEAD_USER_FIELDS = [
   'subscriptionTier',
 ] as const
 
+// `roles` is NOT here — it holds the role definitions now.
 const DEAD_COLLECTIONS = [
   'admins',
-  'roles',
   'orgMemberships',
   'partyMemberships',
   'horsePartyLinks',
@@ -36,8 +46,11 @@ const DEAD_COLLECTIONS = [
 const DEAD_INDEXES: Array<[string, string]> = [
   ['adminRoles', 'roleName_1'],
   ['adminRoles', 'slug_1'],
+  // adminRoles used to hold the DEFINITIONS, so it carried a unique name index.
+  // It holds links now and every row would collide on a missing `name`.
+  ['adminRoles', 'name_1'],
   ['users', 'staffRoleSlug_1_deletedAt_1'],
-  ['users', 'isAdmin_1_deletedAt_1'],
+  ['users', 'roleId_1_deletedAt_1'],
   ['users', 'staffRoles_1'],
 ]
 

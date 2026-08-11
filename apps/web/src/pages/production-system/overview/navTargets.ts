@@ -32,7 +32,16 @@ const WHERE_ALIAS: Record<string, string> = {
   // The one review queue is the Editor Hub's.
   review: 'editor-hub',
   // v1 Magazine Studio → the Magazine Builder.
-  'bulletin-templates': 'magazine-v2',
+  'bulletin-templates': 'magazine',
+  // The module id was renamed when it gained a permission (`magazine.view`);
+  // links and stored tokens still say magazine-v2.
+  'magazine-v2': 'magazine',
+  // The register ids lost their "-production-system" tails.
+  'media-production-system': 'media-records',
+  'racing-production-system': 'racing-records',
+  parties: 'people',
+  'all-stories': 'stories',
+  'comment-moderation': 'comments',
 };
 
 /**

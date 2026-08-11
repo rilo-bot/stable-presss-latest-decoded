@@ -39,19 +39,19 @@ const PODCAST_MODULE = 'podcast'
  * `podcast.*` id has to be considered here on purpose.
  */
 const ENABLING_PERMISSIONS = [
-  'podcast.manage',
-  'podcast.episode.create',
+  'podcast.edit',
+  'podcast.create',
   'podcast.episode.edit_own',
   'podcast.episode.edit_any',
-  'podcast.audio.upload',
-  'podcast.guests.manage',
-  'podcast.episode.schedule',
-  'podcast.episode.submit_review',
-  'podcast.episode.approve',
-  'podcast.episode.publish',
-  'podcast.distribution.manage',
-  'podcast.episode.delete',
-  'podcast.read_all',
+  'podcast.edit',
+  'podcast.edit',
+  'podcast.publish',
+  'podcast.edit',
+  'podcast.publish',
+  'podcast.publish',
+  'podcast.edit',
+  'podcast.delete',
+  'podcast.view',
 ]
 
 interface RoleRow {

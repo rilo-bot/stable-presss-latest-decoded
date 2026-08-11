@@ -5,14 +5,9 @@ import { db } from '../../lib/db.js'
 import { attachAccount } from '../../lib/auth.js'
 import { INVITES, USERS } from '../../lib/collections.js'
 import { isAdmin, canManageTeam, canViewTeam } from '../../lib/rbac.js'
-import {
-  assignRole,
-  checkSuperadminLoss,
-  clearRole,
-  denyRoleGrant,
-  getRoles,
-  roleOfUser,
-} from '../../lib/roleRegistry.js'
+import { getRoles, linksForUsers, roleOfUser } from '../../lib/roleRegistry.js'
+import { canOfferRole, grantRoleTo, revokeRoleFrom } from '../../lib/roleGrant.js'
+import { findUserByEmail } from '../../lib/session.js'
 import { isEmailConfigured, sendInviteEmail, sendRoleGrantedEmail } from '../../lib/email.js'
 import {
   INVITE_RESEND_COOLDOWN_MS,
@@ -36,23 +31,32 @@ function actorName(req: { account?: { name?: string; email?: string } }): string
   return req.account?.name?.trim() || req.account?.email || 'A Stable Press administrator'
 }
 
-/** `roleId != null` IS "is an admin", and it is indexed. */
+/**
+ * `users.isAdmin` IS "is an admin", and it is indexed. The role each one holds
+ * comes from the `adminRoles` links, fetched in ONE query for the whole roster
+ * rather than per row.
+ */
 async function adminRoster() {
-  const users = await db.collection(USERS).find({ roleId: { $ne: null } })
-  const rows = await Promise.all(
-    users.map(async (u) => {
-      const role = await roleOfUser(u)
-      return {
-        userId: String(u._id),
-        name: String(u.name ?? ''),
-        email: String(u.email ?? ''),
-        // null when the role was deleted under them: still an admin, holding
-        // nothing, and must stay visible so someone can fix it.
-        role: role ? { name: role.name, label: role.label, color: role.color, icon: role.icon } : null,
-        lastLogin: typeof u.lastLogin === 'string' ? u.lastLogin : null,
-      }
-    }),
-  )
+  const users = await db.collection(USERS).find({ isAdmin: true })
+  const [links, roles] = await Promise.all([
+    linksForUsers(users.map((u) => String(u._id))),
+    getRoles(),
+  ])
+  const rows = users.map((u) => {
+    const link = links.get(String(u._id))
+    const role = link ? roles.get(link.roleId) : undefined
+    return {
+      userId: String(u._id),
+      name: String(u.name ?? ''),
+      email: String(u.email ?? ''),
+      // null when the role was deleted under them, or the link never landed:
+      // still an admin, holding nothing, and must stay visible so someone can
+      // fix it.
+      role: role ? { name: role.name, label: role.label, color: role.color, icon: role.icon } : null,
+      assignedAt: link?.assignedAt ?? null,
+      lastLogin: typeof u.lastLogin === 'string' ? u.lastLogin : null,
+    }
+  })
   return rows.sort((a, b) => (a.name || a.email).localeCompare(b.name || b.email))
 }
 
@@ -66,7 +70,7 @@ router.get('/directory', async (req, res) => {
     res.status(403).json({ error: 'Admin access required.' })
     return
   }
-  const users = await db.collection(USERS).find({ roleId: { $ne: null } })
+  const users = await db.collection(USERS).find({ isAdmin: true })
   res.json(
     users
       .map((u) => ({ userId: String(u._id), name: String(u.name ?? ''), email: String(u.email ?? '') }))
@@ -118,34 +122,24 @@ router.post('/', async (req, res) => {
     res.status(400).json({ error: 'That role no longer exists.' })
     return
   }
-  if (role.isSuper && !req.account!.isSuperAdmin) {
-    res.status(403).json({ error: 'Only a superadmin can grant the superadmin role.' })
-    return
-  }
-  // This route MOVES an existing member to a role, so it is a second door to
-  // self-escalation without the same amplification check routes/roles.ts uses.
-  const denied = denyRoleGrant(req.account!, role, email === req.account!.email.toLowerCase())
-  if (denied) {
-    res.status(403).json({ error: denied })
+  // Gate the ROLE before either branch: the invite path below has no user
+  // document to check against, and must not become a way to hand out a role you
+  // could not grant directly.
+  const offerable = canOfferRole(req.account!, role)
+  if (!offerable.ok) {
+    res.status(offerable.status).json({ error: offerable.error })
     return
   }
 
-  const existing = (await db.collection(USERS).find({ email }))[0]
+  const existing = await findUserByEmail(email)
   if (existing) {
-    const userId = String(existing._id)
-    const current = await roleOfUser(existing)
-    if (current?.id === role.id) {
-      res.status(409).json({ error: 'That person already holds this role.' })
+    // The SAME guard sequence `POST /api/roles/:name/assign` runs — this route is
+    // the other door onto one operation, and the two had begun to differ.
+    const outcome = await grantRoleTo(req.account!, existing, role)
+    if (!outcome.ok) {
+      res.status(outcome.status).json({ error: outcome.error })
       return
     }
-    // One role per person, so this REPLACES: the superadmin guard applies here
-    // as much as on an explicit removal.
-    const blocked = await checkSuperadminLoss(req.account!, current?.isSuper === true && !role.isSuper)
-    if (blocked) {
-      res.status(403).json({ error: blocked })
-      return
-    }
-    await assignRole(userId, role.id)
 
     // The grant is the point; the email is a courtesy. A delivery failure must
     // not roll it back or read as failure.
@@ -262,19 +256,16 @@ router.delete('/member/:userId', async (req, res) => {
     res.status(404).json({ error: 'Team member not found.' })
     return
   }
-  if (userId === req.account!.id) {
-    res.status(403).json({ error: 'You cannot remove yourself from the team.' })
-    return
-  }
-  const current = await roleOfUser(target)
-  const blocked = await checkSuperadminLoss(req.account!, current?.isSuper === true)
-  if (blocked) {
-    res.status(403).json({ error: blocked })
+  // Same guard sequence as `DELETE /api/roles/:name/assign/:userId`.
+  const outcome = await revokeRoleFrom(req.account!, target)
+  if (!outcome.ok) {
+    res.status(outcome.status).json({ error: outcome.error })
     return
   }
 
-  await clearRole(userId)
-  // A surviving invite would silently re-grant on their next sign-in.
+  // A surviving invite link would hand the role straight back on one click.
+  // (It can no longer do so at sign-in — that path is gone — but the link itself
+  // still redeems, so the pending rows have to go with the revocation.)
   const orphaned = await db.collection(INVITES).find({ email: String(target.email ?? '') })
   await Promise.all(orphaned.map((g) => db.collection(INVITES).deleteOne(g._id)))
 

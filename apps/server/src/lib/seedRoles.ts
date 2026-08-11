@@ -1,47 +1,40 @@
 
 import { db } from './db.js'
 import {
-  ALL_WORKFLOW_STAGES,
   BUILTIN_ROLE_LABELS,
   BUILTIN_ROLE_PERMISSIONS,
-  MODULE_CATALOGUE,
+  BUILTIN_ROLE_SCOPES,
   PERMISSION_CATALOGUE,
-  builtinModulesFor,
+  SCOPED_SCREENS,
+  type RoleScopes,
 } from './permissionCatalogue.js'
-import { ADMIN_ROLES, SUPERADMIN_ROLE_NAME, bustRoleCache } from './roleRegistry.js'
+import { ROLES, SUPERADMIN_ROLE_NAME, bustRoleCache } from './roleRegistry.js'
 import type { SeedRoleName } from './permissionCatalogue.js'
 
 /**
- * Per-role presentation + workflow visibility, lifted verbatim from the static
- * `ROLES` config in apps/web/src/pages/newsroom/constants.tsx. `workflowStages`
- * was `allowedStatuses` there. Icons are lucide NAMES, not components.
+ * Per-role presentation. `workflowStages` used to live here; it is derived now
+ * (anyone who can open the board sees every column), so a seeded role no longer
+ * carries a third list that could disagree with the first two. Icons are lucide
+ * NAMES, not components.
  */
-const SEED_PRESENTATION: Record<
-  SeedRoleName,
-  { description: string; color: string; icon: string; workflowStages: string[] }
-> = {
-  contributor: {
-    description: 'Draft & submit stories',
-    color: 'hsl(var(--chart-1))',
-    icon: 'FileText',
-    // A contributor sees their own work up to the point it leaves their hands.
-    // 'revision' is gone — a sent-back story is a Draft carrying a
-    // `changesRequested` flag, so it shows up in the Draft column.
-    workflowStages: ['draft', 'submitted'],
-  },
-  editor: {
-    description: 'Full editorial control',
-    color: 'hsl(var(--primary))',
-    icon: 'CheckSquare',
-    workflowStages: ALL_WORKFLOW_STAGES,
-  },
-  administrator: {
-    description: 'Full platform access',
-    color: 'hsl(var(--primary))',
-    icon: 'Star',
-    workflowStages: ALL_WORKFLOW_STAGES,
-  },
-}
+const SEED_PRESENTATION: Record<SeedRoleName, { description: string; color: string; icon: string }> =
+  {
+    contributor: {
+      description: 'Write stories and posts — their own work only',
+      color: 'hsl(var(--chart-1))',
+      icon: 'FileText',
+    },
+    editor: {
+      description: 'Runs the desk: everyone’s work, publishing and the queues',
+      color: 'hsl(var(--primary))',
+      icon: 'CheckSquare',
+    },
+    administrator: {
+      description: 'Full platform access',
+      color: 'hsl(var(--primary))',
+      icon: 'Star',
+    },
+  }
 
 interface SeedRole {
   name: string
@@ -54,8 +47,7 @@ interface SeedRole {
   /** Unrestricted access. A field now, not a name comparison — see RoleDoc.isSuper. */
   isSuper: boolean
   permissions: string[]
-  modules: string[]
-  workflowStages: string[]
+  scopes: RoleScopes
 }
 
 /** The roles a fresh install starts with. */
@@ -72,8 +64,7 @@ export function seedRoleDefinitions(): SeedRole[] {
     // Materialised for display only. Enforcement short-circuits in accountCan()
     // BEFORE any lookup, so superadmin survives an empty or corrupt collection.
     permissions: PERMISSION_CATALOGUE.map((p) => p.id),
-    modules: MODULE_CATALOGUE.map((m) => m.id),
-    workflowStages: ALL_WORKFLOW_STAGES,
+    scopes: Object.fromEntries(SCOPED_SCREENS.map((s) => [s, 'all' as const])),
   }
 
   const builtins = (Object.keys(BUILTIN_ROLE_LABELS) as SeedRoleName[]).map((name) => {
@@ -88,8 +79,7 @@ export function seedRoleDefinitions(): SeedRole[] {
       isImmutable: false, // seeded, but a superadmin may edit these
       isSuper: false,
       permissions: [...BUILTIN_ROLE_PERMISSIONS[name]],
-      modules: builtinModulesFor(name),
-      workflowStages: [...meta.workflowStages],
+      scopes: { ...BUILTIN_ROLE_SCOPES[name] },
     }
   })
 
@@ -101,14 +91,14 @@ export function seedRoleDefinitions(): SeedRole[] {
  * Returns the slugs actually created. Safe to call on every boot.
  */
 export async function seedRoles(): Promise<string[]> {
-  const existing = await db.collection(ADMIN_ROLES).find()
+  const existing = await db.collection(ROLES).find()
   const have = new Set(existing.map((r) => String(r.name)))
   const now = new Date().toISOString()
   const created: string[] = []
 
   for (const role of seedRoleDefinitions()) {
     if (have.has(role.name)) continue
-    await db.collection(ADMIN_ROLES).insertOne({ ...role, createdAt: now, updatedAt: now })
+    await db.collection(ROLES).insertOne({ ...role, createdAt: now, updatedAt: now })
     created.push(role.name)
   }
 

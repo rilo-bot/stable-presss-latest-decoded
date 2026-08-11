@@ -41,7 +41,7 @@ export default function Signup() {
 
   const [loading, setLoading] = useState(false);
 
-  const requestSignupOtp = useAuthStore((s) => s.requestSignupOtp);
+  const requestOtp = useAuthStore((s) => s.requestOtp);
   const verifyOtp = useAuthStore((s) => s.verifyOtp);
   const navigate = useNavigate();
 
@@ -73,7 +73,7 @@ export default function Signup() {
     }
     setFieldErrors({});
     setLoading(true);
-    const result = await requestSignupOtp(email.trim(), displayName.trim());
+    const result = await requestOtp(email.trim(), displayName.trim());
     setLoading(false);
     if (result.ok) {
       setOtpPreview(result.devCode ?? null);
@@ -153,7 +153,7 @@ export default function Signup() {
     setOtpDigits(['', '', '', '', '', '']);
     setOtpError('');
     setLoading(true);
-    const result = await requestSignupOtp(email.trim(), displayName.trim());
+    const result = await requestOtp(email.trim(), displayName.trim());
     setLoading(false);
     if (result.ok) {
       setOtpPreview(result.devCode ?? null);
@@ -217,9 +217,9 @@ export default function Signup() {
         <div className="w-full max-w-sm">
           {/* Masthead (mobile) */}
           <div className="lg:hidden text-center mb-8">
-            <h1 className="font-[family-name:var(--font-display)] text-2xl font-bold text-foreground">
+            <p className="font-[family-name:var(--font-display)] text-2xl font-bold text-foreground">
               Stable Press
-            </h1>
+            </p>
             <p className="text-xs text-muted-foreground uppercase tracking-[0.12em] mt-1">
               Racing Journal
             </p>
