@@ -18,9 +18,15 @@
 // `permissions`, a link has `userId`. That is what makes re-running safe even
 // half-way through.
 //
+// Steps 1 and 2 only ADD — run them with `--keep-legacy` and BOTH the old and
+// the new shape are valid at once, so the deploy can be rolled back without a
+// database restore. Step 3 is the point of no return; run it after the deploy
+// has stuck.
+//
 // Usage:
-//   npx tsx scripts/migrate-admin-roles.ts            # dry run (default)
-//   npx tsx scripts/migrate-admin-roles.ts --apply
+//   npx tsx scripts/migrate-admin-roles.ts                      # dry run
+//   npx tsx scripts/migrate-admin-roles.ts --apply --keep-legacy  # reversible
+//   npx tsx scripts/migrate-admin-roles.ts --apply                # finish
 //
 // Needs MONGODB_URI in the environment (this script does not read .env):
 //   MONGODB_URI="mongodb://localhost:27017/stable-press-local" npx tsx ... --apply
@@ -29,6 +35,8 @@
 import { MongoClient, type Document } from 'mongodb'
 
 const APPLY = process.argv.includes('--apply')
+/** Skip step 3, so the OLD shape survives and the deploy stays reversible. */
+const KEEP_LEGACY = process.argv.includes('--keep-legacy')
 const uri = (process.env.MONGODB_URI ?? '').trim()
 
 if (!uri) {
@@ -106,25 +114,55 @@ async function main() {
   }
 
   // ── 3. drop the old shapes ────────────────────────────────────────────────
-  console.log(`\nremove ${defs.length} definition row(s) from adminRoles`)
-  console.log(`unset users.roleId on ${await users.countDocuments({ roleId: { $exists: true } })} account(s)`)
-  if (APPLY) {
+  //
+  // THE ONLY DESTRUCTIVE STEP, and the only one that breaks the OLD code — which
+  // is why `--keep-legacy` exists. Steps 1 and 2 only ADD: the definitions are
+  // COPIED into `roles` rather than moved, and `isAdmin` is written alongside
+  // `roleId` rather than instead of it. Stop there and BOTH shapes are valid at
+  // once, so a deploy can be rolled back without a database restore:
+  //
+  //   old code  users.roleId → definition rows still in adminRoles   ✓
+  //   new code  users.isAdmin → link rows → the `roles` collection    ✓
+  //
+  // The two never collide because a definition and a link are told apart by
+  // shape — `linkForUser` queries on `userId`, which no definition has.
+  //
+  // Run without the flag once the deploy has stuck. Re-running is safe.
+  if (KEEP_LEGACY) {
+    console.log('\n── step 3 SKIPPED (--keep-legacy) ──')
+    console.log('Both the old and the new shape are now valid. The old code keeps working,')
+    console.log('so this deploy is reversible. Re-run WITHOUT --keep-legacy to finish.')
+  } else {
+    console.log(`\nremove ${defs.length} definition row(s) from adminRoles`)
+    console.log(`unset users.roleId on ${await users.countDocuments({ roleId: { $exists: true } })} account(s)`)
+  }
+  if (APPLY && !KEEP_LEGACY) {
     if (defs.length) await adminRoles.deleteMany({ _id: { $in: defs.map((d) => d._id) } })
     await users.updateMany({ roleId: { $exists: true } }, { $unset: { roleId: '' } })
-    // The unique index that makes "one role per admin" real. Created here as
-    // well as in ensureIndexes so the constraint lands with the data. PARTIAL —
-    // revoking soft-deletes the link, and a tombstone must not keep occupying
-    // `userId` or re-granting to that person throws a duplicate key.
-    await adminRoles
-      .createIndex({ userId: 1 }, { unique: true, partialFilterExpression: { deletedAt: null } })
-      .catch(async () => {
-        // An earlier run created it without the filter.
-        await adminRoles.dropIndex('userId_1')
-        await adminRoles.createIndex(
-          { userId: 1 },
-          { unique: true, partialFilterExpression: { deletedAt: null } },
-        )
-      })
+  }
+  if (APPLY) {
+    // Indexes land with the DATA, not with step 3 — the uniqueness constraint is
+    // what makes "one role per admin" real, and it has to hold from the moment
+    // links exist. PARTIAL: revoking soft-deletes the link, and a tombstone must
+    // not keep occupying `userId` or re-granting to that person throws E11000.
+    //
+    // `userId: {$exists: true}` matters as much as the soft-delete filter: with
+    // --keep-legacy the definition rows are still here, and they carry no
+    // userId, so without it they all index as null and the second one collides.
+    // MUST match ensureIndexes.ts or the running server fights this script.
+    const LINK_INDEX = {
+      unique: true,
+      partialFilterExpression: { userId: { $exists: true }, deletedAt: null },
+    } as const
+    await adminRoles.createIndex({ userId: 1 }, LINK_INDEX).catch(async (err: unknown) => {
+      // An earlier run created it with different options. Rebuild — but only if
+      // it is actually there: swallowing every failure here turned a genuine
+      // duplicate-key error into a confusing "index not found" from the dropIndex.
+      const present = (await adminRoles.indexes()).some((i) => i.name === 'userId_1')
+      if (!present) throw err
+      await adminRoles.dropIndex('userId_1')
+      await adminRoles.createIndex({ userId: 1 }, LINK_INDEX)
+    })
     await roles.createIndex({ name: 1 }, { unique: true, partialFilterExpression: { deletedAt: null } })
   }
 

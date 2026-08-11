@@ -79,7 +79,16 @@ const INDEX_SPECS: IndexSpec[] = [
   {
     collection: ADMIN_ROLES,
     keys: { userId: 1 },
-    options: { unique: true, partialFilterExpression: { deletedAt: null } },
+    // `userId: {$exists: true}` as well as the soft-delete filter, because
+    // `adminRoles` can legitimately hold rows WITHOUT a userId: during a
+    // migration run with --keep-legacy it still carries the old role
+    // DEFINITIONS, and every one of those would index as `userId: null` — so the
+    // second definition collides with the first and the index cannot be built.
+    // Verified by rehearsing the migration against a scratch database.
+    options: {
+      unique: true,
+      partialFilterExpression: { userId: { $exists: true }, deletedAt: null },
+    },
   },
   // "Who holds this role?" — the assignee tally and role deletion.
   { collection: ADMIN_ROLES, keys: { roleId: 1 } },
