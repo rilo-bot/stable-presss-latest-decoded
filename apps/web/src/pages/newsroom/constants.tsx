@@ -1,9 +1,8 @@
 import type { ReactNode } from 'react';
 import {
-  FileText, LayoutDashboard, CheckSquare, Shield, Send, Users, BarChart2,
-  Settings, Eye, ArrowRight, BookOpen, Mic, Star, Edit, DollarSign, Image,
-  File, UserCheck, CalendarClock, FolderOpen, Inbox, Layers, Newspaper, Flag,
-  PenLine, Zap, SmilePlus, MessageSquare,
+  FileText, LayoutDashboard, Shield, Users, BarChart2, Settings, ArrowRight,
+  BookOpen, Mic, Star, DollarSign, Image, File, Receipt, Layers, Newspaper,
+  Flag, PenLine, Zap, SmilePlus, MessageSquare,
 } from 'lucide-react';
 import type { ArticleStatus } from '@/types/article';
 import type { PartyRole } from '@/types/party';
@@ -96,11 +95,11 @@ export function navPath(item: SideNavItem): string {
  *
  * SIX SECTIONS, and the grouping is the product's, not the code's:
  *   Workspace  Overview — the general tab, no permission, everyone lands here
- *   Stories    the news pipeline and the three lenses onto it. Only this — a
+ *   Stories    the news pipeline and the two lenses onto it. Only this — a
  *              story moves through five stages, which is what these are for
  *   Content    the other things the newsroom makes: blogs, instant captures,
  *              magazine editions, podcast episodes
- *   Stables    the four registers
+ *   Stables    the five registers
  *   Community  reader-facing signal — moderation and sentiment
  *   Management the admin desk
  *   Personal   your own things. No permission: they only ever show YOUR files
@@ -122,15 +121,11 @@ export const SIDE_NAV: SideNavItem[] = [
   { id: 'stories', label: 'All Stories', icon: <FileText size={15} />, section: 'Stories', slug: 'all-stories', requiresPermission: 'stories.view' },
   { id: 'workflow', label: 'Workflow Board', icon: <LayoutDashboard size={15} />, section: 'Stories', slug: 'workflow', requiresPermission: 'workflow.view' },
   { id: 'pipeline', label: 'Pipeline Map', icon: <ArrowRight size={15} />, section: 'Stories', slug: 'pipeline', requiresPermission: 'pipeline.view' },
-  {
-    id: 'editor-hub',
-    label: 'Editor Hub',
-    icon: <Edit size={15} />,
-    section: 'Stories',
-    slug: 'editor-hub',
-    requiresPermission: 'editor-hub.view',
-    editorOnly: true,
-  },
+  /* Editor Hub used to sit here. Removed: its Review Queue duplicated the
+     Workflow Board, its Scheduling tab was a third copy of a scheduler that
+     already lives on the board and in the story form, its Media Library was a
+     poorer Media Records, and its Assignments tab saved a note no screen ever
+     displayed. Its one unique tab became the Horse Records register below. */
   // ── Content ───────────────────────────────────────────────────────────────
   /* The other things the newsroom makes. Apart from Stories because a story
      moves through a five-stage pipeline and these do not: a post is draft or
@@ -155,12 +150,13 @@ export const SIDE_NAV: SideNavItem[] = [
   { id: 'podcast', label: 'Podcast', icon: <Mic size={15} />, section: 'Content', slug: 'podcast', requiresPermission: 'podcast.view' },
 
   // ── Stables ───────────────────────────────────────────────────────────────
-  /* One naming rule across the four registers: name what the register holds.
-     Horses and people are entities; media and racing entries are records. No
-     "Management" — that's system-speak, not what anyone calls these screens. */
+  /* One naming rule across the five registers: name what the register holds.
+     Horses and people are entities; media, horse and racing entries are records.
+     No "Management" — that's system-speak, not what anyone calls these. */
   { id: 'horses', label: 'Horses', icon: <Star size={15} />, section: 'Stables', slug: 'horses', requiresPermission: 'horses.view' },
   { id: 'people', label: 'People', icon: <Users size={15} />, section: 'Stables', slug: 'people', requiresPermission: 'people.view' },
   { id: 'media-records', label: 'Media Records', icon: <File size={15} />, section: 'Stables', slug: 'media-records', requiresPermission: 'media-records.view' },
+  { id: 'horse-records', label: 'Horse Records', icon: <Receipt size={15} />, section: 'Stables', slug: 'horse-records', requiresPermission: 'horse-records.view' },
   { id: 'racing-records', label: 'Racing Records', icon: <Flag size={15} />, section: 'Stables', slug: 'racing-records', requiresPermission: 'racing-records.view' },
 
   // ── Community ─────────────────────────────────────────────────────────────
@@ -203,57 +199,4 @@ export function pathForModule(id: string): string {
   return item ? navPath(item) : PS_BASE;
 }
 
-/* ── Editor Hub tab types ─────────────────────────────── */
 
-export type EditorTab =
-  | 'review-queue'
-  | 'assignments'
-  | 'scheduling'
-  | 'media-library'
-  | 'horse-records';
-
-export interface EditorTabConfig {
-  id: EditorTab;
-  label: string;
-  icon: ReactNode;
-  description: string;
-  permission: Parameters<typeof can>[0];
-}
-
-export const EDITOR_TABS: EditorTabConfig[] = [
-  {
-    id: 'review-queue',
-    label: 'Review Queue',
-    icon: <Inbox size={14} />,
-    description: 'Editorial review of submitted drafts',
-    permission: 'stories.edit',
-  },
-  {
-    id: 'assignments',
-    label: 'Assignments',
-    icon: <UserCheck size={14} />,
-    description: 'Content assignment & modification',
-    permission: 'stories.edit',
-  },
-  {
-    id: 'scheduling',
-    label: 'Scheduling',
-    icon: <CalendarClock size={14} />,
-    description: 'Scheduled publishing capabilities',
-    permission: 'stories.publish',
-  },
-  {
-    id: 'media-library',
-    label: 'Media Library',
-    icon: <FolderOpen size={14} />,
-    description: 'Full media asset management',
-    permission: 'media-records.edit',
-  },
-  {
-    id: 'horse-records',
-    label: 'Horse Records',
-    icon: <File size={14} />,
-    description: 'Sales & document records for horse profiles',
-    permission: 'media-records.edit',
-  },
-];

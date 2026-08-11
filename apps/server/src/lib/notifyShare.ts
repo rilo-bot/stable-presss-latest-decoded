@@ -12,6 +12,7 @@
 
 import { sendMagazineShareEmail } from './email.js'
 import { absoluteUrl } from './invites.js'
+import { pageNumbersLabel } from './pageLabels.js'
 
 const WEB_PUBLIC_URL = (process.env.WEB_PUBLIC_URL ?? 'http://localhost:5173').replace(/\/$/, '')
 
@@ -19,10 +20,9 @@ const WEB_PUBLIC_URL = (process.env.WEB_PUBLIC_URL ?? 'http://localhost:5173').r
  * Human phrasing for which pages they can touch — NAMING them, not just counting.
  *
  * "You can edit 3 pages" told the recipient nothing they could act on; they had to
- * open the magazine to discover which three. v2 pages carry no title, only an
- * index, so the honest label is the page NUMBER — and that is exactly what the
- * Share dialog's own page picker shows (`p.index + 1`), so the email and the UI
- * name the same thing.
+ * open the magazine to discover which three. The page-naming itself now lives in
+ * `pageNumbersLabel` so this email and the submission/review emails phrase the
+ * same set of pages identically.
  */
 function scopeLabel(pages: number[] | 'all', total: number): string {
   if (pages === 'all') {
@@ -30,12 +30,8 @@ function scopeLabel(pages: number[] | 'all', total: number): string {
       ? `You can edit every page (${total} in total).`
       : 'You can edit every page.'
   }
-  if (pages.length === 0) return 'No pages are assigned to you yet.'
-  const sorted = [...pages].sort((a, b) => a - b)
-  const list =
-    sorted.length === 1
-      ? `page ${sorted[0]}`
-      : `pages ${sorted.slice(0, -1).join(', ')} and ${sorted[sorted.length - 1]}`
+  const list = pageNumbersLabel(pages)
+  if (!list) return 'No pages are assigned to you yet.'
   return total > 0
     ? `You can edit ${list} of ${total}.`
     : `You can edit ${list}.`

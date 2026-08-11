@@ -46,7 +46,25 @@ if (!uri) {
 /** The one role that must end up `isSuper`. Matched on slug, not on label. */
 const SUPERADMIN_SLUG = 'superadmin'
 
-/** Legacy fields `--finish` removes, once nothing reads them. */
+/**
+ * Legacy fields `--finish` removes. Every one verified to have ZERO readers:
+ * `withIdentityDefaults` builds an identity from exactly six fields —
+ * id, name, email, createdAt, isAdmin, lastLogin — and nothing else on the
+ * document is consulted anywhere in server or web.
+ *
+ * `roles` and `status` are in this list on their own merit, not by association:
+ *
+ *   roles: ['reader']  the party-role axis is DERIVED from the `parties`
+ *                      collection by `derivedRoles()`, never from this array.
+ *                      Leaving it is worse than leaving a dead field — it reads
+ *                      like the source of truth for racing roles, and is not.
+ *   status: 'active'   zero readers. Nothing suspends an account through it;
+ *                      revocation is `tokenVersion`, and removal is a soft
+ *                      delete via `deletedAt`.
+ *
+ * What SURVIVES, and why: `tokenVersion` (sign-out-everywhere), `deletedAt`
+ * (soft delete), and the six identity fields above.
+ */
 const LEGACY_USER_FIELDS = [
   'displayName',
   'staffRoleSlug',
@@ -54,6 +72,8 @@ const LEGACY_USER_FIELDS = [
   'subscriptionTier',
   'partyClaims',
   'orgMemberships',
+  'roles',
+  'status',
 ]
 
 const line = (s = '') => console.log(s)
@@ -207,7 +227,20 @@ async function main() {
   } else {
     line(`  removing from users: ${LEGACY_USER_FIELDS.join(', ')}`)
     line('  removing from roles: slug, modules, workflowStages')
+
+    // THE STALE `slug_1` UNIQUE INDEX MUST GO FIRST.
+    //
+    // `slug` was the role key before `name` was, and it carries a UNIQUE index.
+    // Unsetting the field makes every role index as `slug: null`, so the FIRST
+    // document succeeds and the SECOND fails with E11000 — and because
+    // `updateMany` is per-document rather than atomic, that leaves the
+    // collection half-cleaned. Hit for real against production; the users half
+    // had already committed, which is why this step is written to be re-runnable.
+    const staleSlug = (await roles.indexes()).find((i) => i.name === 'slug_1')
+    line(`  stale unique index roles.slug_1: ${staleSlug ? 'present — dropping first' : 'already gone'}`)
+
     if (APPLY) {
+      if (staleSlug) await roles.dropIndex('slug_1')
       await users.updateMany({}, { $unset: Object.fromEntries(LEGACY_USER_FIELDS.map((f) => [f, ''])) })
       await roles.updateMany({}, { $unset: { slug: '', modules: '', workflowStages: '' } })
     }

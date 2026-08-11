@@ -18,12 +18,18 @@
 //
 // TWO RULES HOLD THE MODEL TOGETHER:
 //
-//   1. THE LENS RULE. Workflow Board, Pipeline Map, Editor Hub and Instant
-//      Capture show records that belong to ANOTHER screen. They support `view`
-//      only, and every action taken inside them is enforced with the OWNING
-//      screen's verb — Instant Capture's save checks `stories.create` or
+//   1. THE LENS RULE. Workflow Board, Pipeline Map and Instant Capture show
+//      records that belong to ANOTHER screen. They support `view` only, and
+//      every action taken inside them is enforced with the OWNING screen's
+//      verb — Instant Capture's save checks `stories.create` or
 //      `blogs.create`. Without this a lens is a bypass: `instant.create` would
 //      mint stories for someone who holds no `stories.create`.
+//
+//      Editor Hub was a fourth lens and has been REMOVED. Four of its five tabs
+//      re-implemented the Workflow Board, the story form's scheduler, the Media
+//      Records screen and an assignment note nothing ever displayed. The fifth
+//      was the only door to sales and reports, which is now the `horse-records`
+//      screen below — a register in its own right, not a lens.
 //
 //   2. ANY VERB IMPLIES VIEW. You cannot act on a screen you cannot open, so
 //      `normalisePermissions` adds the `view` of any screen the role can act on.
@@ -63,7 +69,6 @@ export type PermissionAction =
   | 'stories.publish'
   | 'workflow.view'
   | 'pipeline.view'
-  | 'editor-hub.view'
   | 'blogs.view'
   | 'blogs.create'
   | 'blogs.edit'
@@ -93,6 +98,10 @@ export type PermissionAction =
   | 'media-records.create'
   | 'media-records.edit'
   | 'media-records.delete'
+  | 'horse-records.view'
+  | 'horse-records.create'
+  | 'horse-records.edit'
+  | 'horse-records.delete'
   | 'racing-records.view'
   | 'racing-records.create'
   | 'racing-records.edit'
@@ -174,14 +183,6 @@ export const SCREEN_CATALOGUE: ScreenMeta[] = [
     lensOver: 'stories',
     description: 'A read-only map of where work sits.',
   },
-  {
-    id: 'editor-hub',
-    label: 'Editor Hub',
-    section: 'Stories',
-    verbs: ['view'],
-    lensOver: 'stories',
-    description: 'The review queue, assignments and scheduling, in one place.',
-  },
   // ── Content ───────────────────────────────────────────────────────────────
   // The other things the newsroom makes. Separate from Stories because a story
   // moves through a five-stage pipeline and these do not — a post is draft or
@@ -240,6 +241,17 @@ export const SCREEN_CATALOGUE: ScreenMeta[] = [
     section: 'Stables',
     verbs: ['view', 'create', 'edit', 'delete'],
     description: 'The shared media library.',
+  },
+  {
+    id: 'horse-records',
+    label: 'Horse Records',
+    section: 'Stables',
+    verbs: ['view', 'create', 'edit', 'delete'],
+    // Sales and reports: the commercial and veterinary paperwork hanging off a
+    // horse. Its own row rather than a corner of Horses, because who may read
+    // what a horse SOLD for is a different question from who may correct its
+    // date of birth. Was reachable only through Editor Hub, which is gone.
+    description: 'Sale records and documents attached to horses.',
   },
   {
     id: 'racing-records',
@@ -389,7 +401,9 @@ export const LEGACY_PERMISSION_ALIASES: Record<string, PermissionAction[]> = {
   'content.draft.edit_own': ['stories.edit'],
   'content.draft.edit_any': ['stories.edit'],
   'content.submit': ['stories.edit'],
-  'content.editorial_review': ['stories.edit', 'editor-hub.view'],
+  // Was `['stories.edit', 'editor-hub.view']`. Editor Hub is gone and reviewing
+  // now happens on the Workflow Board, so the old id maps to the board instead.
+  'content.editorial_review': ['stories.edit', 'workflow.view'],
   'content.send_revision': ['stories.edit'],
   'content.approve': ['stories.publish'],
   'content.schedule': ['stories.publish'],
@@ -557,6 +571,7 @@ export const BUILTIN_ROLE_PERMISSIONS: Record<SeedRoleName, PermissionAction[]> 
     'horses.view',
     'people.view',
     'media-records.view',
+    'horse-records.view',
     'racing-records.view',
   ]),
 
@@ -569,7 +584,6 @@ export const BUILTIN_ROLE_PERMISSIONS: Record<SeedRoleName, PermissionAction[]> 
     'stories.publish',
     'workflow.view',
     'pipeline.view',
-    'editor-hub.view',
     'blogs.view',
     'blogs.create',
     'blogs.edit',
@@ -593,6 +607,9 @@ export const BUILTIN_ROLE_PERMISSIONS: Record<SeedRoleName, PermissionAction[]> 
     'media-records.view',
     'media-records.create',
     'media-records.edit',
+    'horse-records.view',
+    'horse-records.create',
+    'horse-records.edit',
     'racing-records.view',
     'racing-records.create',
     'racing-records.edit',

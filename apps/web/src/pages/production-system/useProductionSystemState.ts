@@ -28,7 +28,6 @@ import { ARTICLE_STATUSES } from '@/types/article';
 import type { Article, ArticleStatus } from '@/types/article';
 
 import { PS_BASE, SIDE_NAV, pathForModule } from '../newsroom/constants';
-import type { EditorTab } from '../newsroom/constants';
 import { useProductionSystems } from '../newsroom/useProductionSystems';
 
 export function useProductionSystemState() {
@@ -52,9 +51,6 @@ export function useProductionSystemState() {
   const [activeColumn, setActiveColumn] = useState<ArticleStatus>('draft');
   const [searchQuery, setSearchQuery] = useState('');
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
-  const [editorTab, setEditorTab] = useState<EditorTab>('review-queue');
-  const [assignDialogArticle, setAssignDialogArticle] = useState<Article | null>(null);
-  const [assignNote, setAssignNote] = useState('');
 
   // Load the newsroom's stories on mount. The store guards against duplicate
   // fetches, so this is a no-op if a public page already populated it — but it's
@@ -168,7 +164,9 @@ export function useProductionSystemState() {
     return map;
   }, [articles, isContributor, currentUser?.name]);
 
-  // Kanban visibility is the third role axis, ticked per role by a superadmin.
+  // DERIVED, not a third axis any more: the server returns every column to
+  // anyone holding `workflow.view` and none otherwise. Which CARDS appear is the
+  // Stories scope; which transitions are allowed is the verb.
   const stageIds = currentUser?.access?.workflowStages ?? [];
   const visibleStages = WORKFLOW_STAGES.filter((col) => stageIds.includes(col.status));
 
@@ -340,8 +338,6 @@ export function useProductionSystemState() {
     // per-screen ui state that must survive a route change
     activeColumn, setActiveColumn, searchQuery, setSearchQuery,
     sidebarCollapsed, setSidebarCollapsed,
-    editorTab, setEditorTab,
-    assignDialogArticle, setAssignDialogArticle, assignNote, setAssignNote,
     // magazines
     magIssues,
     // team

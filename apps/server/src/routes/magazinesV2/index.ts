@@ -25,11 +25,15 @@ import { MAGAZINE_V2_ENABLED, PAGE_W, PAGE_H, MAX_PAGES_PER_ISSUE, MAX_SOURCE_BY
 import { COL } from '../../lib/magazineV2/collections.js';
 import { rateLimit } from '../../lib/rateLimit.js';
 import { safePublicImageUrl } from '../../lib/magazineV2/url.js';
-import { roleOnMagazine, isOwner, canEditPage, editablePageIds, collaboratorsOf, type V2Collaborator } from '../../lib/magazineV2/access.js';
+import { roleOnMagazine, isOwner, canViewPage, pageEditBlock, editablePageIds, collaboratorsOf, assigneesOfPage, type V2Collaborator, type MagRole } from '../../lib/magazineV2/access.js';
+import { reviewOf, reviewRoundOf, isApprovalStale, needsRepublish, pageEditedSincePublish, reviewIs, reviewTransitionError, type PageReview, type ReviewAction } from '../../lib/magazineV2/review.js';
+import { publishApprovalBlock } from '../../lib/magazineV2/publishGate.js';
 import { notifyShared } from '../../lib/notifyShare.js';
+import { notifySubmitted, notifyReviewed, notifyPageRemoved } from '../../lib/notifyReview.js';
+import { pageNumbersLabel } from '../../lib/pageLabels.js';
 import { magazinePath } from '../../lib/invites.js';
-import { withIdentityDefaults, type IdentityUser } from '../../lib/identity.js';
-import { identityCan, resolveAccount } from '../../lib/effectiveAccess.js';
+import { withIdentityDefaults } from '../../lib/identity.js';
+import { resolveAccount } from '../../lib/effectiveAccess.js';
 import { normalizeElements, normalizeElementPatch } from '../../lib/magazineV2/writePipeline.js';
 import { MAX_ELEMENTS_PER_PAGE, type MagazineElement } from '../../lib/magazineV2/model.js';
 import { isAgentConfigured } from '../../lib/agent/provider.js';
@@ -41,6 +45,10 @@ import { formatPageText, charGuideFor } from '../../lib/magazineV2/format.js';
 /* eslint-disable @typescript-eslint/no-explicit-any */
 type Doc = { _id: string; [k: string]: any };
 type StructResult = { status: number; error?: string; pages?: any[] };
+/** Publish either fails with a reason or reports the snapshot it wrote. */
+type PublishResult =
+  | { status: number; error: string; reason?: string; pageNumbers?: number[] }
+  | { status: 200; publishedIssueId: string; version: number };
 
 function project(doc: Doc) {
   const { _id, ...rest } = doc;
@@ -186,8 +194,20 @@ async function uniqueSlug(title: string): Promise<string> {
   return `${base}-${Date.now()}`;
 }
 
-function withViewer(doc: Doc, uid: string) {
-  return { ...project(doc), myRole: roleOnMagazine(doc, uid), myEditablePageIds: editablePageIds(doc, uid) };
+/**
+ * `pages` is optional and only feeds `needsRepublish`, which cannot be answered
+ * without them — a page's own `updatedAt` is what moves on an element write. Callers
+ * that already have the pages pass them; the rest report `false`, and the client
+ * layers its own "I have edited since I loaded this" on top so the studio reacts
+ * immediately rather than waiting for a refetch.
+ */
+function withViewer(doc: Doc, uid: string, pages?: Doc[]) {
+  return {
+    ...project(doc),
+    myRole: roleOnMagazine(doc, uid),
+    myEditablePageIds: editablePageIds(doc, uid),
+    needsRepublish: pages ? needsRepublish(doc, pages) : false,
+  };
 }
 
 /** The pages a user may SEE, in this share-only model: the owner and 'all'-scoped
@@ -199,6 +219,30 @@ function visiblePages(doc: Doc, uid: string, pages: Doc[]): Doc[] {
   const set = new Set(ids.map(String));
   return pages.filter((p) => set.has(String(p._id)));
 }
+
+/**
+ * Remove a deleted page's id from every collaborator's `pageIds`, returning the new
+ * collaborator array — or null when nothing referenced it (so we skip the write).
+ * A collaborator scoped to `'all'` is untouched: 'all' is not a list of ids.
+ */
+function pruneDeletedPageId(issue: Doc, pageId: string): V2Collaborator[] | null {
+  const current = collaboratorsOf(issue);
+  let touched = false;
+  const next = current.map((c) => {
+    if (c.pageIds === 'all' || !Array.isArray(c.pageIds)) return c;
+    if (!c.pageIds.some((id) => String(id) === String(pageId))) return c;
+    touched = true;
+    return { ...c, pageIds: c.pageIds.filter((id) => String(id) !== String(pageId)) };
+  });
+  return touched ? next : null;
+}
+
+// NOTE: there used to be a `refuseIfDraftClosed` here, guarding six content doors so
+// a published magazine could not change without an explicit revision. The immutable
+// v1/v2 edition model it served was DROPPED (2026-08-11): a published magazine is
+// freely editable, and the resulting divergence from the live edition is reported as
+// `needs_republish` rather than prevented. The guard is gone rather than stubbed —
+// a function that always returns false is a trap for whoever reads it next.
 
 /** Guard structural ops while a worker is digitising/generating the issue. */
 function isBusy(issue: Doc): boolean {
@@ -222,7 +266,12 @@ async function blankPage(magazineId: string): Promise<string> {
   });
 }
 
-function pageSummary(p: Doc) {
+/**
+ * `issue` is optional and only affects `editedSincePublish` — pass it wherever the
+ * caller already has the magazine, so the page rail can mark what a republish would
+ * change. Omitting it reports false rather than guessing.
+ */
+function pageSummary(p: Doc, issue?: Doc) {
   return {
     id: p._id,
     index: p.index,
@@ -232,6 +281,23 @@ function pageSummary(p: Doc) {
     rev: p.rev ?? 0,
     selectedForPublish: p.selectedForPublish !== false,
     elementCount: Array.isArray(p.elements) ? p.elements.length : 0,
+    /** Touched since the live edition was frozen, so a republish would change it. */
+    editedSincePublish: issue ? pageEditedSincePublish(issue, p) : false,
+    // The review axis, always resolved through the accessors so a page that
+    // predates the submissions flow reports 'in_progress' rather than undefined.
+    review: reviewOf(p),
+    reviewRound: reviewRoundOf(p),
+    approvalStale: isApprovalStale(p),
+    // The two notes stay SEPARATE all the way to the client: `submitNote` is the
+    // collaborator's, `reviewNote` is the owner's. One field would have the resubmit's
+    // "done" overwrite the owner's "fix the headline", and the board would then
+    // attribute the wrong words to the wrong person.
+    submitNote: typeof p.submitNote === 'string' ? p.submitNote : '',
+    reviewNote: typeof p.reviewNote === 'string' ? p.reviewNote : '',
+    // Ids, not names — the client already has collaborators[] to resolve them, and a
+    // per-page user lookup would be N+1 on a route that returns every page.
+    submittedBy: typeof p.submittedBy === 'string' ? p.submittedBy : null,
+    submittedAt: typeof p.submittedAt === 'string' ? p.submittedAt : null,
   };
 }
 
@@ -302,7 +368,7 @@ router.post('/issues/blank', async (req, res) => {
     res.status(500).json({ error: 'Failed to create issue' });
     return;
   }
-  res.status(201).json({ issue: withViewer(created, uid), pages: (await pagesFor(id)).map(pageSummary) });
+  res.status(201).json({ issue: withViewer(created, uid), pages: (await pagesFor(id)).map((p) => pageSummary(p, created)) });
 });
 
 /**
@@ -400,7 +466,7 @@ router.post('/issues/:id/reuse', rateLimit('mag2-write', 300, 60_000), async (re
     res.status(500).json({ error: 'Failed to create the magazine' });
     return;
   }
-  res.status(201).json({ issue: withViewer(created, uid), pages: (await pagesFor(id)).map(pageSummary) });
+  res.status(201).json({ issue: withViewer(created, uid), pages: (await pagesFor(id)).map((p) => pageSummary(p, created)) });
 });
 
 // Build with AI — create a 'processing' issue and generate pages in the
@@ -515,6 +581,13 @@ router.post('/issues/:id/confirm-upload', async (req, res) => {
   }
   if (!isOwner(roleOnMagazine(doc, uid))) {
     res.status(403).json({ error: 'Only the owner can do this.' });
+    return;
+  }
+  // Confirming an upload enqueues a FULL re-extraction, which rewrites every page —
+  // the most sweeping content change in the system. It must not run behind a live
+  // edition, and it must not run twice concurrently.
+  if (isBusy(doc)) {
+    res.status(409).json({ error: 'The magazine is already processing. Try again shortly.' });
     return;
   }
   // The key (with its correct extension) was persisted at /issues/upload — use
@@ -823,7 +896,14 @@ router.get('/issues/:id', async (req, res) => {
     res.status(404).json({ error: 'Not found' });
     return;
   }
-  res.json({ issue: withViewer(doc, uid), pages: visiblePages(doc, uid, await pagesFor(doc._id)).map(pageSummary) });
+  // ALL pages feed needsRepublish (any edited page means the live edition is behind),
+  // while only the VISIBLE ones are returned — a page-scoped collaborator still needs
+  // to know the magazine is out of sync, without learning which other pages exist.
+  const allPages = await pagesFor(doc._id);
+  res.json({
+    issue: withViewer(doc, uid, allPages),
+    pages: visiblePages(doc, uid, allPages).map((p) => pageSummary(p, doc)),
+  });
 });
 
 // settings — owner only (slug is immutable). Accepts `title` and/or a cover:
@@ -909,13 +989,26 @@ router.delete('/issues/:id', async (req, res) => {
     res.status(403).json({ error: 'Only the owner can delete this magazine.' });
     return;
   }
+  // Deleting a magazine that is LIVE also takes it off the public newsstand, which is
+  // not obvious from a button in the studio — so say so and require confirmation. This
+  // is milder than the edition-history version of this guard (there is only ever one
+  // snapshot now), but the surprise is the same: readers lose it.
+  const publishedId = typeof doc.publishedIssueId === 'string' ? doc.publishedIssueId : '';
+  const live = publishedId ? ((await db.collection(COL.published).findById(publishedId)) as Doc | null) : null;
+  const isLive = !!live && !live.unpublishedAt;
+  if (isLive && String(req.query.confirm ?? '') !== '1') {
+    res.status(409).json({
+      error: 'This magazine is live on Bulletins. Deleting the draft removes it from the newsstand too.',
+      reason: 'is-live',
+    });
+    return;
+  }
   await withIssueLock(doc._id, async () => {
     for (const p of await pagesFor(doc._id)) await db.collection(COL.pages).deleteOne(p._id);
-    // Remove the published Bulletin snapshot too, so deleting a draft can't leave
-    // an orphan edition live on the newsstand.
-    if (typeof doc.publishedIssueId === 'string' && doc.publishedIssueId) {
-      await db.collection(COL.published).deleteOne(doc.publishedIssueId);
-    }
+    // Remove the published Bulletin snapshot too, so deleting a draft can't leave an
+    // orphan edition on the newsstand. deleteOne is a soft delete, so this is
+    // recoverable in the database if it turns out to be a mistake.
+    if (live) await db.collection(COL.published).deleteOne(String(live._id));
     await db.collection(COL.magazines).deleteOne(doc._id);
   });
   res.json({ success: true });
@@ -931,12 +1024,22 @@ router.delete('/issues/:id', async (req, res) => {
 // no access to the editor draft. Publishing again (republish) refreshes the same
 // snapshot in place and bumps its version (so the PDF cache key changes).
 
-/** Freeze the issue's pages into the public snapshot shape. `scope:'full'`
- *  publishes every page; `'selected'` honours each page's selectedForPublish. */
-async function buildPublishSnapshot(magazineId: string, scope: 'full' | 'selected'): Promise<Doc[]> {
+/**
+ * Freeze the issue's pages into the public snapshot shape. `scope:'full'`
+ * publishes every page; `'selected'` honours each page's selectedForPublish.
+ *
+ * Returns the source docs alongside the snapshot: the approval gate has to read each
+ * page's review state, and re-loading them would risk gating a different set of pages
+ * than the one actually frozen. `all` is the FULL ordered list, which is the only
+ * honest source of page NUMBERS (a selected-scope snapshot renumbers from 0).
+ */
+async function buildPublishSnapshot(
+  magazineId: string,
+  scope: 'full' | 'selected',
+): Promise<{ snapshot: Doc[]; included: Doc[]; all: Doc[] }> {
   const all = await pagesFor(magazineId);
-  const pages = scope === 'full' ? all : all.filter((p) => p.selectedForPublish !== false);
-  return pages.map((p, i) => ({
+  const included = scope === 'full' ? all : all.filter((p) => p.selectedForPublish !== false);
+  const snapshot = included.map((p, i) => ({
     id: p._id,
     index: i,
     width: Number(p.width) || PAGE_W,
@@ -945,8 +1048,17 @@ async function buildPublishSnapshot(magazineId: string, scope: 'full' | 'selecte
     // Elements are already validated + sanitised on every write; the reader also
     // re-sanitises text on render (defense-in-depth, matching the v1 flow).
     elements: Array.isArray(p.elements) ? p.elements : [],
+    // The draft `rev` this page was frozen at — provenance for the snapshot itself,
+    // recording exactly which version of the page readers were given. Nothing reads it
+    // today ("edited since publish" is answered from timestamps, which needs no
+    // snapshot load), but it costs one integer and it is a fact about this record.
+    rev: Number(p.rev) || 0,
   })) as unknown as Doc[];
+  return { snapshot, included, all };
 }
+
+// The publish approval gate lives in lib/magazineV2/publishGate.ts — pure, and
+// therefore testable, which the route file is not.
 
 /** A page's own best cover URL: its background image, else its first image element. */
 function coverUrlOfPage(page: any): string {
@@ -961,7 +1073,21 @@ function coverUrlFromPages(pages: any[]): string {
   return coverUrlOfPage(pages[0]);
 }
 
-// publish (or republish) — owner only. Freezes selected pages into `issues`.
+/**
+ * publish (or republish) — the owner, AND only with `magazine.publish`.
+ *
+ * THE SECOND CHECK IS NEW, AND IT IS THE ONE THE PERMISSION IS NAMED AFTER. The
+ * router-level gate maps HTTP method → verb, and that mapping can only ever produce
+ * view/create/edit/delete — so `POST /publish` was arriving as an *edit*, and
+ * `magazine.publish` was enforced NOWHERE. Its single appearance in server code
+ * picked an icon in the share dialog. A role with Magazine Edit and the Publish box
+ * deliberately UNTICKED could put an edition on the public newsstand; the console
+ * said otherwise. (Podcast already does this properly — see the `podcast.publish`
+ * transition gate in routes/podcastEpisodes.)
+ *
+ * `can()` is used, not `canOn()`: ownership is already established above, and this
+ * asks the unscoped question "may this role publish magazines at all".
+ */
 router.post('/issues/:id/publish', async (req, res) => {
   const uid = req.account!.id;
   const doc = await loadIssue(req.params.id);
@@ -973,75 +1099,118 @@ router.post('/issues/:id/publish', async (req, res) => {
     res.status(403).json({ error: 'Only the owner can publish this magazine.' });
     return;
   }
-  if (isBusy(doc)) {
-    res.status(409).json({ error: 'The magazine is still processing. Try again shortly.' });
+  if (!can(req.account, 'magazine', 'publish')) {
+    res.status(403).json({ error: 'You do not have permission to publish magazines. Ask an administrator to take this one live.' });
     return;
   }
-  // Optional page selection (v1-parity): mark exactly these pages selectedForPublish
-  // (others deselected) before freezing the snapshot. When provided, the snapshot is
-  // scoped to the selection; otherwise fall back to the explicit `scope` (default 'full').
-  const hasSelection = Array.isArray(req.body?.selectedPageIds);
-  if (hasSelection) {
-    const sel = new Set((req.body.selectedPageIds as unknown[]).filter((x): x is string => typeof x === 'string'));
-    for (const p of await pagesFor(doc._id)) {
-      await db.collection(COL.pages).updateOne(p._id, { selectedForPublish: sel.has(p._id) });
+  // SERIALISED per issue, and re-checked inside the lock.
+  //
+  // Publishing writes the snapshot, the selection flags and the magazine's own state,
+  // and it shares this lock with the structural ops — so a publish can no longer freeze
+  // a snapshot halfway through someone's page reorder, and two concurrent publishes
+  // can't interleave their writes into a half-old, half-new edition.
+  const out = await withIssueLock<PublishResult>(doc._id, async () => {
+    // Re-read inside the lock: `doc` was loaded before it, so anything decided from
+    // magazine state has to come from a document that cannot change underneath it.
+    const current = await loadIssue(doc._id);
+    if (!current) return { status: 404, error: 'Not found' };
+    if (isBusy(current)) return { status: 409, error: 'The magazine is still processing. Try again shortly.' };
+    // Optional page selection (v1-parity): mark exactly these pages selectedForPublish
+    // (others deselected) before freezing the snapshot. When provided, the snapshot is
+    // scoped to the selection; otherwise fall back to the explicit `scope` (default 'full').
+    const hasSelection = Array.isArray(req.body?.selectedPageIds);
+    if (hasSelection) {
+      const sel = new Set((req.body.selectedPageIds as unknown[]).filter((x): x is string => typeof x === 'string'));
+      for (const p of await pagesFor(current._id)) {
+        await db.collection(COL.pages).updateOne(p._id, { selectedForPublish: sel.has(p._id) });
+      }
     }
-  }
-  const scope: 'full' | 'selected' = hasSelection || req.body?.scope === 'selected' ? 'selected' : 'full';
-  const pages = await buildPublishSnapshot(doc._id, scope);
-  if (pages.length === 0) {
-    res.status(400).json({ error: 'Select at least one page to publish.' });
+    const scope: 'full' | 'selected' = hasSelection || req.body?.scope === 'selected' ? 'selected' : 'full';
+    const { snapshot, included, all } = await buildPublishSnapshot(current._id, scope);
+    if (snapshot.length === 0) return { status: 400, error: 'Select at least one page to publish.' };
+    const numbers = new Map(all.map((p, i) => [String(p._id), i + 1]));
+    const blocked = publishApprovalBlock(current, included, (id) => numbers.get(String(id)) ?? 0);
+    if (blocked) return { status: 409, ...blocked };
+    const cover = (typeof current.coverImage === 'string' && current.coverImage) || coverUrlFromPages(snapshot);
+    const now = new Date().toISOString();
+    const existingId = typeof current.publishedIssueId === 'string' ? current.publishedIssueId : '';
+    const existing = existingId ? ((await db.collection(COL.published).findById(existingId)) as Doc | null) : null;
+
+    // ONE SNAPSHOT PER MAGAZINE, refreshed in place.
+    //
+    // The immutable-editions model (insert a document per edition, stamp the previous
+    // one `supersededAt`, keep a v1/v2 history) was built and then dropped: editing a
+    // published magazine no longer forks a version. So publishing is back to
+    // overwriting the same document — which also means the public URL never changes,
+    // and reader reactions and comments stay attached to it.
+    //
+    // `version` still increments, because the PDF cache key is
+    // `${id}:${version}:${updatedAt}` — without the bump a republished edition could
+    // serve the previous render.
+    const version = (typeof existing?.version === 'number' ? existing.version : 0) + 1;
+
+    let publishedIssueId: string;
+    if (existing) {
+      await db.collection(COL.published).updateOne(existingId, {
+        title: current.title,
+        coverImage: cover,
+        coverImageUrl: cover,
+        pages: snapshot,
+        pageCount: snapshot.length,
+        scope,
+        version,
+        publishedAt: now,
+        unpublishedAt: null,
+        updatedAt: now,
+      });
+      publishedIssueId = existingId;
+    } else {
+      publishedIssueId = await db.collection(COL.published).insertOne({
+        builder: 'v2', // discriminator — BulletinViewer renders these with the v2 canvas
+        magazineIdV2: current._id, // link back to the draft (for republish/cleanup)
+        magazineId: null, // v1 field kept null so canManageIssue falls back to createdByUserId
+        title: current.title,
+        edition: '',
+        coverImage: cover,
+        coverImageUrl: cover,
+        pages: snapshot,
+        pageCount: snapshot.length,
+        scope,
+        version,
+        publishedAt: now,
+        unpublishedAt: null,
+        createdByUserId: uid,
+        createdAt: now,
+        updatedAt: now,
+      });
+    }
+
+    await db.collection(COL.magazines).updateOne(current._id, {
+      status: 'published',
+      publishedIssueId,
+      publishedAt: now,
+      // Same instant as `publishedAt` on purpose: `needsRepublish` compares the two, so
+      // a freshly published magazine must read as in sync. Any later edit moves this (or
+      // a page's own updatedAt) past it, and the studio says "needs republish".
+      updatedAt: now,
+    });
+    return { status: 200, publishedIssueId, version };
+  });
+
+  if ('error' in out) {
+    res.status(out.status).json({
+      error: out.error,
+      ...(out.reason ? { reason: out.reason } : {}),
+      ...(out.pageNumbers ? { pageNumbers: out.pageNumbers } : {}),
+    });
     return;
   }
-  const cover = (typeof doc.coverImage === 'string' && doc.coverImage) || coverUrlFromPages(pages);
-  const now = new Date().toISOString();
-  const existingId = typeof doc.publishedIssueId === 'string' ? doc.publishedIssueId : '';
-  const existing = existingId ? ((await db.collection(COL.published).findById(existingId)) as Doc | null) : null;
-
-  let publishedIssueId: string;
-  if (existing) {
-    await db.collection(COL.published).updateOne(existingId, {
-      title: doc.title,
-      coverImage: cover,
-      coverImageUrl: cover,
-      pages,
-      pageCount: pages.length,
-      scope,
-      version: (typeof existing.version === 'number' ? existing.version : 1) + 1,
-      publishedAt: now,
-      unpublishedAt: null,
-      updatedAt: now,
-    });
-    publishedIssueId = existingId;
-  } else {
-    publishedIssueId = await db.collection(COL.published).insertOne({
-      builder: 'v2', // discriminator — BulletinViewer renders these with the v2 canvas
-      magazineIdV2: doc._id, // link back to the draft (for republish/cleanup)
-      magazineId: null, // v1 field kept null so canManageIssue falls back to createdByUserId
-      title: doc.title,
-      edition: '',
-      coverImage: cover,
-      coverImageUrl: cover,
-      pages,
-      pageCount: pages.length,
-      scope,
-      version: 1,
-      publishedAt: now,
-      unpublishedAt: null,
-      createdByUserId: uid,
-      createdAt: now,
-      updatedAt: now,
-    });
-  }
-
-  await db.collection(COL.magazines).updateOne(doc._id, {
-    status: 'published',
-    publishedIssueId,
-    publishedAt: now,
-    updatedAt: now,
-  });
   const fresh = await loadIssue(doc._id);
-  res.json({ issue: withViewer(fresh ?? doc, uid), publishedIssueId });
+  res.json({
+    issue: withViewer(fresh ?? doc, uid),
+    publishedIssueId: out.publishedIssueId,
+    version: out.version,
+  });
 });
 
 // unpublish — owner only. Hides the bulletin (keeps the snapshot so re-publish
@@ -1057,6 +1226,12 @@ router.post('/issues/:id/unpublish', async (req, res) => {
     res.status(403).json({ error: 'Only the owner can unpublish this magazine.' });
     return;
   }
+  // Same verb as publish: taking an edition off the newsstand is a distribution
+  // decision, and someone who cannot put it up should not be able to pull it down.
+  if (!can(req.account, 'magazine', 'publish')) {
+    res.status(403).json({ error: 'You do not have permission to publish or unpublish magazines.' });
+    return;
+  }
   const now = new Date().toISOString();
   const publishedIssueId = typeof doc.publishedIssueId === 'string' ? doc.publishedIssueId : '';
   if (publishedIssueId) {
@@ -1066,6 +1241,12 @@ router.post('/issues/:id/unpublish', async (req, res) => {
   const fresh = await loadIssue(doc._id);
   res.json({ issue: withViewer(fresh ?? doc, uid) });
 });
+
+// NOTE: `POST /issues/:id/revision` lived here. It was the key to the published-is-
+// read-only lock, opening a v2 draft while v1 stayed live. Both the lock and the
+// version were dropped (2026-08-11) — a published magazine is simply editable, and the
+// studio shows `needs_republish` until the owner republishes. Nothing needs unlocking,
+// so there is nothing for this endpoint to do.
 
 // toggle a page's selectedForPublish flag — owner only (drives "publish selected
 // pages": the publish snapshot with scope 'selected' honours these flags).
@@ -1087,18 +1268,19 @@ router.patch('/issues/:id/pages/:pageId/select', async (req, res) => {
   }
   const selected = req.body?.selected !== false;
   await db.collection(COL.pages).updateOne(page._id, { selectedForPublish: selected, updatedAt: new Date().toISOString() });
-  res.json({ pages: (await pagesFor(doc._id)).map(pageSummary) });
+  res.json({ pages: (await pagesFor(doc._id)).map((p) => pageSummary(p, doc)) });
 });
 
-// ── Collaborators (Share) — owner only, mirrors the v1 magazines API ─────────
-// Manage/edit capability is derived from the collaborator's STAFF role; the
-// sharer only chooses WHICH pages they may edit ('all' or specific page ids).
+// ── Collaborators (Share) — owner only ──────────────────────────────────────
+// A share decides ONE thing: which pages they may edit ('all' or specific page
+// ids). That choice is also what puts a page in REVIEW scope, so it is the input
+// to the approval flow, not a convenience. There is no per-magazine role.
 
-// Per-magazine collaborator badge (MagRole), not a staff role — grants nothing
-// on its own. Derived from a permission because `user.roles[]` no longer carries
-// staff slugs; see the twin in routes/magazines.ts.
-const magRoleForStaff = async (identity: IdentityUser): Promise<'editor' | 'contributor'> =>
-  (await identityCan(identity, 'magazine.publish')) ? 'editor' : 'contributor';
+// NOTE: `magRoleForStaff` is gone. It read `magazine.publish` to stamp a
+// collaborator as 'editor' or 'contributor' — a badge its own comment admitted
+// "grants nothing on its own", and which the share dialog nonetheless rendered as
+// a shield and the word "Editor". The permission now gates the publish routes for
+// real (see POST /publish), and a non-owner with access is simply a collaborator.
 
 // add / update a collaborator (by email) — staff accounts only
 router.post('/issues/:id/collaborators', async (req, res) => {
@@ -1141,7 +1323,6 @@ router.post('/issues/:id/collaborators', async (req, res) => {
     userId: acct.id,
     email: acct.email,
     displayName: acct.name,
-    role: await magRoleForStaff(acct),
     pageIds,
   };
   const others = collaboratorsOf(doc).filter((c) => c.userId !== acct.id);
@@ -1230,7 +1411,448 @@ router.post('/issues/:id/reset', async (req, res) => {
     });
   });
   const fresh = await loadIssue(doc._id);
-  res.json({ issue: withViewer(fresh ?? doc, uid), pages: (await pagesFor(doc._id)).map(pageSummary) });
+  res.json({ issue: withViewer(fresh ?? doc, uid), pages: (await pagesFor(doc._id)).map((p) => pageSummary(p, doc)) });
+});
+
+// ── Submissions & approval (the per-page review axis) ───────────────────────
+//
+// A SUBMISSION IS AN EVENT OVER A SET OF PAGES; the state lives on each page.
+// That is what resolves "per page or per contributor" — a contributor hits Submit
+// once for all three of their pages, and it becomes one event, three transitions
+// and one email naming pages 4, 5 and 6.
+//
+// Every endpoint here therefore takes `pageIds[]`, never a single page, and the
+// batch is validated in FULL before anything is written: these routes email
+// someone naming specific pages, so a half-applied batch would send a message
+// about pages that never moved.
+//
+// See docs/MAGAZINE-V2-SUBMISSIONS-PLAN.md §5.
+
+/** A whole issue at once must fit — "approve everything" is the common case — so
+ *  this tracks the page cap rather than guessing a round number under it. */
+const MAX_REVIEW_BATCH = MAX_PAGES_PER_ISSUE;
+const MAX_REVIEW_NOTE = 2000;
+
+/** Who did it, for the audit trail. Name falls back to email so a row is never anonymous. */
+function actorOf(req: any): { id: string; name: string } {
+  return { id: req.account!.id, name: req.account!.name || req.account!.email || 'Someone' };
+}
+
+interface ReviewCtx {
+  issue: Doc;
+  role: MagRole;
+  /** The requested pages, in page order. */
+  batch: Doc[];
+  note: string;
+  /** 1-based page number, resolved from the full ordered page list. */
+  numberOf: (pageId: string) => number;
+}
+
+/**
+ * The shared front half of submit / approve / request-changes: membership, the note,
+ * and the pageIds[] batch resolved to real page docs.
+ *
+ * Review decisions stay available on a PUBLISHED magazine, because editing does too:
+ * a collaborator can revise their page after the edition went out, submit it again,
+ * and the owner approves and republishes. Nothing about publishing closes the flow.
+ */
+async function loadReviewCtx(
+  req: any,
+  res: any,
+  opts: { ownerOnly?: boolean; noteRequired?: boolean } = {},
+): Promise<ReviewCtx | null> {
+  const uid = req.account!.id;
+  const issue = await loadIssue(req.params.id);
+  const role = issue ? roleOnMagazine(issue, uid) : null;
+  if (!issue || !role) {
+    res.status(404).json({ error: 'Not found' });
+    return null;
+  }
+  if (opts.ownerOnly && !isOwner(role)) {
+    res.status(403).json({ error: 'Only the owner can approve pages or send them back.' });
+    return null;
+  }
+
+  const note = typeof req.body?.note === 'string' ? req.body.note.trim().slice(0, MAX_REVIEW_NOTE) : '';
+  if (opts.noteRequired && !note) {
+    res.status(400).json({ error: 'Say what needs changing — a note is required when you send pages back.' });
+    return null;
+  }
+
+  const raw = req.body?.pageIds;
+  if (!Array.isArray(raw) || raw.length === 0) {
+    res.status(400).json({ error: 'pageIds[] is required.' });
+    return null;
+  }
+  if (raw.length > MAX_REVIEW_BATCH) {
+    res.status(400).json({ error: `At most ${MAX_REVIEW_BATCH} pages at a time.` });
+    return null;
+  }
+  const all = await pagesFor(issue._id);
+  const numbers = new Map(all.map((p, i) => [String(p._id), i + 1]));
+  const want = new Set(raw.map(String));
+  const batch = all.filter((p) => want.has(String(p._id)));
+  // Length mismatch means an id belongs to another magazine or no longer exists.
+  // Refuse the whole batch rather than silently acting on the subset that resolved.
+  if (batch.length !== want.size) {
+    res.status(404).json({ error: 'One or more of those pages is not in this magazine.' });
+    return null;
+  }
+  return { issue, role, batch, note, numberOf: (id) => numbers.get(String(id)) ?? 0 };
+}
+
+/**
+ * Append to the audit trail. Best-effort by design: the transition it describes is
+ * already committed, so losing a row must not fail the request that earned it —
+ * the same reasoning as the chat persist in the agent route.
+ */
+async function recordReviews(
+  issue: Doc,
+  actor: { id: string; name: string },
+  action: ReviewAction | 'page-removed',
+  entries: { page: Doc; from: PageReview; to: PageReview | null; pageNumber: number }[],
+  note: string,
+): Promise<void> {
+  if (entries.length === 0) return;
+  const at = new Date().toISOString();
+  try {
+    for (const e of entries) {
+      await db.collection(COL.reviews).insertOne({
+        magazineId: String(issue._id),
+        pageId: String(e.page._id),
+        // The page NUMBER at the time — pages get reordered, so the id alone can't
+        // reconstruct what the actor was looking at.
+        pageNumber: e.pageNumber,
+        action,
+        from: e.from,
+        to: e.to,
+        rev: Number(e.page.rev) || 0,
+        actorId: actor.id,
+        actorName: actor.name,
+        note,
+        at,
+      });
+    }
+  } catch (err) {
+    console.warn('[magazineV2] review audit write failed:', err instanceof Error ? err.message : err);
+  }
+}
+
+/**
+ * Group the affected pages by the collaborator they concern.
+ *
+ * Approving eight pages split between two people must send TWO emails, each
+ * naming that person's own pages — not eight emails, and not one email listing
+ * pages the recipient has nothing to do with.
+ */
+function recipientsFor(issue: Doc, pages: Doc[], numberOf: (id: string) => number) {
+  const byUser = new Map<string, { collaborator: V2Collaborator; pageNumbers: number[] }>();
+  for (const p of pages) {
+    for (const c of assigneesOfPage(issue, p._id)) {
+      const entry = byUser.get(c.userId) ?? { collaborator: c, pageNumbers: [] };
+      entry.pageNumbers.push(numberOf(p._id));
+      byUser.set(c.userId, entry);
+    }
+  }
+  return [...byUser.values()];
+}
+
+/** submit — a collaborator sends their assigned pages to the owner. */
+router.post('/issues/:id/pages/submit', async (req, res) => {
+  const ctx = await loadReviewCtx(req, res);
+  if (!ctx) return;
+  const uid = req.account!.id;
+  // THE OWNER NEVER SUBMITS. They are the approver, so self-submission is pure
+  // ceremony — and it would lock them out of their own pages for no benefit.
+  if (isOwner(ctx.role)) {
+    res.status(400).json({
+      error: "You own this magazine, so your pages don't need submitting — publish when the issue is ready.",
+      reason: 'owner-does-not-submit',
+    });
+    return;
+  }
+  for (const p of ctx.batch) {
+    if (!canViewPage(ctx.issue, uid, p._id)) {
+      res.status(403).json({ error: 'You can only submit the pages shared with you.' });
+      return;
+    }
+    const why = reviewTransitionError('submit', p);
+    if (why) {
+      res.status(409).json({ error: `Page ${ctx.numberOf(p._id)} is ${why}.`, reason: 'review-state' });
+      return;
+    }
+  }
+
+  const now = new Date().toISOString();
+  const moved: Doc[] = [];
+  for (const p of ctx.batch) {
+    // CAS on the review state so two tabs can't both submit and double-notify the
+    // owner. Deliberately NOT on `rev`: an autosave landing between the check and
+    // here is the submitter's own work, and the owner reviews whatever the page
+    // holds when they open it. Approve is the transition that must pin `rev`.
+    const ok = await db.collection(COL.pages).updateOneIf(p._id, reviewIs('in_progress'), {
+      review: 'submitted',
+      submittedBy: uid,
+      submittedAt: now,
+      // The submitter's own words, kept SEPARATE from `reviewNote`. Sharing one
+      // field would overwrite the owner's "fix the headline" with the resubmit's
+      // "done", and the UI would then attribute the wrong words to the owner.
+      submitNote: ctx.note,
+      updatedAt: now,
+    });
+    if (ok) moved.push(p);
+  }
+  if (moved.length === 0) {
+    res.status(409).json({ error: 'Those pages were already submitted a moment ago.', reason: 'review-state' });
+    return;
+  }
+  const pageNumbers = moved.map((p) => ctx.numberOf(p._id));
+  await recordReviews(
+    ctx.issue,
+    actorOf(req),
+    'submit',
+    moved.map((p) => ({ page: p, from: 'in_progress' as PageReview, to: 'submitted' as PageReview, pageNumber: ctx.numberOf(p._id) })),
+    ctx.note,
+  );
+
+  // Notify the owner. Best-effort: the submission is already recorded, so a mail
+  // failure is REPORTED, never fatal — same contract as the share email.
+  let emailed = false;
+  let emailError: string | undefined;
+  const owner = (await db.collection('users').findById(String(ctx.issue.ownerId))) as Doc | null;
+  if (owner?.email) {
+    const r = await notifySubmitted({
+      to: String(owner.email),
+      title: String(ctx.issue.title ?? 'Untitled magazine'),
+      path: magazinePath(String(ctx.issue._id), 'v2'),
+      pageNumbers,
+      submittedBy: actorOf(req).name,
+      note: ctx.note || undefined,
+    });
+    emailed = r.delivered;
+    emailError = r.error;
+  } else {
+    emailError = "The owner's account has no email address, so we couldn't notify them.";
+  }
+
+  res.json({
+    // visiblePages, not the raw list: this is the ONE review route a page-scoped
+    // collaborator calls, and every other read they get is filtered the same way.
+    // Handing back summaries of pages nobody shared with them would leak the shape
+    // of the whole issue through the reply to their own submission.
+    pages: visiblePages(ctx.issue, uid, await pagesFor(ctx.issue._id)).map((p) => pageSummary(p, ctx.issue)),
+    submitted: moved.length,
+    skipped: ctx.batch.length - moved.length,
+    label: pageNumbersLabel(pageNumbers),
+    emailed,
+    emailError,
+  });
+});
+
+/** approve — owner only. Records the rev it was approved AT (§4). */
+router.post('/issues/:id/pages/approve', async (req, res) => {
+  const ctx = await loadReviewCtx(req, res, { ownerOnly: true });
+  if (!ctx) return;
+  for (const p of ctx.batch) {
+    const why = reviewTransitionError('approve', p);
+    if (why) {
+      res.status(409).json({ error: `Page ${ctx.numberOf(p._id)} is ${why}.`, reason: 'review-state' });
+      return;
+    }
+  }
+
+  const now = new Date().toISOString();
+  const uid = req.account!.id;
+  const moved: Doc[] = [];
+  const conflicted: number[] = [];
+  for (const p of ctx.batch) {
+    const rev = Number(p.rev) || 0;
+    // Pin `rev` AS WELL AS the review state. `approvedAtRev` is the entire basis of
+    // isApprovalStale: record a rev the page has already moved past and the approval
+    // reads as fresh while the content has changed underneath it — a page published
+    // as "approved" that nobody approved in its current form.
+    const ok = await db.collection(COL.pages).updateOneIf(p._id, { ...reviewIs(reviewOf(p)), rev }, {
+      review: 'approved',
+      approvedAtRev: rev,
+      reviewedBy: uid,
+      reviewedAt: now,
+      // Approving with no note deliberately CLEARS the last feedback: the "fix the
+      // headline" note is resolved once the page is approved, and leaving it on the
+      // page would make the board show outstanding feedback on approved work. The
+      // words themselves are never lost — the audit trail keeps every note.
+      reviewNote: ctx.note,
+      updatedAt: now,
+    });
+    if (ok) moved.push(p);
+    else conflicted.push(ctx.numberOf(p._id));
+  }
+  if (moved.length === 0) {
+    res.status(409).json({
+      error: `${conflicted.length === 1 ? `Page ${conflicted[0]}` : 'Those pages'} changed while you were approving — reload and try again.`,
+      reason: 'review-state',
+    });
+    return;
+  }
+
+  const actor = actorOf(req);
+  await recordReviews(
+    ctx.issue,
+    actor,
+    'approve',
+    moved.map((p) => ({ page: p, from: reviewOf(p), to: 'approved' as PageReview, pageNumber: ctx.numberOf(p._id) })),
+    ctx.note,
+  );
+
+  const { emailed, emailErrors } = await mailReviewed(ctx, moved, actor, 'approved');
+  res.json({
+    pages: (await pagesFor(ctx.issue._id)).map((p) => pageSummary(p, ctx.issue)),
+    approved: moved.length,
+    skipped: conflicted.length,
+    label: pageNumbersLabel(moved.map((p) => ctx.numberOf(p._id))),
+    emailed,
+    emailErrors,
+  });
+});
+
+/**
+ * request-changes — owner only, and it DOUBLES AS REOPEN.
+ *
+ * Editing a submitted or approved page is refused with "ask the owner to reopen
+ * it", so this is the door that message points at: it accepts `approved` as well
+ * as `submitted`. `note` is required — sending work back without saying why is the
+ * single most common way a review flow gets resented.
+ */
+router.post('/issues/:id/pages/request-changes', async (req, res) => {
+  const ctx = await loadReviewCtx(req, res, { ownerOnly: true, noteRequired: true });
+  if (!ctx) return;
+  for (const p of ctx.batch) {
+    const why = reviewTransitionError('request-changes', p);
+    if (why) {
+      res.status(409).json({ error: `Page ${ctx.numberOf(p._id)} is ${why}.`, reason: 'review-state' });
+      return;
+    }
+  }
+
+  const now = new Date().toISOString();
+  const uid = req.account!.id;
+  const moved: Doc[] = [];
+  const conflicted: number[] = [];
+  for (const p of ctx.batch) {
+    const ok = await db.collection(COL.pages).updateOneIf(p._id, reviewIs(reviewOf(p)), {
+      review: 'in_progress',
+      // The round counter is what the board derives its "Needs changes" column
+      // from — `revisions` is not a state, it is in_progress with a round > 0.
+      reviewRound: reviewRoundOf(p) + 1,
+      reviewNote: ctx.note,
+      reviewedBy: uid,
+      reviewedAt: now,
+      // Clear the approval rev on the way out. Nothing reads it while review is
+      // 'in_progress', but leaving a stale value behind invites a future path to
+      // approve without setting it and inherit an approval that was never given.
+      approvedAtRev: null,
+      updatedAt: now,
+    });
+    if (ok) moved.push(p);
+    else conflicted.push(ctx.numberOf(p._id));
+  }
+  if (moved.length === 0) {
+    res.status(409).json({
+      error: `${conflicted.length === 1 ? `Page ${conflicted[0]}` : 'Those pages'} changed while you were reviewing — reload and try again.`,
+      reason: 'review-state',
+    });
+    return;
+  }
+
+  const actor = actorOf(req);
+  await recordReviews(
+    ctx.issue,
+    actor,
+    'request-changes',
+    moved.map((p) => ({ page: p, from: reviewOf(p), to: 'in_progress' as PageReview, pageNumber: ctx.numberOf(p._id) })),
+    ctx.note,
+  );
+
+  const { emailed, emailErrors } = await mailReviewed(ctx, moved, actor, 'changes-requested');
+  res.json({
+    pages: (await pagesFor(ctx.issue._id)).map((p) => pageSummary(p, ctx.issue)),
+    returned: moved.length,
+    skipped: conflicted.length,
+    label: pageNumbersLabel(moved.map((p) => ctx.numberOf(p._id))),
+    emailed,
+    emailErrors,
+  });
+});
+
+/** One email per affected collaborator, naming only their own pages. */
+async function mailReviewed(
+  ctx: ReviewCtx,
+  moved: Doc[],
+  actor: { id: string; name: string },
+  decision: 'approved' | 'changes-requested',
+): Promise<{ emailed: number; emailErrors: string[] }> {
+  const title = String(ctx.issue.title ?? 'Untitled magazine');
+  const path = magazinePath(String(ctx.issue._id), 'v2');
+  let emailed = 0;
+  const emailErrors: string[] = [];
+  for (const { collaborator, pageNumbers } of recipientsFor(ctx.issue, moved, ctx.numberOf)) {
+    if (!collaborator.email) continue;
+    const r = await notifyReviewed({
+      to: collaborator.email,
+      title,
+      path,
+      pageNumbers,
+      reviewedBy: actor.name,
+      decision,
+      note: ctx.note || undefined,
+    });
+    if (r.delivered) emailed++;
+    else if (r.error) emailErrors.push(`${collaborator.email}: ${r.error}`);
+  }
+  return { emailed, emailErrors };
+}
+
+/**
+ * The audit trail, newest first — paginated with a `before` cursor like /chat.
+ *
+ * TIGHTER than the plan's "any member": a page-scoped collaborator sees only rows
+ * for pages shared with them. Everywhere else in this router an unshared page is a
+ * 404, so leaking "page 7 was approved" through the trail would be the one
+ * inconsistency in an otherwise strict share-only model.
+ */
+router.get('/issues/:id/reviews', async (req, res) => {
+  const uid = req.account!.id;
+  const issue = await loadIssue(req.params.id);
+  if (!issue || !roleOnMagazine(issue, uid)) {
+    res.status(404).json({ error: 'Not found' });
+    return;
+  }
+  const limit = Math.min(100, Math.max(1, Number(req.query.limit) || 50));
+  const match: Record<string, unknown> = { magazineId: String(issue._id), deletedAt: null };
+  const visible = editablePageIds(issue, uid);
+  if (visible !== 'all') match.pageId = { $in: visible.map(String) };
+  if (typeof req.query.before === 'string' && req.query.before) match.at = { $lt: req.query.before };
+  const rows = (await db.collection(COL.reviews).aggregate([
+    { $match: match },
+    { $sort: { at: -1 } },
+    { $limit: limit + 1 },
+  ])) as Doc[];
+  const hasMore = rows.length > limit;
+  const batch = rows.slice(0, limit);
+  res.json({
+    reviews: batch.map((r) => ({
+      id: String(r._id),
+      pageId: String(r.pageId ?? ''),
+      pageNumber: typeof r.pageNumber === 'number' ? r.pageNumber : null,
+      action: String(r.action ?? ''),
+      from: r.from ?? null,
+      to: r.to ?? null,
+      actorName: String(r.actorName ?? ''),
+      note: String(r.note ?? ''),
+      at: String(r.at ?? ''),
+    })),
+    hasMore,
+    oldestAt: batch.length > 0 ? String(batch[batch.length - 1]!.at ?? '') : null,
+  });
 });
 
 // ── Page structure (owner only, serialised per issue) ───────────────────────
@@ -1267,7 +1889,7 @@ router.post('/issues/:id/pages', async (req, res) => {
     ids.splice(pos, 0, newId);
     await writeOrder(ids);
     await db.collection(COL.magazines).updateOne(doc._id, { updatedAt: new Date().toISOString() });
-    return { status: 201, pages: (await pagesFor(doc._id)).map(pageSummary) };
+    return { status: 201, pages: (await pagesFor(doc._id)).map((p) => pageSummary(p, doc)) };
   });
   if (out.error) {
     res.status(out.status).json({ error: out.error });
@@ -1309,7 +1931,7 @@ router.post('/issues/:id/pages/:pageId/duplicate', async (req, res) => {
     ids.splice(srcIdx + 1, 0, newId);
     await writeOrder(ids);
     await db.collection(COL.magazines).updateOne(doc._id, { updatedAt: now });
-    return { status: 201, pages: (await pagesFor(doc._id)).map(pageSummary) };
+    return { status: 201, pages: (await pagesFor(doc._id)).map((p) => pageSummary(p, doc)) };
   });
   if (out.error) {
     res.status(out.status).json({ error: out.error });
@@ -1319,24 +1941,116 @@ router.post('/issues/:id/pages/:pageId/duplicate', async (req, res) => {
 });
 
 // delete a page (never the last one)
+/**
+ * Deleting a page a collaborator has SUBMITTED — decided: allow, but warn and notify.
+ *
+ * A first attempt is refused with a 409 naming who submitted it, so the owner is
+ * told what they are about to discard; `?confirm=1` goes through. Only `submitted`
+ * warns: an `approved` page was signed off by the owner themselves, so deleting it
+ * needs no second opinion from them.
+ */
+type DeletePageResult = StructResult & {
+  reason?: string;
+  pageNumber?: number;
+  submittedBy?: { name: string; email: string }[];
+  /** Set when a submitted page WAS deleted — who to tell, once out of the lock. */
+  notify?: { pageNumber: number; recipients: V2Collaborator[] };
+};
+
 router.delete('/issues/:id/pages/:pageId', async (req, res) => {
   const doc = await requireOwnedIssue(req, res);
   if (!doc) return;
-  const out = await withIssueLock<StructResult>(doc._id, async () => {
+  const confirmed = String(req.query.confirm ?? '') === '1';
+  const actor = actorOf(req);
+  const out = await withIssueLock<DeletePageResult>(doc._id, async () => {
     const pages = await pagesFor(doc._id);
     if (pages.length <= 1) return { status: 409, error: 'A magazine must have at least one page.' };
-    const victim = pages.find((p) => p._id === req.params.pageId);
-    if (!victim) return { status: 404, error: 'Page not found' };
+    const victimIndex = pages.findIndex((p) => p._id === req.params.pageId);
+    if (victimIndex === -1) return { status: 404, error: 'Page not found' };
+    const victim = pages[victimIndex]!;
+    const pageNumber = victimIndex + 1;
+
+    // Re-read inside the lock before consulting `collaborators` (see the prune below).
+    const current = (await loadIssue(doc._id)) ?? doc;
+    const wasSubmitted = reviewOf(victim) === 'submitted';
+    // Narrow to the person who ACTUALLY submitted it, not everyone the page is shared
+    // with. An 'all'-scoped collaborator is an assignee of every page, and telling them
+    // "a page you had submitted was removed" about someone else's submission would
+    // simply be false. If that person has since been un-shared they are nobody to
+    // notify — they can no longer see the magazine at all.
+    const submitterId = typeof victim.submittedBy === 'string' ? victim.submittedBy : '';
+    const assignees = wasSubmitted ? assigneesOfPage(current, victim._id) : [];
+    const interested = submitterId ? assignees.filter((c) => c.userId === submitterId) : assignees;
+    if (wasSubmitted && !confirmed) {
+      const who = interested.map((c) => c.displayName || c.email).filter(Boolean).join(', ');
+      return {
+        status: 409,
+        error: `Page ${pageNumber} has been submitted for review${who ? ` by ${who}` : ''}. Deleting it discards that work.`,
+        reason: 'page-submitted',
+        pageNumber,
+        submittedBy: interested.map((c) => ({ name: c.displayName, email: c.email })),
+      };
+    }
+    // Audit BEFORE the delete, so the record of who submitted what outlives the
+    // page it describes — afterwards there is nothing left to read a rev off.
+    if (wasSubmitted) {
+      await recordReviews(current, actor, 'page-removed', [{ page: victim, from: 'submitted', to: null, pageNumber }], '');
+    }
+
     await db.collection(COL.pages).deleteOne(victim._id);
     await writeOrder(pages.filter((p) => p._id !== victim._id).map((p) => p._id));
-    await db.collection(COL.magazines).updateOne(doc._id, { updatedAt: new Date().toISOString() });
-    return { status: 200, pages: (await pagesFor(doc._id)).map(pageSummary) };
+    // Prune the deleted page from every collaborator's assignment. Without this the
+    // id lingers in collaborators[].pageIds forever: harmless for access (a stale id
+    // never matches a page) but it makes the share dialog and the review board report
+    // "3 pages assigned" when one of them no longer exists.
+    //
+    // RE-READ the magazine AGAIN, immediately before the write. `doc` was loaded by
+    // requireOwnedIssue BEFORE the lock, so pruning from it would write back a whole
+    // `collaborators` array assembled from stale data — silently dropping a
+    // collaborator added between the load and here (two owner tabs, or a share landing
+    // mid-delete). Collaborator routes don't take this lock, so the read is repeated
+    // here rather than reusing `current` from the top of the block: same care, and the
+    // narrowest window we can get.
+    const latest = (await loadIssue(doc._id)) ?? current;
+    const pruned = pruneDeletedPageId(latest, victim._id);
+    const update: Record<string, unknown> = { updatedAt: new Date().toISOString() };
+    if (pruned) update.collaborators = pruned;
+    await db.collection(COL.magazines).updateOne(doc._id, update);
+    return {
+      status: 200,
+      pages: (await pagesFor(doc._id)).map((p) => pageSummary(p, doc)),
+      ...(wasSubmitted && interested.length > 0 ? { notify: { pageNumber, recipients: interested } } : {}),
+    };
   });
   if (out.error) {
-    res.status(out.status).json({ error: out.error });
+    res.status(out.status).json({
+      error: out.error,
+      ...(out.reason ? { reason: out.reason, pageNumber: out.pageNumber, submittedBy: out.submittedBy } : {}),
+    });
     return;
   }
-  res.json({ pages: out.pages });
+  // Tell whoever submitted it — outside the lock, so a slow mail provider can't
+  // hold up the next structural op on this issue. The delete is already committed,
+  // so a failure is reported and never fatal.
+  let emailed = 0;
+  const emailErrors: string[] = [];
+  if (out.notify) {
+    const title = String(doc.title ?? 'Untitled magazine');
+    const path = magazinePath(String(doc._id), 'v2');
+    for (const c of out.notify.recipients) {
+      if (!c.email) continue;
+      const r = await notifyPageRemoved({
+        to: c.email,
+        title,
+        path,
+        pageNumbers: [out.notify.pageNumber],
+        removedBy: actor.name,
+      });
+      if (r.delivered) emailed++;
+      else if (r.error) emailErrors.push(`${c.email}: ${r.error}`);
+    }
+  }
+  res.json({ pages: out.pages, emailed, emailErrors });
 });
 
 // reorder — move page from → to (array positions)
@@ -1355,7 +2069,7 @@ router.patch('/issues/:id/pages/reorder', async (req, res) => {
     ids.splice(to, 0, moved!);
     await writeOrder(ids);
     await db.collection(COL.magazines).updateOne(doc._id, { updatedAt: new Date().toISOString() });
-    return { status: 200, pages: (await pagesFor(doc._id)).map(pageSummary) };
+    return { status: 200, pages: (await pagesFor(doc._id)).map((p) => pageSummary(p, doc)) };
   });
   if (out.error) {
     res.status(out.status).json({ error: out.error });
@@ -1410,8 +2124,22 @@ async function loadEditablePage(req: any, res: any): Promise<{ issue: Doc; page:
     res.status(404).json({ error: 'Page not found' });
     return null;
   }
-  if (!canEditPage(issue, uid, page._id)) {
+  // ONE gate for every write path — element add/patch/delete, the AI agent, and
+  // Fill/Adjust. 403 means "not yours"; 409 means "yours, but not right now", which
+  // is a state conflict the client resolves by acting, not by re-authenticating.
+  const block = pageEditBlock(issue, uid, page._id, page);
+  if (block === 'not-assigned') {
     res.status(403).json({ error: 'You can only edit the pages shared with you.' });
+    return null;
+  }
+  if (block === 'page-submitted' || block === 'page-approved') {
+    res.status(409).json({
+      error:
+        block === 'page-submitted'
+          ? 'This page is submitted for review — ask the owner to reopen it.'
+          : 'This page is approved — ask the owner to reopen it before editing.',
+      reason: block,
+    });
     return null;
   }
   return { issue, page };
@@ -1453,7 +2181,10 @@ router.get('/issues/:id/pages/:pageId', async (req, res) => {
     return;
   }
   const page = await pageById(req.params.pageId);
-  if (!page || page.magazineId !== issue._id || !canEditPage(issue, uid, page._id)) {
+  // canVIEWPage, not canEditPage: a collaborator must still be able to read a page
+  // they have submitted — to check what they sent, or to read the feedback on it.
+  // Gating reads on the edit rule would 404 their own submitted work.
+  if (!page || page.magazineId !== issue._id || !canViewPage(issue, uid, page._id)) {
     res.status(404).json({ error: 'Page not found' });
     return;
   }
@@ -1606,6 +2337,12 @@ router.post('/issues/:id/pages/:pageId/agent', rateLimit('mag2-agent', 20, 60_00
       sourceText,
       attachedImages: attachedImages.length > 0 ? attachedImages : undefined,
       pageCount: (await pagesFor(page.magazineId)).length,
+      // Only the owner may add/remove/reorder pages, so only the owner is offered
+      // the tools that stage those changes. Without this the model happily proposes
+      // "add a page" to a contributor, the apply hits an owner-only endpoint, and the
+      // client's keep-going `catch` swallows the 403 — "Applied the assistant's
+      // changes", nothing changed.
+      canEditStructure: isOwner(roleOnMagazine(ctx.issue, req.account!.id)),
     });
     // Persist this turn to the magazine's chat thread (page-tagged) so the
     // conversation survives reloads. Best-effort: a persistence hiccup must not

@@ -29,8 +29,9 @@ import { SIDE_NAV, navPath } from '../../newsroom/constants';
 const WHERE_ALIAS: Record<string, string> = {
   // Your own drafts and revisions live in the Draft column of the board.
   drafts: 'workflow',
-  // The one review queue is the Editor Hub's.
-  review: 'editor-hub',
+  // The review queue was Editor Hub's; that screen is gone and the same stories
+  // are the board's Submitted column.
+  review: 'workflow',
   // v1 Magazine Studio → the Magazine Builder.
   'bulletin-templates': 'magazine',
   // The module id was renamed when it gained a permission (`magazine.view`);

@@ -1,5 +1,7 @@
 // users          _id, name, email, isAdmin, lastLogin, createdAt, tokenVersion
-// roles          _id, name, permissions[], modules[], workflowStages[], isSuper
+// roles          _id, name, permissions[], scopes{}, isSuper
+//                (`modules` and `workflowStages` are DERIVED from permissions in
+//                 projectRole() — they are no longer stored on the document)
 // adminRoles     _id, userId, roleId, assignedAt        ← the LINK, admins only
 // organisations  _id, name, ownerUserId, description, bio
 // orgMembers     _id, userId, orgId, role          'owner' | 'manager' | 'member'

@@ -74,6 +74,114 @@
 }
 
 @layer utilities {
+  /* ── Waiting states: shimmer, not spin ───────────────────────────────────
+     A spinner says "something is happening". Text that shimmers says the same
+     thing AND says what. Used by the magazine studio's build screens
+     (editor-v2/BuildProgress.tsx); see editor-v2/buildStatus.ts for the rule
+     that keeps the words honest.
+
+     The sweep is a masked gradient, so it lights up the GLYPHS rather than
+     drawing a grey box over them: the copy stays readable the whole time,
+     which is the point — the user is meant to read it, not watch it.
+
+     `background-size` is 200% and the animation slides one full width, so the
+     highlight crosses the text once per cycle with no visible seam.
+
+     IT HIDES THE GLYPHS WITH `-webkit-text-fill-color`, NOT `color`. That is what
+     lets the gradient be built from `currentColor`: `color` stays whatever the
+     surrounding text is, so one class shimmers correctly on the studio's near-black
+     canvas, on the light library page and on a gold banner, with no per-site
+     colour props to keep in sync. Setting `color: transparent` instead — the usual
+     recipe — would make `currentColor` resolve to transparent and the text would
+     simply vanish. */
+  .shimmer-text {
+    background-image: linear-gradient(
+      100deg,
+      color-mix(in oklab, currentColor 48%, transparent) 30%,
+      currentColor 48%,
+      color-mix(in oklab, currentColor 48%, transparent) 66%
+    );
+    background-size: 200% 100%;
+    background-position: 180% 0;
+    -webkit-background-clip: text;
+    background-clip: text;
+    -webkit-text-fill-color: transparent;
+    animation: shimmer-sweep 2.6s linear infinite;
+  }
+
+  /* A single line replacing another. Rises INTO place (not out of nowhere) so
+     the eye reads it as the next step in a sequence rather than a flicker. */
+  .build-line-in {
+    animation: build-line-in 420ms cubic-bezier(0.2, 0.8, 0.2, 1) both;
+  }
+
+  /* The indeterminate bar: a short segment travelling a fixed track. Distinct
+     from the determinate bar ON PURPOSE — a sweep means "no count available",
+     a filled proportion means "this many of that many are done". */
+  .track-sweep {
+    animation: track-sweep 1.5s cubic-bezier(0.4, 0, 0.6, 1) infinite;
+  }
+
+  /* A page tile arriving. Real pages only — one per page the server sent. */
+  .tile-pop {
+    animation: tile-pop 380ms cubic-bezier(0.2, 0.9, 0.3, 1.2) both;
+  }
+
+  @keyframes shimmer-sweep {
+    to {
+      background-position: -20% 0;
+    }
+  }
+  @keyframes build-line-in {
+    from {
+      opacity: 0;
+      transform: translateY(0.45em);
+    }
+    to {
+      opacity: 1;
+      transform: none;
+    }
+  }
+  @keyframes track-sweep {
+    from {
+      transform: translateX(-100%);
+    }
+    to {
+      transform: translateX(340%);
+    }
+  }
+  @keyframes tile-pop {
+    from {
+      opacity: 0;
+      transform: scale(0.86);
+    }
+    to {
+      opacity: 1;
+      transform: none;
+    }
+  }
+
+  /* Motion is the decoration here, never the message: with it suppressed the
+     text must still be legible and the progress still readable. So the shimmer
+     resolves to plain text and the bars simply stop moving — nothing is hidden,
+     because nothing was being carried by the animation alone. */
+  @media (prefers-reduced-motion: reduce) {
+    .shimmer-text {
+      animation: none;
+      background-image: none;
+      -webkit-background-clip: border-box;
+      background-clip: border-box;
+      /* `color` was never overridden, so restoring the fill restores the exact
+         colour the surrounding text would have had. */
+      -webkit-text-fill-color: currentColor;
+    }
+    .build-line-in,
+    .track-sweep,
+    .tile-pop {
+      animation: none;
+    }
+  }
+
   /* Thin, subtle scrollbar for scrollable panels (dialogs, drawers). */
   .slim-scroll {
     scrollbar-width: thin;

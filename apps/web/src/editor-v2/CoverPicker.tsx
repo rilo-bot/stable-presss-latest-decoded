@@ -8,9 +8,10 @@
 // through the store's rev-less issue PATCH (owner-gated + URL-validated server-side).
 
 import { useEffect, useRef, useState } from 'react';
-import { X, Upload, Link2, Loader2, ImageOff } from 'lucide-react';
+import { X, Upload, Link2, ImageOff } from 'lucide-react';
 import { toast } from 'sonner';
 import { useEditorStore } from './store';
+import { ShimmerText } from './BuildProgress';
 import * as api from './api';
 import type { MediaAsset } from './api';
 
@@ -103,7 +104,7 @@ export function CoverPicker({ open, onClose }: { open: boolean; onClose: () => v
           {tabBtn('pages', 'Pages')}
           {tabBtn('library', 'Library')}
           {tabBtn('upload', 'Upload / URL')}
-          {busy && <Loader2 size={14} className="ml-auto animate-spin text-white/40" />}
+          {busy && <span className="ml-auto text-[11px] text-white/45" role="status" aria-live="polite"><ShimmerText>Setting the cover…</ShimmerText></span>}
         </div>
 
         {/* Body */}
@@ -128,7 +129,7 @@ export function CoverPicker({ open, onClose }: { open: boolean; onClose: () => v
 
           {tab === 'library' && (
             loadingMedia
-              ? <div className="flex h-32 items-center justify-center text-white/40"><Loader2 size={16} className="mr-2 animate-spin" /> Loading media…</div>
+              ? <div className="flex h-32 items-center justify-center text-[12px] text-white/40" role="status" aria-live="polite"><ShimmerText>Loading your media</ShimmerText></div>
               : assets.length === 0
                 ? <p className="py-10 text-center text-[12px] text-white/40">No media yet. Upload an image or generate/import content first.</p>
                 : (

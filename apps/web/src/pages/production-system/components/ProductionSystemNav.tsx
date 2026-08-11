@@ -64,7 +64,10 @@ interface NavListProps extends NavCounts {
 function navBadge(item: SideNavItem, counts: NavCounts) {
   const { pendingReview, horses, safeParties, mediaItems, racingEntries } = counts;
   switch (item.id) {
-    case 'editor-hub':
+    // The stories-awaiting-review count used to badge Editor Hub. That screen is
+    // gone and the same queue is the board's Submitted column, so the badge
+    // follows the work rather than disappearing with the screen.
+    case 'workflow':
       return pendingReview > 0 ? pendingReview : null;
     // The register ids lost their "-production-system" tails when they became
     // permission prefixes; a stale id here costs a count badge, silently.

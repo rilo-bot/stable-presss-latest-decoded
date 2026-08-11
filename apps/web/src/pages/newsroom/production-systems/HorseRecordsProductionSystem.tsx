@@ -1,11 +1,12 @@
 import { Plus, DollarSign, File } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { EmptyState } from '@/components/EmptyState';
+import { useCan } from '@/lib/permissions';
 import type { Horse } from '@/types/horse';
 import type { Sale } from '@/types/sale';
 import type { HorseReport } from '@/types/horseReport';
 
-interface HorseRecordsTabProps {
+interface HorseRecordsProductionSystemProps {
   horses: Horse[];
   salesRecords: Sale[];
   reportRecords: HorseReport[];
@@ -17,7 +18,19 @@ interface HorseRecordsTabProps {
   removeReport: (id: string) => void;
 }
 
-export function HorseRecordsTab({
+/**
+ * The Horse Records register: what a horse sold for, and the paperwork that
+ * follows it around.
+ *
+ * This was a TAB inside Editor Hub, which meant two things. It was the only
+ * door to the `sales` and `reports` collections in the whole app — so removing
+ * Editor Hub without this screen would have stranded them — and it was reached
+ * only by someone who already held an editing verb, so it never had to ask
+ * whether the viewer could write. Now it is a register in the Stables section
+ * that anyone holding `horse-records.view` can open, so every button below is
+ * gated. The server agrees: /sales and /reports are gated on the same screen.
+ */
+export function HorseRecordsProductionSystem({
   horses,
   salesRecords,
   reportRecords,
@@ -27,7 +40,11 @@ export function HorseRecordsTab({
   setEditReport,
   setReportFormOpen,
   removeReport,
-}: HorseRecordsTabProps) {
+}: HorseRecordsProductionSystemProps) {
+  const mayCreate = useCan('horse-records.create');
+  const mayEdit = useCan('horse-records.edit');
+  const mayDelete = useCan('horse-records.delete');
+
   function horseName(id: string) {
     const h = horses.find((x) => x.id === id);
     return h ? (h.isUnnamed ? 'Un-Named' : h.name) : id;
@@ -42,12 +59,22 @@ export function HorseRecordsTab({
             <p className="text-[12px] uppercase tracking-[0.14em] font-bold text-muted-foreground">Sales Records</p>
             <p className="text-sm text-muted-foreground/70">Auction & transfer history — surfaces on the horse's Sales Data module.</p>
           </div>
-          <Button size="sm" className="gap-1.5 text-sm bg-primary text-primary-foreground hover:bg-primary/90" onClick={() => { setEditSale(undefined); setSalesFormOpen(true); }}>
-            <Plus size={13} /> Add Sale
-          </Button>
+          {mayCreate && (
+            <Button size="sm" className="gap-1.5 text-sm bg-primary text-primary-foreground hover:bg-primary/90" onClick={() => { setEditSale(undefined); setSalesFormOpen(true); }}>
+              <Plus size={13} /> Add Sale
+            </Button>
+          )}
         </div>
         {salesRecords.length === 0 ? (
-          <EmptyState icon={DollarSign} heading="No sale records yet." description="Add auction or transfer records and they will appear on the matching horse profile." ctaLabel="Add Sale" onCta={() => { setEditSale(undefined); setSalesFormOpen(true); }} />
+          <EmptyState
+            icon={DollarSign}
+            heading="No sale records yet."
+            description={mayCreate
+              ? 'Add auction or transfer records and they will appear on the matching horse profile.'
+              : 'Auction and transfer records appear here once someone with Create adds them.'}
+            ctaLabel={mayCreate ? 'Add Sale' : undefined}
+            onCta={mayCreate ? () => { setEditSale(undefined); setSalesFormOpen(true); } : undefined}
+          />
         ) : (
           <div className="border border-border/60 rounded-sm overflow-hidden bg-card divide-y divide-border/50">
             {salesRecords.map((s) => (
@@ -56,8 +83,8 @@ export function HorseRecordsTab({
                   <p className="text-sm font-medium text-foreground truncate">{horseName(s.horse_id)} — {s.venue}{s.lot ? ` · ${s.lot}` : ''}</p>
                   <p className="text-[13px] text-muted-foreground">{s.sale_type} · {s.sale_date}{s.price ? ` · ${s.currency === 'NZD' ? 'NZ$' : '$'}${s.price.toLocaleString('en-AU')}` : ''}</p>
                 </div>
-                <button className="text-sm text-primary hover:underline" onClick={() => { setEditSale(s); setSalesFormOpen(true); }}>Edit</button>
-                <button className="text-sm text-destructive hover:underline" onClick={() => removeSale(s.id)}>Delete</button>
+                {mayEdit && <button className="text-sm text-primary hover:underline" onClick={() => { setEditSale(s); setSalesFormOpen(true); }}>Edit</button>}
+                {mayDelete && <button className="text-sm text-destructive hover:underline" onClick={() => removeSale(s.id)}>Delete</button>}
               </div>
             ))}
           </div>
@@ -71,12 +98,22 @@ export function HorseRecordsTab({
             <p className="text-[12px] uppercase tracking-[0.14em] font-bold text-muted-foreground">Reports / Forms</p>
             <p className="text-sm text-muted-foreground/70">Registration, passport, vet & other documents. Restricted docs show to members only.</p>
           </div>
-          <Button size="sm" className="gap-1.5 text-sm bg-primary text-primary-foreground hover:bg-primary/90" onClick={() => { setEditReport(undefined); setReportFormOpen(true); }}>
-            <Plus size={13} /> Add Document
-          </Button>
+          {mayCreate && (
+            <Button size="sm" className="gap-1.5 text-sm bg-primary text-primary-foreground hover:bg-primary/90" onClick={() => { setEditReport(undefined); setReportFormOpen(true); }}>
+              <Plus size={13} /> Add Document
+            </Button>
+          )}
         </div>
         {reportRecords.length === 0 ? (
-          <EmptyState icon={File} heading="No documents yet." description="Add registration, passport, or veterinary documents for a horse." ctaLabel="Add Document" onCta={() => { setEditReport(undefined); setReportFormOpen(true); }} />
+          <EmptyState
+            icon={File}
+            heading="No documents yet."
+            description={mayCreate
+              ? 'Add registration, passport, or veterinary documents for a horse.'
+              : 'Registration, passport and veterinary documents appear here once someone with Create adds them.'}
+            ctaLabel={mayCreate ? 'Add Document' : undefined}
+            onCta={mayCreate ? () => { setEditReport(undefined); setReportFormOpen(true); } : undefined}
+          />
         ) : (
           <div className="border border-border/60 rounded-sm overflow-hidden bg-card divide-y divide-border/50">
             {reportRecords.map((r) => (
@@ -85,8 +122,8 @@ export function HorseRecordsTab({
                   <p className="text-sm font-medium text-foreground truncate">{horseName(r.horse_id)} — {r.title}</p>
                   <p className="text-[13px] text-muted-foreground">{r.doc_type} · {r.visibility === 'restricted' ? 'Restricted' : 'Public'}{r.issued_date ? ` · ${r.issued_date}` : ''}</p>
                 </div>
-                <button className="text-sm text-primary hover:underline" onClick={() => { setEditReport(r); setReportFormOpen(true); }}>Edit</button>
-                <button className="text-sm text-destructive hover:underline" onClick={() => removeReport(r.id)}>Delete</button>
+                {mayEdit && <button className="text-sm text-primary hover:underline" onClick={() => { setEditReport(r); setReportFormOpen(true); }}>Edit</button>}
+                {mayDelete && <button className="text-sm text-destructive hover:underline" onClick={() => removeReport(r.id)}>Delete</button>}
               </div>
             ))}
           </div>

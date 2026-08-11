@@ -6,13 +6,28 @@
 
 import { useEffect, useRef, useState, type DragEvent } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { Sparkles, Paperclip, X, Loader2, FileText, FileScan, FilePlus, Globe, Trash2, ArrowUp, Pencil, Eye, LayoutTemplate } from 'lucide-react';
+import { Sparkles, Paperclip, X, FileText, FileScan, FilePlus, Globe, Trash2, ArrowUp, Pencil, Eye, LayoutTemplate } from 'lucide-react';
 import { toast } from 'sonner';
 import * as api from './api';
 import type { IssueSummary } from './api';
 import { ingestFile, attachmentSourceText, ATTACH_ACCEPT } from '@/agent/attachments/documentUpload';
+import { ShimmerText } from './BuildProgress';
 
 const ACCENT = '#7c3aed';
+
+/** Lifecycle status → a word for a person. Anything unmapped falls through as-is,
+ *  so a new backend status shows up honestly rather than vanishing. */
+const STATUS_LABEL: Record<string, string> = {
+  draft: 'Draft',
+  uploading: 'Uploading',
+  processing: 'Building',
+  ready: 'Ready',
+  published: 'Published',
+  revising: 'Revising',
+  failed: 'Failed',
+};
+/** The two that mean "work is happening right now", so they shimmer. */
+const STATUS_BUSY = new Set(['uploading', 'processing']);
 
 const IMPORT_ACCEPT =
   'application/pdf,.pdf,application/vnd.openxmlformats-officedocument.wordprocessingml.document,.docx,image/jpeg,image/png,.jpg,.jpeg,.png';
@@ -304,8 +319,8 @@ export default function MagazineV2Home() {
               className="inline-flex items-center gap-1.5 rounded-2xl px-5 py-2.5 text-[15px] font-semibold text-white shadow-lg shadow-[#7c3aed]/25 transition-all hover:-translate-y-px hover:shadow-xl hover:shadow-[#7c3aed]/30 disabled:cursor-not-allowed disabled:opacity-40 disabled:shadow-none disabled:hover:translate-y-0"
               style={{ backgroundImage: `linear-gradient(135deg, #9061f9 0%, ${ACCENT} 100%)`, backgroundColor: ACCENT }}
             >
-              {starting ? <Loader2 size={16} className="animate-spin" /> : <Sparkles size={16} />}
-              {starting ? 'Starting…' : 'Generate'}
+              <Sparkles size={16} />
+              {starting ? <ShimmerText>Starting…</ShimmerText> : 'Generate'}
               {!starting && <ArrowUp size={15} className="opacity-80" />}
             </button>
           </div>
@@ -314,9 +329,13 @@ export default function MagazineV2Home() {
         </div>
 
         {/* Brief inline status while we create the issue, then the studio opens. */}
+        {/* `startMsg` is already the specific step ("Storing your images…"), so it
+            shimmers as itself — no rotating flavour here, because these steps are
+            a second or two each and a line that flipped once would read as a
+            glitch. The long wait is in the studio, which has the full build view. */}
         {starting && startMsg && (
-          <p className="mt-3 inline-flex items-center gap-2 text-sm text-muted-foreground">
-            <Loader2 size={14} className="animate-spin" style={{ color: ACCENT }} /> {startMsg}
+          <p className="mt-3 text-sm" style={{ color: ACCENT }} role="status" aria-live="polite">
+            <ShimmerText>{startMsg}</ShimmerText>
           </p>
         )}
 
@@ -339,7 +358,22 @@ export default function MagazineV2Home() {
       {/* ── Your magazines ────────────────────────────────────────────── */}
       <section className="mt-16">
         {loading ? (
-          <p className="text-center text-sm text-muted-foreground">Loading…</p>
+          // Skeleton cards in the real grid, not a centred "Loading…" — the list
+          // arrives in place instead of the page jumping when it does.
+          <>
+            <h2 className="mb-3 text-sm font-semibold text-muted-foreground">
+              <ShimmerText>Loading your magazines</ShimmerText>
+            </h2>
+            <div className="grid grid-cols-2 gap-3 sm:grid-cols-3" aria-hidden="true">
+              {[0, 1, 2].map((i) => (
+                <div key={i} className="flex flex-col gap-2 rounded-lg border border-border p-4">
+                  <div className="h-4 w-2/3 rounded bg-muted" />
+                  <div className="h-3 w-1/2 rounded bg-muted/70" />
+                  <div className="mt-2 h-6 w-24 rounded bg-muted/50" />
+                </div>
+              ))}
+            </div>
+          </>
         ) : issues.length > 0 ? (
           <>
             <h2 className="mb-3 text-sm font-semibold text-muted-foreground">Your magazines</h2>
@@ -358,8 +392,20 @@ export default function MagazineV2Home() {
                           </span>
                         )}
                       </div>
+                      {/* The raw status token used to be printed here — "processing"
+                          in lowercase, which is a database value, not a sentence.
+                          A magazine mid-build now says so, and shimmers while it is.
+                          No counts: the list endpoint doesn't send pagesProcessed,
+                          and the studio is where the real progress lives. */}
                       <div className="mt-1 text-xs text-muted-foreground">
-                        {it.status} · {it.pageCount} page{it.pageCount === 1 ? '' : 's'}{it.ownerName ? ` · ${it.ownerName}` : ''}
+                        {STATUS_BUSY.has(it.status) ? (
+                          <span style={{ color: ACCENT }}>
+                            <ShimmerText>{STATUS_LABEL[it.status] ?? 'Working'}</ShimmerText>
+                          </span>
+                        ) : (
+                          (STATUS_LABEL[it.status] ?? it.status)
+                        )}{' '}
+                        · {it.pageCount} page{it.pageCount === 1 ? '' : 's'}{it.ownerName ? ` · ${it.ownerName}` : ''}
                       </div>
                       {!it.myRole && (
                         <span className="mt-1.5 inline-block rounded bg-muted px-1.5 py-0.5 text-[10px] font-medium text-muted-foreground">View only</span>
@@ -385,8 +431,8 @@ export default function MagazineV2Home() {
                         className="inline-flex items-center gap-1 rounded border border-border px-2 py-1 text-xs font-medium hover:border-[#7c3aed] hover:text-[#7c3aed] disabled:opacity-50"
                         title="Start a new magazine with this layout — the text and photos are cleared"
                       >
-                        {busy ? <Loader2 size={12} className="animate-spin" /> : <LayoutTemplate size={12} />}
-                        Reuse template
+                        <LayoutTemplate size={12} />
+                        {busy ? <ShimmerText>Copying…</ShimmerText> : 'Reuse template'}
                       </button>
                       {it.myRole === 'owner' && (
                         <button
@@ -395,8 +441,8 @@ export default function MagazineV2Home() {
                           className="inline-flex items-center gap-1 rounded border border-red-300/40 px-2 py-1 text-xs font-medium text-red-600 hover:bg-red-50 disabled:opacity-50 dark:text-red-300/90 dark:hover:bg-red-500/10"
                           title="Delete this magazine"
                         >
-                          {busy ? <Loader2 size={12} className="animate-spin" /> : <Trash2 size={12} />}
-                          Delete
+                          <Trash2 size={12} />
+                          {busy ? <ShimmerText>Deleting…</ShimmerText> : 'Delete'}
                         </button>
                       )}
                       {published && it.publishedIssueId && (

@@ -14,6 +14,7 @@ import { MarkdownMessage } from '@/components/MarkdownMessage';
 import { ingestFile, attachmentSourceText, ATTACH_ACCEPT } from '@/agent/attachments/documentUpload';
 import { useVoiceChat } from '@/agent/voice/useVoiceChat';
 import { useEditorStore } from './store';
+import { ShimmerText, WorkingLine } from './BuildProgress';
 import { uploadMediaImage, uploadMediaDoc, listUploads, listMedia, getUploadText, type AttachedImage, type MagazineUpload, type MediaAsset } from './api';
 import type { AgentProposal } from './model';
 
@@ -350,7 +351,7 @@ export function AiPanel() {
       {tab === 'uploads' ? (
         <div className="min-h-0 flex-1 space-y-1.5 overflow-y-auto px-3 py-3">
           {uploadsLoading && (
-            <div className="flex items-center gap-1.5 text-[12px] text-white/40"><Loader2 size={12} className="animate-spin" /> loading uploads…</div>
+            <div className="text-[12px] text-white/40" role="status" aria-live="polite"><ShimmerText>Loading your uploads</ShimmerText></div>
           )}
           {!uploadsLoading && uploadCount === 0 && (
             <p className="text-[12px] leading-relaxed text-white/55">
@@ -441,9 +442,13 @@ export function AiPanel() {
             </div>
           </div>
         ))}
+        {/* Thinking. The assistant reads the page, then decides, then writes the
+            change — so the line names the step instead of spinning a circle.
+            'composing' is the right pool: this agent works on ONE page. */}
         {chatBusy && (
-          <div className="flex items-center gap-1.5 text-[12px] text-white/40">
-            <Loader2 size={12} className="animate-spin" /> thinking…
+          <div className="flex items-center gap-2 text-[12px] text-white/40" role="status" aria-live="polite">
+            <ShimmerText>Working on this page</ShimmerText>
+            <WorkingLine phase="composing" className="text-white/25" />
           </div>
         )}
       </div>
@@ -496,7 +501,7 @@ export function AiPanel() {
               className="flex min-w-0 flex-1 items-center gap-1.5 text-left hover:text-emerald-100 disabled:opacity-70"
             >
               {ingesting ? (
-                <Loader2 size={11} className="flex-shrink-0 animate-spin" />
+                <FileText size={11} className="flex-shrink-0 opacity-60" />
               ) : att.isImage && att.imgUrl ? (
                 <img src={att.imgUrl} alt="" className="h-6 w-6 flex-shrink-0 rounded object-cover" />
               ) : att.isImage ? (
@@ -504,7 +509,7 @@ export function AiPanel() {
               ) : (
                 <FileText size={11} className="flex-shrink-0" />
               )}
-              <span className="truncate">{ingesting ? `Reading ${att.file.name}…` : att.file.name}</span>
+              <span className="truncate">{ingesting ? <ShimmerText>{`Reading ${att.file.name}…`}</ShimmerText> : att.file.name}</span>
               {!ingesting && <span className="ml-1 flex-shrink-0 text-emerald-200/60">Preview →</span>}
             </button>
             <button type="button" onClick={() => removeAtt(att.id)} disabled={ingesting} aria-label="Remove attachment" className="flex-shrink-0 text-emerald-200/60 hover:text-emerald-100 disabled:opacity-50"><X size={11} /></button>

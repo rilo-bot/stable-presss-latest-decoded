@@ -50,7 +50,7 @@ import BlogCreateForm from '@/pages/blog-composer/BlogCreateForm';
 import BlogEditorScreen from '@/pages/blog-composer/BlogEditorScreen';
 import InstantScreen from '@/pages/production-system/screens/InstantScreen';
 import PodcastScreen from '@/pages/production-system/screens/PodcastScreen';
-import EditorHubScreen from '@/pages/production-system/screens/EditorHubScreen';
+import HorseRecordsScreen from '@/pages/production-system/screens/HorseRecordsScreen';
 import MyAssetsScreen from '@/pages/production-system/screens/MyAssetsScreen';
 import CompensationScreen from '@/pages/production-system/screens/CompensationScreen';
 import HorsesScreen from '@/pages/production-system/screens/HorsesScreen';
@@ -339,12 +339,12 @@ export default function App() {
             {/* The comment desk — reported comments, hide/restore/delete. Gated on
                 `comments.edit`, which the endpoints behind it enforce too. */}
             <Route path="comments" element={<CommentModerationScreen />} />
-            <Route path="editor-hub" element={<EditorHubScreen />} />
             <Route path="my-assets" element={<MyAssetsScreen />} />
             <Route path="compensation" element={<CompensationScreen />} />
             <Route path="horses" element={<HorsesScreen />} />
             <Route path="people" element={<PeopleScreen />} />
             <Route path="media-records" element={<MediaRecordsScreen />} />
+            <Route path="horse-records" element={<HorseRecordsScreen />} />
             <Route path="racing-records" element={<RacingRecordsScreen />} />
             <Route path="team" element={<TeamScreen />} />
             <Route path="roles" element={<RolesScreen />} />

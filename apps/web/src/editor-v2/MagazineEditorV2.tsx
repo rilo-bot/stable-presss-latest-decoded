@@ -9,7 +9,7 @@
 import { useEffect, useRef, useState } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import { toast } from 'sonner';
-import { ArrowLeft, Undo2, Redo2, Plus, Minus, Copy, Trash2, ChevronLeft, ChevronRight, ChevronDown, Sparkles, Loader2, Wand2, WandSparkles, RotateCcw, ImageIcon, Globe, ExternalLink, Send, Users, EyeOff } from 'lucide-react';
+import { ArrowLeft, Undo2, Redo2, Plus, Minus, Copy, Trash2, ChevronLeft, ChevronRight, ChevronDown, Sparkles, Wand2, WandSparkles, RotateCcw, ImageIcon, Globe, ExternalLink, Send, Users, EyeOff, ClipboardList, Lock, RefreshCw } from 'lucide-react';
 import { useEditorStore } from './store';
 import { useStudioChrome } from '@/stores/studioChromeStore';
 import { EditorCanvas } from './EditorCanvas';
@@ -19,6 +19,9 @@ import { CoverPicker } from './CoverPicker';
 import { AttachmentPreviewPane } from './AttachmentPreviewPane';
 import { PublishDialog } from './PublishDialog';
 import { ShareDialog } from './ShareDialog';
+import { ReviewBoard } from './ReviewBoard';
+import { BuildProgress, BuildBanner, ShimmerText } from './BuildProgress';
+import { columnOf, COLUMN_LABEL, COLUMN_TONE, awaitingOwner, submittablePages, publishBlockedReason, readOnlyReason } from './review';
 import type { ElementType, MagazineElement } from './model';
 
 function newElement(kind: ElementType, page: { width: number; height: number }, topZ: number): Partial<MagazineElement> {
@@ -60,7 +63,12 @@ export default function MagazineEditorV2() {
   const [publishMenuOpen, setPublishMenuOpen] = useState(false);
   const [publishDialogOpen, setPublishDialogOpen] = useState(false);
   const [shareOpen, setShareOpen] = useState(false);
+  const [boardOpen, setBoardOpen] = useState(false);
   const isPublished = !!s.issue?.publishedIssueId && s.issue?.status === 'published';
+  // Published, then edited: the bulletin readers see is now behind the draft. There is
+  // no version to reason about — the fix is one click of Republish.
+  const needsRepublish = isPublished && s.needsRepublish();
+  const hasLiveEdition = isPublished;
 
   // Hide the global Stablehand launcher while the v2 editor is open — it has
   // its own docked assistant (AiPanel). Same pattern as the v1 MagazineEditor.
@@ -126,9 +134,12 @@ export default function MagazineEditorV2() {
   };
 
   if (s.loading) {
+    // No issue document yet, so there are no counts: explicit title, the
+    // 'finishing' lines, and the INDETERMINATE track. A determinate bar here
+    // would be inventing a proportion out of nothing.
     return (
-      <div className="fixed inset-0 z-[60] flex items-center justify-center bg-[#0b1220] text-white/60">
-        <Loader2 className="mr-2 animate-spin" size={18} /> Loading studio…
+      <div className="fixed inset-0 z-[60] bg-[#0b1220] text-white">
+        <BuildProgress issue={null} title="Opening the studio" />
       </div>
     );
   }
@@ -145,10 +156,27 @@ export default function MagazineEditorV2() {
   const zoomPct = Math.round((s.zoomWidth / 1275) * 100);
   const canEdit = s.canEdit(); // owner or collaborator; false = another admin's magazine (view-only)
 
+  // ── Review state, all derived from data the store already holds (S5 is pure UI) ──
+  const awaiting = s.canManage() ? awaitingOwner(s.issue, s.pages) : [];
+  const mineToSubmit = !s.canManage() && canEdit ? submittablePages(s.issue, s.pages) : [];
+  // Why Publish would be refused — computed client-side from the same rule the
+  // server enforces, so the button can be disabled WITH A REASON instead of handing
+  // the owner a 409 after they commit to the action.
+  //
+  // Two scopes, judged separately: a FULL edition includes every page whatever its
+  // selection flag, so one unapproved page can block that path while "publish
+  // selected" is still open. Blocking both from one number would take away the very
+  // escape hatch the message recommends.
+  const blockedFull = s.canManage() ? publishBlockedReason(s.issue, s.pages, 'full') : '';
+  const blockedSelected = s.canManage() ? publishBlockedReason(s.issue, s.pages, 'selected') : '';
+  const publishBlocked = blockedFull && blockedSelected ? blockedFull : '';
+  const currentSummary = s.pages.find((p) => p.id === s.currentPageId);
+  const lockedReason = readOnlyReason(s.issue, currentSummary);
+
   // Still being built by "Build with AI" / import — pages stream in live below.
+  // The counts that used to live here now belong to buildStatus.ts, which is also
+  // where the rule about when they may be trusted is written down.
   const building = s.generating || s.issue?.status === 'processing';
-  const buildTotal = s.issue?.pagesTotal ?? 0;
-  const buildDone = Math.min(s.issue?.pagesProcessed ?? s.pages.length, buildTotal || Infinity);
 
   return (
     <div className="fixed inset-0 z-[60] flex flex-col bg-[#0b1220]">
@@ -184,13 +212,52 @@ export default function MagazineEditorV2() {
             </span>
           )
         )}
+        {/* Live, and whether readers are seeing the current draft. These are two
+            different facts and the header shows both: a magazine can be live AND
+            behind, which is exactly the state that used to be invisible. */}
         {isPublished && (
           <span className="flex items-center gap-1 rounded-full border border-emerald-400/30 bg-emerald-400/10 px-2 py-0.5 text-[10px] text-emerald-200">
             <Globe size={10} /> Live in Bulletins
           </span>
         )}
+        {needsRepublish && (
+          <span
+            className="flex items-center gap-1 rounded-full border border-amber-400/40 bg-amber-400/15 px-2 py-0.5 text-[10px] font-semibold text-amber-200"
+            title="You've changed this magazine since it was published. Readers still see the previous version until you republish."
+          >
+            <RefreshCw size={10} /> Needs republish
+          </span>
+        )}
 
         <div className="ml-auto flex items-center gap-1.5">
+          {/* Waiting on you / your turn — the entry point to the board. Shown only
+              when there is genuinely something to act on, so it never becomes a
+              button people learn to ignore. */}
+          {awaiting.length > 0 && (
+            <button
+              onClick={() => setBoardOpen(true)}
+              className="flex items-center gap-1 rounded-sm border border-sky-400/40 bg-sky-400/15 px-2 py-1.5 text-[11px] font-semibold text-sky-200 hover:bg-sky-400/25"
+              title="Pages submitted for your approval"
+            >
+              <ClipboardList size={13} /> {awaiting.length} awaiting you
+            </button>
+          )}
+          {mineToSubmit.length > 0 && (
+            <button
+              onClick={() => setBoardOpen(true)}
+              className="flex items-center gap-1 rounded-sm bg-sky-500 px-2.5 py-1.5 text-[11px] font-semibold text-white hover:bg-sky-600"
+              title="Send your finished pages to the owner for review"
+            >
+              <Send size={13} /> Submit for review
+            </button>
+          )}
+          {/* The board stays reachable even when the queue is empty, for anyone with
+              a stake in review — otherwise there is no way to look back at notes. */}
+          {(s.canManage() ? (s.issue?.collaborators?.length ?? 0) > 0 : canEdit) && awaiting.length === 0 && mineToSubmit.length === 0 && (
+            <button onClick={() => setBoardOpen(true)} className={ghost} title="Review board">
+              <ClipboardList size={13} /> Review
+            </button>
+          )}
           {/* undo / redo */}
           <div className="flex items-center rounded-sm border border-white/15 bg-white/5">
             <button onClick={() => void s.undo()} disabled={!s.undoStack.length} className="px-2 py-1.5 text-white/70 hover:bg-white/10 disabled:opacity-30 disabled:hover:bg-transparent" title="Undo"><Undo2 size={14} /></button>
@@ -216,8 +283,10 @@ export default function MagazineEditorV2() {
 
               {/* AI text pass — Fill (write empty + tighten) / Adjust (tighten) */}
               <div className="mx-0.5 h-5 w-px bg-white/10" />
+              {/* Busy = the WORD shimmers, the icon holds still. A spinner in a
+                  13px button is a grey smudge; a shimmering label is legible. */}
               <button className={ghost} disabled={s.formatBusy || !s.page} onClick={() => void s.runFormat('fill')} title="Fill empty boxes & tighten crowded text (AI)">
-                {s.formatBusy ? <Loader2 size={13} className="animate-spin" /> : <Wand2 size={13} />} Fill
+                <Wand2 size={13} /> {s.formatBusy ? <ShimmerText>Filling…</ShimmerText> : 'Fill'}
               </button>
               <button className={ghost} disabled={s.formatBusy || !s.page} onClick={() => void s.runFormat('adjust')} title="Tighten crowded text so it reads at a comfortable size (AI)">
                 <WandSparkles size={13} /> Adjust
@@ -262,25 +331,45 @@ export default function MagazineEditorV2() {
               <div className="relative">
                 <button
                   onClick={() => setPublishMenuOpen((o) => !o)}
-                  disabled={s.publishing || s.generating}
+                  disabled={s.publishing || s.generating || !!publishBlocked}
                   className="flex items-center gap-1.5 rounded-sm bg-emerald-500 px-3 py-1.5 text-[11px] font-semibold text-white hover:bg-emerald-600 disabled:opacity-50"
-                  title="Publish this magazine to Bulletins"
+                  // Disabled WITH A REASON, never a silent no-op: the server refuses an
+                  // unapproved edition, so the hover has to say which pages and why.
+                  title={publishBlocked || 'Publish this magazine to Bulletins'}
                 >
-                  {s.publishing ? <Loader2 size={13} className="animate-spin" /> : <Send size={13} />}
-                  {s.publishing ? 'Publishing…' : isPublished ? 'Republish' : 'Publish'} <ChevronDown size={12} />
+                  <Send size={13} />
+                  {s.publishing ? (
+                    <ShimmerText>Publishing…</ShimmerText>
+                  ) : isPublished ? (
+                    'Republish'
+                  ) : (
+                    'Publish'
+                  )}{' '}
+                  <ChevronDown size={12} />
                 </button>
                 {publishMenuOpen && !s.publishing && (
                   <div className="absolute right-0 top-full z-50 mt-1 w-60 overflow-hidden rounded-md border border-white/15 bg-[#0d1626] shadow-xl">
-                    <button onClick={() => void publishFull()} className="block w-full px-3 py-2.5 text-left text-xs text-white hover:bg-white/10">
+                    <button
+                      onClick={() => void publishFull()}
+                      disabled={!!blockedFull}
+                      title={blockedFull || undefined}
+                      className="block w-full px-3 py-2.5 text-left text-xs text-white hover:bg-white/10 disabled:cursor-not-allowed disabled:opacity-45 disabled:hover:bg-transparent"
+                    >
                       <span className="font-semibold">Publish full edition</span>
-                      <span className="block text-[10px] text-white/40">All {s.pages.length} page{s.pages.length === 1 ? '' : 's'} go public in Bulletins</span>
+                      <span className="block text-[10px] text-white/40">
+                        {blockedFull || `All ${s.pages.length} page${s.pages.length === 1 ? '' : 's'} go public in Bulletins`}
+                      </span>
                     </button>
                     <button
                       onClick={() => { setPublishMenuOpen(false); setPublishDialogOpen(true); }}
-                      className="block w-full border-t border-white/10 px-3 py-2.5 text-left text-xs text-white hover:bg-white/10"
+                      disabled={!!blockedSelected}
+                      title={blockedSelected || undefined}
+                      className="block w-full border-t border-white/10 px-3 py-2.5 text-left text-xs text-white hover:bg-white/10 disabled:cursor-not-allowed disabled:opacity-45 disabled:hover:bg-transparent"
                     >
                       <span className="font-semibold">Publish selected pages…</span>
-                      <span className="block text-[10px] text-white/40">Choose exactly which pages go public</span>
+                      <span className="block text-[10px] text-white/40">
+                        {blockedSelected || 'Choose exactly which pages go public'}
+                      </span>
                     </button>
                     {isPublished && (
                       <button
@@ -294,20 +383,23 @@ export default function MagazineEditorV2() {
                   </div>
                 )}
               </div>
-              {isPublished && s.issue.publishedIssueId && (
+              {hasLiveEdition && s.issue.publishedIssueId && (
                 <a
                   href={`/bulletins/${s.issue.publishedIssueId}`}
                   target="_blank"
                   rel="noreferrer"
-                  className="flex items-center gap-1 rounded-sm border border-white/15 bg-white/5 px-2 py-1.5 text-[11px] text-white/70 hover:bg-white/10"
-                  title="View on Bulletins"
+                  className="flex items-center gap-1 rounded-sm border border-emerald-400/30 bg-emerald-500/10 px-2 py-1.5 text-[11px] text-emerald-200/90 hover:bg-emerald-500/20"
+                  title={needsRepublish ? 'What readers currently see — your unpublished changes are not in it yet' : 'View on Bulletins'}
                 >
                   <ExternalLink size={12} /> View
                 </a>
               )}
               <button
                 onClick={async () => {
-                  if (!window.confirm('Delete this magazine? This removes the draft, all pages, and any published Bulletins edition. This cannot be undone.')) return;
+                  // Says nothing about Bulletins: if the magazine is live the server
+                  // refuses the first attempt and says so itself, which `remove()` then
+                  // confirms through — one warning, from whoever actually knows.
+                  if (!window.confirm('Delete this magazine? This removes the draft and all its pages. This cannot be undone.')) return;
                   if (await s.remove()) navigate('/production-system/magazine-v2');
                 }}
                 disabled={s.publishing}
@@ -334,14 +426,12 @@ export default function MagazineEditorV2() {
         </div>
       </div>
 
-      {/* Live-build banner — pages stream in below as the AI composes them. */}
-      {building && (
-        <div className="flex items-center gap-2 border-b border-[var(--gold-bright)]/25 bg-[var(--gold-bright)]/10 px-4 py-1.5 text-[11px] text-[var(--gold-bright)]">
-          <Loader2 size={12} className="animate-spin" />
-          <span className="font-medium">{s.issue?.stage || 'Building your magazine'}{buildTotal ? ` — ${buildDone} of ${buildTotal} pages` : '…'}</span>
-          <span className="text-white/45">pages appear as they’re ready — you can start editing the finished ones</span>
-        </div>
-      )}
+      {/* Live-build banner — pages stream in below as the AI composes them.
+          `isAdding` matters: an "add more pages" run leaves pagesProcessed and
+          pagesTotal at the PREVIOUS run's values, so this used to sit at
+          "8 of 8 pages" — a completed bar — for the whole time it was working.
+          BuildBanner shows the indeterminate track for that case instead. */}
+      {building && <BuildBanner issue={s.issue} isAdding={s.generating} arrivedPages={s.pages.length} />}
 
       {/* Post-generation nudge — the first pass is a short preview; offer more. */}
       {!building && s.justGenerated && s.canManage() && (
@@ -375,6 +465,19 @@ export default function MagazineEditorV2() {
           <div className="relative flex items-center gap-1 overflow-x-auto border-b border-white/10 bg-[#0b1220] px-3 py-1.5">
             {s.pages.map((p, i) => {
               const active = p.id === s.currentPageId;
+              // §8.5 — one badge per page in the stack. A dot rather than a word,
+              // because the rail is a dense row of page numbers; the full state (and
+              // any note) lives on the hover title and on the board.
+              const col = columnOf(p);
+              const tone = COLUMN_TONE[col];
+              const stateTitle =
+                `Page ${i + 1} — ${COLUMN_LABEL[col]}` +
+                ((p.reviewRound ?? 0) > 0 && col === 'needs_changes' ? ` (round ${p.reviewRound})` : '') +
+                (p.approvalStale ? ' — edited after approval, needs approving again' : '') +
+                // Which specific pages a republish would change, so the header's
+                // "Needs republish" is traceable to something rather than just a mood.
+                (p.editedSincePublish ? '\nEdited since the bulletin was published' : '') +
+                (p.reviewNote ? `\n“${p.reviewNote}”` : '');
               return (
                 <div key={p.id} className="group flex items-center">
                   <button
@@ -383,7 +486,11 @@ export default function MagazineEditorV2() {
                       'flex items-center gap-1 rounded-sm border px-2.5 py-1 text-[11px] ' +
                       (active ? 'border-white/25 bg-white/10 text-white' : 'border-white/15 text-white/70 hover:bg-white/10')
                     }
+                    title={stateTitle}
                   >
+                    {col !== 'in_progress' && (
+                      <span className={'h-1.5 w-1.5 flex-shrink-0 rounded-full ' + (p.approvalStale ? 'bg-amber-400' : tone.dot)} />
+                    )}
                     {i + 1}
                     <span className={active ? 'text-white/50' : 'text-white/35'}>({p.elementCount})</span>
                   </button>
@@ -408,7 +515,7 @@ export default function MagazineEditorV2() {
                   onClick={() => setPagesAiOpen((v) => !v)}
                   title="Add on-theme pages with AI"
                 >
-                  {s.generating ? <Loader2 size={13} className="animate-spin" /> : <Sparkles size={13} />} Pages
+                  <Sparkles size={13} /> {s.generating ? <ShimmerText>Building…</ShimmerText> : 'Pages'}
                 </button>
               </>
             )}
@@ -443,15 +550,39 @@ export default function MagazineEditorV2() {
             )}
           </div>
 
+          {/* Why this page won't accept edits (§8.5). The server refuses the write
+              either way and the store reverts it, but a canvas that silently swallows
+              a drag is the worst possible version of this feature — say it first, and
+              say what to do about it. */}
+          {lockedReason && (
+            <div className="flex items-center gap-2 border-b border-amber-400/25 bg-amber-400/10 px-4 py-1.5 text-[11px] text-amber-200">
+              <Lock size={12} className="flex-shrink-0" />
+              <span>{lockedReason}</span>
+              {!s.canManage() && (
+                <button onClick={() => setBoardOpen(true)} className="ml-auto underline hover:no-underline">
+                  See the board
+                </button>
+              )}
+            </div>
+          )}
+
           {/* Canvas */}
           <div className="min-h-0 flex-1 overflow-auto bg-[#0b1220]">
             {s.page ? (
               <EditorCanvas />
-            ) : (
-              <div className="flex h-full flex-col items-center justify-center gap-3 text-white/50">
-                <Loader2 size={22} className="animate-spin" style={{ color: 'var(--gold-bright)' }} />
-                <div className="text-sm">{building ? 'Designing your first page…' : 'No page yet'}</div>
+            ) : building ? (
+              // The main event: nothing to edit yet, so this screen is what the
+              // user watches. Full facts — counter, bar, one tile per page.
+              <div className="h-full text-white">
+                <BuildProgress
+                  issue={s.issue}
+                  isAdding={s.generating}
+                  arrivedPages={s.pages.length}
+                  hint="Pages appear here as they’re finished — you can start editing the early ones while the rest are still being built."
+                />
               </div>
+            ) : (
+              <div className="flex h-full items-center justify-center text-sm text-white/40">No page yet</div>
             )}
           </div>
         </div>
@@ -467,6 +598,7 @@ export default function MagazineEditorV2() {
       <CoverPicker open={coverOpen} onClose={() => setCoverOpen(false)} />
       {publishDialogOpen && <PublishDialog onClose={() => setPublishDialogOpen(false)} onPublished={(id) => onPublished(id, 'selected')} />}
       {shareOpen && <ShareDialog onClose={() => setShareOpen(false)} />}
+      {boardOpen && <ReviewBoard onClose={() => setBoardOpen(false)} />}
     </div>
   );
 }

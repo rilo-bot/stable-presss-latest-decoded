@@ -12,9 +12,10 @@
 // ---------------------------------------------------------------------------
 
 import React, { useEffect, useRef, useState, type CSSProperties } from 'react';
-import { Wand2, WandSparkles, Loader2 } from 'lucide-react';
+import { Wand2, WandSparkles } from 'lucide-react';
 import { sanitizeRichText } from '@/lib/htmlInline';
 import { useEditorStore } from './store';
+import { ShimmerText } from './BuildProgress';
 import { IssuePageCanvas } from './IssuePageCanvas';
 import { pctRect, clampRect } from './geometry';
 import * as api from './api';
@@ -534,7 +535,7 @@ export function EditorCanvas() {
                   onClick={() => void runFormat('fill', sum.id)}
                   title="Fill empty boxes & tighten crowded text on this page (AI)"
                 >
-                  {formatBusy && active ? <Loader2 size={11} className="animate-spin" /> : <Wand2 size={11} />} Fill
+                  <Wand2 size={11} /> {formatBusy && active ? <ShimmerText>Filling…</ShimmerText> : 'Fill'}
                 </button>
                 <button
                   className="flex items-center gap-1 rounded-sm border border-white/15 px-1.5 py-0.5 text-white/60 hover:bg-white/10 hover:text-white disabled:opacity-30"

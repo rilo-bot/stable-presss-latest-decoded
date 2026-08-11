@@ -148,11 +148,13 @@ router.use('/people', personScopedWriteGate, peopleRouter)
 router.use('/parties', partyScopedWriteGate, partiesRouter)
 // `screen` names the register row in the permission grid that governs each of
 // these for STAFF (a member acting on a record they claimed is unaffected — see
-// staffMay in lib/rbac.ts). Sales and reports hang off a horse, so they are the
-// Horses register; media items and race entries are their own.
+// staffMay in lib/rbac.ts). Each register answers to its own row: sales and
+// reports were the Horses row when their only UI was a tab inside Editor Hub,
+// and now that they have a screen they answer to it — what a horse SOLD for is
+// a different question from its date of birth.
 router.use('/races', adminGate({ screen: 'racing-records' }), racesRouter)
-router.use('/sales', horseScopedWriteGate({ collection: 'sales', screen: 'horses' }), salesRouter)
-router.use('/reports', horseScopedWriteGate({ collection: 'reports', optionalGet: true, screen: 'horses' }), reportsRouter)
+router.use('/sales', horseScopedWriteGate({ collection: 'sales', screen: 'horse-records' }), salesRouter)
+router.use('/reports', horseScopedWriteGate({ collection: 'reports', optionalGet: true, screen: 'horse-records' }), reportsRouter)
 router.use('/mediaItems', horseScopedWriteGate({ collection: 'mediaItems', screen: 'media-records' }), mediaItemsRouter)
 router.use('/racingEntries', horseScopedWriteGate({ collection: 'racingEntries', screen: 'racing-records' }), racingEntriesRouter)
 
