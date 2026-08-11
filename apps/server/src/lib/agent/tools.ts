@@ -521,14 +521,15 @@ export function buildTools(account?: AccountUser, authHeader?: string): ToolSet 
         id: z.string().optional().describe('Entity id — required for horse/party/article/bulletin/organisation and horse-studio (a horse id) / profile-studio (a party id); optional for magazine-v2 (opens that magazine in the Builder).'),
         screen: z
           .enum([
-            'overview', 'workflow', 'pipeline', 'all-stories', 'editor-hub', 'my-assets',
-            'compensation', 'horses', 'people', 'media-records', 'racing-records',
+            'overview', 'workflow', 'pipeline', 'all-stories', 'my-assets',
+            'compensation', 'horses', 'people', 'media-records', 'horse-records',
+            'racing-records',
             // No 'magazine-studio': that screen was the retired v1 template
             // builder. The Magazine Builder is reached with to:'magazine-v2'.
             'team', 'roles', 'analytics', 'settings',
           ])
           .optional()
-          .describe("Production System screen (only with to:'production-system'): workflow = the story Kanban, all-stories = every story, editor-hub = review/assignments/scheduling, horses/people/media-records/racing-records = the racing-data registers, team/roles = staff & permissions (admin)."),
+          .describe("Production System screen (only with to:'production-system'): workflow = the story Kanban and the review queue, all-stories = every story, horses/people/media-records/horse-records/racing-records = the racing-data registers (horse-records = sales and documents), team/roles = staff & permissions (admin)."),
       }),
     }),
 

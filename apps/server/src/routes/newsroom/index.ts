@@ -121,7 +121,10 @@ async function buildNewsroomSummary(account: AccountUser) {
   const needs: NeedItem[] = []
   if (canReview(account)) {
     const c = countStatus('submitted')
-    if (c) needs.push({ id: 'review-stories', label: 'Stories awaiting your review', count: c, where: 'editor-hub' })
+    // `where: 'editor-hub'` until that screen was removed. The Submitted column
+    // of the board is the same queue, and `resolveWhere` drops any token whose
+    // screen the caller cannot open — so a stale id here is a silent dead link.
+    if (c) needs.push({ id: 'review-stories', label: 'Stories awaiting your review', count: c, where: 'workflow' })
   }
   // The separate legal / compliance queues are gone: approval is one step now,
   // so anyone who can review sees the same Submitted queue above.

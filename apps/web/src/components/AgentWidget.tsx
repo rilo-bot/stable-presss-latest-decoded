@@ -72,7 +72,7 @@ function describePage(pathname: string): PageContext {
   if (root === 'production-system') {
     const screenTitles: Record<string, string> = {
       overview: 'Overview', workflow: 'Workflow Board', pipeline: 'Pipeline Map',
-      'all-stories': 'All Stories', 'editor-hub': 'Editor Hub', 'my-assets': 'My Media Assets',
+      'all-stories': 'All Stories', 'horse-records': 'Horse Records', 'my-assets': 'My Media Assets',
       compensation: 'My Compensation', horses: 'Horses Register', people: 'People Register',
       'media-records': 'Media Records', 'racing-records': 'Racing Records', team: 'Team Members',
       roles: 'Roles & Permissions', analytics: 'Analytics', settings: 'Settings',

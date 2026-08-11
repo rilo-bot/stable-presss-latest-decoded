@@ -119,7 +119,10 @@ function migrateRole(doc: Record<string, any>): { permissions: PermissionAction[
   for (const [moduleId, screen] of [
     ['workflow', 'workflow'],
     ['pipeline', 'pipeline'],
-    ['editor-hub', 'editor-hub'],
+    // The old `editor-hub` module maps to the BOARD: that screen has been
+    // removed, and `normalisePermissions` would silently drop an id no longer in
+    // the catalogue — losing the row rather than moving it.
+    ['editor-hub', 'workflow'],
     ['instant', 'instant'],
     ['comment-moderation', 'comments'],
     ['emoji-analytics', 'emoji-analytics'],

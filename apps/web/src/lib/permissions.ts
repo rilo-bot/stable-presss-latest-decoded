@@ -40,7 +40,6 @@ export type PermissionAction =
   // cannot become a way around the permission that governs the work.
   | 'workflow.view'
   | 'pipeline.view'
-  | 'editor-hub.view'
   | 'instant.view'
   // Blogs — a separate axis from Stories, two states (draft/published)
   | 'blogs.view'
@@ -61,7 +60,7 @@ export type PermissionAction =
   | 'podcast.edit'
   | 'podcast.delete'
   | 'podcast.publish'
-  // Stables — the four registers. They used to ride on `content.draft.create`,
+  // Stables — the five registers. They used to ride on `content.draft.create`,
   // so "may start a story draft" decided who could edit the horse register.
   | 'horses.view'
   | 'horses.create'
@@ -75,6 +74,12 @@ export type PermissionAction =
   | 'media-records.create'
   | 'media-records.edit'
   | 'media-records.delete'
+  // Sale records and horse documents. Their only UI used to be a tab inside
+  // Editor Hub, gated on the Horses row; now a register with its own screen.
+  | 'horse-records.view'
+  | 'horse-records.create'
+  | 'horse-records.edit'
+  | 'horse-records.delete'
   | 'racing-records.view'
   | 'racing-records.create'
   | 'racing-records.edit'

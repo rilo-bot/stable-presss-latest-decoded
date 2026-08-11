@@ -181,3 +181,33 @@ test('no seeded role is left holding a permission that is not in the catalogue',
     for (const id of ids) assert.ok(isPermissionAction(id), `${name} holds unknown id ${id}`)
   }
 })
+
+// ── Horse Records is a register, not a lens ─────────────────────────────────
+//
+// It began life as a TAB inside Editor Hub, gated on `horses.edit`, and the two
+// are easy to re-merge by accident — they are both "horse things". They answer
+// different questions: `horses` is the animal's identity, `horse-records` is
+// what it sold for and the documents that follow it. The server gates /sales
+// and /reports on `horse-records`, so collapsing them here would silently widen
+// who can read a sale price.
+
+test('horse-records is a full register, separate from horses', () => {
+  const rec = SCREEN_CATALOGUE.find((s) => s.id === 'horse-records')
+  assert.ok(rec, 'horse-records must exist — it is the only screen for sales and reports')
+  assert.equal(rec.lensOver, undefined, 'horse-records owns its records; it is not a lens')
+  assert.deepEqual(rec.verbs, ['view', 'create', 'edit', 'delete'])
+  assert.equal(rec.section, 'Stables')
+  // Distinct rows, so a role can hold one without the other.
+  assert.ok(isPermissionAction('horse-records.view'))
+  assert.ok(isPermissionAction('horses.view'))
+})
+
+test('Editor Hub is gone, and nothing still points at it', () => {
+  assert.ok(!SCREEN_CATALOGUE.some((s) => s.id === 'editor-hub'))
+  assert.ok(!isPermissionAction('editor-hub.view'))
+  // The alias that used to grant it must land on a screen that still exists —
+  // an alias mapping to a dead id drops the row instead of moving it.
+  for (const ids of Object.values(LEGACY_PERMISSION_ALIASES)) {
+    for (const id of ids) assert.ok(isPermissionAction(id), `alias target ${id} no longer exists`)
+  }
+})

@@ -51,7 +51,7 @@ import { useProductionSystemState } from './useProductionSystemState';
  */
 // SLUGS, not module ids — this is matched against the URL segment below, and
 // All Stories is `id: 'stories'` at `slug: 'all-stories'`.
-const STORY_SCREENS = new Set(['overview', 'workflow', 'pipeline', 'all-stories', 'editor-hub']);
+const STORY_SCREENS = new Set(['overview', 'workflow', 'pipeline', 'all-stories']);
 
 /**
  * The screen a bare `/production-system` lands on: the first one this user
