@@ -9,7 +9,44 @@ module.exports = {
       screens: { '2xl': '1400px' },
     },
     extend: {
+      /*
+       * THE UI-CHROME TYPE SCALE — three sizes, floor 12px.
+       *
+       * The magazine studio had seven (9 · 10 · 11 · 12 · 12.5 · 15 · 16) and all
+       * but four sites were 12px or smaller: 58 uses of 11px and 48 of 10px. The
+       * distinction between 10 and 11 carries no information a reader can perceive,
+       * so it was noise that read as inconsistency. `ui-sm` is the floor and
+       * nothing in application chrome should go below it.
+       */
+      fontSize: {
+        'ui-lg': ['0.9375rem', { lineHeight: '1.35' }], // 15px — panel + dialog titles
+        ui: ['0.8125rem', { lineHeight: '1.45' }], //       13px — body, chat, inputs
+        'ui-sm': ['0.75rem', { lineHeight: '1.4' }], //     12px — labels, meta, buttons
+      },
       colors: {
+        /*
+         * Magazine studio chrome. Values in index.css; see the block there for why
+         * ink is parchment rather than white and why there are exactly four levels.
+         * Referenced as bg-studio-panel / text-studio-ink-3 / border-studio-hair.
+         */
+        studio: {
+          bg: 'var(--studio-bg)',
+          panel: { DEFAULT: 'var(--studio-panel)', 2: 'var(--studio-panel-2)' },
+          raise: { DEFAULT: 'var(--studio-raise)', 2: 'var(--studio-raise-2)' },
+          hair: 'var(--studio-hair)',
+          edge: { DEFAULT: 'var(--studio-edge)', strong: 'var(--studio-edge-strong)' },
+          ink: {
+            DEFAULT: 'var(--studio-ink)',
+            2: 'var(--studio-ink-2)',
+            3: 'var(--studio-ink-3)',
+            4: 'var(--studio-ink-4)',
+          },
+          /* The studio's ONE accent. Blue (sky-*) is retired: it belonged to no
+             palette in this product and competed with gold for "primary". */
+          gold: 'var(--gold-bright)',
+          /* Selection lands on the PAGE, not the chrome — see index.css. */
+          select: { DEFAULT: 'var(--studio-select)', soft: 'var(--studio-select-soft)', wash: 'var(--studio-select-wash)' },
+        },
         border: 'hsl(var(--border))',
         input: 'hsl(var(--input))',
         ring: 'hsl(var(--ring))',

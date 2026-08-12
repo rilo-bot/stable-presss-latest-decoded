@@ -110,8 +110,32 @@ interface EditorState {
   applyAllProposals: () => Promise<void>;
   discardProposals: () => void;
 
+  /**
+   * Full page data for the thumbnail rail, keyed by pageId.
+   *
+   * The rail draws real pages, and a PageSummary carries only an element COUNT — so
+   * each page has to be fetched once. It is filled LAZILY (a tile asks when it first
+   * scrolls into view) rather than up front, because a 40-page magazine would
+   * otherwise fire 40 requests to draw a strip the user may never scroll.
+   */
+  thumbs: Record<string, MagazinePageV2>;
+  /** Fetch this page's thumbnail if we don't already have a current copy. Fire-and-
+   *  forget: it never throws and never blocks anything the user is doing. */
+  ensureThumb: (pageId: string) => void;
+
   load: (id: string) => Promise<void>;
   openPage: (pageId: string) => Promise<void>;
+  /**
+   * NAVIGATE to a page: open it AND bring it into view.
+   *
+   * `openPage` alone is only half the job, and the missing half was a dead click for
+   * as long as the page rail has existed. The canvas is a vertical stack of EVERY
+   * page (EditorCanvas), so making page 6 "active" while the viewport is still on
+   * page 2 changes nothing the user can see — and the canvas's scroll-settle picker
+   * then hands the active page back to whatever is centred. Anything that means "take
+   * me to this page" must call this, not openPage.
+   */
+  goToPage: (pageId: string) => Promise<void>;
   select: (id: string | null) => void;
   setZoomWidth: (w: number) => void;
   canManage: () => boolean;
@@ -189,6 +213,29 @@ const el = (p: MagazinePageV2 | null, id: string | null) => p?.elements.find((e)
 let genPoll: ReturnType<typeof setTimeout> | null = null;
 function stopGenPoll() { if (genPoll) { clearTimeout(genPoll); genPoll = null; } }
 
+// Thumbnail fetches in flight. Module-scoped rather than in the store because it is
+// pure de-duplication — nothing renders from it, and putting it in state would make
+// every tile re-render each time any other tile started loading.
+const thumbsInFlight = new Set<string>();
+
+/**
+ * Scroll the canvas stack to a page.
+ *
+ * Retries across a few frames because a page created a moment ago (add / duplicate /
+ * generate) is in the store before React has put it in the DOM — without the retry,
+ * "add a page" would scroll nowhere, which is the same dead click it is fixing.
+ */
+function scrollToPage(pageId: string, tries = 3): void {
+  const node = document.querySelector(`[data-page="${pageId}"]`);
+  if (node) {
+    // `block: 'start'` leaves the page filling the viewport, so when the canvas's
+    // scroll-settle picker runs it lands on this same page and doesn't undo us.
+    node.scrollIntoView({ behavior: 'smooth', block: 'start' });
+    return;
+  }
+  if (tries > 0) requestAnimationFrame(() => scrollToPage(pageId, tries - 1));
+}
+
 export const useEditorStore = create<EditorState>((set, get) => ({
   issueId: null,
   issue: null,
@@ -219,6 +266,30 @@ export const useEditorStore = create<EditorState>((set, get) => ({
   proposalsPageId: null,
   previewDoc: null,
   setPreviewDoc: (d) => set({ previewDoc: d }),
+  thumbs: {},
+
+  ensureThumb: (pageId) => {
+    const { issueId, thumbs, pages } = get();
+    if (!issueId || thumbsInFlight.has(pageId)) return;
+    const summary = pages.find((p) => p.id === pageId);
+    if (!summary) return;
+    // A cached copy at the same rev is still accurate. Our own edits bump the OPEN
+    // page's rev without touching its summary, which is fine: the rail renders the
+    // open page from `page`, and openPage() hands the outgoing copy back to the cache.
+    const have = thumbs[pageId];
+    if (have && have.rev >= summary.rev) return;
+    thumbsInFlight.add(pageId);
+    void api
+      .getPage(issueId, pageId)
+      .then((page) => {
+        // Guard the late response: the user may have opened another magazine.
+        if (get().issueId === issueId) set((st) => ({ thumbs: { ...st.thumbs, [pageId]: page } }));
+      })
+      // A thumbnail is decoration. A failed fetch leaves the numbered placeholder in
+      // place, which still navigates — so there is nothing worth interrupting for.
+      .catch(() => {})
+      .finally(() => { thumbsInFlight.delete(pageId); });
+  },
 
   canManage: () => get().issue?.myRole === 'owner',
   canEdit: () => !!get().issue?.myRole,
@@ -228,7 +299,7 @@ export const useEditorStore = create<EditorState>((set, get) => ({
     // editedSinceLoad resets here: the freshly-loaded `issue.needsRepublish` is the
     // server's own answer, so carrying a stale local flag across a reload would keep
     // claiming changes that were already published.
-    set({ loading: true, error: null, issueId: id, generating: false, justGenerated: false, currentPageId: null, page: null, chat: [], proposals: [], proposalsPageId: null, editedSinceLoad: false });
+    set({ loading: true, error: null, issueId: id, generating: false, justGenerated: false, currentPageId: null, page: null, chat: [], proposals: [], proposalsPageId: null, editedSinceLoad: false, thumbs: {} });
     try {
       const { issue, pages } = await api.getIssue(id);
       set({ issue, pages, loading: false, undoStack: [], redoStack: [], selectedId: null });
@@ -271,10 +342,29 @@ export const useEditorStore = create<EditorState>((set, get) => ({
       // the current page), and keeping both means scrolling/switching pages no
       // longer clears your selection or wipes the conversation. Both are cleared
       // per-issue in load(). previewDoc is not page-scoped and survives too.
-      set({ page, currentPageId: pageId, proposals: [], proposalsPageId: null });
+      //
+      // The page we're LEAVING goes into the thumbnail cache: every element write
+      // landed on that object, so it is the freshest copy of it in existence. Without
+      // this, walking away from a page you just edited would leave the rail showing
+      // the version the server last handed us.
+      set((st) => ({
+        page,
+        currentPageId: pageId,
+        proposals: [],
+        proposalsPageId: null,
+        thumbs: { ...st.thumbs, ...(st.page ? { [st.page.id]: st.page } : {}), [pageId]: page },
+      }));
     } catch (e) {
       set({ error: e instanceof Error ? e.message : 'Failed to load page' });
     }
+  },
+
+  goToPage: async (pageId) => {
+    // Scroll FIRST, so the click feels instant instead of waiting on the page fetch.
+    // Both states render the page at the same width (the open one only gains the
+    // editing layer), so there is no layout shift to scroll into.
+    scrollToPage(pageId);
+    await get().openPage(pageId);
   },
 
   select: (id) => set({ selectedId: id }),
@@ -422,9 +512,15 @@ export const useEditorStore = create<EditorState>((set, get) => ({
   addPage: async () => {
     const s = get();
     if (!s.issueId) return;
+    const had = new Set(s.pages.map((p) => p.id));
     try {
       const { pages } = await api.addPage(s.issueId);
       set({ pages, editedSinceLoad: true });
+      // Open the page that was just made. Leaving the user on the old one reads as a
+      // no-op — and in the vertical rail the new tile can be below the fold, so there
+      // was nothing on screen to tell them it had worked.
+      const fresh = pages.find((p) => !had.has(p.id));
+      if (fresh) await get().goToPage(fresh.id);
     } catch (e) {
       toast.error(e instanceof Error ? e.message : 'Failed to add page');
     }
@@ -582,7 +678,9 @@ export const useEditorStore = create<EditorState>((set, get) => ({
     if (!s.issueId) return;
     try {
       const { issue, pages } = await api.resetIssue(s.issueId);
-      set({ issue, pages, selectedId: null, undoStack: [], redoStack: [], proposals: [], proposalsPageId: null });
+      // thumbs are cleared with everything else: reset() destroys every page, and a
+      // stale tile for a page that no longer exists would be a ghost in the rail.
+      set({ issue, pages, selectedId: null, undoStack: [], redoStack: [], proposals: [], proposalsPageId: null, thumbs: {} });
       if (pages[0]) await get().openPage(pages[0].id);
       toast.success('Reset to a blank page.');
     } catch (e) {

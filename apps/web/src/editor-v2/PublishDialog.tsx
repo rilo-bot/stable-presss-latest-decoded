@@ -48,30 +48,30 @@ export function PublishDialog({ onClose, onPublished }: { onClose: () => void; o
   return (
     <div className="fixed inset-0 z-[70] flex items-center justify-center bg-black/60 p-4" onMouseDown={onClose}>
       <div
-        className="flex max-h-[85vh] w-full max-w-md flex-col overflow-hidden rounded-md border border-white/10 bg-[#0d1626] text-white shadow-2xl"
+        className="flex max-h-[85vh] w-full max-w-md flex-col overflow-hidden rounded-md border border-studio-hair bg-studio-panel text-studio-ink shadow-2xl"
         onMouseDown={(e) => e.stopPropagation()}
       >
         {/* Header */}
-        <div className="flex items-center gap-2 border-b border-white/10 px-4 py-3">
+        <div className="flex items-center gap-2 border-b border-studio-hair px-4 py-3">
           <Send size={16} className="text-emerald-300" />
           <div className="min-w-0">
-            <p className="text-sm font-bold">Publish selected pages</p>
-            <p className="truncate text-[11px] text-white/40">Choose which pages go public in Bulletins</p>
+            <p className="text-ui font-bold">Publish selected pages</p>
+            <p className="truncate text-ui-sm text-studio-ink-3">Choose which pages go public in Bulletins</p>
           </div>
-          <button onClick={onClose} className="ml-auto rounded-sm p-1 text-white/50 hover:bg-white/10 hover:text-white" aria-label="Close">
+          <button onClick={onClose} className="ml-auto rounded-sm p-1 text-studio-ink-3 hover:bg-studio-raise-2 hover:text-studio-ink" aria-label="Close">
             <X size={16} />
           </button>
         </div>
 
         {/* Count + select-all toggle */}
-        <div className="flex items-center gap-2 border-b border-white/10 px-4 py-2.5">
-          <span className="text-xs font-semibold text-white/70">
+        <div className="flex items-center gap-2 border-b border-studio-hair px-4 py-2.5">
+          <span className="text-ui-sm font-semibold text-studio-ink-2">
             {selectedCount} of {total} page{total !== 1 ? 's' : ''} selected
           </span>
           <button
             type="button"
             onClick={() => setAll(!allSelected)}
-            className="ml-auto flex items-center gap-1 rounded-sm border border-white/15 px-2 py-1 text-[11px] text-white/70 hover:bg-white/10"
+            className="ml-auto flex items-center gap-1 rounded-sm border border-studio-edge px-2 py-1 text-ui-sm text-studio-ink-2 hover:bg-studio-raise-2"
           >
             {allSelected ? <Square size={12} /> : <CheckSquare size={12} />}
             {allSelected ? 'Deselect all' : 'Select all'}
@@ -81,7 +81,7 @@ export function PublishDialog({ onClose, onPublished }: { onClose: () => void; o
         {/* Why this selection can't publish yet — stated once, above the list, with
             the blocking pages marked in it. */}
         {blocked && (
-          <div className="flex items-start gap-2 border-b border-amber-400/25 bg-amber-400/10 px-4 py-2 text-[11px] text-amber-200">
+          <div className="flex items-start gap-2 border-b border-amber-400/25 bg-amber-400/10 px-4 py-2 text-ui-sm text-amber-200">
             <AlertTriangle size={12} className="mt-[1px] flex-shrink-0" />
             {/* The advice is only true of the APPROVAL block. Appending it to a
                 permission refusal would tell the user to go and untick pages that
@@ -98,8 +98,8 @@ export function PublishDialog({ onClose, onPublished }: { onClose: () => void; o
               <label
                 key={p.id}
                 className={
-                  'flex cursor-pointer items-center gap-2.5 rounded-sm px-2.5 py-2 text-xs hover:bg-white/5 ' +
-                  (p.selectedForPublish ? 'text-white' : 'text-white/55')
+                  'flex cursor-pointer items-center gap-2.5 rounded-sm px-2.5 py-2 text-ui-sm hover:bg-studio-raise ' +
+                  (p.selectedForPublish ? 'text-studio-ink' : 'text-studio-ink-3')
                 }
               >
                 <input
@@ -108,12 +108,12 @@ export function PublishDialog({ onClose, onPublished }: { onClose: () => void; o
                   onChange={(e) => void setPageSelected(p.id, e.target.checked)}
                   className="accent-emerald-500"
                 />
-                <span className="tabular-nums text-white/40">{String(p.index + 1).padStart(2, '0')}</span>
+                <span className="tabular-nums text-studio-ink-3">{String(p.index + 1).padStart(2, '0')}</span>
                 <span className="truncate">
                   Page {p.index + 1} · {p.elementCount} element{p.elementCount !== 1 ? 's' : ''}
                 </span>
                 {isBlocking && (
-                  <span className="ml-auto flex-shrink-0 rounded-full border border-amber-400/30 bg-amber-400/10 px-1.5 py-0.5 text-[10px] text-amber-200">
+                  <span className="ml-auto flex-shrink-0 rounded-full border border-amber-400/30 bg-amber-400/10 px-1.5 py-0.5 text-ui-sm text-amber-200">
                     {p.approvalStale ? 'needs re-approval' : COLUMN_LABEL[columnOf(p)]}
                   </span>
                 )}
@@ -123,8 +123,8 @@ export function PublishDialog({ onClose, onPublished }: { onClose: () => void; o
         </div>
 
         {/* Footer */}
-        <div className="flex items-center gap-2 border-t border-white/10 px-4 py-3">
-          <button type="button" onClick={onClose} className="rounded-sm border border-white/15 px-3 py-2 text-xs text-white/70 hover:bg-white/10">
+        <div className="flex items-center gap-2 border-t border-studio-hair px-4 py-3">
+          <button type="button" onClick={onClose} className="rounded-sm border border-studio-edge px-3 py-2 text-ui-sm text-studio-ink-2 hover:bg-studio-raise-2">
             Cancel
           </button>
           <button
@@ -132,7 +132,7 @@ export function PublishDialog({ onClose, onPublished }: { onClose: () => void; o
             onClick={() => void doPublish()}
             disabled={publishing || selectedCount === 0 || !!blocked}
             title={blocked || undefined}
-            className="ml-auto flex items-center justify-center gap-1.5 rounded-sm bg-emerald-500 px-3 py-2 text-xs font-semibold text-white hover:bg-emerald-600 disabled:opacity-50"
+            className="ml-auto flex items-center justify-center gap-1.5 rounded-sm bg-emerald-500 px-3 py-2 text-ui-sm font-semibold text-studio-ink hover:bg-emerald-600 disabled:opacity-50"
           >
             <Send size={13} />
             {publishing ? <ShimmerText>Publishing…</ShimmerText> : `Publish ${selectedCount} page${selectedCount !== 1 ? 's' : ''}`}

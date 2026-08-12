@@ -9,15 +9,16 @@ import { useEffect, useRef, useState, type ReactNode } from 'react';
 import { toast } from 'sonner';
 import { useEditorStore } from './store';
 import { ShimmerText } from './BuildProgress';
-import type { MagazineElement } from './model';
+import { columnOf, COLUMN_LABEL, COLUMN_TONE } from './review';
+import type { MagazineElement, ElementType } from './model';
 import * as api from './api';
 import type { MediaAsset } from './api';
 import { Section, Stepper, Segmented, ColorControl } from '@/editor-v2/controls';
 import { ICON_NAMES, resolveIcon } from '@/lib/iconRegistry';
 import {
-  MousePointerClick, Type, Image as ImageIcon, QrCode, Square, Shapes,
+  Type, Image as ImageIcon, QrCode, Square, Shapes,
   AlignLeft, AlignCenter, AlignRight, ArrowUpToLine, FoldVertical, ArrowDownToLine, Trash2,
-  Sliders, Images, Upload, Copy, BringToFront, SendToBack,
+  Sliders, Images, Upload, Copy, BringToFront, SendToBack, FileText,
 } from 'lucide-react';
 
 const KIND_META = {
@@ -47,9 +48,124 @@ const FONT_OPTIONS: { label: string; stack: string }[] = [
 const primaryFamily = (stack: string) => (stack.split(',')[0] ?? '').trim().replace(/^['"]+|['"]+$/g, '').toLowerCase();
 const matchFontOption = (stack: string) => FONT_OPTIONS.find((f) => primaryFamily(f.stack) === primaryFamily(stack));
 
-export function Inspector() {
+/**
+ * ADD TO PAGE — the five insert tools, moved here from the top toolbar.
+ *
+ * They were in the header, competing with Publish and Delete-magazine for the same
+ * glance, which was wrong twice over: they act on the CURRENT PAGE rather than the
+ * magazine, and they are only usable when there is a page open. Here they sit
+ * directly above the panel that edits whatever they just created.
+ */
+function AddRow({ onAdd, disabled }: { onAdd: (kind: ElementType) => void; disabled: boolean }) {
+  const tools: { kind: ElementType; label: string; icon: ReactNode }[] = [
+    { kind: 'text', label: 'Text', icon: <Type size={14} /> },
+    { kind: 'image', label: 'Photo', icon: <ImageIcon size={14} /> },
+    { kind: 'shape', label: 'Shape', icon: <Square size={14} /> },
+    { kind: 'qr', label: 'QR code', icon: <QrCode size={14} /> },
+    { kind: 'icon', label: 'Icon', icon: <Shapes size={14} /> },
+  ];
+  return (
+    <div className="flex flex-shrink-0 items-center gap-1 border-b border-studio-hair px-2 py-1.5">
+      <span className="pr-1 text-ui-sm uppercase tracking-wide text-studio-ink-4">Add</span>
+      {tools.map((t) => (
+        <button
+          key={t.kind}
+          onClick={() => onAdd(t.kind)}
+          disabled={disabled}
+          title={`Add ${t.label.toLowerCase()} to this page`}
+          aria-label={`Add ${t.label.toLowerCase()}`}
+          className="flex h-7 w-7 items-center justify-center rounded-sm border border-studio-edge text-studio-ink-2 hover:bg-studio-raise-2 hover:text-studio-ink disabled:opacity-30 disabled:hover:bg-transparent"
+        >
+          {t.icon}
+        </button>
+      ))}
+    </div>
+  );
+}
+
+/**
+ * What the panel shows when nothing is selected: THE PAGE.
+ *
+ * It used to say "Nothing selected" over an illustration — 300px of screen
+ * apologising for itself. A panel that always has something true to show never
+ * needs an empty state, and "which page am I on, is it going in the edition, what
+ * did the owner say about it" are exactly the questions you have at that moment.
+ */
+function PagePanel() {
+  const pages = useEditorStore((s) => s.pages);
+  const currentPageId = useEditorStore((s) => s.currentPageId);
+  const page = useEditorStore((s) => s.page);
+  const setPageSelected = useEditorStore((s) => s.setPageSelected);
+  const canManage = useEditorStore((s) => s.canManage());
+  const sum = pages.find((p) => p.id === currentPageId);
+  if (!sum) return <div className="p-3 text-ui-sm text-studio-ink-3">No page open.</div>;
+
+  const col = columnOf(sum);
+  const tone = COLUMN_TONE[col];
+  return (
+    <div className="flex flex-col">
+      <div className="flex items-center gap-2 border-b border-studio-hair px-3.5 py-3">
+        <span className="flex h-7 w-7 items-center justify-center rounded-sm bg-studio-raise-2 text-studio-ink-2 tabular-nums">
+          {sum.index + 1}
+        </span>
+        <div className="min-w-0">
+          <p className="truncate text-ui font-bold text-studio-ink">Page {sum.index + 1} of {pages.length}</p>
+          <p className="truncate text-ui-sm text-studio-ink-3">
+            {sum.elementCount} item{sum.elementCount === 1 ? '' : 's'}
+            {page ? ` · ${Math.round(page.width)}×${Math.round(page.height)}` : ''}
+          </p>
+        </div>
+      </div>
+
+      <Section title="In this edition">
+        <label className="flex cursor-pointer items-start gap-2 text-ui-sm text-studio-ink-2">
+          <input
+            type="checkbox"
+            checked={sum.selectedForPublish}
+            disabled={!canManage}
+            onChange={(e) => void setPageSelected(sum.id, e.target.checked)}
+            className="mt-0.5 accent-studio-gold"
+          />
+          <span>
+            Include when publishing selected pages
+            <span className="block text-studio-ink-4">A full-edition publish always includes every page.</span>
+          </span>
+        </label>
+      </Section>
+
+      <Section title="Review">
+        <span className={`inline-flex items-center gap-1.5 rounded-full border px-2 py-0.5 text-ui-sm ${tone.chip} ${tone.text}`}>
+          <span className={`h-1.5 w-1.5 rounded-full ${tone.dot}`} />
+          {COLUMN_LABEL[col]}
+          {(sum.reviewRound ?? 0) > 0 && col === 'needs_changes' ? ` · round ${sum.reviewRound}` : ''}
+        </span>
+        {sum.approvalStale && (
+          <p className="mt-1.5 text-ui-sm text-amber-200/90">Edited after approval — it needs approving again.</p>
+        )}
+        {sum.reviewNote && (
+          <p className="mt-1.5 border-l-2 border-studio-edge pl-2 text-ui-sm italic text-studio-ink-2">“{sum.reviewNote}”</p>
+        )}
+        {!sum.reviewNote && !sum.approvalStale && (
+          <p className="mt-1.5 text-ui-sm text-studio-ink-4">
+            {col === 'in_progress' ? 'Not submitted for review.' : 'No notes on this page.'}
+          </p>
+        )}
+      </Section>
+
+      <Section title="Editing">
+        <p className="text-ui-sm leading-relaxed text-studio-ink-3">
+          Click any headline, paragraph, photo or shape on the page to edit it here. Use <b className="text-studio-ink-2">Add</b> above
+          to put something new on it, or <b className="text-studio-ink-2">Assets</b> to place a photo you have already uploaded.
+        </p>
+      </Section>
+    </div>
+  );
+}
+
+export function Inspector({ onAdd }: { onAdd?: (kind: ElementType) => void }) {
   const page = useEditorStore((s) => s.page);
   const selectedId = useEditorStore((s) => s.selectedId);
+  const canEdit = useEditorStore((s) => s.canEdit());
   const [tab, setTab] = useState<'element' | 'assets'>('element');
 
   const el = page?.elements.find((e) => e.id === selectedId) ?? null;
@@ -58,8 +174,8 @@ export function Inspector() {
     <button
       onClick={() => setTab(id)}
       className={
-        'flex flex-1 items-center justify-center gap-1.5 border-b-2 py-2.5 text-xs font-semibold transition-colors ' +
-        (tab === id ? 'border-sky-400 text-white' : 'border-transparent text-white/45 hover:text-white/70')
+        'flex flex-1 items-center justify-center gap-1.5 border-b-2 py-2.5 text-ui-sm font-semibold transition-colors ' +
+        (tab === id ? 'border-studio-gold text-studio-ink' : 'border-transparent text-studio-ink-3 hover:text-studio-ink-2')
       }
     >
       {icon} {label}
@@ -68,20 +184,15 @@ export function Inspector() {
 
   return (
     <div className="flex h-full flex-col">
-      <div className="flex flex-shrink-0 border-b border-white/10">
-        {tabBtn('element', 'Element', <Sliders size={13} />)}
+      {onAdd && canEdit && <AddRow onAdd={onAdd} disabled={!page} />}
+      <div className="flex flex-shrink-0 border-b border-studio-hair">
+        {tabBtn('element', el ? 'Element' : 'Page', el ? <Sliders size={13} /> : <FileText size={13} />)}
         {tabBtn('assets', 'Assets', <Images size={13} />)}
       </div>
-      <div className="min-h-0 flex-1">
-        {tab === 'assets' ? <AssetsTab /> : el ? <ElementPanel el={el} /> : (
-          <div className="flex h-full flex-col items-center justify-center px-6 text-center">
-            <MousePointerClick size={26} className="mb-3 text-white/25" />
-            <p className="text-sm font-semibold text-white/70">Nothing selected</p>
-            <p className="mt-1 text-xs leading-relaxed text-white/40">
-              Click any headline, paragraph, photo, or shape on the page to edit it here — or open <b>Assets</b> to place a photo.
-            </p>
-          </div>
-        )}
+      <div className="min-h-0 flex-1 overflow-y-auto">
+        {/* No empty state: with nothing selected the tab shows the PAGE, which is
+            always a real thing with real properties. */}
+        {tab === 'assets' ? <AssetsTab /> : el ? <ElementPanel el={el} /> : <PagePanel />}
       </div>
     </div>
   );
@@ -130,13 +241,13 @@ function ElementPanel({ el }: { el: MagazineElement }) {
   return (
     <div className="flex h-full flex-col">
       {/* Header */}
-      <div className="flex items-center gap-2 border-b border-white/10 px-3.5 py-3">
-        <span className="flex h-7 w-7 items-center justify-center rounded-sm bg-sky-500/20 text-sky-300">
+      <div className="flex items-center gap-2 border-b border-studio-hair px-3.5 py-3">
+        <span className="flex h-7 w-7 items-center justify-center rounded-sm bg-studio-gold/20 text-studio-gold">
           <Icon size={14} />
         </span>
         <div className="min-w-0">
-          <p className="truncate text-xs font-bold text-white">{meta.label}{el.type === 'text' && el.text ? ` · ${el.text.role}` : ''}</p>
-          <p className="truncate text-[10px] text-white/40">Page {pageNo || '—'}</p>
+          <p className="truncate text-ui-sm font-bold text-studio-ink">{meta.label}{el.type === 'text' && el.text ? ` · ${el.text.role}` : ''}</p>
+          <p className="truncate text-ui-sm text-studio-ink-3">Page {pageNo || '—'}</p>
         </div>
       </div>
 
@@ -149,7 +260,7 @@ function ElementPanel({ el }: { el: MagazineElement }) {
                 defaultValue={el.text.content}
                 rows={3}
                 onBlur={(e) => set({ text: { ...el.text!, content: e.target.value } })}
-                className="w-full resize-none rounded-sm border border-white/15 bg-white/5 px-2 py-1.5 text-xs text-white outline-none focus:border-white/30"
+                className="w-full resize-none rounded-sm border border-studio-edge bg-studio-raise px-2 py-1.5 text-ui-sm text-studio-ink outline-none focus:border-studio-edge-strong"
               />
             </Section>
 
@@ -157,7 +268,7 @@ function ElementPanel({ el }: { el: MagazineElement }) {
               <select
                 value={matchFontOption(el.text!.fontFamily)?.stack ?? ''}
                 onChange={(e) => set({ text: { ...el.text!, fontFamily: e.target.value } })}
-                className="w-full rounded-sm border border-white/15 bg-white/5 px-2.5 py-2 text-sm text-white outline-none hover:bg-white/10"
+                className="w-full rounded-sm border border-studio-edge bg-studio-raise px-2.5 py-2 text-ui text-studio-ink outline-none hover:bg-studio-raise-2"
                 // `colorScheme: dark` makes the browser render the native OPTION popup
                 // dark; without it the popup defaults to white and the inherited white
                 // text is invisible (white-on-white). Explicit per-option colours below
@@ -165,10 +276,10 @@ function ElementPanel({ el }: { el: MagazineElement }) {
                 style={{ fontFamily: el.text.fontFamily, colorScheme: 'dark' }}
               >
                 {!matchFontOption(el.text!.fontFamily) && (
-                  <option value="" style={{ backgroundColor: '#0d1626', color: '#fff' }}>{primaryFamily(el.text.fontFamily) || 'Custom'}</option>
+                  <option value="" style={{ backgroundColor: 'var(--studio-panel)', color: '#fff' }}>{primaryFamily(el.text.fontFamily) || 'Custom'}</option>
                 )}
                 {FONT_OPTIONS.map((f) => (
-                  <option key={f.stack} value={f.stack} style={{ fontFamily: f.stack, backgroundColor: '#0d1626', color: '#fff' }}>{f.label}</option>
+                  <option key={f.stack} value={f.stack} style={{ fontFamily: f.stack, backgroundColor: 'var(--studio-panel)', color: '#fff' }}>{f.label}</option>
                 ))}
               </select>
             </Section>
@@ -217,7 +328,7 @@ function ElementPanel({ el }: { el: MagazineElement }) {
             </Section>
 
             <Section title="Spacing">
-              <p className="mb-1 text-[10px] text-white/40">Line height</p>
+              <p className="mb-1 text-ui-sm text-studio-ink-3">Line height</p>
               <Stepper value={Math.round((el.text.lineHeight ?? 1.3) * 100)} min={80} max={250} step={5} suffix="%" onChange={(v) => set({ text: { ...el.text!, lineHeight: v / 100 } })} />
             </Section>
           </>
@@ -227,7 +338,7 @@ function ElementPanel({ el }: { el: MagazineElement }) {
           <>
             <Section title="Replace image">
               {el.image.url && (
-                <div className="mb-2 overflow-hidden rounded-sm border border-white/10 bg-black/20">
+                <div className="mb-2 overflow-hidden rounded-sm border border-studio-hair bg-black/20">
                   <img src={el.image.url} alt={el.image.alt} className="max-h-28 w-full object-contain" />
                 </div>
               )}
@@ -241,12 +352,12 @@ function ElementPanel({ el }: { el: MagazineElement }) {
               <button
                 onClick={() => fileRef.current?.click()}
                 disabled={uploading}
-                className="flex w-full items-center justify-center gap-2 rounded-sm border border-white/15 bg-white/5 px-3 py-2 text-xs font-semibold text-white hover:bg-white/10 disabled:opacity-50"
+                className="flex w-full items-center justify-center gap-2 rounded-sm border border-studio-edge bg-studio-raise px-3 py-2 text-ui-sm font-semibold text-studio-ink hover:bg-studio-raise-2 disabled:opacity-50"
               >
                 <Upload size={13} />
                 {uploading ? <ShimmerText>Uploading…</ShimmerText> : el.image.url ? 'Upload a replacement' : 'Upload from computer'}
               </button>
-              <p className="mt-1.5 text-[10px] leading-relaxed text-white/40">
+              <p className="mt-1.5 text-ui-sm leading-relaxed text-studio-ink-3">
                 Or pick an existing photo in the <b>Assets</b> tab, or paste a URL below.
               </p>
             </Section>
@@ -256,7 +367,7 @@ function ElementPanel({ el }: { el: MagazineElement }) {
                 defaultValue={el.image.url}
                 placeholder="https://…  (or use the Studio Assistant to add a photo)"
                 onBlur={(e) => set({ image: { ...el.image!, url: e.target.value } })}
-                className="w-full rounded-sm border border-white/15 bg-white/5 px-2 py-1.5 text-xs text-white outline-none focus:border-white/30"
+                className="w-full rounded-sm border border-studio-edge bg-studio-raise px-2 py-1.5 text-ui-sm text-studio-ink outline-none focus:border-studio-edge-strong"
               />
             </Section>
             <Section title="Fit">
@@ -286,7 +397,7 @@ function ElementPanel({ el }: { el: MagazineElement }) {
                 defaultValue={el.qr.url}
                 placeholder="https://…"
                 onBlur={(e) => set({ qr: { ...el.qr!, url: e.target.value } })}
-                className="w-full rounded-sm border border-white/15 bg-white/5 px-2 py-1.5 text-xs text-white outline-none focus:border-white/30"
+                className="w-full rounded-sm border border-studio-edge bg-studio-raise px-2 py-1.5 text-ui-sm text-studio-ink outline-none focus:border-studio-edge-strong"
               />
             </Section>
             <Section title="Dark"><ColorControl value={el.qr.fg} onChange={(c) => set({ qr: { ...el.qr!, fg: c } })} /></Section>
@@ -297,7 +408,7 @@ function ElementPanel({ el }: { el: MagazineElement }) {
         {el.type === 'icon' && el.icon && (
           <>
             <Section title="Icon">
-              <div className="grid max-h-56 grid-cols-6 gap-1 overflow-y-auto rounded-sm border border-white/10 bg-white/5 p-1.5">
+              <div className="grid max-h-56 grid-cols-6 gap-1 overflow-y-auto rounded-sm border border-studio-hair bg-studio-raise p-1.5">
                 {ICON_NAMES.map((name) => {
                   const Glyph = resolveIcon(name);
                   const active = el.icon!.name === name;
@@ -308,7 +419,7 @@ function ElementPanel({ el }: { el: MagazineElement }) {
                       onClick={() => set({ icon: { ...el.icon!, name, src: undefined } })}
                       className={
                         'flex aspect-square items-center justify-center rounded-sm border p-1 ' +
-                        (active ? 'border-sky-400 bg-sky-500/20 text-white' : 'border-transparent text-white/60 hover:bg-white/10 hover:text-white')
+                        (active ? 'border-studio-gold bg-studio-gold/20 text-studio-ink' : 'border-transparent text-studio-ink-2 hover:bg-studio-raise-2 hover:text-studio-ink')
                       }
                     >
                       <Glyph size={16} />
@@ -316,7 +427,7 @@ function ElementPanel({ el }: { el: MagazineElement }) {
                   );
                 })}
               </div>
-              {el.icon.src && <p className="mt-1.5 text-[10px] text-white/40">A custom uploaded icon is in use; pick a glyph above to replace it.</p>}
+              {el.icon.src && <p className="mt-1.5 text-ui-sm text-studio-ink-3">A custom uploaded icon is in use; pick a glyph above to replace it.</p>}
             </Section>
             <Section title="Colour">
               <ColorControl value={el.icon.color ?? '#111111'} onChange={(c) => set({ icon: { ...el.icon!, color: c } })} />
@@ -327,10 +438,10 @@ function ElementPanel({ el }: { el: MagazineElement }) {
         {/* Position & size — shared across kinds */}
         <Section title="Position & size">
           <div className="grid grid-cols-2 gap-2">
-            <div><p className="mb-1 text-[10px] text-white/40">X</p><Stepper value={Math.round(el.x)} min={0} max={5000} suffix="px" onChange={(v) => set({ x: v })} /></div>
-            <div><p className="mb-1 text-[10px] text-white/40">Y</p><Stepper value={Math.round(el.y)} min={0} max={5000} suffix="px" onChange={(v) => set({ y: v })} /></div>
-            <div><p className="mb-1 text-[10px] text-white/40">W</p><Stepper value={Math.round(el.w)} min={2} max={5000} suffix="px" onChange={(v) => set({ w: v })} /></div>
-            <div><p className="mb-1 text-[10px] text-white/40">H</p><Stepper value={Math.round(el.h)} min={2} max={5000} suffix="px" onChange={(v) => set({ h: v })} /></div>
+            <div><p className="mb-1 text-ui-sm text-studio-ink-3">X</p><Stepper value={Math.round(el.x)} min={0} max={5000} suffix="px" onChange={(v) => set({ x: v })} /></div>
+            <div><p className="mb-1 text-ui-sm text-studio-ink-3">Y</p><Stepper value={Math.round(el.y)} min={0} max={5000} suffix="px" onChange={(v) => set({ y: v })} /></div>
+            <div><p className="mb-1 text-ui-sm text-studio-ink-3">W</p><Stepper value={Math.round(el.w)} min={2} max={5000} suffix="px" onChange={(v) => set({ w: v })} /></div>
+            <div><p className="mb-1 text-ui-sm text-studio-ink-3">H</p><Stepper value={Math.round(el.h)} min={2} max={5000} suffix="px" onChange={(v) => set({ h: v })} /></div>
           </div>
         </Section>
 
@@ -340,10 +451,10 @@ function ElementPanel({ el }: { el: MagazineElement }) {
 
         <Section title="Arrange">
           <div className="grid grid-cols-2 gap-2">
-            <button onClick={bringToFront} className="flex items-center justify-center gap-1.5 rounded-sm border border-white/15 bg-white/5 px-2 py-1.5 text-[11px] text-white/80 hover:bg-white/10">
+            <button onClick={bringToFront} className="flex items-center justify-center gap-1.5 rounded-sm border border-studio-edge bg-studio-raise px-2 py-1.5 text-ui-sm text-studio-ink-2 hover:bg-studio-raise-2">
               <BringToFront size={13} /> To front
             </button>
-            <button onClick={sendToBack} className="flex items-center justify-center gap-1.5 rounded-sm border border-white/15 bg-white/5 px-2 py-1.5 text-[11px] text-white/80 hover:bg-white/10">
+            <button onClick={sendToBack} className="flex items-center justify-center gap-1.5 rounded-sm border border-studio-edge bg-studio-raise px-2 py-1.5 text-ui-sm text-studio-ink-2 hover:bg-studio-raise-2">
               <SendToBack size={13} /> To back
             </button>
           </div>
@@ -352,13 +463,13 @@ function ElementPanel({ el }: { el: MagazineElement }) {
         <div className="flex flex-col gap-2 px-3.5 py-3">
           <button
             onClick={() => void duplicateElement(el.id)}
-            className="flex w-full items-center justify-center gap-2 rounded-sm border border-white/15 bg-white/5 px-3 py-2 text-xs font-semibold text-white/80 hover:bg-white/10"
+            className="flex w-full items-center justify-center gap-2 rounded-sm border border-studio-edge bg-studio-raise px-3 py-2 text-ui-sm font-semibold text-studio-ink-2 hover:bg-studio-raise-2"
           >
             <Copy size={13} /> Duplicate element
           </button>
           <button
             onClick={() => void deleteElement(el.id)}
-            className="flex w-full items-center justify-center gap-2 rounded-sm border border-rose-400/30 bg-rose-500/10 px-3 py-2 text-xs font-semibold text-rose-300 hover:bg-rose-500/20"
+            className="flex w-full items-center justify-center gap-2 rounded-sm border border-rose-400/30 bg-rose-500/10 px-3 py-2 text-ui-sm font-semibold text-rose-300 hover:bg-rose-500/20"
           >
             <Trash2 size={13} /> Delete element
           </button>
@@ -418,13 +529,13 @@ function AssetsTab() {
   if (loading) {
     return (
       <div className="p-3">
-        <p className="mb-2 text-[12px] text-white/40" role="status" aria-live="polite">
+        <p className="mb-2 text-ui text-studio-ink-3" role="status" aria-live="polite">
           <ShimmerText>Loading your media</ShimmerText>
         </p>
         {/* Thumb-shaped placeholders in the real grid, so the panel doesn't jump. */}
         <div className="grid grid-cols-3 gap-1.5" aria-hidden="true">
           {[0, 1, 2, 3, 4, 5].map((i) => (
-            <div key={i} className="aspect-square rounded-sm border border-white/10 bg-white/[0.03]" />
+            <div key={i} className="aspect-square rounded-sm border border-studio-hair bg-studio-raise" />
           ))}
         </div>
       </div>
@@ -433,9 +544,9 @@ function AssetsTab() {
   if (assets.length === 0) {
     return (
       <div className="flex h-full flex-col items-center justify-center px-6 text-center">
-        <Images size={26} className="mb-3 text-white/25" />
-        <p className="text-sm font-semibold text-white/70">No media yet</p>
-        <p className="mt-1 text-xs leading-relaxed text-white/40">
+        <Images size={26} className="mb-3 text-studio-ink-4" />
+        <p className="text-ui font-semibold text-studio-ink-2">No media yet</p>
+        <p className="mt-1 text-ui-sm leading-relaxed text-studio-ink-3">
           Photos appear here when you generate a magazine, import a PDF, or ask the Studio Assistant to add a photo.
         </p>
       </div>
@@ -443,7 +554,7 @@ function AssetsTab() {
   }
   return (
     <div className="h-full overflow-y-auto p-3">
-      <p className="mb-2 text-[11px] text-white/45">
+      <p className="mb-2 text-ui-sm text-studio-ink-3">
         {selEl?.type === 'image' ? 'Click a photo to set the selected image.' : 'Click a photo to place it on the page.'}
       </p>
       <div className="grid grid-cols-2 gap-2">
@@ -451,7 +562,7 @@ function AssetsTab() {
           <button
             key={a.id}
             onClick={() => place(a)}
-            className="relative aspect-[4/3] overflow-hidden rounded border border-white/10 hover:border-sky-400"
+            className="relative aspect-[4/3] overflow-hidden rounded border border-studio-hair hover:border-studio-gold"
             title={a.alt || a.kind}
           >
             <img src={a.url} alt={a.alt} className="h-full w-full object-cover" />

@@ -10,8 +10,8 @@ import { FONTS_BY_CATEGORY, getFontDef, type FontCategory } from '@/lib/fonts/re
 
 export function Section({ title, children }: { title: string; children: ReactNode }) {
   return (
-    <div className="px-3.5 py-3 border-b border-white/10">
-      <p className="text-[10px] uppercase tracking-[0.14em] font-bold text-white/45 mb-2">{title}</p>
+    <div className="px-3.5 py-3 border-b border-studio-hair">
+      <p className="text-ui-sm uppercase tracking-[0.14em] font-bold text-studio-ink-3 mb-2">{title}</p>
       {children}
     </div>
   );
@@ -52,10 +52,10 @@ export function Stepper({
   const bump = (delta: number) => onChange(clamp(value + delta));
 
   return (
-    <div className="flex items-center rounded-sm border border-white/15 bg-white/5 overflow-hidden">
+    <div className="flex items-center rounded-sm border border-studio-edge bg-studio-raise overflow-hidden">
       <button
         type="button"
-        className="px-2 py-1.5 text-white/70 hover:bg-white/10"
+        className="px-2 py-1.5 text-studio-ink-2 hover:bg-studio-raise-2"
         onClick={() => bump(-step)}
         aria-label="Decrease"
       >
@@ -75,12 +75,12 @@ export function Stepper({
           }
         }}
         aria-label={suffix ? `Value in ${suffix}` : 'Value'}
-        className="w-full bg-transparent text-center text-xs text-white tabular-nums outline-none [appearance:textfield] [&::-webkit-inner-spin-button]:appearance-none"
+        className="w-full bg-transparent text-center text-ui-sm text-studio-ink tabular-nums outline-none [appearance:textfield] [&::-webkit-inner-spin-button]:appearance-none"
       />
-      {suffix && <span className="pr-1 text-[10px] text-white/40">{suffix}</span>}
+      {suffix && <span className="pr-1 text-ui-sm text-studio-ink-3">{suffix}</span>}
       <button
         type="button"
-        className="px-2 py-1.5 text-white/70 hover:bg-white/10"
+        className="px-2 py-1.5 text-studio-ink-2 hover:bg-studio-raise-2"
         onClick={() => bump(step)}
         aria-label="Increase"
       >
@@ -100,7 +100,7 @@ export function Segmented<T extends string | number>({
   onChange: (v: T) => void;
 }) {
   return (
-    <div className="flex rounded-sm border border-white/15 bg-white/5 overflow-hidden">
+    <div className="flex rounded-sm border border-studio-edge bg-studio-raise overflow-hidden">
       {options.map((opt) => (
         <button
           key={String(opt.value)}
@@ -108,8 +108,8 @@ export function Segmented<T extends string | number>({
           title={opt.title}
           onClick={() => onChange(opt.value)}
           className={cn(
-            'flex-1 flex items-center justify-center px-2 py-1.5 text-xs transition-colors',
-            value === opt.value ? 'bg-sky-500 text-white' : 'text-white/65 hover:bg-white/10'
+            'flex-1 flex items-center justify-center px-2 py-1.5 text-ui-sm transition-colors',
+            value === opt.value ? 'bg-studio-gold text-studio-ink' : 'text-studio-ink-2 hover:bg-studio-raise-2'
           )}
         >
           {opt.label}
@@ -149,19 +149,19 @@ export function ColorControl({ value, onChange }: { value: string; onChange: (v:
             onClick={() => onChange(c)}
             className={cn(
               'h-5 w-5 rounded-sm border transition-transform hover:scale-110',
-              value.toLowerCase() === c.toLowerCase() ? 'border-sky-400 ring-1 ring-sky-400' : 'border-white/20'
+              value.toLowerCase() === c.toLowerCase() ? 'border-studio-gold ring-1 ring-studio-gold' : 'border-studio-edge'
             )}
             style={{ background: c }}
             aria-label={`Set colour ${c}`}
           />
         ))}
       </div>
-      <label className="flex items-center gap-2 text-[11px] text-white/60">
+      <label className="flex items-center gap-2 text-ui-sm text-studio-ink-2">
         <input
           type="color"
           value={HEX6.test(value) ? value : '#000000'}
           onChange={(e) => onChange(e.target.value)}
-          className="h-6 w-8 rounded-sm border border-white/15 bg-transparent p-0"
+          className="h-6 w-8 rounded-sm border border-studio-edge bg-transparent p-0"
           aria-label="Pick colour"
         />
         <input
@@ -169,7 +169,7 @@ export function ColorControl({ value, onChange }: { value: string; onChange: (v:
           value={draft}
           onChange={(e) => onType(e.target.value)}
           onBlur={() => { if (!HEX6.test(draft)) setDraft(value); }}
-          className="flex-1 rounded-sm border border-white/15 bg-white/5 px-2 py-1 text-xs text-white outline-none"
+          className="flex-1 rounded-sm border border-studio-edge bg-studio-raise px-2 py-1 text-ui-sm text-studio-ink outline-none"
           spellCheck={false}
           aria-label="Hex colour"
         />
@@ -209,18 +209,18 @@ export function FontFamilyMenu({
       <button
         type="button"
         onClick={() => setOpen((o) => !o)}
-        className="flex w-full items-center justify-between rounded-sm border border-white/15 bg-white/5 px-2.5 py-2 text-left hover:bg-white/10"
+        className="flex w-full items-center justify-between rounded-sm border border-studio-edge bg-studio-raise px-2.5 py-2 text-left hover:bg-studio-raise-2"
       >
-        <span className="text-sm text-white truncate" style={{ fontFamily: current?.stack }}>
+        <span className="text-ui text-studio-ink truncate" style={{ fontFamily: current?.stack }}>
           {current?.label ?? value}
         </span>
-        <ChevronDown size={13} className="text-white/50 flex-shrink-0" />
+        <ChevronDown size={13} className="text-studio-ink-3 flex-shrink-0" />
       </button>
       {open && (
-        <div className="absolute z-50 mt-1 max-h-72 w-full overflow-y-auto rounded-sm border border-white/15 bg-[#0d1626] shadow-xl">
+        <div className="absolute z-50 mt-1 max-h-72 w-full overflow-y-auto rounded-sm border border-studio-edge bg-studio-panel shadow-xl">
           {(['classic', 'modern', 'script'] as FontCategory[]).map((cat) => (
             <div key={cat}>
-              <p className="sticky top-0 bg-[#0d1626] px-2.5 py-1 text-[9px] uppercase tracking-[0.14em] font-bold text-white/35">
+              <p className="sticky top-0 bg-studio-panel px-2.5 py-1 text-ui-sm uppercase tracking-[0.14em] font-bold text-studio-ink-4">
                 {CATEGORY_LABEL[cat]}
               </p>
               {FONTS_BY_CATEGORY[cat].map((f) => (
@@ -231,12 +231,12 @@ export function FontFamilyMenu({
                     onChange(f.id);
                     setOpen(false);
                   }}
-                  className="flex w-full items-center justify-between px-2.5 py-1.5 text-left hover:bg-white/10"
+                  className="flex w-full items-center justify-between px-2.5 py-1.5 text-left hover:bg-studio-raise-2"
                 >
-                  <span className="text-sm text-white/90" style={{ fontFamily: f.stack }}>
+                  <span className="text-ui text-studio-ink" style={{ fontFamily: f.stack }}>
                     {f.label}
                   </span>
-                  {value === f.id && <Check size={13} className="text-sky-400" />}
+                  {value === f.id && <Check size={13} className="text-studio-gold" />}
                 </button>
               ))}
             </div>

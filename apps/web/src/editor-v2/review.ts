@@ -41,11 +41,24 @@ export const COLUMN_LABEL: Record<ReviewColumn, string> = {
   approved: 'Approved',
 };
 
-/** One palette for badges, dots and column headers, so they can't disagree. */
+/**
+ * One palette for badges, dots and column headers, so they can't disagree.
+ *
+ * A DELIBERATE RAMP, not four decorative colours. Read down the list: dim neutral →
+ * bright neutral → amber → green is "nobody is waiting" → "you are waiting" →
+ * "someone must act" → "done". Only the two states that need a human to do
+ * something are chromatic, which is what makes them findable in the page rail.
+ *
+ * `submitted` was sky-blue. Blue is retired from the studio, and the replacement is
+ * NOT gold: gold is the accent (active tab, selection, primary button), and gold
+ * sitting beside amber would make "waiting on the owner" and "needs changes" —
+ * opposite meanings — look like the same state. A bright neutral says "waiting"
+ * without competing.
+ */
 export const COLUMN_TONE: Record<ReviewColumn, { dot: string; chip: string; text: string }> = {
-  in_progress: { dot: 'bg-white/30', chip: 'border-white/20 bg-white/5', text: 'text-white/60' },
+  in_progress: { dot: 'bg-studio-ink-4', chip: 'border-studio-edge bg-studio-raise', text: 'text-studio-ink-2' },
+  submitted: { dot: 'bg-studio-ink', chip: 'border-studio-edge-strong bg-studio-raise-2', text: 'text-studio-ink' },
   needs_changes: { dot: 'bg-amber-400', chip: 'border-amber-400/30 bg-amber-400/10', text: 'text-amber-200' },
-  submitted: { dot: 'bg-sky-400', chip: 'border-sky-400/30 bg-sky-400/10', text: 'text-sky-200' },
   approved: { dot: 'bg-emerald-400', chip: 'border-emerald-400/30 bg-emerald-400/10', text: 'text-emerald-200' },
 };
 

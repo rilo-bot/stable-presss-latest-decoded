@@ -197,7 +197,7 @@ function TextEditingOverlay({
           document.execCommand('insertText', false, txt);
         }}
         style={textStyle}
-        className="rounded-[2px] ring-2 ring-[#7c3aed]/70"
+        className="rounded-[2px] ring-2 ring-studio-select-soft"
       />
     </div>
   );
@@ -387,10 +387,10 @@ function ActivePageLayer() {
             isEmptySlot(element) && editingId !== element.id ? (
               <div
                 key={element.id}
-                className="pointer-events-none absolute border border-dashed border-[#7c3aed]/50 bg-[#7c3aed]/[0.06]"
+                className="pointer-events-none absolute border border-dashed border-studio-select-soft bg-studio-select-wash"
                 style={{ ...pctRect(element, page), zIndex: element.zIndex }}
               >
-                <span className="absolute inset-0 flex items-center justify-center overflow-hidden px-1 text-center text-[9px] font-semibold uppercase tracking-wide text-[#7c3aed]/70">
+                <span className="absolute inset-0 flex items-center justify-center overflow-hidden px-1 text-center text-ui-sm font-semibold uppercase tracking-wide text-studio-select">
                   {slotLabel(element)}
                 </span>
               </div>
@@ -399,7 +399,7 @@ function ActivePageLayer() {
 
           {selected && !editingId && (
             <div className="absolute" style={{ ...pctRect(selected, page), zIndex: 10000 }}>
-              <div className="pointer-events-none absolute inset-0 ring-2 ring-[#7c3aed]" />
+              <div className="pointer-events-none absolute inset-0 ring-2 ring-studio-select" />
               {HANDLES.map((h) => (
                 <div
                   key={h.m}
@@ -412,7 +412,7 @@ function ActivePageLayer() {
                     height: 10,
                     transform: 'translate(-50%, -50%)',
                     background: '#fff',
-                    border: '1.5px solid #7c3aed',
+                    border: '1.5px solid var(--studio-select)',
                     borderRadius: 2,
                     cursor: h.cur,
                   }}
@@ -504,7 +504,7 @@ export function EditorCanvas() {
   }, [openPage, pages.length]);
 
   if (!pages.length) {
-    return <div className="flex h-full items-center justify-center text-sm text-white/40">No pages.</div>;
+    return <div className="flex h-full items-center justify-center text-ui text-studio-ink-3">No pages.</div>;
   }
 
   return (
@@ -515,10 +515,10 @@ export function EditorCanvas() {
         return (
           <div key={sum.id} data-page={sum.id} className="shrink-0" style={{ width: zoomWidth }}>
             {/* Per-page header: number · publish checkbox · Fill / Adjust (every page) */}
-            <div className="mb-1.5 flex items-center gap-2 text-[11px] text-white/40">
+            <div className="mb-1.5 flex items-center gap-2 text-ui-sm text-studio-ink-3">
               <span>Page {sum.index + 1}</span>
               {canManage && (
-                <label className="flex cursor-pointer items-center gap-1 text-white/45 hover:text-white/70" title="Include this page when publishing selected pages">
+                <label className="flex cursor-pointer items-center gap-1 text-studio-ink-3 hover:text-studio-ink-2" title="Include this page when publishing selected pages">
                   <input
                     type="checkbox"
                     checked={sum.selectedForPublish}
@@ -530,7 +530,7 @@ export function EditorCanvas() {
               )}
               <span className="ml-auto flex items-center gap-1">
                 <button
-                  className="flex items-center gap-1 rounded-sm border border-white/15 px-1.5 py-0.5 text-white/60 hover:bg-white/10 hover:text-white disabled:opacity-30"
+                  className="flex items-center gap-1 rounded-sm border border-studio-edge px-1.5 py-0.5 text-studio-ink-2 hover:bg-studio-raise-2 hover:text-studio-ink disabled:opacity-30"
                   disabled={formatBusy}
                   onClick={() => void runFormat('fill', sum.id)}
                   title="Fill empty boxes & tighten crowded text on this page (AI)"
@@ -538,7 +538,7 @@ export function EditorCanvas() {
                   <Wand2 size={11} /> {formatBusy && active ? <ShimmerText>Filling…</ShimmerText> : 'Fill'}
                 </button>
                 <button
-                  className="flex items-center gap-1 rounded-sm border border-white/15 px-1.5 py-0.5 text-white/60 hover:bg-white/10 hover:text-white disabled:opacity-30"
+                  className="flex items-center gap-1 rounded-sm border border-studio-edge px-1.5 py-0.5 text-studio-ink-2 hover:bg-studio-raise-2 hover:text-studio-ink disabled:opacity-30"
                   disabled={formatBusy}
                   onClick={() => void runFormat('adjust', sum.id)}
                   title="Tighten crowded text on this page (AI)"
@@ -553,7 +553,7 @@ export function EditorCanvas() {
             ) : preview ? (
               <button
                 onClick={() => void openPage(sum.id)}
-                className="block w-full ring-1 ring-white/10 transition hover:ring-2 hover:ring-[#7c3aed]"
+                className="block w-full ring-1 ring-studio-hair transition hover:ring-2 hover:ring-studio-gold"
                 title="Click to edit this page"
               >
                 <IssuePageCanvas page={preview} />
@@ -562,10 +562,10 @@ export function EditorCanvas() {
               <button
                 data-lazy={sum.id}
                 onClick={() => void openPage(sum.id)}
-                className="flex w-full items-center justify-center bg-white/[0.04] text-white/30 ring-1 ring-white/10 hover:ring-[#7c3aed]"
+                className="flex w-full items-center justify-center bg-studio-raise text-studio-ink-4 ring-1 ring-studio-hair hover:ring-studio-gold"
                 style={{ aspectRatio: `${sum.width || 1275} / ${sum.height || 1650}` }}
               >
-                <span className="text-xs">Page {sum.index + 1} — click to edit</span>
+                <span className="text-ui-sm">Page {sum.index + 1} — click to edit</span>
               </button>
             )}
           </div>

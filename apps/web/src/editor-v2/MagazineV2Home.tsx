@@ -13,7 +13,16 @@ import type { IssueSummary } from './api';
 import { ingestFile, attachmentSourceText, ATTACH_ACCEPT } from '@/agent/attachments/documentUpload';
 import { ShimmerText } from './BuildProgress';
 
-const ACCENT = '#7c3aed';
+/**
+ * Gold, in its TWO forms. The library sits on the light app surface, where the
+ * raw accent is only 2.06:1 as text — so fills use `ACCENT` and anything a
+ * person reads (text, icons) uses `ACCENT_INK`. See docs/THEME-REVIEW.md; this
+ * page was violet (#7c3aed), an accent that appears nowhere else in the product
+ * and made the library and the studio look like two different applications.
+ */
+const ACCENT = 'hsl(var(--brand-accent))';
+const ACCENT_INK = 'hsl(var(--brand-accent-ink))';
+const ACCENT_WASH = 'color-mix(in oklab, hsl(var(--brand-accent)) 12%, transparent)';
 
 /** Lifecycle status → a word for a person. Anything unmapped falls through as-is,
  *  so a new backend status shows up honestly rather than vanishing. */
@@ -256,28 +265,28 @@ export default function MagazineV2Home() {
       {/* ── Hero composer ─────────────────────────────────────────────── */}
       <section className="flex flex-col items-center pt-6 text-center sm:pt-10">
         <span
-          className="mb-5 inline-flex items-center gap-1.5 rounded-full px-3 py-1 text-xs font-medium"
-          style={{ backgroundColor: `${ACCENT}14`, color: ACCENT }}
+          className="mb-5 inline-flex items-center gap-1.5 rounded-full px-3 py-1 text-ui-sm font-medium"
+          style={{ backgroundColor: ACCENT_WASH, color: ACCENT_INK }}
         >
           <Sparkles size={13} /> AI Magazine Builder
         </span>
         <h1 className="text-balance text-3xl font-bold tracking-tight sm:text-4xl">What magazine shall we make?</h1>
-        <p className="mt-3 max-w-xl text-balance text-sm text-muted-foreground sm:text-base">
+        <p className="mt-3 max-w-xl text-balance text-ui text-muted-foreground sm:text-ui-lg">
           Describe it in a sentence — the AI designs the layout, writes the copy, and finds the photography.
           Or attach a document or image and it builds the issue from that.
         </p>
 
         {/* The one input the whole flow starts from. */}
         <div
-          className="mt-6 w-full max-w-3xl rounded-[26px] border border-border/70 bg-card text-left shadow-[0_10px_34px_rgba(0,0,0,0.09)] transition-all duration-200 focus-within:border-[#7c3aed]/60 focus-within:shadow-[0_14px_44px_rgba(124,58,237,0.16)]"
-          style={{ borderColor: dragOver ? ACCENT : undefined, boxShadow: dragOver ? `0 0 0 3px ${ACCENT}33` : undefined }}
+          className="mt-6 w-full max-w-3xl rounded-[26px] border border-border/70 bg-card text-left shadow-[0_10px_34px_rgba(0,0,0,0.09)] transition-all duration-200 focus-within:border-brand-accent focus-within:shadow-[0_14px_44px_rgba(212,168,67,0.20)]"
+          style={{ borderColor: dragOver ? ACCENT : undefined, boxShadow: dragOver ? '0 0 0 3px color-mix(in oklab, hsl(var(--brand-accent)) 26%, transparent)' : undefined }}
           onDragOver={(e) => { e.preventDefault(); setDragOver(true); }}
           onDragLeave={() => setDragOver(false)}
           onDrop={onDrop}
         >
           <textarea
             ref={taRef}
-            className="w-full resize-none rounded-[26px] bg-transparent px-5 pt-5 text-[16px] leading-relaxed placeholder:text-muted-foreground/70 focus:outline-none"
+            className="w-full resize-none rounded-[26px] bg-transparent px-5 pt-5 text-ui-lg leading-relaxed placeholder:text-muted-foreground/70 focus:outline-none"
             rows={2}
             autoFocus
             placeholder="e.g. A spring issue for New Zealand racehorse owners — bold, modern, photo-led…"
@@ -288,10 +297,10 @@ export default function MagazineV2Home() {
           />
 
           {files.map((f, i) => (
-            <div key={`${f.name}-${i}`} className="mx-4 mt-1 flex items-center gap-2 rounded-lg border border-border bg-muted/40 px-2.5 py-1.5 text-sm">
-              <FileText size={15} className="shrink-0" style={{ color: ACCENT }} />
+            <div key={`${f.name}-${i}`} className="mx-4 mt-1 flex items-center gap-2 rounded-lg border border-border bg-muted/40 px-2.5 py-1.5 text-ui">
+              <FileText size={15} className="shrink-0" style={{ color: ACCENT_INK }} />
               <span className="flex-1 truncate">{f.name}</span>
-              <span className="hidden text-xs text-muted-foreground sm:inline">building from this</span>
+              <span className="hidden text-ui-sm text-muted-foreground sm:inline">building from this</span>
               <button className="rounded p-1 hover:bg-muted" onClick={() => { setFiles((prev) => prev.filter((_, j) => j !== i)); if (fileRef.current) fileRef.current.value = ''; }} aria-label="Remove attachment"><X size={14} /></button>
             </div>
           ))}
@@ -303,12 +312,12 @@ export default function MagazineV2Home() {
                 type="button"
                 onClick={() => fileRef.current?.click()}
                 disabled={starting}
-                className="inline-flex items-center gap-1.5 rounded-lg px-3 py-2 text-sm text-muted-foreground hover:bg-muted hover:text-foreground disabled:opacity-50"
+                className="inline-flex items-center gap-1.5 rounded-lg px-3 py-2 text-ui text-muted-foreground hover:bg-muted hover:text-foreground disabled:opacity-50"
                 title="Attach a document or image to build from"
               >
                 <Paperclip size={16} /> <span className="hidden sm:inline">Attach</span>
               </button>
-              <span className="hidden pl-1 text-xs text-muted-foreground sm:inline">
+              <span className="hidden pl-1 text-ui-sm text-muted-foreground sm:inline">
                 Shows a quick preview — say how many pages you want, or add more later.
               </span>
             </div>
@@ -316,8 +325,8 @@ export default function MagazineV2Home() {
             <button
               onClick={() => void startAI()}
               disabled={!canGenerate}
-              className="inline-flex items-center gap-1.5 rounded-2xl px-5 py-2.5 text-[15px] font-semibold text-white shadow-lg shadow-[#7c3aed]/25 transition-all hover:-translate-y-px hover:shadow-xl hover:shadow-[#7c3aed]/30 disabled:cursor-not-allowed disabled:opacity-40 disabled:shadow-none disabled:hover:translate-y-0"
-              style={{ backgroundImage: `linear-gradient(135deg, #9061f9 0%, ${ACCENT} 100%)`, backgroundColor: ACCENT }}
+              className="inline-flex items-center gap-1.5 rounded-2xl px-5 py-2.5 text-ui-lg font-semibold shadow-lg shadow-[rgba(212,168,67,0.35)] transition-all hover:-translate-y-px hover:shadow-xl hover:shadow-[rgba(212,168,67,0.45)] disabled:cursor-not-allowed disabled:opacity-40 disabled:shadow-none disabled:hover:translate-y-0"
+              style={{ backgroundImage: 'linear-gradient(135deg, var(--gold-light) 0%, var(--gold-bright) 100%)', backgroundColor: 'var(--gold-bright)', color: 'var(--forest-deep)' }}
             >
               <Sparkles size={16} />
               {starting ? <ShimmerText>Starting…</ShimmerText> : 'Generate'}
@@ -334,16 +343,16 @@ export default function MagazineV2Home() {
             a second or two each and a line that flipped once would read as a
             glitch. The long wait is in the studio, which has the full build view. */}
         {starting && startMsg && (
-          <p className="mt-3 text-sm" style={{ color: ACCENT }} role="status" aria-live="polite">
+          <p className="mt-3 text-ui" style={{ color: ACCENT_INK }} role="status" aria-live="polite">
             <ShimmerText>{startMsg}</ShimmerText>
           </p>
         )}
 
         {/* Quiet secondary starts. */}
-        <div className="mt-4 flex flex-wrap items-center justify-center gap-x-4 gap-y-2 text-sm text-muted-foreground">
+        <div className="mt-4 flex flex-wrap items-center justify-center gap-x-4 gap-y-2 text-ui text-muted-foreground">
           <button type="button" onClick={() => importRef.current?.click()} disabled={starting} className="inline-flex items-center gap-1.5 hover:text-foreground disabled:opacity-50">
             <FileScan size={15} /> Import a PDF, Word or image
-            <span className="rounded px-1.5 py-0.5 text-[10px] font-medium" style={{ backgroundColor: `${ACCENT}14`, color: ACCENT }}>keeps layout</span>
+            <span className="rounded px-1.5 py-0.5 text-ui-sm font-medium" style={{ backgroundColor: ACCENT_WASH, color: ACCENT_INK }}>keeps layout</span>
           </button>
           <span className="hidden text-border sm:inline">·</span>
           <button type="button" onClick={() => void startBlank()} disabled={starting} className="inline-flex items-center gap-1.5 hover:text-foreground disabled:opacity-50">
@@ -352,7 +361,7 @@ export default function MagazineV2Home() {
           <input ref={importRef} type="file" accept={IMPORT_ACCEPT} className="hidden" onChange={(e) => { const f = e.target.files?.[0]; if (f) void startImport(f); if (importRef.current) importRef.current.value = ''; }} />
         </div>
 
-        {error && <p className="mt-4 text-sm text-red-600">{error}</p>}
+        {error && <p className="mt-4 text-ui text-red-600">{error}</p>}
       </section>
 
       {/* ── Your magazines ────────────────────────────────────────────── */}
@@ -361,7 +370,7 @@ export default function MagazineV2Home() {
           // Skeleton cards in the real grid, not a centred "Loading…" — the list
           // arrives in place instead of the page jumping when it does.
           <>
-            <h2 className="mb-3 text-sm font-semibold text-muted-foreground">
+            <h2 className="mb-3 text-ui font-semibold text-muted-foreground">
               <ShimmerText>Loading your magazines</ShimmerText>
             </h2>
             <div className="grid grid-cols-2 gap-3 sm:grid-cols-3" aria-hidden="true">
@@ -376,18 +385,18 @@ export default function MagazineV2Home() {
           </>
         ) : issues.length > 0 ? (
           <>
-            <h2 className="mb-3 text-sm font-semibold text-muted-foreground">Your magazines</h2>
+            <h2 className="mb-3 text-ui font-semibold text-muted-foreground">Your magazines</h2>
             <div className="grid grid-cols-2 gap-3 sm:grid-cols-3">
               {issues.map((it) => {
                 const published = !!it.publishedIssueId;
                 const busy = pubBusy === it.id;
                 return (
-                  <div key={it.id} className="flex flex-col rounded-lg border border-border p-4 transition-colors hover:border-[#7c3aed]">
+                  <div key={it.id} className="flex flex-col rounded-lg border border-border p-4 transition-colors hover:border-brand-accent">
                     <button className="min-w-0 flex-1 text-left" onClick={() => openEditor(it.id)}>
                       <div className="flex items-center gap-1.5">
                         <span className="truncate font-medium">{it.title}</span>
                         {published && (
-                          <span className="inline-flex flex-shrink-0 items-center gap-1 rounded-full bg-emerald-100 px-1.5 py-0.5 text-[10px] font-semibold text-emerald-700">
+                          <span className="inline-flex flex-shrink-0 items-center gap-1 rounded-full bg-emerald-100 px-1.5 py-0.5 text-ui-sm font-semibold text-emerald-700">
                             <Globe size={9} /> Live
                           </span>
                         )}
@@ -397,9 +406,9 @@ export default function MagazineV2Home() {
                           A magazine mid-build now says so, and shimmers while it is.
                           No counts: the list endpoint doesn't send pagesProcessed,
                           and the studio is where the real progress lives. */}
-                      <div className="mt-1 text-xs text-muted-foreground">
+                      <div className="mt-1 text-ui-sm text-muted-foreground">
                         {STATUS_BUSY.has(it.status) ? (
-                          <span style={{ color: ACCENT }}>
+                          <span style={{ color: ACCENT_INK }}>
                             <ShimmerText>{STATUS_LABEL[it.status] ?? 'Working'}</ShimmerText>
                           </span>
                         ) : (
@@ -408,7 +417,7 @@ export default function MagazineV2Home() {
                         · {it.pageCount} page{it.pageCount === 1 ? '' : 's'}{it.ownerName ? ` · ${it.ownerName}` : ''}
                       </div>
                       {!it.myRole && (
-                        <span className="mt-1.5 inline-block rounded bg-muted px-1.5 py-0.5 text-[10px] font-medium text-muted-foreground">View only</span>
+                        <span className="mt-1.5 inline-block rounded bg-muted px-1.5 py-0.5 text-ui-sm font-medium text-muted-foreground">View only</span>
                       )}
                     </button>
                     <div className="mt-3 flex flex-wrap items-center gap-2 border-t border-border pt-2.5">
@@ -416,7 +425,7 @@ export default function MagazineV2Home() {
                           labelled honestly rather than promising an edit. */}
                       <button
                         onClick={() => openEditor(it.id)}
-                        className="inline-flex items-center gap-1 rounded border border-border px-2 py-1 text-xs font-medium hover:border-[#7c3aed] hover:text-[#7c3aed]"
+                        className="inline-flex items-center gap-1 rounded border border-border px-2 py-1 text-ui-sm font-medium hover:border-brand-accent hover:text-brand-accent-ink"
                         title={it.myRole ? 'Open this magazine in the studio' : 'Open read-only (you do not have edit access)'}
                       >
                         {it.myRole ? <Pencil size={12} /> : <Eye size={12} />}
@@ -428,7 +437,7 @@ export default function MagazineV2Home() {
                       <button
                         onClick={() => void reuseTemplate(it)}
                         disabled={busy}
-                        className="inline-flex items-center gap-1 rounded border border-border px-2 py-1 text-xs font-medium hover:border-[#7c3aed] hover:text-[#7c3aed] disabled:opacity-50"
+                        className="inline-flex items-center gap-1 rounded border border-border px-2 py-1 text-ui-sm font-medium hover:border-brand-accent hover:text-brand-accent-ink disabled:opacity-50"
                         title="Start a new magazine with this layout — the text and photos are cleared"
                       >
                         <LayoutTemplate size={12} />
@@ -438,7 +447,7 @@ export default function MagazineV2Home() {
                         <button
                           onClick={() => void removeIssue(it)}
                           disabled={busy}
-                          className="inline-flex items-center gap-1 rounded border border-red-300/40 px-2 py-1 text-xs font-medium text-red-600 hover:bg-red-50 disabled:opacity-50 dark:text-red-300/90 dark:hover:bg-red-500/10"
+                          className="inline-flex items-center gap-1 rounded border border-red-300/40 px-2 py-1 text-ui-sm font-medium text-red-600 hover:bg-red-50 disabled:opacity-50 dark:text-red-300/90 dark:hover:bg-red-500/10"
                           title="Delete this magazine"
                         >
                           <Trash2 size={12} />
@@ -446,7 +455,7 @@ export default function MagazineV2Home() {
                         </button>
                       )}
                       {published && it.publishedIssueId && (
-                        <a href={`/bulletins/${it.publishedIssueId}`} target="_blank" rel="noreferrer" className="ml-auto text-xs text-[#7c3aed] hover:underline">
+                        <a href={`/bulletins/${it.publishedIssueId}`} target="_blank" rel="noreferrer" className="ml-auto text-ui-sm text-brand-accent-ink hover:underline">
                           View on Bulletins
                         </a>
                       )}

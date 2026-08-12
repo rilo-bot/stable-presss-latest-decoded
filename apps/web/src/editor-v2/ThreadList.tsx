@@ -55,28 +55,28 @@ function ThreadRow({ t, active, onOpen }: { t: ChatThread; active: boolean; onOp
             if (e.key === 'Enter') commit();
             if (e.key === 'Escape') { setDraft(t.title); setEditing(false); }
           }}
-          className="min-w-0 flex-1 rounded-sm border border-white/20 bg-white/10 px-1.5 py-1 text-[12px] text-white outline-none focus:border-white/40"
+          className="min-w-0 flex-1 rounded-sm border border-studio-edge bg-studio-raise-2 px-1.5 py-1 text-ui text-studio-ink outline-none focus:border-studio-edge-strong"
         />
-        <button onClick={commit} aria-label="Save name" className="rounded p-1 text-emerald-300 hover:bg-white/10"><Check size={12} /></button>
-        <button onClick={() => { setDraft(t.title); setEditing(false); }} aria-label="Cancel" className="rounded p-1 text-white/40 hover:bg-white/10"><X size={12} /></button>
+        <button onClick={commit} aria-label="Save name" className="rounded p-1 text-emerald-300 hover:bg-studio-raise-2"><Check size={12} /></button>
+        <button onClick={() => { setDraft(t.title); setEditing(false); }} aria-label="Cancel" className="rounded p-1 text-studio-ink-3 hover:bg-studio-raise-2"><X size={12} /></button>
       </div>
     );
   }
 
   return (
-    <div className={'group flex items-center gap-1 rounded-sm ' + (active ? 'bg-white/10' : 'hover:bg-white/5')}>
+    <div className={'group flex items-center gap-1 rounded-sm ' + (active ? 'bg-studio-raise-2' : 'hover:bg-studio-raise')}>
       <button onClick={onOpen} className="min-w-0 flex-1 px-2 py-1.5 text-left">
         <span className="flex items-center gap-1.5">
           {active && <span className="h-1.5 w-1.5 flex-shrink-0 rounded-full" style={{ background: 'var(--gold-bright)' }} />}
-          {t.legacy && <History size={11} className="flex-shrink-0 text-white/35" />}
-          <span className={'truncate text-[12px] ' + (active ? 'font-semibold text-white' : 'text-white/75')}>{t.title}</span>
+          {t.legacy && <History size={11} className="flex-shrink-0 text-studio-ink-4" />}
+          <span className={'truncate text-ui ' + (active ? 'font-semibold text-studio-ink' : 'text-studio-ink-2')}>{t.title}</span>
         </span>
-        <span className="mt-0.5 flex items-center gap-1.5 text-[10px] text-white/35">
+        <span className="mt-0.5 flex items-center gap-1.5 text-ui-sm text-studio-ink-4">
           {t.startedOnPageIndex !== null && <span>p{t.startedOnPageIndex + 1}</span>}
           <span>{t.messageCount || 0} msg{t.messageCount === 1 ? '' : 's'}</span>
           <span>· {ago(t.lastMessageAt)}</span>
-          {t.readOnly && !t.legacy && <span className="flex items-center gap-0.5 text-white/30"><Eye size={9} /> read-only</span>}
-          {t.legacy && <span className="text-white/30">· read-only</span>}
+          {t.readOnly && !t.legacy && <span className="flex items-center gap-0.5 text-studio-ink-4"><Eye size={9} /> read-only</span>}
+          {t.legacy && <span className="text-studio-ink-4">· read-only</span>}
         </span>
       </button>
       {/* Rename and delete belong to whoever started the chat. The owner reading a
@@ -87,7 +87,7 @@ function ThreadRow({ t, active, onOpen }: { t: ChatThread; active: boolean; onOp
               initialised once from the title, so a chat that auto-titled itself from
               its first message (started life as "New chat") would open the rename box
               showing the STALE title — and saving would rename it back to "New chat". */}
-          <button onClick={() => { setDraft(t.title); setEditing(true); }} aria-label={`Rename ${t.title}`} className="rounded p-1 text-white/40 hover:bg-white/10 hover:text-white"><Pencil size={11} /></button>
+          <button onClick={() => { setDraft(t.title); setEditing(true); }} aria-label={`Rename ${t.title}`} className="rounded p-1 text-studio-ink-3 hover:bg-studio-raise-2 hover:text-studio-ink"><Pencil size={11} /></button>
           <button
             onClick={() => {
               // One confirm, and it says what goes with it — a chat is cheap to make
@@ -95,7 +95,7 @@ function ThreadRow({ t, active, onOpen }: { t: ChatThread; active: boolean; onOp
               if (window.confirm(`Delete “${t.title}”? Its ${t.messageCount || 0} message${t.messageCount === 1 ? '' : 's'} go with it.`)) void remove(t.id);
             }}
             aria-label={`Delete ${t.title}`}
-            className="rounded p-1 text-white/40 hover:bg-white/10 hover:text-red-300"
+            className="rounded p-1 text-studio-ink-3 hover:bg-studio-raise-2 hover:text-red-300"
           ><Trash2 size={11} /></button>
         </span>
       )}
@@ -131,26 +131,26 @@ export function ThreadList({ onClose }: { onClose: () => void }) {
   }, [threads]);
 
   return (
-    <div className="absolute inset-0 z-20 flex flex-col bg-[#0d1626]">
-      <div className="flex items-center gap-2 border-b border-white/10 px-3 py-2">
-        <p className="text-[11px] font-bold uppercase tracking-[0.12em] text-white/45">Chats</p>
-        <button onClick={onClose} className="ml-auto rounded-sm p-1 text-white/45 hover:bg-white/10 hover:text-white" aria-label="Close the chat list">
+    <div className="absolute inset-0 z-20 flex flex-col bg-studio-panel">
+      <div className="flex items-center gap-2 border-b border-studio-hair px-3 py-2">
+        <p className="text-ui-sm font-bold uppercase tracking-[0.12em] text-studio-ink-3">Chats</p>
+        <button onClick={onClose} className="ml-auto rounded-sm p-1 text-studio-ink-3 hover:bg-studio-raise-2 hover:text-studio-ink" aria-label="Close the chat list">
           <X size={14} />
         </button>
       </div>
 
       <button
         onClick={() => { newThread(); onClose(); }}
-        className="flex items-center gap-2 border-b border-white/10 px-3 py-2.5 text-left text-[12px] font-semibold text-white hover:bg-white/5"
+        className="flex items-center gap-2 border-b border-studio-hair px-3 py-2.5 text-left text-ui font-semibold text-studio-ink hover:bg-studio-raise"
       >
         <MessageSquarePlus size={14} style={{ color: 'var(--gold-bright)' }} /> New chat
       </button>
 
       <div className="min-h-0 flex-1 overflow-y-auto p-1.5">
         {loading && threads.length === 0 ? (
-          <p className="px-1.5 py-2 text-[12px] text-white/40"><ShimmerText>Loading your chats</ShimmerText></p>
+          <p className="px-1.5 py-2 text-ui text-studio-ink-3"><ShimmerText>Loading your chats</ShimmerText></p>
         ) : threads.length === 0 ? (
-          <p className="px-1.5 py-2 text-[12px] leading-relaxed text-white/45">
+          <p className="px-1.5 py-2 text-ui leading-relaxed text-studio-ink-3">
             No chats yet. Ask the assistant something and this becomes your first one.
           </p>
         ) : (
@@ -160,7 +160,7 @@ export function ThreadList({ onClose }: { onClose: () => void }) {
                 {/* The heading only earns its place when there is something to
                     contrast it with — a contributor sees one flat list. */}
                 {(groups.others.length > 0 || groups.legacy.length > 0) && (
-                  <p className="px-1.5 pb-1 pt-1.5 text-[10px] font-bold uppercase tracking-[0.12em] text-white/30">Mine</p>
+                  <p className="px-1.5 pb-1 pt-1.5 text-ui-sm font-bold uppercase tracking-[0.12em] text-studio-ink-4">Mine</p>
                 )}
                 {groups.mine.map((t) => (
                   <ThreadRow key={t.id} t={t} active={t.id === activeThreadId} onOpen={() => { void openThread(t.id); onClose(); }} />
@@ -170,7 +170,7 @@ export function ThreadList({ onClose }: { onClose: () => void }) {
 
             {groups.others.map(([name, rows]) => (
               <div key={name}>
-                <p className="px-1.5 pb-1 pt-2.5 text-[10px] font-bold uppercase tracking-[0.12em] text-white/30">{name}</p>
+                <p className="px-1.5 pb-1 pt-2.5 text-ui-sm font-bold uppercase tracking-[0.12em] text-studio-ink-4">{name}</p>
                 {rows.map((t) => (
                   <ThreadRow key={t.id} t={t} active={t.id === activeThreadId} onOpen={() => { void openThread(t.id); onClose(); }} />
                 ))}
@@ -179,7 +179,7 @@ export function ThreadList({ onClose }: { onClose: () => void }) {
 
             {groups.legacy.map((t) => (
               <div key={t.id}>
-                <p className="px-1.5 pb-1 pt-2.5 text-[10px] font-bold uppercase tracking-[0.12em] text-white/30">Before chats were separate</p>
+                <p className="px-1.5 pb-1 pt-2.5 text-ui-sm font-bold uppercase tracking-[0.12em] text-studio-ink-4">Before chats were separate</p>
                 <ThreadRow t={t} active={t.id === activeThreadId} onOpen={() => { void openThread(t.id); onClose(); }} />
               </div>
             ))}
@@ -190,7 +190,7 @@ export function ThreadList({ onClose }: { onClose: () => void }) {
       {/* The cost of "the owner can read everything", paid openly. A contributor is
           told once, permanently, in the panel — not in a tooltip nobody opens. */}
       {!isOwner && (
-        <p className="flex items-start gap-1.5 border-t border-white/10 px-3 py-2 text-[10px] leading-relaxed text-white/35">
+        <p className="flex items-start gap-1.5 border-t border-studio-hair px-3 py-2 text-ui-sm leading-relaxed text-studio-ink-4">
           <Info size={11} className="mt-0.5 flex-shrink-0" />
           Your chats are yours — other contributors can’t see them. The magazine owner can.
         </p>

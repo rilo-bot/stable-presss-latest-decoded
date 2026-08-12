@@ -73,6 +73,64 @@
   }
 }
 
+/* ─────────────────────────────────────────────────────────────────────────────
+   MAGAZINE STUDIO CHROME
+   The full-screen editor is one dark surface, and it had drifted off the brand
+   entirely: navy-blue panels (#0b1220 / #0d1626), sky-blue accents, pure-white
+   text at FOURTEEN different opacities, and seven font sizes of which all but
+   four sites were 10–12px. Nothing in it referenced a token, so the theme
+   direction work never reached it.
+
+   These are the whole vocabulary now. Deliberately UNLAYERED (not in
+   @layer base) so they outrank the shadcn defaults, and deliberately NOT
+   theme-aware: the studio is always dark, the way every editor is, because the
+   thing being edited is a bright page and the chrome must recede behind it.
+
+   Surfaces are forest (the brand's own greens); ink is PARCHMENT, not white, so
+   the text reads warm off-white against them; the single accent is gold.
+   ───────────────────────────────────────────────────────────────────────────── */
+:root {
+  /* The table the pages lie on — darker than any panel, so a white page floats. */
+  --studio-bg: #14261b;
+  /* Panels, toolbars, dialogs. --forest-deep. */
+  --studio-panel: #1a3322;
+  /* One step up, for a popover or a nested well. --forest-mid. */
+  --studio-panel-2: #234432;
+
+  /* Raised fills. Parchment-tinted rather than white — a white overlay on green
+     reads grey and drains the warmth out of the surface. */
+  --studio-raise: rgb(245 237 218 / 0.05);
+  --studio-raise-2: rgb(245 237 218 / 0.11);
+
+  /* Two border roles, the split docs/THEME-DIRECTION.md already names: `hair` is
+     decorative (dividers, card edges), `edge` bounds a control and must stay
+     visible. `edge-strong` is the third that kept getting invented ad hoc — the
+     focused/active boundary. */
+  --studio-hair: rgb(245 237 218 / 0.12);
+  --studio-edge: rgb(245 237 218 / 0.2);
+  --studio-edge-strong: rgb(245 237 218 / 0.34);
+
+  /* FOUR ink levels, replacing fourteen. Each is a job, not a shade:
+       ink   — the words themselves
+       ink-2 — supporting text you are meant to read
+       ink-3 — labels and metadata
+       ink-4 — decoration, disabled, watermarks (never load-bearing text) */
+  --studio-ink: rgb(245 237 218 / 0.95);
+  --studio-ink-2: rgb(245 237 218 / 0.74);
+  --studio-ink-3: rgb(245 237 218 / 0.58);
+  --studio-ink-4: rgb(245 237 218 / 0.38);
+
+  /* SELECTION — the ring on whatever you are editing, the dashed outline on an
+     empty slot, the resize handles. It lands on the PAGE, not on the chrome, so it
+     is the one colour that has to stay legible over a white cover, a cream spread
+     and a full-bleed dark photo alike. It was hardcoded violet (#7c3aed) in five
+     places; gold is the brand's most visible accent at both ends of that range.
+     One token, so switching it is one line if it competes with a gold layout. */
+  --studio-select: var(--gold-bright);
+  --studio-select-soft: rgb(212 168 67 / 0.55);
+  --studio-select-wash: rgb(212 168 67 / 0.08);
+}
+
 @layer utilities {
   /* ── Waiting states: shimmer, not spin ───────────────────────────────────
      A spinner says "something is happening". Text that shimmers says the same
