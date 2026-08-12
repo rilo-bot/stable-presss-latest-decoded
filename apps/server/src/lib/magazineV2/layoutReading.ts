@@ -48,6 +48,12 @@ export interface ReadRegion {
    *  masthead", "bleeds off the left edge"). Advisory: shown to the user, and
    *  passed to the art-director when we fall back to it. Never parsed. */
   note?: string;
+  /** REPLICATE MODE ONLY (the user asked for the reference's content too): the
+   *  region's actual words, transcribed. Absent in a plain layout read. */
+  text?: string;
+  /** REPLICATE MODE ONLY: one line describing the photograph in this region so
+   *  an equivalent picture can be sourced (crop / image-gen / stock). */
+  imageDesc?: string;
 }
 
 export interface ReadPalette { primary: string; secondary: string; accent: string }
@@ -64,6 +70,15 @@ export interface LayoutReading {
   /** The model's own estimate, 0–1. Reported, never used to gate silently. */
   confidence: number;
   notes?: string;
+  /** 'replicate' when the user asked for the reference's CONTENT too ("exact
+   *  same, with the content"): the apply uses the transcribed region texts
+   *  instead of reflowing the page's existing elements. Absent = classic
+   *  behaviour (structure only, the page keeps its own content). */
+  contentMode?: 'replicate';
+  /** The reference image's own URL — lets the apply CROP clean photo regions
+   *  out of it. Set server-side after a read; on the round trip back from a
+   *  client it is re-validated against the magazine's media before use. */
+  sourceUrl?: string;
 }
 
 // ── Caps ─────────────────────────────────────────────────────────────────────
@@ -74,6 +89,9 @@ export const MAX_REGIONS = MAX_LEAVES;
 export const MAX_COLUMNS = 6;
 const MAX_NOTE = 160;
 const MAX_NOTES = 600;
+/** Transcribed copy per region — enough for an abridged body column. */
+const MAX_REGION_TEXT = 2000;
+const MAX_IMAGE_DESC = 300;
 /** A region thinner than this in either axis is noise — a rule, a hairline, a
  *  misread edge. It cannot hold content at any page size, and as a partition
  *  input it produces slivers that the solver then has to fight. */
@@ -173,6 +191,12 @@ function coerceRegion(o: unknown, scale: 1 | 0.01): ReadRegion | null {
   if (align) region.align = align;
   const note = optStr(r.note, MAX_NOTE);
   if (note) region.note = note;
+  // Replicate-mode extras. Collapse whitespace: transcriptions arrive with the
+  // model's own line breaks, and the composer wants prose that wraps on its own.
+  const text = optStr(r.text, MAX_REGION_TEXT)?.replace(/\s+/g, ' ').trim();
+  if (text) region.text = text;
+  const imageDesc = optStr(r.imageDesc, MAX_IMAGE_DESC)?.replace(/\s+/g, ' ').trim();
+  if (imageDesc) region.imageDesc = imageDesc;
   return region;
 }
 
@@ -234,6 +258,17 @@ export function normalizeLayoutReading(input: unknown): LayoutReading | null {
   if (palette) reading.palette = palette;
   const notes = optStr(o.notes, MAX_NOTES);
   if (notes) reading.notes = notes;
+  // Replicate-mode round trip: these are set server-side after a read, but a
+  // reading also comes BACK from the client on apply, so they cross the trust
+  // boundary like everything else. sourceUrl must be http(s) — and the apply
+  // route additionally proves it belongs to the magazine before fetching it.
+  if (o.contentMode === 'replicate') reading.contentMode = 'replicate';
+  if (typeof o.sourceUrl === 'string') {
+    try {
+      const u = new URL(o.sourceUrl.trim());
+      if (u.protocol === 'http:' || u.protocol === 'https:') reading.sourceUrl = o.sourceUrl.trim();
+    } catch { /* not a URL — dropped */ }
+  }
   return reading;
 }
 

@@ -80,6 +80,19 @@ const SYSTEM = [
   '• confidence: be honest. A blurry photo of a printed page, or a layout you are guessing at, is low.',
 ].join('\n');
 
+/** Appended to SYSTEM only when the user asked for the reference's CONTENT too.
+ *  It has to explicitly override the base prompt's "do not transcribe" rule. */
+const TRANSCRIBE = [
+  '',
+  'THIS CLIENT ALSO WANTS THE CONTENT, not just the arrangement — so, OVERRIDING the "ignore what',
+  'the words say" rule above:',
+  '• For every TEXT region, add "text": the region\'s actual words, transcribed faithfully.',
+  '  Headlines, kickers, cover lines, captions, figures: verbatim. A long body column may be',
+  '  abridged to its first ~600 characters. Plain text only — collapse line breaks into spaces.',
+  '• For every IMAGE region, add "imageDesc": one line describing the photograph (subject, setting,',
+  '  mood, orientation) so an equivalent picture can be sourced. Never identify a real person.',
+].join('\n');
+
 /**
  * Read one reference image into a LayoutReading.
  *
@@ -87,8 +100,17 @@ const SYSTEM = [
  * (an assetId → media lookup). Never take a URL from the client and hand it
  * straight to the model: it would spend our model budget on any image on the
  * internet, and make our server the thing that fetched it.
+ *
+ * `opts.transcribe` = the user asked for the reference's content too: the read
+ * also carries each region's words and each photo's description, and the reading
+ * is marked `contentMode: 'replicate'` so the apply uses them instead of the
+ * page's existing content.
  */
-export async function readLayoutImage(imageUrl: string, hint?: string): Promise<ReadLayoutResult> {
+export async function readLayoutImage(
+  imageUrl: string,
+  hint?: string,
+  opts?: { transcribe?: boolean },
+): Promise<ReadLayoutResult> {
   if (!isAgentConfigured()) {
     return { reading: null, error: 'The AI assistant is not configured on this server.' };
   }
@@ -102,7 +124,7 @@ export async function readLayoutImage(imageUrl: string, hint?: string): Promise<
   try {
     const { text } = await generateText({
       model: getAgentModel(),
-      system: SYSTEM,
+      system: opts?.transcribe ? SYSTEM + TRANSCRIBE : SYSTEM,
       messages: [
         {
           role: 'user',
@@ -132,6 +154,10 @@ export async function readLayoutImage(imageUrl: string, hint?: string): Promise<
         error: 'I could not make out a layout in that image. A flat, straight-on shot of the whole page works best.',
       };
     }
+    // Ours, not the model's: the source lets the apply crop clean photo regions,
+    // and the mode tells it to use the transcription instead of reflowing.
+    reading.sourceUrl = imageUrl;
+    if (opts?.transcribe) reading.contentMode = 'replicate';
     return { reading, error: '' };
   } catch (err) {
     // Distinguish the two failures the user can act on. Anything else is ours.

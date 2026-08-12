@@ -160,14 +160,22 @@ function capBands(bands: Band[]): Band[] {
  *  can only ever be answered by eye. */
 export type Origin = Record<string, ReadBox>;
 
-/** Names a slot AND records its source box. One function, so a leaf can never be
- *  created with a contentRef that nothing knows the provenance of.
+/** Replicate-mode payload carried per slot: the transcribed words of a text
+ *  region, and the described photograph of an image region. */
+export interface RegionContent {
+  texts: Record<string, string>;
+  imageDescs: Record<string, string>;
+}
+
+/** Names a slot AND records its source box (plus any transcription). One
+ *  function, so a leaf can never be created with a contentRef that nothing
+ *  knows the provenance of.
  *
  *  Names follow what the generator's copy and photo steps already expect —
  *  "hero", "photo1", "body", "body2" — so the reflow and the curator both find them. */
 type Alloc = (region: ReadRegion) => string;
 
-function makeAlloc(origin: Origin): Alloc {
+function makeAlloc(origin: Origin, carried: RegionContent): Alloc {
   const seen = new Map<string, number>();
   return (region) => {
     const base = region.role === 'image' ? 'photo' : region.role;
@@ -176,6 +184,8 @@ function makeAlloc(origin: Origin): Alloc {
     // The first photo is the hero — the curator and the reflow both look for it.
     const ref = base === 'photo' ? (n === 1 ? 'hero' : `photo${n - 1}`) : n === 1 ? base : `${base}${n}`;
     origin[ref] = region.box;
+    if (region.text) carried.texts[ref] = region.text;
+    if (region.imageDesc) carried.imageDescs[ref] = region.imageDesc;
     return ref;
   };
 }
@@ -315,9 +325,12 @@ function partition(regions: ReadRegion[], depth: number, ref: Alloc): LayoutNode
  * the spec; text that then does not fit its band is a fidelity problem to REPORT
  * (P3), not to silently paper over here.
  */
-export function readingToSpec(reading: LayoutReading): { spec: LayoutSpec; origin: Origin } | null {
+export function readingToSpec(
+  reading: LayoutReading,
+): { spec: LayoutSpec; origin: Origin; carried: RegionContent } | null {
   const origin: Origin = {};
-  const root = partition(reading.regions, 0, makeAlloc(origin));
+  const carried: RegionContent = { texts: {}, imageDescs: {} };
+  const root = partition(reading.regions, 0, makeAlloc(origin, carried));
   if (!root) return null;
   const spec: LayoutSpec = {
     page: {
@@ -335,7 +348,9 @@ export function readingToSpec(reading: LayoutReading): { spec: LayoutSpec; origi
   // would be measuring against a page we never claimed to build.
   const placed = new Set(specContentRefs(spec).map((s) => s.ref));
   for (const key of Object.keys(origin)) if (!placed.has(key)) delete origin[key];
-  return { spec, origin };
+  for (const key of Object.keys(carried.texts)) if (!placed.has(key)) delete carried.texts[key];
+  for (const key of Object.keys(carried.imageDescs)) if (!placed.has(key)) delete carried.imageDescs[key];
+  return { spec, origin, carried };
 }
 
 /** Every contentRef the spec asks for, in tree order — what the reflow has to fill. */

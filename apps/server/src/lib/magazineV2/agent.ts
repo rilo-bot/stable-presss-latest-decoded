@@ -140,7 +140,10 @@ const SYSTEM = (
       '  add_media_image for a new element, or set_element_image to point an existing image element at it.',
       '• ARRANGE THE PAGE LIKE THE PICTURE ("use this layout", "build a layout like this", "copy this design",',
       '  "make my page look like this") → use_image_as_layout. The picture is a REFERENCE: its structure is',
-      '  copied, its content is not, and the page keeps the user’s own words and photos.',
+      '  copied, its content is not, and the page keeps the user’s own words and photos. BUT if they ask for',
+      '  the content too ("make it EXACT same", "with the content/text/images too", "copy it exactly"), call',
+      '  it with useContent: true — the page is then rebuilt with the reference’s own words and matching',
+      '  imagery, replacing what is on the page now.',
       'A layout rebuild replaces every element on the page, so it cannot be staged alongside other edits —',
       'do it on its own turn.',
     );
@@ -348,8 +351,16 @@ function buildTools(ctx: AgentCtx, dims: { width: number; height: number }, canE
     use_image_as_layout: tool({
       description:
         'The user wants a page laid out LIKE an image they uploaded ("use this layout", "build a layout like this", "copy this design"). Reads the picture\'s COMPOSITION and stages a rebuild of this page in it — the user\'s own text and photos flow into the new structure. NOT for placing a photo on the page: that is add_media_image. The url must be one the user attached or one from list_media.',
-      inputSchema: z.object({ url: z.string() }),
-      execute: async ({ url }) => {
+      inputSchema: z.object({
+        url: z.string(),
+        hint: z.string().max(400).optional().describe(
+          "The user's request in their own words (e.g. 'two columns with a big photo top-right') so the layout reading can honour specifics they called out.",
+        ),
+        useContent: z.boolean().optional().describe(
+          'true when the user wants the reference\'s CONTENT too — "exact same as the image", "with the content/text/images too", "copy it exactly". The page is then rebuilt with the reference\'s own transcribed words and equivalent imagery, REPLACING its current content. Leave false/absent to keep the page\'s own words and photos in the new arrangement.',
+        ),
+      }),
+      execute: async ({ url, hint, useContent }) => {
         // Exclusive: it replaces every element, so nothing else can be staged with it.
         if (ctx.proposals.length > 0) {
           return { ok: false, error: 'A layout rebuild replaces every element on the page, so it cannot be combined with other changes. Ask the user to apply the changes already staged first.' };
@@ -357,13 +368,19 @@ function buildTools(ctx: AgentCtx, dims: { width: number; height: number }, canE
         // The same allow-list as every other image tool — the model can never point
         // this at an arbitrary URL, which would spend a vision call on any image on
         // the internet and make our server the thing that fetched it.
-        const media = (await db.collection(COL.media).find({ magazineId: ctx.magazineId })) as unknown as { _id: string; url: string }[];
-        if (!media.some((m) => m.url === url)) {
+        const media = (await db.collection(COL.media).find({ magazineId: ctx.magazineId })) as unknown as { _id: string; url: string; kind?: string }[];
+        const asset = media.find((m) => m.url === url);
+        if (!asset) {
           return { ok: false, error: 'That url is not in this magazine. Ask the user to attach the layout image, then use its url.' };
         }
-        const { reading, error } = await readLayoutImage(url);
+        const { reading, error } = await readLayoutImage(url, hint, { transcribe: useContent === true });
         if (!reading) return { ok: false, error: error || 'I could not make out a layout in that image.' };
-        const summary = `Rebuild this page in that layout — ${describeReading(reading)}`;
+        // NOTE: the asset is re-tagged `kind:'reference'` by the APPLY route, not
+        // here — staging must stay side-effect-free so a rejected proposal does
+        // not permanently remove someone's photo from the picker.
+        const summary = useContent
+          ? `Rebuild this page as a replica of that image — ${describeReading(reading)} — carrying its own words and equivalent imagery (replaces everything currently on the page)`
+          : `Rebuild this page in that layout — ${describeReading(reading)}`;
         ctx.proposals.push({ id: pid(ctx), kind: 'apply-layout', layoutReading: reading, summary });
         // The model is told what was read so its reply can describe it, and told the
         // honest limit so it does not promise a pixel-perfect copy.
@@ -371,7 +388,9 @@ function buildTools(ctx: AgentCtx, dims: { width: number; height: number }, canE
           ok: true,
           summary: `Staged: ${summary}`,
           read: { regions: reading.regions.length, columns: reading.columns ?? null, confidence: reading.confidence },
-          note: 'This matches the composition — where things sit and how big they are — not an exact copy. Nothing is taken from the picture itself: the page keeps the user\'s own words and photos.',
+          note: useContent
+            ? 'This rebuilds the page with the reference\'s transcribed words in its arrangement; photos are cropped from the reference where clean, otherwise sourced to match its descriptions. It replaces the page\'s current content entirely.'
+            : 'This matches the composition — where things sit and how big they are — not an exact copy. Nothing is taken from the picture itself: the page keeps the user\'s own words and photos, and any boxes the page has no content for yet are filled on apply with drafted copy in the magazine\'s voice and photos from its library.',
         };
       },
     }),

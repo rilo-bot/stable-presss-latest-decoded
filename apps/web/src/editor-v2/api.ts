@@ -408,6 +408,9 @@ export interface ReadRegion {
   colorRef?: string;
   align?: string;
   note?: string;
+  /** Replicate mode only: the region's transcribed words / described photo. */
+  text?: string;
+  imageDesc?: string;
 }
 export interface LayoutReading {
   aspect: number;
@@ -418,6 +421,11 @@ export interface LayoutReading {
   palette?: { primary: string; secondary: string; accent: string };
   confidence: number;
   notes?: string;
+  /** 'replicate' = the apply uses the transcription and REPLACES the page's
+   *  content ("exact same as the image, content and all"). Pass through
+   *  verbatim — reconstructing a reading without these silently downgrades it. */
+  contentMode?: 'replicate';
+  sourceUrl?: string;
 }
 /**
  * Read a layout out of an image ALREADY in the magazine's media library.
@@ -463,6 +471,8 @@ export const applyLayoutToPage = (
   }).then(parse<{
     page: MagazinePageV2;
     leftOver: { text: number; images: number };
+    /** Empty layout boxes the server filled with drafted copy / library photos. */
+    filled: { text: number; images: number };
     fidelity: LayoutFidelity;
     warning: string;
   }>);

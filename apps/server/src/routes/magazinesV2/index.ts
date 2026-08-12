@@ -45,6 +45,7 @@ import { formatPageText, charGuideFor } from '../../lib/magazineV2/format.js';
 import { readLayoutImage } from '../../lib/magazineV2/readLayout.js';
 import { aspectMismatch, normalizeLayoutReading } from '../../lib/magazineV2/layoutReading.js';
 import { applyReadingToPage } from '../../lib/magazineV2/applyLayout.js';
+import { makeSlotFiller } from '../../lib/magazineV2/slotFiller.js';
 
 /* eslint-disable @typescript-eslint/no-explicit-any */
 type Doc = { _id: string; [k: string]: any };
@@ -2739,6 +2740,7 @@ router.post('/issues/:id/pages/:pageId/apply-layout', rateLimit('mag2-agent', 20
 
   // Either the reading the client is holding, or one read fresh from an asset.
   let reading = normalizeLayoutReading(req.body?.reading);
+  let referenceAssetId = '';
   if (!reading) {
     const assetId = typeof req.body?.assetId === 'string' ? req.body.assetId.trim() : '';
     if (!assetId) {
@@ -2750,21 +2752,77 @@ router.post('/issues/:id/pages/:pageId/apply-layout', rateLimit('mag2-agent', 20
       res.status(404).json({ error: 'That image is not in this magazine.' });
       return;
     }
-    const out = await readLayoutImage(String(asset.url));
+    const out = await readLayoutImage(String(asset.url), undefined, { transcribe: req.body?.useContent === true });
     if (!out.reading) {
       res.status(422).json({ error: out.error || 'Could not read a layout from that image.' });
       return;
     }
     reading = out.reading;
+    referenceAssetId = assetId;
   }
 
   const genTheme = ((issue as unknown as { genTheme?: { palette?: Record<string, string>; fonts?: Record<string, string> } }).genTheme) ?? null;
-  const applied = applyReadingToPage(reading, {
+  const pageElements = Array.isArray(page.elements) ? (page.elements as MagazineElement[]) : [];
+
+  // The reflow can only place what the page already holds. For the boxes it
+  // cannot fill — the page is thinner than the reference — hand the apply a
+  // filler backed by this magazine's own library and source documents, so the
+  // reference's composition survives instead of being pruned down to whatever
+  // little the page had (the old behaviour: one caption grown to a full page
+  // and a 3% fidelity warning).
+  const libRaw = (await db.collection(COL.media).find({ magazineId: issue._id })) as Doc[];
+  // A reading that came back from a client carries whatever sourceUrl it likes.
+  // The crop path FETCHES that URL server-side, so it is only kept when it is
+  // provably one of this magazine's own media files — same discipline as the
+  // assetId branch above and every image tool in the agent.
+  if (reading.sourceUrl && !libRaw.some((m) => String(m.url) === reading!.sourceUrl)) {
+    delete reading.sourceUrl;
+  }
+  // Prefer photos not placed anywhere in the issue yet; photos used on OTHER
+  // pages remain available as a fallback tier (a repeat beats an empty hero
+  // box), but photos already on THIS page are never offered — the reflow has
+  // them, and twice on one page reads as a bug.
+  const allPages = (await db.collection(COL.pages).find({ magazineId: issue._id })) as Doc[];
+  const usedUrls = new Set<string>();
+  for (const p of allPages) {
+    for (const e of (Array.isArray(p.elements) ? (p.elements as MagazineElement[]) : [])) {
+      if (e?.type === 'image' && e.image?.url) usedUrls.add(e.image.url);
+    }
+  }
+  const thisPageUrls = new Set(pageElements.filter((e) => e.type === 'image').map((e) => e.image?.url ?? ''));
+  const offerable = libRaw
+    .filter((m) =>
+      typeof m.url === 'string' && m.url &&
+      m.kind !== 'doc' && m.kind !== 'reference' &&
+      String(m._id) !== referenceAssetId && // never the reference's own pixels…
+      String(m.url) !== (reading.sourceUrl ?? '') && // …by id or by url
+      !thisPageUrls.has(String(m.url)))
+    // Newest upload first — the photo the user just added is the one they mean.
+    .sort((a, b) => String(b.createdAt ?? '').localeCompare(String(a.createdAt ?? '')))
+    .map((m) => ({ url: String(m.url), assetId: String(m._id), alt: typeof m.alt === 'string' ? m.alt : '' }));
+  const candidateImages = offerable.filter((m) => !usedUrls.has(m.url));
+  const reusableImages = offerable.filter((m) => usedUrls.has(m.url));
+  const uploadedSource = libRaw
+    .filter((m) => typeof m.sourceText === 'string' && String(m.sourceText).trim())
+    .map((m) => String(m.sourceText))
+    .join('\n\n')
+    .slice(0, 60_000);
+  const fill = makeSlotFiller({
+    magazineId: String(issue._id),
+    pageIndex: Number(page.index) || 0,
+    title: typeof issue.title === 'string' ? issue.title : '',
+    pageElements,
+    candidateImages,
+    reusableImages,
+    sourceText: uploadedSource,
+  });
+
+  const applied = await applyReadingToPage(reading, {
     width: Number(page.width) || undefined,
     height: Number(page.height) || undefined,
     background: page.background as { type?: string; value?: string } | undefined,
-    elements: Array.isArray(page.elements) ? (page.elements as MagazineElement[]) : [],
-  }, genTheme);
+    elements: pageElements,
+  }, genTheme, { fill });
   if (!applied.page) {
     // 422: the request and the server are both fine — this layout and this page
     // cannot be put together, and the sentence says which.
@@ -2785,10 +2843,23 @@ router.post('/issues/:id/pages/:pageId/apply-layout', rateLimit('mag2-agent', 20
     return;
   }
   await db.collection(COL.magazines).updateOne(issue._id, { updatedAt: now });
+  // The image is now provably USED as a layout reference — somebody's page
+  // design, not a photo — so re-tag it out of the photo picker and future
+  // fills. Only after a successful apply: a staged-then-rejected proposal must
+  // never permanently remove a photo from the user's library.
+  const refAsset = libRaw.find((m) =>
+    (referenceAssetId && String(m._id) === referenceAssetId) ||
+    (reading.sourceUrl && String(m.url) === reading.sourceUrl));
+  if (refAsset && refAsset.kind !== 'reference') {
+    try {
+      await db.collection(COL.media).updateOne(String(refAsset._id), { kind: 'reference', updatedAt: now });
+    } catch { /* tagging is a courtesy — the apply itself succeeded */ }
+  }
   const fresh = await pageById(page._id);
   res.json({
     page: fresh ? project(fresh) : null,
     leftOver: applied.page.leftOver,
+    filled: applied.page.filled,
     // MEASURED, not claimed (P3). The client shows this sentence instead of asserting
     // that the layout matched.
     fidelity: {

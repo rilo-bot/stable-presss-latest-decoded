@@ -231,7 +231,7 @@ export function LayoutReference() {
           )}
 
           <p className="text-ui-sm text-studio-ink-4">
-            Your headline, text and photos move into the new structure — nothing is retyped.
+            Your headline, text and photos move into the new structure — nothing is retyped. Boxes the page has no content for are filled with drafted copy and photos from your library.
             It <b className="text-studio-ink-3">replaces this page's arrangement and cannot be undone</b>, and it matches the
             composition rather than cloning the page exactly.
           </p>

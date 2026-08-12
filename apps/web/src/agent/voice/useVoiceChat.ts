@@ -1,8 +1,9 @@
 // Push-to-talk voice for ANY useChat-backed chat surface (the global concierge,
 // the profile/onboarding Stablehand, the studio drawer). Records mic audio,
 // transcribes it server-side (OpenAI STT), sends the text through the caller's
-// `send`, and reads assistant replies aloud with streaming TTS — speaking the
-// first sentence while the rest is still being written. The OpenAI key lives only
+// `send`, and — only while the read-aloud toggle is on — reads assistant replies
+// aloud with streaming TTS, speaking the first sentence while the rest is still
+// being written. The OpenAI key lives only
 // on the server; this hook just drives /api/agent/voice/* via voiceClient.
 //
 // Extracted from AgentWidget so every chat surface shares one implementation.
@@ -35,7 +36,7 @@ export interface VoiceChat {
   toggleMic: () => Promise<void>;
 }
 
-export function useVoiceChat({ messages, send, busy, active, autoSpeakOnMic = true }: {
+export function useVoiceChat({ messages, send, busy, active }: {
   /** Live message list from useChat. */
   messages: UIMessage[];
   /** Send a user message (the caller's own send/clear-input fn). */
@@ -44,12 +45,6 @@ export function useVoiceChat({ messages, send, busy, active, autoSpeakOnMic = tr
   busy: boolean;
   /** Whether the chat surface is open/visible — speech stops when it isn't. */
   active: boolean;
-  /**
-   * When true (default), speaking a request via the mic reads the reply back
-   * aloud even if read-aloud mode is off. Set false for surfaces where spoken
-   * replies must be strictly opt-in (only when the read-aloud toggle is on).
-   */
-  autoSpeakOnMic?: boolean;
 }): VoiceChat {
   const [voiceReady, setVoiceReady] = useState(false);
   const [voiceMode, setVoiceMode] = useState(false);
@@ -60,7 +55,6 @@ export function useVoiceChat({ messages, send, busy, active, autoSpeakOnMic = tr
   const liveRef = useRef<LiveCaption | null>(null);
   const speechRef = useRef<SpeechStream | null>(null);   // streaming TTS for the current reply
   const speechMsgIdRef = useRef<string | null>(null);    // assistant msg id we're speaking
-  const speakNextRef = useRef(false);                    // speak the next reply (user just spoke)
 
   useEffect(() => {
     if (!isRecordingSupported()) return;
@@ -80,10 +74,7 @@ export function useVoiceChat({ messages, send, busy, active, autoSpeakOnMic = tr
       try {
         const clip = await rec.stop();
         const text = await transcribe(clip);
-        if (text) {
-          if (autoSpeakOnMic) speakNextRef.current = true; // speak the reply back, even if voice mode is off
-          send(text);
-        }
+        if (text) send(text);
       } catch {
         /* transcription failed — user can try again or type */
       } finally {
@@ -104,16 +95,14 @@ export function useVoiceChat({ messages, send, busy, active, autoSpeakOnMic = tr
   };
 
   // Stream the latest assistant reply to speech: start speaking the first sentence
-  // WHILE the rest is still being written (voice mode on, or the user just spoke).
+  // WHILE the rest is still being written (only when the read-aloud toggle is on).
   useEffect(() => {
     const last = messages[messages.length - 1];
     if (!last || last.role !== 'assistant') return;
     if (speechMsgIdRef.current !== last.id) {
       speechMsgIdRef.current = last.id;
       speechRef.current?.stop();
-      const shouldSpeak = voiceMode || speakNextRef.current;
-      speakNextRef.current = false;
-      speechRef.current = shouldSpeak ? new SpeechStream() : null;
+      speechRef.current = voiceMode ? new SpeechStream() : null;
     }
     const stream = speechRef.current;
     if (stream) {

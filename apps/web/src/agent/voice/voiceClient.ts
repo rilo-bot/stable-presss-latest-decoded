@@ -105,78 +105,88 @@ export async function transcribe(clip: Blob): Promise<string> {
   return typeof data.text === 'string' ? data.text : '';
 }
 
-/** Strip light Markdown so TTS reads clean prose, not asterisks and bullets. */
+/** Strip Markdown so TTS reads clean prose — no asterisks, pipes, rules, or code. */
 function forSpeech(md: string): string {
   return md
     .replace(/```[\s\S]*?```/g, ' ')
-    .replace(/\[([^\]]+)\]\([^)]+\)/g, '$1')
-    .replace(/[*_`#>]/g, '')
+    .replace(/!\[[^\]]*\]\([^)]+\)/g, ' ')          // images: nothing to say
+    .replace(/\[([^\]]+)\]\([^)]+\)/g, '$1')        // links: speak the label
+    .replace(/^\s*\|?[\s:|-]+\|[\s:|-]*$/gm, ' ')   // table separator rows
+    .replace(/^\s*(?:[-*_]\s*){3,}$/gm, ' ')        // horizontal rules
+    .replace(/[|*_`#>~]/g, ' ')                     // remaining markdown symbols
     .replace(/^\s*[-•]\s+/gm, '')
     .replace(/\s+/g, ' ')
     .trim();
 }
 
-let currentAudio: HTMLAudioElement | null = null;
-
-/** Stop any in-progress playback. */
-export function stopSpeaking(): void {
-  if (currentAudio) {
-    currentAudio.pause();
-    currentAudio.src = '';
-    currentAudio = null;
-  }
-}
-
-/** Speak a reply aloud. Cancels any prior playback first. Resolves when it ends. */
-export async function speak(text: string): Promise<void> {
-  const clean = forSpeech(text);
-  if (!clean) return;
-  const res = await fetch(apiUrl('/api/agent/voice/speak'), {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json', ...authHeader() },
-    body: JSON.stringify({ text: clean }),
-  });
-  if (!res.ok) throw new Error(`speak ${res.status}`);
-  const url = URL.createObjectURL(await res.blob());
-  stopSpeaking();
-  const audio = new Audio(url);
-  currentAudio = audio;
-  await new Promise<void>((resolve) => {
-    audio.onended = audio.onerror = () => { URL.revokeObjectURL(url); if (currentAudio === audio) currentAudio = null; resolve(); };
-    void audio.play().catch(() => resolve());
-  });
-}
-
-/** Synthesise ONE chunk into a ready-to-play audio element (null on failure). */
+/**
+ * Synthesise ONE chunk into a ready-to-play audio element (null when there is
+ * nothing speakable or synthesis keeps failing). Retries transient failures —
+ * a dropped request here used to mean a silently skipped sentence. Chunks that
+ * can never succeed (400 bad input, 413 too long) are not retried, and chunks
+ * with no letters or digits are never sent: TTS models given symbol soup
+ * produce humming/noise instead of silence.
+ */
 async function synthesizeClip(text: string): Promise<HTMLAudioElement | null> {
   const clean = forSpeech(text);
-  if (!clean) return null;
-  try {
-    const res = await fetch(apiUrl('/api/agent/voice/speak'), {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json', ...authHeader() },
-      body: JSON.stringify({ text: clean }),
-    });
-    if (!res.ok) return null;
-    return new Audio(URL.createObjectURL(await res.blob()));
-  } catch {
-    return null;
+  if (!clean || !/[\p{L}\p{N}]/u.test(clean)) return null;
+  for (let attempt = 0; attempt < 3; attempt++) {
+    if (attempt > 0) await new Promise((r) => setTimeout(r, 2000 * attempt));
+    try {
+      const res = await fetch(apiUrl('/api/agent/voice/speak'), {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', ...authHeader() },
+        body: JSON.stringify({ text: clean }),
+      });
+      if (res.ok) return new Audio(URL.createObjectURL(await res.blob()));
+      if (res.status === 400 || res.status === 413) return null;
+    } catch {
+      /* network hiccup — retry */
+    }
   }
+  return null;
+}
+
+// Batch sentences into chunks of at least this many chars before synthesising
+// (the FIRST chunk goes out immediately for fast time-to-first-audio). One
+// request per sentence used to blow through the server's TTS rate limit on long
+// replies — every 429 was a silently skipped sentence — and one-word chunks
+// ("Sure.") make TTS models produce humming artifacts.
+const MIN_CHUNK = 200;
+// Hard cap per request, comfortably under the server's 4000-char limit. Anything
+// larger is rejected with 413 and used to vanish from playback entirely.
+const MAX_CHUNK = 3000;
+
+/** Split an oversize chunk on word boundaries so no piece exceeds MAX_CHUNK. */
+function splitToMax(text: string): string[] {
+  const out: string[] = [];
+  let rest = text;
+  while (rest.length > MAX_CHUNK) {
+    const cut = rest.lastIndexOf(' ', MAX_CHUNK);
+    out.push(rest.slice(0, cut > 0 ? cut : MAX_CHUNK).trim());
+    rest = rest.slice(cut > 0 ? cut : MAX_CHUNK).trim();
+  }
+  if (rest) out.push(rest);
+  return out;
 }
 
 /**
  * Streaming TTS: feed the assistant reply as it streams and we start speaking the
- * FIRST sentence while the rest is still being written. Sentences are synthesised
- * concurrently (as each completes) and played strictly in order, so time-to-first-
- * audio is "first sentence + its synth", not "whole reply + whole synth".
+ * FIRST sentence while the rest is still being written. Complete sentences are
+ * batched into chunks, synthesised concurrently (as each completes), and played
+ * strictly in order, so time-to-first-audio is "first sentence + its synth", not
+ * "whole reply + whole synth".
  */
 export class SpeechStream {
   private consumed = 0;                                   // chars already chunked
+  private buffer = '';                                    // complete sentences awaiting batching
   private clips: Promise<HTMLAudioElement | null>[] = []; // synth jobs, in order
   private playIdx = 0;
   private looping = false;
   private stopped = false;
   private current: HTMLAudioElement | null = null;
+  private releaseCurrent: (() => void) | null = null;     // resolves the in-flight play await
+  private started = false;                                // first chunk already sent?
 
   /** Feed the latest full assistant text (mid-stream). */
   update(fullText: string): void { this.ingest(fullText, false); }
@@ -186,29 +196,40 @@ export class SpeechStream {
   private ingest(fullText: string, flush: boolean): void {
     if (this.stopped) return;
     const pending = fullText.slice(this.consumed);
-    // Terminator + trailing whitespace = a complete sentence (mid-stream safe:
-    // won't cut "3.5" because there's no space after the dot).
-    const re = /[.!?]+(?:["')\]]+)?\s/g;
+    // A boundary is a sentence terminator + whitespace (mid-stream safe: won't
+    // cut "3.5" because there's no space after the dot) OR a line break —
+    // markdown bullets, headings, and table rows rarely end in ". ", and without
+    // the newline rule whole lists used to pile up into one giant final chunk.
+    const re = /(?:[.!?]+["')\]]*\s|\n+)/g;
     let m: RegExpExecArray | null;
     let start = 0;
     let consumedHere = 0;
     while ((m = re.exec(pending))) {
       const end = m.index + m[0].length;
       const sentence = pending.slice(start, end).trim();
-      if (sentence) this.enqueue(sentence);
+      if (sentence) this.buffer += (this.buffer ? ' ' : '') + sentence;
       start = end;
       consumedHere = end;
+      // Ship the very first sentence immediately; batch the rest.
+      if (this.buffer && (!this.started || this.buffer.length >= MIN_CHUNK)) this.flushBuffer();
     }
     this.consumed += consumedHere;
     if (flush) {
       const tail = fullText.slice(this.consumed).trim();
-      if (tail) this.enqueue(tail);
+      if (tail) this.buffer += (this.buffer ? ' ' : '') + tail;
       this.consumed = fullText.length;
+      this.flushBuffer();
     }
   }
 
-  private enqueue(text: string): void {
-    this.clips.push(synthesizeClip(text));
+  private flushBuffer(): void {
+    const text = this.buffer.trim();
+    this.buffer = '';
+    if (!text) return;
+    this.started = true;
+    for (const piece of splitToMax(text)) {
+      this.clips.push(synthesizeClip(piece));
+    }
     void this.loop();
   }
 
@@ -217,21 +238,33 @@ export class SpeechStream {
     this.looping = true;
     while (this.playIdx < this.clips.length && !this.stopped) {
       const audio = await this.clips[this.playIdx++];
-      if (!audio || this.stopped) continue;
+      if (!audio) continue;
+      if (this.stopped) { try { URL.revokeObjectURL(audio.src); } catch { /* noop */ } break; }
       this.current = audio;
       await new Promise<void>((resolve) => {
+        this.releaseCurrent = resolve;
         audio.onended = audio.onerror = () => resolve();
         void audio.play().catch(() => resolve());
       });
+      this.releaseCurrent = null;
       try { URL.revokeObjectURL(audio.src); } catch { /* noop */ }
       this.current = null;
     }
     this.looping = false;
   }
 
-  /** Stop playback and abandon the rest of the queue. */
+  /** Stop playback now and abandon the rest of the queue. */
   stop(): void {
+    if (this.stopped) return;
     this.stopped = true;
     if (this.current) { this.current.pause(); this.current = null; }
+    // Pausing fires no 'ended' event — release the play await so loop() exits
+    // instead of hanging forever.
+    this.releaseCurrent?.();
+    // Free blobs that were synthesised but will never play.
+    for (const p of this.clips.slice(this.playIdx)) {
+      void p.then((a) => { if (a) { try { URL.revokeObjectURL(a.src); } catch { /* noop */ } } });
+    }
+    this.playIdx = this.clips.length;
   }
 }

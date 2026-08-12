@@ -157,9 +157,6 @@ export function AiPanel() {
     send: (t) => void sendChat(t),
     busy: chatBusy,
     active: true,
-    // Spoken replies are strictly opt-in: silent by default, only when the
-    // read-aloud (🔊) toggle is on — even after speaking via the mic.
-    autoSpeakOnMic: false,
   });
 
   const prevFirstId = useRef<string | undefined>(undefined);

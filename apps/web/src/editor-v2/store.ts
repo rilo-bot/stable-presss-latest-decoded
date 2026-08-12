@@ -735,7 +735,7 @@ export const useEditorStore = create<EditorState>((set, get) => ({
     const pageId = s.page.id;
     set({ layoutBusy: true });
     try {
-      const { page, leftOver, fidelity, warning } = await api.applyLayoutToPage(issueId, pageId, { rev: s.page.rev, reading });
+      const { page, leftOver, filled, fidelity, warning } = await api.applyLayoutToPage(issueId, pageId, { rev: s.page.rev, reading });
       set((st) => ({
         // The returned page is authoritative — it is what the solver produced.
         page: st.currentPageId === pageId ? page : st.page,
@@ -756,7 +756,14 @@ export const useEditorStore = create<EditorState>((set, get) => ({
       const lost: string[] = [];
       if (leftOver.images > 0) lost.push(`${leftOver.images} photo${leftOver.images === 1 ? '' : 's'}`);
       if (leftOver.text > 0) lost.push(`${leftOver.text} text block${leftOver.text === 1 ? '' : 's'}`);
-      const tail = lost.length > 0 ? ` ${lost.join(' and ')} had nowhere to go and stayed out.` : '';
+      let tail = lost.length > 0 ? ` ${lost.join(' and ')} had nowhere to go and stayed out.` : '';
+      // …and say what was ADDED. Boxes the page had no content for are filled
+      // server-side (drafted copy, library photos) so the layout stays complete —
+      // the user should know which words on the page are drafts to review.
+      const added: string[] = [];
+      if (filled?.text > 0) added.push(`drafted copy for ${filled.text} box${filled.text === 1 ? '' : 'es'}`);
+      if (filled?.images > 0) added.push(`added photos to ${filled.images} box${filled.images === 1 ? '' : 'es'}`);
+      if (added.length > 0) tail += ` I ${added.join(' and ')} to keep the layout complete — give the new copy a read.`;
       // The MEASURED verdict decides the tone of the toast. A "loose" result is not a
       // success message with a caveat buried in a panel — it is the headline.
       if (fidelity.verdict === 'loose') toast.warning(`${fidelity.summary}${tail}`);

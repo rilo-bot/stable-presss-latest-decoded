@@ -17,6 +17,7 @@
 
 import { PAGE_H, PAGE_W } from './config.js';
 import { normalizeLayoutSpec } from './layoutSpec.js';
+import { cropSafeBoxes, findEmptySlots, fillSatisfies, type SlotFiller } from './fillSlots.js';
 import type { LayoutReading } from './layoutReading.js';
 import { readingToSpec, specContentRefs } from './readingToSpec.js';
 import { measureFidelity, type Fidelity } from './layoutFidelity.js';
@@ -35,6 +36,9 @@ export interface AppliedPage {
   elements: MagazineElement[];
   /** Content that had nowhere to go — reported, never dropped in silence. */
   leftOver: { text: number; images: number };
+  /** Slots the page could not fill itself that the filler DID fill — drafted
+   *  copy and sourced photos. Reported, so the toast can say what was added. */
+  filled: { text: number; images: number };
   /** How close the built page actually came to the reference (P3). Measured, not
    *  claimed: the caller shows this instead of asserting a match. */
   fidelity: Fidelity;
@@ -206,12 +210,20 @@ export function reflowContent(
  *
  * Pure apart from the imports: the caller persists the result. That is deliberate —
  * a function that both composes and writes cannot be tested without a database.
+ *
+ * `opts.fill` is the one injected effect: when the reflow leaves slots empty —
+ * the page holds less than the reference shows — the filler is asked for content
+ * (drafted copy, library/stock photos) BEFORE pruning, so the reference's boxes
+ * survive instead of being deleted and the page actually looks like the picture.
+ * The filler is best-effort: whatever it cannot fill is pruned exactly as before,
+ * and a filler that throws degrades to pruning rather than failing the apply.
  */
-export function applyReadingToPage(
+export async function applyReadingToPage(
   reading: LayoutReading,
   page: { width?: number; height?: number; background?: { type?: string; value?: string }; elements: MagazineElement[] },
   genTheme: { palette?: Partial<GenPalette>; fonts?: Partial<GenFonts> } | null,
-): ApplyResult {
+  opts?: { fill?: SlotFiller },
+): Promise<ApplyResult> {
   const converted = readingToSpec(reading);
   if (!converted) return { page: null, why: 'That layout could not be turned into a page structure.' };
   // Through the trust boundary even though we built it ourselves: it is the one place
@@ -222,11 +234,65 @@ export function applyReadingToPage(
 
   const dims = { width: Number(page.width) || PAGE_W, height: Number(page.height) || PAGE_H };
   const theme = themeForPage(genTheme, page);
-  const { content, leftOver } = reflowContent(specContentRefs(spec), page.elements);
+  const slots = specContentRefs(spec);
+
+  // Two content sources, one switch. REPLICATE (the user asked for the
+  // reference's content too): the transcription IS the copy — the page's old
+  // elements are replaced wholesale, never mixed in, because "exact same as the
+  // image" mixed with the old article is exactly the soup nobody wants.
+  // Otherwise: classic reflow — the page's own content, and nothing invented.
+  const replicate = reading.contentMode === 'replicate';
+  let content: ResolvedContent;
+  let leftOver: { text: number; images: number };
+  if (replicate) {
+    content = {};
+    for (const slot of slots) {
+      const t = converted.carried.texts[slot.ref];
+      if (t && TEXT_ROLES.has(slot.role)) content[slot.ref] = { text: t };
+    }
+    leftOver = { text: 0, images: 0 };
+  } else {
+    ({ content, leftOver } = reflowContent(slots, page.elements));
+  }
+
+  // Fill what the content source could not — its content always wins; the
+  // filler is only ever asked about slots that would otherwise be pruned.
+  const filled = { text: 0, images: 0 };
+  if (opts?.fill) {
+    const empty = findEmptySlots(slots, content);
+    if (empty.length > 0) {
+      let extra: ResolvedContent = {};
+      try {
+        extra = await opts.fill(empty, {
+          replicate,
+          imageDescs: converted.carried.imageDescs,
+          cropBoxes: replicate ? cropSafeBoxes(slots, converted.origin, reading.regions) : {},
+          sourceUrl: reading.sourceUrl,
+        });
+      } catch (err) {
+        // A failed fill is a degraded page, not a failed apply.
+        console.warn(`[magazineV2] slot fill failed: ${err instanceof Error ? err.message : String(err)}`);
+      }
+      for (const slot of empty) {
+        const f = extra[slot.ref];
+        if (!fillSatisfies(slot.role, f)) continue;
+        content[slot.ref] = f!;
+        if (slot.role === 'image') filled.images += 1;
+        else if (f!.text) filled.text += 1;
+      }
+    }
+  }
 
   const pruned = pruneLayoutSpec(spec, content);
   if (!pruned) {
-    return { page: null, why: 'This page has no content to put into that layout yet — add a headline, some text or a photo first.' };
+    // Name the actual problem per mode: in replicate mode the page's own content
+    // is irrelevant — the transcription came back empty.
+    return {
+      page: null,
+      why: replicate
+        ? "The reference's text could not be read well enough to rebuild this page from it — a sharper, straight-on image of the page works best."
+        : 'This page has no content to put into that layout yet — add a headline, some text or a photo first.',
+    };
   }
   const solved = solveLayout(pruned, dims, { measureLeaf: makeMeasureLeaf(content, theme.fonts) });
   const composed = composeFromSolved(solved, content, theme);
@@ -242,5 +308,5 @@ export function applyReadingToPage(
   // text auto-fit and image cropping — real, but not what "did we match the layout"
   // is asking.
   const fidelity = measureFidelity(solved, converted.origin, dims);
-  return { page: { background: composed.background, elements, leftOver, fidelity }, why: '' };
+  return { page: { background: composed.background, elements, leftOver, filled, fidelity }, why: '' };
 }

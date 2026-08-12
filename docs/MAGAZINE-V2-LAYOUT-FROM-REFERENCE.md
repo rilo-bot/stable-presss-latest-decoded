@@ -124,6 +124,61 @@ existing elements into the new tree **by role**: headline → headline leaf, bod
 image leaves in descending area. Surplus copy joins the largest body leaf; unfilled slots either
 take a generation brief or are pruned. **Nothing is retyped.**
 
+### The generation brief, as built (2026-08-13)
+
+Pruning alone had a failure mode a client hit on day one: a **sparse page + a rich reference**
+pruned 7 of 8 boxes, the surviving caption grew to fill the page, and the toast said "loose
+interpretation (3%)" over a page that looked nothing like the picture. So empty slots now take the
+generation brief BEFORE pruning:
+
+- `fillSlots.ts` — the PURE half: `findEmptySlots` / `fillSatisfies` (one predicate shared with the
+  counter, matching pruneSpec's `leafHasContent`). No I/O imports, so `applyLayout.ts` and its tests
+  stay database-free.
+- `slotFiller.ts` — the EFFECTFUL half, built by the apply-layout route and injected into
+  `applyReadingToPage(reading, page, genTheme, { fill })` (now async):
+  - **image slots** ← three tiers, so a photo box is never empty while ANY photo exists:
+    (1) library photos not placed anywhere in the issue yet, newest first; (2) library photos
+    already used on OTHER pages — a repeat beats a deleted hero box, and a cover reusing an
+    interior photo is normal practice (photos already on THIS page are never offered);
+    (3) stock (if configured) with per-slot query variants. `kind` doc/reference and the
+    reference asset itself are excluded everywhere;
+  - **text slots** ← ONE copywriter call for all of them (single voice), grounded in the magazine's
+    title, the page's existing copy and uploaded source documents, with one self-heal retry naming
+    any refs the first answer skipped (the "drafted 3 of 8" partial-answer failure). Never lorem,
+    never the reference's own words (§1).
+  - **qr / icon / shape** ← left alone; inventing a QR destination would be fabrication.
+- Filling is best-effort, pruning is the guarantee: a filler that fails or throws degrades to the
+  old prune behaviour, never to a failed apply. The reflow's own content always wins — the filler
+  is only ever ASKED about slots that would otherwise be deleted.
+- The response reports `filled: { text, images }` next to `leftOver`, and the toast tells the user
+  what was drafted so they know which words to review.
+- The chat tool now passes the user's sentence as a `hint` to the vision read, and re-tags a
+  chat-attached image as `kind:'reference'` the moment it is used as a layout — same promise the
+  panel path makes at upload (out of the photo picker, and never pulled back in by the filler).
+
+### Replicate mode — "exact same, WITH the content" (2026-08-13)
+
+§1's "we never take copy/photos from the reference" is the right DEFAULT and the wrong answer to a
+user who explicitly asks for a replica ("make this page exact same as the attached image with the
+content, layout and image too"). Structure-only in that case pours the page's old article into the
+reference's boxes — the soup nobody wants. So the ask is now honoured, explicitly and only when made:
+
+- `use_image_as_layout` takes `useContent: true` (the model sets it for "exact same / with the
+  content / copy it exactly"). The vision read then ALSO transcribes each text region's words
+  (`region.text`, verbatim; body abridged) and describes each photograph (`region.imageDesc`), and
+  the reading is marked `contentMode: 'replicate'` with `sourceUrl` set.
+- On apply, replicate mode uses the transcription AS the copy and REPLACES the page's content
+  entirely — old elements never mix into a replica. Everything crosses `normalizeLayoutReading`
+  (texts capped + whitespace-collapsed, sourceUrl http(s)-only) and the apply route re-proves
+  `sourceUrl` belongs to the magazine's own media before anything fetches it.
+- Image slots in replicate mode: (0a) **crop the region straight out of the reference** (sharp +
+  S3, stored as a `reference-crop` media asset) — but ONLY regions `cropSafeBoxes` clears: a cover
+  hero with cover lines printed over it is never cropped, because that would bake the text into the
+  picture under the transcription; (0b) **image-gen** from `imageDesc` (env-gated); then stock by
+  description, then the library tiers. Every tier degrades to the next; pruning remains the floor.
+- Licensing note: replicate mode reproduces someone's page on the user's explicit instruction —
+  the default path still never does.
+
 ## 4. Aspect ratio
 
 A landscape reference cannot be "the same layout" on an A4 portrait page. Small differences
