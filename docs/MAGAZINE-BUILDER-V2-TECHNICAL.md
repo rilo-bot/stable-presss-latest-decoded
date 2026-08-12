@@ -184,9 +184,42 @@ sees *only* their pages (`visiblePages` mirrors `editablePageIds`).
 ## 4. API surface
 
 Mounted at **`/api/magazinesV2`** with a 30 MB JSON limit
-([routes/index.ts:92](apps/server/src/routes/index.ts#L92)). **39 endpoints** — 35 originally, plus
+([routes/index.ts:92](apps/server/src/routes/index.ts#L92)). **42 endpoints** — 35 originally, plus
 `POST …/pages/submit`, `…/pages/approve`, `…/pages/request-changes` and `GET …/reviews` from
-docs/MAGAZINE-V2-SUBMISSIONS-PLAN.md.
+docs/MAGAZINE-V2-SUBMISSIONS-PLAN.md, plus the four thread endpoints (§4.1), which **replaced**
+`GET …/chat`.
+
+### 4.1 Chat threads
+
+`GET /issues/:id/threads` · `PATCH · DELETE /issues/:id/threads/:threadId` ·
+`GET /issues/:id/threads/:threadId/messages`. See [threads.ts](apps/server/src/lib/magazineV2/threads.ts)
+for the two access functions every one of them asks:
+
+- **read** — the creator, **or the magazine owner**
+- **write** (send a turn, rename, delete) — the **creator only**. `canWriteThread` takes no owner flag
+  on purpose, so no caller can widen it by passing one; a test asserts its arity.
+
+`GET /issues/:id/chat` **is gone.** It returned every message in the magazine to anyone with access —
+including messages about pages a page-scoped collaborator cannot open. A deprecated alias would have
+kept that open indefinitely.
+
+**History now comes from the thread, not from the client.** The agent route takes `threadId` and one
+new message, then reads that thread's last 30 turns itself. The client used to post its whole in-memory
+transcript, which is how turns about page 7 — written by somebody else — reached the prompt when you
+asked about page 2 (review finding **M3**, fixed here). Turns from a different page are labelled
+`[page N]` in the prompt, because a thread follows a train of thought across pages. A missing
+`threadId` **creates** a thread and returns its id rather than erroring, so a stale tab degrades into a
+fresh chat.
+
+Messages written before threads existed have no `userId` — the information was never recorded, so they
+cannot be attributed. They surface as one synthesised **"Earlier conversation"**: owner-only,
+read-only, assembled at read time, **no migration**.
+
+**There is no `POST /threads`.** A chat is created by its **first turn**, because an empty conversation
+nobody has spoken in isn't worth a document — and an endpoint the client never calls is the same species
+of dead surface as a permission that gates nothing. Naming a thread you may READ but not WRITE is a
+**403 `thread-not-yours`**, not a silent redirect into a new one: degrading is right for an id that no
+longer exists, and wrong when the turn would be persisted somewhere other than where the caller asked.
 
 **Publishing still overwrites ONE snapshot per magazine.** An immutable-edition model
 (insert-per-edition, `supersededAt`, a v1/v2 history, `POST …/revision`, `GET …/editions`) was built

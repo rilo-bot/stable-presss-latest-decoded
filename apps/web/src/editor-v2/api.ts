@@ -272,6 +272,16 @@ export interface AttachedImage {
   url: string;
   name: string;
 }
+/**
+ * Send one turn.
+ *
+ * `messages` is the NEW turn only — the server reads the rest of the thread's
+ * history itself. It used to be the client's whole transcript, which is how turns
+ * about other pages (and other people's turns) reached the model.
+ *
+ * `threadId` may be omitted; the server then starts a thread and returns its id,
+ * so a fresh panel doesn't need a round trip before the first message.
+ */
 export const chatAgent = (
   id: string,
   pageId: string,
@@ -279,11 +289,30 @@ export const chatAgent = (
   selectedElementId?: string,
   sourceText?: string,
   attachedImages?: AttachedImage[],
+  threadId?: string,
 ) =>
-  authFetch(`${BASE}/issues/${id}/pages/${pageId}/agent`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ messages, selectedElementId, sourceText, attachedImages }) }).then(parse<{ reply: string; proposals: AgentProposal[] }>);
+  authFetch(`${BASE}/issues/${id}/pages/${pageId}/agent`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ messages, selectedElementId, sourceText, attachedImages, threadId }) }).then(
+    parse<{ reply: string; proposals: AgentProposal[]; threadId: string }>,
+  );
 
-// The persistent per-magazine chat thread (page-tagged). `before` (ISO cursor)
-// loads the batch OLDER than it — for lazy "load earlier" upward.
+// ── Chat threads ──
+// One conversation per thread, listed newest-activity-first. A contributor sees
+// their own; the magazine owner sees everyone's.
+export interface ChatThread {
+  id: string;
+  title: string;
+  userId: string;
+  userName: string;
+  /** Started by you — the only threads you can write to, rename or delete. */
+  mine: boolean;
+  startedOnPageIndex: number | null;
+  messageCount: number;
+  lastMessageAt: string;
+  createdAt: string;
+  /** The pre-threads flat log, surfaced as one unattributable read-only chat. */
+  legacy: boolean;
+  readOnly: boolean;
+}
 export interface ChatMsgDto {
   id: string;
   role: 'user' | 'assistant';
@@ -292,12 +321,22 @@ export interface ChatMsgDto {
   attachments?: { name: string; isImage: boolean; url?: string }[];
   createdAt: string;
 }
-export const listChat = (id: string, opts?: { before?: string; limit?: number }) => {
+export const listThreads = (id: string) =>
+  authFetchRetry(`${BASE}/issues/${id}/threads`).then(parse<{ threads: ChatThread[] }>).then((r) => r.threads);
+export const renameThread = (id: string, threadId: string, title: string) =>
+  authFetch(`${BASE}/issues/${id}/threads/${threadId}`, { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ title }) }).then(
+    parse<{ thread: ChatThread }>,
+  ).then((r) => r.thread);
+export const deleteThread = (id: string, threadId: string) =>
+  authFetch(`${BASE}/issues/${id}/threads/${threadId}`, { method: 'DELETE' }).then(parse<{ ok: boolean }>);
+/** One thread's transcript. `before` (ISO cursor) loads the batch OLDER than it,
+ *  for lazy "load earlier" upward. */
+export const listThreadMessages = (id: string, threadId: string, opts?: { before?: string; limit?: number }) => {
   const p = new URLSearchParams();
   if (opts?.before) p.set('before', opts.before);
   if (opts?.limit) p.set('limit', String(opts.limit));
   const qs = p.toString();
-  return authFetch(`${BASE}/issues/${id}/chat${qs ? `?${qs}` : ''}`).then(
+  return authFetchRetry(`${BASE}/issues/${id}/threads/${threadId}/messages${qs ? `?${qs}` : ''}`).then(
     parse<{ messages: ChatMsgDto[]; hasMore: boolean; oldestCreatedAt: string | null }>,
   );
 };

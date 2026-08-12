@@ -93,20 +93,32 @@
      canvas, on the light library page and on a gold banner, with no per-site
      colour props to keep in sync. Setting `color: transparent` instead — the usual
      recipe — would make `currentColor` resolve to transparent and the text would
-     simply vanish. */
+     simply vanish.
+
+     THE TRANSPARENT FILL IS BEHIND AN @supports GATE, and that is not decoration.
+     `-webkit-text-fill-color: transparent` hides the glyphs; the gradient is what
+     puts them back. A browser that does not understand `color-mix()` drops the
+     `background-image` declaration as invalid — but it understands the fill just
+     fine, so the text would be hidden with nothing painting it: INVISIBLE COPY on
+     every loading state in the studio. Gating the fill on the same feature the
+     gradient needs means an unsupported browser simply renders plain text. */
   .shimmer-text {
-    background-image: linear-gradient(
-      100deg,
-      color-mix(in oklab, currentColor 48%, transparent) 30%,
-      currentColor 48%,
-      color-mix(in oklab, currentColor 48%, transparent) 66%
-    );
     background-size: 200% 100%;
     background-position: 180% 0;
-    -webkit-background-clip: text;
-    background-clip: text;
-    -webkit-text-fill-color: transparent;
-    animation: shimmer-sweep 2.6s linear infinite;
+  }
+  @supports (background-clip: text) and (color: color-mix(in oklab, red 50%, transparent)) {
+    .shimmer-text {
+      background-image: linear-gradient(
+        100deg,
+        color-mix(in oklab, currentColor 48%, transparent) 30%,
+        currentColor 48%,
+        color-mix(in oklab, currentColor 48%, transparent) 66%
+      );
+      -webkit-background-clip: text;
+      background-clip: text;
+      -webkit-text-fill-color: transparent;
+      animation: shimmer-sweep 2.6s linear infinite;
+    }
   }
 
   /* A single line replacing another. Rises INTO place (not out of nowhere) so

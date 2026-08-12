@@ -7,6 +7,7 @@
 import { useState } from 'react';
 import { X, CheckSquare, Square, Send, AlertTriangle } from 'lucide-react';
 import { useEditorStore } from './store';
+import { useCan } from '@/lib/permissions';
 import { ShimmerText } from './BuildProgress';
 import { publishBlockers, publishBlockedReason, columnOf, COLUMN_LABEL } from './review';
 
@@ -23,7 +24,13 @@ export function PublishDialog({ onClose, onPublished }: { onClose: () => void; o
   // The approval gate, live against the ticks in this dialog. Unticking a blocking
   // page clears the block on the spot — which is what makes the message's own advice
   // ("leave them out of this edition") something you can actually act on here.
-  const blocked = publishBlockedReason(issue, pages, 'selected');
+  // TWO gates, permission first: the server checks `magazine.publish` on the route
+  // before it looks at approvals, so the reason shown has to be checked in the same
+  // order or the dialog would blame the pages for a role problem.
+  const mayPublish = useCan('magazine.publish');
+  const blocked = mayPublish
+    ? publishBlockedReason(issue, pages, 'selected')
+    : 'Your role cannot publish magazines. Ask an administrator to take this one live.';
   const { waiting, stale } = publishBlockers(issue, pages, 'selected');
   const blockingIds = new Set([...waiting, ...stale].map((p) => p.id));
 
@@ -76,7 +83,10 @@ export function PublishDialog({ onClose, onPublished }: { onClose: () => void; o
         {blocked && (
           <div className="flex items-start gap-2 border-b border-amber-400/25 bg-amber-400/10 px-4 py-2 text-[11px] text-amber-200">
             <AlertTriangle size={12} className="mt-[1px] flex-shrink-0" />
-            <span>{blocked} Approve them on the review board, or untick them here.</span>
+            {/* The advice is only true of the APPROVAL block. Appending it to a
+                permission refusal would tell the user to go and untick pages that
+                are not the problem. */}
+            <span>{blocked}{mayPublish ? ' Approve them on the review board, or untick them here.' : ''}</span>
           </div>
         )}
 

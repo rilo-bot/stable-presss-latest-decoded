@@ -17,8 +17,8 @@
 // ---------------------------------------------------------------------------
 
 import crypto from 'crypto';
-import { Router, type RequestHandler } from 'express';
-import { db } from '../../lib/db.js';
+import { Router, type RequestHandler, type Request, type Response } from 'express';
+import { db, rawCollection } from '../../lib/db.js';
 import { attachAccount } from '../../lib/auth.js';
 import { can, isAdmin } from '../../lib/rbac.js';
 import { MAGAZINE_V2_ENABLED, PAGE_W, PAGE_H, MAX_PAGES_PER_ISSUE, MAX_SOURCE_BYTES, ALLOWED_SOURCE_MIME, sourceExtForMime, MAX_IMAGE_BYTES, ALLOWED_IMAGE_MIME, imageExtFor } from '../../lib/magazineV2/config.js';
@@ -28,6 +28,7 @@ import { safePublicImageUrl } from '../../lib/magazineV2/url.js';
 import { roleOnMagazine, isOwner, canViewPage, pageEditBlock, editablePageIds, collaboratorsOf, assigneesOfPage, type V2Collaborator, type MagRole } from '../../lib/magazineV2/access.js';
 import { reviewOf, reviewRoundOf, isApprovalStale, needsRepublish, pageEditedSincePublish, reviewIs, reviewTransitionError, type PageReview, type ReviewAction } from '../../lib/magazineV2/review.js';
 import { publishApprovalBlock } from '../../lib/magazineV2/publishGate.js';
+import { canReadThread, canWriteThread, threadSummary, legacyThreadSummary, titleFromMessage, cleanTitle, LEGACY_THREAD_ID } from '../../lib/magazineV2/threads.js';
 import { notifyShared } from '../../lib/notifyShare.js';
 import { notifySubmitted, notifyReviewed, notifyPageRemoved } from '../../lib/notifyReview.js';
 import { pageNumbersLabel } from '../../lib/pageLabels.js';
@@ -2308,7 +2309,7 @@ router.post('/issues/:id/pages/:pageId/agent', rateLimit('mag2-agent', 20, 60_00
   const { page } = ctx;
   const messages = Array.isArray(req.body?.messages) ? req.body.messages : [];
   if (messages.length === 0) {
-    res.status(400).json({ error: 'messages[] is required' });
+    res.status(400).json({ error: 'A message is required' });
     return;
   }
   const selectedElementId = typeof req.body?.selectedElementId === 'string' ? req.body.selectedElementId : undefined;
@@ -2323,9 +2324,86 @@ router.post('/issues/:id/pages/:pageId/agent', rateLimit('mag2-agent', 20, 60_00
       url: a.url.slice(0, 2000),
       name: typeof a.name === 'string' ? a.name.slice(0, 200) : 'image',
     }));
+  // ── The thread this turn belongs to ──
+  //
+  // HISTORY COMES FROM THE THREAD, NOT FROM THE CLIENT. The client used to post its
+  // whole in-memory transcript and the server sent that to the model, which is how
+  // turns about page 7 — written by somebody else — ended up in the prompt when you
+  // asked about page 2 (review finding M3). Now the client sends one new message and
+  // a threadId, and the server reads that thread's own history back.
+  //
+  // A missing or unusable threadId CREATES a thread rather than failing: a stale tab
+  // must degrade into a fresh chat, never into an error.
+  const wanted = typeof req.body?.threadId === 'string' ? req.body.threadId.trim() : '';
+  const uid = req.account!.id;
+  let thread: Doc | null = null;
+  if (wanted && wanted !== LEGACY_THREAD_ID) {
+    const found = await db.collection(COL.threads).findById(wanted);
+    const here = found && String(found.magazineId) === String(page.magazineId);
+    // NAMING A THREAD YOU MAY NOT WRITE TO IS REFUSED, NOT REDIRECTED. Degrading to
+    // a fresh thread is right for a threadId that no longer exists (a stale tab);
+    // it is wrong here, because the turn would be persisted somewhere other than
+    // where the caller asked to put it and the reply would look like it landed.
+    //
+    // Writing needs the CREATOR. The magazine owner can read a contributor's thread
+    // but must not speak into it — the assistant is a 1:1 conversation, and a second
+    // voice would surface in the creator's next prompt as if they had said it.
+    if (here && !canWriteThread(found, uid)) {
+      res.status(403).json({
+        error: 'This chat belongs to someone else. Start your own chat, or send the page back for changes.',
+        reason: 'thread-not-yours',
+      });
+      return;
+    }
+    if (here) thread = found;
+  } else if (wanted === LEGACY_THREAD_ID) {
+    // The legacy log has no author, so there is nobody to continue as. A new thread
+    // is the honest landing place, and the client's composer is disabled there anyway.
+    thread = null;
+  }
+  const newUserText = (() => {
+    const last = [...messages].reverse().find((m: { role?: string; content?: unknown }) => m?.role === 'user');
+    return last && typeof last.content === 'string' ? last.content : '';
+  })();
+  if (!thread) {
+    const now = new Date().toISOString();
+    const id = await db.collection(COL.threads).insertOne({
+      magazineId: page.magazineId,
+      userId: uid,
+      userName: req.account!.name || req.account!.email || 'Someone',
+      title: titleFromMessage(newUserText),
+      startedOnPageId: page._id,
+      startedOnPageIndex: Number(page.index) || 0,
+      lastMessageAt: now,
+      messageCount: 0,
+      deletedAt: null,
+      createdAt: now,
+      updatedAt: now,
+    });
+    thread = (await db.collection(COL.threads).findById(id)) ?? { _id: id, userId: uid, messageCount: 0 };
+  }
+  const threadId = String(thread._id);
+
+  // This thread's own history, oldest→newest, capped the same way the agent caps it.
+  // Turns from a DIFFERENT page are labelled, because a thread follows a train of
+  // thought across pages ("keep the voice we used on page 2") and without the label
+  // the model cannot tell what "it" referred to two turns ago.
+  const priorRows = (await db.collection(COL.chat).aggregate([
+    { $match: { threadId, deletedAt: null } },
+    { $sort: { createdAt: -1 } },
+    { $limit: 30 },
+  ])) as Doc[];
+  const thisPageIndex = Number(page.index) || 0;
+  const history = priorRows.reverse().map((m): { role: 'user' | 'assistant'; content: string } => {
+    const idx = typeof m.pageIndex === 'number' ? m.pageIndex : thisPageIndex;
+    const role = m.role === 'assistant' ? ('assistant' as const) : ('user' as const);
+    const tag = role === 'user' && idx !== thisPageIndex ? `[page ${idx + 1}] ` : '';
+    return { role, content: `${tag}${String(m.content ?? '')}` };
+  });
+
   try {
     const turn = await runPageAgent({
-      messages,
+      messages: [...history, { role: 'user', content: newUserText }],
       page: {
         width: Number(page.width) || PAGE_W,
         height: Number(page.height) || PAGE_H,
@@ -2344,55 +2422,208 @@ router.post('/issues/:id/pages/:pageId/agent', rateLimit('mag2-agent', 20, 60_00
       // changes", nothing changed.
       canEditStructure: isOwner(roleOnMagazine(ctx.issue, req.account!.id)),
     });
-    // Persist this turn to the magazine's chat thread (page-tagged) so the
-    // conversation survives reloads. Best-effort: a persistence hiccup must not
-    // fail a reply the user already received.
+    // Persist both turns INTO THIS THREAD (page-tagged) so the conversation
+    // survives reloads. Best-effort: a persistence hiccup must not fail a reply the
+    // user already received.
+    let wrote = 0;
     try {
-      const lastUser = [...messages].reverse().find((m: { role?: string; content?: unknown }) => m?.role === 'user');
       const t0 = Date.now();
-      if (lastUser && typeof lastUser.content === 'string' && lastUser.content.trim()) {
+      if (newUserText.trim()) {
         await db.collection(COL.chat).insertOne({
+          threadId,
+          userId: uid,
           magazineId: page.magazineId,
           pageId: page._id,
-          pageIndex: Number(page.index) || 0,
+          pageIndex: thisPageIndex,
           role: 'user',
-          content: lastUser.content.slice(0, 8000),
+          content: newUserText.slice(0, 8000),
           ...(attachedImages.length > 0
             ? { attachments: attachedImages.map((a: { url: string; name: string }) => ({ name: a.name, isImage: true, url: a.url })) }
             : {}),
+          deletedAt: null,
           createdAt: new Date(t0).toISOString(),
         });
+        wrote++;
       }
       await db.collection(COL.chat).insertOne({
+        threadId,
+        userId: uid,
         magazineId: page.magazineId,
         pageId: page._id,
-        pageIndex: Number(page.index) || 0,
+        pageIndex: thisPageIndex,
         role: 'assistant',
         content: String(turn.reply ?? '').slice(0, 20000),
+        deletedAt: null,
         createdAt: new Date(t0 + 1).toISOString(), // +1ms so it sorts AFTER the user turn
       });
+      wrote++;
+      // Keep the list's sort key and count current. Title too, but ONLY while the
+      // thread is still unnamed: re-deriving it from every message would rename a
+      // chat under the user each turn, and a title they typed must never be lost.
+      const prior = typeof thread.messageCount === 'number' ? thread.messageCount : 0;
+      const update: Record<string, unknown> = {
+        lastMessageAt: new Date(t0 + 1).toISOString(),
+        messageCount: prior + wrote,
+        updatedAt: new Date(t0 + 1).toISOString(),
+      };
+      if (prior === 0 && (!thread.title || thread.title === 'New chat') && newUserText.trim()) {
+        update.title = titleFromMessage(newUserText);
+      }
+      await db.collection(COL.threads).updateOne(threadId, update);
     } catch (persistErr) {
       console.warn('[magazineV2] chat persist failed (reply still delivered):', persistErr instanceof Error ? persistErr.message : persistErr);
     }
-    res.json(turn);
+    // `threadId` goes back so a client that started without one adopts the thread
+    // the server just created, instead of making a new one on every turn.
+    res.json({ ...turn, threadId });
   } catch (err) {
     console.error('[magazineV2] agent error:', err instanceof Error ? err.message : err);
     res.status(500).json({ error: 'The assistant hit a snag. Please try again.' });
   }
 });
 
-// The persistent per-magazine chat thread (page-tagged), returned oldest→newest.
-// `before` (an ISO cursor) fetches the batch OLDER than it, so the client lazily
-// loads earlier history upward. GETs aren't rate-limited (see router.use above).
-router.get('/issues/:id/chat', async (req, res) => {
+// ── Chat threads ────────────────────────────────────────────────────────────
+//
+// One conversation per thread, owned by whoever started it. Read = the creator or
+// the magazine owner; write = the creator only. See lib/magazineV2/threads.ts —
+// the two access functions live there so these routes cannot disagree with the
+// agent route about who may do what.
+//
+// `GET /issues/:id/chat` USED TO LIVE HERE and is gone. It returned every message
+// in the magazine to anyone with access — including messages about pages a
+// page-scoped collaborator cannot open. Keeping it as a deprecated alias would
+// have kept that hole open indefinitely; the client ships in the same deploy.
+
+/** One message on the wire. */
+const chatMessage = (m: Doc) => ({
+  id: String(m._id),
+  role: m.role === 'assistant' ? 'assistant' : 'user',
+  content: String(m.content ?? ''),
+  pageIndex: typeof m.pageIndex === 'number' ? m.pageIndex : null,
+  attachments: Array.isArray(m.attachments) ? m.attachments : undefined,
+  createdAt: String(m.createdAt ?? ''),
+});
+
+/** Membership + owner flag, or null once a 404 has been sent. */
+async function loadChatCtx(req: Request, res: Response): Promise<{ issue: Doc; uid: string; owner: boolean } | null> {
   const uid = req.account!.id;
-  const issue = await loadIssue(req.params.id);
-  if (!issue || !roleOnMagazine(issue, uid)) {
+  const issue = await loadIssue(String(req.params.id));
+  const role = issue ? roleOnMagazine(issue, uid) : null;
+  if (!issue || !role) {
     res.status(404).json({ error: 'Not found' });
+    return null;
+  }
+  return { issue, uid, owner: isOwner(role) };
+}
+
+/**
+ * Load a thread the caller may READ, or 404.
+ *
+ * `write: true` narrows it to the creator. The refusal is a 404 in both cases:
+ * a 403 on someone else's thread would confirm it exists, and the id is guessable.
+ */
+async function loadThread(
+  req: Request,
+  res: Response,
+  opts: { write?: boolean } = {},
+): Promise<{ issue: Doc; uid: string; owner: boolean; thread: Doc } | null> {
+  const ctx = await loadChatCtx(req, res);
+  if (!ctx) return null;
+  const thread = await db.collection(COL.threads).findById(String(req.params.threadId));
+  const belongs = thread && String(thread.magazineId) === String(ctx.issue._id);
+  const allowed = belongs && (opts.write ? canWriteThread(thread, ctx.uid) : canReadThread(thread, ctx.uid, ctx.owner));
+  if (!allowed) {
+    res.status(404).json({ error: 'Chat not found' });
+    return null;
+  }
+  return { ...ctx, thread: thread! };
+}
+
+// The thread list. A collaborator gets their own; the owner gets everyone's, each
+// row carrying who started it so the panel can group them.
+router.get('/issues/:id/threads', async (req, res) => {
+  const ctx = await loadChatCtx(req, res);
+  if (!ctx) return;
+  const match: Record<string, unknown> = { magazineId: ctx.issue._id, deletedAt: null };
+  if (!ctx.owner) match.userId = ctx.uid;
+  const rows = (await db.collection(COL.threads).aggregate([
+    { $match: match },
+    { $sort: { lastMessageAt: -1 } },
+    { $limit: 200 },
+  ])) as Doc[];
+  const threads = rows.map((t) => threadSummary(t, ctx.uid));
+
+  // Messages written before threads existed have no userId, so they can be shown
+  // but never attributed. One synthesised read-only row, owner-only, assembled at
+  // read time — no migration writes anything. Counted in the same round trip.
+  if (ctx.owner) {
+    const legacy = (await db.collection(COL.chat).aggregate([
+      { $match: { magazineId: ctx.issue._id, threadId: null, deletedAt: null } },
+      { $group: { _id: null, count: { $sum: 1 }, last: { $max: '$createdAt' } } },
+    ])) as Doc[];
+    const row = legacy[0];
+    if (row && Number(row.count) > 0) threads.push(legacyThreadSummary(Number(row.count), String(row.last ?? '')));
+  }
+  res.json({ threads });
+});
+
+// NOTE: there is no POST /threads. A chat is created by its FIRST TURN (see the
+// agent route above), because an empty conversation nobody has spoken in is not
+// worth a document — and an endpoint the client never calls is the same species of
+// dead surface as a permission that gates nothing.
+// Rename. Creator only — the owner can read a thread but not retitle it.
+router.patch('/issues/:id/threads/:threadId', async (req, res) => {
+  const ctx = await loadThread(req, res, { write: true });
+  if (!ctx) return;
+  const title = cleanTitle(req.body?.title);
+  if (!title) {
+    res.status(400).json({ error: 'A title is required.' });
     return;
   }
+  await db.collection(COL.threads).updateOne(ctx.thread._id, { title, updatedAt: new Date().toISOString() });
+  const fresh = await db.collection(COL.threads).findById(ctx.thread._id);
+  res.json({ thread: threadSummary(fresh ?? ctx.thread, ctx.uid) });
+});
+
+// Delete a chat and everything in it. Creator only.
+router.delete('/issues/:id/threads/:threadId', async (req, res) => {
+  const ctx = await loadThread(req, res, { write: true });
+  if (!ctx) return;
+  const now = new Date().toISOString();
+  await db.collection(COL.threads).deleteOne(ctx.thread._id);
+  // Soft-delete the messages too, in ONE write. The db wrapper has no updateMany,
+  // and a per-message loop would be N round trips on a long conversation — so this
+  // is the raw driver, matching the `deletedAt` convention `find()` filters on.
+  const raw = await rawCollection(COL.chat);
+  await raw.updateMany({ threadId: String(ctx.thread._id), deletedAt: null }, { $set: { deletedAt: now } });
+  res.json({ ok: true });
+});
+
+// One thread's transcript, oldest→newest. `before` (an ISO cursor) fetches the
+// batch OLDER than it, so the panel pages history upward.
+router.get('/issues/:id/threads/:threadId/messages', async (req, res) => {
+  const threadId = String(req.params.threadId);
   const limit = Math.min(100, Math.max(1, Number(req.query.limit) || 50));
-  const match: Record<string, unknown> = { magazineId: issue._id, deletedAt: null };
+  const match: Record<string, unknown> = { deletedAt: null };
+
+  if (threadId === LEGACY_THREAD_ID) {
+    // The pre-threads flat log. Owner only, because nothing in it can be
+    // attributed — showing it to a collaborator would be handing them everyone's
+    // old conversation, which is the leak this whole change exists to close.
+    const ctx = await loadChatCtx(req, res);
+    if (!ctx) return;
+    if (!ctx.owner) {
+      res.status(404).json({ error: 'Chat not found' });
+      return;
+    }
+    match.magazineId = ctx.issue._id;
+    match.threadId = null;
+  } else {
+    const ctx = await loadThread(req, res);
+    if (!ctx) return;
+    match.threadId = String(ctx.thread._id);
+  }
+
   if (typeof req.query.before === 'string' && req.query.before) match.createdAt = { $lt: req.query.before };
   // Newest `limit` (+1 to detect more), then hand back oldest→newest for display.
   const rows = (await db.collection(COL.chat).aggregate([
@@ -2403,14 +2634,7 @@ router.get('/issues/:id/chat', async (req, res) => {
   const hasMore = rows.length > limit;
   const batch = rows.slice(0, limit).reverse();
   res.json({
-    messages: batch.map((m) => ({
-      id: String(m._id),
-      role: m.role === 'assistant' ? 'assistant' : 'user',
-      content: String(m.content ?? ''),
-      pageIndex: typeof m.pageIndex === 'number' ? m.pageIndex : null,
-      attachments: Array.isArray(m.attachments) ? m.attachments : undefined,
-      createdAt: String(m.createdAt ?? ''),
-    })),
+    messages: batch.map(chatMessage),
     hasMore,
     oldestCreatedAt: batch[0]?.createdAt ?? null,
   });

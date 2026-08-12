@@ -12,6 +12,7 @@ import { toast } from 'sonner';
 import { ArrowLeft, Undo2, Redo2, Plus, Minus, Copy, Trash2, ChevronLeft, ChevronRight, ChevronDown, Sparkles, Wand2, WandSparkles, RotateCcw, ImageIcon, Globe, ExternalLink, Send, Users, EyeOff, ClipboardList, Lock, RefreshCw } from 'lucide-react';
 import { useEditorStore } from './store';
 import { useStudioChrome } from '@/stores/studioChromeStore';
+import { useCan } from '@/lib/permissions';
 import { EditorCanvas } from './EditorCanvas';
 import { Inspector } from './Inspector';
 import { AiPanel } from './AiPanel';
@@ -64,6 +65,17 @@ export default function MagazineEditorV2() {
   const [publishDialogOpen, setPublishDialogOpen] = useState(false);
   const [shareOpen, setShareOpen] = useState(false);
   const [boardOpen, setBoardOpen] = useState(false);
+  // EVERY HOOK MUST LIVE ABOVE THE `s.loading` / `s.error` EARLY RETURNS BELOW.
+  // This one was originally placed next to the publish gating it feeds, ~40 lines
+  // after those returns, which crashed the whole studio: the first render (before
+  // `load()` flips `loading`) ran it, the next render returned early and did not, and
+  // React threw "Rendered fewer hooks than expected".
+  //
+  // Publishing needs the STAFF permission as well as ownership — the server checks
+  // `magazine.publish` on both publish routes. Without it the button looked enabled
+  // and 403'd on click, which is the silent no-op the rest of this toolbar avoids.
+  // Answered from the resolved access payload, never guessed.
+  const mayPublish = useCan('magazine.publish');
   const isPublished = !!s.issue?.publishedIssueId && s.issue?.status === 'published';
   // Published, then edited: the bulletin readers see is now behind the draft. There is
   // no version to reason about — the fix is one click of Republish.
@@ -167,8 +179,9 @@ export default function MagazineEditorV2() {
   // selection flag, so one unapproved page can block that path while "publish
   // selected" is still open. Blocking both from one number would take away the very
   // escape hatch the message recommends.
-  const blockedFull = s.canManage() ? publishBlockedReason(s.issue, s.pages, 'full') : '';
-  const blockedSelected = s.canManage() ? publishBlockedReason(s.issue, s.pages, 'selected') : '';
+  const noPublishRight = mayPublish ? '' : 'Your role cannot publish magazines. Ask an administrator to take this one live.';
+  const blockedFull = s.canManage() ? noPublishRight || publishBlockedReason(s.issue, s.pages, 'full') : '';
+  const blockedSelected = s.canManage() ? noPublishRight || publishBlockedReason(s.issue, s.pages, 'selected') : '';
   const publishBlocked = blockedFull && blockedSelected ? blockedFull : '';
   const currentSummary = s.pages.find((p) => p.id === s.currentPageId);
   const lockedReason = readOnlyReason(s.issue, currentSummary);
@@ -374,10 +387,15 @@ export default function MagazineEditorV2() {
                     {isPublished && (
                       <button
                         onClick={() => { setPublishMenuOpen(false); void s.unpublish(); }}
-                        className="block w-full border-t border-white/10 px-3 py-2.5 text-left text-xs text-red-300 hover:bg-white/10"
+                        disabled={!mayPublish}
+                        title={noPublishRight || undefined}
+                        className="block w-full border-t border-white/10 px-3 py-2.5 text-left text-xs text-red-300 hover:bg-white/10 disabled:opacity-40 disabled:hover:bg-transparent"
                       >
+                        {/* Unpublish is the SAME server verb as publish, so it takes
+                            the same gate: a role that cannot put an edition up must
+                            not be able to pull one down. */}
                         <span className="flex items-center gap-1 font-semibold"><EyeOff size={11} /> Unpublish</span>
-                        <span className="block text-[10px] text-white/40">Remove this edition from Bulletins</span>
+                        <span className="block text-[10px] text-white/40">{noPublishRight || 'Remove this edition from Bulletins'}</span>
                       </button>
                     )}
                   </div>

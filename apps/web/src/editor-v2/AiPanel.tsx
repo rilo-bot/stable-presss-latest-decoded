@@ -7,7 +7,7 @@
 // rev-guarded element CRUD (store.applyAllProposals).
 
 import { useEffect, useRef, useState } from 'react';
-import { Sparkles, Send, Square, Loader2, Check, X, Plus, Pencil, Trash2, Paperclip, FileText, FilePlus2, ArrowLeftRight, Image as ImageIcon, Mic, Volume2, VolumeX } from 'lucide-react';
+import { Sparkles, Send, Square, Loader2, Check, X, Plus, Pencil, Trash2, Paperclip, FileText, FilePlus2, ArrowLeftRight, Image as ImageIcon, Mic, Volume2, VolumeX, MessagesSquare, MessageSquarePlus, ChevronDown, Eye } from 'lucide-react';
 import type { UIMessage } from 'ai';
 import { toast } from 'sonner';
 import { MarkdownMessage } from '@/components/MarkdownMessage';
@@ -15,6 +15,7 @@ import { ingestFile, attachmentSourceText, ATTACH_ACCEPT } from '@/agent/attachm
 import { useVoiceChat } from '@/agent/voice/useVoiceChat';
 import { useEditorStore } from './store';
 import { ShimmerText, WorkingLine } from './BuildProgress';
+import { ThreadList } from './ThreadList';
 import { uploadMediaImage, uploadMediaDoc, listUploads, listMedia, getUploadText, type AttachedImage, type MagazineUpload, type MediaAsset } from './api';
 import type { AgentProposal } from './model';
 
@@ -68,6 +69,15 @@ export function AiPanel() {
   const setPreviewDoc = useEditorStore((s) => s.setPreviewDoc);
 
   const issueId = useEditorStore((s) => s.issueId);
+
+  const threads = useEditorStore((s) => s.threads);
+  const activeThreadId = useEditorStore((s) => s.activeThreadId);
+  const newThread = useEditorStore((s) => s.newThread);
+  const [threadsOpen, setThreadsOpen] = useState(false);
+  // The row for the open transcript. Absent while a brand-new chat is unsent —
+  // it has no document yet, which is why the header falls back to 'New chat'.
+  const activeThread = threads.find((t) => t.id === activeThreadId);
+  const readOnlyThread = !!activeThread?.readOnly;
 
   const [input, setInput] = useState('');
   const [atts, setAtts] = useState<PanelAttachment[]>([]); // source docs/images to work from
@@ -309,7 +319,7 @@ export function AiPanel() {
   };
 
   return (
-    <div className="flex h-full flex-col bg-[#0d1626] text-white">
+    <div className="relative flex h-full flex-col bg-[#0d1626] text-white">
       {/* Header */}
       <div
         className="flex items-center gap-2 border-b border-white/10 px-3 py-2.5"
@@ -347,6 +357,32 @@ export function AiPanel() {
           </button>
         ))}
       </div>
+
+      {/* Which chat you're in, and the way to the rest of them. Only on the Chat
+          tab: the list is navigation for this transcript, not for Uploads. */}
+      {tab === 'chat' && (
+        <div className="flex items-center gap-1.5 border-b border-white/10 px-2 py-1.5">
+          <button
+            onClick={() => setThreadsOpen(true)}
+            className="flex min-w-0 flex-1 items-center gap-1.5 rounded-sm px-1.5 py-1 text-left hover:bg-white/5"
+            title="All chats"
+          >
+            <MessagesSquare size={13} className="flex-shrink-0 text-white/45" />
+            <span className="truncate text-[12px] font-semibold text-white/85">{activeThread?.title ?? 'New chat'}</span>
+            <ChevronDown size={12} className="flex-shrink-0 text-white/35" />
+          </button>
+          <button
+            onClick={() => newThread()}
+            className="flex-shrink-0 rounded-sm p-1.5 text-white/50 hover:bg-white/10 hover:text-white"
+            title="Start a new chat"
+            aria-label="Start a new chat"
+          >
+            <MessageSquarePlus size={14} />
+          </button>
+        </div>
+      )}
+
+      {threadsOpen && <ThreadList onClose={() => setThreadsOpen(false)} />}
 
       {tab === 'uploads' ? (
         <div className="min-h-0 flex-1 space-y-1.5 overflow-y-auto px-3 py-3">
@@ -523,6 +559,21 @@ export function AiPanel() {
             <span className="line-clamp-2 italic">{voice.caption || (voice.transcribing ? 'Transcribing…' : 'Listening… speak now')}</span>
           </div>
         )}
+        {/* Someone else's chat, or the unattributable legacy log: read, don't
+            type. The assistant is a 1:1 conversation — a second voice would land
+            in the other person's next prompt as if they had said it. The server
+            refuses it too; this is the honest version of that refusal, and it
+            points at the channel that actually reaches them. */}
+        {readOnlyThread ? (
+          <div className="flex items-start gap-2 rounded-sm border border-white/10 bg-white/[0.03] px-3 py-2 text-[11px] leading-relaxed text-white/50">
+            <Eye size={12} className="mt-0.5 flex-shrink-0" />
+            <span>
+              {activeThread?.legacy
+                ? "This is the studio's history from before chats were separate. It can't say who wrote what, so it's read-only."
+                : `Reading ${activeThread?.userName || "someone else"}’s chat — read-only. To ask for changes, send the page back for changes.`}
+            </span>
+          </div>
+        ) : (
         <form onSubmit={(e) => { e.preventDefault(); void send(); }} className="flex items-end gap-2">
           <button
             type="button"
@@ -580,6 +631,7 @@ export function AiPanel() {
             {chatBusy || ingesting ? <Loader2 size={13} className="animate-spin" /> : <Send size={13} />}
           </button>
         </form>
+        )}
       </div>
         </>
       )}

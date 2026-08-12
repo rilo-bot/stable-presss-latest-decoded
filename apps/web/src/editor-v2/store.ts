@@ -86,6 +86,20 @@ interface EditorState {
   chatHasMore: boolean;
   chatOldest: string | null;
   chatLoadingOlder: boolean;
+  // ── Threads ──
+  // The conversation list, and which one the transcript above belongs to.
+  threads: api.ChatThread[];
+  threadsLoading: boolean;
+  /** null = a new, not-yet-created chat: the first turn creates it server-side. */
+  activeThreadId: string | null;
+  loadThreads: () => Promise<void>;
+  /** Switch the transcript to a thread. Discards staged proposals — they belong to
+   *  a turn, and applying them from a different conversation would be a surprise. */
+  openThread: (threadId: string) => Promise<void>;
+  /** A blank chat. Nothing is written until the first message is sent. */
+  newThread: () => void;
+  renameThread: (threadId: string, title: string) => Promise<void>;
+  removeThread: (threadId: string) => Promise<void>;
   proposals: AgentProposal[];
   proposalsPageId: string | null;
   /** When set, the right pane shows this attachment instead of the Inspector. */
@@ -194,6 +208,9 @@ export const useEditorStore = create<EditorState>((set, get) => ({
   undoStack: [],
   redoStack: [],
   chat: [],
+  threads: [],
+  threadsLoading: false,
+  activeThreadId: null,
   chatBusy: false,
   chatHasMore: false,
   chatOldest: null,
@@ -216,14 +233,21 @@ export const useEditorStore = create<EditorState>((set, get) => ({
       const { issue, pages } = await api.getIssue(id);
       set({ issue, pages, loading: false, undoStack: [], redoStack: [], selectedId: null });
       if (pages[0]) await get().openPage(pages[0].id);
-      // Load the persisted chat thread (most recent batch). Best-effort — a chat
+      // Load the conversation list and open the most recent one — the behaviour of
+      // every chat app: you come back to where you left off. Best-effort; a chat
       // fetch failure must never block opening the magazine.
       try {
-        const t = await api.listChat(id, { limit: 50 });
+        const threads = await api.listThreads(id);
         // Guard against a slow response landing after the user opened another issue.
-        if (get().issueId === id) set({ chat: t.messages.map(dtoToChat), chatHasMore: t.hasMore, chatOldest: t.oldestCreatedAt });
+        if (get().issueId !== id) return;
+        set({ threads });
+        // Resume the newest thread YOU can write to. Landing in the legacy log or
+        // someone else's read-only thread would mean the composer is disabled before
+        // the user has done anything.
+        const resume = threads.find((t) => t.mine && !t.legacy);
+        if (resume) await get().openThread(resume.id);
       } catch {
-        /* leave the thread empty */
+        /* start with a blank chat */
       }
       // Still generating (from "Build with AI" / import)? Poll and reveal pages
       // as they arrive instead of making the user wait on a loading screen.
@@ -772,23 +796,106 @@ export const useEditorStore = create<EditorState>((set, get) => ({
 
   clearJustGenerated: () => set({ justGenerated: false }),
 
+  // ── Threads ──
+  loadThreads: async () => {
+    const id = get().issueId;
+    if (!id) return;
+    set({ threadsLoading: true });
+    try {
+      const threads = await api.listThreads(id);
+      set((st) => (st.issueId === id ? { threads, threadsLoading: false } : { threadsLoading: false }));
+    } catch {
+      set({ threadsLoading: false });
+    }
+  },
+
+  openThread: async (threadId) => {
+    const id = get().issueId;
+    if (!id) return;
+    // Clear the transcript FIRST. Loading over the old one would leave another
+    // conversation on screen for the length of the fetch, and the user would read it
+    // as belonging to the thread they just clicked.
+    set({ activeThreadId: threadId, chat: [], chatHasMore: false, chatOldest: null, proposals: [], proposalsPageId: null });
+    try {
+      const t = await api.listThreadMessages(id, threadId, { limit: 50 });
+      set((st) => (st.issueId === id && st.activeThreadId === threadId
+        ? { chat: t.messages.map(dtoToChat), chatHasMore: t.hasMore, chatOldest: t.oldestCreatedAt }
+        : {}));
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : 'Could not open that chat.');
+    }
+  },
+
+  // No server call: an empty chat that nobody has spoken in isn't worth a document.
+  // The first turn creates it and adopts the id the server returns.
+  newThread: () => set({ activeThreadId: null, chat: [], chatHasMore: false, chatOldest: null, proposals: [], proposalsPageId: null }),
+
+  renameThread: async (threadId, title) => {
+    const id = get().issueId;
+    if (!id || !title.trim()) return;
+    try {
+      const updated = await api.renameThread(id, threadId, title.trim());
+      set((st) => ({ threads: st.threads.map((t) => (t.id === threadId ? updated : t)) }));
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : 'Could not rename that chat.');
+    }
+  },
+
+  removeThread: async (threadId) => {
+    const id = get().issueId;
+    if (!id) return;
+    try {
+      await api.deleteThread(id, threadId);
+      const wasActive = get().activeThreadId === threadId;
+      set((st) => ({ threads: st.threads.filter((t) => t.id !== threadId) }));
+      // Deleting the chat you're reading leaves the panel showing a transcript that
+      // no longer exists — so land on the next one, or a blank chat.
+      if (wasActive) {
+        const next = get().threads.find((t) => t.mine && !t.legacy);
+        if (next) await get().openThread(next.id);
+        else get().newThread();
+      }
+      toast.success('Chat deleted.');
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : 'Could not delete that chat.');
+    }
+  },
+
   // ── AI editing assistant ──
   sendChat: async (text, sourceText, attachedImages, attachments) => {
     const s = get();
     const body = text.trim();
     if (!body || !s.issueId || !s.currentPageId || s.chatBusy) return;
-    const history: ChatMessage[] = [...s.chat, { role: 'user', content: body, attachments }];
-    set({ chat: history, chatBusy: true });
+    // Read-only thread (someone else's, or the legacy log) — the composer is
+    // disabled for these, and this is the matching guard so a stale render can't
+    // post into a conversation the server would refuse anyway.
+    const active = s.threads.find((t) => t.id === s.activeThreadId);
+    if (active?.readOnly) return;
+    set({ chat: [...s.chat, { role: 'user', content: body, attachments }], chatBusy: true });
     try {
-      // The server only needs role+content; attachment refs are client display-only.
-      const apiHistory = history.map((m) => ({ role: m.role, content: m.content }));
-      const { reply, proposals } = await api.chatAgent(s.issueId, s.currentPageId, apiHistory, s.selectedId ?? undefined, sourceText, attachedImages);
+      // ONE turn, plus the thread id. The server reads the rest of the history from
+      // the thread itself — the client's transcript is for display, not the prompt.
+      const { reply, proposals, threadId } = await api.chatAgent(
+        s.issueId,
+        s.currentPageId,
+        [{ role: 'user', content: body }],
+        s.selectedId ?? undefined,
+        sourceText,
+        attachedImages,
+        s.activeThreadId ?? undefined,
+      );
       set((st) => ({
         chat: [...st.chat, { role: 'assistant', content: reply }],
         proposals,
         proposalsPageId: s.currentPageId,
         chatBusy: false,
+        // Adopt the thread the server used — on the first turn of a new chat this is
+        // the id it just created. Without this, every turn would start another one.
+        activeThreadId: threadId || st.activeThreadId,
       }));
+      // Refresh the list so the new/renamed thread appears with its real title and
+      // sorts to the top. Cheap, and it keeps the list honest without a socket.
+      void get().loadThreads();
     } catch (e) {
       set((st) => ({ chat: [...st.chat, { role: 'assistant', content: 'Sorry — I hit a snag just then. Please try again.' }], chatBusy: false }));
       toast.error(e instanceof Error ? e.message : 'Assistant failed');
@@ -796,16 +903,17 @@ export const useEditorStore = create<EditorState>((set, get) => ({
   },
 
   // Lazily pull the batch OLDER than the oldest message we hold, prepending it —
-  // so the persisted thread pages upward without loading the whole history at once.
+  // so a long thread pages upward without loading all of it at once.
   loadOlderChat: async () => {
     const s = get();
-    if (!s.issueId || !s.chatHasMore || s.chatLoadingOlder || !s.chatOldest) return;
+    if (!s.issueId || !s.activeThreadId || !s.chatHasMore || s.chatLoadingOlder || !s.chatOldest) return;
     const issueId = s.issueId;
+    const threadId = s.activeThreadId;
     const before = s.chatOldest;
     set({ chatLoadingOlder: true });
     try {
-      const t = await api.listChat(issueId, { before, limit: 50 });
-      set((st) => (st.issueId !== issueId ? { chatLoadingOlder: false } : {
+      const t = await api.listThreadMessages(issueId, threadId, { before, limit: 50 });
+      set((st) => (st.issueId !== issueId || st.activeThreadId !== threadId ? { chatLoadingOlder: false } : {
         chat: [...t.messages.map(dtoToChat), ...st.chat],
         chatHasMore: t.hasMore,
         chatOldest: t.oldestCreatedAt ?? st.chatOldest,
