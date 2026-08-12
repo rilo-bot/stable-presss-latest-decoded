@@ -21,10 +21,12 @@ import { normalizeElements } from './writePipeline.js';
 import { MAX_ELEMENTS_PER_PAGE, type MagazineElement } from './model.js';
 import { fetchAndStoreStock, isStockConfigured, type StockOrientation } from './stock.js';
 import { retrieveSource } from './retrieval.js';
+import { readLayoutImage } from './readLayout.js';
+import type { LayoutReading } from './layoutReading.js';
 
 export interface AgentProposal {
   id: string;
-  kind: 'update' | 'add' | 'delete' | 'add-page' | 'remove-page' | 'reorder-page' | 'generate-pages';
+  kind: 'update' | 'add' | 'delete' | 'add-page' | 'remove-page' | 'reorder-page' | 'generate-pages' | 'apply-layout';
   summary: string;
   elementId?: string; // update/delete: the real element id
   tempId?: string; // add: a placeholder id the client remaps to the server id
@@ -37,6 +39,10 @@ export interface AgentProposal {
   to?: number; // reorder-page: destination index
   count?: number; // generate-pages: how many pages
   topic?: string; // generate-pages: optional focus
+  // ── apply-layout: rebuild THIS page in a layout read from a reference image ──
+  // The reading travels with the proposal so applying it costs no second vision
+  // call — and so what the user approves is exactly what was described to them.
+  layoutReading?: LayoutReading;
 }
 
 const MAX_MESSAGES = 30;
@@ -125,10 +131,18 @@ const SYSTEM = (
   if (attachedImages && attachedImages.length > 0) {
     lines.push(
       '',
-      'The user ATTACHED these image(s); each is ALREADY stored in the media library. When they ask to place,',
-      'include or use their image/graph/chart, use these EXACT urls — add_media_image for a new element, or',
-      'set_element_image to point an existing image element at one:',
+      'The user ATTACHED these image(s); each is ALREADY stored in the media library. Use these EXACT urls:',
       ...attachedImages.map((img) => `- ${img.url} (“${img.name}”)`),
+      '',
+      'THERE ARE TWO COMPLETELY DIFFERENT THINGS THEY MIGHT WANT — read the sentence, and if it is genuinely',
+      'unclear, ASK in one line rather than guessing:',
+      '• PUT THE PICTURE ON THE PAGE ("use this photo", "add my chart", "put this in the magazine") →',
+      '  add_media_image for a new element, or set_element_image to point an existing image element at it.',
+      '• ARRANGE THE PAGE LIKE THE PICTURE ("use this layout", "build a layout like this", "copy this design",',
+      '  "make my page look like this") → use_image_as_layout. The picture is a REFERENCE: its structure is',
+      '  copied, its content is not, and the page keeps the user’s own words and photos.',
+      'A layout rebuild replaces every element on the page, so it cannot be staged alongside other edits —',
+      'do it on its own turn.',
     );
   }
   const src = (sourceText ?? '').trim();
@@ -160,6 +174,30 @@ const find = (ctx: AgentCtx, id: string) => ctx.working.find((e) => e.id === id)
 const pid = (ctx: AgentCtx) => `p${++ctx.seq}`;
 
 /**
+ * A layout rebuild is EXCLUSIVE, and this is why.
+ *
+ * `apply-layout` replaces every element on the page with new ones carrying new ids.
+ * Any element edit staged in the same turn targets an id that will not exist by the
+ * time it runs — so mixing them cannot work in either order: edits first are thrown
+ * away by the rebuild, edits second are applied to ghosts.
+ *
+ * So the tools refuse the combination instead of letting the apply loop discover it.
+ * Refusing at the tool is how the rest of this file handles impossible requests (a
+ * locked element, a page-structure op a collaborator can't do): the model is told
+ * why, and says so, rather than staging work that fails silently.
+ */
+const hasLayout = (ctx: AgentCtx) => ctx.proposals.some((p) => p.kind === 'apply-layout');
+const LAYOUT_CLASH = 'This page is already staged for a layout rebuild, which replaces every element on it. Apply that first, then ask for this change in a new message.';
+
+/** One line describing what was read, for the proposal the user approves. */
+function describeReading(reading: LayoutReading): string {
+  const counts = new Map<string, number>();
+  for (const r of reading.regions) counts.set(r.role, (counts.get(r.role) ?? 0) + 1);
+  const parts = [...counts.entries()].map(([role, n]) => (n > 1 ? `${n} ${role}s` : `a ${role}`));
+  return parts.join(', ');
+}
+
+/**
  * `canEditStructure: false` OMITS the four page-structure tools rather than having
  * them refuse.
  *
@@ -171,6 +209,7 @@ const pid = (ctx: AgentCtx) => `p${++ctx.seq}`;
  */
 function buildTools(ctx: AgentCtx, dims: { width: number; height: number }, canEditStructure = true) {
   const stageUpdate = (elementId: string, patch: Record<string, unknown>, summary: string) => {
+    if (hasLayout(ctx)) return { ok: false as const, error: LAYOUT_CLASH };
     const el = find(ctx, elementId);
     if (!el) return { ok: false as const, error: `No element #${elementId} on this page.` };
     // A locked element is refused HERE rather than staged and rejected on apply:
@@ -290,6 +329,7 @@ function buildTools(ctx: AgentCtx, dims: { width: number; height: number }, canE
         url: z.string().optional().describe('qr destination'),
       }),
       execute: async ({ type, x, y, w, h, content, color, url }) => {
+        if (hasLayout(ctx)) return { ok: false, error: LAYOUT_CLASH };
         if (ctx.working.length >= MAX_ELEMENTS_PER_PAGE) return { ok: false, error: 'The page is full.' };
         const partial: Record<string, unknown> = { type, x, y, w, h, source: 'ai-agent' };
         if (type === 'text') partial.text = { content: (content ?? 'Text').slice(0, 8000), color: color || '#111111', fontSize: 40, maxFontSize: 40, autoFit: 'shrink' };
@@ -305,15 +345,47 @@ function buildTools(ctx: AgentCtx, dims: { width: number; height: number }, canE
       },
     }),
 
+    use_image_as_layout: tool({
+      description:
+        'The user wants a page laid out LIKE an image they uploaded ("use this layout", "build a layout like this", "copy this design"). Reads the picture\'s COMPOSITION and stages a rebuild of this page in it — the user\'s own text and photos flow into the new structure. NOT for placing a photo on the page: that is add_media_image. The url must be one the user attached or one from list_media.',
+      inputSchema: z.object({ url: z.string() }),
+      execute: async ({ url }) => {
+        // Exclusive: it replaces every element, so nothing else can be staged with it.
+        if (ctx.proposals.length > 0) {
+          return { ok: false, error: 'A layout rebuild replaces every element on the page, so it cannot be combined with other changes. Ask the user to apply the changes already staged first.' };
+        }
+        // The same allow-list as every other image tool — the model can never point
+        // this at an arbitrary URL, which would spend a vision call on any image on
+        // the internet and make our server the thing that fetched it.
+        const media = (await db.collection(COL.media).find({ magazineId: ctx.magazineId })) as unknown as { _id: string; url: string }[];
+        if (!media.some((m) => m.url === url)) {
+          return { ok: false, error: 'That url is not in this magazine. Ask the user to attach the layout image, then use its url.' };
+        }
+        const { reading, error } = await readLayoutImage(url);
+        if (!reading) return { ok: false, error: error || 'I could not make out a layout in that image.' };
+        const summary = `Rebuild this page in that layout — ${describeReading(reading)}`;
+        ctx.proposals.push({ id: pid(ctx), kind: 'apply-layout', layoutReading: reading, summary });
+        // The model is told what was read so its reply can describe it, and told the
+        // honest limit so it does not promise a pixel-perfect copy.
+        return {
+          ok: true,
+          summary: `Staged: ${summary}`,
+          read: { regions: reading.regions.length, columns: reading.columns ?? null, confidence: reading.confidence },
+          note: 'This matches the composition — where things sit and how big they are — not an exact copy. Nothing is taken from the picture itself: the page keeps the user\'s own words and photos.',
+        };
+      },
+    }),
+
     add_media_image: tool({
       description:
-        'Add a NEW image element from a url already in the media library (e.g. a photo/graph the user uploaded) at the given box (page pixels). For a brand-new stock photo use add_stock_image instead.',
+        'Add a NEW image element from a url already in the media library (e.g. a photo/graph the user uploaded) at the given box (page pixels). For a brand-new stock photo use add_stock_image instead. If the user wants the page ARRANGED like the image rather than the image ON the page, use use_image_as_layout.',
       inputSchema: z.object({
         url: z.string(),
         x: z.number(), y: z.number(), w: z.number(), h: z.number(),
         alt: z.string().optional(),
       }),
       execute: async ({ url, x, y, w, h, alt }) => {
+        if (hasLayout(ctx)) return { ok: false, error: LAYOUT_CLASH };
         if (ctx.working.length >= MAX_ELEMENTS_PER_PAGE) return { ok: false, error: 'The page is full.' };
         // Same allow-list as set_element_image: the media library + images already
         // on the page. The model can never introduce an arbitrary/invented URL.
@@ -338,6 +410,7 @@ function buildTools(ctx: AgentCtx, dims: { width: number; height: number }, canE
       description: 'Source a real stock photo for a query and add it as an image element at the given box (page pixels).',
       inputSchema: z.object({ query: z.string(), x: z.number(), y: z.number(), w: z.number(), h: z.number() }),
       execute: async ({ query, x, y, w, h }) => {
+        if (hasLayout(ctx)) return { ok: false, error: LAYOUT_CLASH };
         if (!isStockConfigured()) return { ok: false, error: 'Stock photos are not configured on this server.' };
         if (ctx.working.length >= MAX_ELEMENTS_PER_PAGE) return { ok: false, error: 'The page is full.' };
         const ratio = w / Math.max(1, h);
@@ -358,6 +431,7 @@ function buildTools(ctx: AgentCtx, dims: { width: number; height: number }, canE
       description: 'Remove an element from the page.',
       inputSchema: z.object({ elementId: z.string() }),
       execute: async ({ elementId }) => {
+        if (hasLayout(ctx)) return { ok: false, error: LAYOUT_CLASH };
         const el = find(ctx, elementId);
         if (!el) return { ok: false, error: `No element #${elementId}.` };
         if (el.locked === true) return { ok: false, error: `Element #${elementId} is locked — ask the user to unlock it first.` };
@@ -375,6 +449,7 @@ function buildTools(ctx: AgentCtx, dims: { width: number; height: number }, canE
       description: 'Replace a TEXT element with a photo in the same position (sources a real stock photo for `query`).',
       inputSchema: z.object({ elementId: z.string(), query: z.string() }),
       execute: async ({ elementId, query }) => {
+        if (hasLayout(ctx)) return { ok: false, error: LAYOUT_CLASH };
         const el = find(ctx, elementId);
         if (!el || el.type !== 'text') return { ok: false, error: 'Not a text element.' };
         if (el.locked === true) return { ok: false, error: `Element #${elementId} is locked — ask the user to unlock it first.` };

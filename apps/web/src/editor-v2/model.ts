@@ -78,7 +78,7 @@ export interface MagazineElement {
 /** One staged edit from the AI editing agent (applied via the element/page CRUD). */
 export interface AgentProposal {
   id: string;
-  kind: 'update' | 'add' | 'delete' | 'add-page' | 'remove-page' | 'reorder-page' | 'generate-pages';
+  kind: 'update' | 'add' | 'delete' | 'add-page' | 'remove-page' | 'reorder-page' | 'generate-pages' | 'apply-layout';
   summary: string;
   elementId?: string; // update/delete — a real id, or a tempId of an earlier 'add'
   tempId?: string; // add — placeholder id remapped to the server id on apply
@@ -91,6 +91,11 @@ export interface AgentProposal {
   to?: number; // reorder-page
   count?: number; // generate-pages
   topic?: string; // generate-pages
+  /** apply-layout: the layout read from a reference image the user attached. It
+   *  travels with the proposal so applying it costs no second vision call — and so
+   *  what the user approves is exactly what the assistant described. Typed loosely
+   *  here to avoid a circular import; the server re-normalises it on apply anyway. */
+  layoutReading?: unknown;
 }
 
 /** A fully-loaded page (elements included) as returned by GET …/pages/:pageId. */

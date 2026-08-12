@@ -7,7 +7,7 @@
 // rev-guarded element CRUD (store.applyAllProposals).
 
 import { useEffect, useRef, useState } from 'react';
-import { Sparkles, Send, Square, Loader2, Check, X, Plus, Pencil, Trash2, Paperclip, FileText, FilePlus2, ArrowLeftRight, Image as ImageIcon, Mic, Volume2, VolumeX, MessagesSquare, MessageSquarePlus, ChevronDown, Eye } from 'lucide-react';
+import { Sparkles, Send, Square, Loader2, Check, X, Plus, Pencil, Trash2, Paperclip, FileText, FilePlus2, ArrowLeftRight, Image as ImageIcon, Mic, Volume2, VolumeX, MessagesSquare, MessageSquarePlus, ChevronDown, Eye, LayoutTemplate } from 'lucide-react';
 import type { UIMessage } from 'ai';
 import { toast } from 'sonner';
 import { MarkdownMessage } from '@/components/MarkdownMessage';
@@ -46,6 +46,9 @@ const kindIcon = (k: AgentProposal['kind']) =>
   : k === 'delete' || k === 'remove-page' ? <Trash2 size={11} />
   : k === 'add-page' || k === 'generate-pages' ? <FilePlus2 size={11} />
   : k === 'reorder-page' ? <ArrowLeftRight size={11} />
+  // A layout rebuild is the one proposal that replaces the WHOLE page, so it gets
+  // its own mark rather than reading as another small edit in the list.
+  : k === 'apply-layout' ? <LayoutTemplate size={11} />
   : <Pencil size={11} />;
 
 function thumbOf(p: AgentProposal): string | undefined {

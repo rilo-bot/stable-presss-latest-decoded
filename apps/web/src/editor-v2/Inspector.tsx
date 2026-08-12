@@ -9,6 +9,7 @@ import { useEffect, useRef, useState, type ReactNode } from 'react';
 import { toast } from 'sonner';
 import { useEditorStore } from './store';
 import { ShimmerText } from './BuildProgress';
+import { LayoutReference } from './LayoutReference';
 import { columnOf, COLUMN_LABEL, COLUMN_TONE } from './review';
 import type { MagazineElement, ElementType } from './model';
 import * as api from './api';
@@ -151,6 +152,12 @@ function PagePanel() {
           </p>
         )}
       </Section>
+
+      {canManage && (
+        <Section title="Match a layout">
+          <LayoutReference />
+        </Section>
+      )}
 
       <Section title="Editing">
         <p className="text-ui-sm leading-relaxed text-studio-ink-3">

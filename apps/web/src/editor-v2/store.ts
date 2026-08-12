@@ -168,6 +168,16 @@ interface EditorState {
   runFormat: (mode: 'fill' | 'adjust', pageId?: string) => Promise<void>;
   /** Toggle whether a page is included in "publish selected pages". */
   setPageSelected: (pageId: string, selected: boolean) => Promise<void>;
+  /**
+   * Rebuild the open page in a layout read from a reference image.
+   *
+   * REPLACES every element on the page, and the undo stack does not cover that — the
+   * caller must confirm with the user first. Returns the MEASURED fidelity (P3) on
+   * success, or null when nothing changed.
+   */
+  applyLayout: (reading: api.LayoutReading) => Promise<api.LayoutFidelity | null>;
+  /** An "apply this layout" call is in flight. */
+  layoutBusy: boolean;
   /** Publish (or republish) to Bulletins ('full' = all pages, 'selected' =
    *  flagged pages) → returns the public Bulletins issue id, or null on failure. */
   publish: (scope: 'full' | 'selected') => Promise<string | null>;
@@ -716,6 +726,59 @@ export const useEditorStore = create<EditorState>((set, get) => ({
   },
 
   // Toggle a page's inclusion in "publish selected pages".
+  layoutBusy: false,
+
+  applyLayout: async (reading) => {
+    const s = get();
+    if (!s.issueId || !s.page || s.layoutBusy) return null;
+    const issueId = s.issueId;
+    const pageId = s.page.id;
+    set({ layoutBusy: true });
+    try {
+      const { page, leftOver, fidelity, warning } = await api.applyLayoutToPage(issueId, pageId, { rev: s.page.rev, reading });
+      set((st) => ({
+        // The returned page is authoritative — it is what the solver produced.
+        page: st.currentPageId === pageId ? page : st.page,
+        // Keep the summary and the rail thumbnail in step: the element count and the
+        // rev both changed, and a stale summary would leave the rail drawing the old
+        // page until something else happened to refresh it.
+        pages: st.pages.map((p) => (p.id === pageId ? { ...p, elementCount: page.elements.length, rev: page.rev } : p)),
+        thumbs: { ...st.thumbs, [pageId]: page },
+        // Every element on the page is new, so the old undo entries point at elements
+        // that no longer exist. Keeping them would make Ctrl+Z resurrect ghosts.
+        undoStack: [],
+        redoStack: [],
+        selectedId: null,
+        editedSinceLoad: true,
+      }));
+      // Say what didn't fit. Surplus photos genuinely have nowhere to go, and a
+      // silent loss is the thing this feature must never do.
+      const lost: string[] = [];
+      if (leftOver.images > 0) lost.push(`${leftOver.images} photo${leftOver.images === 1 ? '' : 's'}`);
+      if (leftOver.text > 0) lost.push(`${leftOver.text} text block${leftOver.text === 1 ? '' : 's'}`);
+      const tail = lost.length > 0 ? ` ${lost.join(' and ')} had nowhere to go and stayed out.` : '';
+      // The MEASURED verdict decides the tone of the toast. A "loose" result is not a
+      // success message with a caveat buried in a panel — it is the headline.
+      if (fidelity.verdict === 'loose') toast.warning(`${fidelity.summary}${tail}`);
+      else toast.success(`${fidelity.summary}${tail}`);
+      if (warning) toast.message(warning);
+      return fidelity;
+    } catch (e) {
+      // A 409 carries the server's current page: adopt it so the user is looking at
+      // what actually exists before they try again.
+      if (e instanceof ApiError && e.status === 409 && e.body?.page) {
+        const fresh = e.body.page as MagazinePageV2;
+        set((st) => (st.currentPageId === pageId ? { page: fresh } : {}));
+        toast.error('This page changed while you were choosing a layout — have another look, then try again.');
+        return null;
+      }
+      toast.error(e instanceof Error ? e.message : 'Could not apply that layout');
+      return null;
+    } finally {
+      set({ layoutBusy: false });
+    }
+  },
+
   setPageSelected: async (pageId, selected) => {
     const s = get();
     if (!s.issueId) return;
@@ -1032,6 +1095,25 @@ export const useEditorStore = create<EditorState>((set, get) => ({
     const issueId = s.issueId;
     const idMap = new Map<string, string>();
     const isPageKind = (k: AgentProposal['kind']) => k === 'add-page' || k === 'remove-page' || k === 'reorder-page' || k === 'generate-pages';
+
+    // A layout rebuild replaces every element on the page, so it can never be mixed
+    // with element edits — the agent's tools refuse the combination at staging time
+    // (see hasLayout in agent.ts), and this handles it on its own rather than trying
+    // to interleave it with edits that would be applied to elements it destroyed.
+    const layout = s.proposals.find((p) => p.kind === 'apply-layout');
+    if (layout) {
+      const reading = layout.layoutReading as api.LayoutReading | undefined;
+      set({ proposals: [], proposalsPageId: null });
+      if (!reading) {
+        toast.error('That layout could not be applied — ask the assistant to read the image again.');
+        return;
+      }
+      // Straight through the same store action the panel uses: one apply path means
+      // the confirm, the undo-stack clear, the thumbnail refresh and the measured
+      // verdict can't drift between the two ways of reaching it.
+      await get().applyLayout(reading);
+      return;
+    }
 
     // Refusals are COUNTED, not just survived. Each loop keeps going after a failure
     // (one bad proposal shouldn't strand the rest), but the toast at the end has to

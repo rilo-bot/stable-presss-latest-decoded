@@ -42,6 +42,9 @@ import { storage } from '../../lib/storage.js';
 import { enqueueJob } from '../../lib/magazineV2/jobs.js';
 import { runPageAgent } from '../../lib/magazineV2/agent.js';
 import { formatPageText, charGuideFor } from '../../lib/magazineV2/format.js';
+import { readLayoutImage } from '../../lib/magazineV2/readLayout.js';
+import { aspectMismatch, normalizeLayoutReading } from '../../lib/magazineV2/layoutReading.js';
+import { applyReadingToPage } from '../../lib/magazineV2/applyLayout.js';
 
 /* eslint-disable @typescript-eslint/no-explicit-any */
 type Doc = { _id: string; [k: string]: any };
@@ -659,7 +662,15 @@ router.get('/issues/:id/media', async (req, res) => {
   }
   // Images only — uploaded DOCUMENTS (kind:'doc') live in the same collection but
   // surface through GET /uploads, not the image picker.
-  const assets = ((await db.collection(COL.media).find({ magazineId: doc._id })) as Doc[]).filter((a) => a.kind !== 'doc');
+  //
+  // kind:'reference' is excluded too, and that exclusion is a PROMISE: a layout
+  // reference is somebody else's licensed page, uploaded so we could read its
+  // structure. Offering it in the photo picker would invite the one thing
+  // docs/MAGAZINE-V2-LAYOUT-FROM-REFERENCE.md says we never do — put their picture
+  // in the client's magazine.
+  const assets = ((await db.collection(COL.media).find({ magazineId: doc._id })) as Doc[]).filter(
+    (a) => a.kind !== 'doc' && a.kind !== 'reference',
+  );
   res.json({
     assets: assets.map((a) => ({ id: a._id, url: a.url, alt: a.alt, kind: a.kind, pageIndex: a.pageIndex, contentType: a.contentType, size: a.size })),
   });
@@ -870,6 +881,10 @@ router.post('/issues/:id/media', rateLimit('mag2-write', 300, 60_000), async (re
     return;
   }
   const alt = typeof req.body?.alt === 'string' ? req.body.alt.slice(0, 300) : '';
+  // 'reference' = a layout the AI reads but nobody may place (see GET /media). The
+  // allow-list is explicit: any other value is a caller inventing a kind, and 'doc'
+  // in particular would hide an image inside the documents library.
+  const kind = req.body?.kind === 'reference' ? 'reference' : 'upload';
   const url = storage.publicUrl(key);
   const now = new Date().toISOString();
   const assetId = await db.collection(COL.media).insertOne({
@@ -880,12 +895,64 @@ router.post('/issues/:id/media', rateLimit('mag2-write', 300, 60_000), async (re
     contentType: head.contentType,
     size: head.contentLength,
     alt,
-    kind: 'upload',
+    kind,
     source: 'upload',
     createdAt: now,
     updatedAt: now,
   });
-  res.status(201).json({ asset: { id: String(assetId), url, alt, kind: 'upload', pageIndex: null, contentType: head.contentType, size: head.contentLength } });
+  res.status(201).json({ asset: { id: String(assetId), url, alt, kind, pageIndex: null, contentType: head.contentType, size: head.contentLength } });
+});
+
+// ── Reference layouts: "take this layout" ────────────────────────────────────
+// Read a layout out of an image already in the magazine's media library. P1 of
+// docs/MAGAZINE-V2-LAYOUT-FROM-REFERENCE.md: this ONLY reads — it builds nothing
+// and writes nothing, so the user can see what we understood before committing.
+//
+// It takes an assetId, NEVER a URL. A caller-supplied URL would let anyone spend
+// our model budget on any image on the internet and make our server the thing that
+// fetched it; the media lookup below is the id-in-our-DB proof.
+router.post('/issues/:id/layout-reference', rateLimit('mag2-layout-read', 10, 60_000), async (req, res) => {
+  const uid = req.account!.id;
+  const doc = await loadIssue(String(req.params.id));
+  // A non-member gets 404 (never "exists but not yours"), and myRole null — another
+  // admin's magazine, view-only — lands here too: reading a layout is the first step
+  // of editing one, so it needs an editing role, not just sight of the magazine.
+  if (!doc || !roleOnMagazine(doc, uid)) {
+    res.status(404).json({ error: 'Not found' });
+    return;
+  }
+  const assetId = typeof req.body?.assetId === 'string' ? req.body.assetId.trim() : '';
+  if (!assetId) {
+    res.status(400).json({ error: 'assetId is required.' });
+    return;
+  }
+  const asset = (await db.collection(COL.media).findById(assetId)) as Doc | null;
+  if (!asset || asset.magazineId !== doc._id || asset.kind === 'doc' || !asset.url) {
+    res.status(404).json({ error: 'That image is not in this magazine.' });
+    return;
+  }
+  const hint = typeof req.body?.hint === 'string' ? req.body.hint.slice(0, 400) : '';
+  const { reading, error } = await readLayoutImage(String(asset.url), hint);
+  if (!reading) {
+    // 422, not 500: the request was fine and the server is fine — the image could
+    // not be read. The sentence is the user's to act on.
+    res.status(422).json({ error: error || 'Could not read a layout from that image.' });
+    return;
+  }
+  // Optional: judge the reference against the page it is destined for, so the
+  // client can warn BEFORE anything is built rather than explain afterwards.
+  let warning = '';
+  const pageId = typeof req.body?.pageId === 'string' ? req.body.pageId.trim() : '';
+  if (pageId) {
+    const page = await pageById(pageId);
+    if (page && page.magazineId === doc._id) {
+      // pageDims, not raw width/height: a not-yet-extracted page carries 0×0, and
+      // judging the reference against nothing would report a bogus mismatch.
+      const dims = pageDims(page);
+      warning = aspectMismatch(reading, dims.width, dims.height);
+    }
+  }
+  res.json({ reading, warning, asset: { id: String(asset._id), url: String(asset.url) } });
 });
 
 // get issue meta + page summaries (NOT full element payloads). Owner/collaborator
@@ -2645,6 +2712,95 @@ router.get('/issues/:id/threads/:threadId/messages', async (req, res) => {
 // designed size), asks the model to rewrite ONLY those, and returns { edits }.
 // It never writes the DB; the client applies each edit through the element CRUD
 // (undoable). Text only — geometry/images/QR untouched.
+/**
+ * Put this page into a layout read from a reference image (P2 of
+ * docs/MAGAZINE-V2-LAYOUT-FROM-REFERENCE.md).
+ *
+ * Takes the READING the client already has (from POST /layout-reference) so a second
+ * pass over the same picture costs nothing — and re-normalises it here, because
+ * anything arriving from a client is untrusted no matter where it came from
+ * originally. Pass `assetId` instead to read the image again.
+ *
+ * This REPLACES the page's elements, which the studio's undo stack does not cover, so
+ * it is rev-guarded like every other page write: a stale rev means someone (or the
+ * assistant) changed the page since it was loaded, and the reflow would be working
+ * from content that has moved on.
+ */
+router.post('/issues/:id/pages/:pageId/apply-layout', rateLimit('mag2-agent', 20, 60_000), async (req, res) => {
+  const ctx = await loadEditablePage(req, res);
+  if (!ctx) return;
+  const { issue, page } = ctx;
+  const rev = requireRev(req, res);
+  if (rev === null) return;
+  if ((page.rev ?? 0) !== rev) {
+    res.status(409).json({ error: 'This page changed since you loaded it.', page: project(page) });
+    return;
+  }
+
+  // Either the reading the client is holding, or one read fresh from an asset.
+  let reading = normalizeLayoutReading(req.body?.reading);
+  if (!reading) {
+    const assetId = typeof req.body?.assetId === 'string' ? req.body.assetId.trim() : '';
+    if (!assetId) {
+      res.status(400).json({ error: 'A layout `reading` or an `assetId` is required.' });
+      return;
+    }
+    const asset = (await db.collection(COL.media).findById(assetId)) as Doc | null;
+    if (!asset || asset.magazineId !== issue._id || asset.kind === 'doc' || !asset.url) {
+      res.status(404).json({ error: 'That image is not in this magazine.' });
+      return;
+    }
+    const out = await readLayoutImage(String(asset.url));
+    if (!out.reading) {
+      res.status(422).json({ error: out.error || 'Could not read a layout from that image.' });
+      return;
+    }
+    reading = out.reading;
+  }
+
+  const genTheme = ((issue as unknown as { genTheme?: { palette?: Record<string, string>; fonts?: Record<string, string> } }).genTheme) ?? null;
+  const applied = applyReadingToPage(reading, {
+    width: Number(page.width) || undefined,
+    height: Number(page.height) || undefined,
+    background: page.background as { type?: string; value?: string } | undefined,
+    elements: Array.isArray(page.elements) ? (page.elements as MagazineElement[]) : [],
+  }, genTheme);
+  if (!applied.page) {
+    // 422: the request and the server are both fine — this layout and this page
+    // cannot be put together, and the sentence says which.
+    res.status(422).json({ error: applied.why });
+    return;
+  }
+
+  const now = new Date().toISOString();
+  const ok = await db.collection(COL.pages).updateOneIf(page._id, { rev }, {
+    elements: applied.page.elements,
+    background: applied.page.background,
+    rev: rev + 1,
+    updatedAt: now,
+  });
+  if (!ok) {
+    const fresh = await pageById(page._id);
+    res.status(409).json({ error: 'This page changed since you loaded it.', page: fresh ? project(fresh) : null });
+    return;
+  }
+  await db.collection(COL.magazines).updateOne(issue._id, { updatedAt: now });
+  const fresh = await pageById(page._id);
+  res.json({
+    page: fresh ? project(fresh) : null,
+    leftOver: applied.page.leftOver,
+    // MEASURED, not claimed (P3). The client shows this sentence instead of asserting
+    // that the layout matched.
+    fidelity: {
+      score: applied.page.fidelity.score,
+      verdict: applied.page.fidelity.verdict,
+      summary: applied.page.fidelity.summary,
+      missing: applied.page.fidelity.missing,
+    },
+    warning: aspectMismatch(reading, pageDims(page).width, pageDims(page).height),
+  });
+});
+
 router.post('/issues/:id/pages/:pageId/format', rateLimit('mag2-agent', 20, 60_000), async (req, res) => {
   if (!isAgentConfigured()) {
     res.status(503).json({ error: 'AI is not configured on this server.' });

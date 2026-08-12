@@ -45,6 +45,7 @@ import { isImageGenConfigured, generateAndStoreImage } from './imagegen.js';
 // ── AI-authored layout path (behind MAGAZINE_V2_AI_LAYOUT) ────────────────────
 import type { TextRole } from './model.js';
 import { normalizeLayoutSpec, type LayoutSpec } from './layoutSpec.js';
+import { parseJsonObject } from './parseJson.js';
 import { pruneLayoutSpec } from './pruneSpec.js';
 import { retrieveSource, isTruncated } from './retrieval.js';
 import { seedSpecFor } from './seedSpecs.js';
@@ -1000,42 +1001,6 @@ async function composeSpecToPage(
     return { page: null, why: report.issues.map((i) => `${i.kind}: ${i.detail}`).join('; ') };
   }
   return { page: { background: composed.background, elements } };
-}
-
-/** Extract the FIRST complete, brace-balanced JSON object from model text
- *  (tolerates prose or ``` fences around it, and stray braces AFTER it). The old
- *  first-`{`/last-`}` slice spanned two objects or embedded prose braces and
- *  failed to parse — silently forcing the seed layout. String-aware so braces
- *  inside string literals don't miscount. Returns null if none parses. */
-function parseJsonObject(text: string): unknown | null {
-  if (!text) return null;
-  // Try each '{' as a candidate start: scan its brace-balanced (string-aware)
-  // group and parse it; if that group isn't valid JSON (e.g. a prose "{note}"
-  // before the real object), advance to the next '{' and try again.
-  for (let start = text.indexOf('{'); start !== -1; start = text.indexOf('{', start + 1)) {
-    let depth = 0;
-    let inStr = false;
-    let esc = false;
-    for (let i = start; i < text.length; i++) {
-      const ch = text[i]!;
-      if (inStr) {
-        if (esc) esc = false;
-        else if (ch === '\\') esc = true;
-        else if (ch === '"') inStr = false;
-        continue;
-      }
-      if (ch === '"') inStr = true;
-      else if (ch === '{') depth++;
-      else if (ch === '}' && --depth === 0) {
-        try {
-          return JSON.parse(text.slice(start, i + 1));
-        } catch {
-          break; // this candidate group isn't valid JSON — try the next '{'
-        }
-      }
-    }
-  }
-  return null;
 }
 
 /**
