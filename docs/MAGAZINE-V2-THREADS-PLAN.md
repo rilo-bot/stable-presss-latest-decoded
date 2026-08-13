@@ -1,6 +1,25 @@
 # Magazine v2 — chat threads and history management
 
-**Status: PLANNED.** Nothing built.
+**Status: ✅ BUILT 2026-08-12** on `day-work`. T1–T3 in full, T4 partially — see the deviations below.
+127 tests pass; server + web typecheck and build clean. Never opened in a browser.
+
+**Three deliberate deviations from this plan:**
+
+1. **`GET /issues/:id/chat` was REMOVED, not kept as a deprecated alias** (§3 said keep it). It returned
+   every message in the magazine to anyone with access — the leak this document exists to close — and a
+   deprecated endpoint that still leaks is one nobody ever gets round to deleting. The client ships in
+   the same deploy.
+2. **No archive, and no TTL on soft-deleted threads** (§5). Delete is the pressure valve. Both were
+   dropped on instruction — *"no need any advance kind of thing"* — and neither is load-bearing for the
+   flow. Soft-deleted threads and messages simply persist; add the TTL when retention matters.
+3. **Page tags are applied to prompt history unconditionally** when a turn comes from a different page,
+   rather than only when the thread is known to span pages. Cheaper to reason about, and the label costs
+   the model nothing.
+
+Everything else is as designed, including the access pair, the synthesised legacy thread, the grouped
+owner view, and the disclosure line in the panel.
+
+---
 **Date:** 2026-08-11 · **Branch:** `feature/blogs`
 **Companion to:** `docs/MAGAZINE-V2-SUBMISSIONS-PLAN.md` (independent — either can go first, though T2 pairs naturally with S3).
 **Also fixes:** **M3** in `docs/MAGAZINE-V2-REVIEW-2026-08-11.md` (a per-magazine chat sent to a per-page agent), which this supersedes.

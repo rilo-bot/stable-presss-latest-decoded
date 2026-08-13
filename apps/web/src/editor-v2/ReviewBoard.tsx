@@ -49,7 +49,7 @@ export function ReviewBoard({ onClose }: { onClose: () => void }) {
   const approvePages = useEditorStore((s) => s.approvePages);
   const requestChanges = useEditorStore((s) => s.requestChanges);
   const submitPages = useEditorStore((s) => s.submitPages);
-  const openPage = useEditorStore((s) => s.openPage);
+  const goToPage = useEditorStore((s) => s.goToPage);
 
   const isOwner = issue?.myRole === 'owner';
   const [picked, setPicked] = useState<Set<string>>(new Set());
@@ -104,21 +104,21 @@ export function ReviewBoard({ onClose }: { onClose: () => void }) {
   return (
     <div className="fixed inset-0 z-[70] flex items-center justify-center bg-black/60 p-4" onMouseDown={onClose}>
       <div
-        className="flex max-h-[88vh] w-full max-w-5xl flex-col overflow-hidden rounded-md border border-white/10 bg-[#0d1626] text-white shadow-2xl"
+        className="flex max-h-[88vh] w-full max-w-5xl flex-col overflow-hidden rounded-md border border-studio-hair bg-studio-panel text-studio-ink shadow-2xl"
         onMouseDown={(e) => e.stopPropagation()}
       >
         {/* Header */}
-        <div className="flex items-center gap-2 border-b border-white/10 px-4 py-3">
+        <div className="flex items-center gap-2 border-b border-studio-hair px-4 py-3">
           <ClipboardList size={16} className="text-[var(--gold-bright)]" />
           <div className="min-w-0">
-            <p className="text-sm font-bold">Review board</p>
-            <p className="truncate text-[11px] text-white/40">
+            <p className="text-ui font-bold">Review board</p>
+            <p className="truncate text-ui-sm text-studio-ink-3">
               {isOwner
                 ? 'Approve pages, or send them back with a note'
                 : 'Send your pages to the owner when they’re ready'}
             </p>
           </div>
-          <button onClick={onClose} className="ml-auto rounded-sm p-1 text-white/50 hover:bg-white/10 hover:text-white" aria-label="Close">
+          <button onClick={onClose} className="ml-auto rounded-sm p-1 text-studio-ink-3 hover:bg-studio-raise-2 hover:text-studio-ink" aria-label="Close">
             <X size={16} />
           </button>
         </div>
@@ -126,7 +126,7 @@ export function ReviewBoard({ onClose }: { onClose: () => void }) {
         {/* The solo-owner case: say so plainly rather than showing four empty columns
             and implying the owner has forgotten to do something. */}
         {isOwner && (issue?.collaborators?.length ?? 0) === 0 && (
-          <div className="border-b border-white/10 bg-white/5 px-4 py-2 text-[11px] text-white/55">
+          <div className="border-b border-studio-hair bg-studio-raise px-4 py-2 text-ui-sm text-studio-ink-3">
             Nobody else is working on this magazine, so no page needs approving — you can publish whenever you like.
             Review only applies to pages you’ve shared with someone.
           </div>
@@ -141,11 +141,11 @@ export function ReviewBoard({ onClose }: { onClose: () => void }) {
               <div key={col} className="flex w-56 flex-shrink-0 flex-col">
                 <div className="mb-2 flex items-center gap-1.5 px-0.5">
                   <span className={'h-2 w-2 rounded-full ' + tone.dot} />
-                  <span className={'text-[11px] font-semibold ' + tone.text}>{COLUMN_LABEL[col]}</span>
-                  <span className="text-[11px] text-white/30">({list.length})</span>
+                  <span className={'text-ui-sm font-semibold ' + tone.text}>{COLUMN_LABEL[col]}</span>
+                  <span className="text-ui-sm text-studio-ink-4">({list.length})</span>
                 </div>
                 <div className="flex flex-col gap-2">
-                  {list.length === 0 && <p className="px-0.5 text-[11px] text-white/25">Nothing here</p>}
+                  {list.length === 0 && <p className="px-0.5 text-ui-sm text-studio-ink-4">Nothing here</p>}
                   {list.map((p) => {
                     const who = assigneeNames(issue, p.id);
                     const canAct = actionable(p);
@@ -154,8 +154,8 @@ export function ReviewBoard({ onClose }: { onClose: () => void }) {
                       <div
                         key={p.id}
                         className={
-                          'rounded-sm border px-2.5 py-2 text-[11px] ' +
-                          (picked.has(p.id) ? 'border-[var(--gold-bright)]/60 bg-[var(--gold-bright)]/10' : 'border-white/12 bg-white/5')
+                          'rounded-sm border px-2.5 py-2 text-ui-sm ' +
+                          (picked.has(p.id) ? 'border-[var(--gold-bright)]/60 bg-[var(--gold-bright)]/10' : 'border-studio-hair bg-studio-raise')
                         }
                       >
                         <div className="flex items-center gap-1.5">
@@ -171,24 +171,24 @@ export function ReviewBoard({ onClose }: { onClose: () => void }) {
                             <span className="w-3" />
                           )}
                           <button
-                            onClick={() => { void openPage(p.id); onClose(); }}
-                            className="font-semibold text-white hover:underline"
+                            onClick={() => { void goToPage(p.id); onClose(); }}
+                            className="font-semibold text-studio-ink hover:underline"
                             title="Open this page"
                           >
                             Page {p.index + 1}
                           </button>
-                          <span className="ml-auto text-white/30">{p.elementCount} el</span>
+                          <span className="ml-auto text-studio-ink-4">{p.elementCount} el</span>
                         </div>
 
                         {/* Who it belongs to — or that it belongs to nobody but the owner,
                             which is why it will publish without approval. */}
-                        <p className="mt-1 flex items-center gap-1 text-white/45">
+                        <p className="mt-1 flex items-center gap-1 text-studio-ink-3">
                           <User size={9} />
                           {who.length > 0 ? who.join(', ') : scoped ? 'shared' : 'yours only'}
                         </p>
 
                         {col === 'submitted' && p.submittedAt && (
-                          <p className="mt-0.5 text-white/35">submitted {ago(p.submittedAt)}</p>
+                          <p className="mt-0.5 text-studio-ink-4">submitted {ago(p.submittedAt)}</p>
                         )}
                         {col === 'needs_changes' && (p.reviewRound ?? 0) > 0 && (
                           <p className="mt-0.5 text-amber-200/70">round {p.reviewRound}</p>
@@ -204,9 +204,9 @@ export function ReviewBoard({ onClose }: { onClose: () => void }) {
                             <span>edited after approval — needs approving again</span>
                           </p>
                         )}
-                        {p.submitNote && <p className="mt-1 italic text-white/50">“{p.submitNote}”</p>}
+                        {p.submitNote && <p className="mt-1 italic text-studio-ink-3">“{p.submitNote}”</p>}
                         {p.reviewNote && (
-                          <p className="mt-1 border-l-2 border-white/15 pl-1.5 italic text-white/50">
+                          <p className="mt-1 border-l-2 border-studio-edge pl-1.5 italic text-studio-ink-3">
                             {p.reviewNote}
                           </p>
                         )}
@@ -220,12 +220,12 @@ export function ReviewBoard({ onClose }: { onClose: () => void }) {
         </div>
 
         {/* Action bar — one note field, shared by all three actions */}
-        <div className="border-t border-white/10 px-4 py-3">
+        <div className="border-t border-studio-hair px-4 py-3">
           {nothingToReview && (
-            <p className="mb-2 text-[11px] text-white/40">Nothing is waiting on you right now.</p>
+            <p className="mb-2 text-ui-sm text-studio-ink-3">Nothing is waiting on you right now.</p>
           )}
           {!isOwner && mineToSubmit.length === 0 && (
-            <p className="mb-2 text-[11px] text-white/40">
+            <p className="mb-2 text-ui-sm text-studio-ink-3">
               None of your pages are ready to send — they’re either already submitted or approved.
             </p>
           )}
@@ -237,11 +237,11 @@ export function ReviewBoard({ onClose }: { onClose: () => void }) {
                 rows={2}
                 placeholder={isOwner ? 'Note (required when sending pages back)' : 'Anything the owner should know? (optional)'}
                 className={
-                  'w-full resize-none rounded-sm border bg-white/5 px-2 py-1.5 text-[11px] text-white placeholder:text-white/30 focus:outline-none ' +
-                  (noteError ? 'border-amber-400' : 'border-white/15')
+                  'w-full resize-none rounded-sm border bg-studio-raise px-2 py-1.5 text-ui-sm text-studio-ink placeholder:text-studio-ink-4 focus:outline-none ' +
+                  (noteError ? 'border-amber-400' : 'border-studio-edge')
                 }
               />
-              {noteError && <p className="mt-1 text-[10px] text-amber-300">Say what needs changing — the note goes to whoever worked on it.</p>}
+              {noteError && <p className="mt-1 text-ui-sm text-amber-300">Say what needs changing — the note goes to whoever worked on it.</p>}
             </div>
             <div className="flex flex-shrink-0 flex-col gap-1.5">
               {isOwner ? (
@@ -249,7 +249,7 @@ export function ReviewBoard({ onClose }: { onClose: () => void }) {
                   <button
                     onClick={() => void run('approve')}
                     disabled={reviewBusy || pickedIds.length === 0}
-                    className="flex items-center justify-center gap-1.5 rounded-sm bg-emerald-500 px-3 py-1.5 text-[11px] font-semibold text-white hover:bg-emerald-600 disabled:opacity-40"
+                    className="flex items-center justify-center gap-1.5 rounded-sm bg-emerald-500 px-3 py-1.5 text-ui-sm font-semibold text-studio-ink hover:bg-emerald-600 disabled:opacity-40"
                   >
                     <Check size={12} />
                     {reviewBusy ? <ShimmerText>Approving…</ShimmerText> : `Approve${pickedIds.length > 0 ? ` ${pickedIds.length}` : ''}`}
@@ -257,7 +257,7 @@ export function ReviewBoard({ onClose }: { onClose: () => void }) {
                   <button
                     onClick={() => void run('changes')}
                     disabled={reviewBusy || pickedIds.length === 0}
-                    className="flex items-center justify-center gap-1.5 rounded-sm border border-amber-400/40 bg-amber-400/10 px-3 py-1.5 text-[11px] font-semibold text-amber-200 hover:bg-amber-400/20 disabled:opacity-40"
+                    className="flex items-center justify-center gap-1.5 rounded-sm border border-amber-400/40 bg-amber-400/10 px-3 py-1.5 text-ui-sm font-semibold text-amber-200 hover:bg-amber-400/20 disabled:opacity-40"
                   >
                     <Undo2 size={12} /> Send back
                   </button>
@@ -266,14 +266,14 @@ export function ReviewBoard({ onClose }: { onClose: () => void }) {
                 <button
                   onClick={() => void run('submit')}
                   disabled={reviewBusy || pickedIds.length === 0}
-                  className="flex items-center justify-center gap-1.5 rounded-sm bg-sky-500 px-3 py-1.5 text-[11px] font-semibold text-white hover:bg-sky-600 disabled:opacity-40"
+                  className="flex items-center justify-center gap-1.5 rounded-sm bg-studio-gold px-3 py-1.5 text-ui-sm font-semibold text-studio-ink hover:bg-studio-gold disabled:opacity-40"
                 >
                   <Send size={12} />
                   {reviewBusy ? <ShimmerText>Submitting…</ShimmerText> : `Submit${pickedIds.length > 0 ? ` ${pickedIds.length}` : ''}`}
                 </button>
               )}
               {pickedIds.length === 0 && (
-                <p className="max-w-[9rem] text-[10px] leading-tight text-white/30">
+                <p className="max-w-[9rem] text-ui-sm leading-tight text-studio-ink-4">
                   {isOwner ? 'Tick the pages you’ve reviewed' : 'Tick the pages you’re done with'}
                 </p>
               )}

@@ -272,6 +272,16 @@ export interface AttachedImage {
   url: string;
   name: string;
 }
+/**
+ * Send one turn.
+ *
+ * `messages` is the NEW turn only — the server reads the rest of the thread's
+ * history itself. It used to be the client's whole transcript, which is how turns
+ * about other pages (and other people's turns) reached the model.
+ *
+ * `threadId` may be omitted; the server then starts a thread and returns its id,
+ * so a fresh panel doesn't need a round trip before the first message.
+ */
 export const chatAgent = (
   id: string,
   pageId: string,
@@ -279,11 +289,30 @@ export const chatAgent = (
   selectedElementId?: string,
   sourceText?: string,
   attachedImages?: AttachedImage[],
+  threadId?: string,
 ) =>
-  authFetch(`${BASE}/issues/${id}/pages/${pageId}/agent`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ messages, selectedElementId, sourceText, attachedImages }) }).then(parse<{ reply: string; proposals: AgentProposal[] }>);
+  authFetch(`${BASE}/issues/${id}/pages/${pageId}/agent`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ messages, selectedElementId, sourceText, attachedImages, threadId }) }).then(
+    parse<{ reply: string; proposals: AgentProposal[]; threadId: string }>,
+  );
 
-// The persistent per-magazine chat thread (page-tagged). `before` (ISO cursor)
-// loads the batch OLDER than it — for lazy "load earlier" upward.
+// ── Chat threads ──
+// One conversation per thread, listed newest-activity-first. A contributor sees
+// their own; the magazine owner sees everyone's.
+export interface ChatThread {
+  id: string;
+  title: string;
+  userId: string;
+  userName: string;
+  /** Started by you — the only threads you can write to, rename or delete. */
+  mine: boolean;
+  startedOnPageIndex: number | null;
+  messageCount: number;
+  lastMessageAt: string;
+  createdAt: string;
+  /** The pre-threads flat log, surfaced as one unattributable read-only chat. */
+  legacy: boolean;
+  readOnly: boolean;
+}
 export interface ChatMsgDto {
   id: string;
   role: 'user' | 'assistant';
@@ -292,12 +321,22 @@ export interface ChatMsgDto {
   attachments?: { name: string; isImage: boolean; url?: string }[];
   createdAt: string;
 }
-export const listChat = (id: string, opts?: { before?: string; limit?: number }) => {
+export const listThreads = (id: string) =>
+  authFetchRetry(`${BASE}/issues/${id}/threads`).then(parse<{ threads: ChatThread[] }>).then((r) => r.threads);
+export const renameThread = (id: string, threadId: string, title: string) =>
+  authFetch(`${BASE}/issues/${id}/threads/${threadId}`, { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ title }) }).then(
+    parse<{ thread: ChatThread }>,
+  ).then((r) => r.thread);
+export const deleteThread = (id: string, threadId: string) =>
+  authFetch(`${BASE}/issues/${id}/threads/${threadId}`, { method: 'DELETE' }).then(parse<{ ok: boolean }>);
+/** One thread's transcript. `before` (ISO cursor) loads the batch OLDER than it,
+ *  for lazy "load earlier" upward. */
+export const listThreadMessages = (id: string, threadId: string, opts?: { before?: string; limit?: number }) => {
   const p = new URLSearchParams();
   if (opts?.before) p.set('before', opts.before);
   if (opts?.limit) p.set('limit', String(opts.limit));
   const qs = p.toString();
-  return authFetch(`${BASE}/issues/${id}/chat${qs ? `?${qs}` : ''}`).then(
+  return authFetchRetry(`${BASE}/issues/${id}/threads/${threadId}/messages${qs ? `?${qs}` : ''}`).then(
     parse<{ messages: ChatMsgDto[]; hasMore: boolean; oldestCreatedAt: string | null }>,
   );
 };
@@ -338,8 +377,12 @@ export const retryPage = (id: string, pageId: string) =>
 export const listMedia = (id: string) => authFetchRetry(`${BASE}/issues/${id}/media`).then(parse<{ assets: MediaAsset[] }>).then((r) => r.assets);
 
 /** Upload an image from the device into the issue's media library (presign → PUT
- *  → confirm). Returns the stored MediaAsset. */
-export async function uploadMediaImage(id: string, file: File, alt?: string): Promise<MediaAsset> {
+ *  → confirm). Returns the stored MediaAsset.
+ *
+ *  `kind: 'reference'` stores a LAYOUT REFERENCE — read by the AI, and deliberately
+ *  hidden from the photo picker so nobody can place someone else's page into their
+ *  own magazine. */
+export async function uploadMediaImage(id: string, file: File, alt?: string, kind?: 'upload' | 'reference'): Promise<MediaAsset> {
   const { uploadUrl, key } = await authFetch(`${BASE}/issues/${id}/media/upload-url`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
@@ -349,9 +392,80 @@ export async function uploadMediaImage(id: string, file: File, alt?: string): Pr
   return authFetch(`${BASE}/issues/${id}/media`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ key, alt: alt ?? '' }),
+    body: JSON.stringify({ key, alt: alt ?? '', kind: kind ?? 'upload' }),
   }).then(parse<{ asset: MediaAsset }>).then((r) => r.asset);
 }
+
+// ── Reference layouts: "take this layout" ──
+// Mirrors apps/server/src/lib/magazineV2/layoutReading.ts. Boxes are FRACTIONS of
+// the reference (0–1), never pixels — that is what lets the preview draw them over
+// any page and, later, lets us measure the built page against them.
+export interface ReadRegion {
+  role: string;
+  box: { x: number; y: number; w: number; h: number };
+  z?: number;
+  emphasis?: 'dominant' | 'normal' | 'quiet';
+  colorRef?: string;
+  align?: string;
+  note?: string;
+}
+export interface LayoutReading {
+  aspect: number;
+  background: 'light' | 'dark' | 'photo';
+  margin: string;
+  columns?: number;
+  regions: ReadRegion[];
+  palette?: { primary: string; secondary: string; accent: string };
+  confidence: number;
+  notes?: string;
+}
+/**
+ * Read a layout out of an image ALREADY in the magazine's media library.
+ *
+ * Takes an assetId, not a URL — the server proves the image belongs to this
+ * magazine before spending a vision call on it. Reads only: nothing is built and
+ * nothing is written, so the user sees what we understood first. A 422 carries the
+ * reason the image could not be read, which is a sentence worth showing verbatim.
+ */
+export const readLayoutReference = (id: string, body: { assetId: string; pageId?: string; hint?: string }) =>
+  authFetch(`${BASE}/issues/${id}/layout-reference`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(body),
+  }).then(parse<{ reading: LayoutReading; warning: string; asset: { id: string; url: string } }>);
+
+/**
+ * Put this page into the layout that was read (P2).
+ *
+ * REPLACES the page's elements, so it carries the page `rev` like every other page
+ * write — a 409 means the page moved on and the reflow would be working from content
+ * that has changed. `leftOver` reports what had nowhere to go: surplus photos can't
+ * be merged into a slot, so the user is told rather than left to notice.
+ */
+export interface LayoutFidelity {
+  /** 0–1, area-weighted: getting the hero photo right counts for more than a caption. */
+  score: number;
+  verdict: 'matched' | 'adapted' | 'loose';
+  /** One sentence, already phrased. Never claims more than `score` supports. */
+  summary: string;
+  /** Reference boxes that never reached the page (nothing to put in them). */
+  missing: number;
+}
+export const applyLayoutToPage = (
+  id: string,
+  pageId: string,
+  body: { rev: number; reading: LayoutReading },
+) =>
+  authFetch(`${BASE}/issues/${id}/pages/${pageId}/apply-layout`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(body),
+  }).then(parse<{
+    page: MagazinePageV2;
+    leftOver: { text: number; images: number };
+    fidelity: LayoutFidelity;
+    warning: string;
+  }>);
 
 // ── Document uploads (the magazine's browsable "Uploads": PDFs/Word/text) ──
 /** A document uploaded to the magazine's Uploads library. */

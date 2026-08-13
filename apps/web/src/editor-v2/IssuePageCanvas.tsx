@@ -107,13 +107,19 @@ function IconElement({ el, page }: { el: MagazineElement; page: IssuePageData })
   );
 }
 
-function ImageElement({ el, page }: { el: MagazineElement; page: IssuePageData }) {
+function ImageElement({ el, page, lazy }: { el: MagazineElement; page: IssuePageData; lazy?: boolean }) {
   if (!el.image?.url) return null;
   return (
     <div style={elementBoxStyle(el, page)}>
       <img
         src={el.image.url}
         alt={el.image.alt}
+        // Opt-in only. The page rail draws every page at 92px, and without this a
+        // 40-page magazine would pull every full-resolution photo in it. It must stay
+        // OFF by default: the PDF is rendered by a headless browser that screenshots
+        // the whole document at once, and a lazy image it decides is offscreen never
+        // loads at all — a blank photo in the printed edition.
+        loading={lazy ? 'lazy' : undefined}
         className="h-full w-full"
         style={{
           objectFit: el.image.fit,
@@ -129,8 +135,9 @@ function ImageElement({ el, page }: { el: MagazineElement; page: IssuePageData }
 /** Render one page read-only, faithfully scaled to whatever width it's given.
  *  `hideElementId` omits a single element — used by the editor while that element
  *  is being edited in place (an overlay draws it instead), so the two never
- *  double up. Public viewer / PDF never pass it, so their output is unchanged. */
-export function IssuePageCanvas({ page, hideElementId }: { page: IssuePageData; hideElementId?: string }) {
+ *  double up. Public viewer / PDF never pass it, so their output is unchanged.
+ *  `lazyImages` defers offscreen photos — for the page rail only (see ImageElement). */
+export function IssuePageCanvas({ page, hideElementId, lazyImages }: { page: IssuePageData; hideElementId?: string; lazyImages?: boolean }) {
   const sorted = [...page.elements].sort((a, b) => a.zIndex - b.zIndex);
   // Aspect box via padding-bottom (a % of WIDTH), NOT `aspect-ratio`: a ratio box
   // nested under a `container-type: inline-size` flex item collapses to 0 height
@@ -155,7 +162,7 @@ export function IssuePageCanvas({ page, hideElementId }: { page: IssuePageData; 
       {sorted.map((el) =>
         el.id === hideElementId ? null :
         el.type === 'image' ? (
-          <ImageElement key={el.id} el={el} page={page} />
+          <ImageElement key={el.id} el={el} page={page} lazy={lazyImages} />
         ) : el.type === 'text' ? (
           <TextElement key={el.id} el={el} page={page} />
         ) : el.type === 'shape' ? (

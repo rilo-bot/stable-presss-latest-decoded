@@ -73,7 +73,7 @@ function Track({ fraction }: { fraction: number | null }) {
   const determinate = fraction !== null;
   return (
     <div
-      className="relative h-1 w-full overflow-hidden rounded-full bg-white/10"
+      className="relative h-1 w-full overflow-hidden rounded-full bg-studio-raise-2"
       role="progressbar"
       aria-valuemin={determinate ? 0 : undefined}
       aria-valuemax={determinate ? 100 : undefined}
@@ -164,18 +164,18 @@ export function BuildProgress({
         <span className="sr-only" role="status" aria-live="polite">
           {title ?? (st.phase === 'digitizing' ? 'Reading your document' : st.phase === 'composing' ? 'Building your pages' : 'Planning your issue')}
         </span>
-        <p aria-hidden="true" className="text-center text-[15px] font-semibold tracking-tight">
+        <p aria-hidden="true" className="text-center text-ui-lg font-semibold tracking-tight">
           <span className="shimmer-text">{title ?? st.headline}</span>
         </p>
 
         {/* Flavour. Keyed on `tick` so React remounts it and the flip-in replays. */}
-        <p key={tick} aria-hidden="true" className="build-line-in mt-1.5 text-center text-[12px] text-white/45">
+        <p key={tick} aria-hidden="true" className="build-line-in mt-1.5 text-center text-ui text-studio-ink-3">
           {line}
         </p>
 
         <div className="mt-4">
           <Track fraction={st.fraction} />
-          <div className="mt-1.5 flex items-center justify-between text-[10px] tabular-nums text-white/35">
+          <div className="mt-1.5 flex items-center justify-between text-ui-sm tabular-nums text-studio-ink-4">
             <span>{st.count ? `${st.count.done} of ${st.count.total} pages` : 'working'}</span>
             <span>{elapsed}</span>
           </div>
@@ -187,7 +187,7 @@ export function BuildProgress({
           </div>
         )}
 
-        {hint && <p className="mt-4 text-center text-[11px] leading-relaxed text-white/30">{hint}</p>}
+        {hint && <p className="mt-4 text-center text-ui-sm leading-relaxed text-studio-ink-4">{hint}</p>}
       </div>
     </div>
   );
@@ -212,7 +212,7 @@ export function BuildBanner({
 
   return (
     <div className="border-b border-[var(--gold-bright)]/25 bg-[var(--gold-bright)]/10 px-4 py-1.5">
-      <div className="flex items-center gap-3 text-[11px]">
+      <div className="flex items-center gap-3 text-ui-sm">
         {/* Phase only in the live region — same reasoning as BuildProgress. */}
         <span className="sr-only" role="status" aria-live="polite">
           {isAdding ? 'Adding your new pages' : st.phase === 'digitizing' ? 'Reading your document' : 'Building your pages'}
@@ -221,13 +221,13 @@ export function BuildBanner({
         <span aria-hidden="true" className="font-semibold" style={{ color: GOLD }}>
           <ShimmerText>{st.count ? `${shown} of ${st.count.total} pages built` : st.headline}</ShimmerText>
         </span>
-        <span key={tick} aria-hidden="true" className="build-line-in text-white/45">
+        <span key={tick} aria-hidden="true" className="build-line-in text-studio-ink-3">
           {line}
         </span>
         <div className="ml-auto flex w-40 flex-shrink-0 items-center gap-2">
           <Track fraction={st.fraction} />
         </div>
-        <span className="flex-shrink-0 text-white/30">
+        <span className="flex-shrink-0 text-studio-ink-4">
           {isAdding ? 'new pages appear together when ready' : 'pages appear as they’re ready'}
         </span>
       </div>

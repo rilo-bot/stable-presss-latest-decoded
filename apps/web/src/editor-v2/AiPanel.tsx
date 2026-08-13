@@ -7,7 +7,7 @@
 // rev-guarded element CRUD (store.applyAllProposals).
 
 import { useEffect, useRef, useState } from 'react';
-import { Sparkles, Send, Square, Loader2, Check, X, Plus, Pencil, Trash2, Paperclip, FileText, FilePlus2, ArrowLeftRight, Image as ImageIcon, Mic, Volume2, VolumeX } from 'lucide-react';
+import { Sparkles, Send, Square, Loader2, Check, X, Plus, Pencil, Trash2, Paperclip, FileText, FilePlus2, ArrowLeftRight, Image as ImageIcon, Mic, Volume2, VolumeX, MessagesSquare, MessageSquarePlus, ChevronDown, Eye, LayoutTemplate } from 'lucide-react';
 import type { UIMessage } from 'ai';
 import { toast } from 'sonner';
 import { MarkdownMessage } from '@/components/MarkdownMessage';
@@ -15,6 +15,7 @@ import { ingestFile, attachmentSourceText, ATTACH_ACCEPT } from '@/agent/attachm
 import { useVoiceChat } from '@/agent/voice/useVoiceChat';
 import { useEditorStore } from './store';
 import { ShimmerText, WorkingLine } from './BuildProgress';
+import { ThreadList } from './ThreadList';
 import { uploadMediaImage, uploadMediaDoc, listUploads, listMedia, getUploadText, type AttachedImage, type MagazineUpload, type MediaAsset } from './api';
 import type { AgentProposal } from './model';
 
@@ -45,6 +46,9 @@ const kindIcon = (k: AgentProposal['kind']) =>
   : k === 'delete' || k === 'remove-page' ? <Trash2 size={11} />
   : k === 'add-page' || k === 'generate-pages' ? <FilePlus2 size={11} />
   : k === 'reorder-page' ? <ArrowLeftRight size={11} />
+  // A layout rebuild is the one proposal that replaces the WHOLE page, so it gets
+  // its own mark rather than reading as another small edit in the list.
+  : k === 'apply-layout' ? <LayoutTemplate size={11} />
   : <Pencil size={11} />;
 
 function thumbOf(p: AgentProposal): string | undefined {
@@ -68,6 +72,15 @@ export function AiPanel() {
   const setPreviewDoc = useEditorStore((s) => s.setPreviewDoc);
 
   const issueId = useEditorStore((s) => s.issueId);
+
+  const threads = useEditorStore((s) => s.threads);
+  const activeThreadId = useEditorStore((s) => s.activeThreadId);
+  const newThread = useEditorStore((s) => s.newThread);
+  const [threadsOpen, setThreadsOpen] = useState(false);
+  // The row for the open transcript. Absent while a brand-new chat is unsent —
+  // it has no document yet, which is why the header falls back to 'New chat'.
+  const activeThread = threads.find((t) => t.id === activeThreadId);
+  const readOnlyThread = !!activeThread?.readOnly;
 
   const [input, setInput] = useState('');
   const [atts, setAtts] = useState<PanelAttachment[]>([]); // source docs/images to work from
@@ -309,23 +322,23 @@ export function AiPanel() {
   };
 
   return (
-    <div className="flex h-full flex-col bg-[#0d1626] text-white">
+    <div className="relative flex h-full flex-col bg-studio-panel text-studio-ink">
       {/* Header */}
       <div
-        className="flex items-center gap-2 border-b border-white/10 px-3 py-2.5"
+        className="flex items-center gap-2 border-b border-studio-hair px-3 py-2.5"
         style={{ background: 'linear-gradient(180deg, var(--forest-light) 0%, var(--forest-deep) 100%)' }}
       >
         <Sparkles size={16} style={{ color: 'var(--gold-bright)' }} />
         <div className="leading-tight">
-          <div className="text-[12px] font-bold" style={{ color: 'var(--parchment)' }}>Studio Assistant</div>
-          <div className="text-[10px]" style={{ color: 'var(--gold-mid)' }}>Edits this page — staged for your approval</div>
+          <div className="text-ui font-bold" style={{ color: 'var(--parchment)' }}>Studio Assistant</div>
+          <div className="text-ui-sm" style={{ color: 'var(--gold-mid)' }}>Edits this page — staged for your approval</div>
         </div>
         {voice.voiceReady && (
           <button
             onClick={() => voice.setVoiceMode((v) => !v)}
             aria-pressed={voice.voiceMode}
             title={voice.voiceMode ? 'Reading replies aloud — click to mute' : 'Read replies aloud'}
-            className={'ml-auto flex h-7 w-7 items-center justify-center rounded-full ' + (voice.voiceMode ? 'text-[#0b1220]' : 'text-white/60 hover:bg-white/10')}
+            className={'ml-auto flex h-7 w-7 items-center justify-center rounded-full ' + (voice.voiceMode ? 'text-studio-bg' : 'text-studio-ink-2 hover:bg-studio-raise-2')}
             style={voice.voiceMode ? { background: 'var(--gold-bright)' } : undefined}
           >
             {voice.voiceMode ? <Volume2 size={14} /> : <VolumeX size={14} />}
@@ -334,13 +347,13 @@ export function AiPanel() {
       </div>
 
       {/* Tabs */}
-      <div className="flex border-b border-white/10 text-[11px] font-semibold">
+      <div className="flex border-b border-studio-hair text-ui-sm font-semibold">
         {(['chat', 'uploads'] as const).map((tk) => (
           <button
             key={tk}
             type="button"
             onClick={() => setTab(tk)}
-            className={'flex-1 px-3 py-2 transition-colors ' + (tab === tk ? 'text-white' : 'text-white/45 hover:text-white/70')}
+            className={'flex-1 px-3 py-2 transition-colors ' + (tab === tk ? 'text-studio-ink' : 'text-studio-ink-3 hover:text-studio-ink-2')}
             style={tab === tk ? { boxShadow: 'inset 0 -2px 0 var(--gold-bright)' } : undefined}
           >
             {tk === 'chat' ? 'Chat' : `Uploads${uploadCount > 0 ? ` (${uploadCount})` : ''}`}
@@ -348,33 +361,59 @@ export function AiPanel() {
         ))}
       </div>
 
+      {/* Which chat you're in, and the way to the rest of them. Only on the Chat
+          tab: the list is navigation for this transcript, not for Uploads. */}
+      {tab === 'chat' && (
+        <div className="flex items-center gap-1.5 border-b border-studio-hair px-2 py-1.5">
+          <button
+            onClick={() => setThreadsOpen(true)}
+            className="flex min-w-0 flex-1 items-center gap-1.5 rounded-sm px-1.5 py-1 text-left hover:bg-studio-raise"
+            title="All chats"
+          >
+            <MessagesSquare size={13} className="flex-shrink-0 text-studio-ink-3" />
+            <span className="truncate text-ui font-semibold text-studio-ink">{activeThread?.title ?? 'New chat'}</span>
+            <ChevronDown size={12} className="flex-shrink-0 text-studio-ink-4" />
+          </button>
+          <button
+            onClick={() => newThread()}
+            className="flex-shrink-0 rounded-sm p-1.5 text-studio-ink-3 hover:bg-studio-raise-2 hover:text-studio-ink"
+            title="Start a new chat"
+            aria-label="Start a new chat"
+          >
+            <MessageSquarePlus size={14} />
+          </button>
+        </div>
+      )}
+
+      {threadsOpen && <ThreadList onClose={() => setThreadsOpen(false)} />}
+
       {tab === 'uploads' ? (
         <div className="min-h-0 flex-1 space-y-1.5 overflow-y-auto px-3 py-3">
           {uploadsLoading && (
-            <div className="text-[12px] text-white/40" role="status" aria-live="polite"><ShimmerText>Loading your uploads</ShimmerText></div>
+            <div className="text-ui text-studio-ink-3" role="status" aria-live="polite"><ShimmerText>Loading your uploads</ShimmerText></div>
           )}
           {!uploadsLoading && uploadCount === 0 && (
-            <p className="text-[12px] leading-relaxed text-white/55">
-              No uploads yet. In <strong className="text-white/85">Chat</strong>, attach a document or image (📎) — it’s saved here and can fill a page later.
+            <p className="text-ui leading-relaxed text-studio-ink-3">
+              No uploads yet. In <strong className="text-studio-ink">Chat</strong>, attach a document or image (📎) — it’s saved here and can fill a page later.
             </p>
           )}
           {uploads.map((u) => (
-            <div key={u.id} className="flex items-center gap-2 rounded-md border border-white/10 bg-white/[0.03] px-2.5 py-2 text-[11px]">
-              <FileText size={14} className="flex-shrink-0 text-white/50" />
-              <button type="button" onClick={() => void previewUpload(u)} title="Preview" className="min-w-0 flex-1 truncate text-left text-white/85 hover:text-white">
+            <div key={u.id} className="flex items-center gap-2 rounded-md border border-studio-hair bg-studio-raise px-2.5 py-2 text-ui-sm">
+              <FileText size={14} className="flex-shrink-0 text-studio-ink-3" />
+              <button type="button" onClick={() => void previewUpload(u)} title="Preview" className="min-w-0 flex-1 truncate text-left text-studio-ink hover:text-studio-ink">
                 {u.originalName}
               </button>
               {u.hasText && (
-                <button type="button" onClick={() => void fillFromUpload(u)} disabled={chatBusy} className="flex-shrink-0 rounded-sm border border-white/15 px-1.5 py-0.5 text-[10px] text-white/70 hover:bg-white/10 disabled:opacity-40">
+                <button type="button" onClick={() => void fillFromUpload(u)} disabled={chatBusy} className="flex-shrink-0 rounded-sm border border-studio-edge px-1.5 py-0.5 text-ui-sm text-studio-ink-2 hover:bg-studio-raise-2 disabled:opacity-40">
                   Fill page
                 </button>
               )}
             </div>
           ))}
           {uploadImages.map((m) => (
-            <button key={m.id} type="button" onClick={() => previewImage(m)} title="Preview" className="flex w-full items-center gap-2 rounded-md border border-white/10 bg-white/[0.03] px-2.5 py-2 text-left text-[11px] hover:bg-white/[0.06]">
+            <button key={m.id} type="button" onClick={() => previewImage(m)} title="Preview" className="flex w-full items-center gap-2 rounded-md border border-studio-hair bg-studio-raise px-2.5 py-2 text-left text-ui-sm hover:bg-studio-raise">
               <img src={m.url} alt="" className="h-7 w-10 flex-shrink-0 rounded-sm object-cover" />
-              <span className="min-w-0 flex-1 truncate text-white/85">{m.alt || 'Image'}</span>
+              <span className="min-w-0 flex-1 truncate text-studio-ink">{m.alt || 'Image'}</span>
             </button>
           ))}
         </div>
@@ -390,18 +429,18 @@ export function AiPanel() {
             <button
               onClick={() => void loadOlderChat()}
               disabled={chatLoadingOlder}
-              className="rounded-sm border border-white/15 px-2 py-0.5 text-[11px] text-white/55 hover:bg-white/10 disabled:opacity-40"
+              className="rounded-sm border border-studio-edge px-2 py-0.5 text-ui-sm text-studio-ink-3 hover:bg-studio-raise-2 disabled:opacity-40"
             >
               {chatLoadingOlder ? 'Loading…' : 'Load earlier messages'}
             </button>
           </div>
         )}
         {chat.length === 0 && (
-          <p className="text-[12px] leading-relaxed text-white/55">
-            I’m your studio assistant for this page. Ask me to <strong className="text-white/85">rewrite the headline</strong>,{' '}
-            <strong className="text-white/85">recolour a block</strong>, <strong className="text-white/85">add a photo</strong>,{' '}
-            or <strong className="text-white/85">move things around</strong>, or <strong className="text-white/85">attach a document (📎)</strong> and ask me to fill this page from it. Select an element first and say “this”. Everything I
-            propose waits for your <strong className="text-white/85">Apply</strong>.
+          <p className="text-ui leading-relaxed text-studio-ink-3">
+            I’m your studio assistant for this page. Ask me to <strong className="text-studio-ink">rewrite the headline</strong>,{' '}
+            <strong className="text-studio-ink">recolour a block</strong>, <strong className="text-studio-ink">add a photo</strong>,{' '}
+            or <strong className="text-studio-ink">move things around</strong>, or <strong className="text-studio-ink">attach a document (📎)</strong> and ask me to fill this page from it. Select an element first and say “this”. Everything I
+            propose waits for your <strong className="text-studio-ink">Apply</strong>.
           </p>
         )}
         {chat.map((m, i) => (
@@ -409,8 +448,8 @@ export function AiPanel() {
             <div
               className={
                 m.role === 'user'
-                  ? 'max-w-[88%] whitespace-pre-wrap rounded-lg rounded-br-sm bg-emerald-600/90 px-2.5 py-1.5 text-[12px] text-white'
-                  : 'max-w-[92%] rounded-lg rounded-bl-sm bg-white/5 px-2.5 py-1.5 text-[12px]'
+                  ? 'max-w-[88%] whitespace-pre-wrap rounded-lg rounded-br-sm bg-emerald-600/90 px-2.5 py-1.5 text-ui text-studio-ink'
+                  : 'max-w-[92%] rounded-lg rounded-bl-sm bg-studio-raise px-2.5 py-1.5 text-ui'
               }
             >
               {m.role === 'user' ? (
@@ -418,7 +457,7 @@ export function AiPanel() {
                   {m.attachments && m.attachments.length > 0 && (
                     <div className="mb-1 flex flex-wrap gap-1">
                       {m.attachments.map((a, j) => (
-                        <span key={j} className="flex max-w-full items-center gap-1 rounded bg-black/20 px-1.5 py-0.5 text-[10px] text-white/90">
+                        <span key={j} className="flex max-w-full items-center gap-1 rounded bg-black/20 px-1.5 py-0.5 text-ui-sm text-studio-ink">
                           {a.isImage && a.url ? (
                             <img src={a.url} alt="" className="h-4 w-4 flex-shrink-0 rounded object-cover" />
                           ) : a.isImage ? (
@@ -432,7 +471,7 @@ export function AiPanel() {
                     </div>
                   )}
                   {typeof m.pageIndex === 'number' && (
-                    <span className="mb-0.5 block text-[9px] font-semibold uppercase tracking-wide text-white/55">Page {m.pageIndex + 1}</span>
+                    <span className="mb-0.5 block text-ui-sm font-semibold uppercase tracking-wide text-studio-ink-3">Page {m.pageIndex + 1}</span>
                   )}
                   {m.content}
                 </>
@@ -446,9 +485,9 @@ export function AiPanel() {
             change — so the line names the step instead of spinning a circle.
             'composing' is the right pool: this agent works on ONE page. */}
         {chatBusy && (
-          <div className="flex items-center gap-2 text-[12px] text-white/40" role="status" aria-live="polite">
+          <div className="flex items-center gap-2 text-ui text-studio-ink-3" role="status" aria-live="polite">
             <ShimmerText>Working on this page</ShimmerText>
-            <WorkingLine phase="composing" className="text-white/25" />
+            <WorkingLine phase="composing" className="text-studio-ink-4" />
           </div>
         )}
       </div>
@@ -457,15 +496,15 @@ export function AiPanel() {
       {showTray && (
         <div className="max-h-[46%] space-y-2 overflow-y-auto border-t-2 px-3 py-2.5" style={{ borderColor: 'var(--gold-mid)', background: 'rgba(212,168,67,0.08)' }}>
           <div className="flex items-center justify-between gap-2">
-            <span className="flex items-center gap-1.5 text-[11px] font-bold uppercase tracking-wider" style={{ color: 'var(--gold-light)' }}>
-              <span className="flex h-4 min-w-4 items-center justify-center rounded-full px-1 text-[10px] font-bold text-[#0b1220]" style={{ background: 'var(--gold-bright)' }}>{proposals.length}</span>
+            <span className="flex items-center gap-1.5 text-ui-sm font-bold uppercase tracking-wider" style={{ color: 'var(--gold-light)' }}>
+              <span className="flex h-4 min-w-4 items-center justify-center rounded-full px-1 text-ui-sm font-bold text-studio-bg" style={{ background: 'var(--gold-bright)' }}>{proposals.length}</span>
               Review &amp; apply
             </span>
             <div className="flex items-center gap-1">
-              <button onClick={() => void applyAll()} className="flex items-center gap-1 rounded-sm bg-emerald-500 px-2 py-0.5 text-[10px] font-semibold text-white hover:bg-emerald-600">
+              <button onClick={() => void applyAll()} className="flex items-center gap-1 rounded-sm bg-emerald-500 px-2 py-0.5 text-ui-sm font-semibold text-studio-ink hover:bg-emerald-600">
                 <Check size={11} /> Apply all
               </button>
-              <button onClick={() => discard()} className="flex items-center gap-1 rounded-sm border border-white/15 px-2 py-0.5 text-[10px] text-white/60 hover:bg-white/10">
+              <button onClick={() => discard()} className="flex items-center gap-1 rounded-sm border border-studio-edge px-2 py-0.5 text-ui-sm text-studio-ink-2 hover:bg-studio-raise-2">
                 <X size={11} /> Discard
               </button>
             </div>
@@ -473,10 +512,10 @@ export function AiPanel() {
           {proposals.map((p) => {
             const thumb = thumbOf(p);
             return (
-              <div key={p.id} className="flex items-center gap-2 rounded-md border px-2.5 py-2 text-[11px]" style={{ borderColor: 'rgba(212,168,67,0.3)', background: 'rgba(212,168,67,0.05)' }}>
+              <div key={p.id} className="flex items-center gap-2 rounded-md border px-2.5 py-2 text-ui-sm" style={{ borderColor: 'rgba(212,168,67,0.3)', background: 'rgba(212,168,67,0.05)' }}>
                 <span className="flex h-4 w-4 flex-shrink-0 items-center justify-center" style={{ color: 'var(--gold-light)' }}>{kindIcon(p.kind)}</span>
                 {thumb && <img src={thumb} alt="" className="h-7 w-10 flex-shrink-0 rounded-sm object-cover" />}
-                <span className="text-white/85">{p.summary}</span>
+                <span className="text-studio-ink">{p.summary}</span>
               </div>
             );
           })}
@@ -485,14 +524,14 @@ export function AiPanel() {
 
       {/* Composer — slightly darker surface + extra bottom padding lifts the input
           off the screen edge and separates it from the scrolling conversation. */}
-      <div className="border-t border-white/10 bg-[#0b1220] px-3 pt-2.5 pb-3.5">
+      <div className="border-t border-studio-hair bg-studio-bg px-3 pt-2.5 pb-3.5">
         {selectedId && (
-          <div className="mb-1.5 flex items-center gap-1 text-[10px] text-white/45">
+          <div className="mb-1.5 flex items-center gap-1 text-ui-sm text-studio-ink-3">
             <span className="h-1.5 w-1.5 rounded-full" style={{ background: 'var(--gold-bright)' }} /> focused on the selected element
           </div>
         )}
         {atts.map((att) => (
-          <div key={att.id} className="mb-1.5 flex items-center gap-1.5 rounded-sm border border-emerald-400/30 bg-emerald-400/10 px-2 py-1.5 text-[10px] text-emerald-200">
+          <div key={att.id} className="mb-1.5 flex items-center gap-1.5 rounded-sm border border-emerald-400/30 bg-emerald-400/10 px-2 py-1.5 text-ui-sm text-emerald-200">
             <button
               type="button"
               onClick={() => void openPreview(att)}
@@ -518,18 +557,33 @@ export function AiPanel() {
         <input ref={fileRef} type="file" accept={ATTACH_ACCEPT} multiple className="hidden" onChange={(e) => addFiles(e.target.files)} />
         {/* Speaking / transcribing status bar — matches v1: pulsing dot + live caption. */}
         {(voice.recording || voice.transcribing) && (
-          <div className="mb-1.5 flex items-center gap-2 rounded-sm border border-white/10 bg-white/[0.03] px-2.5 py-1.5 text-[11px] text-white/60">
-            <span className={'inline-block h-2 w-2 rounded-full ' + (voice.recording ? 'animate-pulse bg-red-500' : 'bg-white/30')} />
+          <div className="mb-1.5 flex items-center gap-2 rounded-sm border border-studio-hair bg-studio-raise px-2.5 py-1.5 text-ui-sm text-studio-ink-2">
+            <span className={'inline-block h-2 w-2 rounded-full ' + (voice.recording ? 'animate-pulse bg-red-500' : 'bg-studio-ink-3')} />
             <span className="line-clamp-2 italic">{voice.caption || (voice.transcribing ? 'Transcribing…' : 'Listening… speak now')}</span>
           </div>
         )}
+        {/* Someone else's chat, or the unattributable legacy log: read, don't
+            type. The assistant is a 1:1 conversation — a second voice would land
+            in the other person's next prompt as if they had said it. The server
+            refuses it too; this is the honest version of that refusal, and it
+            points at the channel that actually reaches them. */}
+        {readOnlyThread ? (
+          <div className="flex items-start gap-2 rounded-sm border border-studio-hair bg-studio-raise px-3 py-2 text-ui-sm leading-relaxed text-studio-ink-3">
+            <Eye size={12} className="mt-0.5 flex-shrink-0" />
+            <span>
+              {activeThread?.legacy
+                ? "This is the studio's history from before chats were separate. It can't say who wrote what, so it's read-only."
+                : `Reading ${activeThread?.userName || "someone else"}’s chat — read-only. To ask for changes, send the page back for changes.`}
+            </span>
+          </div>
+        ) : (
         <form onSubmit={(e) => { e.preventDefault(); void send(); }} className="flex items-end gap-2">
           <button
             type="button"
             onClick={() => fileRef.current?.click()}
             aria-label="Attach documents or images"
             title="Attach documents/images — docs fill the page, images can be placed on it"
-            className="flex h-8 w-8 flex-shrink-0 items-center justify-center rounded-full border border-white/15 text-white/60 hover:bg-white/10 hover:text-white/90"
+            className="flex h-8 w-8 flex-shrink-0 items-center justify-center rounded-full border border-studio-edge text-studio-ink-2 hover:bg-studio-raise-2 hover:text-studio-ink"
           >
             <Paperclip size={14} />
           </button>
@@ -551,7 +605,7 @@ export function AiPanel() {
               : atts.length > 0 ? 'e.g. “fill this page from the document and place the graphs”'
               : 'Ask the studio assistant…  (Shift+Enter for a new line)'
             }
-            className="max-h-40 min-h-[38px] flex-1 resize-none overflow-y-auto rounded-2xl border border-white/15 bg-white/5 px-3.5 py-2 text-[12.5px] leading-snug text-white outline-none transition-colors placeholder:text-white/30 focus:border-[var(--gold-bright)]/50 focus:bg-white/[0.07] disabled:opacity-60"
+            className="max-h-40 min-h-[38px] flex-1 resize-none overflow-y-auto rounded-2xl border border-studio-edge bg-studio-raise px-3.5 py-2 text-ui leading-snug text-studio-ink outline-none transition-colors placeholder:text-studio-ink-4 focus:border-[var(--gold-bright)]/50 focus:bg-studio-raise disabled:opacity-60"
           />
           {/* Mic — v1 order (after the textarea), v1 icon logic: transcribing→spinner,
               recording→stop (■), idle→mic; hidden while a reply is generating. */}
@@ -564,7 +618,7 @@ export function AiPanel() {
               title={voice.recording ? 'Stop & send' : 'Speak'}
               className={
                 'flex h-8 w-8 flex-shrink-0 items-center justify-center rounded-full border transition-colors disabled:opacity-50 ' +
-                (voice.recording ? 'animate-pulse border-red-500 bg-red-500/15 text-red-400' : 'border-white/15 text-white/60 hover:bg-white/10')
+                (voice.recording ? 'animate-pulse border-red-500 bg-red-500/15 text-red-400' : 'border-studio-edge text-studio-ink-2 hover:bg-studio-raise-2')
               }
             >
               {voice.transcribing ? <Loader2 size={13} className="animate-spin" /> : voice.recording ? <Square size={13} /> : <Mic size={13} />}
@@ -574,12 +628,13 @@ export function AiPanel() {
             type="submit"
             aria-label="Send"
             disabled={(!input.trim() && atts.length === 0) || chatBusy || ingesting}
-            className="flex h-8 w-8 flex-shrink-0 items-center justify-center rounded-full text-[#0b1220] disabled:opacity-40"
+            className="flex h-8 w-8 flex-shrink-0 items-center justify-center rounded-full text-studio-bg disabled:opacity-40"
             style={{ background: 'var(--gold-bright)' }}
           >
             {chatBusy || ingesting ? <Loader2 size={13} className="animate-spin" /> : <Send size={13} />}
           </button>
         </form>
+        )}
       </div>
         </>
       )}

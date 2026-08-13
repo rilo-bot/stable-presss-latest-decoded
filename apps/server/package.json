@@ -8,6 +8,8 @@
     "start": "node dist/index.js",
     "check:types": "tsc --noEmit -p tsconfig.scripts.json",
     "check:permissions": "tsx scripts/check-permission-enforcement.ts",
+    "check:hooks": "tsx scripts/check-hooks.ts",
+    "check:studio": "tsx scripts/check-studio-tokens.ts",
     "check:admins": "tsx scripts/check-admins.ts",
     "migrate:admin-roles": "tsx scripts/migrate-admin-roles.ts",
     "migrate:permissions": "tsx scripts/migrate-permissions.ts",

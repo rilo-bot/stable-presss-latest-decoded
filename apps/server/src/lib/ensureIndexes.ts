@@ -32,8 +32,18 @@ const INDEX_SPECS: IndexSpec[] = [
   { collection: COL.jobs, keys: { expiresAt: 1 }, options: { expireAfterSeconds: 0 } },
   // Per-magazine media library: find({ magazineId }).
   { collection: COL.media, keys: { magazineId: 1, deletedAt: 1 } },
-  // Per-magazine chat thread. Grows unbounded, so it must not scan.
+  // Per-magazine chat. Grows unbounded, so it must not scan. Kept for the legacy
+  // flat log (rows with no threadId), which is still queried by magazine.
   { collection: COL.chat, keys: { magazineId: 1, deletedAt: 1, createdAt: -1 } },
+  // The hot path now: one thread's messages, oldest→newest. Every transcript read
+  // and every agent turn goes through this.
+  { collection: COL.chat, keys: { threadId: 1, deletedAt: 1, createdAt: 1 } },
+  // A collaborator's own thread list, most recently used first.
+  { collection: COL.threads, keys: { magazineId: 1, userId: 1, deletedAt: 1, lastMessageAt: -1 } },
+  // The owner's list of EVERYONE's threads — a different leading shape, so it needs
+  // its own index rather than riding the one above (userId in the middle would make
+  // that a scan for the owner's query).
+  { collection: COL.threads, keys: { magazineId: 1, deletedAt: 1, lastMessageAt: -1 } },
   // The review audit trail is APPEND-ONLY and never pruned, so it only grows. Every
   // read is one magazine's rows newest-first — without this, opening the trail scans
   // every review event ever recorded, for every magazine.

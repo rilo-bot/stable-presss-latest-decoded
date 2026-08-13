@@ -34,9 +34,19 @@ export const COL = {
   media: 'mediaAssetsV2',
   /** Worker job queue (extraction / generation). */
   jobs: 'magazineJobs',
-  /** Persistent per-magazine assistant chat thread (page-tagged, paginated) —
-   *  so the conversation survives reloads instead of living only in memory. */
+  /** Persistent assistant chat MESSAGES (page-tagged, paginated) — so the
+   *  conversation survives reloads instead of living only in memory. Every new
+   *  message carries `threadId` + `userId`; rows with neither are the legacy
+   *  flat log, served as one read-only "Earlier conversation". */
   chat: 'magazineChatV2',
+  /**
+   * Chat THREADS — one document per conversation, private to whoever started it.
+   *
+   * A thread is explicit rather than derived, because the things a user does to
+   * one (name it, come back to it, delete it) all need something to point at.
+   * The magazine owner can read every thread; nobody else sees anyone else's.
+   */
+  threads: 'magazineThreadsV2',
   /**
    * The submissions/approval AUDIT TRAIL — one row per review transition
    * (submit / approve / request-changes), append-only.

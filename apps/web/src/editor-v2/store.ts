@@ -86,6 +86,20 @@ interface EditorState {
   chatHasMore: boolean;
   chatOldest: string | null;
   chatLoadingOlder: boolean;
+  // ── Threads ──
+  // The conversation list, and which one the transcript above belongs to.
+  threads: api.ChatThread[];
+  threadsLoading: boolean;
+  /** null = a new, not-yet-created chat: the first turn creates it server-side. */
+  activeThreadId: string | null;
+  loadThreads: () => Promise<void>;
+  /** Switch the transcript to a thread. Discards staged proposals — they belong to
+   *  a turn, and applying them from a different conversation would be a surprise. */
+  openThread: (threadId: string) => Promise<void>;
+  /** A blank chat. Nothing is written until the first message is sent. */
+  newThread: () => void;
+  renameThread: (threadId: string, title: string) => Promise<void>;
+  removeThread: (threadId: string) => Promise<void>;
   proposals: AgentProposal[];
   proposalsPageId: string | null;
   /** When set, the right pane shows this attachment instead of the Inspector. */
@@ -96,8 +110,32 @@ interface EditorState {
   applyAllProposals: () => Promise<void>;
   discardProposals: () => void;
 
+  /**
+   * Full page data for the thumbnail rail, keyed by pageId.
+   *
+   * The rail draws real pages, and a PageSummary carries only an element COUNT — so
+   * each page has to be fetched once. It is filled LAZILY (a tile asks when it first
+   * scrolls into view) rather than up front, because a 40-page magazine would
+   * otherwise fire 40 requests to draw a strip the user may never scroll.
+   */
+  thumbs: Record<string, MagazinePageV2>;
+  /** Fetch this page's thumbnail if we don't already have a current copy. Fire-and-
+   *  forget: it never throws and never blocks anything the user is doing. */
+  ensureThumb: (pageId: string) => void;
+
   load: (id: string) => Promise<void>;
   openPage: (pageId: string) => Promise<void>;
+  /**
+   * NAVIGATE to a page: open it AND bring it into view.
+   *
+   * `openPage` alone is only half the job, and the missing half was a dead click for
+   * as long as the page rail has existed. The canvas is a vertical stack of EVERY
+   * page (EditorCanvas), so making page 6 "active" while the viewport is still on
+   * page 2 changes nothing the user can see — and the canvas's scroll-settle picker
+   * then hands the active page back to whatever is centred. Anything that means "take
+   * me to this page" must call this, not openPage.
+   */
+  goToPage: (pageId: string) => Promise<void>;
   select: (id: string | null) => void;
   setZoomWidth: (w: number) => void;
   canManage: () => boolean;
@@ -130,6 +168,16 @@ interface EditorState {
   runFormat: (mode: 'fill' | 'adjust', pageId?: string) => Promise<void>;
   /** Toggle whether a page is included in "publish selected pages". */
   setPageSelected: (pageId: string, selected: boolean) => Promise<void>;
+  /**
+   * Rebuild the open page in a layout read from a reference image.
+   *
+   * REPLACES every element on the page, and the undo stack does not cover that — the
+   * caller must confirm with the user first. Returns the MEASURED fidelity (P3) on
+   * success, or null when nothing changed.
+   */
+  applyLayout: (reading: api.LayoutReading) => Promise<api.LayoutFidelity | null>;
+  /** An "apply this layout" call is in flight. */
+  layoutBusy: boolean;
   /** Publish (or republish) to Bulletins ('full' = all pages, 'selected' =
    *  flagged pages) → returns the public Bulletins issue id, or null on failure. */
   publish: (scope: 'full' | 'selected') => Promise<string | null>;
@@ -175,6 +223,29 @@ const el = (p: MagazinePageV2 | null, id: string | null) => p?.elements.find((e)
 let genPoll: ReturnType<typeof setTimeout> | null = null;
 function stopGenPoll() { if (genPoll) { clearTimeout(genPoll); genPoll = null; } }
 
+// Thumbnail fetches in flight. Module-scoped rather than in the store because it is
+// pure de-duplication — nothing renders from it, and putting it in state would make
+// every tile re-render each time any other tile started loading.
+const thumbsInFlight = new Set<string>();
+
+/**
+ * Scroll the canvas stack to a page.
+ *
+ * Retries across a few frames because a page created a moment ago (add / duplicate /
+ * generate) is in the store before React has put it in the DOM — without the retry,
+ * "add a page" would scroll nowhere, which is the same dead click it is fixing.
+ */
+function scrollToPage(pageId: string, tries = 3): void {
+  const node = document.querySelector(`[data-page="${pageId}"]`);
+  if (node) {
+    // `block: 'start'` leaves the page filling the viewport, so when the canvas's
+    // scroll-settle picker runs it lands on this same page and doesn't undo us.
+    node.scrollIntoView({ behavior: 'smooth', block: 'start' });
+    return;
+  }
+  if (tries > 0) requestAnimationFrame(() => scrollToPage(pageId, tries - 1));
+}
+
 export const useEditorStore = create<EditorState>((set, get) => ({
   issueId: null,
   issue: null,
@@ -194,6 +265,9 @@ export const useEditorStore = create<EditorState>((set, get) => ({
   undoStack: [],
   redoStack: [],
   chat: [],
+  threads: [],
+  threadsLoading: false,
+  activeThreadId: null,
   chatBusy: false,
   chatHasMore: false,
   chatOldest: null,
@@ -202,6 +276,30 @@ export const useEditorStore = create<EditorState>((set, get) => ({
   proposalsPageId: null,
   previewDoc: null,
   setPreviewDoc: (d) => set({ previewDoc: d }),
+  thumbs: {},
+
+  ensureThumb: (pageId) => {
+    const { issueId, thumbs, pages } = get();
+    if (!issueId || thumbsInFlight.has(pageId)) return;
+    const summary = pages.find((p) => p.id === pageId);
+    if (!summary) return;
+    // A cached copy at the same rev is still accurate. Our own edits bump the OPEN
+    // page's rev without touching its summary, which is fine: the rail renders the
+    // open page from `page`, and openPage() hands the outgoing copy back to the cache.
+    const have = thumbs[pageId];
+    if (have && have.rev >= summary.rev) return;
+    thumbsInFlight.add(pageId);
+    void api
+      .getPage(issueId, pageId)
+      .then((page) => {
+        // Guard the late response: the user may have opened another magazine.
+        if (get().issueId === issueId) set((st) => ({ thumbs: { ...st.thumbs, [pageId]: page } }));
+      })
+      // A thumbnail is decoration. A failed fetch leaves the numbered placeholder in
+      // place, which still navigates — so there is nothing worth interrupting for.
+      .catch(() => {})
+      .finally(() => { thumbsInFlight.delete(pageId); });
+  },
 
   canManage: () => get().issue?.myRole === 'owner',
   canEdit: () => !!get().issue?.myRole,
@@ -211,19 +309,26 @@ export const useEditorStore = create<EditorState>((set, get) => ({
     // editedSinceLoad resets here: the freshly-loaded `issue.needsRepublish` is the
     // server's own answer, so carrying a stale local flag across a reload would keep
     // claiming changes that were already published.
-    set({ loading: true, error: null, issueId: id, generating: false, justGenerated: false, currentPageId: null, page: null, chat: [], proposals: [], proposalsPageId: null, editedSinceLoad: false });
+    set({ loading: true, error: null, issueId: id, generating: false, justGenerated: false, currentPageId: null, page: null, chat: [], proposals: [], proposalsPageId: null, editedSinceLoad: false, thumbs: {} });
     try {
       const { issue, pages } = await api.getIssue(id);
       set({ issue, pages, loading: false, undoStack: [], redoStack: [], selectedId: null });
       if (pages[0]) await get().openPage(pages[0].id);
-      // Load the persisted chat thread (most recent batch). Best-effort — a chat
+      // Load the conversation list and open the most recent one — the behaviour of
+      // every chat app: you come back to where you left off. Best-effort; a chat
       // fetch failure must never block opening the magazine.
       try {
-        const t = await api.listChat(id, { limit: 50 });
+        const threads = await api.listThreads(id);
         // Guard against a slow response landing after the user opened another issue.
-        if (get().issueId === id) set({ chat: t.messages.map(dtoToChat), chatHasMore: t.hasMore, chatOldest: t.oldestCreatedAt });
+        if (get().issueId !== id) return;
+        set({ threads });
+        // Resume the newest thread YOU can write to. Landing in the legacy log or
+        // someone else's read-only thread would mean the composer is disabled before
+        // the user has done anything.
+        const resume = threads.find((t) => t.mine && !t.legacy);
+        if (resume) await get().openThread(resume.id);
       } catch {
-        /* leave the thread empty */
+        /* start with a blank chat */
       }
       // Still generating (from "Build with AI" / import)? Poll and reveal pages
       // as they arrive instead of making the user wait on a loading screen.
@@ -247,10 +352,29 @@ export const useEditorStore = create<EditorState>((set, get) => ({
       // the current page), and keeping both means scrolling/switching pages no
       // longer clears your selection or wipes the conversation. Both are cleared
       // per-issue in load(). previewDoc is not page-scoped and survives too.
-      set({ page, currentPageId: pageId, proposals: [], proposalsPageId: null });
+      //
+      // The page we're LEAVING goes into the thumbnail cache: every element write
+      // landed on that object, so it is the freshest copy of it in existence. Without
+      // this, walking away from a page you just edited would leave the rail showing
+      // the version the server last handed us.
+      set((st) => ({
+        page,
+        currentPageId: pageId,
+        proposals: [],
+        proposalsPageId: null,
+        thumbs: { ...st.thumbs, ...(st.page ? { [st.page.id]: st.page } : {}), [pageId]: page },
+      }));
     } catch (e) {
       set({ error: e instanceof Error ? e.message : 'Failed to load page' });
     }
+  },
+
+  goToPage: async (pageId) => {
+    // Scroll FIRST, so the click feels instant instead of waiting on the page fetch.
+    // Both states render the page at the same width (the open one only gains the
+    // editing layer), so there is no layout shift to scroll into.
+    scrollToPage(pageId);
+    await get().openPage(pageId);
   },
 
   select: (id) => set({ selectedId: id }),
@@ -398,9 +522,15 @@ export const useEditorStore = create<EditorState>((set, get) => ({
   addPage: async () => {
     const s = get();
     if (!s.issueId) return;
+    const had = new Set(s.pages.map((p) => p.id));
     try {
       const { pages } = await api.addPage(s.issueId);
       set({ pages, editedSinceLoad: true });
+      // Open the page that was just made. Leaving the user on the old one reads as a
+      // no-op — and in the vertical rail the new tile can be below the fold, so there
+      // was nothing on screen to tell them it had worked.
+      const fresh = pages.find((p) => !had.has(p.id));
+      if (fresh) await get().goToPage(fresh.id);
     } catch (e) {
       toast.error(e instanceof Error ? e.message : 'Failed to add page');
     }
@@ -558,7 +688,9 @@ export const useEditorStore = create<EditorState>((set, get) => ({
     if (!s.issueId) return;
     try {
       const { issue, pages } = await api.resetIssue(s.issueId);
-      set({ issue, pages, selectedId: null, undoStack: [], redoStack: [], proposals: [], proposalsPageId: null });
+      // thumbs are cleared with everything else: reset() destroys every page, and a
+      // stale tile for a page that no longer exists would be a ghost in the rail.
+      set({ issue, pages, selectedId: null, undoStack: [], redoStack: [], proposals: [], proposalsPageId: null, thumbs: {} });
       if (pages[0]) await get().openPage(pages[0].id);
       toast.success('Reset to a blank page.');
     } catch (e) {
@@ -594,6 +726,59 @@ export const useEditorStore = create<EditorState>((set, get) => ({
   },
 
   // Toggle a page's inclusion in "publish selected pages".
+  layoutBusy: false,
+
+  applyLayout: async (reading) => {
+    const s = get();
+    if (!s.issueId || !s.page || s.layoutBusy) return null;
+    const issueId = s.issueId;
+    const pageId = s.page.id;
+    set({ layoutBusy: true });
+    try {
+      const { page, leftOver, fidelity, warning } = await api.applyLayoutToPage(issueId, pageId, { rev: s.page.rev, reading });
+      set((st) => ({
+        // The returned page is authoritative — it is what the solver produced.
+        page: st.currentPageId === pageId ? page : st.page,
+        // Keep the summary and the rail thumbnail in step: the element count and the
+        // rev both changed, and a stale summary would leave the rail drawing the old
+        // page until something else happened to refresh it.
+        pages: st.pages.map((p) => (p.id === pageId ? { ...p, elementCount: page.elements.length, rev: page.rev } : p)),
+        thumbs: { ...st.thumbs, [pageId]: page },
+        // Every element on the page is new, so the old undo entries point at elements
+        // that no longer exist. Keeping them would make Ctrl+Z resurrect ghosts.
+        undoStack: [],
+        redoStack: [],
+        selectedId: null,
+        editedSinceLoad: true,
+      }));
+      // Say what didn't fit. Surplus photos genuinely have nowhere to go, and a
+      // silent loss is the thing this feature must never do.
+      const lost: string[] = [];
+      if (leftOver.images > 0) lost.push(`${leftOver.images} photo${leftOver.images === 1 ? '' : 's'}`);
+      if (leftOver.text > 0) lost.push(`${leftOver.text} text block${leftOver.text === 1 ? '' : 's'}`);
+      const tail = lost.length > 0 ? ` ${lost.join(' and ')} had nowhere to go and stayed out.` : '';
+      // The MEASURED verdict decides the tone of the toast. A "loose" result is not a
+      // success message with a caveat buried in a panel — it is the headline.
+      if (fidelity.verdict === 'loose') toast.warning(`${fidelity.summary}${tail}`);
+      else toast.success(`${fidelity.summary}${tail}`);
+      if (warning) toast.message(warning);
+      return fidelity;
+    } catch (e) {
+      // A 409 carries the server's current page: adopt it so the user is looking at
+      // what actually exists before they try again.
+      if (e instanceof ApiError && e.status === 409 && e.body?.page) {
+        const fresh = e.body.page as MagazinePageV2;
+        set((st) => (st.currentPageId === pageId ? { page: fresh } : {}));
+        toast.error('This page changed while you were choosing a layout — have another look, then try again.');
+        return null;
+      }
+      toast.error(e instanceof Error ? e.message : 'Could not apply that layout');
+      return null;
+    } finally {
+      set({ layoutBusy: false });
+    }
+  },
+
   setPageSelected: async (pageId, selected) => {
     const s = get();
     if (!s.issueId) return;
@@ -772,23 +957,106 @@ export const useEditorStore = create<EditorState>((set, get) => ({
 
   clearJustGenerated: () => set({ justGenerated: false }),
 
+  // ── Threads ──
+  loadThreads: async () => {
+    const id = get().issueId;
+    if (!id) return;
+    set({ threadsLoading: true });
+    try {
+      const threads = await api.listThreads(id);
+      set((st) => (st.issueId === id ? { threads, threadsLoading: false } : { threadsLoading: false }));
+    } catch {
+      set({ threadsLoading: false });
+    }
+  },
+
+  openThread: async (threadId) => {
+    const id = get().issueId;
+    if (!id) return;
+    // Clear the transcript FIRST. Loading over the old one would leave another
+    // conversation on screen for the length of the fetch, and the user would read it
+    // as belonging to the thread they just clicked.
+    set({ activeThreadId: threadId, chat: [], chatHasMore: false, chatOldest: null, proposals: [], proposalsPageId: null });
+    try {
+      const t = await api.listThreadMessages(id, threadId, { limit: 50 });
+      set((st) => (st.issueId === id && st.activeThreadId === threadId
+        ? { chat: t.messages.map(dtoToChat), chatHasMore: t.hasMore, chatOldest: t.oldestCreatedAt }
+        : {}));
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : 'Could not open that chat.');
+    }
+  },
+
+  // No server call: an empty chat that nobody has spoken in isn't worth a document.
+  // The first turn creates it and adopts the id the server returns.
+  newThread: () => set({ activeThreadId: null, chat: [], chatHasMore: false, chatOldest: null, proposals: [], proposalsPageId: null }),
+
+  renameThread: async (threadId, title) => {
+    const id = get().issueId;
+    if (!id || !title.trim()) return;
+    try {
+      const updated = await api.renameThread(id, threadId, title.trim());
+      set((st) => ({ threads: st.threads.map((t) => (t.id === threadId ? updated : t)) }));
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : 'Could not rename that chat.');
+    }
+  },
+
+  removeThread: async (threadId) => {
+    const id = get().issueId;
+    if (!id) return;
+    try {
+      await api.deleteThread(id, threadId);
+      const wasActive = get().activeThreadId === threadId;
+      set((st) => ({ threads: st.threads.filter((t) => t.id !== threadId) }));
+      // Deleting the chat you're reading leaves the panel showing a transcript that
+      // no longer exists — so land on the next one, or a blank chat.
+      if (wasActive) {
+        const next = get().threads.find((t) => t.mine && !t.legacy);
+        if (next) await get().openThread(next.id);
+        else get().newThread();
+      }
+      toast.success('Chat deleted.');
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : 'Could not delete that chat.');
+    }
+  },
+
   // ── AI editing assistant ──
   sendChat: async (text, sourceText, attachedImages, attachments) => {
     const s = get();
     const body = text.trim();
     if (!body || !s.issueId || !s.currentPageId || s.chatBusy) return;
-    const history: ChatMessage[] = [...s.chat, { role: 'user', content: body, attachments }];
-    set({ chat: history, chatBusy: true });
+    // Read-only thread (someone else's, or the legacy log) — the composer is
+    // disabled for these, and this is the matching guard so a stale render can't
+    // post into a conversation the server would refuse anyway.
+    const active = s.threads.find((t) => t.id === s.activeThreadId);
+    if (active?.readOnly) return;
+    set({ chat: [...s.chat, { role: 'user', content: body, attachments }], chatBusy: true });
     try {
-      // The server only needs role+content; attachment refs are client display-only.
-      const apiHistory = history.map((m) => ({ role: m.role, content: m.content }));
-      const { reply, proposals } = await api.chatAgent(s.issueId, s.currentPageId, apiHistory, s.selectedId ?? undefined, sourceText, attachedImages);
+      // ONE turn, plus the thread id. The server reads the rest of the history from
+      // the thread itself — the client's transcript is for display, not the prompt.
+      const { reply, proposals, threadId } = await api.chatAgent(
+        s.issueId,
+        s.currentPageId,
+        [{ role: 'user', content: body }],
+        s.selectedId ?? undefined,
+        sourceText,
+        attachedImages,
+        s.activeThreadId ?? undefined,
+      );
       set((st) => ({
         chat: [...st.chat, { role: 'assistant', content: reply }],
         proposals,
         proposalsPageId: s.currentPageId,
         chatBusy: false,
+        // Adopt the thread the server used — on the first turn of a new chat this is
+        // the id it just created. Without this, every turn would start another one.
+        activeThreadId: threadId || st.activeThreadId,
       }));
+      // Refresh the list so the new/renamed thread appears with its real title and
+      // sorts to the top. Cheap, and it keeps the list honest without a socket.
+      void get().loadThreads();
     } catch (e) {
       set((st) => ({ chat: [...st.chat, { role: 'assistant', content: 'Sorry — I hit a snag just then. Please try again.' }], chatBusy: false }));
       toast.error(e instanceof Error ? e.message : 'Assistant failed');
@@ -796,16 +1064,17 @@ export const useEditorStore = create<EditorState>((set, get) => ({
   },
 
   // Lazily pull the batch OLDER than the oldest message we hold, prepending it —
-  // so the persisted thread pages upward without loading the whole history at once.
+  // so a long thread pages upward without loading all of it at once.
   loadOlderChat: async () => {
     const s = get();
-    if (!s.issueId || !s.chatHasMore || s.chatLoadingOlder || !s.chatOldest) return;
+    if (!s.issueId || !s.activeThreadId || !s.chatHasMore || s.chatLoadingOlder || !s.chatOldest) return;
     const issueId = s.issueId;
+    const threadId = s.activeThreadId;
     const before = s.chatOldest;
     set({ chatLoadingOlder: true });
     try {
-      const t = await api.listChat(issueId, { before, limit: 50 });
-      set((st) => (st.issueId !== issueId ? { chatLoadingOlder: false } : {
+      const t = await api.listThreadMessages(issueId, threadId, { before, limit: 50 });
+      set((st) => (st.issueId !== issueId || st.activeThreadId !== threadId ? { chatLoadingOlder: false } : {
         chat: [...t.messages.map(dtoToChat), ...st.chat],
         chatHasMore: t.hasMore,
         chatOldest: t.oldestCreatedAt ?? st.chatOldest,
@@ -826,6 +1095,25 @@ export const useEditorStore = create<EditorState>((set, get) => ({
     const issueId = s.issueId;
     const idMap = new Map<string, string>();
     const isPageKind = (k: AgentProposal['kind']) => k === 'add-page' || k === 'remove-page' || k === 'reorder-page' || k === 'generate-pages';
+
+    // A layout rebuild replaces every element on the page, so it can never be mixed
+    // with element edits — the agent's tools refuse the combination at staging time
+    // (see hasLayout in agent.ts), and this handles it on its own rather than trying
+    // to interleave it with edits that would be applied to elements it destroyed.
+    const layout = s.proposals.find((p) => p.kind === 'apply-layout');
+    if (layout) {
+      const reading = layout.layoutReading as api.LayoutReading | undefined;
+      set({ proposals: [], proposalsPageId: null });
+      if (!reading) {
+        toast.error('That layout could not be applied — ask the assistant to read the image again.');
+        return;
+      }
+      // Straight through the same store action the panel uses: one apply path means
+      // the confirm, the undo-stack clear, the thumbnail refresh and the measured
+      // verdict can't drift between the two ways of reaching it.
+      await get().applyLayout(reading);
+      return;
+    }
 
     // Refusals are COUNTED, not just survived. Each loop keeps going after a failure
     // (one bad proposal shouldn't strand the rest), but the toast at the end has to

@@ -36,15 +36,15 @@ export function AttachmentPreviewPane() {
   return (
     <div className="flex h-full flex-col">
       {/* Header — name, open-externally (a PDF is cramped in a side pane), close */}
-      <div className="flex flex-shrink-0 items-center gap-2 border-b border-white/10 px-3 py-2.5">
-        <FileText size={14} className="flex-shrink-0 text-white/60" />
-        <p className="min-w-0 flex-1 truncate text-xs font-bold text-white" title={doc.name}>{doc.name}</p>
+      <div className="flex flex-shrink-0 items-center gap-2 border-b border-studio-hair px-3 py-2.5">
+        <FileText size={14} className="flex-shrink-0 text-studio-ink-2" />
+        <p className="min-w-0 flex-1 truncate text-ui-sm font-bold text-studio-ink" title={doc.name}>{doc.name}</p>
         {canRenderDoc && (
           <a
             href={doc.docUrl}
             target="_blank"
             rel="noreferrer"
-            className="flex h-6 w-6 items-center justify-center rounded text-white/60 hover:bg-white/10 hover:text-white"
+            className="flex h-6 w-6 items-center justify-center rounded text-studio-ink-2 hover:bg-studio-raise-2 hover:text-studio-ink"
             title="Open in a new tab (full size)"
             aria-label="Open in a new tab"
           >
@@ -53,7 +53,7 @@ export function AttachmentPreviewPane() {
         )}
         <button
           onClick={() => close(null)}
-          className="flex h-6 w-6 items-center justify-center rounded text-white/60 hover:bg-white/10 hover:text-white"
+          className="flex h-6 w-6 items-center justify-center rounded text-studio-ink-2 hover:bg-studio-raise-2 hover:text-studio-ink"
           title="Close preview (back to editing)"
           aria-label="Close preview"
         >
@@ -63,13 +63,13 @@ export function AttachmentPreviewPane() {
 
       {/* Document / extracted-text switch — only when both views exist */}
       {canRenderDoc && hasText && (
-        <div className="flex flex-shrink-0 gap-1 border-b border-white/10 px-3 py-2">
+        <div className="flex flex-shrink-0 gap-1 border-b border-studio-hair px-3 py-2">
           {([['doc', 'Document'], ['text', 'Extracted text']] as const).map(([m, label]) => (
             <button
               key={m}
               onClick={() => setMode(m)}
-              className={`rounded px-2 py-1 text-[10px] font-bold uppercase tracking-wide transition ${
-                mode === m ? 'bg-white/15 text-white' : 'text-white/45 hover:bg-white/[0.06] hover:text-white/75'
+              className={`rounded px-2 py-1 text-ui-sm font-bold uppercase tracking-wide transition ${
+                mode === m ? 'bg-studio-raise-2 text-studio-ink' : 'text-studio-ink-3 hover:bg-studio-raise hover:text-studio-ink-2'
               }`}
               title={m === 'doc' ? 'The file as it looks' : 'The text the AI reads from this file'}
             >
@@ -86,13 +86,13 @@ export function AttachmentPreviewPane() {
         ) : showingDoc ? (
           <iframe src={doc.docUrl} title={doc.name} className="h-full w-full border-0 bg-white" />
         ) : hasText ? (
-          <pre className="whitespace-pre-wrap break-words font-sans text-[11px] leading-relaxed text-white/70">{doc.text}</pre>
+          <pre className="whitespace-pre-wrap break-words font-sans text-ui-sm leading-relaxed text-studio-ink-2">{doc.text}</pre>
         ) : (
-          <p className="text-center text-xs text-white/40">No preview available for this file.</p>
+          <p className="text-center text-ui-sm text-studio-ink-3">No preview available for this file.</p>
         )}
       </div>
 
-      <div className="flex-shrink-0 border-t border-white/10 px-3 py-2 text-center text-[10px] text-white/35">
+      <div className="flex-shrink-0 border-t border-studio-hair px-3 py-2 text-center text-ui-sm text-studio-ink-4">
         Close to return to the element editor.
       </div>
     </div>

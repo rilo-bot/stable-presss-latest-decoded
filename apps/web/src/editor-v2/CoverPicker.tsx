@@ -67,59 +67,59 @@ export function CoverPicker({ open, onClose }: { open: boolean; onClose: () => v
     <button
       key={t}
       onClick={() => setTab(t)}
-      className={'px-3 py-1.5 text-[12px] rounded-sm ' + (tab === t ? 'bg-white/10 text-white' : 'text-white/55 hover:bg-white/5')}
+      className={'px-3 py-1.5 text-ui rounded-sm ' + (tab === t ? 'bg-studio-raise-2 text-studio-ink' : 'text-studio-ink-3 hover:bg-studio-raise')}
     >{label}</button>;
 
   return (
     <div className="fixed inset-0 z-[70] flex items-center justify-center bg-black/60 p-4" onClick={onClose}>
       <div
-        className="flex max-h-[80vh] w-[560px] max-w-full flex-col overflow-hidden rounded-lg border border-white/15 bg-[#0d1626] shadow-2xl"
+        className="flex max-h-[80vh] w-[560px] max-w-full flex-col overflow-hidden rounded-lg border border-studio-edge bg-studio-panel shadow-2xl"
         onClick={(e) => e.stopPropagation()}
       >
         {/* Header */}
-        <div className="flex items-center gap-3 border-b border-white/10 px-4 py-3">
-          <div className="h-14 w-11 flex-shrink-0 overflow-hidden rounded-sm border border-white/15 bg-white/5">
+        <div className="flex items-center gap-3 border-b border-studio-hair px-4 py-3">
+          <div className="h-14 w-11 flex-shrink-0 overflow-hidden rounded-sm border border-studio-edge bg-studio-raise">
             {cover
               ? <img src={cover} alt="" className="h-full w-full object-cover" />
-              : <div className="flex h-full w-full items-center justify-center text-white/25"><ImageOff size={16} /></div>}
+              : <div className="flex h-full w-full items-center justify-center text-studio-ink-4"><ImageOff size={16} /></div>}
           </div>
           <div className="min-w-0">
-            <p className="text-sm font-semibold text-white">Cover image</p>
-            <p className="truncate text-[11px] text-white/40">{cover ? 'Custom cover set' : 'Automatic (page 1)'}</p>
+            <p className="text-ui font-semibold text-studio-ink">Cover image</p>
+            <p className="truncate text-ui-sm text-studio-ink-3">{cover ? 'Custom cover set' : 'Automatic (page 1)'}</p>
           </div>
           <div className="ml-auto flex items-center gap-2">
             {cover && (
               <button
                 disabled={busy}
                 onClick={() => run(async () => { await s.setCover({ coverImage: '' }); })}
-                className="rounded-sm border border-white/15 px-2 py-1 text-[11px] text-white/60 hover:bg-white/10 disabled:opacity-40"
+                className="rounded-sm border border-studio-edge px-2 py-1 text-ui-sm text-studio-ink-2 hover:bg-studio-raise-2 disabled:opacity-40"
               >Reset to automatic</button>
             )}
-            <button onClick={onClose} className="rounded-sm p-1 text-white/50 hover:bg-white/10 hover:text-white" aria-label="Close"><X size={16} /></button>
+            <button onClick={onClose} className="rounded-sm p-1 text-studio-ink-3 hover:bg-studio-raise-2 hover:text-studio-ink" aria-label="Close"><X size={16} /></button>
           </div>
         </div>
 
         {/* Tabs */}
-        <div className="flex items-center gap-1 border-b border-white/10 px-3 py-2">
+        <div className="flex items-center gap-1 border-b border-studio-hair px-3 py-2">
           {tabBtn('pages', 'Pages')}
           {tabBtn('library', 'Library')}
           {tabBtn('upload', 'Upload / URL')}
-          {busy && <span className="ml-auto text-[11px] text-white/45" role="status" aria-live="polite"><ShimmerText>Setting the cover…</ShimmerText></span>}
+          {busy && <span className="ml-auto text-ui-sm text-studio-ink-3" role="status" aria-live="polite"><ShimmerText>Setting the cover…</ShimmerText></span>}
         </div>
 
         {/* Body */}
         <div className="min-h-0 flex-1 overflow-y-auto p-4">
           {tab === 'pages' && (
             <div>
-              <p className="mb-2 text-[11px] text-white/45">Use a page's image as the cover. Pages with no image can't be used.</p>
+              <p className="mb-2 text-ui-sm text-studio-ink-3">Use a page's image as the cover. Pages with no image can't be used.</p>
               <div className="grid grid-cols-6 gap-2">
                 {s.pages.map((p, i) => (
                   <button
                     key={p.id}
                     disabled={busy}
                     onClick={() => run(async () => { if (await s.setCover({ coverPageId: p.id })) onClose(); })}
-                    className={'flex aspect-[3/4] flex-col items-center justify-center rounded-sm border text-[12px] disabled:opacity-40 ' +
-                      (p.id === s.currentPageId ? 'border-[var(--gold-bright)]/70 bg-white/10 text-white' : 'border-white/15 bg-white/5 text-white/60 hover:bg-white/10')}
+                    className={'flex aspect-[3/4] flex-col items-center justify-center rounded-sm border text-ui disabled:opacity-40 ' +
+                      (p.id === s.currentPageId ? 'border-[var(--gold-bright)]/70 bg-studio-raise-2 text-studio-ink' : 'border-studio-edge bg-studio-raise text-studio-ink-2 hover:bg-studio-raise-2')}
                     title={`Use page ${i + 1}`}
                   >{i + 1}</button>
                 ))}
@@ -129,9 +129,9 @@ export function CoverPicker({ open, onClose }: { open: boolean; onClose: () => v
 
           {tab === 'library' && (
             loadingMedia
-              ? <div className="flex h-32 items-center justify-center text-[12px] text-white/40" role="status" aria-live="polite"><ShimmerText>Loading your media</ShimmerText></div>
+              ? <div className="flex h-32 items-center justify-center text-ui text-studio-ink-3" role="status" aria-live="polite"><ShimmerText>Loading your media</ShimmerText></div>
               : assets.length === 0
-                ? <p className="py-10 text-center text-[12px] text-white/40">No media yet. Upload an image or generate/import content first.</p>
+                ? <p className="py-10 text-center text-ui text-studio-ink-3">No media yet. Upload an image or generate/import content first.</p>
                 : (
                   <div className="grid grid-cols-3 gap-2">
                     {assets.map((a) => (
@@ -139,7 +139,7 @@ export function CoverPicker({ open, onClose }: { open: boolean; onClose: () => v
                         key={a.id}
                         disabled={busy}
                         onClick={() => run(async () => { if (await s.setCover({ coverImage: a.url })) onClose(); })}
-                        className="relative aspect-[4/3] overflow-hidden rounded border border-white/10 hover:border-[var(--gold-bright)] disabled:opacity-40"
+                        className="relative aspect-[4/3] overflow-hidden rounded border border-studio-hair hover:border-[var(--gold-bright)] disabled:opacity-40"
                         title={a.alt || a.kind}
                       >
                         <img src={a.url} alt={a.alt} className="h-full w-full object-cover" />
@@ -155,7 +155,7 @@ export function CoverPicker({ open, onClose }: { open: boolean; onClose: () => v
                 <button
                   disabled={busy}
                   onClick={() => fileRef.current?.click()}
-                  className="flex w-full items-center justify-center gap-2 rounded-md border border-dashed border-white/20 py-6 text-[12px] text-white/60 hover:bg-white/5 disabled:opacity-40"
+                  className="flex w-full items-center justify-center gap-2 rounded-md border border-dashed border-studio-edge py-6 text-ui text-studio-ink-2 hover:bg-studio-raise disabled:opacity-40"
                 >
                   <Upload size={15} /> Upload an image from your device
                 </button>
@@ -166,23 +166,23 @@ export function CoverPicker({ open, onClose }: { open: boolean; onClose: () => v
                   className="hidden"
                   onChange={(e) => { const f = e.target.files?.[0]; if (f) void onUploadFile(f); e.target.value = ''; }}
                 />
-                <p className="mt-1 text-[10px] text-white/35">PNG, JPEG, WebP, or GIF · up to 15 MB</p>
+                <p className="mt-1 text-ui-sm text-studio-ink-4">PNG, JPEG, WebP, or GIF · up to 15 MB</p>
               </div>
               <div className="flex items-center gap-2">
                 <div className="relative flex-1">
-                  <Link2 size={13} className="pointer-events-none absolute left-2 top-1/2 -translate-y-1/2 text-white/35" />
+                  <Link2 size={13} className="pointer-events-none absolute left-2 top-1/2 -translate-y-1/2 text-studio-ink-4" />
                   <input
                     value={urlValue}
                     onChange={(e) => setUrlValue(e.target.value)}
                     onKeyDown={(e) => { if (e.key === 'Enter') void onUseUrl(); }}
                     placeholder="Paste an image URL"
-                    className="w-full rounded border border-white/20 bg-[#0b1220] py-1.5 pl-7 pr-2 text-[12px] text-white placeholder:text-white/30"
+                    className="w-full rounded border border-studio-edge bg-studio-bg py-1.5 pl-7 pr-2 text-ui text-studio-ink placeholder:text-studio-ink-4"
                   />
                 </div>
                 <button
                   disabled={busy || !urlValue.trim()}
                   onClick={() => void onUseUrl()}
-                  className="rounded-sm bg-[var(--gold-bright)] px-3 py-1.5 text-[12px] font-semibold text-[#0b1220] disabled:opacity-40"
+                  className="rounded-sm bg-[var(--gold-bright)] px-3 py-1.5 text-ui font-semibold text-studio-bg disabled:opacity-40"
                 >Set</button>
               </div>
             </div>
