@@ -47,6 +47,11 @@ import type { TextRole } from './model.js';
 import { normalizeLayoutSpec, type LayoutSpec } from './layoutSpec.js';
 import { parseJsonObject } from './parseJson.js';
 import { pruneLayoutSpec } from './pruneSpec.js';
+import { densityOf, densityHint, MIN_ELEMENTS, type Density } from './pageDensity.js';
+import { fitReport, fitHint, seriousFlaws, charBudget, type Fit } from './fitReport.js';
+import { ROLE_SCALE, ptToPx } from './roleScale.js';
+import { pageFurniture } from './pageFurniture.js';
+import { renumberFolios } from './renumberFolios.js';
 import { retrieveSource, isTruncated } from './retrieval.js';
 import { seedSpecFor } from './seedSpecs.js';
 import { archetypeLibraryText, archetypeSteer } from './layoutArchetypes.js';
@@ -421,15 +426,38 @@ export async function draftPage(opts: {
 }): Promise<PageDraft> {
   const { plan, page, template } = opts;
   const source = (opts.sourceText ?? '').trim();
+  // THE BUDGET IS THE BOX, not a table. Every slot already carries its real (fractional)
+  // rectangle, so the number of characters that fit can be measured instead of guessed —
+  // which is what "body: ≤1400 chars" was, whether the box was a full page or a footnote.
+  // Clamped by the old table so this can only ever pull an instruction TOWARDS what fits:
+  // it may ask for less than 1400, never for more, and never for absurdly little.
+  const measuredMax = (s: PageTemplateSlot): number => {
+    const table = CHAR_GUIDE[s.textRole ?? 'other'] ?? 220;
+    const scale = ROLE_SCALE[s.leafRole ?? s.textRole ?? 'body'] ?? ROLE_SCALE.body!;
+    const fontSize = s.style?.fontSize ?? scale.maxFontSize;
+    const fitted = charBudget({
+      boxW: Math.max(1, s.box.w * PAGE_W),
+      boxH: Math.max(1, s.box.h * PAGE_H),
+      fontSize,
+      lineHeight: s.style?.lineHeight ?? scale.lineHeight,
+      fontFamily: (s.style?.fontRef ?? scale.fontRef) === 'display' ? plan.fonts.display : plan.fonts.body,
+      fontWeight: s.style?.fontWeight ?? scale.fontWeight,
+    });
+    if (!fitted) return table;
+    const floor = s.textRole === 'body' ? 300 : 20;
+    return Math.max(floor, Math.min(table, fitted));
+  };
   const slotLines = template.slots
     .map((s) => {
       if (s.role === 'text') {
         if (/^stat\d/.test(s.id)) return `- ${s.id} (FIGURE — a short number only, e.g. "4.8%", "15,000+", "$12B")`;
         if (/^label\d/.test(s.id)) return `- ${s.id} (label — a short phrase describing the matching stat figure, ≤90 chars)`;
         if (/^entry\d/.test(s.id)) return `- ${s.id} (contents entry — "PAGE — TITLE: one-line description")`;
-        if (s.textRole === 'body') return `- ${s.id} (BODY — the page's backbone: write 2–3 FULL paragraphs of substantive, specific prose (~900–${CHAR_GUIDE.body} chars); never just one or two sentences)`;
-        const max = CHAR_GUIDE[s.textRole ?? 'other'] ?? 220;
-        return `- ${s.id} (text, ${s.textRole ?? 'body'}, ≤${max} chars)`;
+        const max = measuredMax(s);
+        if (s.textRole === 'body') {
+          return `- ${s.id} (BODY — the page's backbone: write FULL paragraphs of substantive, specific prose; its box holds about ${max} characters, so write close to that and never just one or two sentences)`;
+        }
+        return `- ${s.id} (text, ${s.textRole ?? 'body'}, ≤${max} chars — that is what its box holds)`;
       }
       if (s.role === 'image') return `- ${s.id} (image BRIEF — describe the photo to create: subject, setting, mood, lighting. No text in image.)`;
       if (s.role === 'qr') return `- ${s.id} (qr — a full https:// destination URL)`;
@@ -624,15 +652,13 @@ function ensureHeadline(draft: PageDraft, plan: GenPlan, page: GenPlanPage, temp
   return draft;
 }
 
-/** Too few real content elements for an interior page → treat as a failed page so
- *  the caller uses the (content-backfilled) template path rather than shipping a
- *  near-empty page. Cover / back-cover / pull-quote are legitimately spare. */
-function isTooSparse(composed: ComposedPage, kind: PageTemplateKind): boolean {
-  if (kind === 'cover' || kind === 'back-cover' || kind === 'pull-quote') return false;
-  const meaningful = composed.elements.filter(
-    (e) => (e.type === 'text' && !!e.text?.content?.trim()) || (e.type === 'image' && !!e.image?.url),
-  ).length;
-  return meaningful < 2;
+/** Too few real content elements for this KIND of page → treat as a failed page so
+ *  the art-director self-heals (and, once attempts are spent, the caller uses the
+ *  content-backfilled template path) rather than shipping a near-empty page. The
+ *  bar and the reasoning live in pageDensity.ts; nothing is exempt any more —
+ *  a cover with a photograph and no words used to pass this. */
+function sparsenessOf(composed: ComposedPage, kind: PageTemplateKind): Density {
+  return densityOf(composed.elements, kind);
 }
 
 // ── Deterministic compose + layout-QA (no LLM) ────────────────────────────────
@@ -862,7 +888,13 @@ async function composeOnePageTemplate(
 
 /** Compose one page. Dispatches to the AI-authored-layout path when the flag is
  *  set, otherwise the fixed-template path. The AI path itself falls back to the
- *  template path if it can't produce a clean page — so this never regresses. */
+ *  template path if it can't produce a clean page — so this never regresses.
+ *
+ *  This is also the ONE seam every generation entry point funnels through (a whole
+ *  issue, a persisted issue, and "add pages matching theme"), which is why page
+ *  FURNITURE is added here: both layout paths get it, and neither can drift.
+ *  It lands AFTER each path's layout QA and density gate by design — furniture is
+ *  chrome, so it must not be able to rescue a thin page or fail a good one. */
 async function composeOnePage(
   plan: GenPlan,
   page: GenPlanPage,
@@ -872,10 +904,19 @@ async function composeOnePage(
   sourceText?: string,
   pool?: PhotoClaimer,
 ): Promise<ComposedPage> {
-  if (aiLayoutEnabled()) {
-    return composeOnePageAI(plan, page, pageNumber, totalPages, ctx, sourceText, pool);
-  }
-  return composeOnePageTemplate(plan, page, pageNumber, totalPages, ctx, sourceText, pool);
+  const composed = aiLayoutEnabled()
+    ? await composeOnePageAI(plan, page, pageNumber, totalPages, ctx, sourceText, pool)
+    : await composeOnePageTemplate(plan, page, pageNumber, totalPages, ctx, sourceText, pool);
+  const furniture = pageFurniture(composed, {
+    kind: page.kind,
+    sectionTitle: page.sectionTitle ?? '',
+    magazineTitle: plan.title,
+    pageNumber,
+    palette: plan.palette,
+    fonts: plan.fonts,
+  });
+  if (furniture.length === 0) return composed;
+  return { background: composed.background, elements: [...composed.elements, ...furniture] };
 }
 
 // ── AI-authored layout path ───────────────────────────────────────────────────
@@ -898,7 +939,7 @@ function aiLayoutEnabled(): boolean {
 // bounded self-heal retries that feed the QA-failure reason back so it fixes its
 // OWN layout before we fall back to the fixed template. Bounded (not a runaway
 // loop). Override with MAGAZINE_V2_AI_LAYOUT_ATTEMPTS.
-const AI_LAYOUT_ATTEMPTS = Math.max(1, Math.min(4, Number(process.env.MAGAZINE_V2_AI_LAYOUT_ATTEMPTS) || 2));
+const AI_LAYOUT_ATTEMPTS = Math.max(1, Math.min(6, Number(process.env.MAGAZINE_V2_AI_LAYOUT_ATTEMPTS) || 3));
 
 /** Map a DSL leaf role to the element model's text role (for draftPage's copy
  *  guidance). Non-obvious roles collapse to their nearest editorial equivalent. */
@@ -937,6 +978,17 @@ function buildPseudoTemplate(spec: LayoutSpec): PageTemplate {
       continue; // shape / icon → no drafted content
     }
     seen.add(ref);
+    // Carry the art-director's OWN type decisions onto the slot. Without this the
+    // copywriter's character budget would be measured at the role's default size while
+    // the composer set the size the AI asked for — so a leaf asking for 28pt would be
+    // given the copy budget of a 46pt headline, or vice versa.
+    const scale = ROLE_SCALE[role] ?? ROLE_SCALE.body!;
+    const style: PageTemplateSlot['style'] = {
+      fontRef: leaf.node.fontRef ?? scale.fontRef,
+      fontSize: leaf.node.fontPt !== undefined ? ptToPx(leaf.node.fontPt) : scale.maxFontSize,
+      fontWeight: leaf.node.weightHint ?? scale.fontWeight,
+      lineHeight: leaf.node.lineHeight ?? scale.lineHeight,
+    };
     slots.push({
       id: ref,
       role: sRole,
@@ -945,6 +997,7 @@ function buildPseudoTemplate(spec: LayoutSpec): PageTemplate {
       required: false,
       z: leaf.z,
       box: { x: leaf.box.x / PAGE_W, y: leaf.box.y / PAGE_H, w: leaf.box.w / PAGE_W, h: leaf.box.h / PAGE_H },
+      ...(sRole === 'text' ? { style } : {}),
     });
   }
   return { id: 'ai-pseudo', kind: 'two-column-article', description: 'AI-authored layout (pseudo-template for drafting/curation).', slots };
@@ -977,7 +1030,7 @@ async function composeSpecToPage(
   theme: { palette: GenPalette; fonts: GenFonts },
   ctx?: { magazineId: string; pageIndex: number },
   pool?: PhotoClaimer,
-): Promise<{ page: ComposedPage | null; why?: string }> {
+): Promise<{ page: ComposedPage | null; fit?: Fit; why?: string }> {
   const dims = { width: PAGE_W, height: PAGE_H };
   const fills = await curateFills(pseudo, draft, theme.palette, ctx, pool);
   const content = fillsToContent(fills);
@@ -994,13 +1047,17 @@ async function composeSpecToPage(
   const solved = solveLayout(pruned, dims, { measureLeaf: makeMeasureLeaf(content, theme.fonts) });
   const composed = composeFromSolved(solved, content, theme);
   const elements = normalizeElements(composed.elements, dims);
+  // What actually happened to every box, measured — the art-director's eyes. Returned
+  // whether or not QA passed, because a page can be perfectly legal and still be a
+  // headline shrunk by half over a column nobody can read.
+  const fit = fitReport(solved, content, theme.fonts);
   const report = validatePageLayout(elements, dims);
   if (!report.ok) {
     // Surface WHAT failed. These issues used to be computed and discarded, which
     // made every fallback an unexplained "failed QA" line in the logs.
-    return { page: null, why: report.issues.map((i) => `${i.kind}: ${i.detail}`).join('; ') };
+    return { page: null, fit, why: report.issues.map((i) => `${i.kind}: ${i.detail}`).join('; ') };
   }
-  return { page: { background: composed.background, elements } };
+  return { page: { background: composed.background, elements }, fit };
 }
 
 /**
@@ -1022,16 +1079,21 @@ async function artDirectPage(plan: GenPlan, page: GenPlanPage, pageNumber: numbe
     '',
     'JSON shape: { "page": { "background": { "ref": <color> }, "margin": <space> }, "root": <node> }',
     'A <node> is exactly one of:',
-    '  • leaf:  { "kind":"leaf", "role":<role>, "contentRef":<short string>, "colorRef"?:<color>, "fontRef"?:<font>, "weightHint"?:400-900, "align"?:<align>, "fit"?:"cover"|"contain", "iconName"?:<glyph — role "icon" only> }',
+    '  • leaf:  { "kind":"leaf", "role":<role>, "contentRef":<short string>, "colorRef"?:<color>, "color"?:"#rrggbb",',
+    '             "fontRef"?:<font>, "fontPt"?:<POINTS>, "lineHeight"?:0.8-2.5, "tracking"?:px, "caps"?:true,',
+    '             "weightHint"?:400-900, "align"?:<align>, "fit"?:"cover"|"contain", "fill"?:"#rrggbb", "opacity"?:0.05-1,',
+    '             "iconName"?:<glyph — role "icon" only> }',
     '  • row/col: { "kind":"row"|"col", "gap"?:<space>, "pad"?:<space>, "align"?:<flex>, "justify"?:<flex>, "children":[ { "weight"?:number, "sizing"?:"fr"|"content", "node":<node> } ] }',
     '  • stack (overlay layers on one rectangle): { "kind":"stack", "layers":[ <node>, … ] }',
     '    A stack is ONLY for backing + content: image/shape layers UNDER exactly ONE text-carrying layer.',
     '    Never overlay two text layers — they share the same box and print on top of each other. To put text',
     '    lines one ABOVE another, use a `col`.',
-    'Tokens — color: bg|text|primary|secondary|accent · space: none|xs|sm|md|lg|xl · font: display|body ·',
+    'Tokens — color: bg|text|primary|secondary|accent OR any exact "#rrggbb" (an exact colour wins) ·',
+    'space: none|xs|sm|md|lg|xl (0/10/20/36/60/96px) OR any number of px up to 400 · font: display|body ·',
     'align/justify (flex): start|center|end|between · role: headline|subhead|kicker|byline|body|caption|',
-    'pullquote|figure|label|entry|image|shape|qr|icon. Use `sizing:"content"` for headings/kickers/bylines/',
-    'figures/icons and `weight` (fr) to share remaining space. Depth ≤4, ≤14 leaves. Give every text/image/qr',
+    'pullquote|figure|label|entry|image|shape|qr|icon|spacer. Use `sizing:"content"` for headings/kickers/bylines/',
+    'figures/icons and `weight` (fr) to share remaining space. Depth ≤6, ≤28 leaves, ≤12 children per row/col.',
+    'Give every text/image/qr',
     'leaf a short contentRef (copy & photos are produced for those keys) — follow these NAMING CONVENTIONS so',
     'the right copy is written: "kicker","headline","subhead","deck","body","body2","pullquote","attribution",',
     '"byline","caption","cta","qr","qrLabel"; stat FIGURES → "stat1"/"stat2"/"stat3" with captions "label1"/',
@@ -1062,22 +1124,45 @@ async function artDirectPage(plan: GenPlan, page: GenPlanPage, pageNumber: numbe
     '  a one-line "caption" — the classic feature/benefit or contact strip.',
     '• PULL-QUOTE: an oversized centred "pullquote" (display) with a "byline"/"attribution".',
     '• CAPTION under photos; BYLINE under a feature headline.',
-    '• QR CALL-TO-ACTION: a "qr" leaf beside a short "qrLabel" ("Scan to join", a URL). Put one in a footer',
-    '  band on the cover, back-cover and feature pages.',
+    '• QR CALL-TO-ACTION: a "qr" leaf beside a short "qrLabel" ("Scan to join", a URL). A QR IS SQUARE and',
+    '  SMALL — give it a square-ish share of about 6–12% of the page, never a wide band and never a quarter of',
+    '  the sheet. Use one only where scanning is genuinely the point; most pages need none.',
     'Icon glyph names (choose the closest): Trophy, Award, Medal, Crown, Star, Users, UsersGroup, Horse,',
     'Horseshoe, Helmet, Flag, Target, Calendar, Clock, MapPin, Phone, Mail, Globe, Instagram, Facebook,',
     'Youtube, Camera, Video, BookOpen, GraduationCap, TrendingUp, PieChart, DollarSign, Handshake, Briefcase,',
     'Sprout, Leaf, Heart, Shield, Ticket, Binoculars, Sparkles, QrCode, Share2, Send, CheckCircle, Bell.',
     '',
-    'COLOUR & TYPE — use them with intent (this is what makes it beautiful): kickers & emphasis in ACCENT,',
-    'headlines in TEXT or PRIMARY, body in TEXT, captions in SECONDARY; on a dark photo/scrim use "bg" (light)',
-    'text. Pair the fonts deliberately — display for headlines/figures/pull-quotes, body for everything else —',
-    'and vary weightHint for hierarchy (800–900 headlines/figures, 700 kickers/labels, 400 body). Ensure strong',
-    'contrast everywhere.',
+    'COLOUR & TYPE — YOURS TO DECIDE, and this is what makes a page beautiful:',
+    '• SIZE: name it in POINTS with "fontPt". A real editorial scale is roughly — masthead 44–72pt, feature',
+    '  headline 28–48pt, deck 13–16pt, body 9.5–11pt, caption 8–9pt, kicker/label 8–10pt tracked. Body copy',
+    '  below 8pt cannot be read on paper and will be raised. Omit fontPt and a sensible default is used.',
+    '• LEADING: "lineHeight" 1.35–1.5 for body, 1.0–1.1 for large headlines (big type needs tighter leading).',
+    '• TRACKING + CAPS: `"caps":true, "tracking":2` on a kicker or label is the single device that most makes a',
+    '  page look designed rather than typed. Never track body copy.',
+    '• COLOUR: any "#rrggbb" you want, per leaf, plus "fill"/"opacity" on shapes and a "color" on the page',
+    '  background. Use restraint — one accent doing real work beats five. Ensure strong contrast: light type',
+    '  only over a dark photo/scrim/panel, dark type only on a light ground.',
+    '• Pair the fonts deliberately (display for headlines/figures/pull-quotes, body for everything else) and',
+    '  vary weightHint for hierarchy (800–900 headlines/figures, 700 kickers/labels, 400 body).',
     '',
-    'FILL THE PAGE — this is critical:',
-    '• The root must cover the whole page; never leave a large empty region. Use fr `weight`s that add up to',
-    '  a full, balanced page — a hero image should take a big share, body/columns the rest.',
+    `MEASURE BEFORE YOU COMMIT — the page is ${PAGE_W}×${PAGE_H}px (A4 at 150 DPI), so 1pt = 2.08px and`,
+    'px × 0.48 = pt. You are choosing boxes for real copy, so do the arithmetic:',
+    '• A line of body copy holds about (box width in px ÷ (0.5 × font size in px)) characters. Aim for 45–75',
+    '  characters a line; past 90 it is a wall of text. At 10pt (21px) that means a column 470–790px wide —',
+    `  i.e. a full-width ${PAGE_W}px page needs TWO columns for body copy, never one.`,
+    '• A paragraph of N characters needs about (N ÷ chars-per-line) lines, each (font size × lineHeight) tall.',
+    '  900 characters at 10pt in a 560px column ≈ 17 lines ≈ 360px of height. Give it that much, not a third of it.',
+    '• A headline of N characters at S points is about N × S × 1.1px wide on one line — if that exceeds your box,',
+    '  it will wrap, so plan the lines you want or keep it short.',
+    '• A QR and an icon are SQUARE: whatever box you give them, they render as the largest square that fits and',
+    '  the rest of that box is wasted.',
+    '',
+    'SPACE IS A MATERIAL, NOT A FAULT:',
+    '• The root covers the whole page, but empty space is allowed and often right — say it OUT LOUD with a',
+    '  "spacer" leaf (it takes its fr share and draws nothing). Roughly 15–30% of an interior page as',
+    '  deliberate air reads as designed; a page with no air reads as a leaflet. What is NOT allowed is',
+    '  ACCIDENTAL emptiness: a box far bigger than the thing inside it. Size boxes to their contents and put',
+    '  the space you want where you want it.',
     '• A photo-led page = a `stack` whose FIRST layer is a full-page image (contentRef "hero"), then a',
     '  shape scrim, then the text — so the image bleeds to the edges (no empty band around it).',
     '• Shapes BACK content, never blank space. A `shape` is valid only as (a) a scrim over a photo, (b) a thin',
@@ -1116,8 +1201,11 @@ async function artDirectPage(plan: GenPlan, page: GenPlanPage, pageNumber: numbe
         `Design a distinct, modern layout tree for a "${page.kind}" page.`,
         `Intent: ${page.intent}${page.sectionTitle ? ` (section: ${page.sectionTitle})` : ''}.`,
         archetypeSteer(page.kind, pageNumber),
+        // The remedy travels WITH the reason (see the hint sites in composeOnePageAI):
+        // a fixed "simplify it" tail here told the model to thin the very pages that
+        // had failed for being too thin.
         retryHint
-          ? `\nYOUR PREVIOUS LAYOUT FAILED THE QUALITY CHECK: ${retryHint}\nProduce a CORRECTED layout that specifically fixes that — give text enough room, use fewer/shorter leaves or a simpler tree, and make sure nothing overflows its box or overlaps. Do not repeat the same mistake.`
+          ? `\nYOUR PREVIOUS LAYOUT FAILED THE QUALITY CHECK: ${retryHint}.\nProduce a CORRECTED layout that fixes exactly that. Do not repeat the same mistake.`
           : '',
         'Return ONLY the JSON.',
       ].join('\n'),
@@ -1165,6 +1253,9 @@ async function composeOnePageAI(
   // copy + the template it was written against, so retries remap from it by role.
   let contentDraft: PageDraft | null = null;
   let contentTpl: PageTemplate | null = null;
+  // The best LEGAL page any attempt produced, ranked by how many measured flaws it has.
+  // Held so that asking for a better page can never end up costing us a working one.
+  let best: { page: ComposedPage; flaws: number; attempt: number; source: 'agent' | 'seed'; slots: number; density: Density } | null = null;
   for (let attempt = 1; attempt <= AI_LAYOUT_ATTEMPTS; attempt++) {
     pagePool.reset(); // every attempt reuses the same claimed photos, never fresh ones
     try {
@@ -1190,23 +1281,51 @@ async function composeOnePageAI(
       draft = ensureHeadline(draft, plan, page, pseudo);
       // Remember the (headline-ensured) fresh copy as the source for later remaps.
       if (draftedFresh) { contentDraft = draft; contentTpl = pseudo; }
-      const { page: aiPage, why } = await composeSpecToPage(spec, pseudo, draft, theme, ctx, pagePool);
-      if (aiPage && !isTooSparse(aiPage, page.kind)) {
-        console.log(`[magazineV2] page ${pageNumber}/${totalPages} "${page.kind}" → AI layout (attempt ${attempt}, spec: ${source}, ${pseudo.slots.length} slots, ${aiPage.elements.length} elements)`);
-        return aiPage;
+      const { page: aiPage, fit, why } = await composeSpecToPage(spec, pseudo, draft, theme, ctx, pagePool);
+      const density = aiPage ? sparsenessOf(aiPage, page.kind) : null;
+      // The measurements of what it just built. A clean page reports nothing; a page
+      // that is merely LEGAL still gets told that its headline shrank by half, that its
+      // QR is a quarter of the sheet, or that a column runs 120 characters wide.
+      const measured = fit ? fitHint(fit) : '';
+      const withMeasurements = (reason: string) => (measured ? `${reason}\n\n${measured}` : reason);
+
+      if (aiPage && density && !density.tooSparse) {
+        // A LEGAL page is never thrown away. Findings buy another ATTEMPT, not a
+        // fallback: keeping the best page seen and re-asking is the only version of
+        // this that can't make the issue worse, because the fixed-template path costs
+        // the whole page its design. (Requiring a clean report to accept a page sent
+        // essentially every page to the template — measured, then rejected.)
+        const flaws = fit ? seriousFlaws(fit) : 0;
+        if (!best || flaws < best.flaws) best = { page: aiPage, flaws, attempt, source, slots: pseudo.slots.length, density };
+        if (flaws === 0 || attempt >= AI_LAYOUT_ATTEMPTS || source === 'seed') break;
+        console.log(`[magazineV2] page ${pageNumber} "${page.kind}" attempt ${attempt} is legal but measured ${flaws} flaw(s) — re-asking with the measurements.`);
+        // The COPY is fine; it's the geometry that needs revising, so the draft is kept
+        // and re-flowed rather than re-written.
+        hint = withMeasurements(
+          'your layout was valid, but the page MEASURED badly. Fix exactly what the measurements below say, and change nothing else that was working',
+        );
+        continue;
       }
-      if (aiPage) {
+
+      if (aiPage && density) {
         // Too sparse: the page needs MORE substance, so draft FRESH copy for the
         // next (richer) layout instead of re-flowing the same thin copy — reuse is
         // only the right call when the copy was fine and the LAYOUT overflowed.
-        hint = 'the layout was too sparse — too few real content elements; fill the page with substantive content leaves';
+        hint = withMeasurements(densityHint(density, page.kind));
         contentDraft = null;
         contentTpl = null;
       } else {
-        hint = why; // a QA/overflow failure → keep the copy, re-solve the layout
+        // Each hint carries its OWN remedy. The retry wrapper used to append
+        // "use fewer/shorter leaves or a simpler tree" to every failure, which told
+        // the model to thin a page whose problem was that it was already too thin —
+        // and on a real run that turned an overflowing cover into a 1-element cover.
+        hint = withMeasurements(
+          `${why} — give that text enough room (a bigger share, or shorter copy, or a smaller size), ` +
+            `while keeping at least ${MIN_ELEMENTS[page.kind]} real content elements on the page`,
+        );
       }
       const spent = attempt >= AI_LAYOUT_ATTEMPTS;
-      console.warn(`[magazineV2] page ${pageNumber} "${page.kind}" AI layout attempt ${attempt}/${AI_LAYOUT_ATTEMPTS} failed (${aiPage ? 'too sparse' : `QA: ${why}`}) — ${spent ? 'using template path' : 'self-healing'}.`);
+      console.warn(`[magazineV2] page ${pageNumber} "${page.kind}" AI layout attempt ${attempt}/${AI_LAYOUT_ATTEMPTS} failed (${density ? `too sparse: ${density.meaningful}/${density.min}` : `QA: ${why}`}) — ${spent ? 'using template path' : 'self-healing'}.`);
       // A fixed SEED spec is deterministic — retrying it changes nothing, so don't
       // burn an attempt; drop to the template path now.
       if (source === 'seed') break;
@@ -1215,6 +1334,10 @@ async function composeOnePageAI(
       break;
     }
   }
+    if (best) {
+      console.log(`[magazineV2] page ${pageNumber}/${totalPages} "${page.kind}" → AI layout (attempt ${best.attempt}, spec: ${best.source}, ${best.slots} slots, ${best.page.elements.length} elements, ${best.density.meaningful}/${best.density.min} content, ${best.flaws} measured flaw(s))`);
+      return best.page;
+    }
     pagePool.reset(); // the template fallback reuses the same claimed photos, not fresh ones
     // `return await` so the finally below runs AFTER the fallback has claimed, not before.
     return await composeOnePageTemplate(plan, page, pageNumber, totalPages, ctx, sourceText, pagePool);
@@ -1387,6 +1510,10 @@ export async function generateMorePages(
     const OFFSET = 2_000_000;
     for (let i = 0; i < order.length; i++) await db.collection(COL.pages).updateOne(order[i]!, { index: OFFSET + i });
     for (let i = 0; i < order.length; i++) await db.collection(COL.pages).updateOne(order[i]!, { index: i });
+    // Inserting in the middle pushes every later page down, so the folios printed on
+    // the EXISTING pages are now wrong too — repair the whole issue, not just the
+    // new pages (which were stamped from `atIndex` before the splice).
+    await renumberFolios(order);
 
     const update: Record<string, unknown> = { status: restore, stage: '', processingError: '', pagesTotal: total, updatedAt: new Date().toISOString() };
     if (atIndex === 0 && composed[0]) update.coverImage = coverUrlOf(composed[0]);

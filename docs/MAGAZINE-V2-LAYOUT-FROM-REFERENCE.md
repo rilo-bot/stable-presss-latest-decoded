@@ -276,6 +276,64 @@ between the two ways in.
 exclusivity rule is a one-line guard repeated at each staging site and is visible in the diff;
 verification is a browser run.
 
+### THE COVER BUG — found by a real test run, 2026-08-12
+
+Uploading a magazine cover (masthead + teasers over a full-bleed photo) produced a page with the
+headline as a giant band through the MIDDLE, then reported **"loose interpretation (5%)"**. The
+reading was excellent — *"dominant masthead, top teasers, right-aligned cover line over a full-bleed
+photograph"* — so the fault was entirely downstream. **Three separate defects, all in the same
+blind spot: the reference's EMPTY SPACE is part of its design, and nothing in the pipeline believed
+that.**
+
+**1. `fr` weights cannot express emptiness.** They always fill their container — the solver only
+honours `justify` when *every* track is content-sized (`resolveMainSizes`: one fr track consumes the
+remainder, so `leftover` is 0). A cluster occupying the top 25% got weights summing to 25 and was
+stretched over the whole page. Fix: `partition` now carries the **rect it must fill**, and when one
+end is deliberately empty (`EMPTY_END`, 25% at ONE end) the children become content-sized with
+`justify` + `pad` — the idiom the art-director prompt already teaches for text over a photo.
+*Measured as the LARGER end, not the sum: 10% top + 10% bottom is a margin, and summing them made
+the first version content-size a perfectly ordinary page.*
+
+**2. `pruneSpec`'s FR-GUARANTEE undid it.** A start-packed container left with only content-sized
+children gets one promoted to `fr` so no strip trails uncovered — right for the generator, which
+must fill the page; catastrophic here. With one cover slot unfillable it stretched the **tagline over
+two thirds of the sheet**. Fix: `pruneLayoutSpec(spec, content, { keepWhitespace: true })`, set only
+by this path. The generator's behaviour is untouched.
+
+**3. An empty slot is not a small loss.** Because pruning deletes it and the page RE-PARTITIONS, one
+unfillable box threw away the whole arrangement. `reflowContent` now runs **two passes**: every slot
+takes its own role first, then genuinely spare copy fills what is left. Two passes and not one
+because filling opportunistically let an early headline slot steal the paragraph that `body`, two
+slots later, matched exactly. Terse slots (caption/label/byline/kicker) take the SHORTEST spare copy
+— a 300-word paragraph in a caption box is worse than an empty one.
+
+**Also: the summary was blaming the wrong element.** `worst` ranked by raw IoU, which is brutal on
+hairlines — a tagline 2% of the page tall landing 3% low scores zero while looking almost right. It
+now ranks by **contribution** (`(1 − iou) × area`), so the sentence names what actually cost the
+score.
+
+Same cover, after: **96% adapted**, masthead at y 0.09, every cluster line in the upper half, photo
+bleeding to all four edges. Locked in by an end-to-end test that asserts exactly that, plus five
+converter tests covering both sides of the `EMPTY_END` rule.
+
+### THE PAGE'S PHOTO IS ITS BACKGROUND — reported 2026-08-12
+
+*"it removes the existing images and only ruins the page."* Correct, and for a reason nothing in the
+reflow accounted for: **an imported page's photography is the page BACKGROUND, not an element.**
+`processPage` rasterises the page, erases the rendered glyphs, and stores the result as
+`background: { type: 'image', value: … }` — so a PDF page has real imagery and **zero image
+elements**. Two consequences, both destructive:
+
+1. `reflowContent` read only `elements`, so the hero slot went **empty** → pruned → the page
+   re-partitioned around the text. The arrangement was thrown away.
+2. `composeFromSolved` always returns a painted **colour**, and the route wrote it — **deleting the
+   photograph**, on an operation the user expected to rearrange their page rather than empty it.
+
+Fixed on both sides: the background image is now the **first** image candidate (it is by definition
+the biggest picture on the page), and a background image that nothing consumed is **kept** rather
+than painted over. Once the photo becomes a full-bleed element the colour is correct again, because
+the element covers it. Four tests, including both halves of that last distinction.
+
 **The bug the depth test caught:** `normalizeLayoutSpec` numbers the **root as depth 1** and drops
 anything past `MAX_TREE_DEPTH`, so a container emitted one level too deep doesn't fail loudly — it
 has **every leaf inside it silently deleted**. The first converter had that off by one and none of

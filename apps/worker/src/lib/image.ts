@@ -10,6 +10,7 @@
 // ---------------------------------------------------------------------------
 
 import sharp, { type OverlayOptions } from 'sharp';
+import { PAGE_W, PAGE_H } from '../../../server/src/lib/magazineV2/config.js';
 
 /** Re-encode a large photographic raster (page background / photo) to JPEG. */
 export async function toStoredJpeg(png: Buffer, opts: { quality?: number; maxWidth?: number } = {}): Promise<Buffer> {
@@ -53,8 +54,11 @@ export async function toStoredImportImage(
   const outMeta = await sharp(out.buffer).metadata();
   return {
     ...out,
-    width: outMeta.width ?? meta.width ?? 1275,
-    height: outMeta.height ?? meta.height ?? 1650,
+    // Last-resort dims when sharp can read neither the output's nor the input's
+    // metadata. Imported from the server's canonical page box rather than restated,
+    // so this can't quietly keep asserting a sheet size the builder has moved off.
+    width: outMeta.width ?? meta.width ?? PAGE_W,
+    height: outMeta.height ?? meta.height ?? PAGE_H,
   };
 }
 

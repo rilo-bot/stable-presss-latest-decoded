@@ -40,6 +40,8 @@ import { MAX_ELEMENTS_PER_PAGE, type MagazineElement } from '../../lib/magazineV
 import { isAgentConfigured } from '../../lib/agent/provider.js';
 import { storage } from '../../lib/storage.js';
 import { enqueueJob } from '../../lib/magazineV2/jobs.js';
+import { renumberFolios } from '../../lib/magazineV2/renumberFolios.js';
+import { FURNITURE_IDS } from '../../lib/magazineV2/pageFurniture.js';
 import { runPageAgent } from '../../lib/magazineV2/agent.js';
 import { formatPageText, charGuideFor } from '../../lib/magazineV2/format.js';
 import { readLayoutImage } from '../../lib/magazineV2/readLayout.js';
@@ -162,6 +164,11 @@ function pageDims(p: Doc): { width: number; height: number } {
  * Write a new page order two-phase (park all at a high offset, then land each at
  * its final 0..n-1 index) so it's safe even if a unique {magazineId,index} index
  * is added later. Callers run this inside withIssueLock so it can't interleave.
+ *
+ * Every structural op (insert blank, duplicate, delete, reorder) lands here, which
+ * is why the folio repair lives here too: a generated page's printed page number
+ * is an element, so moving the page would otherwise leave it printing its old
+ * number. See lib/magazineV2/renumberFolios.ts.
  */
 async function writeOrder(orderedIds: string[]): Promise<void> {
   const OFFSET = 1_000_000;
@@ -171,6 +178,7 @@ async function writeOrder(orderedIds: string[]): Promise<void> {
   for (let i = 0; i < orderedIds.length; i++) {
     await db.collection(COL.pages).updateOne(orderedIds[i]!, { index: i });
   }
+  await renumberFolios(orderedIds);
 }
 
 function slugify(title: string): string {
@@ -1977,9 +1985,14 @@ router.post('/issues/:id/pages/:pageId/duplicate', async (req, res) => {
     if (pages.length >= MAX_PAGES_PER_ISSUE) return { status: 409, error: `A magazine can have at most ${MAX_PAGES_PER_ISSUE} pages.` };
     const src = pages[srcIdx]!;
     const now = new Date().toISOString();
-    // Strip element ids so normalizeElements assigns fresh ones (also re-validates).
+    // Strip element ids so normalizeElements assigns fresh ones (also re-validates)
+    // — EXCEPT page furniture, whose ids are the handle writeOrder re-numbers the
+    // folio by. Ids only have to be unique within a page, so keeping them on a copy
+    // is safe; regenerating them would freeze the duplicate's page number forever.
     const freshEls = normalizeElements(
-      (Array.isArray(src.elements) ? src.elements : []).map((e: MagazineElement) => ({ ...e, id: undefined })),
+      (Array.isArray(src.elements) ? src.elements : []).map((e: MagazineElement) =>
+        FURNITURE_IDS.includes(e.id) ? { ...e } : { ...e, id: undefined },
+      ),
       pageDims(src),
     );
     const newId = await db.collection(COL.pages).insertOne({

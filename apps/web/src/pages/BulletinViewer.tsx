@@ -30,22 +30,24 @@ import { toast } from 'sonner';
 
 /**
  * Fallback page dims when an issue somehow carries none — the canonical generated
- * page (US Letter portrait at 150 DPI), matching PAGE_W/PAGE_H in the server's
- * magazineV2 config. Uploaded pages carry whatever size the extractor produced, so
- * NOTHING here may assume a fixed sheet.
+ * page (**A4 portrait at 150 DPI**), matching PAGE_W/PAGE_H in the server's
+ * magazineV2 config. Uploaded pages, and pages generated before the switch to A4,
+ * carry whatever size they were made at, so NOTHING here may assume a fixed sheet:
+ * every page is measured from its own box (see pageBox / pageInches).
  */
-const FALLBACK_W = 1275;
-const FALLBACK_H = 1650;
+const FALLBACK_W = 1240;
+const FALLBACK_H = 1754;
 
 /**
- * DPI the page pixels are measured at. Generated pages are US Letter at 150 DPI
- * (1275×1650), and the PDF extractor rasterises uploads at the same 150
+ * DPI the page pixels are measured at. Generated pages are A4 at 150 DPI
+ * (1240×1754), and the PDF extractor rasterises uploads at the same 150
  * (`RENDER_DPI` in apps/worker/src/lib/pdf.ts), so one constant converts either
- * kind of page to a physical size.
+ * kind of page to a physical size — including older Letter-sized pages, which is
+ * why this is a DPI and not a sheet.
  *
  * This matters because a browser treats a bare `px` as a CSS pixel — 1/96 inch —
- * so printing a 1275px-wide box lands on a 13.3-inch sheet. Divide by 150 instead
- * and it lands on the 8.5 inches the page was designed as.
+ * so printing a 1240px-wide box lands on a 12.9-inch sheet. Divide by 150 instead
+ * and it lands on the 8.27 inches the page was designed as.
  */
 const RASTER_DPI = 150;
 

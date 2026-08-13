@@ -12,6 +12,11 @@ import assert from 'node:assert/strict';
 import { readingToSpec, specContentRefs } from '../../src/lib/magazineV2/readingToSpec.ts';
 import { normalizeLayoutSpec, MAX_TREE_DEPTH, MAX_LEAVES, MAX_CHILDREN } from '../../src/lib/magazineV2/layoutSpec.ts';
 import { normalizeLayoutReading, type LayoutReading, type ReadRegion } from '../../src/lib/magazineV2/layoutReading.ts';
+import { pruneLayoutSpec } from '../../src/lib/magazineV2/pruneSpec.ts';
+import { solveLayout } from '../../src/lib/magazineV2/solveLayout.ts';
+import { makeMeasureLeaf } from '../../src/lib/magazineV2/measureLeaf.ts';
+import { PAGE_H, PAGE_W } from '../../src/lib/magazineV2/config.ts';
+import type { ResolvedContent } from '../../src/lib/magazineV2/composeFromSolved.ts';
 import type { LayoutNode } from '../../src/lib/magazineV2/layoutSpec.ts';
 
 /** The converter returns the spec AND where each slot came from (P3 needs that
@@ -88,7 +93,79 @@ test('band weights carry the reference proportions, not a guess', () => {
   assert.deepEqual(ws, [60, 40]);
 });
 
-test('every band is fr-weighted — content-sizing would discard the proportions', () => {
+test('a cluster with an EMPTY half is content-sized and pushed to its end', () => {
+  // The cover shape. fr weights always fill their container, so bands covering the top
+  // quarter would be stretched down the whole page — the bug that put a magazine
+  // masthead across the middle of the sheet. Content-sizing is what gives the solver
+  // leftover to leave empty, and `justify` is what decides which end keeps it.
+  const spec = toSpec(read([
+    { role: 'kicker', box: box(0.1, 0.03, 0.8, 0.03) },
+    { role: 'headline', box: box(0.08, 0.09, 0.84, 0.1) },
+    { role: 'subhead', box: box(0.3, 0.21, 0.4, 0.03) },
+  ]));
+  assert.ok(spec);
+  assert.equal(spec.root.kind, 'col');
+  if (spec.root.kind !== 'col') return;
+  assert.deepEqual(spec.root.children.map((c) => c.sizing), ['content', 'content', 'content']);
+  assert.equal(spec.root.justify, 'start', 'the cluster belongs at the top, where it was');
+  assert.notEqual(spec.root.pad, undefined, 'and the margin above it is kept');
+});
+
+test('a cluster in the MIDDLE keeps its empty space at both ends', () => {
+  const spec = toSpec(read([
+    { role: 'headline', box: box(0.1, 0.4, 0.8, 0.08) },
+    { role: 'subhead', box: box(0.1, 0.5, 0.8, 0.05) },
+  ]));
+  assert.ok(spec);
+  assert.equal(spec.root.kind, 'col');
+  if (spec.root.kind !== 'col') return;
+  assert.equal(spec.root.justify, 'center');
+});
+
+test('ordinary MARGINS are not empty space — those bands still fill the page', () => {
+  // 10% clear at the top and 10% at the bottom is a margin, not a design decision.
+  // Summing the two ends (rather than taking the larger) is what made the first
+  // version of this rule content-size a perfectly normal page.
+  const spec = toSpec(read([
+    { role: 'headline', box: box(0.1, 0.1, 0.8, 0.1) },
+    { role: 'body', box: box(0.1, 0.25, 0.8, 0.65) },
+  ]));
+  assert.ok(spec);
+  assert.equal(spec.root.kind, 'col');
+  if (spec.root.kind !== 'col') return;
+  assert.deepEqual(spec.root.children.map((c) => c.sizing), ['fr', 'fr']);
+  assert.equal(spec.root.justify, undefined);
+});
+
+test('short text takes the alignment its POSITION implies', () => {
+  // The cross axis cannot be expressed structurally — a band always spans the full
+  // width — so a cover line that sat on the right becomes right-aligned text in a
+  // full-width box, which looks the same.
+  const spec = toSpec(read([
+    { role: 'image', box: box(0, 0, 1, 0.6) },
+    { role: 'headline', box: box(0.55, 0.65, 0.4, 0.1) },
+    { role: 'caption', box: box(0.05, 0.8, 0.3, 0.05) },
+  ]));
+  assert.ok(spec);
+  const byRole = new Map(leaves(spec.root).map((l) => [l.kind === 'leaf' ? l.role : '', l]));
+  const head = byRole.get('headline');
+  const cap = byRole.get('caption');
+  assert.equal(head?.kind === 'leaf' ? head.align : undefined, 'right');
+  assert.equal(cap?.kind === 'leaf' ? cap.align : undefined, 'left');
+});
+
+test('PROSE is never realigned by position — a right-hand column stays left-aligned', () => {
+  const spec = toSpec(read([
+    { role: 'body', box: box(0.05, 0.1, 0.4, 0.8) },
+    { role: 'body', box: box(0.55, 0.1, 0.4, 0.8) },
+  ]));
+  assert.ok(spec);
+  for (const l of leaves(spec.root)) {
+    assert.equal(l.kind === 'leaf' ? l.align : undefined, undefined, 'right-aligned paragraphs look broken');
+  }
+});
+
+test('every band is fr-weighted when they fill the space — content-sizing would discard the proportions', () => {
   const spec = toSpec(read([
     { role: 'headline', box: box(0.1, 0.1, 0.8, 0.1) },
     { role: 'body', box: box(0.1, 0.3, 0.8, 0.6) },
@@ -123,7 +200,18 @@ test('a scrim between photo and text stays a backing layer', () => {
   assert.equal(spec.root.kind, 'stack');
   if (spec.root.kind !== 'stack') return;
   assert.equal(spec.root.layers.length, 3);
-  assert.deepEqual(roles(spec.root), ['image', 'shape', 'headline']);
+  // A scrim is decorative backing whatever its measured size, so it stays a layer — only
+  // PHOTOGRAPHS are size-tested, because a layer is handed the whole rectangle and an inset
+  // photo blown up to full bleed hides the hero underneath it.
+  assert.equal(spec.root.layers[0]!.kind, 'leaf');
+  assert.equal(spec.root.layers[1]!.kind, 'leaf');
+  // The headline sat at y 0.7, and a stack layer gets the WHOLE rectangle — so the content
+  // layer is a col that holds it down there with a spacer, rather than a bare leaf stretched
+  // over the entire page.
+  assert.equal(spec.root.layers[2]!.kind, 'col', 'the single line is positioned, not stretched');
+  // A spacer either side: the line sat at y 0.70–0.85, so there is empty space above it AND
+  // below it, and both are part of where it sits.
+  assert.deepEqual(roles(spec.root), ['image', 'shape', 'spacer', 'headline', 'spacer']);
 });
 
 test('NEVER two text layers on one rectangle', () => {
@@ -299,4 +387,96 @@ test('specContentRefs reaches leaves inside stacks', () => {
   const refs = specContentRefs(spec);
   assert.equal(refs.length, 2);
   assert.deepEqual(refs.map((r) => r.role).sort(), ['headline', 'image']);
+});
+
+// ── The cover bug, as a FAMILY (docs/MAGAZINE-V2-BUILDER-PLAN.md §11.1) ───────
+//
+// A cluster of type in the top quarter of a full-bleed photo was stretched over the whole
+// page three separate times, each fix escaping somewhere new. The DSL simply had no way to
+// say "this space is empty on purpose": `justify` is honoured only when every track is
+// content-sized, content sizing is a no-op on image/qr/icon leaves, and `pad` stops at 96px
+// while a half-empty page needs ~1,200. These four tests are the four shapes that reached
+// the escape, so the family is covered rather than the example.
+
+/** Every leaf's fraction-of-page box after a real solve. */
+const solvedBoxes = (regions: Parameters<typeof read>[0], margin = 'none') => {
+  const spec = normalizeLayoutSpec(toSpec(read(regions, { margin: margin as never }))!)!;
+  const content: ResolvedContent = {};
+  for (const s of specContentRefs(spec)) {
+    content[s.ref] = s.role === 'image'
+      ? { image: { url: 'https://x/p.jpg', assetId: 'a', alt: '' } }
+      : { text: 'A Line Of Type' };
+  }
+  const pruned = pruneLayoutSpec(spec, content, { keepWhitespace: true })!;
+  const solved = solveLayout(pruned, { width: PAGE_W, height: PAGE_H }, {
+    measureLeaf: makeMeasureLeaf(content, { display: 'Playfair Display, serif', body: 'Inter, Arial, sans-serif' }),
+  });
+  return solved.leaves
+    .filter((l) => l.node.role !== 'spacer')
+    .map((l) => ({ role: l.node.role, y: l.box.y / PAGE_H, h: l.box.h / PAGE_H }));
+};
+
+/** Nothing that is not the photo may reach below this — the cluster is in the top third. */
+const assertClustered = (boxes: { role: string; y: number; h: number }[], where: string) => {
+  for (const b of boxes) {
+    if (b.role === 'image') continue;
+    assert.ok(b.h <= 0.3, `${where}: a ${b.role} box is ${(b.h * 100).toFixed(0)}% of the page tall`);
+    assert.ok(b.y + b.h <= 0.55, `${where}: a ${b.role} ends at ${((b.y + b.h) * 100).toFixed(0)}% — it left the cluster`);
+  }
+};
+
+test('ENTRANCE 1 — one line of type over a full-bleed photo keeps its place', () => {
+  // `stackFor` used to short-circuit to a bare leaf when there was exactly one content
+  // region, and a stack layer is handed the whole rectangle: the title of a cover became a
+  // page-height text box. This is the single commonest magazine idiom there is.
+  const boxes = solvedBoxes([
+    { role: 'image', box: box(0, 0, 1, 1) },
+    { role: 'headline', box: box(0.08, 0.78, 0.6, 0.12) },
+  ]);
+  const headline = boxes.find((b) => b.role === 'headline')!;
+  assert.ok(headline.h <= 0.3, `the headline is ${(headline.h * 100).toFixed(0)}% of the page tall`);
+  assert.ok(headline.y > 0.5, `it sat at y 0.78 and came out at ${headline.y.toFixed(2)} — it must stay low`);
+});
+
+test('ENTRANCE 2 — a SIDE-BY-SIDE pair in the cluster (the reported bug)', () => {
+  // An issue number and a price beside each other make that band a CONTAINER, and content
+  // sizing is ignored for containers, so `justify` stopped working and the cluster stretched.
+  // Measured before the fix: the masthead came out 1060px tall on a 1650px page.
+  assertClustered(solvedBoxes([
+    { role: 'image', box: box(0, 0, 1, 1) },
+    { role: 'headline', box: box(0.08, 0.04, 0.84, 0.08) },
+    { role: 'kicker', box: box(0.08, 0.15, 0.34, 0.04) },
+    { role: 'label', box: box(0.58, 0.15, 0.34, 0.04) },
+  ]), 'side-by-side pair');
+});
+
+test('ENTRANCE 3 — an IMAGE inside the cluster', () => {
+  // `sizing:'content'` is a no-op on an image leaf (measureLeaf returns null for anything
+  // that is not text), so one small photo among the type took an fr share and swallowed the
+  // whole empty half.
+  const boxes = solvedBoxes([
+    { role: 'image', box: box(0, 0, 1, 1) },
+    { role: 'headline', box: box(0.08, 0.04, 0.84, 0.08) },
+    { role: 'image', box: box(0.35, 0.15, 0.3, 0.06) },
+  ]);
+  assertClustered(boxes, 'image in the cluster');
+  // …and the INSET photo is the thing that swallowed it, so it has to be checked by name.
+  // assertClustered skips images (the full-bleed hero is legitimately page-height), which
+  // made the first version of this test pass with the bug re-planted.
+  const inset = boxes.filter((b) => b.role === 'image').sort((a, b) => a.h - b.h)[0]!;
+  assert.ok(inset.h <= 0.3, `the inset photo is ${(inset.h * 100).toFixed(0)}% of the page tall`);
+  assert.ok(inset.y + inset.h <= 0.55, `it ends at ${((inset.y + inset.h) * 100).toFixed(0)}% — it left the cluster`);
+});
+
+test('ENTRANCE 4 — an inset photo is not blown up to full bleed over the hero', () => {
+  // Every layer of a stack gets the whole rectangle, so a photo covering a third of the
+  // reference came out full-bleed ON TOP of the hero and hid it.
+  const boxes = solvedBoxes([
+    { role: 'image', box: box(0, 0, 1, 1) },
+    { role: 'image', box: box(0.1, 0.55, 0.5, 0.3) },
+    { role: 'headline', box: box(0.08, 0.1, 0.84, 0.1) },
+  ]);
+  const images = boxes.filter((b) => b.role === 'image');
+  assert.equal(images.length, 2, 'both photos are on the page');
+  assert.equal(images.filter((i) => i.h > 0.9).length, 1, 'exactly ONE photo is full-bleed');
 });

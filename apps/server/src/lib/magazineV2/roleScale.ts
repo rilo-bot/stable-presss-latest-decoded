@@ -10,11 +10,26 @@
 // Font sizes here are CEILINGS at the canonical page scale; fitFontSize only ever
 // shrinks from them, so they are never forced to overflow.
 //
+// These are now DEFAULTS, not the law: a leaf may name its own `fontPt` and the
+// art-director's number wins (see composeFromSolved). This table is what a role
+// gets when nobody decided — which keeps every existing spec, seed and template
+// rendering exactly as before.
+//
 // Pure data — no DOM, no LLM, no I/O.
 // ---------------------------------------------------------------------------
 
 import type { TextRole } from './model.js';
+import { PAGE_DPI } from './config.js';
 import type { ColorRef, FontRef, TextAlignToken } from './layoutSpec.js';
+
+/**
+ * Points ↔ page pixels. The page is rendered at 150 DPI, so 1pt (1/72 in) is
+ * 150/72 ≈ 2.083px and `pt = px × 0.48`. Every size the art-director names is in
+ * POINTS, because that is the only unit in which "too small to read on paper" means
+ * anything — a 14px body looks reasonable in a code review and prints at 6.7pt.
+ */
+export const ptToPx = (pt: number): number => (pt * PAGE_DPI) / 72;
+export const pxToPt = (px: number): number => (px * 72) / PAGE_DPI;
 
 export interface RoleStyle {
   maxFontSize: number;

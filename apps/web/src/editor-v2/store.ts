@@ -733,6 +733,19 @@ export const useEditorStore = create<EditorState>((set, get) => ({
     if (!s.issueId || !s.page || s.layoutBusy) return null;
     const issueId = s.issueId;
     const pageId = s.page.id;
+    // THE CONFIRM LIVES HERE, not in the panel that used to own it. A rebuild replaces
+    // every element and the undo stack cannot cover it, and there are two ways to reach
+    // it: the reference panel and the assistant staging `apply-layout` in chat. With the
+    // confirm in the component, the chat path rebuilt the page with no warning while a
+    // comment down in applyAllProposals claimed the confirm was shared. It names the
+    // PAGE, too: from chat you may not be looking at the page you are about to replace.
+    const n = s.pages.findIndex((p) => p.id === pageId) + 1;
+    const where = n > 0 ? `page ${n}` : 'this page';
+    const count = s.page.elements.length;
+    const ok = window.confirm(
+      `Rearrange ${where} into that layout?\n\n${count} item${count === 1 ? '' : 's'} will move into the new structure. Your words and photos are kept, but the current arrangement cannot be brought back with undo.`,
+    );
+    if (!ok) return null;
     set({ layoutBusy: true });
     try {
       const { page, leftOver, fidelity, warning } = await api.applyLayoutToPage(issueId, pageId, { rev: s.page.rev, reading });
@@ -1108,9 +1121,9 @@ export const useEditorStore = create<EditorState>((set, get) => ({
         toast.error('That layout could not be applied — ask the assistant to read the image again.');
         return;
       }
-      // Straight through the same store action the panel uses: one apply path means
-      // the confirm, the undo-stack clear, the thumbnail refresh and the measured
-      // verdict can't drift between the two ways of reaching it.
+      // Straight through the same store action the panel uses, and the confirm now
+      // genuinely lives in there — this comment used to claim a shared confirm while the
+      // only one was in LayoutReference.tsx, so a chat rebuild asked nothing at all.
       await get().applyLayout(reading);
       return;
     }

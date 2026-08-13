@@ -85,22 +85,20 @@ export function LayoutReference() {
   const issueId = useEditorStore((s) => s.issueId);
   const currentPageId = useEditorStore((s) => s.currentPageId);
   const layoutBusy = useEditorStore((s) => s.layoutBusy);
-  const elementCount = useEditorStore((s) => s.page?.elements.length ?? 0);
   const fileRef = useRef<HTMLInputElement | null>(null);
   const [busy, setBusy] = useState(false);
   const [shot, setShot] = useState<{ url: string; reading: LayoutReading; warning: string } | null>(null);
   const [fidelity, setFidelity] = useState<api.LayoutFidelity | null>(null);
 
   /**
-   * Confirm before rebuilding. This replaces every element on the page and the undo
-   * stack does not cover it, so it is the one action here that needs a "yes" — and
-   * the prompt says how much is at stake by counting what is on the page now.
+   * The confirm lives in `store.applyLayout`, NOT here.
+   *
+   * It used to be in this component, which meant the CHAT path — the assistant staging
+   * `apply-layout` from "make this page look like the image" — rebuilt the page with no
+   * confirmation at all, while a comment in the store claimed the confirm was shared
+   * between both ways in. One irreversible action, one place that asks.
    */
   const apply = async (reading: LayoutReading) => {
-    const ok = window.confirm(
-      `Rearrange this page into that layout?\n\n${elementCount} item${elementCount === 1 ? '' : 's'} will move into the new structure. Your words and photos are kept, but the current arrangement cannot be brought back with undo.`,
-    );
-    if (!ok) return;
     const measured = await useEditorStore.getState().applyLayout(reading);
     // The reading STAYS on success, with its measured result beside it. Two reasons:
     // the user can see how close it came while looking at the page it produced, and
@@ -198,7 +196,11 @@ export function LayoutReference() {
               {[shot.reading.palette.primary, shot.reading.palette.secondary, shot.reading.palette.accent].map((c) => (
                 <span key={c} className="h-3 w-3 rounded-sm border border-studio-edge" style={{ background: c }} title={c} />
               ))}
-              <span>· kept out of your palette unless you ask</span>
+              {/* Says what HAPPENS, not what could. This used to read "kept out of your
+                  palette unless you ask" — and there is no way to ask: nothing anywhere
+                  applies a reference's palette. Offering a capability that does not
+                  exist is worse than not reading the colours at all. */}
+              <span>· not used — this page keeps its own colours</span>
             </div>
           )}
 

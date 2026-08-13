@@ -15,6 +15,7 @@
 // ---------------------------------------------------------------------------
 
 import puppeteer, { type Browser } from 'puppeteer'
+import { PAGE_W, PAGE_H } from './magazineV2/config.js'
 
 // Reuse ONE browser across requests — launching Chromium costs ~300ms+ and a
 // lot of memory, so a per-request launch would be both slow and wasteful.
@@ -121,18 +122,21 @@ export interface SheetSize {
 }
 
 /**
- * Canonical generated page — US Letter portrait at 150 DPI. Mirrors PAGE_W/PAGE_H
- * in lib/magazineV2/config.ts. Only a fallback: an UPLOADED page carries whatever
- * size the extractor rasterised, so the caller passes the issue's real dims.
+ * Canonical generated page — A4 portrait at 150 DPI, IMPORTED from
+ * lib/magazineV2/config.ts rather than restated, because a mirrored literal here is
+ * how this file once printed every page onto the retired v1 builder's sheet. Only a
+ * fallback: an UPLOADED page carries whatever size the extractor rasterised, and
+ * pages generated before the switch to A4 carry theirs, so the caller passes the
+ * issue's real dims.
  */
-const DEFAULT_SHEET: SheetSize = { width: 1275, height: 1650 }
+const DEFAULT_SHEET: SheetSize = { width: PAGE_W, height: PAGE_H }
 
 /**
- * DPI those page pixels are measured at. Generated pages are US Letter at 150 DPI;
- * the extractor rasterises uploads at the same 150 (`RENDER_DPI` in
+ * DPI those page pixels are measured at. Generated pages are A4 at 150 DPI; the
+ * extractor rasterises uploads at the same 150 (`RENDER_DPI` in
  * apps/worker/src/lib/pdf.ts). Chromium reads a bare `px` as a CSS pixel (1/96in),
- * so asking for 1275px of paper yields a 13.3-inch sheet — the right shape at an
- * unusable size. Dividing by 150 asks for the 8.5 inches the page was designed as.
+ * so asking for 1240px of paper yields a 12.9-inch sheet — the right shape at an
+ * unusable size. Dividing by 150 asks for the 8.27 inches the page was designed as.
  *
  * Mirrored by RASTER_DPI in apps/web/src/pages/BulletinViewer.tsx, which sizes the
  * `@page` box the same way for native browser printing.

@@ -18,9 +18,9 @@
 
 import { fitFontSize, readableColor } from './layout.js';
 import type { GenPalette, GenFonts } from './templates.js';
-import type { ColorRef, LeafRole } from './layoutSpec.js';
+import { MIN_DISPLAY_PT, MIN_PROSE_PT, PROSE_ROLES, type ColorRef, type LeafNode, type LeafRole } from './layoutSpec.js';
 import type { SolvedLayout, SolvedLeaf, Rect } from './solveLayout.js';
-import { ROLE_SCALE, TEXT_ROLES } from './roleScale.js';
+import { ROLE_SCALE, TEXT_ROLES, ptToPx } from './roleScale.js';
 
 const HEX_RE = /^#[0-9a-fA-F]{6}$/;
 
@@ -45,6 +45,37 @@ function paletteColor(palette: GenPalette, ref: ColorRef | undefined, fallback: 
   if (!ref) return fallback;
   const v = palette[ref];
   return typeof v === 'string' && HEX_RE.test(v) ? v : fallback;
+}
+
+/** The colour a leaf asked for: an exact hex outranks a palette slot, which outranks
+ *  the role's default. The palette is a convenience, never a cage. */
+function leafColor(node: LeafNode, palette: GenPalette, refFallback: ColorRef | undefined, fallback: string): string {
+  if (node.color && HEX_RE.test(node.color)) return node.color;
+  return paletteColor(palette, node.colorRef ?? refFallback, fallback);
+}
+
+/**
+ * The type size for a text leaf, in page px.
+ *
+ * The art-director's `fontPt` wins; the role's ceiling is only the default. Both are
+ * then handed to `fitFontSize` as a CEILING, so an over-ambitious size still shrinks
+ * to its box rather than overflowing — the AI decides the intent, the measurement
+ * decides what actually fits.
+ *
+ * The floor is the one thing the AI does not get to choose, and it is not taste: at
+ * 150 DPI a 14px body is 6.7pt, which is smaller than a passport's fine print.
+ */
+export function typeSizeFor(node: LeafNode, role: LeafRole, scale: { maxFontSize: number; minFontSize: number }): { max: number; min: number } {
+  const floorPt = PROSE_ROLES.has(role) ? MIN_PROSE_PT : MIN_DISPLAY_PT;
+  const floor = ptToPx(floorPt);
+  // NO DECISION → the role default, UNTOUCHED. The existing floors sit under the print
+  // floor (body 14px = 6.7pt, caption 12px = 5.8pt) and raising them is Phase 3's job
+  // for a measured reason: without fit-aware authoring, a higher floor converts
+  // shrink-to-fit into overflow and multiplies QA failures. Applying it only where the
+  // art-director opted in means the new power is safe and nothing else moves.
+  if (node.fontPt === undefined) return { max: scale.maxFontSize, min: scale.minFontSize };
+  const asked = ptToPx(node.fontPt);
+  return { max: Math.max(asked, floor), min: floor };
 }
 
 /** Shift a hex colour toward black (amt<0) or white (amt>0), amt in [-1,1]. */
@@ -119,6 +150,11 @@ function buildElement(leaf: SolvedLeaf, fill: LeafFill | undefined, theme: { pal
   const { palette, fonts } = theme;
   const role = node.role as LeafRole;
 
+  // Deliberate emptiness. The solver has already given it its share of the track, which
+  // is the entire job — there is nothing to draw, and drawing anything (even a
+  // transparent box) would put a click target over the page's whitespace.
+  if (role === 'spacer') return null;
+
   if (role === 'image') {
     if (fill?.image?.url) {
       return { ...base, type: 'image', image: { assetId: fill.image.assetId, url: fill.image.url, alt: fill.image.alt, fit: node.fit ?? 'cover' } };
@@ -130,19 +166,35 @@ function buildElement(leaf: SolvedLeaf, fill: LeafFill | undefined, theme: { pal
   }
 
   if (role === 'shape') {
-    // A scrim over a photo → translucent dark wash (legible text, picture visible).
-    if (isScrim) return { ...base, type: 'shape', shape: { fill: SCRIM_FILL, opacity: SCRIM_OPACITY } };
-    const f = fill?.shapeFill && HEX_RE.test(fill.shapeFill) ? fill.shapeFill : paletteColor(palette, node.colorRef, palette.primary);
-    return { ...base, type: 'shape', shape: { fill: f } };
+    // A scrim over a photo → a wash the text can be read through. How dark, and what
+    // colour, is now the art-director's call; these constants are only the default.
+    if (isScrim) {
+      return {
+        ...base,
+        type: 'shape',
+        shape: { fill: node.fill ?? paletteColor(palette, node.colorRef, SCRIM_FILL), opacity: node.opacity ?? SCRIM_OPACITY },
+      };
+    }
+    const f = node.fill ?? (fill?.shapeFill && HEX_RE.test(fill.shapeFill) ? fill.shapeFill : paletteColor(palette, node.colorRef, palette.primary));
+    return { ...base, type: 'shape', shape: { fill: f, ...(node.opacity !== undefined ? { opacity: node.opacity } : {}) } };
   }
 
   if (role === 'qr') {
     const url = fill?.qrUrl ?? '';
     if (!url) return null;
-    return { ...base, type: 'qr', qr: { url, fg: palette.text, bg: palette.bg } };
+    // A QR CODE IS SQUARE — that is physics, not preference. Given a 1200×160 band it
+    // used to become a 1200×160 element with a small glyph adrift in the middle: over a
+    // thousand pixels of invisible, selectable dead space at the foot of the page.
+    // The element is now the largest square that fits, centred in the box it was given.
+    const side = Math.max(1, Math.min(box.w, box.h));
+    const sq = { x: box.x + Math.round((box.w - side) / 2), y: box.y + Math.round((box.h - side) / 2), w: side, h: side };
+    return { ...base, ...sq, type: 'qr', qr: { url, fg: node.color ?? palette.text, bg: palette.bg } };
   }
 
   if (role === 'icon') {
+    // A glyph is square too — same reasoning as the QR above.
+    const side = Math.max(1, Math.min(box.w, box.h));
+    const sq = { x: box.x + Math.round((box.w - side) / 2), y: box.y + Math.round((box.h - side) / 2), w: side, h: side };
     const icon: Record<string, unknown> = {};
     // The glyph name is authored by the art-director ON THE LEAF (node.iconName);
     // a curated content fill can still override it. Unknown/absent → the model's
@@ -152,9 +204,11 @@ function buildElement(leaf: SolvedLeaf, fill: LeafFill | undefined, theme: { pal
     if (fill?.iconSrc) icon.src = fill.iconSrc;
     // Icons read best in the accent colour on a light page (as in premium refs);
     // an explicit colorRef wins, and contrast is repaired against what's behind.
-    const desired = fill?.iconColor && HEX_RE.test(fill.iconColor) ? fill.iconColor : paletteColor(palette, node.colorRef ?? 'accent', palette.accent);
+    const desired = node.color ?? (fill?.iconColor && HEX_RE.test(fill.iconColor) ? fill.iconColor : paletteColor(palette, node.colorRef ?? 'accent', palette.accent));
+    // Contrast-repaired against what sits behind it. A purple outline icon on a purple
+    // field is not a colour scheme, it is an invisible icon.
     icon.color = readableColor(desired, behind, palette.accent, palette.text);
-    return { ...base, type: 'icon', icon };
+    return { ...base, ...sq, type: 'icon', icon };
   }
 
   // text roles
@@ -164,17 +218,25 @@ function buildElement(leaf: SolvedLeaf, fill: LeafFill | undefined, theme: { pal
   const fontFamily = (node.fontRef ?? scale.fontRef) === 'display' ? fonts.display : fonts.body;
   const fontWeight = node.weightHint ?? scale.fontWeight;
   const align = node.align ?? scale.align;
+  const lineHeight = node.lineHeight ?? scale.lineHeight;
+  const tracking = node.tracking;
+  const textTransform = node.caps ? 'uppercase' : undefined;
+  const size = typeSizeFor(node, role, scale);
   const fontSize = fitFontSize({
     text: content,
     boxW: box.w,
     boxH: box.h,
-    maxFontSize: scale.maxFontSize,
-    minFontSize: scale.minFontSize,
-    lineHeight: scale.lineHeight,
+    maxFontSize: size.max,
+    minFontSize: size.min,
+    lineHeight,
     fontFamily,
     fontWeight,
+    // Tracking and capitals both change how wide the copy runs, so the fit has to see
+    // them — otherwise a tracked all-caps label measures short and then overflows.
+    ...(tracking !== undefined ? { letterSpacing: tracking } : {}),
+    ...(textTransform ? { textTransform } : {}),
   });
-  const desired = paletteColor(palette, node.colorRef ?? scale.colorRef, palette.text);
+  const desired = leafColor(node, palette, scale.colorRef, palette.text);
   const color = readableColor(desired, behind, palette.bg, palette.text);
   return {
     ...base,
@@ -184,12 +246,14 @@ function buildElement(leaf: SolvedLeaf, fill: LeafFill | undefined, theme: { pal
       role: scale.textRole,
       fontFamily,
       fontSize,
-      maxFontSize: scale.maxFontSize,
+      maxFontSize: size.max,
       fontWeight,
       color,
       align,
-      lineHeight: scale.lineHeight,
+      lineHeight,
       autoFit: 'shrink',
+      ...(tracking !== undefined ? { letterSpacing: tracking } : {}),
+      ...(textTransform ? { textTransform } : {}),
     },
   };
 }
@@ -204,7 +268,10 @@ export function composeFromSolved(
   content: ResolvedContent,
   theme: { palette: GenPalette; fonts: GenFonts },
 ): ComposedFromSolved {
-  const pageBg = paletteColor(theme.palette, solved.background.ref, theme.palette.bg);
+  // An exact background colour outranks the palette slot, same rule as a leaf's.
+  const pageBg = solved.background.color && HEX_RE.test(solved.background.color)
+    ? solved.background.color
+    : paletteColor(theme.palette, solved.background.ref, theme.palette.bg);
   const scrims = new Set(solved.leaves.filter((l) => isScrimShape(l, solved.leaves)));
   const elements: unknown[] = [];
   for (const leaf of solved.leaves) {
@@ -213,7 +280,12 @@ export function composeFromSolved(
     if (el) elements.push(el);
   }
   // Contrast used the flat `pageBg` hex above; the visible page gets the gradient paint.
-  return { background: { type: 'color', value: backgroundPaint(theme.palette, solved.background.ref, pageBg) }, elements };
+  // An EXACT background colour is taken literally — if the art-director named a ground,
+  // washing a gradient over it would be overruling a decision it just made.
+  const paint = solved.background.color && HEX_RE.test(solved.background.color)
+    ? pageBg
+    : backgroundPaint(theme.palette, solved.background.ref, pageBg);
+  return { background: { type: 'color', value: paint }, elements };
 }
 
 export { TEXT_ROLES, ROLE_SCALE };

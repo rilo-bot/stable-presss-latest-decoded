@@ -28,11 +28,29 @@
 // ---------------------------------------------------------------------------
 
 import {
-  MAX_CHILDREN, MAX_STACK_LAYERS, MAX_TREE_DEPTH, SPACE_PX, SPACE_TOKENS,
-  type LayoutChild, type LayoutNode, type LayoutSpec, type LeafNode, type SpaceToken,
+  SPACE_PX, SPACE_TOKENS,
+  type ContainerNode, type FlexAlign, type LayoutChild, type LayoutNode, type LayoutSpec, type LeafNode, type SpaceToken, type TextAlignToken,
 } from './layoutSpec.js';
+
+/**
+ * THIS PATH PINS ITS OWN BUDGET, and must keep doing so.
+ *
+ * The guillotine's output is not just "a valid page" — it is the thing the IoU
+ * fidelity check measures a reference against, and how deep it may cut decides which
+ * partition it finds. Reading the DSL's global caps here meant that raising them for
+ * the GENERATOR (so the art-director can compose modules) silently re-cut every
+ * reference layout and moved every fidelity score with it. Those are two different
+ * jobs: the generator wants room to design, this wants a stable, faithful transform.
+ *
+ * These numbers are the caps as they stood when the fidelity behaviour was measured
+ * and accepted. They may only change alongside a re-measurement.
+ */
+const MAX_TREE_DEPTH = 4;
+const MAX_CHILDREN = 8;
+const MAX_STACK_LAYERS = 5;
 import { PAGE_H, PAGE_W } from './config.js';
 import type { LayoutReading, ReadBox, ReadRegion } from './layoutReading.js';
+import { TEXT_ROLES } from './roleScale.js';
 
 /** Roles that BACK other content: legal as the lower layers of a stack. Mirrors
  *  `isBackingLayer` in layoutSpec.ts and the scrim/panel rules in pruneSpec.ts. */
@@ -64,6 +82,110 @@ const canContain = (depth: number) => depth + 2 <= MAX_TREE_DEPTH;
 /** Biggest by area. Used where only ONE region can be placed and the rest must go. */
 const biggest = (regions: ReadRegion[]): ReadRegion =>
   regions.reduce((a, b) => (b.box.w * b.box.h > a.box.w * a.box.h ? b : a));
+
+/**
+ * A clear run at either end of a rectangle becomes a `spacer` sibling above this — the
+ * same noise floor as a gap, because that is the same measurement.
+ *
+ * There USED to be a 25% threshold here, on the theory that a 10% run is an ordinary
+ * margin rather than design and should be left to fr weights. That was true of the old
+ * mechanism, which content-sized every child and would wreck an ordinary page. It is false
+ * of a spacer, which is just one more weighted track: reproducing a 3% offset is as
+ * harmless as reproducing a 60% one, and DROPPING it was measurably worse. On a real cover
+ * fixture, ignoring a 3% lead shifted the whole cluster to the top edge and took the
+ * kicker's IoU from 0.46 to 0.005 — thin bands land nowhere near their reference box when
+ * everything above them is missing. So every run above the noise floor is reproduced.
+ *
+ * Why a spacer at all, rather than the three things tried before: `justify` is honoured
+ * only when every track is content-sized (one side-by-side pair defeats it), content
+ * sizing is a no-op on image/qr/icon leaves (a photo defeats it), and `pad` cannot express
+ * it because the space tokens stop at 96px while a half-empty page needs ~1,200. See the
+ * `spacer` role in layoutSpec.ts.
+ */
+const MIN_RUN = MIN_GAP;
+
+/**
+ * How much clear space at one end means the emptiness is DESIGN rather than a margin.
+ *
+ * 10% clear top and bottom is a margin: the bands really do fill the rectangle and fr
+ * weights are exactly right, because they preserve the proportions. 3% top and 55% bottom
+ * is a cover, and the empty part has to be expressed. Measured per end, never summed —
+ * summing 10%+10% to 20% is what made the first version of this rule fire on an ordinary
+ * page.
+ */
+const EMPTY_END = 0.25;
+
+/**
+ * Anchor a set of bands inside the rectangle they occupy only part of.
+ *
+ * TWO MECHANISMS, chosen by what the children are, because measurement said so:
+ *
+ *  • Every child a TEXT LEAF → content-size them and `justify`. The solver measures each
+ *    line's own copy, which lands close to the reference's band heights, and `pad`
+ *    reproduces the offset exactly. Scored 0.60 on the cover fixture.
+ *  • Anything else → `fr` weights plus `spacer` siblings. Content sizing is a no-op on
+ *    image/qr/icon leaves and is ignored entirely for containers, so for those children the
+ *    first mechanism silently degrades into the stretched page this whole exercise is about.
+ *
+ * Spacers are NOT used for the all-text case even though they are more general, and this is
+ * the one counter-intuitive thing here: a container carries ONE `gap` and the solver puts it
+ * between every pair of children, INCLUDING between a spacer and the cluster. On the cover
+ * fixture that inserted an extra 60px above the masthead and dragged every band down —
+ * 0.60 → 0.30, measurably worse. `pad` has no such problem because it is not a child.
+ */
+function anchored(
+  kind: 'col' | 'row',
+  gap: SpaceToken,
+  kids: LayoutChild[],
+  runs: { lead: number; trail: number; axisLen: number; axisPx: number },
+): ContainerNode {
+  const { lead, trail, axisLen, axisPx } = runs;
+  const children = kids.map((k) => ({ ...k }));
+  if (Math.max(lead, trail) / axisLen <= EMPTY_END) return { kind, gap, children };
+
+  if (children.every((c) => c.node.kind === 'leaf' && TEXT_ROLES.has(c.node.role))) {
+    for (const c of children) c.sizing = 'content';
+    const justify: FlexAlign = lead <= trail * 0.5 ? 'start' : trail <= lead * 0.5 ? 'end' : 'center';
+    const margin = justify === 'end' ? trail : justify === 'start' ? lead : Math.min(lead, trail);
+    return { kind, gap, children, justify, pad: spaceTokenFor(margin, axisPx) };
+  }
+
+  const withSpacers: LayoutChild[] = [];
+  if (lead / axisLen > MIN_RUN) withSpacers.push(spacerChild(lead));
+  withSpacers.push(...children);
+  if (trail / axisLen > MIN_RUN) withSpacers.push(spacerChild(trail));
+  return { kind, gap, children: withSpacers };
+}
+
+/**
+ * How much of its rectangle a BACKING region must cover to be a stack layer.
+ *
+ * Every layer of a stack is handed the whole rectangle by the solver, so a photo that only
+ * covered a third of the reference came out full-bleed — drawn over the hero and hiding it.
+ * A backing region below this threshold is not backing at all; it is an inset picture, and
+ * it goes through the partition with everything else so it keeps its size.
+ */
+const FILLS_RECT = 0.8;
+
+/**
+ * Text alignment implied by WHERE a region sat across the page.
+ *
+ * The cross axis cannot be expressed structurally — a band always spans its
+ * container's full width (the solver hands every child the whole cross length) — so
+ * for short text the alignment inside a full-width box is what reproduces "this line
+ * sat on the right". Deliberately NOT applied to prose: a right-hand body column
+ * should still be left-aligned, because that is a typographic decision rather than a
+ * positional one, and right-aligned paragraphs look broken.
+ */
+const POSITIONAL_ALIGN_ROLES = new Set(['headline', 'kicker', 'subhead', 'byline', 'figure', 'label', 'caption', 'pullquote']);
+
+function alignFor(region: ReadRegion): TextAlignToken | undefined {
+  if (!POSITIONAL_ALIGN_ROLES.has(region.role)) return undefined;
+  const mid = region.box.x + region.box.w / 2;
+  if (mid < 0.42) return 'left';
+  if (mid > 0.58) return 'right';
+  return 'center';
+}
 
 const lo = (b: ReadBox, axis: 'y' | 'x') => (axis === 'y' ? b.y : b.x);
 const hi = (b: ReadBox, axis: 'y' | 'x') => (axis === 'y' ? b.y + b.h : b.x + b.w);
@@ -127,21 +249,32 @@ function gapFor(bands: Band[], axisPx: number): SpaceToken {
   return spaceTokenFor(gaps[Math.floor(gaps.length / 2)]!, axisPx);
 }
 
-/** fr weight from a band's extent. Fractions are relative, so scaling by 100 keeps
- *  a whole point of resolution per percent and stays inside MAX_WEIGHT. */
-const weightFor = (band: Band) => Math.max(1, Math.min(100, Math.round((band.end - band.start) * 100)));
+/** fr weight from an extent along the axis. Fractions are relative, so scaling by 100
+ *  keeps a whole point of resolution per percent and stays inside MAX_WEIGHT. */
+const weightOf = (extent: number) => Math.max(1, Math.min(100, Math.round(extent * 100)));
+const weightFor = (band: Band) => weightOf(band.end - band.start);
+
+/** Deliberate emptiness as a weighted track: it takes its share and draws nothing. */
+function spacerChild(run: number): LayoutChild {
+  return { weight: weightOf(run), sizing: 'fr', node: { kind: 'leaf', role: 'spacer' } };
+}
 
 /**
- * Merge adjacent bands until there are at most MAX_CHILDREN of them.
+ * Merge adjacent bands until there are at most `limit` of them.
  *
  * Merging the NARROWEST neighbouring pair each time keeps the big structural
  * divisions of the page intact and folds the fine detail together — the opposite
  * choice (truncating to the first eight) would throw away the bottom third of a
  * dense reference.
+ *
+ * `limit` is passed rather than assumed, because spacers occupy child slots too: capping
+ * to MAX_CHILDREN first and then adding two spacers would push the container over the cap,
+ * and normalizeLayoutSpec would silently slice the trailing spacer off — putting the
+ * stretched page straight back.
  */
-function capBands(bands: Band[]): Band[] {
+function capBands(bands: Band[], limit: number = MAX_CHILDREN): Band[] {
   const out = [...bands];
-  while (out.length > MAX_CHILDREN) {
+  while (out.length > limit) {
     let at = 0;
     let smallest = Infinity;
     for (let i = 1; i < out.length; i++) {
@@ -180,11 +313,38 @@ function makeAlloc(origin: Origin): Alloc {
   };
 }
 
+/**
+ * ONE region in a rectangle it does not fill.
+ *
+ * A leaf handed a rectangle takes all of it, which is right for a band (its rect IS its
+ * extent) and wrong for the commonest magazine idiom there is: a single line of type over
+ * a full-bleed photograph. A stack layer gets the whole page, so the title of a cover
+ * became a page-height text box and nothing recorded that it sat across the bottom third.
+ * Wrapping it between spacers keeps its place.
+ */
+function placeOne(region: ReadRegion, rect: ReadBox, depth: number, ref: Alloc): LayoutNode {
+  const leaf = leafFor(region, ref);
+  if (!canContain(depth)) return leaf; // no room for a wrapper; a bare leaf is still valid
+  const axisLen = Math.max(0.0001, rect.h);
+  const lead = Math.max(0, region.box.y - rect.y);
+  const trail = Math.max(0, rect.y + rect.h - (region.box.y + region.box.h));
+  const wantLead = lead / axisLen > MIN_RUN;
+  const wantTrail = trail / axisLen > MIN_RUN;
+  if (!wantLead && !wantTrail) return leaf; // it effectively does fill the rect
+  const children: LayoutChild[] = [];
+  if (wantLead) children.push(spacerChild(lead));
+  children.push({ weight: weightOf(region.box.h), sizing: 'fr', node: leaf });
+  if (wantTrail) children.push(spacerChild(trail));
+  return { kind: 'col', gap: 'none', children };
+}
+
 function leafFor(region: ReadRegion, ref: Alloc): LeafNode {
   const contentRef = ref(region);
   const leaf: LeafNode = { kind: 'leaf', role: region.role, contentRef };
   if (region.colorRef) leaf.colorRef = region.colorRef;
-  if (region.align && region.align !== 'justify') leaf.align = region.align;
+  // What the reading said, else what its position implies.
+  const align = region.align && region.align !== 'justify' ? region.align : alignFor(region);
+  if (align) leaf.align = align;
   // Emphasis is the reference's own hierarchy, mapped onto the weights the
   // art-director prompt uses (800–900 dominant, 400 quiet).
   if (region.emphasis === 'dominant') leaf.weightHint = 800;
@@ -207,9 +367,20 @@ function leafFor(region: ReadRegion, ref: Alloc): LeafNode {
  * other side. So the content regions are partitioned among themselves and the
  * result goes in as one layer.
  */
-function stackFor(regions: ReadRegion[], depth: number, ref: Alloc): LayoutNode | null {
-  const backing = regions.filter((r) => BACKING_ROLES.has(r.role));
-  const content = regions.filter((r) => !BACKING_ROLES.has(r.role));
+function stackFor(regions: ReadRegion[], rect: ReadBox, depth: number, ref: Alloc): LayoutNode | null {
+  // Backing means "behind everything", and the solver enforces that by handing every layer
+  // the whole rectangle. A picture that covered a third of the reference is therefore NOT
+  // backing: made a layer, it came out full-bleed on top of the hero and hid it. Below
+  // FILLS_RECT it is an inset picture and goes through the partition like any other region.
+  // …but ONLY for photographs. A `shape` is decorative backing by definition — a scrim or a
+  // panel — and a half-height wash under a cover's title is exactly the right thing to put
+  // behind text, whatever its measured size. pruneSpec and composeFromSolved both draw the
+  // same distinction, and reclassifying a scrim here broke it.
+  const rectArea = Math.max(1e-6, rect.w * rect.h);
+  const isBacking = (r: ReadRegion) =>
+    BACKING_ROLES.has(r.role) && (r.role !== 'image' || (r.box.w * r.box.h) / rectArea >= FILLS_RECT);
+  const backing = regions.filter(isBacking);
+  const content = regions.filter((r) => !isBacking(r));
   // Order the backing biggest-first (a full-bleed photo, then its scrim), honouring
   // an explicit z when the model gave one.
   backing.sort((a, b) => (a.z ?? 0) - (b.z ?? 0) || b.box.w * b.box.h - a.box.w * a.box.h);
@@ -225,19 +396,21 @@ function stackFor(regions: ReadRegion[], depth: number, ref: Alloc): LayoutNode 
     // as sharing a rectangle. layoutSpec.ts's repair pass turns exactly this shape
     // into a col, and producing the stack here just to have it repaired later would
     // also recurse: partition() on the same set finds no cut and comes straight back.
-    return flatten(content, depth, ref);
+    return flatten(content, rect, depth, ref);
   }
   // A stack's layers sit at the same normalizer depth a container's children would,
   // so the same budget applies — and MAX_STACK_LAYERS caps how many can go under the
   // one content layer.
   if (!canContain(depth)) return leafFor(biggest(regions), ref);
   const layers: LayoutNode[] = backing.slice(0, MAX_STACK_LAYERS - 1).map((r) => leafFor(r, ref));
-  const contentLayer = content.length === 1 || !canContain(depth + 1)
-    // Only one node may go on top, so if the content itself would need a container
-    // we cannot afford, the largest piece of it goes up and the rest is given up.
-    ? leafFor(content.length === 1 ? content[0]! : biggest(content), ref)
-    // depth+1: the content layer sits one level inside the stack.
-    : partition(content, depth + 1, ref);
+  // depth+1: the content layer sits one level inside the stack. It gets the SAME rect — a
+  // stack's layers all occupy the whole rectangle — and `partition` is what turns that into
+  // a position, whether the content is one line or a cluster. It used to short-circuit to a
+  // bare leaf when there was exactly one content region, which is precisely the cover idiom
+  // (one title over a photograph) and precisely where the position was being thrown away;
+  // partition now routes a single region through placeOne instead, and handles the depth
+  // cap itself.
+  const contentLayer = partition(content, rect, depth + 1, ref);
   if (!contentLayer) return null;
   layers.push(contentLayer);
   if (layers.length === 1) return layers[0]!;
@@ -253,22 +426,50 @@ function stackFor(regions: ReadRegion[], depth: number, ref: Alloc): LayoutNode 
  * than the first: if a corner of the page has to be given up, give up the small
  * print, not the photograph.
  */
-function flatten(regions: ReadRegion[], depth: number, ref: Alloc): LayoutNode | null {
+function flatten(regions: ReadRegion[], rect: ReadBox, depth: number, ref: Alloc): LayoutNode | null {
   if (regions.length === 0) return null;
-  if (regions.length === 1) return leafFor(regions[0]!, ref);
+  if (regions.length === 1) return placeOne(regions[0]!, rect, depth, ref);
   if (!canContain(depth)) return leafFor(biggest(regions), ref);
-  const kept = [...regions].sort((a, b) => a.box.y - b.box.y || a.box.x - b.box.x).slice(0, MAX_CHILDREN);
-  return {
-    kind: 'col',
-    gap: 'sm',
-    children: kept.map((r): LayoutChild => ({ weight: Math.max(1, Math.round(r.box.h * 100)), sizing: 'fr', node: leafFor(r, ref) })),
-  };
+  // Two slots held back for the spacers — see capBands on why this cannot be done after.
+  const kept = [...regions].sort((a, b) => a.box.y - b.box.y || a.box.x - b.box.x).slice(0, MAX_CHILDREN - 2);
+  // These regions OVERLAP, so their heights say nothing about how the space should divide:
+  // each line takes the height its own copy needs. Where the CLUSTER sits is a different
+  // question, and spacers answer it — `justify` could not, because it is honoured only when
+  // every track is content-sized, and `pad` could not, because it stops at 96px.
+  const top = Math.min(...kept.map((r) => r.box.y));
+  const bottom = Math.max(...kept.map((r) => r.box.y + r.box.h));
+  return anchored(
+    'col',
+    'sm',
+    kept.map((r): LayoutChild => ({ sizing: 'content', node: leafFor(r, ref) })),
+    {
+      lead: Math.max(0, top - rect.y),
+      trail: Math.max(0, rect.y + rect.h - bottom),
+      axisLen: Math.max(0.0001, rect.h),
+      axisPx: PAGE_H,
+    },
+  );
 }
 
-/** One level of the partition. Returns null only when there is nothing to place. */
-function partition(regions: ReadRegion[], depth: number, ref: Alloc): LayoutNode | null {
+/** The slice of `rect` a band occupies, for recursing into it. A band spans the full
+ *  cross axis, because that is what the solver gives every child. */
+function bandRect(rect: ReadBox, band: Band, axis: 'y' | 'x'): ReadBox {
+  return axis === 'y'
+    ? { x: rect.x, y: band.start, w: rect.w, h: Math.max(0, band.end - band.start) }
+    : { x: band.start, y: rect.y, w: Math.max(0, band.end - band.start), h: rect.h };
+}
+
+/**
+ * One level of the partition. `rect` is the space this node has to fill, in reference
+ * coordinates — without it a container cannot tell "these bands ARE the page" from
+ * "these bands are a cluster in the corner of it", which is the difference between
+ * reproducing a layout and stretching it over the sheet.
+ *
+ * Returns null only when there is nothing to place.
+ */
+function partition(regions: ReadRegion[], rect: ReadBox, depth: number, ref: Alloc): LayoutNode | null {
   if (regions.length === 0) return null;
-  if (regions.length === 1) return leafFor(regions[0]!, ref);
+  if (regions.length === 1) return placeOne(regions[0]!, rect, depth, ref);
   // Out of depth budget: no container of any kind may be created here.
   if (!canContain(depth)) return leafFor(biggest(regions), ref);
 
@@ -279,25 +480,39 @@ function partition(regions: ReadRegion[], depth: number, ref: Alloc): LayoutNode
   // that is how a page is read and how magazine layouts are built (bands first,
   // columns inside them).
   const useCol = rows.length >= cols.length;
-  const bands = capBands(useCol ? rows : cols);
+  const raw = useCol ? rows : cols;
 
-  if (bands.length < 2) {
+  if (raw.length < 2) {
     // No cut in either axis: these regions overlap. That is what a stack is for.
-    return stackFor(regions, depth, ref);
+    return stackFor(regions, rect, depth, ref);
   }
 
-  const children: LayoutChild[] = [];
+  const axis = useCol ? 'y' : 'x';
+  const axisStart = useCol ? rect.y : rect.x;
+  const axisLen = Math.max(0.0001, useCol ? rect.h : rect.w);
+  // Merging bands never moves the outer edges, so the clear runs can be measured before
+  // capping — which they must be, because each spacer costs a child slot.
+  const lead = Math.max(0, raw[0]!.start - axisStart);
+  const trail = Math.max(0, axisStart + axisLen - raw[raw.length - 1]!.end);
+  // Two slots held back whenever there is emptiness to express, because the spacer branch
+  // of `anchored` may need them and capping afterwards would let normalizeLayoutSpec slice
+  // a spacer off — putting the stretched page straight back.
+  const reserve = Math.max(lead, trail) / axisLen > EMPTY_END ? 2 : 0;
+  const bands = capBands(raw, Math.max(2, MAX_CHILDREN - reserve));
+
+  const kids: { child: LayoutChild; band: Band }[] = [];
   for (const band of bands) {
-    const node = partition(band.regions, depth + 1, ref);
-    if (node) children.push({ weight: weightFor(band), sizing: 'fr', node });
+    const node = partition(band.regions, bandRect(rect, band, axis), depth + 1, ref);
+    if (node) kids.push({ child: { weight: weightFor(band), sizing: 'fr', node }, band });
   }
-  if (children.length === 0) return null;
-  if (children.length === 1) return children[0]!.node;
-  return {
-    kind: useCol ? 'col' : 'row',
-    gap: gapFor(bands, useCol ? PAGE_H : PAGE_W),
-    children,
-  };
+  if (kids.length === 0) return null;
+  // One surviving band and nothing to anchor it against: the container adds nothing.
+  if (kids.length === 1 && reserve === 0) return kids[0]!.child.node;
+
+  const axisPx = useCol ? PAGE_H : PAGE_W;
+  return anchored(useCol ? 'col' : 'row', gapFor(bands, axisPx), kids.map((k) => k.child), {
+    lead, trail, axisLen, axisPx,
+  });
 }
 
 /**
@@ -317,7 +532,18 @@ function partition(regions: ReadRegion[], depth: number, ref: Alloc): LayoutNode
  */
 export function readingToSpec(reading: LayoutReading): { spec: LayoutSpec; origin: Origin } | null {
   const origin: Origin = {};
-  const root = partition(reading.regions, 0, makeAlloc(origin));
+  // The root fills the page's CONTENT AREA, not the sheet.
+  //
+  // The solver insets the whole tree by `page.margin`, and the reading's boxes are absolute
+  // — they already include the reference's margin. Measuring the clear runs against the
+  // sheet therefore counts that margin twice: on a cover reading `md` with its cluster
+  // starting 3% down, a 3% lead spacer landed on top of a 2.2% page inset and pushed
+  // everything below where the reference had it. Measured against the content area the lead
+  // comes out at ~0.8% instead, which is the noise floor, and the margin is expressed once.
+  const mx = (SPACE_PX[reading.margin] ?? 0) / PAGE_W;
+  const my = (SPACE_PX[reading.margin] ?? 0) / PAGE_H;
+  const rect: ReadBox = { x: mx, y: my, w: Math.max(0.01, 1 - 2 * mx), h: Math.max(0.01, 1 - 2 * my) };
+  const root = partition(reading.regions, rect, 0, makeAlloc(origin));
   if (!root) return null;
   const spec: LayoutSpec = {
     page: {

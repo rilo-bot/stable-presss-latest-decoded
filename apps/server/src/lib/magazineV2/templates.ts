@@ -45,7 +45,9 @@ export interface SlotStyle {
   fontRef?: FontRef;
   fontSize?: number; // px in canonical space — the MAXIMUM (fit shrinks from here)
   minFontSize?: number; // fit floor; defaults to ~55% of fontSize
-  fontWeight?: 400 | 500 | 600 | 700 | 800;
+  // 900 is a real weight the element model, the DSL and roleScale all allow; it was
+  // missing only here, which made a black-weight leaf impossible to describe as a slot.
+  fontWeight?: 400 | 500 | 600 | 700 | 800 | 900;
   align?: 'left' | 'center' | 'right';
   vAlign?: ElementVAlign; // vertical placement of copy within the box
   lineHeight?: number;

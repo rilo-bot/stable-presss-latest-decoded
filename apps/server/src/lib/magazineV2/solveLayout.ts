@@ -33,6 +33,7 @@ import { PAGE_W, PAGE_H } from './config.js';
 import { MIN_SIZE } from './model.js';
 import {
   SPACE_PX,
+  resolveSpace,
   type LayoutSpec,
   type LayoutNode,
   type ContainerNode,
@@ -54,7 +55,7 @@ export interface SolvedLeaf {
 }
 
 export interface SolvedLayout {
-  background: { ref: ColorRef };
+  background: { ref: ColorRef; color?: string };
   margin: number; // resolved page margin in px
   page: { width: number; height: number };
   leaves: SolvedLeaf[];
@@ -150,7 +151,7 @@ function resolveMainSizes(
 }
 
 function layoutContainer(node: ContainerNode, rect: Rect, out: SolvedLeaf[], z: Z, measure?: MeasureFn): void {
-  const inner = insetRect(rect, SPACE_PX[node.pad ?? 'none']);
+  const inner = insetRect(rect, resolveSpace(node.pad));
   const isRow = node.kind === 'row';
   const n = node.children.length;
 
@@ -161,7 +162,7 @@ function layoutContainer(node: ContainerNode, rect: Rect, out: SolvedLeaf[], z: 
 
   // Gaps must fit inside the main length; if they don't, shrink them
   // proportionally (integer) so `available` is never negative.
-  let gap = SPACE_PX[node.gap ?? 'none'];
+  let gap = resolveSpace(node.gap);
   if (n > 1 && gap * (n - 1) > mainLen) gap = Math.max(0, Math.floor(mainLen / (n - 1)));
   const available = Math.max(0, mainLen - gap * (n - 1));
 
@@ -220,13 +221,13 @@ export function solveLayout(
   page: { width: number; height: number } = { width: PAGE_W, height: PAGE_H },
   opts: { measureLeaf?: MeasureFn } = {},
 ): SolvedLayout {
-  const margin = SPACE_PX[spec.page?.margin ?? 'md'];
+  const margin = resolveSpace(spec.page?.margin, SPACE_PX.md);
   const content = insetRect({ x: 0, y: 0, w: page.width, h: page.height }, margin);
   const leaves: SolvedLeaf[] = [];
   layoutNode(spec.root, content, leaves, { n: 0 }, opts.measureLeaf);
   const kept = leaves.filter((l) => l.box.w >= MIN_SIZE && l.box.h >= MIN_SIZE);
   return {
-    background: spec.page?.background ?? { ref: 'bg' },
+    background: spec.page?.background ?? { ref: 'bg' as ColorRef },
     margin,
     page,
     leaves: kept,

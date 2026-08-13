@@ -8,7 +8,7 @@
 
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { reflowContent, themeForPage, applyReadingToPage } from '../../src/lib/magazineV2/applyLayout.ts';
+import { reflowContent, themeForPage, applyReadingToPage, contrastRatio } from '../../src/lib/magazineV2/applyLayout.ts';
 import { normalizeLayoutReading } from '../../src/lib/magazineV2/layoutReading.ts';
 import type { MagazineElement } from '../../src/lib/magazineV2/model.ts';
 
@@ -49,6 +49,71 @@ test('the biggest photo becomes the hero', () => {
   );
   assert.equal(content.hero?.image?.url, 'https://x/big.jpg', 'the hero box gets the hero photo');
   assert.equal(content.photo1?.image?.url, 'https://x/small.jpg');
+});
+
+test("a PDF page's photo lives in the BACKGROUND, and it fills the hero slot", () => {
+  // Reported from a real run: applying a layout "removed the existing images and ruined
+  // the page". processPage stores an imported page's photography as
+  // `background: {type:'image'}` with ZERO image elements, so reading only `elements`
+  // left the hero empty — pruned, re-partitioned, and the background then overwritten
+  // with a flat colour. The page's only picture, deleted by a layout change.
+  const { content, usedBackground } = reflowContent(
+    slots(['hero', 'image'], ['headline', 'headline']),
+    [text('headline', 'A Scanned Spread')],
+    'https://x/page-3-background.jpg',
+  );
+  assert.equal(content.hero?.image?.url, 'https://x/page-3-background.jpg');
+  assert.equal(usedBackground, true);
+});
+
+test('the background image is the FIRST candidate — it is the biggest picture there is', () => {
+  const { content } = reflowContent(
+    slots(['hero', 'image'], ['photo1', 'image']),
+    [image('https://x/inset.jpg', 300, 200)],
+    'https://x/full-page.jpg',
+  );
+  assert.equal(content.hero?.image?.url, 'https://x/full-page.jpg');
+  assert.equal(content.photo1?.image?.url, 'https://x/inset.jpg');
+});
+
+test('a background photo the layout has no room for is KEPT, not painted over', () => {
+  // A text-only reference on an imported page: nothing consumes the background, so it
+  // must survive. composeFromSolved always returns a colour, and writing it would
+  // destroy the photograph.
+  const out = applyReadingToPage(
+    reading([
+      { role: 'headline', box: { x: 0.1, y: 0.1, w: 0.8, h: 0.15 } },
+      { role: 'body', box: { x: 0.1, y: 0.3, w: 0.8, h: 0.6 } },
+    ]),
+    {
+      width: 1275, height: 1650,
+      background: { type: 'image', value: 'https://x/scan.jpg' },
+      elements: [text('headline', 'Kept'), text('body', 'The prose of the page.')],
+    },
+    null,
+  );
+  assert.ok(out.page);
+  assert.equal(out.page.background.type, 'image');
+  assert.equal(out.page.background.value, 'https://x/scan.jpg');
+});
+
+test('but once the photo becomes a full-bleed element, the colour background is right', () => {
+  const out = applyReadingToPage(
+    reading([
+      { role: 'image', box: { x: 0, y: 0, w: 1, h: 1 } },
+      { role: 'headline', box: { x: 0.1, y: 0.7, w: 0.8, h: 0.12 } },
+    ], { margin: 'none' }),
+    {
+      width: 1275, height: 1650,
+      background: { type: 'image', value: 'https://x/scan.jpg' },
+      elements: [text('headline', 'Over the photo')],
+    },
+    null,
+  );
+  assert.ok(out.page);
+  assert.equal(out.page.background.type, 'color', 'the element covers the page, so the paint underneath is moot');
+  const photo = out.page.elements.find((e) => e.type === 'image');
+  assert.equal(photo?.image?.url, 'https://x/scan.jpg', 'and the photo is still on the page');
 });
 
 test('a kicker slot accepts a subhead, a figure accepts a headline', () => {
@@ -93,6 +158,39 @@ test('spare prose joins the body slot rather than vanishing', () => {
   assert.match(content.body!.text!, /First paragraph/);
   assert.match(content.body!.text!, /Second paragraph/);
   assert.match(content.body!.text!, /Third paragraph/);
+});
+
+test('a slot with no role match takes SPARE copy rather than being left empty', () => {
+  // An empty slot is not a small loss: pruneSpec deletes it and the page RE-PARTITIONS,
+  // throwing away the arrangement we were asked to reproduce. A cover reference wanting
+  // a standfirst, on a page that has captions and no standfirst, must still get one.
+  const { content } = reflowContent(
+    slots(['headline', 'headline'], ['subhead', 'subhead']),
+    [text('headline', 'The Title'), text('caption', 'A spare line of copy.')],
+  );
+  assert.equal(content.headline?.text, 'The Title');
+  assert.equal(content.subhead?.text, 'A spare line of copy.');
+});
+
+test('but a slot NEVER steals copy that a later slot matches exactly', () => {
+  // The flaw the two-pass split fixes: filling opportunistically in one pass let the
+  // headline slot grab the body paragraph that `body`, two slots later, matched.
+  const { content } = reflowContent(
+    slots(['headline', 'headline'], ['body', 'body']),
+    [text('body', 'The one real paragraph on this page.')],
+  );
+  assert.equal(content.body?.text, 'The one real paragraph on this page.');
+  assert.equal(content.headline, undefined, 'the headline goes without rather than robbing the body');
+});
+
+test('a terse slot takes the SHORTEST spare copy, not the longest', () => {
+  // A 300-word paragraph in a caption box is worse than an empty caption box.
+  const { content } = reflowContent(
+    slots(['caption', 'caption'], ['headline', 'headline']),
+    [text('body', 'Short.'), text('body', 'A considerably longer paragraph that would swamp a caption box entirely.')],
+  );
+  assert.equal(content.caption?.text, 'Short.');
+  assert.match(content.headline!.text!, /considerably longer/);
 });
 
 test('surplus PHOTOS are reported, because they cannot be merged', () => {
@@ -175,8 +273,8 @@ test('an empty page falls back to defaults instead of throwing', () => {
 
 // ── End to end, with no database ─────────────────────────────────────────────
 
-const reading = (regions: Record<string, unknown>[]) => {
-  const r = normalizeLayoutReading({ regions });
+const reading = (regions: Record<string, unknown>[], extra: Record<string, unknown> = {}) => {
+  const r = normalizeLayoutReading({ regions, ...extra });
   assert.ok(r);
   return r;
 };
@@ -220,6 +318,61 @@ test('a page with nothing on it is refused with a reason, not filled with blanks
   assert.match(out.why, /no content/i);
 });
 
+test('A COVER, end to end: the empty half stays empty after pruning', () => {
+  // The second half of the cover bug, reported from a real run as "loose (5%)".
+  //
+  // pruneSpec has an FR-GUARANTEE: a start-packed container left with only
+  // content-sized children gets one promoted to `fr` so no strip trails uncovered.
+  // Right for the generator, which must fill the page — catastrophic here. With one
+  // cover slot unfillable, the promotion stretched the tagline over TWO THIRDS of the
+  // sheet. applyReadingToPage now passes keepWhitespace, because a reference's empty
+  // space IS its design.
+  const H = 1650;
+  const out = applyReadingToPage(
+    reading([
+      { role: 'image', box: { x: 0, y: 0, w: 1, h: 1 } },
+      { role: 'kicker', box: { x: 0.1, y: 0.03, w: 0.8, h: 0.025 } },
+      { role: 'headline', box: { x: 0.08, y: 0.09, w: 0.84, h: 0.09 } },
+      { role: 'subhead', box: { x: 0.28, y: 0.2, w: 0.44, h: 0.022 } },
+      { role: 'headline', box: { x: 0.55, y: 0.3, w: 0.4, h: 0.14 } }, // unfillable: one headline on the page
+    // 'none' is what a cover reading actually reports (the photo runs off every edge).
+    // A page margin insets the whole tree, bleed included, so it matters here.
+    ], { margin: 'none' }),
+    {
+      width: 1275, height: H,
+      elements: [
+        image('https://x/cover.jpg', 1275, 1650),
+        text('subhead', 'PRE-DAWN STABLES'),
+        text('headline', 'The Hour Before Thunder'),
+        text('caption', 'A groom’s steady hand, a coat catching first light.'),
+      ],
+    },
+    null,
+  );
+  assert.equal(out.why, '');
+  assert.ok(out.page);
+  const texts = out.page.elements.filter((e) => e.type === 'text');
+  assert.ok(texts.length >= 3);
+  // Every line of the cover's text cluster belongs in the top third. Before the fix one
+  // of them was 66% of the page tall and another sat at the very bottom.
+  for (const t of texts) {
+    assert.ok(t.h <= H * 0.25, `a ${t.text?.role} box is ${Math.round(t.h)}px tall — nothing in a cover cluster is a quarter of the page`);
+    assert.ok(t.y + t.h <= H * 0.5, `a ${t.text?.role} ended at ${Math.round(t.y + t.h)} — the cluster belongs in the upper half`);
+  }
+  // And the photo still bleeds to every edge.
+  const photo = out.page.elements.find((e) => e.type === 'image')!;
+  assert.equal(photo.w, 1275);
+  assert.equal(photo.h, H);
+  assert.equal(out.page.fidelity.verdict, 'adapted', 'one box could not be filled, so not a close match');
+  // 0.5, not the 0.75 this once asserted. That threshold was an artefact of the very bug
+  // Phase 0 removed: the full-bleed photo scored IoU 1.0 against area 1.0 BY CONSTRUCTION
+  // and dragged the mean to 0.96 on its own. Measured honestly, with the guaranteed photo
+  // excluded, this page is kicker 0.67, headline 0.66, subhead 0.00 → 0.60. A real
+  // adaptation, and a number that can now move DOWN when the cluster drifts.
+  assert.ok(out.page.fidelity.score > 0.5, `score ${out.page.fidelity.score.toFixed(2)} — it was 0.05 before the cover fix`);
+  assert.ok(out.page.fidelity.score < 0.9, 'and no longer flattered by the guaranteed full-bleed photo');
+});
+
 test('the reference decides the proportions: a taller photo band gives a taller photo', () => {
   const page = {
     width: 1275, height: 1650,
@@ -236,4 +389,112 @@ test('the reference decides the proportions: a taller photo band gives a taller 
   assert.ok(shallow.page && deep.page);
   const h = (r: typeof shallow) => r.page!.elements.find((e) => e.type === 'image')!.h;
   assert.ok(h(deep) > h(shallow) * 1.8, `${h(deep)} should dwarf ${h(shallow)}`);
+});
+
+// ── Legibility of a DERIVED palette (Phase 0 of docs/MAGAZINE-V2-BUILDER-PLAN.md) ──
+//
+// White type over a dark photograph is the commonest cover idiom there is, and on an
+// imported page the photo lives in `background`. The ink derived to #ffffff — correctly,
+// the words really are white — and the ground fell through to #ffffff too, because
+// `background.type === 'color'` is false for an image. Consume the photo into a box that
+// is not full-bleed and the rest of the sheet was painted white with white words on it:
+// the page came out BLANK, and the fidelity score called it a match.
+
+/** A text element with an explicit ink colour. */
+const inked = (role: string, content: string, color: string, fontSize = 24) => el({
+  type: 'text',
+  text: { content, role, fontFamily: 'Inter, Arial, sans-serif', fontSize, fontWeight: 400, color, align: 'left', lineHeight: 1.4, autoFit: 'shrink' },
+} as Partial<MagazineElement>);
+
+test('white type over a background PHOTO never derives white-on-white', () => {
+  const theme = themeForPage(null, {
+    background: { type: 'image', value: 'https://x/dark-cover.jpg' },
+    elements: [inked('headline', 'THE HORSE', '#ffffff'), inked('body', 'Inside the carnival.', '#ffffff')],
+  });
+  assert.notEqual(theme.palette.bg, theme.palette.text, 'the page would be blank');
+  assert.ok(contrastRatio(theme.palette.text, theme.palette.bg) > 4.5, 'and readable, not merely different');
+});
+
+test('the GROUND moves, not the ink — white type stays white', () => {
+  // Repainting the words dark would be legible and would throw the design away: the type
+  // is white because it sat on a photograph, so the ground goes dark instead.
+  const theme = themeForPage(null, {
+    background: { type: 'image', value: 'https://x/dark-cover.jpg' },
+    elements: [inked('headline', 'THE HORSE', '#ffffff')],
+  });
+  assert.equal(theme.palette.text, '#ffffff', "the page's own ink is kept");
+  assert.ok(contrastRatio(theme.palette.bg, '#ffffff') > 4.5, 'the ground went dark');
+});
+
+test('an ink that reads on NEITHER ground is the one case where the ink moves', () => {
+  // A mid grey on a mid grey cannot be saved by moving the ground, and being visible
+  // outranks provenance.
+  const theme = themeForPage({ palette: { bg: '#7f7f7f' } }, {
+    elements: [inked('body', 'grey on grey', '#828282')],
+  });
+  assert.ok(contrastRatio(theme.palette.text, theme.palette.bg) > 1.6, 'something had to move');
+});
+
+test('accents that vanish into the ground fall back to the ink', () => {
+  // Captions resolve through `secondary` and kickers through `accent` (roleScale), so the
+  // FAMILY is "any ink that resolves against the ground" — not just `text`. Guarding only
+  // bg-vs-text would have left an invisible caption on the same page.
+  const theme = themeForPage(
+    { palette: { bg: '#ffffff', text: '#111111', primary: '#fdfdfd', secondary: '#ffffff', accent: '#fefefe' } },
+    { elements: [inked('body', 'x', '#111111')] },
+  );
+  for (const role of ['primary', 'secondary', 'accent'] as const) {
+    assert.ok(
+      contrastRatio(theme.palette[role], theme.palette.bg) > 1.6,
+      `${role} ${theme.palette[role]} is invisible on ${theme.palette.bg}`,
+    );
+  }
+});
+
+test('a legitimate low-contrast BRAND accent is left alone', () => {
+  // The guard is for disappearance, not for WCAG AA. This product's gold sits at ~2.1:1 on
+  // white by design; repainting it here would recolour every magazine and belongs to
+  // docs/THEME-REVIEW.md, not to a layout apply.
+  const theme = themeForPage(
+    { palette: { bg: '#ffffff', text: '#111111', primary: '#883333', secondary: '#666666', accent: '#d4a843' } },
+    { elements: [inked('body', 'x', '#111111')] },
+  );
+  assert.equal(theme.palette.accent, '#d4a843', 'gold on white is a choice, not a bug');
+  assert.ok(contrastRatio('#d4a843', '#ffffff') < 3, 'and it really is below AA — deliberately untouched');
+});
+
+test('END TO END: applying a layout to a white-type cover leaves nothing invisible', () => {
+  // The reported failure, as a test. The reference's photo box is NOT full-bleed, so the
+  // background photo is consumed into it and the rest of the sheet is painted.
+  const out = applyReadingToPage(
+    normalizeLayoutReading({
+      aspect: 1275 / 1650, background: 'light', margin: 'md', confidence: 0.9,
+      regions: [
+        { role: 'image', box: { x: 0, y: 0, w: 1, h: 0.45 } },
+        { role: 'headline', box: { x: 0.08, y: 0.5, w: 0.84, h: 0.1 } },
+        { role: 'body', box: { x: 0.08, y: 0.63, w: 0.84, h: 0.3 } },
+      ],
+    })!,
+    {
+      width: 1275, height: 1650,
+      background: { type: 'image', value: 'https://x/dark-cover-photo.jpg' },
+      elements: [
+        inked('headline', 'THE HORSE', '#ffffff'),
+        inked('body', 'Inside: the spring carnival, hoof care, and a ride through the high country.', '#ffffff'),
+      ],
+    },
+    null,
+  );
+  assert.equal(out.why, '');
+  assert.ok(out.page);
+  const bg = out.page.background;
+  const texts = out.page.elements.filter((e) => e.type === 'text');
+  assert.ok(texts.length >= 2, 'the words are still there');
+  for (const t of texts) {
+    if (bg.type !== 'color') continue;
+    assert.ok(
+      contrastRatio(t.text!.color, bg.value) > 1.6,
+      `"${(t.text?.content ?? '').slice(0, 20)}" is ${t.text?.color} on a ${bg.value} page — invisible`,
+    );
+  }
 });

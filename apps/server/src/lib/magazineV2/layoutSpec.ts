@@ -28,6 +28,50 @@ export type SpaceToken = (typeof SPACE_TOKENS)[number];
 /** px at the canonical PAGE_W×PAGE_H scale (see config.ts). */
 export const SPACE_PX: Record<SpaceToken, number> = { none: 0, xs: 10, sm: 20, md: 36, lg: 60, xl: 96 };
 
+/**
+ * Spacing is a TOKEN OR A NUMBER OF PIXELS — the art-director's own call.
+ *
+ * The six tokens stopped at 96px, which is a ladder for a body-copy gutter and
+ * useless for the deliberate 200px air a modern editorial page puts above a
+ * headline. The tokens stay because they are convenient and consistent; a raw
+ * number is now equally valid. Anything unusable resolves to the caller's fallback,
+ * and the solver still clamps padding to half the rectangle and shrinks gaps that
+ * would not fit — so a wild number can waste space but can never break the tiling.
+ */
+export type Space = SpaceToken | number;
+/** A single gap/pad can never sensibly exceed this; the solver clamps again anyway. */
+export const MAX_SPACE_PX = 400;
+
+export function resolveSpace(v: Space | undefined, fallback = 0): number {
+  if (typeof v === 'number' && Number.isFinite(v)) return Math.min(MAX_SPACE_PX, Math.max(0, Math.round(v)));
+  if (typeof v === 'string' && v in SPACE_PX) return SPACE_PX[v as SpaceToken];
+  return fallback;
+}
+
+/**
+ * TYPE SIZE IS THE ART-DIRECTOR'S DECISION, IN POINTS.
+ *
+ * It used to come entirely from a 10-role table (roleScale.ts) and the model could
+ * not name a size at all. Points, not pixels, because the page is 150 DPI so
+ * `pt = px × 0.48`, and a designer thinks in points — a floor expressed in pt is a
+ * statement about what can be READ off paper rather than an arbitrary pixel count.
+ *
+ * The clamp here is only the outer bound of sanity. The real floor is applied per
+ * role at compose time (see PROSE_ROLES): prose that cannot be read is a defect, not
+ * a decision, while a 6pt tracked label above a headline is a legitimate choice.
+ */
+export const MIN_TYPE_PT = 5;
+export const MAX_TYPE_PT = 220;
+
+/** Roles a reader has to READ, as opposed to glance at. These get the print floor. */
+export const PROSE_ROLES = new Set<string>(['body', 'entry', 'caption', 'label', 'byline', 'subhead']);
+/** Below this, prose is not readable in print at any size of page. */
+export const MIN_PROSE_PT = 8;
+/** Display/label type may be deliberately tiny, but never invisible. */
+export const MIN_DISPLAY_PT = 6;
+
+const HEX_RE = /^#[0-9a-fA-F]{6}$/;
+
 /** Which palette colour a leaf/background resolves to (mirrors templates.ts ColorRef). */
 export const COLOR_REFS = ['bg', 'text', 'primary', 'secondary', 'accent'] as const;
 export type ColorRef = (typeof COLOR_REFS)[number];
@@ -58,6 +102,27 @@ export type FontWeight = (typeof FONT_WEIGHTS)[number];
 export const LEAF_ROLES = [
   // non-text
   'image', 'icon', 'shape', 'qr',
+  /**
+   * DELIBERATE EMPTINESS — a leaf that takes its share of the track and renders nothing.
+   *
+   * The DSL had no way to say "this space is empty on purpose", and every attempt to work
+   * around that absence failed in a different place. `fr` weights always fill their
+   * container. `justify` is honoured only when EVERY child is content-sized, so one
+   * side-by-side pair inside a cluster defeated it. Content sizing is a no-op on
+   * image/qr/icon leaves, so a photo in the cluster defeated it too. And `pad` cannot
+   * express it at all, because the space tokens stop at 96px and a half-empty page needs
+   * about 1,200. That is why a magazine cover's masthead kept coming back as a band
+   * through the middle of the page — three fixes, three different escapes.
+   *
+   * As a weighted sibling it needs none of those conditions: the emptiness is just
+   * another track, so it works whatever the other children are. It also gives the
+   * generator the primitive it needs for a whitespace budget, instead of being told
+   * "never leave a large empty region" and inflating boxes to obey.
+   *
+   * Only meaningful as a container child. As a stack layer it would cover the whole
+   * rectangle and render nothing, so pruneSpec drops it there.
+   */
+  'spacer',
   // text roles (align with model.ts TextRole) + generation-specific ones
   'headline', 'subhead', 'kicker', 'byline', 'body', 'caption', 'pullquote', 'figure', 'label', 'entry',
 ] as const;
@@ -66,11 +131,20 @@ export type LeafRole = (typeof LEAF_ROLES)[number];
 // Compile-time nudge: keep the text-ish leaf roles a superset of TextRole.
 type _AssertTextRolesCovered = TextRole extends LeafRole | 'other' ? true : never;
 
-// ── Caps — bound the AI's degrees of freedom so a page can't get pathological ──
-export const MAX_TREE_DEPTH = 4;
-export const MAX_LEAVES = 14;
-export const MAX_CHILDREN = 8;
-export const MAX_STACK_LAYERS = 5;
+// ── Caps — the outer bound of a page's structure, not a design opinion ────────
+//
+// These were tight enough to make reference density arithmetically impossible: at 14
+// leaves, a row of five icon+label+text cards is 15 leaves on its own, and at depth 4
+// a card with two leaves inside a row inside a col does not fit at all
+// (root 1 → col 2 → row 3 → card 4 → leaves 5). Both are raised so the art-director
+// can compose at the level a designer thinks at — modules, not loose boxes.
+//
+// They remain caps because they bound COST and pathology, not taste: every leaf is a
+// solved rectangle and a piece of copy to write.
+export const MAX_TREE_DEPTH = 6;
+export const MAX_LEAVES = 28;
+export const MAX_CHILDREN = 12;
+export const MAX_STACK_LAYERS = 6;
 export const MAX_WEIGHT = 100;
 const MAX_CONTENT_REF = 64;
 
@@ -83,22 +157,41 @@ export interface LeafNode {
   role: LeafRole;
   /** Key into the ContentDoc for this leaf's copy / image brief / qr / icon. */
   contentRef?: string;
-  colorRef?: ColorRef; // text/qr colour (text leaves)
+  colorRef?: ColorRef; // text/qr colour by palette slot (text leaves)
+  /** An EXACT colour, #rrggbb — outranks colorRef. The palette is a convenience, not
+   *  a cage: a page may want a tone that isn't one of the five slots. Still checked
+   *  for legibility against whatever sits behind it. */
+  color?: string;
   fontRef?: FontRef; // text leaves
   weightHint?: FontWeight; // text leaves — design's intended weight
   align?: TextAlignToken; // text leaves
+  /** Type size in POINTS, authored by the art-director. Clamped to
+   *  [MIN_TYPE_PT, MAX_TYPE_PT] here and floored per role at compose time. Absent →
+   *  the role's default from roleScale.ts. */
+  fontPt?: number;
+  /** Leading as a multiple of the type size (0.8–2.5). Absent → the role default. */
+  lineHeight?: number;
+  /** Letter-spacing in px at page scale (−4…40). The tracked all-caps label is one of
+   *  the few devices that reads as designed rather than typed, and it was unreachable. */
+  tracking?: number;
+  /** Set the copy in capitals as a STYLE, leaving the words themselves untouched. */
+  caps?: boolean;
   fit?: ImageFit; // image leaves
   /** Curated registry glyph name for an `icon` leaf (validated against ./icons). */
   iconName?: string;
   /** Advisory aspect ratio (w/h) for an image leaf. The solver may ignore it to
    *  keep the partition intact — images conform to their solved box via fit. */
   aspect?: number;
+  /** Fill for a `shape` leaf, and the wash of a scrim, as #rrggbb. */
+  fill?: string;
+  /** Opacity for a `shape` leaf (0.05–1). A scrim's darkness is a design decision. */
+  opacity?: number;
 }
 
 export interface ContainerNode {
   kind: 'row' | 'col';
-  gap?: SpaceToken;
-  pad?: SpaceToken;
+  gap?: Space;
+  pad?: Space;
   align?: FlexAlign; // cross-axis
   justify?: FlexAlign; // main-axis
   children: LayoutChild[];
@@ -122,8 +215,9 @@ export interface LayoutChild {
 }
 
 export interface PageSpec {
-  background?: { ref: ColorRef };
-  margin?: SpaceToken;
+  /** The page ground: a palette slot, or an exact colour that outranks it. */
+  background?: { ref: ColorRef; color?: string };
+  margin?: Space;
 }
 
 export interface LayoutSpec {
@@ -153,6 +247,18 @@ function clampWeight(v: unknown): number {
   const n = typeof v === 'number' && Number.isFinite(v) ? v : 1;
   return Math.min(MAX_WEIGHT, Math.max(0, n));
 }
+/** A spacing value: a token, or a raw pixel count. Anything else → undefined. */
+function coerceSpace(v: unknown): Space | undefined {
+  if (typeof v === 'number' && Number.isFinite(v) && v >= 0) return Math.min(MAX_SPACE_PX, Math.round(v));
+  return oneOf(v, SPACE_TOKENS, undefined);
+}
+function coerceHex(v: unknown): string | undefined {
+  return typeof v === 'string' && HEX_RE.test(v.trim()) ? v.trim().toLowerCase() : undefined;
+}
+function clampNum(v: unknown, lo: number, hi: number): number | undefined {
+  if (typeof v !== 'number' || !Number.isFinite(v)) return undefined;
+  return Math.min(hi, Math.max(lo, v));
+}
 
 function coerceLeaf(o: Record<string, unknown>): LeafNode {
   const role = oneOf(o.role, LEAF_ROLES, 'body')!;
@@ -172,6 +278,21 @@ function coerceLeaf(o: Record<string, unknown>): LeafNode {
   if (typeof o.aspect === 'number' && Number.isFinite(o.aspect) && o.aspect > 0) {
     leaf.aspect = Math.min(10, Math.max(0.1, o.aspect));
   }
+  // The art-director's own type + colour decisions. Each is optional; absent means
+  // "use the role default", so a spec written before these existed is unchanged.
+  const color = coerceHex(o.color);
+  if (color) leaf.color = color;
+  const fontPt = clampNum(o.fontPt, MIN_TYPE_PT, MAX_TYPE_PT);
+  if (fontPt !== undefined) leaf.fontPt = fontPt;
+  const lineHeight = clampNum(o.lineHeight, 0.8, 2.5);
+  if (lineHeight !== undefined) leaf.lineHeight = lineHeight;
+  const tracking = clampNum(o.tracking, -4, 40);
+  if (tracking !== undefined) leaf.tracking = tracking;
+  if (o.caps === true) leaf.caps = true;
+  const fill = coerceHex(o.fill);
+  if (fill) leaf.fill = fill;
+  const opacity = clampNum(o.opacity, 0.05, 1);
+  if (opacity !== undefined) leaf.opacity = opacity;
   return leaf;
 }
 
@@ -179,7 +300,10 @@ function coerceLeaf(o: Record<string, unknown>): LeafNode {
  *  or a card/panel field. Everything else is a content layer. Mirrors the
  *  image/shape backing distinction drawn by pruneSpec + composeFromSolved. */
 function isBackingLayer(node: LayoutNode): boolean {
-  return node.kind === 'leaf' && (node.role === 'image' || node.role === 'shape');
+  // `spacer` is here because it is NOT a content layer: counting it as one would send a
+  // stack of [spacer, headline] through the two-content-layers repair below for no reason.
+  // pruneSpec drops a spacer layer outright — it is a container child or nothing.
+  return node.kind === 'leaf' && (node.role === 'image' || node.role === 'shape' || node.role === 'spacer');
 }
 
 /**
@@ -259,10 +383,10 @@ function coerceNode(raw: unknown, depth: number, budget: Budget): LayoutNode | n
     }
     if (children.length === 0) return null;
     const out: ContainerNode = { kind: o.kind, children };
-    const gap = oneOf(o.gap, SPACE_TOKENS, undefined);
-    if (gap) out.gap = gap;
-    const pad = oneOf(o.pad, SPACE_TOKENS, undefined);
-    if (pad) out.pad = pad;
+    const gap = coerceSpace(o.gap);
+    if (gap !== undefined) out.gap = gap;
+    const pad = coerceSpace(o.pad);
+    if (pad !== undefined) out.pad = pad;
     const align = oneOf(o.align, FLEX_ALIGNS, undefined);
     if (align) out.align = align;
     const justify = oneOf(o.justify, FLEX_ALIGNS, undefined);
@@ -299,8 +423,9 @@ export function normalizeLayoutSpec(raw: unknown): LayoutSpec | null {
   const p = (o.page && typeof o.page === 'object' ? o.page : {}) as Record<string, unknown>;
   const bg = (p.background && typeof p.background === 'object' ? p.background : {}) as Record<string, unknown>;
   const bgRef = oneOf(bg.ref, COLOR_REFS, 'bg')!;
-  const margin = oneOf(p.margin, SPACE_TOKENS, 'md')!;
-  spec.page = { background: { ref: bgRef }, margin };
+  const bgColor = coerceHex(bg.color);
+  const margin = coerceSpace(p.margin) ?? 'md';
+  spec.page = { background: { ref: bgRef, ...(bgColor ? { color: bgColor } : {}) }, margin };
   return spec;
 }
 

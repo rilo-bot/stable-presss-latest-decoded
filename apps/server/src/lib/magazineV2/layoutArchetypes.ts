@@ -136,15 +136,30 @@ export function archetypesForKind(kind: PageTemplateKind): LayoutArchetype[] {
 }
 
 /**
- * A per-page STEER: pick one suitable archetype, rotating by page position so
- * consecutive same-kind pages diverge (and the choice is deterministic, so a
- * resume/rerun is stable). Returned as a short instruction to drop into the
- * art-director's user prompt — inspiration to remix, never a spec to copy.
+ * A per-page STEER — now a SHORTLIST, not a pick.
+ *
+ * It used to choose one archetype by arithmetic on the page NUMBER
+ * (`options[(pageNumber - 1) % options.length]`), which meant a page's treatment was
+ * decided by where it happened to sit in the issue rather than by what it is about.
+ * A cover on page 1 and the same cover moved to page 3 were steered differently, and
+ * a page about a horse's morning routine got whatever the modulus landed on.
+ *
+ * The choice belongs to the art-director, which is the only party that has read the
+ * page's intent. `pageNumber` is still taken so the caller doesn't change, and so the
+ * shortlist can be ROTATED — the rotation now only decides which suitable treatment is
+ * mentioned FIRST, as a nudge away from every page in an issue converging on the same
+ * one; it no longer decides the answer.
  */
 export function archetypeSteer(kind: PageTemplateKind, pageNumber: number): string {
   const options = archetypesForKind(kind);
-  const pick = options[Math.abs(pageNumber - 1) % options.length]!;
-  return `Lean toward a "${pick.name}" treatment for this page, but ADAPT and remix it to the intent — ${pick.recipe} Make it visibly different from the other pages.`;
+  const offset = Math.abs(pageNumber - 1) % options.length;
+  const rotated = [...options.slice(offset), ...options.slice(0, offset)];
+  const names = rotated.map((a) => `"${a.name}"`).join(', ');
+  return (
+    `Treatments that suit this KIND of page, most-suggested first: ${names}. ` +
+    `Choose whichever fits THIS page's intent — or invent a better one — then adapt it; never reproduce one ` +
+    `verbatim, and make this page visibly different from the others in the issue.`
+  );
 }
 
 /** The whole library rendered as a prompt block (shown as inspiration, not specs). */

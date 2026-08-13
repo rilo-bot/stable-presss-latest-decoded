@@ -19,7 +19,7 @@
 
 import { estimateTextHeight } from './layout.js';
 import { measureRunWidthPx } from './fontMetrics.js';
-import { roleStyle, TEXT_ROLES } from './roleScale.js';
+import { roleStyle, TEXT_ROLES, ptToPx } from './roleScale.js';
 import type { GenFonts } from './templates.js';
 import type { ResolvedContent } from './composeFromSolved.js';
 import type { MeasureFn } from './solveLayout.js';
@@ -36,13 +36,28 @@ export function makeMeasureLeaf(content: ResolvedContent, fonts: GenFonts): Meas
     const s = roleStyle(leaf.role);
     const fontFamily = (leaf.fontRef ?? s.fontRef) === 'display' ? fonts.display : fonts.body;
     const fontWeight = leaf.weightHint ?? s.fontWeight;
+    // Measure at the size the composer will actually SET — the art-director's own
+    // `fontPt` when it named one, the role ceiling otherwise. Measuring at the role
+    // ceiling regardless would break this module's whole promise (that the box and the
+    // type agree) the moment the AI asked for a different size: a leaf asking for 28pt
+    // would be given the room a 46pt headline needs.
+    const fontSize = leaf.fontPt !== undefined ? ptToPx(leaf.fontPt) : s.maxFontSize;
+    const lineHeight = leaf.lineHeight ?? s.lineHeight;
+    const letterSpacing = leaf.tracking;
+    const textTransform = leaf.caps ? 'uppercase' : undefined;
     if (axis === 'col') {
       // Column track: main axis is height → the wrapped height of the copy at
-      // its ceiling size, in this track's width.
-      return estimateTextHeight({ text, fontSize: s.maxFontSize, boxWidthPx: crossLen, lineHeight: s.lineHeight, fontFamily, fontWeight });
+      // its set size, in this track's width.
+      return estimateTextHeight({
+        text, fontSize, boxWidthPx: crossLen, lineHeight, fontFamily, fontWeight,
+        ...(letterSpacing !== undefined ? { letterSpacing } : {}),
+        ...(textTransform ? { textTransform } : {}),
+      });
     }
-    // Row track: main axis is width → the single-line width of the copy at its
-    // ceiling size (a short label/kicker/figure hugging its text).
-    return measureRunWidthPx(text, fontFamily, fontWeight, s.maxFontSize);
+    // Row track: main axis is width → the single-line width of the copy at its set
+    // size (a short label/kicker/figure hugging its text). Tracking widens every gap,
+    // so it has to be added back: the metrics measure glyphs, not letter-spacing.
+    const run = measureRunWidthPx(textTransform ? text.toUpperCase() : text, fontFamily, fontWeight, fontSize);
+    return letterSpacing ? run + Math.max(0, text.length - 1) * letterSpacing : run;
   };
 }

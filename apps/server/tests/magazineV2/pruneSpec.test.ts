@@ -19,6 +19,10 @@ const spec = (root: LayoutNode): LayoutSpec => ({ page: { background: { ref: 'bg
 const leaf = (role: string, contentRef?: string): LayoutNode => ({ kind: 'leaf', role, contentRef }) as LayoutNode;
 const photo = { url: 'https://cdn.example.com/p.jpg', assetId: 'a1', alt: '' };
 
+import { solveLayout } from '../../src/lib/magazineV2/solveLayout.ts';
+import { composeFromSolved } from '../../src/lib/magazineV2/composeFromSolved.ts';
+import { PAGE_H, PAGE_W } from '../../src/lib/magazineV2/config.ts';
+
 test('a text leaf with no copy is dropped; one with copy survives', () => {
   const root = {
     kind: 'col',
@@ -184,4 +188,89 @@ test('an icon leaf counts as content via its authored glyph, with no contentRef'
   } as unknown as LayoutNode;
   const pruned = pruneLayoutSpec(spec(root), {});
   assert.ok(pruned, 'an icon with a glyph name is real content even with no content entry');
+});
+
+// ── The `spacer` role (docs/MAGAZINE-V2-BUILDER-PLAN.md §11.1) ────────────────
+//
+// Deliberate emptiness: a leaf that takes its share of the track and draws nothing. It is
+// the one leaf role that must SURVIVE this pass despite carrying no content, which makes
+// "still has children" a different question from "still has content".
+
+const spacer = (): LayoutNode => ({ kind: 'leaf', role: 'spacer' });
+
+test('a spacer survives pruning — that is the whole point of it', () => {
+  const out = pruneLayoutSpec(
+    { page: { margin: 'none', background: { ref: 'bg' } }, root: { kind: 'col', children: [
+      { weight: 20, sizing: 'fr', node: { kind: 'leaf', role: 'headline', contentRef: 'headline' } },
+      { weight: 80, sizing: 'fr', node: spacer() },
+    ] } },
+    { headline: { text: 'Kept' } },
+  );
+  assert.ok(out);
+  assert.equal(out.root.kind, 'col');
+  if (out.root.kind !== 'col') return;
+  assert.equal(out.root.children.length, 2, 'the empty 80% is still there');
+  assert.equal(out.root.children[1]!.node.kind === 'leaf' ? out.root.children[1]!.node.role : '', 'spacer');
+});
+
+test('a container of ONLY spacers is dropped — that is dead space, not design', () => {
+  const out = pruneLayoutSpec(
+    { page: { margin: 'none', background: { ref: 'bg' } }, root: { kind: 'col', children: [
+      { weight: 50, sizing: 'fr', node: spacer() },
+      { weight: 50, sizing: 'fr', node: spacer() },
+    ] } },
+    {},
+  );
+  assert.equal(out, null, 'nothing to look at, so there is no page');
+});
+
+test('a spacer nested under a container with real content still survives', () => {
+  const out = pruneLayoutSpec(
+    { page: { margin: 'none', background: { ref: 'bg' } }, root: { kind: 'col', children: [
+      { weight: 50, sizing: 'fr', node: { kind: 'col', children: [
+        { weight: 30, sizing: 'fr', node: spacer() },
+        { weight: 70, sizing: 'fr', node: { kind: 'leaf', role: 'body', contentRef: 'body' } },
+      ] } },
+      { weight: 50, sizing: 'fr', node: spacer() },
+    ] } },
+    { body: { text: 'Prose.' } },
+  );
+  assert.ok(out);
+  assert.equal(out.root.kind, 'col');
+  if (out.root.kind !== 'col') return;
+  assert.equal(out.root.children.length, 2);
+  const inner = out.root.children[0]!.node;
+  assert.equal(inner.kind, 'col');
+  assert.equal(inner.kind === 'col' ? inner.children.length : 0, 2, 'the inner spacer is kept too');
+});
+
+test('a spacer as a STACK LAYER is dropped — it would cover the whole rectangle', () => {
+  const out = pruneLayoutSpec(
+    { page: { margin: 'none', background: { ref: 'bg' } }, root: { kind: 'stack', layers: [
+      { kind: 'leaf', role: 'image', contentRef: 'hero' },
+      spacer(),
+      { kind: 'leaf', role: 'headline', contentRef: 'headline' },
+    ] } },
+    { hero: { image: { url: 'https://x/p.jpg', assetId: 'a', alt: '' } }, headline: { text: 'Over it' } },
+  );
+  assert.ok(out);
+  assert.equal(out.root.kind, 'stack');
+  if (out.root.kind !== 'stack') return;
+  assert.equal(out.root.layers.length, 2, 'the spacer layer is gone; the photo and the type remain');
+});
+
+test('a spacer draws NOTHING — it must not become an element', () => {
+  // A transparent box would still be a click target sitting over the page's whitespace.
+  const spec = { page: { margin: 'none' as const, background: { ref: 'bg' as const } }, root: { kind: 'col' as const, children: [
+    { weight: 20, sizing: 'fr' as const, node: { kind: 'leaf' as const, role: 'headline' as const, contentRef: 'headline' } },
+    { weight: 80, sizing: 'fr' as const, node: spacer() },
+  ] } };
+  const content = { headline: { text: 'One line' } };
+  const solved = solveLayout(spec, { width: PAGE_W, height: PAGE_H }, {});
+  assert.equal(solved.leaves.length, 2, 'the solver DID give the spacer a box');
+  const composed = composeFromSolved(solved, content, {
+    palette: { bg: '#ffffff', text: '#111111', primary: '#883333', secondary: '#666666', accent: '#d4a843' },
+    fonts: { display: 'Playfair Display, serif', body: 'Inter, Arial, sans-serif' },
+  });
+  assert.equal(composed.elements.length, 1, 'but nothing was drawn for it');
 });
