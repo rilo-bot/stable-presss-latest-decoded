@@ -159,6 +159,24 @@ test('the running head never repeats words the page already carries', () => {
   const label = furniture.find((e) => e.id === 'furniture-head-label');
   assert.ok(label, 'the page still gets a running head');
   assert.equal(label!.text!.content, 'Feature', 'it falls back to the kind rather than echoing the kicker');
+  // THE FALLBACK COLLIDES TOO, and this is the page that shipped: on a stat page the
+  // kicker is "BY THE NUMBERS" and KIND_LABEL['stat-infographic'] is "By the numbers", so
+  // guarding only the section title moved the duplicate from one source to the other.
+  const statPage = normalizeElements(
+    [
+      { id: 'k', type: 'text', x: M, y: 150, w: 600, h: 40, text: { content: 'BY THE NUMBERS', role: 'subhead', fontFamily: fonts.body, fontSize: 24, fontWeight: 700, color: palette.accent, align: 'left', lineHeight: 1.2, autoFit: 'clip' } },
+      { id: 'h', type: 'text', x: M, y: 210, w: PAGE_W - 2 * M, h: PAGE_H - 300, text: { content: 'The Favorites, Split', role: 'headline', fontFamily: fonts.display, fontSize: 70, fontWeight: 800, color: palette.text, align: 'left', lineHeight: 1.05, autoFit: 'clip' } },
+    ],
+    { width: PAGE_W, height: PAGE_H },
+  );
+  const stat = pageFurniture(
+    { background: { type: 'color', value: palette.bg }, elements: statPage },
+    ctx({ kind: 'stat-infographic' as PageTemplateKind, sectionTitle: 'By the numbers' }),
+  );
+  assert.equal(stat.find((e) => e.id === 'furniture-head-label'), undefined, 'no label survives — both candidates are already on the page');
+  assert.ok(stat.find((e) => e.id === 'furniture-head-title'), 'the masthead still runs, and takes the full measure');
+  assert.equal(stat.find((e) => e.id === 'furniture-head-title')!.w, PAGE_W - 2 * M);
+
   // Same rule for the masthead: if the page itself sets the title, the head drops it.
   const withTitle = normalizeElements(
     [{ id: 't', type: 'text', x: M, y: 200, w: 900, h: 120, text: { content: 'Good Morning Horse', role: 'headline', fontFamily: fonts.display, fontSize: 80, fontWeight: 800, color: palette.text, align: 'left', lineHeight: 1.05, autoFit: 'clip' } }],

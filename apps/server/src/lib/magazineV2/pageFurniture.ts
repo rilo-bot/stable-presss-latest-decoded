@@ -283,12 +283,22 @@ export function pageFurniture(page: FurnishablePage, ctx: FurnitureContext): Mag
         .filter((e) => e.type === 'text' && e.text?.content)
         .map((e) => normalizeWords(e.text!.content)),
     );
-    const section = truncate(ctx.sectionTitle, MAX_LABEL);
-    const label = section && !onPage.has(normalizeWords(section)) ? section : truncate(KIND_LABEL[ctx.kind], MAX_LABEL);
+    // EVERY candidate is checked, including the fallback. The first version of this
+    // guarded the section title and then fell back to KIND_LABEL — and for
+    // `stat-infographic` that label is "By the numbers", which is exactly the kicker the
+    // copywriter writes for such a page. So a real page shipped reading "By the numbers"
+    // directly above "BY THE NUMBERS". Guarding one door and leaving the other open is
+    // the same bug twice; if nothing survives, the page simply gets no label.
+    const label =
+      [truncate(ctx.sectionTitle, MAX_LABEL), truncate(KIND_LABEL[ctx.kind], MAX_LABEL)].find(
+        (c) => !!c && !onPage.has(normalizeWords(c)),
+      ) ?? '';
     const title = truncate(ctx.magazineTitle, MAX_TITLE);
     const showTitle =
-      !!title && normalizeWords(title) !== normalizeWords(label) && !onPage.has(normalizeWords(title));
-    const labelW = showTitle ? Math.round(contentW * 0.62) : contentW;
+      !!title && (!label || normalizeWords(title) !== normalizeWords(label)) && !onPage.has(normalizeWords(title));
+    // With no label the masthead becomes the whole running head rather than hanging off
+    // the right of an empty measure.
+    const labelW = !label ? 0 : showTitle ? Math.round(contentW * 0.62) : contentW;
     if (label) {
       raw.push(
         line(HEAD_LABEL_ID, { x: inset, y: textY, w: labelW, h: TEXT_H }, label, {

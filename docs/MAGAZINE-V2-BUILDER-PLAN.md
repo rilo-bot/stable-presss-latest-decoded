@@ -591,9 +591,48 @@ table, so it can only ever ask for *less* than a size that doesn't fit), and the
 longer echoes words already on the page (a real page read "Reading the Walk" above
 "READING THE WALK").
 
+### 4c-ii. Five fixes from the first real A4 issue (2026-08-13)
+
+The run that followed produced a 5-page issue and every fix below comes from a page in it, not
+from judgement. **274 tests**, all guards, both builds green.
+
+**What that issue proved worked:** the QR is square and sized sensibly and sits beside its
+label; a genuine **three-icon module row** appeared on the back cover (depth 5 — impossible
+before the cap rise); two-tone headlines were used unprompted; furniture behaved exactly as
+specified, including *skipping* the running head on a page whose top band held a photo.
+
+**And what it caught:**
+
+1. **The running head duplicated the kicker AGAIN.** I guarded the section title and then fell
+   back to `KIND_LABEL['stat-infographic']` — which is *"By the numbers"*, exactly the kicker a
+   stat page gets. **Fixing one door and leaving the other open is the same bug twice.** Every
+   candidate is now checked, and a page with no surviving candidate gets no label at all.
+2. **`slack` not counting as a flaw let the worst page through.** A stat page shipped with three
+   bands each ~4× taller than the figure inside them; all three were measured as slack and none
+   counted. The rule was right in the small and wrong in the large, so slack is now judged by
+   **the share of the PAGE it wastes** (≥6% is a defect, below that still advice). This is the
+   direct fix for the client's original *"shows more space than the elements"*.
+3. **The type floors came forward from Phase 3, on evidence.** A panel of copy shipped at about
+   5.5pt. §6 deferred the floors because raising them without fit-aware authoring converts
+   shrink-to-fit into overflow — **that precondition was met by §4c**, so the reason expired.
+   The floor now applies whether or not the AI named a size.
+4. **…and it needed a second fix to be real.** `refitText` re-fits every text element on every
+   write from `maxFontSize × 0.55`, so a body slot composed at an 8pt floor would drop back to
+   6.3pt on the next save. The floor is now carried on the element (`text.minFontSize`, new
+   optional field, read-through, no migration) and honoured there.
+5. **Icons as clip-art, and an orphaned QR label.** The cover had two 15%-wide unlabelled
+   glyphs floating at the top, and its `qrLabel` sat beside the standfirst while the QR was at
+   the foot of the page. Both are now measured (`decor`, `orphan`) and stated in the brief. The
+   `decor` check asks whether any copy sits within one icon-width — which is what separates the
+   cover's clip-art from the back cover's module using the *same two glyphs*.
+
+**One test passed with its bug re-planted and had to be repaired**: the "floor survives a later
+write" case used a full-page box, where the copy fitted at its ceiling and nothing shrank at
+all. Third time the re-plant rule has caught a vacuous test of mine — §10.2 earns its place.
+
 **Still open after this:** the design critic (§5) — nothing yet scores a page's beauty, so this
-phase can tell the model that a box is wrong but not that a page is *dull*; the type floors
-(§6); and a rendered-pixel review, which remains the honest gap (§10.4).
+phase can tell the model that a box is wrong but not that a page is *dull*; and a rendered-pixel
+review, which remains the honest gap (§10.4).
 
 ## 5. Phase 2 — The design critic
 

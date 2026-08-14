@@ -52,6 +52,11 @@ export interface ElementTextData {
   fontFamily: string;
   fontSize: number; // px at the page's canonical dims — the CURRENT (fit) size
   maxFontSize?: number; // design's intended ceiling; refit shrinks from here
+  /** The design's FLOOR — refit may not shrink below it (defaults to 55% of the
+   *  ceiling). Carried on the element because the print legibility floor has to survive
+   *  every later write: without it, refitText re-fits from `maxFontSize * 0.55` and a
+   *  body slot set at an 8pt floor silently drops back to 6.6pt on the next save. */
+  minFontSize?: number;
   fontWeight: 400 | 500 | 600 | 700 | 800 | 900;
   color: string; // #rrggbb
   align: ElementTextAlign;
@@ -163,6 +168,10 @@ function coerceText(o: Record<string, unknown>): ElementTextData {
   };
   if (typeof t.maxFontSize === 'number' && Number.isFinite(t.maxFontSize)) {
     out.maxFontSize = clampNum(t.maxFontSize, 6, 400, out.fontSize);
+  }
+  if (typeof t.minFontSize === 'number' && Number.isFinite(t.minFontSize)) {
+    // Never above the ceiling it is a floor for, or refit would have no range to work in.
+    out.minFontSize = Math.min(clampNum(t.minFontSize, 6, 400, 6), out.maxFontSize ?? out.fontSize);
   }
   if (t.vAlign === 'center' || t.vAlign === 'bottom') out.vAlign = t.vAlign;
   if (typeof t.letterSpacing === 'number' && Number.isFinite(t.letterSpacing)) {

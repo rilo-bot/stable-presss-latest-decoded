@@ -41,6 +41,21 @@ const MAX_COMFORTABLE_CPL = 90;
 const MIN_COMFORTABLE_CPL = 24;
 /** Copy filling less than this share of its box means the box was over-allocated. */
 const SLACK_AT = 0.55;
+/**
+ * A slack box that wastes more than this share of the PAGE is a defect, not advice.
+ *
+ * Slack was first reported but never counted, on the reasoning that a loose caption box
+ * is common and often correct. That was right in the small and wrong in the large: a
+ * real stat page shipped with three bands each roughly four times taller than the figure
+ * inside them, every one measured as slack, none of them counted — which is precisely
+ * the "shows more space than the elements" complaint. The size of the waste is what
+ * decides, so it is measured against the sheet rather than against the box.
+ */
+const SLACK_SERIOUS_SHARE = 0.06;
+/** An icon wider than this share of the page has stopped being a mark and become art. */
+const ICON_DECOR_WIDTH = 0.12;
+/** How far from a QR its own label may sit, in multiples of the QR's side. */
+const QR_LABEL_REACH = 1.5;
 /** A size cut by more than this means the design's intent was not achievable. */
 const SHRUNK_AT = 0.7;
 /** A square device (QR/icon) wasting more than this share of its box is a defect. */
@@ -49,10 +64,12 @@ const SQUARE_WASTE_AT = 0.35;
 const QR_LOUD_AT = 0.15;
 
 export interface FitFinding {
-  kind: 'overflow' | 'shrunk' | 'slack' | 'square' | 'loud' | 'measure' | 'air';
+  kind: 'overflow' | 'shrunk' | 'slack' | 'square' | 'loud' | 'measure' | 'decor' | 'orphan';
   /** Which leaf, in the art-director's own words (its contentRef, else its role). */
   where: string;
   detail: string;
+  /** For `slack`: the share of the PAGE this box wastes. What decides severity. */
+  share?: number;
 }
 
 export interface Fit {
@@ -63,6 +80,23 @@ export interface Fit {
 
 const pct = (v: number) => `${Math.round(v * 100)}%`;
 const pt = (px: number) => `${Math.round(pxToPt(px))}pt`;
+
+interface Box { x: number; y: number; w: number; h: number }
+
+/** Distance between two boxes' nearest edges (0 when they touch or overlap). */
+function gapBetween(a: Box, b: Box): number {
+  const dx = Math.max(0, Math.max(a.x - (b.x + b.w), b.x - (a.x + a.w)));
+  const dy = Math.max(0, Math.max(a.y - (b.y + b.h), b.y - (a.y + a.h)));
+  return Math.hypot(dx, dy);
+}
+
+/** Is there any real copy within `reach` px of this leaf? Used to tell a labelled mark
+ *  apart from a floating decoration, without needing the tree the solver has discarded. */
+function hasWordsNear(solved: SolvedLayout, leaf: SolvedLayout['leaves'][number], reach: number): boolean {
+  return solved.leaves.some(
+    (o) => o !== leaf && TEXT_ROLES.has(o.node.role) && gapBetween(leaf.box, o.box) <= reach,
+  );
+}
 
 /**
  * Measure what happened to every leaf on a solved page.
@@ -92,6 +126,20 @@ export function fitReport(solved: SolvedLayout, content: ResolvedContent, fonts:
     // ── Square devices: a QR and a glyph have ONE natural shape ──────────────
     if (role === 'qr' || role === 'icon') {
       const side = Math.min(box.w, box.h);
+      // A LARGE ICON WITH NOTHING BESIDE IT IS CLIP-ART. On a real cover two 15%-wide
+      // outline glyphs floated at the top with no label attached and read as decoration;
+      // the same two glyphs on the back cover, inside a module with labels under them,
+      // read as design. The difference is whether anything explains them.
+      if (role === 'icon' && side > solved.page.width * ICON_DECOR_WIDTH && !hasWordsNear(solved, leaf, side)) {
+        findings.push({
+          kind: 'decor',
+          where: ref,
+          detail:
+            `the icon is ${Math.round(side)}px across (${pct(side / solved.page.width)} of the page width) with no ` +
+            `text beside it — at that size an unlabelled glyph reads as clip-art. Either shrink it to a mark ` +
+            `(6–9% of the width) inside a row/col WITH a label or caption, or use a photograph instead.`,
+        });
+      }
       const waste = 1 - (side * side) / (box.w * box.h);
       if (waste > SQUARE_WASTE_AT) {
         findings.push({
@@ -160,13 +208,16 @@ export function fitReport(solved: SolvedLayout, content: ResolvedContent, fonts:
         });
       }
     } else if (wantedH < box.h * SLACK_AT) {
+      const share = (box.w * (box.h - wantedH)) / pageArea;
       findings.push({
         kind: 'slack',
         where: ref,
+        share,
         detail:
           `${role}'s box is ${Math.round(box.h)}px tall but its copy only needs ${Math.round(wantedH)}px — ` +
-          `${pct(1 - wantedH / box.h)} of that box is blank. Either give the space to something else, ` +
-          `set the type larger, write more, or make the emptiness deliberate with a "spacer" leaf.`,
+          `that is ${pct(share)} OF THE WHOLE PAGE left blank inside one box. Either give the space to ` +
+          `something else, set the type larger, write more, or make the emptiness deliberate with a ` +
+          `"spacer" leaf so it reads as air rather than as an accident.`,
       });
     }
 
@@ -194,6 +245,29 @@ export function fitReport(solved: SolvedLayout, content: ResolvedContent, fonts:
     }
   }
 
+  // ── A QR and its own label belong together ───────────────────────────────
+  // On a real cover the label sat up beside the standfirst while its QR was at the foot
+  // of the page, so the words explained nothing and the code invited nothing. The pairing
+  // is by contentRef, which is the only link the solved layout still carries.
+  const qrs = solved.leaves.filter((l) => l.node.role === 'qr');
+  const labels = solved.leaves.filter((l) => TEXT_ROLES.has(l.node.role) && /^qr/i.test(l.node.contentRef ?? ''));
+  for (const q of qrs) {
+    const side = Math.min(q.box.w, q.box.h);
+    for (const l of labels) {
+      const gap = gapBetween(q.box, l.box);
+      if (gap > side * QR_LABEL_REACH) {
+        findings.push({
+          kind: 'orphan',
+          where: l.node.contentRef || 'qrLabel',
+          detail:
+            `this label explains the QR but sits ${Math.round(gap)}px away from it (the QR is only ` +
+            `${Math.round(side)}px across). Put the qr leaf and its label in the SAME row or col so they read as ` +
+            `one device.`,
+        });
+      }
+    }
+  }
+
   const emptyShare = emptyArea / pageArea;
   return { findings, emptyShare };
 }
@@ -207,9 +281,11 @@ export function fitReport(solved: SolvedLayout, content: ResolvedContent, fonts:
  */
 export function fitHint(fit: Fit, limit = 6): string {
   if (fit.findings.length === 0) return '';
-  const rank: Record<FitFinding['kind'], number> = { loud: 0, square: 1, shrunk: 2, measure: 3, slack: 4, overflow: 5, air: 6 };
+  const rank: Record<FitFinding['kind'], number> = { loud: 0, decor: 1, square: 2, shrunk: 3, measure: 4, orphan: 5, slack: 6, overflow: 7 };
   const lines = [...fit.findings]
-    .sort((a, b) => rank[a.kind] - rank[b.kind])
+    // Worst KIND first, and within slack the biggest waste first — a box swallowing a
+    // fifth of the page should not be buried under three loose captions.
+    .sort((a, b) => rank[a.kind] - rank[b.kind] || (b.share ?? 0) - (a.share ?? 0))
     .slice(0, limit)
     .map((f) => `• ${f.where}: ${f.detail}`);
   const more = fit.findings.length - lines.length;
@@ -252,16 +328,25 @@ export function charBudget(opts: {
 /**
  * How many findings are unambiguous DEFECTS rather than advice.
  *
- * The four counted here are wrong however you look at them: a square device in a long
- * band, a QR the size of a photograph, type that had to be cut by a third to fit, and a
- * column past the readable measure. `slack` and `overflow` are deliberately NOT counted
- * — slack is extremely common and often correct (a caption sharing a column with a
- * photo), and overflow means the composer will shrink the type, which it does well. If
- * those forced a retry, essentially every page would burn its attempts and drop to the
- * fixed template, which is a far worse outcome than a slightly loose box.
+ * Counted: a square device stretched into a band, a QR the size of a photograph, an
+ * unlabelled glyph big enough to read as clip-art, a label stranded away from the code it
+ * explains, type cut by a third to fit, and a column past the readable measure. All are
+ * wrong however you look at them.
+ *
+ * `slack` is counted ONLY BY SIZE. Every loose box used to be advisory, on the reasoning
+ * that a caption with room to spare is normal — but a stat page shipped with three bands
+ * four times taller than their contents, each one reported and none counted. So a box
+ * wasting more than SLACK_SERIOUS_SHARE of the sheet is a defect and a smaller one is
+ * still just advice.
+ *
+ * `overflow` stays uncounted: it means the composer will shrink the type, which it does
+ * well. Counting it would burn every attempt on pages that are fine.
  */
 export function seriousFlaws(fit: Fit): number {
-  return fit.findings.filter((f) => f.kind === 'loud' || f.kind === 'square' || f.kind === 'shrunk' || f.kind === 'measure').length;
+  return fit.findings.filter((f) => {
+    if (f.kind === 'slack') return (f.share ?? 0) >= SLACK_SERIOUS_SHARE;
+    return f.kind === 'loud' || f.kind === 'square' || f.kind === 'shrunk' || f.kind === 'measure' || f.kind === 'decor' || f.kind === 'orphan';
+  }).length;
 }
 
-export { MAX_COMFORTABLE_CPL, SLACK_AT, QR_LOUD_AT, SQUARE_WASTE_AT };
+export { MAX_COMFORTABLE_CPL, SLACK_AT, SLACK_SERIOUS_SHARE, QR_LOUD_AT, SQUARE_WASTE_AT, ICON_DECOR_WIDTH };

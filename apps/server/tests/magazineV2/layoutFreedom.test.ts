@@ -18,6 +18,8 @@ import { normalizeLayoutSpec, MAX_LEAVES, MAX_CHILDREN, MAX_TREE_DEPTH, MIN_PROS
 import { solveLayout } from '../../src/lib/magazineV2/solveLayout.js';
 import { composeFromSolved } from '../../src/lib/magazineV2/composeFromSolved.js';
 import { ptToPx, ROLE_SCALE } from '../../src/lib/magazineV2/roleScale.js';
+import { refitText } from '../../src/lib/magazineV2/layout.js';
+import { normalizeElements } from '../../src/lib/magazineV2/writePipeline.js';
 import { PAGE_W, PAGE_H } from '../../src/lib/magazineV2/config.js';
 import type { LayoutSpec } from '../../src/lib/magazineV2/layoutSpec.js';
 
@@ -58,6 +60,40 @@ test('a leaf that names nothing renders exactly as before', () => {
 test('PROSE HAS A FLOOR — an unreadable body size is raised, and it is not a matter of taste', () => {
   const el = only({ role: 'body', fontPt: 4 }, 'Copy');
   assert.ok(el.text.fontSize >= ptToPx(MIN_PROSE_PT) - 0.5, `${el.text.fontSize}px is under ${MIN_PROSE_PT}pt`);
+});
+
+test('THE FLOOR APPLIES WITHOUT ANYONE DECIDING — a role default may not print at 5.5pt', () => {
+  // A real page shipped a panel of copy shrunk to its role floor: caption's 12px is
+  // 5.8pt, body's 14px is 6.7pt. The floor used to apply only where the AI named a size.
+  const el = only({ role: 'caption' }, 'A long caption that will not fit in this box at any comfortable size, so it shrinks and shrinks.', 0);
+  assert.ok(el.text.minFontSize >= ptToPx(MIN_PROSE_PT) - 0.01, `floor is ${el.text.minFontSize}px`);
+  assert.ok(el.text.fontSize >= ptToPx(MIN_PROSE_PT) - 0.5, `set at ${el.text.fontSize}px`);
+});
+
+test('the floor SURVIVES a later write — otherwise it holds only until someone drags the box', () => {
+  // refitText re-fits from maxFontSize × 0.55 on every element write, which would put a
+  // body slot composed at an 8pt floor back to 6.3pt on the next save.
+  //
+  // The box has to be SMALL enough that the fit actually has to shrink: the first version
+  // of this test used the full page, where the copy fitted at its ceiling and nothing was
+  // exercised at all — it passed with the bug put back.
+  const spec = normalizeLayoutSpec({
+    root: {
+      kind: 'col',
+      children: [
+        { weight: 1, node: { kind: 'leaf', role: 'body', contentRef: 'k' } },
+        { weight: 20, node: { kind: 'leaf', role: 'spacer' } },
+      ],
+    },
+  })!;
+  const copy = 'The paddock is where the real reading happens, and the trainers walk the rail with their hands in their pockets and their eyes fixed on one thing. '.repeat(4);
+  const el = (composeFromSolved(solveLayout(spec, DIMS), { k: { text: copy } }, theme).elements as any[])[0];
+  assert.ok(el.h < 120, `the fixture must give it a tight box (got ${el.h}px)`);
+  assert.ok(el.text.fontSize < ROLE_SCALE.body!.maxFontSize, 'and the copy must actually have to shrink');
+
+  const after = refitText(normalizeElements([el], DIMS));
+  assert.ok(after[0]!.text!.fontSize >= ptToPx(MIN_PROSE_PT) - 0.5, `re-fit to ${after[0]!.text!.fontSize}px`);
+  assert.equal(after[0]!.text!.minFontSize, el.text.minFontSize, 'the floor is carried on the element');
 });
 
 test('a deliberately tiny LABEL is allowed — display type is not prose', () => {

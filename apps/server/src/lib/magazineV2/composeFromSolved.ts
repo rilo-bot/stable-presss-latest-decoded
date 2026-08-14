@@ -68,14 +68,18 @@ function leafColor(node: LeafNode, palette: GenPalette, refFallback: ColorRef | 
 export function typeSizeFor(node: LeafNode, role: LeafRole, scale: { maxFontSize: number; minFontSize: number }): { max: number; min: number } {
   const floorPt = PROSE_ROLES.has(role) ? MIN_PROSE_PT : MIN_DISPLAY_PT;
   const floor = ptToPx(floorPt);
-  // NO DECISION → the role default, UNTOUCHED. The existing floors sit under the print
-  // floor (body 14px = 6.7pt, caption 12px = 5.8pt) and raising them is Phase 3's job
-  // for a measured reason: without fit-aware authoring, a higher floor converts
-  // shrink-to-fit into overflow and multiplies QA failures. Applying it only where the
-  // art-director opted in means the new power is safe and nothing else moves.
-  if (node.fontPt === undefined) return { max: scale.maxFontSize, min: scale.minFontSize };
-  const asked = ptToPx(node.fontPt);
-  return { max: Math.max(asked, floor), min: floor };
+  // THE FLOOR APPLIES WHETHER OR NOT ANYONE DECIDED.
+  //
+  // It used to apply only where the art-director had named a size, because raising the
+  // role DEFAULTS (body 14px = 6.7pt, caption 12px = 5.8pt) without fit-aware authoring
+  // converts shrink-to-fit into overflow. That precondition has since been met — the
+  // copywriter is given a character budget measured from the real box, and the fit report
+  // says when type had to be cut — and a real page then shipped with a panel of copy
+  // shrunk to about 5.5pt, which is the worst thing on the sheet. So it applies to both
+  // paths now: below this, the words are on the page but nobody can read them.
+  const asked = node.fontPt === undefined ? scale.maxFontSize : ptToPx(node.fontPt);
+  const min = node.fontPt === undefined ? Math.max(scale.minFontSize, floor) : floor;
+  return { max: Math.max(asked, min), min };
 }
 
 /** Shift a hex colour toward black (amt<0) or white (amt>0), amt in [-1,1]. */
@@ -247,6 +251,8 @@ function buildElement(leaf: SolvedLeaf, fill: LeafFill | undefined, theme: { pal
       fontFamily,
       fontSize,
       maxFontSize: size.max,
+      // Carried so the print floor survives every later write — see refitText.
+      minFontSize: size.min,
       fontWeight,
       color,
       align,

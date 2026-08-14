@@ -207,6 +207,12 @@ export function readableColor(desired: string, bg: string, light: string, dark: 
  * Recompute fontSize for shrink-to-fit text that declares a maxFontSize.
  * Extracted text (no maxFontSize) keeps its measured size untouched. Runs on
  * every element write (via writePipeline.normalizeElements).
+ *
+ * Honours the element's OWN `minFontSize` when it carries one. The 55%-of-ceiling
+ * default is a reasonable guess for hand-made text, but it is not a print floor: a body
+ * slot composed with an 8pt floor would be re-fitted from `24 × 0.55 = 13px` (6.3pt) on
+ * the very next save, so the legibility rule would hold only until someone dragged the
+ * box. Carrying the floor on the element is what makes it durable.
  */
 export function refitText(elements: MagazineElement[]): MagazineElement[] {
   return elements.map((el) => {
@@ -218,7 +224,7 @@ export function refitText(elements: MagazineElement[]): MagazineElement[] {
       boxW: el.w,
       boxH: el.h,
       maxFontSize: t.maxFontSize,
-      minFontSize: Math.max(6, Math.round(t.maxFontSize * 0.55)),
+      minFontSize: typeof t.minFontSize === 'number' ? t.minFontSize : Math.max(6, Math.round(t.maxFontSize * 0.55)),
       lineHeight: t.lineHeight,
       fontFamily: t.fontFamily,
       fontWeight: t.fontWeight,

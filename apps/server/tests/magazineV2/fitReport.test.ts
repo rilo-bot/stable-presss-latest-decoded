@@ -79,14 +79,73 @@ test('a single full-width body column is reported by its line length', () => {
   assert.match(measure!.detail, /45–75 is readable/);
 });
 
-test('a box far taller than its copy is reported — the "more space than elements" complaint, measured', () => {
-  const fit = fitReport(solvedOf([[{ role: 'body', contentRef: 'body', fontPt: 10 }, [36, 200, 560, 900]]]), { body: { text: 'Two short lines of copy.' } }, fonts);
-  const slack = fit.findings.find((f) => f.kind === 'slack');
-  assert.ok(slack, `got ${kinds(fit).join(', ') || 'none'}`);
-  assert.match(slack!.detail, /blank/);
-  // …but slack alone must NOT buy a retry: it is common, often correct, and if it
-  // forced one, nearly every page would burn its attempts and drop to the template.
-  assert.equal(seriousFlaws(fit), 0);
+test('SLACK IS JUDGED BY THE PAGE IT WASTES, not by the box', () => {
+  // A stat page shipped with three bands each about four times taller than the figure
+  // inside them. Every one was reported as slack and NONE was counted, because slack was
+  // advisory whatever its size — so nothing retried and the page went out. The size of
+  // the waste is what decides.
+  const big = fitReport(solvedOf([[{ role: 'body', contentRef: 'body', fontPt: 10 }, [36, 200, 560, 900]]]), { body: { text: 'Two short lines of copy.' } }, fonts);
+  const slack = big.findings.find((f) => f.kind === 'slack');
+  assert.ok(slack, `got ${kinds(big).join(', ') || 'none'}`);
+  assert.ok((slack!.share ?? 0) > 0.15, `share ${slack!.share}`);
+  assert.match(slack!.detail, /OF THE WHOLE PAGE/);
+  assert.equal(seriousFlaws(big), 1, 'a box swallowing a fifth of the sheet is a defect');
+
+  // …and the reason slack was advisory in the first place still holds for small boxes: a
+  // caption with room to spare is normal, and counting it would burn every attempt.
+  const small = fitReport(solvedOf([[{ role: 'caption', contentRef: 'cap', fontPt: 9 }, [36, 200, 300, 120]]]), { cap: { text: 'A short caption.' } }, fonts);
+  assert.ok(small.findings.some((f) => f.kind === 'slack'), 'still reported');
+  assert.equal(seriousFlaws(small), 0, 'but not a defect');
+});
+
+test('a big unlabelled glyph is clip-art; the same glyph with a label beside it is design', () => {
+  // A real cover put two 15%-wide outline icons at the top with nothing attached to them.
+  // The same two glyphs on the back cover, in a module with labels, looked professional.
+  const alone = fitReport(solvedOf([[{ role: 'icon', iconName: 'Trophy' }, [200, 120, 200, 200]]]), {}, fonts);
+  const decor = alone.findings.find((f) => f.kind === 'decor');
+  assert.ok(decor, `got ${kinds(alone).join(', ') || 'none'}`);
+  assert.match(decor!.detail, /clip-art/);
+  assert.equal(seriousFlaws(alone), 1);
+
+  // With a caption right under it, the same icon is a labelled mark.
+  const labelled = fitReport(
+    solvedOf([
+      [{ role: 'icon', iconName: 'Trophy' }, [200, 120, 200, 200]],
+      [{ role: 'label', contentRef: 'l', fontPt: 9 }, [200, 330, 200, 24]],
+    ]),
+    { l: { text: "Winner's Circle" } },
+    fonts,
+  );
+  assert.ok(!kinds(labelled).includes('decor'), `got ${kinds(labelled).join(', ')}`);
+
+  // A small mark needs no label — it is not pretending to be a picture.
+  const mark = fitReport(solvedOf([[{ role: 'icon', iconName: 'Trophy' }, [200, 120, 80, 80]]]), {}, fonts);
+  assert.deepEqual(mark.findings, []);
+});
+
+test('a QR label stranded away from its QR is reported', () => {
+  // The cover defect: the label sat beside the standfirst, the code was at the foot.
+  const apart = fitReport(
+    solvedOf([
+      [{ role: 'qr', contentRef: 'qr' }, [140, 1200, 200, 200]],
+      [{ role: 'caption', contentRef: 'qrLabel', fontPt: 9 }, [600, 600, 300, 30]],
+    ]),
+    { qr: { qrUrl: 'https://x' }, qrLabel: { text: 'Scan for odds' } },
+    fonts,
+  );
+  const orphan = apart.findings.find((f) => f.kind === 'orphan');
+  assert.ok(orphan, `got ${kinds(apart).join(', ') || 'none'}`);
+  assert.ok(seriousFlaws(apart) >= 1);
+
+  const together = fitReport(
+    solvedOf([
+      [{ role: 'qr', contentRef: 'qr' }, [140, 1200, 200, 200]],
+      [{ role: 'caption', contentRef: 'qrLabel', fontPt: 9 }, [360, 1240, 300, 30]],
+    ]),
+    { qr: { qrUrl: 'https://x' }, qrLabel: { text: 'Scan for odds' } },
+    fonts,
+  );
+  assert.ok(!kinds(together).includes('orphan'), `got ${kinds(together).join(', ')}`);
 });
 
 test('deliberate emptiness is counted, not complained about', () => {
