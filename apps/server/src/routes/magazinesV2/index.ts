@@ -41,12 +41,13 @@ import { isAgentConfigured } from '../../lib/agent/provider.js';
 import { storage } from '../../lib/storage.js';
 import { enqueueJob } from '../../lib/magazineV2/jobs.js';
 import { renumberFolios } from '../../lib/magazineV2/renumberFolios.js';
-import { FURNITURE_IDS } from '../../lib/magazineV2/pageFurniture.js';
+import { FURNITURE_IDS, type RefurnishContext } from '../../lib/magazineV2/pageFurniture.js';
+import type { GenFonts, GenPalette } from '../../lib/magazineV2/templates.js';
 import { runPageAgent } from '../../lib/magazineV2/agent.js';
 import { formatPageText, charGuideFor } from '../../lib/magazineV2/format.js';
 import { readLayoutImage } from '../../lib/magazineV2/readLayout.js';
 import { aspectMismatch, normalizeLayoutReading } from '../../lib/magazineV2/layoutReading.js';
-import { applyReadingToPage } from '../../lib/magazineV2/applyLayout.js';
+import { applyReadingToPage, tightSummary } from '../../lib/magazineV2/applyLayout.js';
 
 /* eslint-disable @typescript-eslint/no-explicit-any */
 type Doc = { _id: string; [k: string]: any };
@@ -2183,6 +2184,21 @@ router.post('/issues/:id/pages/generate', rateLimit('mag2-generate', 10, 60_000)
   const topic = typeof req.body?.topic === 'string' ? req.body.topic.trim().slice(0, 400) : undefined;
   const at = Number(req.body?.atIndex);
   const atIndex = Number.isInteger(at) && at >= 0 && at <= pages.length ? at : pages.length;
+  // A GENERATED PAGE IS ALWAYS AN INTERIOR PAGE — planPages emits INTERIOR_KINDS only,
+  // never a cover. Inserting one at position 0 therefore put a two-column article in
+  // front of the magazine AND repointed the issue's cover image at it, silently
+  // replacing a cover the user had already approved. The chat assistant can propose an
+  // atIndex, so this was reachable by asking for "a page at the front".
+  //
+  // Refused rather than quietly clamped to 1: the caller asked for something this
+  // endpoint cannot do, and a silent shift is how you end up with the page in a place
+  // nobody chose. An issue with no pages yet is the one case where 0 is simply the end.
+  if (atIndex === 0 && pages.length > 0) {
+    res.status(400).json({
+      error: 'New AI pages are interior pages, so they cannot go in front of the cover. Insert after page 1, or edit the cover directly.',
+    });
+    return;
+  }
   const prevStatus = String(doc.status);
   await db.collection(COL.magazines).updateOne(doc._id, { status: 'processing', stage: 'Designing pages', updatedAt: new Date().toISOString() });
   await enqueueJob('generatePages', { issueId: doc._id, count, topic, atIndex, prevStatus });
@@ -2739,6 +2755,28 @@ router.get('/issues/:id/threads/:threadId/messages', async (req, res) => {
  * assistant) changed the page since it was loaded, and the reflow would be working
  * from content that has moved on.
  */
+/**
+ * What `applyReadingToPage` needs to put a rearranged page's running head and folio
+ * back. Everything here is already on the two documents — a page stores its `index`,
+ * and the issue stores the theme — which is why the reference path can restore chrome
+ * without knowing the page's template kind (a page document has never recorded one).
+ *
+ * `refurnish` reads the section label off the page's own previous running head, so this
+ * deliberately carries no `sectionTitle`.
+ */
+function furnitureContextFor(issue: Doc, page: Doc): RefurnishContext | undefined {
+  const gt = (issue as unknown as { genTheme?: { title?: string; palette?: GenPalette; fonts?: GenFonts } }).genTheme;
+  if (!gt?.palette || !gt?.fonts) return undefined; // no theme → no chrome to re-derive
+  const index = Number(page.index);
+  if (!Number.isInteger(index) || index < 0) return undefined;
+  return {
+    magazineTitle: String(gt.title || issue.title || ''),
+    pageNumber: index + 1,
+    palette: gt.palette,
+    fonts: gt.fonts,
+  };
+}
+
 router.post('/issues/:id/pages/:pageId/apply-layout', rateLimit('mag2-agent', 20, 60_000), async (req, res) => {
   const ctx = await loadEditablePage(req, res);
   if (!ctx) return;
@@ -2771,13 +2809,13 @@ router.post('/issues/:id/pages/:pageId/apply-layout', rateLimit('mag2-agent', 20
     reading = out.reading;
   }
 
-  const genTheme = ((issue as unknown as { genTheme?: { palette?: Record<string, string>; fonts?: Record<string, string> } }).genTheme) ?? null;
+  const genTheme = ((issue as unknown as { genTheme?: { title?: string; palette?: Record<string, string>; fonts?: Record<string, string> } }).genTheme) ?? null;
   const applied = applyReadingToPage(reading, {
     width: Number(page.width) || undefined,
     height: Number(page.height) || undefined,
     background: page.background as { type?: string; value?: string } | undefined,
     elements: Array.isArray(page.elements) ? (page.elements as MagazineElement[]) : [],
-  }, genTheme);
+  }, genTheme, furnitureContextFor(issue, page));
   if (!applied.page) {
     // 422: the request and the server are both fine — this layout and this page
     // cannot be put together, and the sentence says which.
@@ -2810,6 +2848,10 @@ router.post('/issues/:id/pages/:pageId/apply-layout', rateLimit('mag2-agent', 20
       summary: applied.page.fidelity.summary,
       missing: applied.page.fidelity.missing,
     },
+    // Copy that had to be cut to stay readable. This used to be a 422 with an internal
+    // element id in it; the page is built now and the shortfall is stated in characters.
+    tight: applied.page.tight,
+    tightSummary: tightSummary(applied.page.tight),
     warning: aspectMismatch(reading, pageDims(page).width, pageDims(page).height),
   });
 });

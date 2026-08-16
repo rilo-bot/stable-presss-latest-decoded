@@ -261,8 +261,20 @@ export function AiPanel() {
           if (!a.mediaUrl && issueId) {
             try {
               a.mediaUrl = (await uploadMediaImage(issueId, a.file, a.file.name)).url;
-            } catch {
-              toast.message(`Couldn't store “${a.file.name}” for placement — I'll describe it to the assistant instead.`);
+            } catch (e) {
+              // SAY WHAT WENT WRONG. This used to be a bare `catch {}` under a message
+              // that only reported the consequence, so every cause looked identical:
+              // an image over the size limit, a storage misconfiguration and a browser
+              // upload blocked by the bucket's CORS rules all produced the same
+              // sentence, and the last of those never reaches the server log at all
+              // (the PUT goes straight to S3). The server's own refusals are already
+              // written for a person — a 413 says what the limit is — so pass them
+              // through rather than paraphrasing.
+              const why = e instanceof Error && e.message ? e.message : '';
+              toast.message(
+                `Couldn't store “${a.file.name}” for placement${why ? ` — ${why}` : ''}. I'll describe it to the assistant instead, but it can't be placed on the page.`,
+              );
+              console.warn('[studio] media upload failed', a.file.name, e);
             }
           }
           if (a.mediaUrl) imgs.push({ url: a.mediaUrl, name: a.file.name });

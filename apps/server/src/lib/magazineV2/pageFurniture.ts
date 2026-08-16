@@ -94,7 +94,18 @@ const KIND_LABEL: Record<PageTemplateKind, string> = {
 };
 
 export interface FurnitureContext {
-  kind: PageTemplateKind;
+  /**
+   * The page's template kind, when the caller knows it. Covers and back covers get no
+   * chrome at all, and it is the FALLBACK source for the running-head label.
+   *
+   * Optional because not every caller can know it: a page document stores its elements
+   * and its index, not its kind, so the reference path rebuilding an existing page has
+   * no kind to give. Such a caller supplies the label itself (see `refurnish`) and gets
+   * no KIND_LABEL fallback — which is right, since inventing "Feature" for a page whose
+   * running head deliberately had no label would be putting words back that were
+   * deliberately left out.
+   */
+  kind?: PageTemplateKind;
   sectionTitle: string;
   magazineTitle: string;
   pageNumber: number;
@@ -290,9 +301,10 @@ export function pageFurniture(page: FurnishablePage, ctx: FurnitureContext): Mag
     // directly above "BY THE NUMBERS". Guarding one door and leaving the other open is
     // the same bug twice; if nothing survives, the page simply gets no label.
     const label =
-      [truncate(ctx.sectionTitle, MAX_LABEL), truncate(KIND_LABEL[ctx.kind], MAX_LABEL)].find(
-        (c) => !!c && !onPage.has(normalizeWords(c)),
-      ) ?? '';
+      [
+        truncate(ctx.sectionTitle, MAX_LABEL),
+        ctx.kind ? truncate(KIND_LABEL[ctx.kind], MAX_LABEL) : '',
+      ].find((c) => !!c && !onPage.has(normalizeWords(c))) ?? '';
     const title = truncate(ctx.magazineTitle, MAX_TITLE);
     const showTitle =
       !!title && (!label || normalizeWords(title) !== normalizeWords(label)) && !onPage.has(normalizeWords(title));
@@ -345,6 +357,51 @@ export function pageFurniture(page: FurnishablePage, ctx: FurnitureContext): Mag
 
   if (raw.length === 0) return [];
   return normalizeElements(raw, { width: PAGE_W, height: PAGE_H });
+}
+
+/** What a REBUILD needs to put a page's chrome back: everything `FurnitureContext` has
+ *  except the two things a stored page cannot tell you — its kind and its section. */
+export interface RefurnishContext {
+  magazineTitle: string;
+  pageNumber: number;
+  palette: GenPalette;
+  fonts: GenFonts;
+}
+
+/**
+ * Put a REARRANGED page's chrome back, taking its wording from the chrome it had.
+ *
+ * "Take this layout" replaces every element on a page, which used to take the running
+ * head and the folio with it — measured: `furniture ids surviving: 0`, the folio's digit
+ * glued onto the end of the article, and a fidelity report of 81% "matched" printed over
+ * the top. Losing the folio is the worse half: `restampFolio` finds it by id, so a page
+ * that loses it drops out of `renumberFolios` permanently and can never be renumbered
+ * again by a later reorder.
+ *
+ * RE-DERIVED, NOT RE-ATTACHED. The old boxes were measured against the old layout, and
+ * the new one may well have taken the top band; `pageFurniture` reads the free bands of
+ * the page it is handed and emits nothing where there is no room. The WORDING, though, is
+ * the page's own: the section label is read back off the previous running head rather
+ * than guessed, so a page that said "Stable Life" still says "Stable Life", and a page
+ * that deliberately carried no label (because it duplicated the kicker) does not acquire
+ * one from a fallback.
+ *
+ * A page that had no chrome to begin with — a cover, a back cover — gets none back.
+ */
+export function refurnish(
+  previous: MagazineElement[],
+  page: FurnishablePage,
+  ctx: RefurnishContext,
+): MagazineElement[] {
+  if (!previous.some((e) => FURNITURE_IDS.includes(e.id))) return [];
+  const label = previous.find((e) => e.id === HEAD_LABEL_ID && e.type === 'text')?.text?.content ?? '';
+  return pageFurniture(page, {
+    sectionTitle: label,
+    magazineTitle: ctx.magazineTitle,
+    pageNumber: ctx.pageNumber,
+    palette: ctx.palette,
+    fonts: ctx.fonts,
+  });
 }
 
 /**

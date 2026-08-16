@@ -10,7 +10,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { readingToSpec, specContentRefs } from '../../src/lib/magazineV2/readingToSpec.ts';
-import { normalizeLayoutSpec, MAX_TREE_DEPTH, MAX_LEAVES, MAX_CHILDREN } from '../../src/lib/magazineV2/layoutSpec.ts';
+import { normalizeLayoutSpec, MAX_TREE_DEPTH, MAX_LEAVES, MAX_CHILDREN, MAX_SPACE_PX } from '../../src/lib/magazineV2/layoutSpec.ts';
 import { normalizeLayoutReading, type LayoutReading, type ReadRegion } from '../../src/lib/magazineV2/layoutReading.ts';
 import { pruneLayoutSpec } from '../../src/lib/magazineV2/pruneSpec.ts';
 import { solveLayout } from '../../src/lib/magazineV2/solveLayout.ts';
@@ -112,14 +112,31 @@ test('a cluster with an EMPTY half is content-sized and pushed to its end', () =
 });
 
 test('a cluster in the MIDDLE keeps its empty space at both ends', () => {
-  const spec = toSpec(read([
+  // EITHER MECHANISM IS ALLOWED HERE, and the test says so deliberately. A centred
+  // cluster's margin is min(lead, trail), which on a full page is ~700px — past what a
+  // `pad` can express — so this shape now goes through spacers rather than
+  // content-size + justify:'center'. The old assertion pinned the mechanism and broke
+  // on a change that measured strictly BETTER (46.9% → 77.2% fidelity on this shape).
+  // What must never change is the property in the test's own name.
+  const regions = [
     { role: 'headline', box: box(0.1, 0.4, 0.8, 0.08) },
     { role: 'subhead', box: box(0.1, 0.5, 0.8, 0.05) },
-  ]));
+  ];
+  const spec = toSpec(read(regions));
   assert.ok(spec);
   assert.equal(spec.root.kind, 'col');
   if (spec.root.kind !== 'col') return;
-  assert.equal(spec.root.justify, 'center');
+  const viaJustify = spec.root.justify === 'center';
+  const viaSpacers = spec.root.children.filter((c) => c.node.kind === 'leaf' && c.node.role === 'spacer').length === 2;
+  assert.ok(viaJustify || viaSpacers, 'the empty space is expressed one way or the other');
+
+  const boxes = solvedBoxes(regions);
+  const text = boxes.filter((b) => b.role !== 'spacer');
+  assert.equal(text.length, 2, 'both lines reached the page');
+  const top = Math.min(...text.map((t) => t.y));
+  const bottom = Math.max(...text.map((t) => t.y + t.h));
+  assert.ok(top >= 0.25, `the cluster starts at ${(top * 100).toFixed(0)}% — space above it was lost`);
+  assert.ok(bottom <= 0.75, `the cluster ends at ${(bottom * 100).toFixed(0)}% — space below it was lost`);
 });
 
 test('ordinary MARGINS are not empty space — those bands still fill the page', () => {
@@ -466,6 +483,83 @@ test('ENTRANCE 3 — an IMAGE inside the cluster', () => {
   const inset = boxes.filter((b) => b.role === 'image').sort((a, b) => a.h - b.h)[0]!;
   assert.ok(inset.h <= 0.3, `the inset photo is ${(inset.h * 100).toFixed(0)}% of the page tall`);
   assert.ok(inset.y + inset.h <= 0.55, `it ends at ${((inset.y + inset.h) * 100).toFixed(0)}% — it left the cluster`);
+});
+
+// ── The offset a pad has to be able to say ───────────────────────────────────
+//
+// `anchored`'s all-text branch is the ONE code path that can express "this cluster sat
+// here and not there". It used to say the offset with `spaceTokenFor`, which can only
+// return a token, and the scale stops at xl = 96px — so every offset past 96px was
+// silently pinned to 96px. On a lower-third cover (the second commonest cover idiom
+// there is) that put the whole title block at the TOP of the page: measured 6.1%,
+// verdict "loose", the kicker and headline both at IoU 0.00 on A4 and on Letter alike.
+// It is a plain number now, which the DSL has accepted since `Space = SpaceToken | number`.
+
+/** Every `pad` in a spec, so a test can assert the MECHANISM and not just the outcome. */
+const padsIn = (node: LayoutNode, out: unknown[] = []): unknown[] => {
+  if (node.kind === 'leaf') return out;
+  if (node.kind === 'stack') { node.layers.forEach((l) => padsIn(l, out)); return out; }
+  if (node.pad !== undefined) out.push(node.pad);
+  node.children.forEach((c) => padsIn(c.node, out));
+  return out;
+};
+
+test('a title block anchored to the FOOT of the reference stays at the foot', () => {
+  const regions = [
+    { role: 'image', box: box(0, 0, 1, 1) },            // full-bleed cover photo
+    { role: 'kicker', box: box(0.1, 0.6, 0.8, 0.03) },
+    { role: 'headline', box: box(0.08, 0.65, 0.84, 0.12) },
+    { role: 'subhead', box: box(0.3, 0.8, 0.4, 0.05) },
+  ];
+  // The offset this fixture needs is 0.15 × PAGE_H ≈ 263px — comfortably past the 96px
+  // the token scale tops out at, which is the whole point of the fixture.
+  const wanted = Math.round(0.15 * PAGE_H);
+  assert.ok(wanted > 96, `the fixture must need more than a token can say (wants ${wanted}px)`);
+
+  const pads = padsIn(normalizeLayoutSpec(toSpec(read(regions, { margin: 'md' }))!)!.root);
+  assert.ok(
+    pads.some((p) => typeof p === 'number' && p > 96),
+    `the offset must survive as a number, not a token — got ${JSON.stringify(pads)}`,
+  );
+
+  const boxes = solvedBoxes(regions, 'md');
+  const text = boxes.filter((b) => b.role !== 'image');
+  assert.equal(text.length, 3, 'all three lines reached the page');
+  for (const t of text) {
+    assert.ok(t.y >= 0.45, `${t.role} starts at ${(t.y * 100).toFixed(0)}% — the cluster belongs in the LOWER half`);
+  }
+  const lowest = Math.max(...text.map((t) => t.y + t.h));
+  assert.ok(lowest >= 0.72, `the cluster ends at ${(lowest * 100).toFixed(0)}% — it should sit near the foot`);
+  assert.ok(lowest <= 0.99, `the cluster ends at ${(lowest * 100).toFixed(0)}% — it must not be jammed off the sheet`);
+});
+
+test('an offset too big for a pad falls through to spacers instead of being clamped', () => {
+  // Past MAX_SPACE_PX a pad cannot say the offset either, so `anchored` hands the case to
+  // the spacer mechanism, which has no ceiling. Clamping instead would re-create the very
+  // bug above, one order of magnitude up.
+  //
+  // THE FIXTURE HAS TO BE OFF-CENTRE. The obvious one — a cluster centred on the page —
+  // is useless here and the first version of this test used it and PASSED with the bug
+  // re-planted: a clamped `justify: 'center'` still lands a centred cluster in the middle,
+  // so the fixture could not tell truncation from fidelity. This one is top-weighted:
+  // lead 0.25 (438px, past the ceiling) against a trail twice its size, so `justify` is
+  // 'start' and a clamp visibly yanks the cluster to the top of the sheet.
+  const regions = [
+    { role: 'image', box: box(0, 0, 1, 1) },
+    { role: 'headline', box: box(0.1, 0.25, 0.8, 0.08) },
+    { role: 'subhead', box: box(0.2, 0.35, 0.6, 0.04) },
+  ];
+  const wanted = Math.round(0.25 * PAGE_H);
+  assert.ok(wanted > MAX_SPACE_PX, `the fixture must exceed the pad ceiling (wants ${wanted}px)`);
+
+  const boxes = solvedBoxes(regions, 'md');
+  const head = boxes.find((b) => b.role === 'headline');
+  assert.ok(head, 'the headline reached the page');
+  assert.ok(
+    head.y >= 0.18,
+    `the headline starts at ${(head.y * 100).toFixed(0)}% — the reference had it at 25%, and a truncated offset drags it to the top`,
+  );
+  assert.ok(head.y <= 0.4, `the headline starts at ${(head.y * 100).toFixed(0)}% — it should not drift down the page either`);
 });
 
 test('ENTRANCE 4 — an inset photo is not blown up to full bleed over the hero', () => {

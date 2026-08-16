@@ -14,6 +14,7 @@ import { solveLayout } from '../../src/lib/magazineV2/solveLayout.ts';
 import type { Origin } from '../../src/lib/magazineV2/readingToSpec.ts';
 import type { SolvedLayout } from '../../src/lib/magazineV2/solveLayout.ts';
 import type { LeafRole } from '../../src/lib/magazineV2/layoutSpec.ts';
+import { PAGE_H, PAGE_W } from '../../src/lib/magazineV2/config.ts';
 
 const box = (x: number, y: number, w: number, h: number) => ({ x, y, w, h });
 const DIMS = { width: 1000, height: 1000 };
@@ -186,8 +187,8 @@ test('A MAGAZINE COVER: text clustered at the top stays at the top', () => {
   assert.ok(reading);
   const converted = readingToSpec(reading);
   assert.ok(converted);
-  const H = 1650;
-  const solved = solveLayout(converted.spec, { width: 1275, height: H }, { measureLeaf: () => 90 });
+  const H = PAGE_H;
+  const solved = solveLayout(converted.spec, { width: PAGE_W, height: H }, { measureLeaf: () => 90 });
   const head = solved.leaves.find((l) => l.node.role === 'headline');
   assert.ok(head, 'the headline reached the page');
   // The masthead sat in the top 20% of the reference. Anywhere past the top THIRD is
@@ -196,7 +197,7 @@ test('A MAGAZINE COVER: text clustered at the top stays at the top', () => {
     head.box.y + head.box.h <= H * 0.4,
     `the masthead ends at ${head.box.y + head.box.h} of ${H} — it belongs in the top third`,
   );
-  const f = measureFidelity(solved, converted.origin, { width: 1275, height: H });
+  const f = measureFidelity(solved, converted.origin, { width: PAGE_W, height: H });
   assert.ok(f.score > ADAPTED_AT, `fidelity ${f.score.toFixed(2)} — a cover should not be a loose interpretation`);
 });
 

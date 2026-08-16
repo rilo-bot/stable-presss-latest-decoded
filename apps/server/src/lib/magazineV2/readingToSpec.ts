@@ -28,7 +28,7 @@
 // ---------------------------------------------------------------------------
 
 import {
-  SPACE_PX, SPACE_TOKENS,
+  MAX_SPACE_PX, SPACE_PX, SPACE_TOKENS,
   type ContainerNode, type FlexAlign, type LayoutChild, type LayoutNode, type LayoutSpec, type LeafNode, type SpaceToken, type TextAlignToken,
 } from './layoutSpec.js';
 
@@ -98,9 +98,9 @@ const biggest = (regions: ReadRegion[]): ReadRegion =>
  *
  * Why a spacer at all, rather than the three things tried before: `justify` is honoured
  * only when every track is content-sized (one side-by-side pair defeats it), content
- * sizing is a no-op on image/qr/icon leaves (a photo defeats it), and `pad` cannot express
- * it because the space tokens stop at 96px while a half-empty page needs ~1,200. See the
- * `spacer` role in layoutSpec.ts.
+ * sizing is a no-op on image/qr/icon leaves (a photo defeats it), and `pad` runs out at
+ * MAX_SPACE_PX (400) while a half-empty page needs ~1,200. See the `spacer` role in
+ * layoutSpec.ts.
  */
 const MIN_RUN = MIN_GAP;
 
@@ -120,9 +120,9 @@ const EMPTY_END = 0.25;
  *
  * TWO MECHANISMS, chosen by what the children are, because measurement said so:
  *
- *  • Every child a TEXT LEAF → content-size them and `justify`. The solver measures each
- *    line's own copy, which lands close to the reference's band heights, and `pad`
- *    reproduces the offset exactly. Scored 0.60 on the cover fixture.
+ *  • Every child a TEXT LEAF, and the offset small enough for a `pad` → content-size them
+ *    and `justify`. The solver measures each line's own copy, which lands close to the
+ *    reference's band heights, and `pad` reproduces the offset exactly.
  *  • Anything else → `fr` weights plus `spacer` siblings. Content sizing is a no-op on
  *    image/qr/icon leaves and is ignored entirely for containers, so for those children the
  *    first mechanism silently degrades into the stretched page this whole exercise is about.
@@ -132,6 +132,19 @@ const EMPTY_END = 0.25;
  * between every pair of children, INCLUDING between a spacer and the cluster. On the cover
  * fixture that inserted an extra 60px above the masthead and dragged every band down —
  * 0.60 → 0.30, measurably worse. `pad` has no such problem because it is not a child.
+ *
+ * THE OFFSET IS RAW PIXELS, NOT A SPACE TOKEN, and that is the whole difference between
+ * this working and not. `spaceTokenFor` can only return a token, and the scale stops at
+ * `xl` = 96px — so a cover whose title block sits 263px off the foot was pinned at 96px
+ * and every band missed its reference box completely: measured 0.0%, verdict "loose", all
+ * three text IoU 0.00, on BOTH sheet sizes. `pad` has accepted a plain number since the
+ * DSL unlock (`Space = SpaceToken | number`), which is what makes the honest value
+ * expressible; the same fixture then scores 51%. Tokens are still right for `gap`, which
+ * is a rhythm rather than a measurement.
+ *
+ * Past MAX_SPACE_PX a pad cannot say it either, and clamping would re-create the same bug
+ * one order of magnitude up — so that case falls through to spacers, which have no ceiling.
+ * The choice here is therefore offset SIZE as well as child kind.
  */
 function anchored(
   kind: 'col' | 'row',
@@ -144,10 +157,14 @@ function anchored(
   if (Math.max(lead, trail) / axisLen <= EMPTY_END) return { kind, gap, children };
 
   if (children.every((c) => c.node.kind === 'leaf' && TEXT_ROLES.has(c.node.role))) {
-    for (const c of children) c.sizing = 'content';
     const justify: FlexAlign = lead <= trail * 0.5 ? 'start' : trail <= lead * 0.5 ? 'end' : 'center';
     const margin = justify === 'end' ? trail : justify === 'start' ? lead : Math.min(lead, trail);
-    return { kind, gap, children, justify, pad: spaceTokenFor(margin, axisPx) };
+    const padPx = Math.round(Math.max(0, margin) * axisPx);
+    if (padPx <= MAX_SPACE_PX) {
+      for (const c of children) c.sizing = 'content';
+      return { kind, gap, children, justify, pad: padPx };
+    }
+    // Too far off the edge for a pad to say — spacers below.
   }
 
   const withSpacers: LayoutChild[] = [];
@@ -434,8 +451,8 @@ function flatten(regions: ReadRegion[], rect: ReadBox, depth: number, ref: Alloc
   const kept = [...regions].sort((a, b) => a.box.y - b.box.y || a.box.x - b.box.x).slice(0, MAX_CHILDREN - 2);
   // These regions OVERLAP, so their heights say nothing about how the space should divide:
   // each line takes the height its own copy needs. Where the CLUSTER sits is a different
-  // question, and spacers answer it — `justify` could not, because it is honoured only when
-  // every track is content-sized, and `pad` could not, because it stops at 96px.
+  // question, and `anchored` answers it — with a `pad` while the offset fits inside
+  // MAX_SPACE_PX, and with spacers beyond that.
   const top = Math.min(...kept.map((r) => r.box.y));
   const bottom = Math.max(...kept.map((r) => r.box.y + r.box.h));
   return anchored(

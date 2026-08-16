@@ -24,9 +24,11 @@ import { pruneLayoutSpec } from './pruneSpec.js';
 import { solveLayout } from './solveLayout.js';
 import { makeMeasureLeaf } from './measureLeaf.js';
 import { composeFromSolved, type LeafFill, type ResolvedContent } from './composeFromSolved.js';
+import { charBudget } from './fitReport.js';
 import { validatePageLayout } from './layoutValidate.js';
 import { normalizeElements } from './writePipeline.js';
 import { TEXT_ROLES } from './roleScale.js';
+import { FURNITURE_IDS, refurnish, type RefurnishContext } from './pageFurniture.js';
 import type { GenFonts, GenPalette } from './templates.js';
 import type { MagazineElement } from './model.js';
 
@@ -38,6 +40,17 @@ export interface AppliedPage {
   /** How close the built page actually came to the reference (P3). Measured, not
    *  claimed: the caller shows this instead of asserting a match. */
   fidelity: Fidelity;
+  /** Slots whose copy does not fit at a readable size, with the numbers. Empty is the
+   *  normal case. The page is still built — see the QA split in applyReadingToPage. */
+  tight: TightSlot[];
+}
+/** One slot that holds less copy than it was given, in characters the user can act on. */
+export interface TightSlot {
+  role: string;
+  /** Roughly what the box holds at the size it settled on. */
+  holds: number;
+  /** What this page actually has for it. */
+  has: number;
 }
 export interface ApplyResult {
   page: AppliedPage | null;
@@ -202,9 +215,20 @@ export function reflowContent(
   const content: ResolvedContent = {};
 
   // Pools, each ordered so the FIRST one taken is the most important.
+  //
+  // FURNITURE IS NOT CONTENT, and it has to be excluded HERE rather than trusted to
+  // behave. `pageFurniture` stamps the running head, the masthead and the folio with
+  // `role: 'other'` and a comment saying they therefore never count as content — true
+  // of pageDensity, which filters on these same ids, and false of this function, which
+  // treats every 'other' as spare editorial prose. The measured result was a page whose
+  // body copy ended "…nobody minded.\n7", the masthead promoted to a standfirst, and a
+  // fidelity report of 81% "matched" over the top of it. Worse, the folio was then gone
+  // for good: restampFolio finds it by id, so renumberFolios could never repair that
+  // page again. Chrome is re-derived from the new layout after QA instead.
   const byRole = new Map<string, MagazineElement[]>();
   const loose: MagazineElement[] = [];
-  for (const el of elements.filter((e) => e.type === 'text' && textOf(e))) {
+  const editorial = elements.filter((e) => !FURNITURE_IDS.includes(e.id));
+  for (const el of editorial.filter((e) => e.type === 'text' && textOf(e))) {
     const role = el.text?.role ?? 'other';
     if (role === 'other') { loose.push(el); continue; }
     const list = byRole.get(role) ?? [];
@@ -214,16 +238,16 @@ export function reflowContent(
   for (const list of byRole.values()) list.sort((a, b) => textOf(b).length - textOf(a).length);
   loose.sort((a, b) => textOf(b).length - textOf(a).length);
 
-  const BACKGROUND = ' background';
-  const images: { url: string; assetId: string; alt: string; key?: string }[] = elements
+  const BACKGROUND = '\u0000background';
+  const images: { url: string; assetId: string; alt: string; key?: string }[] = editorial
     .filter((e) => e.type === 'image' && e.image?.url)
     .sort((a, b) => b.w * b.h - a.w * a.h)
     .map((e) => ({ url: e.image!.url, assetId: e.image!.assetId ?? '', alt: e.image!.alt ?? '' }));
   if (backgroundImage) images.unshift({ url: backgroundImage, assetId: '', alt: '', key: BACKGROUND });
   let usedBackground = false;
 
-  const icons = elements.filter((e) => e.type === 'icon' && (e.icon?.name || e.icon?.src));
-  const qrs = elements.filter((e) => e.type === 'qr' && e.qr?.url);
+  const icons = editorial.filter((e) => e.type === 'icon' && (e.icon?.name || e.icon?.src));
+  const qrs = editorial.filter((e) => e.type === 'qr' && e.qr?.url);
 
   // The element model's text roles are coarser than the DSL's leaf roles, so a
   // `kicker` slot looks for a `subhead`, a `figure` for a `headline`, and so on. This
@@ -327,6 +351,9 @@ export function applyReadingToPage(
   reading: LayoutReading,
   page: { width?: number; height?: number; background?: { type?: string; value?: string }; elements: MagazineElement[] },
   genTheme: { palette?: Partial<GenPalette>; fonts?: Partial<GenFonts> } | null,
+  /** Who this page is, so its running head and folio can be put back after the rebuild.
+   *  Optional: omitted, the page simply comes back without chrome. */
+  furnitureCtx?: RefurnishContext,
 ): ApplyResult {
   const converted = readingToSpec(reading);
   if (!converted) return { page: null, why: 'That layout could not be turned into a page structure.' };
@@ -352,12 +379,30 @@ export function applyReadingToPage(
   const solved = solveLayout(pruned, dims, { measureLeaf: makeMeasureLeaf(content, theme.fonts) });
   const composed = composeFromSolved(solved, content, theme);
   const elements = normalizeElements(composed.elements, dims) as MagazineElement[];
+  /**
+   * QA, SPLIT BY WHAT THE USER CAN DO ABOUT IT.
+   *
+   * Overlap and out-of-bounds are correctness: the solver guarantees against both, so
+   * either one means something is genuinely wrong and refusing is right.
+   *
+   * OVERFLOW IS NOT IN THAT CLASS, and treating it as if it were is what made this
+   * feature start refusing ordinary work. Bringing the prose floor up to 8pt (right —
+   * the pages that "used to build" set body copy at 6.7pt at 150 DPI) meant a page whose
+   * copy no longer fitted at a READABLE size became a 422 rather than a page: measured on
+   * a photo-led reference, 2,200 characters built and 2,400 refused, and what the user
+   * saw was "fails layout QA — overflow: text d9fe643f-…", an element id that appears
+   * nowhere in their magazine, after a confirm that already warned the change could not
+   * be undone. Refusing is the one outcome they cannot act on.
+   *
+   * So the page is built and the shortfall is REPORTED, in characters, per role. The
+   * floor stays; the silence goes.
+   */
   const report = validatePageLayout(elements, dims);
-  if (!report.ok) {
-    // The same QA the generator runs. Naming what failed matters: these issues used
-    // to be computed and thrown away, which made every fallback unexplained.
-    return { page: null, why: `The page that layout produces fails layout QA — ${report.issues.map((i) => `${i.kind}: ${i.detail}`).join('; ')}` };
+  const fatal = report.issues.filter((i) => i.kind !== 'overflow');
+  if (fatal.length > 0) {
+    return { page: null, why: `The page that layout produces fails layout QA — ${fatal.map((i) => `${i.kind}: ${i.detail}`).join('; ')}` };
   }
+  const tight = tightSlots(report.issues, elements);
   // Measured against the SOLVED boxes, which is where the reference's proportions
   // either survived or didn't. Measuring the composed elements instead would fold in
   // text auto-fit and image cropping — real, but not what "did we match the layout"
@@ -378,5 +423,62 @@ export function applyReadingToPage(
   const background = bgImage && !usedBackground
     ? { type: 'image' as const, value: bgImage }
     : composed.background;
-  return { page: { background, elements, leftOver, fidelity }, why: '' };
+
+  /**
+   * Re-derive the page's chrome against the NEW layout.
+   *
+   * Furniture is deliberately not carried through the reflow (see reflowContent), so a
+   * rearranged page would otherwise come back with no running head and no folio — and
+   * an absent folio is not merely cosmetic: `restampFolio` finds it by id, so a page
+   * that loses it can never be renumbered again by a later reorder.
+   *
+   * `refurnish` re-derives the boxes against the new layout and takes the wording from
+   * the chrome the page already had. Same rule as generate.ts — furniture lands AFTER
+   * layout QA, so chrome can neither rescue a bad page nor fail a good one.
+   *
+   * Without a context the caller gets a bare page, which is correct: this function
+   * cannot invent a page number.
+   */
+  const furniture = furnitureCtx
+    ? refurnish(page.elements, { background, elements }, furnitureCtx)
+    : [];
+  const withChrome = furniture.length > 0 ? [...elements, ...furniture] : elements;
+  return { page: { background, elements: withChrome, leftOver, fidelity, tight }, why: '' };
+}
+
+/**
+ * Turn the QA's overflow issues into numbers a writer can act on.
+ *
+ * "text d9fe643f-… overflows its box" tells the user nothing they can use: the id is
+ * internal and the box is one they never drew. "the body holds about 2,200 characters at
+ * a readable size, and this page has 2,600" tells them to cut 400 characters or pick a
+ * different reference — which is the whole difference between a report and a complaint.
+ */
+function tightSlots(issues: { kind: string; detail: string }[], elements: MagazineElement[]): TightSlot[] {
+  const out: TightSlot[] = [];
+  for (const issue of issues) {
+    if (issue.kind !== 'overflow') continue;
+    // The detail carries the element id; the numbers come from the element itself.
+    const el = elements.find((e) => e.type === 'text' && !!e.text && issue.detail.includes(e.id));
+    if (!el?.text) continue;
+    const holds = charBudget({
+      boxW: el.w,
+      boxH: el.h,
+      fontSize: el.text.fontSize,
+      lineHeight: el.text.lineHeight,
+      fontFamily: el.text.fontFamily,
+      fontWeight: el.text.fontWeight,
+    });
+    out.push({ role: el.text.role ?? 'other', holds, has: textOf(el).length });
+  }
+  return out;
+}
+
+/** The shortfall as one sentence, for a caller that needs to show it. */
+export function tightSummary(tight: TightSlot[]): string {
+  if (tight.length === 0) return '';
+  const worst = [...tight].sort((a, b) => b.has - b.holds - (a.has - a.holds))[0]!;
+  const rest = tight.length - 1;
+  const tail = rest > 0 ? ` (and ${rest} other slot${rest === 1 ? '' : 's'})` : '';
+  return `The ${worst.role} holds about ${worst.holds} characters at a readable size, and this page has ${worst.has}${tail}. The text is on the page but some of it is cut — shorten it, or try a layout with more room.`;
 }

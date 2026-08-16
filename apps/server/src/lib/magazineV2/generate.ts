@@ -44,6 +44,7 @@ import { isStockConfigured, fetchAndStoreStock, type StockOrientation } from './
 import { isImageGenConfigured, generateAndStoreImage } from './imagegen.js';
 // ── AI-authored layout path (behind MAGAZINE_V2_AI_LAYOUT) ────────────────────
 import type { TextRole } from './model.js';
+import { pagesAlreadyIn } from './pageDigest.js';
 import { normalizeLayoutSpec, type LayoutSpec } from './layoutSpec.js';
 import { parseJsonObject } from './parseJson.js';
 import { pruneLayoutSpec } from './pruneSpec.js';
@@ -321,7 +322,20 @@ const PagesSchema = z.object({
   pages: z.array(z.object({ kind: z.enum(PAGE_TEMPLATE_KINDS), intent: z.string(), sectionTitle: z.string().optional() })),
 });
 
-export async function planPages(opts: { title: string; subtitle?: string; topic?: string; count: number }): Promise<GenPlanPage[]> {
+export async function planPages(opts: {
+  title: string;
+  subtitle?: string;
+  topic?: string;
+  count: number;
+  /**
+   * One line per page the issue already has. WITHOUT THIS THE PLANNER IS GUESSING: it is
+   * told to "expand on the issue's existing themes" and to vary the page kinds, and it
+   * used to be shown neither — so "do not repeat the same kind twice in a row" only ever
+   * applied within the new batch, and adding one page to a twelve-page issue was a page
+   * designed with no knowledge of the other twelve.
+   */
+  existing?: string[];
+}): Promise<GenPlanPage[]> {
   const count = Math.max(1, Math.min(12, Math.round(opts.count) || 1));
   // Distinct per-index angles so a failed planner call still yields varied,
   // ON-SUBJECT pages (not N clones, and not a preset domain) — derived from the
@@ -351,6 +365,16 @@ export async function planPages(opts: { title: string; subtitle?: string; topic?
         `Issue: "${opts.title}"${opts.subtitle ? ` — ${opts.subtitle}` : ''}.`,
         opts.topic ? `The new pages should focus on: ${opts.topic}.` : "The new pages should expand on the issue's existing themes.",
         '',
+        ...(opts.existing && opts.existing.length > 0
+          ? [
+              `The issue already has ${opts.existing.length} page(s):`,
+              ...opts.existing.map((p, i) => `  ${i + 1}. ${p}`),
+              '',
+              'Do NOT repeat any of those angles or section titles. The new pages must add',
+              'something the issue does not already have.',
+              '',
+            ]
+          : []),
         'Design exactly the requested number of INTERIOR pages (NO cover, NO back-cover,',
         'NO contents page). Vary the page kinds for a magazine-like rhythm — do not repeat',
         'the same kind twice in a row. Each page needs a clear, specific intent and a short',
@@ -1218,7 +1242,29 @@ async function artDirectPage(plan: GenPlan, page: GenPlanPage, pageNumber: numbe
       // limit); without this they errored → fixed seed → identical tail pages. The
       // SDK backs off between attempts, so the abort budget covers all of them.
       maxRetries: 3,
-      abortSignal: AbortSignal.timeout(90_000),
+      /**
+       * THE BUDGET FOR ALL FOUR ATTEMPTS AND THE BACKOFF BETWEEN THEM — not for one
+       * call, which is why it is generous.
+       *
+       * Raised from 90s on evidence rather than taste. On a real three-page run the
+       * art-director timed out on `feature-full-bleed`, fell back to the fixed seed
+       * spec, and shipped a FIVE-ELEMENT page: `art-director failed … (The operation
+       * was aborted due to timeout) — using seed`. That is the "sparse, lame page" the
+       * client has been reporting, and on that page it was not a design decision at
+       * all — it was a network deadline. One page in three.
+       *
+       * The cost of being wrong in each direction is not symmetrical. Too high and a
+       * slow model makes generation slower, which the progress banner already covers.
+       * Too low and the page silently loses its design, which is the thing this whole
+       * plan exists to stop.
+       *
+       * Safe against the queue's stale-job sweep only because there is ONE worker: the
+       * sweep runs while the loop is idle, so an in-process job is never reclaimed
+       * however long it takes (queue.ts, STALE_RUNNING_MS). Run a second worker and
+       * that stops being true, and this budget × the page count is what has to fit
+       * inside it — a twelve-page issue at GEN_PAGE_CONCURRENCY 2 already would not.
+       */
+      abortSignal: AbortSignal.timeout(150_000),
     });
     const spec = normalizeLayoutSpec(parseJsonObject(text));
     if (spec) return { spec, source: 'agent' };
@@ -1329,7 +1375,14 @@ async function composeOnePageAI(
         );
       }
       const spent = attempt >= AI_LAYOUT_ATTEMPTS;
-      console.warn(`[magazineV2] page ${pageNumber} "${page.kind}" AI layout attempt ${attempt}/${AI_LAYOUT_ATTEMPTS} failed (${density ? `too sparse: ${density.meaningful}/${density.min}` : `QA: ${why}`}) — ${spent ? 'using template path' : 'self-healing'}.`);
+      // WHAT HAPPENS NEXT DEPENDS ON `best`, NOT ON THE ATTEMPT COUNT. This line used to
+      // say "using template path" whenever the attempts ran out — and since a legal page
+      // from an earlier attempt is retained and returned, that was simply untrue: a real
+      // run reported the cover as "using template path" and then shipped attempt 1's AI
+      // layout. A log that misreports which path built the page makes every later
+      // question about quality unanswerable.
+      const next = !spent ? 'self-healing' : best ? `keeping attempt ${best.attempt}` : 'using template path';
+      console.warn(`[magazineV2] page ${pageNumber} "${page.kind}" AI layout attempt ${attempt}/${AI_LAYOUT_ATTEMPTS} failed (${density ? `too sparse: ${density.meaningful}/${density.min}` : `QA: ${why}`}) — ${next}.`);
       // A fixed SEED spec is deterministic — retrying it changes nothing, so don't
       // burn an attempt; drop to the template path now.
       if (source === 'seed') break;
@@ -1486,10 +1539,19 @@ export async function generateMorePages(
 
     await db.collection(COL.magazines).updateOne(issueId, { stage: 'Designing pages', updatedAt: new Date().toISOString() });
 
-    const specs = await planPages({ title, subtitle, topic: opts.topic, count: opts.count });
-    const plan: GenPlan = { title, subtitle, palette, fonts, pages: specs };
-    const existing = ((await db.collection(COL.pages).find({ magazineId: issueId })) as { _id: string; index: number }[])
+    // Loaded BEFORE the plan, not after: the planner has to see what the issue already
+    // says before it decides what is missing from it.
+    const existing = ((await db.collection(COL.pages).find({ magazineId: issueId })) as { _id: string; index: number; elements?: unknown }[])
       .sort((a, b) => a.index - b.index);
+
+    const specs = await planPages({
+      title,
+      subtitle,
+      topic: opts.topic,
+      count: opts.count,
+      existing: pagesAlreadyIn(existing),
+    });
+    const plan: GenPlan = { title, subtitle, palette, fonts, pages: specs };
     const total = existing.length + specs.length;
 
     // The user's OWN uploaded photos come first here too. This call used to omit the

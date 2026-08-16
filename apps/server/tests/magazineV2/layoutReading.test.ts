@@ -10,6 +10,7 @@ import assert from 'node:assert/strict';
 import {
   normalizeLayoutReading, aspectMismatch, MAX_REGIONS, ASPECT_TOLERANCE,
 } from '../../src/lib/magazineV2/layoutReading.ts';
+import { PAGE_H, PAGE_W } from '../../src/lib/magazineV2/config.ts';
 
 const region = (o: Record<string, unknown>) => ({ role: 'body', box: { x: 0, y: 0, w: 1, h: 0.5 }, ...o });
 const twoRegions = [
@@ -191,8 +192,14 @@ test('a box given as bare x/y/width/height still reads', () => {
 
 // ── aspectMismatch ───────────────────────────────────────────────────────────
 
-const A4_W = 1275;
-const A4_H = 1800; // portrait, ~0.708
+// THE REAL SHEET, imported rather than restated. These used to be 1275×1800 with the
+// comment "portrait, ~0.708" — a ratio close enough to A4 to look deliberate and a page
+// size that has never existed in this repo. The aspect gate is measured against the page
+// the reference will actually be built on, so a literal here silently keeps testing the
+// old sheet: that is how a fidelity verdict flipped from "adapted" to "loose" with every
+// test still green.
+const A4_W = PAGE_W;
+const A4_H = PAGE_H;
 
 test('a matching shape produces no warning', () => {
   const r = normalizeLayoutReading({ aspect: 0.707, regions: twoRegions })!;

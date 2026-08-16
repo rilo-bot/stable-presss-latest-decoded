@@ -22,6 +22,7 @@ import { MAX_ELEMENTS_PER_PAGE, type MagazineElement } from './model.js';
 import { fetchAndStoreStock, isStockConfigured, type StockOrientation } from './stock.js';
 import { retrieveSource } from './retrieval.js';
 import { readLayoutImage } from './readLayout.js';
+import { resolvePageOrdinal } from './pageDigest.js';
 import type { LayoutReading } from './layoutReading.js';
 
 export interface AgentProposal {
@@ -39,10 +40,25 @@ export interface AgentProposal {
   to?: number; // reorder-page: destination index
   count?: number; // generate-pages: how many pages
   topic?: string; // generate-pages: optional focus
-  // ── apply-layout: rebuild THIS page in a layout read from a reference image ──
+  // ── apply-layout: rebuild a page in a layout read from a reference image ──
   // The reading travels with the proposal so applying it costs no second vision
   // call — and so what the user approves is exactly what was described to them.
   layoutReading?: LayoutReading;
+  /**
+   * WHICH page to rebuild, resolved SERVER-SIDE from the ordinal the model gave.
+   *
+   * Absent means the page the user is looking at, which is what this always used to
+   * do — and could only do. "Build page 2 like this" from chat rebuilt whatever page
+   * happened to be open, because the tool had no page argument at all and the client
+   * read the target off its own state. The confirm names the page, so a mistake was
+   * caught rather than prevented.
+   *
+   * A resolved id, never the ordinal: page order can change between the model's turn
+   * and the user pressing Apply, and an index would then point at a different page.
+   */
+  pageId?: string;
+  /** The ordinal as the user said it, for the confirm. Only set with `pageId`. */
+  pageNumber?: number;
 }
 
 const MAX_MESSAGES = 30;
@@ -141,8 +157,14 @@ const SYSTEM = (
       '• ARRANGE THE PAGE LIKE THE PICTURE ("use this layout", "build a layout like this", "copy this design",',
       '  "make my page look like this") → use_image_as_layout. The picture is a REFERENCE: its structure is',
       '  copied, its content is not, and the page keeps the user’s own words and photos.',
+      '  If they name a page ("do page 2 like this"), pass it as `page`; otherwise leave it out and it',
+      '  rearranges the page they are looking at.',
       'A layout rebuild replaces every element on the page, so it cannot be staged alongside other edits —',
       'do it on its own turn.',
+      'IT REARRANGES AN EXISTING PAGE. It cannot create one, and it needs a page that already has content:',
+      'if they ask you to ADD a new page in that design, say plainly that you can add a page or copy a',
+      'layout onto a page that has content, but not both at once — do not stage a rebuild and imply it',
+      'made a new page.',
     );
   }
   const src = (sourceText ?? '').trim();
@@ -347,9 +369,13 @@ function buildTools(ctx: AgentCtx, dims: { width: number; height: number }, canE
 
     use_image_as_layout: tool({
       description:
-        'The user wants a page laid out LIKE an image they uploaded ("use this layout", "build a layout like this", "copy this design"). Reads the picture\'s COMPOSITION and stages a rebuild of this page in it — the user\'s own text and photos flow into the new structure. NOT for placing a photo on the page: that is add_media_image. The url must be one the user attached or one from list_media.',
-      inputSchema: z.object({ url: z.string() }),
-      execute: async ({ url }) => {
+        'The user wants a page laid out LIKE an image they uploaded ("use this layout", "build a layout like this", "copy this design"). Reads the picture\'s COMPOSITION and stages a rebuild in it — the user\'s own text and photos flow into the new structure. NOT for placing a photo on the page: that is add_media_image. The url must be one the user attached or one from list_media. Pass `page` ONLY when the user names a different page ("do page 2 like this"); leave it out for the page they are looking at. It rearranges an EXISTING page — it cannot create one, so if the user asks for a NEW page in that design, say so instead of calling this.',
+      inputSchema: z.object({
+        url: z.string(),
+        /** 1-based, as a person says it. Resolved to a page id below. */
+        page: z.number().int().positive().optional(),
+      }),
+      execute: async ({ url, page }) => {
         // Exclusive: it replaces every element, so nothing else can be staged with it.
         if (ctx.proposals.length > 0) {
           return { ok: false, error: 'A layout rebuild replaces every element on the page, so it cannot be combined with other changes. Ask the user to apply the changes already staged first.' };
@@ -361,10 +387,35 @@ function buildTools(ctx: AgentCtx, dims: { width: number; height: number }, canE
         if (!media.some((m) => m.url === url)) {
           return { ok: false, error: 'That url is not in this magazine. Ask the user to attach the layout image, then use its url.' };
         }
+        /**
+         * THE ORDINAL IS RESOLVED HERE, AGAINST THE ISSUE'S REAL PAGE ORDER.
+         *
+         * The model supplies a page NUMBER — never an id, never geometry — and the
+         * server turns it into an id. That keeps the invariant this whole feature rests
+         * on (the model never authors anything the solver owns) while letting a person
+         * say "do page 2 like this"; and resolving now rather than at apply time means
+         * a page number that does not exist is refused while the model can still say so,
+         * instead of failing silently after the user has clicked Apply.
+         */
+        let pageId: string | undefined;
+        if (page !== undefined) {
+          const all = (await db.collection(COL.pages).find({ magazineId: ctx.magazineId })) as { _id: string; index: number }[];
+          const resolved = resolvePageOrdinal(all, page, ctx.pageIndex);
+          if (!resolved.ok) return { ok: false, error: resolved.error };
+          pageId = resolved.pageId;
+        }
+
         const { reading, error } = await readLayoutImage(url);
         if (!reading) return { ok: false, error: error || 'I could not make out a layout in that image.' };
-        const summary = `Rebuild this page in that layout — ${describeReading(reading)}`;
-        ctx.proposals.push({ id: pid(ctx), kind: 'apply-layout', layoutReading: reading, summary });
+        const where = pageId ? `page ${page}` : 'this page';
+        const summary = `Rebuild ${where} in that layout — ${describeReading(reading)}`;
+        ctx.proposals.push({
+          id: pid(ctx),
+          kind: 'apply-layout',
+          layoutReading: reading,
+          summary,
+          ...(pageId ? { pageId, pageNumber: page } : {}),
+        });
         // The model is told what was read so its reply can describe it, and told the
         // honest limit so it does not promise a pixel-perfect copy.
         return {

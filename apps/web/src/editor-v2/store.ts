@@ -175,7 +175,9 @@ interface EditorState {
    * caller must confirm with the user first. Returns the MEASURED fidelity (P3) on
    * success, or null when nothing changed.
    */
-  applyLayout: (reading: api.LayoutReading) => Promise<api.LayoutFidelity | null>;
+  /** `targetPageId` rebuilds a page other than the open one — the assistant resolves it
+   *  server-side from a page number the user said. Omitted = the page on screen. */
+  applyLayout: (reading: api.LayoutReading, targetPageId?: string) => Promise<api.LayoutFidelity | null>;
   /** An "apply this layout" call is in flight. */
   layoutBusy: boolean;
   /** Publish (or republish) to Bulletins ('full' = all pages, 'selected' =
@@ -728,27 +730,47 @@ export const useEditorStore = create<EditorState>((set, get) => ({
   // Toggle a page's inclusion in "publish selected pages".
   layoutBusy: false,
 
-  applyLayout: async (reading) => {
+  applyLayout: async (reading, targetPageId) => {
     const s = get();
     if (!s.issueId || !s.page || s.layoutBusy) return null;
     const issueId = s.issueId;
-    const pageId = s.page.id;
+    /**
+     * The page the assistant NAMED, or the one on screen.
+     *
+     * `targetPageId` is resolved server-side from an ordinal the user spoke ("do page 2
+     * like this") — the chat tool had no page argument at all until now, so it always
+     * rebuilt whatever page happened to be open. Everything below therefore has to come
+     * from the TARGET rather than from `s.page`: its rev, its element count, and whether
+     * the editor's own view needs replacing afterwards.
+     */
+    const pageId = targetPageId ?? s.page.id;
+    const summary = s.pages.find((p) => p.id === pageId);
+    if (targetPageId && !summary) {
+      toast.error('That page is no longer in this magazine.');
+      return null;
+    }
+    const isOpen = pageId === s.page.id;
+    // The open page's own element array is authoritative; for any other page the rail
+    // summary is what we have, and it carries both the rev and the element count.
+    const rev = isOpen ? s.page.rev : summary!.rev;
+    const count = isOpen ? s.page.elements.length : summary!.elementCount;
     // THE CONFIRM LIVES HERE, not in the panel that used to own it. A rebuild replaces
     // every element and the undo stack cannot cover it, and there are two ways to reach
     // it: the reference panel and the assistant staging `apply-layout` in chat. With the
     // confirm in the component, the chat path rebuilt the page with no warning while a
     // comment down in applyAllProposals claimed the confirm was shared. It names the
-    // PAGE, too: from chat you may not be looking at the page you are about to replace.
+    // PAGE, too: from chat you may not be looking at the page you are about to replace —
+    // and now that the assistant can target a page you are NOT looking at, that naming
+    // is the only thing standing between "do page 2" and a rebuilt page 5.
     const n = s.pages.findIndex((p) => p.id === pageId) + 1;
     const where = n > 0 ? `page ${n}` : 'this page';
-    const count = s.page.elements.length;
     const ok = window.confirm(
       `Rearrange ${where} into that layout?\n\n${count} item${count === 1 ? '' : 's'} will move into the new structure. Your words and photos are kept, but the current arrangement cannot be brought back with undo.`,
     );
     if (!ok) return null;
     set({ layoutBusy: true });
     try {
-      const { page, leftOver, fidelity, warning } = await api.applyLayoutToPage(issueId, pageId, { rev: s.page.rev, reading });
+      const { page, leftOver, fidelity, warning, tightSummary } = await api.applyLayoutToPage(issueId, pageId, { rev, reading });
       set((st) => ({
         // The returned page is authoritative — it is what the solver produced.
         page: st.currentPageId === pageId ? page : st.page,
@@ -757,11 +779,11 @@ export const useEditorStore = create<EditorState>((set, get) => ({
         // page until something else happened to refresh it.
         pages: st.pages.map((p) => (p.id === pageId ? { ...p, elementCount: page.elements.length, rev: page.rev } : p)),
         thumbs: { ...st.thumbs, [pageId]: page },
-        // Every element on the page is new, so the old undo entries point at elements
-        // that no longer exist. Keeping them would make Ctrl+Z resurrect ghosts.
-        undoStack: [],
-        redoStack: [],
-        selectedId: null,
+        // Every element on the REBUILT page is new, so undo entries pointing at them are
+        // now ghosts. Only clear when that page is the one open: since the assistant can
+        // target a page you are not looking at, wiping the stack regardless would throw
+        // away the undo history of a page this rebuild never touched.
+        ...(st.currentPageId === pageId ? { undoStack: [], redoStack: [], selectedId: null } : {}),
         editedSinceLoad: true,
       }));
       // Say what didn't fit. Surplus photos genuinely have nowhere to go, and a
@@ -770,11 +792,19 @@ export const useEditorStore = create<EditorState>((set, get) => ({
       if (leftOver.images > 0) lost.push(`${leftOver.images} photo${leftOver.images === 1 ? '' : 's'}`);
       if (leftOver.text > 0) lost.push(`${leftOver.text} text block${leftOver.text === 1 ? '' : 's'}`);
       const tail = lost.length > 0 ? ` ${lost.join(' and ')} had nowhere to go and stayed out.` : '';
+      // Name the page when it is NOT the one on screen. "Matched your reference closely
+      // (73%)" is a complete sentence about a page you can see and an ambiguous one
+      // about a page you cannot.
+      const head = isOpen ? '' : `${where.charAt(0).toUpperCase()}${where.slice(1)}: `;
       // The MEASURED verdict decides the tone of the toast. A "loose" result is not a
       // success message with a caveat buried in a panel — it is the headline.
-      if (fidelity.verdict === 'loose') toast.warning(`${fidelity.summary}${tail}`);
-      else toast.success(`${fidelity.summary}${tail}`);
+      if (fidelity.verdict === 'loose') toast.warning(`${head}${fidelity.summary}${tail}`);
+      else toast.success(`${head}${fidelity.summary}${tail}`);
       if (warning) toast.message(warning);
+      // Copy that had to be cut to stay readable. Its own toast, because it is about
+      // the WRITING rather than the layout, and it is the one thing here the user can
+      // actually fix. It used to be a 422 quoting an element id at them.
+      if (tightSummary) toast.warning(tightSummary);
       return fidelity;
     } catch (e) {
       // A 409 carries the server's current page: adopt it so the user is looking at
@@ -1124,7 +1154,10 @@ export const useEditorStore = create<EditorState>((set, get) => ({
       // Straight through the same store action the panel uses, and the confirm now
       // genuinely lives in there — this comment used to claim a shared confirm while the
       // only one was in LayoutReference.tsx, so a chat rebuild asked nothing at all.
-      await get().applyLayout(reading);
+      // `pageId` is set only when the user NAMED a page; the server resolved the ordinal
+      // against the real page order, so this is an id and not an index that could have
+      // drifted since the assistant answered.
+      await get().applyLayout(reading, layout.pageId);
       return;
     }
 

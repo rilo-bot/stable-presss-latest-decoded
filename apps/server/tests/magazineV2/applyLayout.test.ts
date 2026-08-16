@@ -8,9 +8,11 @@
 
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { reflowContent, themeForPage, applyReadingToPage, contrastRatio } from '../../src/lib/magazineV2/applyLayout.ts';
+import { reflowContent, themeForPage, applyReadingToPage, contrastRatio, tightSummary } from '../../src/lib/magazineV2/applyLayout.ts';
 import { normalizeLayoutReading } from '../../src/lib/magazineV2/layoutReading.ts';
 import type { MagazineElement } from '../../src/lib/magazineV2/model.ts';
+import { PAGE_H, PAGE_W } from '../../src/lib/magazineV2/config.ts';
+import { pageFurniture, restampFolio, FURNITURE_IDS, FOLIO_ELEMENT_ID } from '../../src/lib/magazineV2/pageFurniture.ts';
 
 let seq = 0;
 const el = (o: Partial<MagazineElement>): MagazineElement => ({
@@ -86,7 +88,7 @@ test('a background photo the layout has no room for is KEPT, not painted over', 
       { role: 'body', box: { x: 0.1, y: 0.3, w: 0.8, h: 0.6 } },
     ]),
     {
-      width: 1275, height: 1650,
+      width: PAGE_W, height: PAGE_H,
       background: { type: 'image', value: 'https://x/scan.jpg' },
       elements: [text('headline', 'Kept'), text('body', 'The prose of the page.')],
     },
@@ -104,7 +106,7 @@ test('but once the photo becomes a full-bleed element, the colour background is 
       { role: 'headline', box: { x: 0.1, y: 0.7, w: 0.8, h: 0.12 } },
     ], { margin: 'none' }),
     {
-      width: 1275, height: 1650,
+      width: PAGE_W, height: PAGE_H,
       background: { type: 'image', value: 'https://x/scan.jpg' },
       elements: [text('headline', 'Over the photo')],
     },
@@ -287,7 +289,7 @@ test('a page and a reading become a solved page', () => {
       { role: 'body', box: { x: 0.06, y: 0.75, w: 0.88, h: 0.2 } },
     ]),
     {
-      width: 1275, height: 1650,
+      width: PAGE_W, height: PAGE_H,
       elements: [image('https://x/p.jpg', 1200, 900), text('headline', 'The Big Story'), text('body', 'A paragraph of real copy that belongs on this page.')],
     },
     null,
@@ -298,7 +300,7 @@ test('a page and a reading become a solved page', () => {
   // The solver is the sole pixel authority: everything it produced must be on the page.
   for (const e of out.page.elements) {
     assert.ok(e.x >= 0 && e.y >= 0, `${e.type} starts on the page`);
-    assert.ok(e.x + e.w <= 1275 + 1 && e.y + e.h <= 1650 + 1, `${e.type} ends on the page`);
+    assert.ok(e.x + e.w <= PAGE_W + 1 && e.y + e.h <= PAGE_H + 1, `${e.type} ends on the page`);
   }
   const kinds = out.page.elements.map((e) => e.type);
   assert.ok(kinds.includes('image'));
@@ -311,7 +313,7 @@ test('a page with nothing on it is refused with a reason, not filled with blanks
       { role: 'headline', box: { x: 0, y: 0, w: 1, h: 0.3 } },
       { role: 'body', box: { x: 0, y: 0.4, w: 1, h: 0.5 } },
     ]),
-    { width: 1275, height: 1650, elements: [] },
+    { width: PAGE_W, height: PAGE_H, elements: [] },
     null,
   );
   assert.equal(out.page, null);
@@ -327,7 +329,7 @@ test('A COVER, end to end: the empty half stays empty after pruning', () => {
   // cover slot unfillable, the promotion stretched the tagline over TWO THIRDS of the
   // sheet. applyReadingToPage now passes keepWhitespace, because a reference's empty
   // space IS its design.
-  const H = 1650;
+  const H = PAGE_H;
   const out = applyReadingToPage(
     reading([
       { role: 'image', box: { x: 0, y: 0, w: 1, h: 1 } },
@@ -339,9 +341,9 @@ test('A COVER, end to end: the empty half stays empty after pruning', () => {
     // A page margin insets the whole tree, bleed included, so it matters here.
     ], { margin: 'none' }),
     {
-      width: 1275, height: H,
+      width: PAGE_W, height: H,
       elements: [
-        image('https://x/cover.jpg', 1275, 1650),
+        image('https://x/cover.jpg', PAGE_W, PAGE_H),
         text('subhead', 'PRE-DAWN STABLES'),
         text('headline', 'The Hour Before Thunder'),
         text('caption', 'A groom’s steady hand, a coat catching first light.'),
@@ -361,7 +363,7 @@ test('A COVER, end to end: the empty half stays empty after pruning', () => {
   }
   // And the photo still bleeds to every edge.
   const photo = out.page.elements.find((e) => e.type === 'image')!;
-  assert.equal(photo.w, 1275);
+  assert.equal(photo.w, PAGE_W);
   assert.equal(photo.h, H);
   assert.equal(out.page.fidelity.verdict, 'adapted', 'one box could not be filled, so not a close match');
   // 0.5, not the 0.75 this once asserted. That threshold was an artefact of the very bug
@@ -375,7 +377,7 @@ test('A COVER, end to end: the empty half stays empty after pruning', () => {
 
 test('the reference decides the proportions: a taller photo band gives a taller photo', () => {
   const page = {
-    width: 1275, height: 1650,
+    width: PAGE_W, height: PAGE_H,
     elements: [image('https://x/p.jpg', 1200, 900), text('body', 'Copy that fills the rest of the page nicely.')],
   };
   const shallow = applyReadingToPage(reading([
@@ -468,7 +470,7 @@ test('END TO END: applying a layout to a white-type cover leaves nothing invisib
   // background photo is consumed into it and the rest of the sheet is painted.
   const out = applyReadingToPage(
     normalizeLayoutReading({
-      aspect: 1275 / 1650, background: 'light', margin: 'md', confidence: 0.9,
+      aspect: PAGE_W / PAGE_H, background: 'light', margin: 'md', confidence: 0.9,
       regions: [
         { role: 'image', box: { x: 0, y: 0, w: 1, h: 0.45 } },
         { role: 'headline', box: { x: 0.08, y: 0.5, w: 0.84, h: 0.1 } },
@@ -476,7 +478,7 @@ test('END TO END: applying a layout to a white-type cover leaves nothing invisib
       ],
     })!,
     {
-      width: 1275, height: 1650,
+      width: PAGE_W, height: PAGE_H,
       background: { type: 'image', value: 'https://x/dark-cover-photo.jpg' },
       elements: [
         inked('headline', 'THE HORSE', '#ffffff'),
@@ -497,4 +499,190 @@ test('END TO END: applying a layout to a white-type cover leaves nothing invisib
       `"${(t.text?.content ?? '').slice(0, 20)}" is ${t.text?.color} on a ${bg.value} page — invisible`,
     );
   }
+});
+
+// ── Page chrome survives a rebuild ───────────────────────────────────────────
+//
+// "Take this layout" replaces every element on the page, and the running head, the
+// masthead and the folio are elements. They carry `role: 'other'`, which reflowContent
+// read as "spare editorial prose" — so the page number was appended to the article and
+// the masthead was promoted to a standfirst, while the fidelity report said 81%
+// "matched". The folio's loss was the worse half: restampFolio finds it BY ID, so a page
+// that dropped it fell out of renumberFolios for good and could never be renumbered by a
+// later reorder.
+//
+// These build their fixture from the REAL pageFurniture, so the test cannot drift away
+// from the module it is guarding.
+
+const THEME = {
+  palette: { primary: '#2f5a41', secondary: '#7a8b80', bg: '#f6f4ee', text: '#1a1a1a', accent: '#c8a45c' },
+  fonts: { display: 'Playfair Display, serif', body: 'Inter, Arial, sans-serif' },
+};
+
+const furnishedPage = (pageNumber = 7) => {
+  // Real geometry, deliberately. pageFurniture measures the page's FREE BANDS, so a
+  // fixture whose elements all sit at 0,0 (the default in this file's helpers) has no
+  // top band and never gets a running head — the first version of these tests did that
+  // and asserted against chrome the fixture had never produced.
+  const at = (e: MagazineElement, x: number, y: number, w: number, h: number): MagazineElement =>
+    ({ ...e, x, y, w, h });
+  const editorial = [
+    at(image('https://x/hero.jpg', 1100, 700), 90, 170, 1060, 560),
+    at(text('headline', 'The long ride home'), 90, 760, 1060, 120),
+    at(text('byline', 'By Anna Reid'), 90, 900, 500, 40),
+    at(text('body', 'The season opened in a drizzle that nobody minded.'), 90, 960, 1060, 560),
+  ];
+  const chrome = pageFurniture(
+    { background: { type: 'color', value: THEME.palette.bg }, elements: editorial },
+    { kind: 'two-column-article', sectionTitle: 'Stable Life', magazineTitle: 'The Stable Press', pageNumber, ...THEME },
+  );
+  assert.ok(chrome.length > 0, 'the fixture must actually be furnished, or this tests nothing');
+  assert.ok(chrome.some((e) => e.id === FOLIO_ELEMENT_ID), 'and it must carry a folio');
+  assert.ok(chrome.some((e) => e.id === 'furniture-head-label'), 'and a running head');
+  return { elements: [...editorial, ...chrome], chrome };
+};
+
+const ORDINARY_REFERENCE = [
+  { role: 'image', box: { x: 0, y: 0.06, w: 1, h: 0.34 } },
+  { role: 'headline', box: { x: 0.06, y: 0.44, w: 0.88, h: 0.1 } },
+  { role: 'caption', box: { x: 0.06, y: 0.56, w: 0.88, h: 0.03 } },
+  { role: 'body', box: { x: 0.06, y: 0.62, w: 0.88, h: 0.28 } },
+];
+
+test('a rebuild does not pour the running head and folio into the article', () => {
+  const { elements } = furnishedPage(7);
+  const out = applyReadingToPage(
+    reading(ORDINARY_REFERENCE),
+    { width: PAGE_W, height: PAGE_H, background: { type: 'color', value: THEME.palette.bg }, elements },
+    THEME,
+    { magazineTitle: 'The Stable Press', pageNumber: 7, ...THEME },
+  );
+  assert.equal(out.why, '');
+  assert.ok(out.page);
+
+  // Chrome is chrome: it may appear as furniture, never as copy in an editorial slot.
+  const editorialText = out.page.elements
+    .filter((e) => e.type === 'text' && !FURNITURE_IDS.includes(e.id))
+    .map((e) => e.text?.content ?? '');
+  for (const t of editorialText) {
+    assert.ok(!/\bThe Stable Press\b/.test(t), `the masthead was used as copy: "${t.slice(0, 60)}"`);
+    assert.ok(!/\bStable Life\b/.test(t), `the running head was used as copy: "${t.slice(0, 60)}"`);
+    assert.ok(!/\n\s*7\s*$/.test(t), `the folio was appended to the copy: "${t.slice(-40)}"`);
+  }
+  // …and the writing itself is untouched.
+  assert.ok(
+    editorialText.some((t) => t.includes('nobody minded')),
+    "the user's own paragraph is still on the page",
+  );
+});
+
+test("a rebuilt page keeps a folio, so a later reorder can still renumber it", () => {
+  const { elements } = furnishedPage(7);
+  const out = applyReadingToPage(
+    reading(ORDINARY_REFERENCE),
+    { width: PAGE_W, height: PAGE_H, background: { type: 'color', value: THEME.palette.bg }, elements },
+    THEME,
+    { magazineTitle: 'The Stable Press', pageNumber: 7, ...THEME },
+  );
+  assert.ok(out.page);
+  const folio = out.page.elements.find((e) => e.id === FOLIO_ELEMENT_ID);
+  assert.ok(folio, 'the folio is back on the page');
+  assert.equal(folio.text?.content, '7', 'and still says which page this is');
+  // The real consequence: renumberFolios works through restampFolio, which finds the
+  // folio by id. No folio, no renumbering — permanently.
+  assert.ok(restampFolio(out.page.elements, 9), 'a later reorder can still renumber this page');
+});
+
+test('a rebuilt page keeps the section it was already in, and invents nothing', () => {
+  const { elements } = furnishedPage(4);
+  const out = applyReadingToPage(
+    reading(ORDINARY_REFERENCE),
+    { width: PAGE_W, height: PAGE_H, background: { type: 'color', value: THEME.palette.bg }, elements },
+    THEME,
+    { magazineTitle: 'The Stable Press', pageNumber: 4, ...THEME },
+  );
+  assert.ok(out.page);
+  const label = out.page.elements.find((e) => e.id === 'furniture-head-label');
+  // The page said "Stable Life" before the rebuild; a page document stores no kind and
+  // no section, so this can only be right if the wording came from the page itself.
+  assert.ok(label, 'the running head is back');
+  assert.equal(label.text?.content, 'Stable Life');
+});
+
+test('a page that never had chrome does not acquire any from a rebuild', () => {
+  // A cover carries no running head and no folio by design. Rebuilding it must not
+  // introduce one, and refurnish decides that from the page rather than from a kind
+  // it has no way to know.
+  const out = applyReadingToPage(
+    reading(ORDINARY_REFERENCE),
+    {
+      width: PAGE_W, height: PAGE_H,
+      background: { type: 'color', value: THEME.palette.bg },
+      elements: [image('https://x/cover.jpg', 1100, 700), text('headline', 'THE HORSE'), text('body', 'Inside this issue.')],
+    },
+    THEME,
+    { magazineTitle: 'The Stable Press', pageNumber: 1, ...THEME },
+  );
+  assert.ok(out.page);
+  const chrome = out.page.elements.filter((e) => FURNITURE_IDS.includes(e.id));
+  assert.equal(chrome.length, 0, 'an unfurnished page stays unfurnished');
+});
+
+// ── Copy that does not fit is REPORTED, not refused ──────────────────────────
+//
+// Raising the prose floor to 8pt was right — the pages that "used to build" set body
+// copy at 6.7pt at 150 DPI. What was wrong is what happened next: a page whose copy no
+// longer fitted at a readable size became a 422 reading "fails layout QA — overflow:
+// text d9fe643f-…", an element id that exists nowhere in the user's magazine, shown
+// after a confirm that had already warned the change could not be undone. Overlap and
+// out-of-bounds still refuse; those are correctness, and the solver guarantees them.
+
+/** A picture-led reference: a big photo and a thin band of prose under it. This is the
+ *  shape that trips the floor — a two-column reference has room for 8,000 characters. */
+const PICTURE_LED = [
+  { role: 'image', box: { x: 0, y: 0, w: 1, h: 0.55 } },
+  { role: 'headline', box: { x: 0.06, y: 0.58, w: 0.88, h: 0.1 } },
+  { role: 'body', box: { x: 0.06, y: 0.7, w: 0.88, h: 0.18 } },
+];
+
+test('too much copy for the layout builds the page and says how much is over', () => {
+  const tooMuch = 'The season opened in a drizzle that nobody minded, and the horses went out anyway. '.repeat(40);
+  const out = applyReadingToPage(
+    reading(PICTURE_LED),
+    {
+      width: PAGE_W, height: PAGE_H,
+      elements: [image('https://x/hero.jpg', 1200, 900), text('headline', 'The long ride home'), text('body', tooMuch)],
+    },
+    null,
+  );
+  // The page is built. That is the whole point.
+  assert.equal(out.why, '', 'the layout must not be refused over copy length');
+  assert.ok(out.page, 'a page came back');
+  assert.ok(out.page.elements.some((e) => e.type === 'text' && (e.text?.content ?? '').includes('nobody minded')),
+    "the user's words are on the page");
+
+  // …and the shortfall is stated in characters, naming the role, with no element id.
+  assert.ok(out.page.tight.length > 0, 'the overflow was reported');
+  const body = out.page.tight.find((t) => t.role === 'body');
+  assert.ok(body, 'the body is the slot that overflowed');
+  assert.ok(body.has > body.holds, `has ${body.has} vs holds ${body.holds} — that is not an overflow`);
+  const sentence = tightSummary(out.page.tight);
+  assert.match(sentence, /body/);
+  assert.match(sentence, /\d+ characters/);
+  assert.ok(!/[0-9a-f]{8}-[0-9a-f]{4}/.test(sentence), `an element id leaked into the message: "${sentence}"`);
+});
+
+test('copy that fits reports nothing at all', () => {
+  const out = applyReadingToPage(
+    reading(PICTURE_LED),
+    {
+      width: PAGE_W, height: PAGE_H,
+      elements: [image('https://x/hero.jpg', 1200, 900), text('headline', 'The long ride home'), text('body', 'A short paragraph that fits comfortably.')],
+    },
+    null,
+  );
+  assert.equal(out.why, '');
+  assert.ok(out.page);
+  assert.deepEqual(out.page.tight, [], 'a page that fits has nothing to report');
+  assert.equal(tightSummary(out.page.tight), '');
 });

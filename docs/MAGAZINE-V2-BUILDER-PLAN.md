@@ -634,6 +634,42 @@ all. Third time the re-plant rule has caught a vacuous test of mine — §10.2 e
 phase can tell the model that a box is wrong but not that a page is *dull*; and a rendered-pixel
 review, which remains the honest gap (§10.4).
 
+### 4d. Where this stands after the reference audit (2026-08-15)
+
+An 18-agent adversarial audit of the *"upload an image and build it like this"* path is written up
+in full at **[MAGAZINE-V2-REFERENCE-AUDIT-2026-08-15.md](MAGAZINE-V2-REFERENCE-AUDIT-2026-08-15.md)** —
+22 findings, 5 confirmed by two independent skeptics each, 1 split on severity, 0 refuted, 16
+unverified leads. That document holds the fix list, the measurements and the build order; this
+section records only what it changes about **this plan**.
+
+**Two of the five confirmed defects are regressions from §4c and §4c-ii above** — the furniture I
+added is eaten as prose by the reference path (and the folio is then unrenumberable forever), and
+the 8pt floor I brought forward turns picture-led references into a 422 showing a raw element UUID.
+**Both passed 274 tests and all five guards.** The floor and the furniture are still right; what is
+wrong is that nothing in CI exercises `applyReadingToPage` end-to-end.
+
+So the honest reading of the anti-regression spine (§10) after this session:
+
+| §10 rule | Held? |
+|---|---|
+| Fix the mechanism, not the example | Yes — every §4c-ii fix is a mechanism |
+| The re-plant rule | Yes, and it caught **three** vacuous tests of mine |
+| One measured number + one `check:*` per phase | Yes for the generator. **No for the reference path** — it has neither |
+| Rendered pixels, not typechecks | **Still not done.** §10.4 remains the disqualifying gap |
+
+**The two ordering consequences:**
+
+1. **The reference-path fixes come before any new reference capability** (named page, batch,
+   scaffold, PDF). Applying a broken transform to 24 pages instead of 1 is the worst possible
+   sequencing.
+2. **Phase 2's critic (§5) cannot be calibrated without the render harness** (§10.4), which is now
+   blocking two phases rather than one. It should be built next, not "eventually".
+
+**Also recorded there and worth keeping in mind while reading any search result:**
+`applyLayout.ts` carries a literal NUL byte (a `'\0background'` sentinel written raw), so ripgrep
+classifies it as **binary and skips it silently** — a file at the centre of this feature answers
+"no matches" to every content search.
+
 ## 5. Phase 2 — The design critic
 
 **Goal:** raise the ceiling on quality. This is the actual Canva step, and it is not a better
@@ -825,13 +861,19 @@ Phase 1.5a furniture + density   ──▶ BUILT 2026-08-13 (see §4b "AS BUILT"
 Phase 1    fit before beauty     ──▶ BUILT 2026-08-13 (§4c) — the unlock + the fit report
              · type/colour/spacing decided by the AI; caps 14→28, depth 4→6
              · every box measured and reported back into the retry
-Phase 1.5b composite modules     ──▶ NEXT (the caps already rose with Phase 1)
+R-fixes    reference path repair ──▶ 1, 1b, 1c, 2, 3 DONE 2026-08-16 (audit doc §7)
+             · 289 tests, 5 guards green; every fix re-plant-verified
+             · Fix 4 (spacer leaf budget) + Fix 5 (MAX_REGIONS) still open
+             · NEW next fix, measured: band HEIGHT on content-sized text
+Phase 1.5b composite modules     ──▶ then (the caps already rose with Phase 1)
              · statCard, iconNote, stepItem, quoteBlock, logoRow…
              · a 5-across icon row is now BUILDABLE at 15 leaves; a module makes it 5
-Phase 2    the design critic     ──▶ raises the ceiling; the Canva step
+Render     the pixel harness     ──▶ §10.4 — now blocks TWO phases, not one
+Phase 2    the design critic     ──▶ raises the ceiling; the Canva step  [needs Render]
 Phase 3    issue coherence       ──▶ pages become a magazine            [11.2 resolved]
 Phase 4    uniqueness with taste ──▶ "modern, unique"                   [needs 11.3]
 Phase 5    the upload surface    ──▶ the client's full sentence         [needs 11.4]
+             · the audit's (A) named page → (B) batch + dry run → (D) scaffold → (C) PDF
 ```
 
 Phase 1.5a is split out and moved to the front because it is independent of everything else,
@@ -839,3 +881,7 @@ costs almost nothing, and is what the client will see first.
 
 Phase 0 is small and unblocks measurement. Phase 1 is where the client sees the difference.
 Phase 2 is where the quality ceiling actually moves.
+
+The R-fixes jumped the queue on 2026-08-15 for one reason: the reference path is the only place
+where Phase 1's own changes made something **worse**, and every later reference capability
+multiplies whatever that path does today across every page it touches.

@@ -14,8 +14,12 @@ import assert from 'node:assert/strict';
 import { solveLayout, type Rect, type SolvedLeaf } from '../../src/lib/magazineV2/solveLayout.js';
 import { MIN_SIZE } from '../../src/lib/magazineV2/model.js';
 import type { LayoutNode, LayoutSpec } from '../../src/lib/magazineV2/layoutSpec.js';
+import { PAGE_H, PAGE_W } from '../../src/lib/magazineV2/config.js';
 
-const PAGE = { width: 1275, height: 1650 };
+// The real sheet, imported. The solver is page-size agnostic and these tests would pass
+// on any rectangle — but a literal here reads as "the page", and the last one outlived
+// the sheet it named by a whole page-size change.
+const PAGE = { width: PAGE_W, height: PAGE_H };
 
 const leaf = (role: string, contentRef = role): LayoutNode =>
   ({ kind: 'leaf', role, contentRef }) as LayoutNode;
@@ -73,8 +77,8 @@ test('a col tiles its main axis EXACTLY — no gaps, no overlaps, last child on 
 });
 
 test('weights with an indivisible total still tile exactly (the rounding case)', () => {
-  // 3 tracks over 1650px does not divide evenly — this is where naive per-child
-  // rounding leaves 1px seams or overshoots the parent.
+  // None of these track counts divides the page height evenly — this is where naive
+  // per-child rounding leaves 1px seams or overshoots the parent.
   for (const n of [3, 7, 11, 13]) {
     const root = {
       kind: 'col',

@@ -96,6 +96,14 @@ export interface AgentProposal {
    *  what the user approves is exactly what the assistant described. Typed loosely
    *  here to avoid a circular import; the server re-normalises it on apply anyway. */
   layoutReading?: unknown;
+  /** apply-layout: which page, when the user named one ("do page 2 like this"). An ID,
+   *  resolved server-side from the ordinal — page order can change between the
+   *  assistant's answer and the user pressing Apply, and an index would then point
+   *  somewhere else. Absent = the page on screen, which is all this could ever do
+   *  before. */
+  pageId?: string;
+  /** apply-layout: the ordinal as the user said it, for the confirm. Set with pageId. */
+  pageNumber?: number;
 }
 
 /** A fully-loaded page (elements included) as returned by GET …/pages/:pageId. */

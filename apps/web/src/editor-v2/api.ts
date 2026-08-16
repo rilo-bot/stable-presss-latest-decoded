@@ -361,7 +361,22 @@ export const uploadIssue = (filename: string, contentType: string, size: number)
 /** 2) PUT the raw bytes straight to S3 (never through our API). Content-Type MUST
  *  match what was signed. Not authFetch — this hits S3 directly. */
 export async function putToS3(uploadUrl: string, file: File): Promise<void> {
-  const res = await fetch(uploadUrl, { method: 'PUT', headers: { 'Content-Type': file.type || 'application/pdf' }, body: file });
+  let res: Response;
+  try {
+    res = await fetch(uploadUrl, { method: 'PUT', headers: { 'Content-Type': file.type || 'application/pdf' }, body: file });
+  } catch (e) {
+    // A CORS-BLOCKED PUT REJECTS HERE, IT DOES NOT RETURN A RESPONSE — so the `!res.ok`
+    // branch below never sees it and the caller got a bare "Failed to fetch". This is
+    // the browser talking straight to S3, so the API server logs nothing either: with
+    // both ends silent, the commonest deployment mistake there is (an origin missing
+    // from the bucket's CORS rules — a new dev host, a preview URL) presented as an
+    // unexplained failure. The one thing we can state for certain is that the request
+    // never got an answer, and where to look.
+    throw new Error(
+      `Upload could not reach storage (${e instanceof Error ? e.message : 'network error'}). ` +
+        `If this is a new host, check the bucket's CORS policy allows ${window.location.origin}.`,
+    );
+  }
   if (!res.ok) throw new Error(`Upload failed (HTTP ${res.status}). Check the storage bucket's CORS policy.`);
 }
 
@@ -464,6 +479,11 @@ export const applyLayoutToPage = (
     page: MagazinePageV2;
     leftOver: { text: number; images: number };
     fidelity: LayoutFidelity;
+    /** Slots holding more copy than fits at a readable size. The page is still built —
+     *  this used to be a 422 that refused the whole layout. */
+    tight: { role: string; holds: number; has: number }[];
+    /** The same thing as one sentence, already worded for a toast. */
+    tightSummary: string;
     warning: string;
   }>);
 
