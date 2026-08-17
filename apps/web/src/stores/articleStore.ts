@@ -49,7 +49,18 @@ interface ArticleState {
   loading: boolean;
   loaded: boolean;
   error: string | null;
-  fetchArticles: () => Promise<void>;
+  /**
+   * `silent` suppresses the error toast, for callers whose audience cannot act on
+   * it. The public front page is the one that matters: a reader who cannot reach
+   * /api/articles got a red toast reading "HTTP 500" — a message that tells them
+   * nothing, blames nothing they did, and appears on a page they did not ask to
+   * debug. The store still records `error`, so the page can say something honest in
+   * the space where the stories would have been.
+   *
+   * Newsroom callers keep the toast: a staff member who has just filed something
+   * needs to know the list is stale.
+   */
+  fetchArticles: (options?: { silent?: boolean }) => Promise<void>;
   /** Resolves with the created article (with server-assigned id), or null on failure. */
   addArticle: (article: Omit<Article, 'id' | 'createdAt'>) => Promise<Article | null>;
   /** Resolves `true` if the save reached the server, `false` if it failed (and was rolled back). */
@@ -73,7 +84,7 @@ export const useArticleStore = create<ArticleState>()((set, get) => ({
   loaded: false,
   error: null,
 
-  fetchArticles: async () => {
+  fetchArticles: async (options?: { silent?: boolean }) => {
     if (get().loading || get().loaded) return;
     set({ loading: true, error: null });
     try {
@@ -84,7 +95,7 @@ export const useArticleStore = create<ArticleState>()((set, get) => ({
     } catch (err) {
       const message = err instanceof Error ? err.message : 'Failed to load articles';
       set({ loading: false, error: message });
-      toast.error(message);
+      if (!options?.silent) toast.error(message);
     }
   },
 

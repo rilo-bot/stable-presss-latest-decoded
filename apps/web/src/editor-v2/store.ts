@@ -777,7 +777,7 @@ export const useEditorStore = create<EditorState>((set, get) => ({
     const n = s.pages.findIndex((p) => p.id === pageId) + 1;
     const where = n > 0 ? `page ${n}` : 'this page';
     const ok = window.confirm(
-      `Rearrange ${where} into that layout?\n\n${count} item${count === 1 ? '' : 's'} will move into the new structure. Your words and photos are kept, but the current arrangement cannot be brought back with undo.`,
+      `Rebuild ${where} to match that reference?\n\nThe page is cleared and recreated in the image's design — fresh words are written for your magazine, and the page's photos are re-used where the layout wants pictures. Its current ${count} item${count === 1 ? '' : 's'} are replaced and cannot be brought back with undo.`,
     );
     if (!ok) return null;
     set({ layoutBusy: true });

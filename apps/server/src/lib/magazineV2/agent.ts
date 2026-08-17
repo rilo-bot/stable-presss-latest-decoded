@@ -13,7 +13,7 @@
 
 import { generateText, stepCountIs, tool, type ModelMessage } from 'ai';
 import { z } from 'zod';
-import { getAgentModel } from '../agent/provider.js';
+import { getMagazineModel } from '../agent/provider.js';
 import { db } from '../db.js';
 import { COL } from './collections.js';
 import { safeUrl } from './url.js';
@@ -712,7 +712,7 @@ export async function runPageAgent(opts: {
   let text = '';
   try {
     const result = await generateText({
-      model: getAgentModel(),
+      model: getMagazineModel(),
       system: SYSTEM(
         dims,
         opts.page.elements,

@@ -2,28 +2,29 @@
 // Magazine Builder v2 — DRAFT copy for reference-layout slots the page cannot
 // fill from its own content ("reference-fill").
 //
-// "Use this layout" used to be a pure REARRANGE: the page's own words and photos
-// were reflowed into the reference's boxes, and any box left over was pruned —
-// so a 7-region cover applied to a 3-element page came back mostly blank with an
-// honest warning. Honest, but not what anyone asked for: the user wanted THE
-// LAYOUT, complete. This module writes the missing pieces.
-//
-// It drafts ONLY what `unfilledSlots` says the page cannot cover — the user's
-// own copy always wins a slot first (reflowContent passes 1–2), and drafted text
-// enters as pass 3. One model call for all missing slots together, so the drafts
-// cohere with each other and with the page's surviving copy.
+// "Use this layout" is a RECREATE (user direction 2026-08-17): the page is
+// cleaned and the reference's design rebuilt complete, so every slot
+// `unfilledSlots` lists — on a blank page, all of them — is drafted here in one
+// model call, guided by each slot's vision `hint` (what the reference page
+// actually showed there), so the result reads like the reference adapted to
+// this magazine. It still works for partially-filled pages: it only ever
+// drafts what `unfilledSlots` lists, and drafted text enters reflow as pass 3.
 //
 // Never throws. A failure returns [] and the apply proceeds exactly as before
 // this module existed — rearrange-only, with the leftover warning.
 // ---------------------------------------------------------------------------
 
 import { generateText } from 'ai';
-import { getAgentModel } from '../agent/provider.js';
+import { getMagazineModel } from '../agent/provider.js';
 import { parseJsonObject } from './parseJson.js';
 
 export interface FillSlotSpec {
   role: string;
   approxChars: number;
+  /** What the vision read in this slot's region of the reference ("masthead
+   *  'THE HORSE'") — the drafter writes THIS magazine's version of the same
+   *  thing. Absent when the slot has no one-to-one region. */
+  hint?: string;
 }
 
 const MAX_SLOTS = 16;
@@ -56,10 +57,11 @@ export async function draftReferenceFill(opts: {
   if (slots.length === 0) return [];
 
   const system = [
-    'You are a magazine copywriter filling specific slots on ONE page of an existing magazine.',
-    'The page is being rearranged into a new layout that has more slots than the page has content;',
-    'you write ONLY the missing pieces. The user’s own copy stays — yours must sit beside it',
-    'naturally: same subject, same register, no repetition of what is already there.',
+    'You are a magazine copywriter RECREATING a reference page for a different magazine: the',
+    'reference’s design is being rebuilt slot for slot, and you write the copy that goes in it.',
+    'Where a slot notes what the reference showed there, write THIS magazine’s own version of the',
+    'same thing — same purpose, same weight (a masthead stays a masthead, a tagline a tagline) —',
+    'never the reference’s brand, names, or subject.',
     '',
     'Rules:',
     '- Write REAL editorial copy on the magazine’s subject — concrete and specific, never filler',
@@ -80,14 +82,17 @@ export async function draftReferenceFill(opts: {
       : 'The page is currently empty — the drafts carry it alone.',
     '',
     'Slots to write:',
-    ...slots.map((s, i) => `${i}. role: ${s.role} — about ${s.approxChars} characters`),
+    ...slots.map(
+      (s, i) =>
+        `${i}. role: ${s.role} — about ${s.approxChars} characters${s.hint ? ` — the reference shows: “${s.hint.slice(0, 160)}”` : ''}`,
+    ),
   ]
     .filter(Boolean)
     .join('\n');
 
   try {
     const { text } = await generateText({
-      model: getAgentModel(),
+      model: getMagazineModel(),
       system,
       prompt: user,
       temperature: 0.7,

@@ -2,6 +2,9 @@ import { Link } from 'react-router-dom';
 import { cn } from '@/lib/utils';
 import type { Article } from '@/types/article';
 import { Clock } from 'lucide-react';
+// The stored value is the filter KEY ('race-reports'), not a label. Printing it raw
+// put 'RACE-REPORTS' on every card here, on the front page and on /news alike.
+import { categoryLabel } from '@/pages/news-index/constants';
 
 interface ArticleCardProps {
   article: Article;
@@ -42,7 +45,7 @@ export function ArticleCard({ article, variant = 'default', className }: Article
         <div className="flex flex-col justify-center min-w-0">
           {article.category && (
             <span className="text-[10px] uppercase tracking-[0.12em] text-[hsl(var(--brand-accent))] font-semibold mb-1">
-              {article.category}
+              {categoryLabel(article.category)}
             </span>
           )}
           <h3 className="font-[family-name:var(--font-display)] text-sm font-semibold leading-snug text-foreground group-hover:opacity-80 transition-opacity duration-140 line-clamp-2">
@@ -81,7 +84,7 @@ export function ArticleCard({ article, variant = 'default', className }: Article
           <div className="flex items-center gap-3 mb-3">
             {article.category && (
               <span className="text-[10px] uppercase tracking-[0.12em] text-[hsl(var(--brand-accent))] font-semibold">
-                {article.category}
+                {categoryLabel(article.category)}
               </span>
             )}
             {formattedDate && (
@@ -137,7 +140,7 @@ export function ArticleCard({ article, variant = 'default', className }: Article
         <div className="flex items-center gap-2 mb-2">
           {article.category && (
             <span className="text-[10px] uppercase tracking-[0.12em] text-[hsl(var(--brand-accent))] font-semibold">
-              {article.category}
+              {categoryLabel(article.category)}
             </span>
           )}
           {article.readingTime && (

@@ -201,7 +201,19 @@ export const useBlogStore = create<BlogState>()((set, get) => ({
       const res = await authFetchRetry(`/api/blogs?${queryFrom({ status: 'published' }, 1, limit)}`);
       if (!res.ok) return;
       const data = (await res.json()) as BlogListResponse;
-      set({ latest: data.items, latestLoaded: true });
+      /**
+       * GUARDED, because this feeds the public front page. A 200 whose body is not
+       * the envelope this expects — a proxy's JSON error page, a bare array, a
+       * renamed field — used to put `undefined` into `latest`, and LandingBlog
+       * reads `posts.length` on the first line of its render. There is no error
+       * boundary above it, so React unmounted the whole landing tree: a blank
+       * front page from a request that succeeded.
+       *
+       * `fetchList` above sets `items` the same unguarded way and feeds /blog and
+       * the newsroom's Blogs screen. Same fix applies; left alone here only
+       * because this pass is scoped to the landing page.
+       */
+      set({ latest: Array.isArray(data.items) ? data.items : [], latestLoaded: true });
     } catch {
       // Deliberately silent — see above.
     }

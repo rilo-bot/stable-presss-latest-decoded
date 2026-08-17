@@ -558,7 +558,7 @@ function tightSlots(issues: { kind: string; detail: string }[], elements: Magazi
 export function unfilledSlots(
   reading: LayoutReading,
   page: { width?: number; height?: number; background?: { type?: string; value?: string }; elements: MagazineElement[] },
-): { texts: { role: string; approxChars: number }[]; images: number } | null {
+): { texts: { role: string; approxChars: number; hint?: string }[]; images: number } | null {
   const converted = readingToSpec(reading);
   if (!converted) return null;
   const spec = normalizeLayoutSpec(converted.spec);
@@ -567,10 +567,26 @@ export function unfilledSlots(
   const bgImage = page.background?.type === 'image' && page.background.value ? String(page.background.value) : '';
   const { content } = reflowContent(slots, page.elements, bgImage || undefined);
 
+  // The vision's note for the region a slot came from ("masthead 'THE HORSE'") —
+  // it tells the drafter WHAT the reference said there, so the fresh copy is this
+  // magazine's version of the same thing rather than generic filler. Matched back
+  // through `origin` (the slot's source box IS the region's box); a slot with no
+  // one-to-one region (a split body, a synthesized band) simply gets no hint.
+  const near = (a: number, b: number) => Math.abs(a - b) < 1e-6;
+  const hintFor = (ref: string, role: string): string | undefined => {
+    const box = converted.origin[ref];
+    if (!box) return undefined;
+    const region = reading.regions.find(
+      (g) => g.role === role && near(g.box.x, box.x) && near(g.box.y, box.y) && near(g.box.w, box.w) && near(g.box.h, box.h),
+    );
+    const note = region?.note?.trim();
+    return note || undefined;
+  };
+
   const dims = { width: Number(page.width) || PAGE_W, height: Number(page.height) || PAGE_H };
   // ~1 character per 45px² at body sizes on the 150-DPI sheet — deliberately
   // conservative; short-line display roles are capped by ROLE_CHAR_CAP.
-  const texts: { role: string; approxChars: number }[] = [];
+  const texts: { role: string; approxChars: number; hint?: string }[] = [];
   let images = 0;
   for (const slot of slots) {
     if (slot.role === 'image') { if (!content[slot.ref]) images += 1; continue; }
@@ -586,7 +602,8 @@ export function unfilledSlots(
     const box = converted.origin[slot.ref];
     const area = box ? box.w * dims.width * (box.h * dims.height) : 0;
     const byArea = area > 0 ? Math.round(area / 45) : 80;
-    texts.push({ role: slot.role, approxChars: Math.max(16, Math.min(cap, byArea)) });
+    const hint = hintFor(slot.ref, slot.role);
+    texts.push({ role: slot.role, approxChars: Math.max(16, Math.min(cap, byArea)), ...(hint ? { hint } : {}) });
   }
   return { texts, images };
 }

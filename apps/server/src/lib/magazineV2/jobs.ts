@@ -21,7 +21,7 @@ export interface JobPayloads {
   /** Re-run extraction for a single page (the per-page retry). */
   processPage: { issueId: string; pageId: string; index: number };
   /** Build a whole issue from a brief / source document (from-scratch AI generation). */
-  generateIssue: { issueId: string; prompt: string; pageCount?: number; sourceText?: string };
+  generateIssue: { issueId: string; prompt: string; pageCount?: number; sourceText?: string; threadId?: string };
   /** Design + insert N on-theme pages into an existing issue ("add pages"). */
   generatePages: { issueId: string; count: number; topic?: string; atIndex: number; prevStatus: string };
 }

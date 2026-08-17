@@ -761,6 +761,25 @@ test('unfilledSlots names exactly what the page cannot cover, with sane budgets'
   }
 });
 
+test("unfilledSlots carries each region's vision note as the drafting hint", () => {
+  // RECREATE mode: the drafter is told what the reference page SHOWED in each
+  // region ("masthead 'THE HORSE'") so the fresh copy says the same thing,
+  // adapted to this magazine — not generic filler.
+  const r = reading([
+    { role: 'image', box: { x: 0, y: 0, w: 1, h: 0.5 } },
+    { role: 'headline', box: { x: 0.06, y: 0.55, w: 0.88, h: 0.1 }, note: "masthead 'THE HORSE'" },
+    { role: 'body', box: { x: 0.06, y: 0.7, w: 0.88, h: 0.25 } },
+  ]);
+  const missing = unfilledSlots(r, { width: PAGE_W, height: PAGE_H, elements: [] });
+  assert.ok(missing);
+  const headline = missing.texts.find((t) => t.role === 'headline');
+  assert.ok(headline, 'the empty headline slot is listed');
+  assert.equal(headline.hint, "masthead 'THE HORSE'", 'the vision note reaches the drafter');
+  const body = missing.texts.find((t) => t.role === 'body');
+  assert.ok(body, 'the empty body slot is listed');
+  assert.equal(body.hint, undefined, 'no note → no hint, not an empty string');
+});
+
 test('with extras, a reference applied to a page with one line builds COMPLETE — no pruned holes', () => {
   const r = reading([
     { role: 'image', box: { x: 0, y: 0, w: 1, h: 0.5 } },

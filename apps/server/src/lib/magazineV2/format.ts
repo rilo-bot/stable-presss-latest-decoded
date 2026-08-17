@@ -14,7 +14,7 @@
 
 import { generateObject } from 'ai';
 import { z } from 'zod';
-import { getAgentModel } from '../agent/provider.js';
+import { getMagazineModel } from '../agent/provider.js';
 
 /** Rough char ceiling per text role (keeps rewritten copy inside its box). */
 const CHAR_GUIDE: Record<string, number> = {
@@ -34,9 +34,11 @@ export interface FormatCandidate {
   maxChars: number;
 }
 
+// Every field REQUIRED ('' = none) — GPT strict structured outputs rejects
+// optionals (the planner hit this live: [Azure] "Missing 'sectionTitle'").
 const EditsSchema = z.object({
   edits: z.array(z.object({ elementId: z.string(), content: z.string() })),
-  note: z.string().optional(),
+  note: z.string(),
 });
 
 export function charGuideFor(role: string): number {
@@ -73,7 +75,7 @@ export async function formatPageText(opts: {
 
   try {
     const { object } = await generateObject({
-      model: getAgentModel(),
+      model: getMagazineModel(),
       schema: EditsSchema,
       system,
       prompt: ['Boxes:', ...lines].join('\n'),

@@ -26,8 +26,8 @@ const handlers: JobHandlers = {
   processPage: (payload) => processPageJob(payload as { issueId: string; pageId: string; index: number }),
   // Build a whole issue from a brief / source document (from-scratch AI gen).
   generateIssue: (payload) => {
-    const p = payload as { issueId: string; prompt: string; pageCount?: number; sourceText?: string };
-    return generateMagazineIssue(p.issueId, p.prompt, p.pageCount, p.sourceText);
+    const p = payload as { issueId: string; prompt: string; pageCount?: number; sourceText?: string; threadId?: string };
+    return generateMagazineIssue(p.issueId, p.prompt, p.pageCount, p.sourceText, p.threadId);
   },
   // Design + insert N on-theme pages into an existing issue.
   generatePages: (payload) => {

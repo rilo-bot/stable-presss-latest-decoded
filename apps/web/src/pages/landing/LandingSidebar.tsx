@@ -1,31 +1,36 @@
 /**
  * The front page's right-hand rail.
  *
- * THREE blocks, from seven. It carried, in order: a membership CTA with an email
- * form, the podcast card, "Also in this edition", an "Editorial Desk" card, a
- * "Tipping Ring" card, the sponsor list, and "Your Tipping Record" — and three of
- * those were CTAs competing with the membership form directly above them, plus two
- * more CTAs elsewhere on the page. Six ways to be asked to subscribe on one screen
- * is not six chances to convert; it is a page with no primary action.
+ * TWO blocks, from seven — and from the four it had after the last cut. It once
+ * carried, in order: a membership CTA with an email form, the podcast card, "Also in
+ * this edition", an "Editorial Desk" card, a "Tipping Ring" card, the sponsor list,
+ * and "Your Tipping Record". Six ways to be asked to subscribe on one screen is not
+ * six chances to convert; it is a page with no primary action.
  *
- * What survives: the membership form (the only one that captures an email), the
- * podcast card (real episodes), "Also today" (real stories), and the sponsors
- * (real, and they are paying to be there).
+ * What survives here: the membership form (the only thing on the page that captures
+ * an email) and "Also today" (real stories, everything the page has not already
+ * shown).
  *
- * Removed:
- *   · "The Editorial Desk" — static copy whose two buttons went to /news and
- *     /bulletins, both of which are in the nav and the footer already.
- *   · "Tipping Ring" — the ring is not launching with the site.
- *   · "Your Tipping Record" — same.
+ * Removed earlier: "The Editorial Desk" (static copy whose two buttons went to
+ * /news and /bulletins, both already in the nav and the footer), "Tipping Ring" and
+ * "Your Tipping Record" (the ring is not launching with the site).
+ *
+ * Removed now: the podcast card and the sponsor list, which did not belong in a
+ * 19rem column — they are full-width bands of their own further down the page. See
+ * LandingPodcast.tsx and LandingSponsors.tsx.
+ *
+ * THE BENEFIT LIST IS GONE FROM HERE, and that is not a trim. It listed "Tipping
+ * ring entry" for a ring that is not open, a "Fortnightly print bulletin" for a
+ * cadence that exists nowhere in the code or the data, and "Full access to every
+ * article" on a site with no paywall. What an account actually does is now set out,
+ * honestly and at length, in LandingMembership.tsx. This card only has to take an
+ * email address.
  */
-import type { ReactNode } from 'react';
 import { Link } from 'react-router-dom';
-import { Check, Star } from 'lucide-react';
+import { Star } from 'lucide-react';
 import { ArticleCard } from '@/components/ArticleCard';
 import { Button } from '@/components/ui/button';
-import { cn } from '@/lib/utils';
 import type { Article } from '@/types/article';
-import type { Sponsor } from '@/types/sponsor';
 
 interface LandingSidebarProps {
   hasUser: boolean;
@@ -33,8 +38,6 @@ interface LandingSidebarProps {
   setSubscribeEmail: (value: string) => void;
   handleSubscribe: (e: React.FormEvent) => void;
   sidebarArticles: Article[];
-  sponsors: Sponsor[];
-  podcastSlot: ReactNode;
 }
 
 export function LandingSidebar({
@@ -43,13 +46,13 @@ export function LandingSidebar({
   setSubscribeEmail,
   handleSubscribe,
   sidebarArticles,
-  sponsors,
-  podcastSlot,
 }: LandingSidebarProps) {
   return (
     <aside className="lg:col-span-1 space-y-8">
 
-      {/* Subscription CTA */}
+      {/* ── Membership ──
+          One of the page's two join CTAs; the full-width band above the footer is
+          the other. Keep it at two. */}
       {!hasUser && (
         <div
           className="rounded-sm overflow-hidden border"
@@ -71,27 +74,14 @@ export function LandingSidebar({
             <h3 className="font-[family-name:var(--font-display)] text-lg font-bold text-foreground leading-snug mb-1">
               Join Stable Press
             </h3>
+            {/* Says what signing up actually costs and actually does. The detail —
+                reactions, comments, claiming your register entry, the dashboard —
+                is in the membership block further down; repeating it here is how
+                this card grew a list of things that were not true. */}
             <p className="text-xs text-muted-foreground leading-relaxed mb-4">
-              Full access to every article, the print bulletin, tipping
-              competitions, and the podcast archive.
+              Free. A name, an email and a six-digit code — then you can react,
+              comment, and claim your own entry in the register.
             </p>
-            <ul className="space-y-1.5 mb-4">
-              {[
-                'Unlimited editorial access',
-                'Fortnightly print bulletin',
-                'Tipping ring entry',
-                'Podcast early access',
-                'Horse profile deep dives',
-              ].map((benefit) => (
-                <li
-                  key={benefit}
-                  className="flex items-center gap-2 text-xs text-foreground/80"
-                >
-                  <Check size={11} style={{ color: 'hsl(var(--brand-accent-ink))' }} />
-                  {benefit}
-                </li>
-              ))}
-            </ul>
 
             <form onSubmit={handleSubscribe} className="space-y-2">
               <input
@@ -107,7 +97,7 @@ export function LandingSidebar({
                 size="sm"
                 className="w-full bg-primary text-primary-foreground hover:bg-primary/90 text-xs font-semibold"
               >
-                Start Membership
+                Create an account
               </Button>
             </form>
           </div>
@@ -125,10 +115,9 @@ export function LandingSidebar({
         </div>
       )}
 
-      {/* Podcast Promo */}
-      {podcastSlot}
-
-      {/* Also in this edition */}
+      {/* ── Also today ──
+          Everything published that the rest of the page has not already used —
+          computed from what was actually shown, not a fixed slice. */}
       {sidebarArticles.length > 0 && (
         <div>
           <div className="flex items-center gap-3 mb-4">
@@ -149,77 +138,6 @@ export function LandingSidebar({
         </div>
       )}
 
-      {/* Two CTA cards sat here — "The Editorial Desk" (static copy, buttons to
-          /news and /bulletins) and "Tipping Ring" — directly beneath the membership
-          form above. Both are gone; see the note at the top of this file. */}
-
-      {/* Sponsors.
-          Type floor raised throughout: the sponsor initial was 9px, the category
-          8px, the enquiries line 9px. All gold text here now uses
-          `--brand-accent-ink` — `--brand-accent` is a FILL, and it is 2.06:1 as
-          text on this surface (docs/THEME-DIRECTION.md). The initial keeps the
-          plain accent because there it IS a fill, behind ink. */}
-      <div>
-        <div className="flex items-center gap-3 mb-4">
-          <h3 className="text-[11px] uppercase tracking-[0.1em] font-bold text-muted-foreground whitespace-nowrap">
-            Partners &amp; Sponsors
-          </h3>
-          <div className="flex-1 h-px bg-border/50" />
-        </div>
-        {sponsors.length === 0 ? (
-          <p className="text-[12px] text-muted-foreground italic">
-            No sponsors listed yet.
-          </p>
-        ) : (
-        <div className="space-y-3">
-          {sponsors.map((sponsor, idx) => (
-            <div
-              key={sponsor.id}
-              className={cn(
-                'flex items-start gap-3 pb-3',
-                idx < sponsors.length - 1 && 'border-b border-border/40'
-              )}
-            >
-              <div
-                className="flex-shrink-0 w-10 h-10 rounded-sm flex items-center justify-center text-[13px] font-bold uppercase"
-                style={{
-                  background: 'hsl(var(--brand-accent) / 0.14)',
-                  color: 'hsl(var(--brand-accent-ink))',
-                }}
-              >
-                {sponsor.name.charAt(0)}
-              </div>
-              <div className="min-w-0">
-                {sponsor.category && (
-                  <span
-                    className="block text-[11px] uppercase tracking-[0.1em] font-bold mb-0.5"
-                    style={{ color: 'hsl(var(--brand-accent-ink))' }}
-                  >
-                    {sponsor.category}
-                  </span>
-                )}
-                <p className="text-sm font-semibold text-foreground">
-                  {sponsor.name}
-                </p>
-                {sponsor.tagline && (
-                  <p className="text-[12px] text-muted-foreground mt-0.5">
-                    {sponsor.tagline}
-                  </p>
-                )}
-              </div>
-            </div>
-          ))}
-        </div>
-        )}
-        <p className="mt-3 text-[11px] text-muted-foreground text-center">
-          Sponsor enquiries:{' '}
-          <span className="text-foreground font-medium">press@stablepress.com.au</span>
-        </p>
-      </div>
-
-      {/* "Your Tipping Record" — a four-stat tile of the signed-in member's own
-          balance, rank and winnings — was the seventh block. Out with the rest of
-          the tipping surface. */}
     </aside>
   );
 }

@@ -79,6 +79,27 @@ export const CATEGORIES: CategoryDef[] = [
   },
 ];
 
+/** key → label, built once from the table above. */
+const CATEGORY_LABELS = new Map(CATEGORIES.map((c) => [c.key, c.label]));
+
+/**
+ * The reader-facing name of a category.
+ *
+ * `article.category` stores the KEY — `race-reports`, `morning-edition`,
+ * `jockey-desk` — because that is what /news filters on. Several surfaces printed
+ * that value straight into the page, so the front page's lead story was kickered
+ * "RACE-REPORTS" and the analysis rows read "TRAINER-PROFILES": internal
+ * identifiers, uppercased, hyphens and all, as editorial labels.
+ *
+ * An unknown key falls back to itself rather than to nothing — a category that has
+ * been retired from the table should still label the stories that carry it, and a
+ * visible oddity is easier to notice than a silently missing kicker.
+ */
+export function categoryLabel(key?: string | null): string | null {
+  if (!key) return null;
+  return CATEGORY_LABELS.get(key) ?? key;
+}
+
 export const SECTIONS = [
   {
     key: 'news',

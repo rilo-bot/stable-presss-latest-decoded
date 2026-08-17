@@ -29,6 +29,21 @@ export function getAgentModel(): LanguageModel {
   return provider(AGENT_MODEL)
 }
 
+// The MAGAZINE builder's own brain — deliberately HARDCODED, not env (user
+// direction 2026-08-17): the magazine runs on the GPT flagship while every other
+// studio keeps AGENT_MODEL. Slug verified against openrouter.ai/models on
+// 2026-08-17 — never change it without re-verifying (an unverified slug broke
+// prod generation once already).
+export const MAGAZINE_MODEL = 'openai/gpt-5.6-sol'
+
+/** The magazine builder's model (planner, copywriter, art director, page agent,
+ *  reference fill). The reference-image VISION read stays on getAgentModel until
+ *  a GPT reference-read is verified — see docs/MAGAZINE-V2-BUILDER-STRONG.md. */
+export function getMagazineModel(): LanguageModel {
+  if (!provider) provider = createOpenRouter({ apiKey: API_KEY })
+  return provider(MAGAZINE_MODEL)
+}
+
 /**
  * Model variant for reading PDFs (document ingest OCR). It enables OpenRouter's
  * `file-parser` plugin with the `mistral-ocr` engine so IMAGE-BASED / scanned PDFs

@@ -520,9 +520,45 @@ router.post('/issues/generate', rateLimit('mag2-generate', 10, 60_000), async (r
     createdAt: now,
     updatedAt: now,
   });
+  // THE BIRTH THREAD (user direction 2026-08-17): the very first prompt IS the
+  // first message of the magazine's conversation. The planner's read-back and
+  // the completion note land here as assistant turns, so the user can reply and
+  // continue the same conversation in the studio. Best-effort — a thread hiccup
+  // must never block generation.
+  let threadId: string | undefined;
+  try {
+    const firstMsg = prompt || 'Build a magazine from the attached document.';
+    const tid = await db.collection(COL.threads).insertOne({
+      magazineId: id,
+      userId: uid,
+      userName: req.account!.name || req.account!.email || 'Someone',
+      title: titleFromMessage(firstMsg),
+      startedOnPageId: null,
+      startedOnPageIndex: 0,
+      lastMessageAt: now,
+      messageCount: 1,
+      deletedAt: null,
+      createdAt: now,
+      updatedAt: now,
+    });
+    threadId = String(tid);
+    await db.collection(COL.chat).insertOne({
+      threadId,
+      userId: uid,
+      magazineId: id,
+      pageId: null,
+      pageIndex: 0,
+      role: 'user',
+      content: firstMsg.slice(0, 8000),
+      deletedAt: null,
+      createdAt: now,
+    });
+  } catch (err) {
+    console.warn('[magazineV2] birth thread failed (generation proceeds):', err instanceof Error ? err.message : err);
+  }
   // Hand off to the worker: generation (per-page LLM + image calls) is slow, so
   // it runs out-of-process. The client polls the issue status until it settles.
-  await enqueueJob('generateIssue', { issueId: id, prompt, pageCount, sourceText });
+  await enqueueJob('generateIssue', { issueId: id, prompt, pageCount, sourceText, threadId });
   const created = await loadIssue(id);
   res.status(202).json({ issue: created ? withViewer(created, uid) : { id } });
 });
@@ -2849,29 +2885,53 @@ router.post('/issues/:id/pages/:pageId/apply-layout', rateLimit('mag2-agent', 20
     elements: Array.isArray(page.elements) ? (page.elements as MagazineElement[]) : [],
   };
 
-  // ── REFERENCE-FILL ──
-  // "Use this layout" must produce THE LAYOUT, complete — not a rearrangement
-  // with holes. The page's own words and photos always fill slots first; what
-  // the page cannot cover is drafted (on the magazine's own subject) and topped
-  // up from the media library, so no reference box is ever pruned for emptiness
-  // and the survivors never stretch over the gap. Best-effort: if drafting is
-  // unavailable or fails, the apply proceeds exactly as before, warnings and all.
+  // ── RECREATE, NOT REARRANGE ──
+  // "Use this layout" CLEANS the page first and rebuilds it to MATCH the
+  // reference (user direction 2026-08-17): same design, every text slot written
+  // fresh — each draft guided by what the vision read in that region of the
+  // image — with nothing of the old arrangement or copy carried over. The reflow
+  // therefore runs against a BLANK page: no old text can claim a slot, and
+  // nothing "stays out" (leftOver is zero by construction). The page's own
+  // photos remain the image pool — they are this story's assets, and the
+  // reference's photos are not ours to take — topped up from the media library
+  // when the reference wants more. Best-effort: if drafting is unavailable or
+  // fails, still-empty slots are pruned exactly as before, warnings and all.
+  // The page's CHROME rides along — reflow ignores furniture by id, so it can
+  // never claim a slot — because refurnish takes the running head's wording from
+  // it, and the FOLIO must keep its id or renumberFolios can never find it again.
+  const blank = {
+    width: pageShape.width,
+    height: pageShape.height,
+    elements: pageShape.elements.filter((e) => FURNITURE_IDS.includes(e.id)),
+  };
   let extraFill: ExtraContent | undefined;
-  const missing = unfilledSlots(reading, pageShape);
+  const missing = unfilledSlots(reading, blank);
   if (missing && (missing.texts.length > 0 || missing.images > 0)) {
     const extraImages: { url: string; assetId?: string; alt?: string }[] = [];
     if (missing.images > 0) {
-      // The magazine's own library — never `reference` uploads (someone else's
-      // licensed page) and never docs. Photos already on the page are skipped so
-      // the same picture doesn't appear twice.
-      const media = (await db.collection(COL.media).find({ magazineId: issue._id })) as Doc[];
-      const onPage = new Set(pageShape.elements.filter((e) => e.type === 'image' && e.image?.url).map((e) => e.image!.url));
-      extraImages.push(
-        ...media
-          .filter((m) => m.kind !== 'reference' && m.kind !== 'doc' && typeof m.url === 'string' && m.url && !onPage.has(String(m.url)))
-          .slice(0, missing.images)
-          .map((m) => ({ url: String(m.url), assetId: String(m._id), alt: typeof m.alt === 'string' ? m.alt : '' })),
-      );
+      const seen = new Set<string>();
+      const take = (url: string, assetId?: string, alt?: string) => {
+        if (!url || seen.has(url) || extraImages.length >= missing.images) return;
+        seen.add(url);
+        extraImages.push({ url, ...(assetId ? { assetId } : {}), alt: alt ?? '' });
+      };
+      // The page's own photos first — the most relevant pictures for this story.
+      for (const e of pageShape.elements) {
+        if (e.type === 'image' && e.image?.url) {
+          take(String(e.image.url), e.image.assetId ? String(e.image.assetId) : undefined, e.image.alt ? String(e.image.alt) : '');
+        }
+      }
+      if (pageShape.background?.type === 'image' && pageShape.background.value) take(String(pageShape.background.value));
+      if (extraImages.length < missing.images) {
+        // Top up from the magazine's own library — never `reference` uploads
+        // (someone else's licensed page) and never docs.
+        const media = (await db.collection(COL.media).find({ magazineId: issue._id })) as Doc[];
+        for (const m of media) {
+          if (m.kind !== 'reference' && m.kind !== 'doc' && typeof m.url === 'string') {
+            take(String(m.url), String(m._id), typeof m.alt === 'string' ? m.alt : '');
+          }
+        }
+      }
     }
     let extraTexts: { role: string; text: string }[] = [];
     if (missing.texts.length > 0 && isAgentConfigured()) {
@@ -2879,17 +2939,14 @@ router.post('/issues/:id/pages/:pageId/apply-layout', rateLimit('mag2-agent', 20
         title: String(issue.title || genTheme?.title || 'Untitled Magazine'),
         subtitle: genTheme?.subtitle ? String(genTheme.subtitle) : undefined,
         subject: genTheme?.prompt ? String(genTheme.prompt) : undefined,
-        existingText: pageShape.elements
-          .filter((e) => e.type === 'text' && e.text?.content)
-          .map((e) => String(e.text!.content).replace(/<[^>]*>/g, ' ').replace(/\s+/g, ' ').trim())
-          .filter(Boolean),
+        existingText: [],
         slots: missing.texts,
       });
     }
     if (extraTexts.length > 0 || extraImages.length > 0) extraFill = { texts: extraTexts, images: extraImages };
   }
 
-  const applied = applyReadingToPage(reading, pageShape, genTheme, furnitureContextFor(issue, page), extraFill);
+  const applied = applyReadingToPage(reading, blank, genTheme, furnitureContextFor(issue, page), extraFill);
   if (!applied.page) {
     // 422: the request and the server are both fine — this layout and this page
     // cannot be put together, and the sentence says which.

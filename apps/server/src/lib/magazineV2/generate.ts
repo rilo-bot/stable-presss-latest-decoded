@@ -21,7 +21,7 @@
 
 import { generateObject, generateText } from 'ai';
 import { z } from 'zod';
-import { getAgentModel } from '../agent/provider.js';
+import { getMagazineModel } from '../agent/provider.js';
 import { db } from '../db.js';
 import { COL } from './collections.js';
 import { PAGE_W, PAGE_H, MAX_PAGES_PER_ISSUE } from './config.js';
@@ -139,9 +139,16 @@ async function mapWithConcurrency<T, R>(items: T[], limit: number, fn: (item: T,
 // ── Types ─────────────────────────────────────────────────────────────────────
 
 export interface GenPlanPage {
+  /** The nearest STRUCTURAL FAMILY — consumed only by the template fallback and
+   *  the archetype steer. The page's real design intent lives in `look`. */
   kind: PageTemplateKind;
   intent: string;
   sectionTitle: string;
+  /** The Editorial Director's own visual direction for this page, in free words
+   *  ("full-bleed dusk photo, masthead across the top, three gold stat pairs
+   *  low-left"). Passed verbatim to the art director. Optional: plans stored
+   *  before 2026-08-17 don't have it. */
+  look?: string;
 }
 export interface GenPlan {
   title: string;
@@ -149,6 +156,10 @@ export interface GenPlan {
   palette: GenPalette;
   fonts: GenFonts;
   pages: GenPlanPage[];
+  /** The planner's read-back of the request — what it understood the user to be
+   *  asking (topic, exact ask, page count and why). Posted into the issue's
+   *  birth thread so the user sees the AI understood them. */
+  readback?: string;
 }
 export interface PageDraft {
   texts: Record<string, string>; // slotId → copy
@@ -185,57 +196,41 @@ function normalizeFonts(f: unknown): GenFonts {
   };
 }
 
-// Guarantee a real magazine shape: cover first, back-cover last. An EXPLICIT page
-// count is honoured down to 3 (cover + 1 inner + back-cover) — the same floor the
-// create route validates (pc >= 3) — so a user who asks for 3 gets 3, not a
-// silently-bumped 4. Only the DEFAULT (no count given) keeps the 4-page floor, so
-// an auto preview still reads as a real issue.
-function normalizePages(pages: GenPlanPage[], target?: number, subject?: { title: string; subtitle: string }): GenPlanPage[] {
-  const ABS_MIN = 3; // cover + at least one inner page + back-cover
-  const DEFAULT_MIN = 4;
+// DE-CAGED 2026-08-17 (user direction): the planner's page list is TRUSTED — no
+// forced 'cover' first / 'back-cover' last, and NO canned filler pages. The AI
+// decides the issue's flow. This function only enforces the hard bounds (an
+// explicit target is trimmed to exactly; everything is capped at MAX). A plan
+// that comes back SHORT of an explicit target is topped up in planIssue by
+// RE-ASKING the planner (planPages) — an LLM writes the missing pages, never a
+// filler table.
+function normalizePages(pages: GenPlanPage[], target?: number): GenPlanPage[] {
   const MAX = Math.min(MAX_PAGES_PER_ISSUE, 24);
-  let inner: GenPlanPage[] = pages.filter((p) => p.kind !== 'cover' && p.kind !== 'back-cover');
-  const floor = target != null ? ABS_MIN : DEFAULT_MIN;
-  const desiredTotal = Math.min(MAX, Math.max(floor, target ?? (pages.length || 8)));
-  const desiredInner = Math.max(1, desiredTotal - 2);
-  // Distinct per-kind intent + section for padded pages (a single shared intent
-  // string made every filler page draft/lay-out the same). Grounded in the
-  // issue's OWN subject — never a preset domain — so a padded page still reads as
-  // a real, on-topic editorial page.
-  const subjectRef = subject?.title ? `“${subject.title}”${subject.subtitle ? ` — ${subject.subtitle}` : ''}` : 'the issue’s subject';
-  const FILLERS: { kind: PageTemplateKind; intent: string; sectionTitle: string }[] = [
-    { kind: 'feature-full-bleed', intent: `A full-bleed feature developing a distinct, specific aspect of ${subjectRef} not covered by other pages.`, sectionTitle: 'Feature' },
-    { kind: 'two-column-article', intent: `An in-depth article on a specific story within ${subjectRef}, written with real substance.`, sectionTitle: 'The Long Read' },
-    { kind: 'photo-grid', intent: `A photo essay capturing imagery central to ${subjectRef}.`, sectionTitle: 'Gallery' },
-    { kind: 'pull-quote', intent: `A reflective full-page pull-quote from a plausible voice connected to ${subjectRef} (a role, never a real named person).`, sectionTitle: 'In Their Words' },
-    { kind: 'stat-infographic', intent: `A by-the-numbers spread on ${subjectRef} told through figures.`, sectionTitle: 'By the Numbers' },
-  ];
-  while (inner.length < desiredInner) {
-    const f = FILLERS[inner.length % FILLERS.length]!;
-    inner.push({ kind: f.kind, intent: f.intent, sectionTitle: f.sectionTitle });
-  }
-  if (inner.length > desiredInner) inner = inner.slice(0, desiredInner);
-  return [
-    { kind: 'cover', intent: pages.find((p) => p.kind === 'cover')?.intent ?? 'The magazine cover.', sectionTitle: '' },
-    ...inner,
-    { kind: 'back-cover', intent: pages.find((p) => p.kind === 'back-cover')?.intent ?? 'Closing call-to-action.', sectionTitle: '' },
-  ];
+  const cap = target != null ? Math.min(MAX, Math.max(1, target)) : MAX;
+  return pages.slice(0, cap);
 }
 
 // ── Agent 1: Editorial Director — the whole-issue creative brief ──────────────
 
 const PlanSchema = z.object({
+  // The intake read-back: what the planner understood the user to be asking —
+  // topic, the exact ask, page count and why, and what material it will use
+  // (brief / document / uploaded photos). Shown to the user in the birth thread.
+  readback: z.string(),
   title: z.string(),
   subtitle: z.string(),
   palette: z.object({ primary: z.string(), secondary: z.string(), accent: z.string(), bg: z.string(), text: z.string() }),
   fonts: z.object({ display: z.string(), body: z.string() }),
   // No array min/max (some structured-output providers reject minItems>1); the
-  // page count is enforced by normalizePages.
+  // page count is enforced by normalizePages + the top-up re-ask.
   pages: z.array(
     z.object({
       kind: z.enum(PAGE_TEMPLATE_KINDS),
       intent: z.string(),
-      sectionTitle: z.string().optional(),
+      look: z.string(),
+      // REQUIRED, '' = none: GPT strict structured outputs rejects any schema
+      // whose `required` array is missing a declared property — an .optional()
+      // here failed every planning call ([Azure] "Missing 'sectionTitle'").
+      sectionTitle: z.string(),
     }),
   ),
 });
@@ -243,19 +238,28 @@ const PlanSchema = z.object({
 export async function planIssue(brief: string, options?: { pageCount?: number; tone?: string; sourceText?: string }): Promise<GenPlan> {
   const source = (options?.sourceText ?? '').trim();
   const system = [
-    'You are the Editorial Director of a premium print magazine. From the brief,',
+    'You are the Editorial Director of a premium print magazine. From the request,',
     'design a complete issue: a strong title, a one-line subtitle, a tight colour',
     'palette, a font pairing, and an ordered list of pages.',
+    '',
+    'FIRST, READ THE REQUEST PROPERLY and write a short `readback` (2-4 sentences,',
+    'addressed to the user): the topic, what EXACTLY they are asking for, how many',
+    'pages you will make and why (their stated number, or your judgement), and what',
+    'material you are working from (their brief, an attached document, their photos).',
+    'If the request is ambiguous, say in the readback which reading you chose.',
     '',
     PLANNER_DOMAIN,
     '',
     'Rules:',
-    "- The FIRST page must be a 'cover' and the LAST a 'back-cover'. Never repeat a kind twice in a row.",
-    '- Match the page list length to the PAGE COUNT instruction below. For a SHORT PREVIEW, pick only',
-    "  the strongest few — a 'cover', one or two features (feature-full-bleed / two-column-article /",
-    "  photo-grid), and a 'back-cover'; SKIP the contents page. For a FULL issue, add a 'contents' page",
-    '  (page 2) and a richer, varied flow (features, an article, a photo essay, a pull-quote, a',
-    '  by-the-numbers stat-infographic).',
+    '- THE FLOW IS YOURS. There are no required page types: most issues open with a',
+    '  cover-like statement page and close with a sign-off, but that is your call,',
+    '  not a rule. Design the sequence a great editor would.',
+    '- Match the page list length to the PAGE COUNT instruction below.',
+    '- Each page gets a `look`: YOUR visual direction for it in a sentence or two',
+    '  ("full-bleed dusk photo, masthead huge across the top, three gold stat pairs',
+    '  low-left"). The art director designs from your `look` — make it specific and',
+    '  make every page look DIFFERENT. `kind` is only the nearest structural family',
+    '  (a fallback skeleton) — pick the closest, and never let it limit the look.',
     '- Palette: five #rrggbb colours forming a cohesive, sophisticated EDITORIAL scheme',
     '  (think premium print magazine, not clip-art). `bg` light/near-white, `text` a deep',
     '  near-black for legibility; `primary` a rich brand colour, `secondary` a supporting',
@@ -279,14 +283,14 @@ export async function planIssue(brief: string, options?: { pageCount?: number; t
       ? `\nSOURCE DOCUMENT (build the issue from this${isTruncated(source, 14000) ? ' — a representative sample spanning the WHOLE document, so cover its full breadth, not just the opening' : ''}):\n"""\n${retrieveSource(source, { maxChars: 14000 })}\n"""`
       : '',
     options?.pageCount
-      ? `Target page count: about ${options.pageCount}.`
-      : 'PAGE COUNT: unless the brief explicitly names a number of pages, design a SHORT PREVIEW of 4–5 pages only (cover, 2–3 content pages, back-cover) so the reader sees the direction fast — they can ask for more afterwards. If the brief names a count, use that.',
+      ? `Target page count: EXACTLY ${options.pageCount} pages.`
+      : 'PAGE COUNT: if the request names a number of pages anywhere in its words, honour it exactly. Otherwise design a SHORT PREVIEW of 4–5 pages so the reader sees the direction fast — they can ask for more afterwards.',
     `Display fonts to choose from: ${DISPLAY_FONTS.join(' | ')}`,
     `Body fonts to choose from: ${BODY_FONTS.join(' | ')}`,
   ].join('\n');
 
   const { object } = await generateObject({
-    model: getAgentModel(),
+    model: getMagazineModel(),
     schema: PlanSchema,
     system,
     prompt: user,
@@ -295,22 +299,42 @@ export async function planIssue(brief: string, options?: { pageCount?: number; t
     abortSignal: AbortSignal.timeout(90_000),
   });
 
-  const pages: GenPlanPage[] = (object.pages ?? [])
-    .filter((x): x is { kind: PageTemplateKind; intent: string; sectionTitle?: string } => !!x)
+  let pages: GenPlanPage[] = (object.pages ?? [])
+    .filter((x): x is { kind: PageTemplateKind; intent: string; look: string; sectionTitle: string } => !!x)
     .map((x) => ({
       kind: (PAGE_TEMPLATE_KINDS as readonly string[]).includes(x.kind) ? x.kind : 'two-column-article',
       intent: str(x.intent, 400, 'A page in the magazine.'),
       sectionTitle: str(x.sectionTitle, 120),
+      ...(str(x.look, 400) ? { look: str(x.look, 400) } : {}),
     }));
 
   const title = str(object.title, 120, 'Untitled Magazine');
   const subtitle = str(object.subtitle, 200);
+
+  // SHORT of an explicit target → RE-ASK the planner for the missing pages (an
+  // LLM writes them, grounded in what the plan already covers). Never a canned
+  // filler: planPages has its own subject-derived last resort if even the
+  // re-ask fails, so the user always gets the count they asked for.
+  const want = options?.pageCount != null ? Math.max(1, Math.min(24, options.pageCount)) : undefined;
+  if (want != null && pages.length < want) {
+    console.log(`[magazineV2] planner returned ${pages.length}/${want} pages — re-asking for the missing ${want - pages.length}.`);
+    const extra = await planPages({
+      title,
+      subtitle,
+      topic: brief.trim().slice(0, 600) || undefined,
+      count: want - pages.length,
+      existing: pages.map((p) => p.intent),
+    });
+    pages = [...pages, ...extra];
+  }
+
   return {
+    readback: str(object.readback, 1500),
     title,
     subtitle,
     palette: normalizePalette(object.palette),
     fonts: normalizeFonts(object.fonts),
-    pages: normalizePages(pages, options?.pageCount, { title, subtitle }),
+    pages: normalizePages(pages, want),
   };
 }
 
@@ -318,8 +342,10 @@ export async function planIssue(brief: string, options?: { pageCount?: number; t
 
 const INTERIOR_KINDS: PageTemplateKind[] = ['feature-full-bleed', 'two-column-article', 'photo-grid', 'pull-quote', 'stat-infographic'];
 
+// Every field REQUIRED ('' = none) — GPT strict structured outputs rejects
+// optionals; see PlanSchema.
 const PagesSchema = z.object({
-  pages: z.array(z.object({ kind: z.enum(PAGE_TEMPLATE_KINDS), intent: z.string(), sectionTitle: z.string().optional() })),
+  pages: z.array(z.object({ kind: z.enum(PAGE_TEMPLATE_KINDS), intent: z.string(), look: z.string(), sectionTitle: z.string() })),
 });
 
 export async function planPages(opts: {
@@ -358,7 +384,7 @@ export async function planPages(opts: {
 
   try {
     const { object } = await generateObject({
-      model: getAgentModel(),
+      model: getMagazineModel(),
       schema: PagesSchema,
       system: [
         'You are the Editorial Director adding new pages to an EXISTING premium magazine.',
@@ -386,11 +412,12 @@ export async function planPages(opts: {
       abortSignal: AbortSignal.timeout(60_000),
     });
     let pages: GenPlanPage[] = (object.pages ?? [])
-      .filter((x): x is { kind: PageTemplateKind; intent: string; sectionTitle?: string } => !!x)
+      .filter((x): x is { kind: PageTemplateKind; intent: string; look: string; sectionTitle: string } => !!x)
       .map((x) => ({
         kind: (INTERIOR_KINDS as readonly string[]).includes(x.kind) ? x.kind : 'two-column-article',
         intent: str(x.intent, 400, 'A page in the magazine.'),
         sectionTitle: str(x.sectionTitle, 120),
+        ...(str(x.look, 400) ? { look: str(x.look, 400) } : {}),
       }));
     if (pages.length === 0) return fallback();
     while (pages.length < count) pages.push(fallback()[pages.length % count]!);
@@ -547,7 +574,7 @@ export async function draftPage(opts: {
     const draft: PageDraft = { texts: {}, images: {}, qr: {} };
     try {
       const { object } = await generateObject({
-        model: getAgentModel(),
+        model: getMagazineModel(),
         schema: DraftSchema,
         system,
         prompt: basePrompt + feedback,
@@ -1223,11 +1250,14 @@ async function artDirectPage(plan: GenPlan, page: GenPlanPage, pageNumber: numbe
 
   try {
     const { text } = await generateText({
-      model: getAgentModel(),
+      model: getMagazineModel(),
       system,
       prompt: [
         `Design a distinct, modern layout tree for a "${page.kind}" page.`,
         `Intent: ${page.intent}${page.sectionTitle ? ` (section: ${page.sectionTitle})` : ''}.`,
+        // The Editorial Director's own visual direction outranks the structural
+        // family: when a look is given, the page should read as THAT design.
+        page.look ? `THE EDITORIAL DIRECTOR'S VISUAL DIRECTION for this page — design to this: ${page.look}` : '',
         archetypeSteer(page.kind, pageNumber),
         // The remedy travels WITH the reason (see the hint sites in composeOnePageAI):
         // a fixed "simplify it" tail here told the model to thin the very pages that
@@ -1449,18 +1479,50 @@ function validStoredPlan(v: unknown): GenPlanPage[] | null {
   for (const x of v) {
     const kind = (x as { kind?: unknown } | null)?.kind;
     if (typeof kind !== 'string' || !(PAGE_TEMPLATE_KINDS as readonly string[]).includes(kind)) return null;
+    const look = str((x as { look?: unknown }).look, 400);
     pages.push({
       kind: kind as PageTemplateKind,
       intent: str((x as { intent?: unknown }).intent, 400, 'A page in the magazine.'),
       sectionTitle: str((x as { sectionTitle?: unknown }).sectionTitle, 120),
+      ...(look ? { look } : {}),
     });
   }
   return pages;
 }
 
+/**
+ * Post an assistant note into the issue's BIRTH THREAD (the conversation started
+ * by the user's very first prompt). Best-effort: a thread hiccup must never
+ * touch generation. The note is attributed to the thread's own creator (the
+ * same shape the agent route writes), so the studio renders it like any turn.
+ */
+async function postThreadNote(threadId: string | undefined, magazineId: string, content: string): Promise<void> {
+  if (!threadId || !content.trim()) return;
+  try {
+    const thread = (await db.collection(COL.threads).findById(threadId)) as { userId?: unknown; messageCount?: unknown } | null;
+    if (!thread) return;
+    const now = new Date().toISOString();
+    await db.collection(COL.chat).insertOne({
+      threadId,
+      userId: thread.userId ?? null,
+      magazineId,
+      pageId: null,
+      pageIndex: 0,
+      role: 'assistant',
+      content: content.slice(0, 8000),
+      deletedAt: null,
+      createdAt: now,
+    });
+    const prior = typeof thread.messageCount === 'number' ? thread.messageCount : 0;
+    await db.collection(COL.threads).updateOne(threadId, { lastMessageAt: now, messageCount: prior + 1, updatedAt: now });
+  } catch (err) {
+    console.warn('[magazineV2] birth-thread note failed (generation unaffected):', err instanceof Error ? err.message : err);
+  }
+}
+
 /** Run full generation for an already-created 'processing' issue and persist,
  *  page by page (so the client's progress poll advances). Never throws. */
-export async function generateMagazineIssue(issueId: string, brief: string, pageCount?: number, sourceText?: string): Promise<void> {
+export async function generateMagazineIssue(issueId: string, brief: string, pageCount?: number, sourceText?: string, threadId?: string): Promise<void> {
   try {
     // ── RETRY = RESUME, NOT RESTART ──────────────────────────────────────────
     // The queue retries a failed job up to maxAttempts. This handler used to open
@@ -1501,6 +1563,19 @@ export async function generateMagazineIssue(issueId: string, brief: string, page
       for (const p of existing) await db.collection(COL.pages).deleteOne(p._id);
       existing.length = 0;
       plan = await planIssue(brief, { pageCount, sourceText });
+      // The read-back + plan go into the birth thread, so the user's first prompt
+      // gets a real answer: what the AI understood and what it is about to build.
+      // Fresh plans only — a resumed retry must not repeat itself.
+      await postThreadNote(
+        threadId,
+        issueId,
+        [
+          plan.readback || `Building “${plan.title}” — ${plan.pages.length} pages.`,
+          '',
+          'The plan:',
+          ...plan.pages.map((p, i) => `Page ${i + 1} — ${p.intent}`),
+        ].join('\n'),
+      );
     }
 
     const have = new Map(existing.filter((p) => p.index >= 0 && p.index < plan.pages.length).map((p) => [p.index, p]));
@@ -1545,6 +1620,11 @@ export async function generateMagazineIssue(issueId: string, brief: string, page
       stage: '',
       updatedAt: new Date().toISOString(),
     });
+    await postThreadNote(
+      threadId,
+      issueId,
+      `All ${plan.pages.length} pages of “${plan.title}” are built. Open any page and tell me what to change — I can redesign, rewrite, add or move pages from here.`,
+    );
   } catch (err) {
     // This handler is idempotent (it clears stale pages up top), so RETHROW
     // rather than silently marking the issue failed and returning: the queue
