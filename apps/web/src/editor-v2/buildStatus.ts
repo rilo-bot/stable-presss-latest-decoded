@@ -21,12 +21,15 @@
 //
 // WHY THERE IS AN INDETERMINATE MODE. Pages are composed CONCURRENTLY
 // (`mapWithConcurrency`), so `pagesProcessed` is a count of finished pages, not
-// a cursor — "building page 3" would be a guess, "3 of 10 done" is a fact. And
-// two phases have no per-page signal at all: planning (nothing is countable
-// yet) and "add more pages" (which never bumps `pagesProcessed`, and inserts
-// every new page in one go at the end). A bar that crept forward through those
-// would be decoration pretending to be data, so those phases get a shimmer with
-// no number instead.
+// a cursor — "building page 3" would be a guess, "3 of 10 done" is a fact. Two
+// windows have no trustworthy count: planning (nothing is countable yet), and
+// the brief gap after an add-pages request before the worker resets the
+// counters (they still hold the PREVIOUS run's values, i.e. done >= total). A
+// bar that crept forward through those would be decoration pretending to be
+// data, so they get a shimmer with no number instead. Once the add-pages run
+// sets its own counts (it bumps pagesProcessed per composed page now), the
+// counter is real and shown — the pages themselves still land together at the
+// end, which is why the banner's trailing copy says so.
 // ---------------------------------------------------------------------------
 
 export type BuildPhase = 'planning' | 'composing' | 'digitizing' | 'finishing';
@@ -67,10 +70,10 @@ export function phaseOf(issue: IssueLike | null | undefined): BuildPhase {
  * The whole factual picture, derived once and passed down.
  *
  * `isAdding` is the "add more pages" run. It is passed in rather than sniffed
- * because the client knows it (the store sets `generating`) and the document
- * does not: that path leaves `pagesProcessed`/`pagesTotal` at the values from the
- * PREVIOUS run, which is why the old banner read "8 of 8 pages" — a finished bar
- * — for the entire time it was working.
+ * because the client knows it (the store sets `adding`) and the document does
+ * not. It only changes the WORDING while the counter is stale (the window
+ * before the worker resets the counts, when they still show the previous run's
+ * finished "8 of 8"); once the run's own counts land, the real counter shows.
  */
 export function buildStatus(issue: IssueLike | null | undefined, isAdding = false): BuildStatus {
   const phase = phaseOf(issue);
@@ -80,24 +83,28 @@ export function buildStatus(issue: IssueLike | null | undefined, isAdding = fals
 
   // Countable only when the phase composes pages AND the counter has somewhere
   // left to go. `done >= total` while still processing means the counter is stale
-  // (the add-pages case), and a full bar is the one thing worse than no bar.
-  const countable = !isAdding && (phase === 'composing' || phase === 'digitizing') && total > 0 && done < total;
+  // (the window between an add-pages request and the worker resetting the counts),
+  // and a full bar is the one thing worse than no bar. Add-pages now DOES keep
+  // the counter honest (pagesTotal/pagesProcessed are set at the start of the run
+  // and bumped per page), so isAdding no longer forces indeterminate — it only
+  // picks the fallback wording while the counter is stale.
+  const countable = (phase === 'composing' || phase === 'digitizing') && total > 0 && done < total;
 
   // Counts go in the headline whenever they are trustworthy — that is the number
   // the user actually wants — and the phase name stands in when they are not.
-  const headline = isAdding
-    ? 'Adding your new pages'
-    : phase === 'digitizing'
-      ? countable
-        ? `${done} of ${total} pages read`
-        : 'Reading your document'
-      : phase === 'composing'
-        ? countable
-          ? `${done} of ${total} pages built`
-          : 'Building your pages'
-        : phase === 'planning'
-          ? 'Planning your issue'
-          : 'Finishing up';
+  const headline = countable
+    ? phase === 'digitizing'
+      ? `${done} of ${total} pages read`
+      : `${done} of ${total} pages built`
+    : isAdding
+      ? 'Adding your new pages'
+      : phase === 'digitizing'
+        ? 'Reading your document'
+        : phase === 'composing'
+          ? 'Building your pages'
+          : phase === 'planning'
+            ? 'Planning your issue'
+            : 'Finishing up';
 
   return {
     phase,

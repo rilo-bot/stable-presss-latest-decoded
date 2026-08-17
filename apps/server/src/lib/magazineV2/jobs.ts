@@ -29,6 +29,89 @@ export interface JobPayloads {
 /** How many times a failing job is retried before it's marked `failed`. */
 export const JOB_MAX_ATTEMPTS = 3;
 
+// ── Stuck-issue watchdog (API side) ─────────────────────────────────────────
+//
+// The worker reconciles issue status when a job ends — but only a LIVE worker
+// can do that. If the worker process dies (and is not restarted), its job stays
+// 'running' forever, nothing flips the issue out of 'processing', and every
+// client polls a loading banner for eternity. The worker-side orphan sweep
+// can't help: it runs inside the worker that's dead.
+//
+// So the API heals on read: GET /issues/:id calls healStuckIssue for any
+// 'processing' issue. Two cases are terminal and safe to call dead:
+//   1. NO queued/running job exists for the issue at all (the job was TTL-reaped,
+//      or enqueue failed after the status flip) — nothing will ever finish it.
+//   2. A job HAS been queued/running for longer than any real job could take
+//      (worker dead, or down for the better part of an hour).
+// A short grace window covers the honest race between the route flipping the
+// issue to 'processing' and the enqueue landing.
+
+/** How long a job may sit queued/running before the API calls it dead. Must be
+ *  comfortably ABOVE the longest real job (a 24-page issue at ~60–150s/page,
+ *  two lanes ≈ 30 min worst case). */
+const STUCK_JOB_MS = Math.max(10 * 60_000, Number(process.env.MAGAZINE_V2_STUCK_ISSUE_MS ?? 45 * 60_000));
+/** Covers the route's flip-status-then-enqueue window (milliseconds apart in
+ *  practice; 20s is generous). */
+const STUCK_GRACE_MS = 20_000;
+
+async function markIssueFailed(issueId: string, message: string): Promise<boolean> {
+  const healed = await db.collection(COL.magazines).updateOneIf(
+    issueId,
+    { status: 'processing' },
+    { status: 'failed', stage: '', processingError: message, updatedAt: new Date().toISOString() },
+  );
+  if (healed) console.error(`[magazineV2] healed stuck issue ${issueId}: ${message}`);
+  return !!healed;
+}
+
+/**
+ * Mark a 'processing' issue failed when its background job is provably dead.
+ * Returns true when the issue document was changed (the caller should re-read).
+ * Conservative by design: any live job within its window means "still working".
+ */
+export async function healStuckIssue(issue: { _id: string; status?: string; updatedAt?: string }): Promise<boolean> {
+  if (String(issue.status) !== 'processing') return false;
+  let live: Array<Record<string, unknown>>;
+  try {
+    live = (await db
+      .collection(COL.jobs)
+      .find({ 'payload.issueId': issue._id, status: { $in: ['queued', 'running'] } })) as Array<Record<string, unknown>>;
+  } catch {
+    return false; // a DB blip must never fail the read that called us
+  }
+  const now = Date.now();
+
+  if (live.length === 0) {
+    const stamped = Date.parse(String(issue.updatedAt ?? ''));
+    if (Number.isFinite(stamped) && now - stamped < STUCK_GRACE_MS) return false; // enqueue may still be landing
+    return markIssueFailed(String(issue._id), 'Generation was interrupted before it could finish. Please try again.');
+  }
+
+  // A job exists — it is only "dead" once it has outlived any possible real run.
+  const stuck = live.find((j) => {
+    const t = Date.parse(String(j.startedAt ?? j.updatedAt ?? j.createdAt ?? ''));
+    return Number.isFinite(t) && now - t > STUCK_JOB_MS;
+  });
+  if (!stuck) return false;
+
+  // Retire the dead job first (compare-and-set, so a job a revived worker just
+  // moved on is left alone), then fail the issue. TTL stamp matches the worker's.
+  const nowIso = new Date().toISOString();
+  const retired = await db.collection(COL.jobs).updateOneIf(
+    String(stuck._id),
+    { status: String(stuck.status) },
+    {
+      status: 'failed',
+      lastError: 'Marked failed by the API watchdog: exceeded the maximum possible job runtime (worker likely died).',
+      finishedAt: nowIso,
+      updatedAt: nowIso,
+      expiresAt: new Date(now + 7 * 24 * 60 * 60_000),
+    },
+  );
+  if (!retired) return false; // someone else just touched it — believe them
+  return markIssueFailed(String(issue._id), 'Generation stalled and could not recover (the background worker stopped responding). Please try again.');
+}
+
 /** Enqueue a background job for the worker to claim. Returns the new job id. */
 export async function enqueueJob<T extends MagazineJobType>(type: T, payload: JobPayloads[T]): Promise<string> {
   const now = new Date().toISOString();

@@ -39,7 +39,8 @@ import { normalizeElements, normalizeElementPatch } from '../../lib/magazineV2/w
 import { MAX_ELEMENTS_PER_PAGE, type MagazineElement } from '../../lib/magazineV2/model.js';
 import { isAgentConfigured } from '../../lib/agent/provider.js';
 import { storage } from '../../lib/storage.js';
-import { enqueueJob } from '../../lib/magazineV2/jobs.js';
+import { enqueueJob, healStuckIssue } from '../../lib/magazineV2/jobs.js';
+import { pagesAlreadyIn } from '../../lib/magazineV2/pageDigest.js';
 import { renumberFolios } from '../../lib/magazineV2/renumberFolios.js';
 import { FURNITURE_IDS, type RefurnishContext } from '../../lib/magazineV2/pageFurniture.js';
 import type { GenFonts, GenPalette } from '../../lib/magazineV2/templates.js';
@@ -47,7 +48,8 @@ import { runPageAgent } from '../../lib/magazineV2/agent.js';
 import { formatPageText, charGuideFor } from '../../lib/magazineV2/format.js';
 import { readLayoutImage } from '../../lib/magazineV2/readLayout.js';
 import { aspectMismatch, normalizeLayoutReading } from '../../lib/magazineV2/layoutReading.js';
-import { applyReadingToPage, tightSummary } from '../../lib/magazineV2/applyLayout.js';
+import { applyReadingToPage, tightSummary, unfilledSlots, type ExtraContent } from '../../lib/magazineV2/applyLayout.js';
+import { draftReferenceFill } from '../../lib/magazineV2/referenceFill.js';
 
 /* eslint-disable @typescript-eslint/no-explicit-any */
 type Doc = { _id: string; [k: string]: any };
@@ -968,10 +970,17 @@ router.post('/issues/:id/layout-reference', rateLimit('mag2-layout-read', 10, 60
 // only (share-only access); a page-scoped collaborator sees only their pages.
 router.get('/issues/:id', async (req, res) => {
   const uid = req.account!.id;
-  const doc = await loadIssue(req.params.id);
+  let doc = await loadIssue(req.params.id);
   if (!doc || !roleOnMagazine(doc, uid)) {
     res.status(404).json({ error: 'Not found' });
     return;
+  }
+  // Self-heal on read: a dead worker leaves an issue 'processing' forever (the
+  // worker-side orphan sweep only runs inside a living worker). This is the
+  // client's progress poll, so it is exactly the read that must never spin on a
+  // job that can no longer finish. Conservative — see healStuckIssue.
+  if (String(doc.status) === 'processing' && (await healStuckIssue(doc))) {
+    doc = (await loadIssue(req.params.id)) ?? doc;
   }
   // ALL pages feed needsRepublish (any edited page means the live edition is behind),
   // while only the VISIBLE ones are returned — a page-scoped collaborator still needs
@@ -2497,6 +2506,23 @@ router.post('/issues/:id/pages/:pageId/agent', rateLimit('mag2-agent', 20, 60_00
     return { role, content: `${tag}${String(m.content ?? '')}` };
   });
 
+  // ── What the assistant knows about the WHOLE magazine ──
+  //
+  // It used to receive this page's elements and "page N of T" — nothing else.
+  // Every cross-page ask ("what's on page 5?", "keep it consistent with the
+  // cover") was unanswerable, which read as "the AI can't see my magazine".
+  // Now it gets the issue's identity plus one line per page (the same digest
+  // the add-pages planner reads), and a read-only get_page tool — SCOPED to
+  // the pages this caller may see, so a page-scoped collaborator's assistant
+  // is exactly as blind as the collaborator's own screen.
+  const allPages = await pagesFor(page.magazineId);
+  const myVisiblePages = visiblePages(ctx.issue, uid, allPages).sort((a, b) => (Number(a.index) || 0) - (Number(b.index) || 0));
+  const issueTheme = ((ctx.issue as { genTheme?: { title?: string; subtitle?: string } }).genTheme ?? {});
+  const pageLines = myVisiblePages.map((p) => {
+    const line = pagesAlreadyIn([p as { elements?: unknown }])[0] ?? '';
+    return `Page ${(Number(p.index) || 0) + 1}: ${line || '(no headline yet)'}`;
+  });
+
   try {
     const turn = await runPageAgent({
       messages: [...history, { role: 'user', content: newUserText }],
@@ -2510,7 +2536,13 @@ router.post('/issues/:id/pages/:pageId/agent', rateLimit('mag2-agent', 20, 60_00
       selectedElementId,
       sourceText,
       attachedImages: attachedImages.length > 0 ? attachedImages : undefined,
-      pageCount: (await pagesFor(page.magazineId)).length,
+      pageCount: allPages.length,
+      issue: {
+        title: String(ctx.issue.title || issueTheme.title || 'Untitled Magazine'),
+        subtitle: issueTheme.subtitle ? String(issueTheme.subtitle) : undefined,
+        pageLines,
+      },
+      readablePageIds: myVisiblePages.map((p) => String(p._id)),
       // Only the owner may add/remove/reorder pages, so only the owner is offered
       // the tools that stage those changes. Without this the model happily proposes
       // "add a page" to a contributor, the apply hits an owner-only endpoint, and the
@@ -2809,13 +2841,55 @@ router.post('/issues/:id/pages/:pageId/apply-layout', rateLimit('mag2-agent', 20
     reading = out.reading;
   }
 
-  const genTheme = ((issue as unknown as { genTheme?: { title?: string; palette?: Record<string, string>; fonts?: Record<string, string> } }).genTheme) ?? null;
-  const applied = applyReadingToPage(reading, {
+  const genTheme = ((issue as unknown as { genTheme?: { title?: string; subtitle?: string; prompt?: string; palette?: Record<string, string>; fonts?: Record<string, string> } }).genTheme) ?? null;
+  const pageShape = {
     width: Number(page.width) || undefined,
     height: Number(page.height) || undefined,
     background: page.background as { type?: string; value?: string } | undefined,
     elements: Array.isArray(page.elements) ? (page.elements as MagazineElement[]) : [],
-  }, genTheme, furnitureContextFor(issue, page));
+  };
+
+  // ── REFERENCE-FILL ──
+  // "Use this layout" must produce THE LAYOUT, complete — not a rearrangement
+  // with holes. The page's own words and photos always fill slots first; what
+  // the page cannot cover is drafted (on the magazine's own subject) and topped
+  // up from the media library, so no reference box is ever pruned for emptiness
+  // and the survivors never stretch over the gap. Best-effort: if drafting is
+  // unavailable or fails, the apply proceeds exactly as before, warnings and all.
+  let extraFill: ExtraContent | undefined;
+  const missing = unfilledSlots(reading, pageShape);
+  if (missing && (missing.texts.length > 0 || missing.images > 0)) {
+    const extraImages: { url: string; assetId?: string; alt?: string }[] = [];
+    if (missing.images > 0) {
+      // The magazine's own library — never `reference` uploads (someone else's
+      // licensed page) and never docs. Photos already on the page are skipped so
+      // the same picture doesn't appear twice.
+      const media = (await db.collection(COL.media).find({ magazineId: issue._id })) as Doc[];
+      const onPage = new Set(pageShape.elements.filter((e) => e.type === 'image' && e.image?.url).map((e) => e.image!.url));
+      extraImages.push(
+        ...media
+          .filter((m) => m.kind !== 'reference' && m.kind !== 'doc' && typeof m.url === 'string' && m.url && !onPage.has(String(m.url)))
+          .slice(0, missing.images)
+          .map((m) => ({ url: String(m.url), assetId: String(m._id), alt: typeof m.alt === 'string' ? m.alt : '' })),
+      );
+    }
+    let extraTexts: { role: string; text: string }[] = [];
+    if (missing.texts.length > 0 && isAgentConfigured()) {
+      extraTexts = await draftReferenceFill({
+        title: String(issue.title || genTheme?.title || 'Untitled Magazine'),
+        subtitle: genTheme?.subtitle ? String(genTheme.subtitle) : undefined,
+        subject: genTheme?.prompt ? String(genTheme.prompt) : undefined,
+        existingText: pageShape.elements
+          .filter((e) => e.type === 'text' && e.text?.content)
+          .map((e) => String(e.text!.content).replace(/<[^>]*>/g, ' ').replace(/\s+/g, ' ').trim())
+          .filter(Boolean),
+        slots: missing.texts,
+      });
+    }
+    if (extraTexts.length > 0 || extraImages.length > 0) extraFill = { texts: extraTexts, images: extraImages };
+  }
+
+  const applied = applyReadingToPage(reading, pageShape, genTheme, furnitureContextFor(issue, page), extraFill);
   if (!applied.page) {
     // 422: the request and the server are both fine — this layout and this page
     // cannot be put together, and the sentence says which.
@@ -2852,6 +2926,9 @@ router.post('/issues/:id/pages/:pageId/apply-layout', rateLimit('mag2-agent', 20
     // element id in it; the page is built now and the shortfall is stated in characters.
     tight: applied.page.tight,
     tightSummary: tightSummary(applied.page.tight),
+    // What reference-fill contributed, so the client can say "wrote fresh copy
+    // for N boxes" instead of the user wondering where the words came from.
+    filled: { texts: extraFill?.texts?.length ?? 0, images: extraFill?.images?.length ?? 0 },
     warning: aspectMismatch(reading, pageDims(page).width, pageDims(page).height),
   });
 });

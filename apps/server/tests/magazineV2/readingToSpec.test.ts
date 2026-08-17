@@ -574,3 +574,55 @@ test('ENTRANCE 4 — an inset photo is not blown up to full bleed over the hero'
   assert.equal(images.length, 2, 'both photos are on the page');
   assert.equal(images.filter((i) => i.h > 0.9).length, 1, 'exactly ONE photo is full-bleed');
 });
+
+// ── BAND HEIGHT (the fix after Fix 1c) ───────────────────────────────────────
+//
+// Fix 1c measured that EVERY remaining "loose" fidelity verdict was the same
+// shape: many small text bands, content-sized to ~40px of copy where the
+// reference gave them ~105px. The heights were read correctly and carried in
+// `origin`, then thrown away wherever sizing flipped to 'content'. `minPx` now
+// carries the reference's own extent as the track's floor.
+
+test('an anchored text cluster keeps the reference band heights, not its copy height', () => {
+  // Three entry bands in the top third — lead 10% (pad, ≤ MAX_SPACE_PX), big
+  // empty bottom → `anchored` flips them all to content sizing. Each band is
+  // 7% of the page ≈ 123px on A4; a single line of copy measures ~40px, which
+  // is what these bands used to collapse to.
+  const boxes = solvedBoxes([
+    { role: 'entry', box: box(0.1, 0.10, 0.8, 0.07) },
+    { role: 'entry', box: box(0.1, 0.20, 0.8, 0.07) },
+    { role: 'entry', box: box(0.1, 0.30, 0.8, 0.07) },
+  ]);
+  const entries = boxes.filter((b) => b.role === 'entry');
+  assert.equal(entries.length, 3);
+  for (const e of entries) {
+    // ≥ 5.5% of the page each (reference asked 7%; pad/rounding eat a little) —
+    // the collapsed version measured ~2.3%.
+    assert.ok(e.h >= 0.055, `entry band h=${(e.h * 100).toFixed(1)}% collapsed below its reference height`);
+  }
+});
+
+test('band heights survive normalize + prune on the apply path', () => {
+  // The same shape but asserted at the spec level: the converter emits minPx on
+  // content children, the trust boundary keeps it, and pruning copies it through.
+  const spec0 = toSpec(read([
+    { role: 'headline', box: box(0.1, 0.08, 0.8, 0.12) },
+    { role: 'subhead', box: box(0.1, 0.22, 0.8, 0.05) },
+  ]));
+  assert.ok(spec0);
+  const spec = normalizeLayoutSpec(spec0)!;
+  const content: ResolvedContent = { headline: { text: 'A Line' }, subhead: { text: 'Another' } };
+  const pruned = pruneLayoutSpec(spec, content, { keepWhitespace: true })!;
+  const mins: number[] = [];
+  const walk = (n: LayoutNode): void => {
+    if (n.kind === 'leaf') return;
+    if (n.kind === 'stack') { n.layers.forEach(walk); return; }
+    for (const c of n.children) {
+      if (typeof c.minPx === 'number' && c.sizing === 'content') mins.push(c.minPx);
+      walk(c.node);
+    }
+  };
+  walk(pruned.root);
+  assert.ok(mins.length >= 2, `expected minPx on the content children, found ${mins.length}`);
+  assert.ok(mins.some((m) => m >= Math.round(0.12 * PAGE_H) - 2), 'the headline band carries its reference height');
+});

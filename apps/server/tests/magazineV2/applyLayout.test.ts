@@ -8,7 +8,7 @@
 
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { reflowContent, themeForPage, applyReadingToPage, contrastRatio, tightSummary } from '../../src/lib/magazineV2/applyLayout.ts';
+import { reflowContent, themeForPage, applyReadingToPage, contrastRatio, tightSummary, unfilledSlots } from '../../src/lib/magazineV2/applyLayout.ts';
 import { normalizeLayoutReading } from '../../src/lib/magazineV2/layoutReading.ts';
 import type { MagazineElement } from '../../src/lib/magazineV2/model.ts';
 import { PAGE_H, PAGE_W } from '../../src/lib/magazineV2/config.ts';
@@ -685,4 +685,143 @@ test('copy that fits reports nothing at all', () => {
   assert.ok(out.page);
   assert.deepEqual(out.page.tight, [], 'a page that fits has nothing to report');
   assert.equal(tightSummary(out.page.tight), '');
+});
+
+// ── Reference-fill (pass 3): drafted copy + library photos for empty slots ────
+//
+// "Use this layout" must produce the layout COMPLETE. Before this pass, a slot
+// the page couldn't fill was pruned and the survivors stretched over the hole —
+// the measured 8% "loose" page. The rules pinned here: extras fill ONLY what the
+// user's own content could not, the user's copy always wins first, and extras
+// never masquerade as the user's content in the leftOver report.
+
+test('pass 3: drafted copy fills slots the page cannot, and only those', () => {
+  const { content } = reflowContent(
+    slots(['headline', 'headline'], ['subhead', 'subhead'], ['caption', 'caption']),
+    [text('headline', 'The Real Headline')],
+    undefined,
+    { texts: [{ role: 'subhead', text: 'A drafted subhead.' }, { role: 'caption', text: 'A drafted caption.' }, { role: 'headline', text: 'A drafted headline that must lose.' }] },
+  );
+  assert.equal(content.headline?.text, 'The Real Headline', "the user's copy wins its slot");
+  assert.equal(content.subhead?.text, 'A drafted subhead.');
+  assert.equal(content.caption?.text, 'A drafted caption.');
+});
+
+test('pass 3 runs AFTER spare user copy — real words beat drafted ones even across roles', () => {
+  const { content } = reflowContent(
+    slots(['headline', 'headline'], ['caption', 'caption']),
+    [text('headline', 'The Headline'), text('subhead', 'A spare user line.')],
+    undefined,
+    { texts: [{ role: 'caption', text: 'A drafted caption.' }] },
+  );
+  // Pass 2 moves the user's spare subhead into the caption slot before pass 3 runs.
+  assert.equal(content.caption?.text, 'A spare user line.');
+});
+
+test('library photos fill image slots only when the page has run out', () => {
+  const { content, leftOver } = reflowContent(
+    slots(['hero', 'image'], ['photo1', 'image']),
+    [image('https://x/own.jpg', 1600, 1200)],
+    undefined,
+    { images: [{ url: 'https://x/library.jpg', assetId: 'lib1', alt: 'From the library' }] },
+  );
+  assert.equal(content.hero?.image?.url, 'https://x/own.jpg', "the page's own photo takes the hero");
+  assert.equal(content.photo1?.image?.url, 'https://x/library.jpg');
+  assert.equal(leftOver.images, 0, 'an extra that was USED is not a loss');
+});
+
+test('unused extras are dropped silently and never counted as lost user content', () => {
+  const { leftOver } = reflowContent(
+    slots(['headline', 'headline']),
+    [text('headline', 'The Headline')],
+    undefined,
+    { texts: [{ role: 'body', text: 'Drafted body nobody needed.' }], images: [{ url: 'https://x/library.jpg' }] },
+  );
+  assert.equal(leftOver.text, 0);
+  assert.equal(leftOver.images, 0);
+});
+
+test('unfilledSlots names exactly what the page cannot cover, with sane budgets', () => {
+  const r = reading([
+    { role: 'image', box: { x: 0, y: 0, w: 1, h: 0.5 } },
+    { role: 'headline', box: { x: 0.06, y: 0.55, w: 0.88, h: 0.1 } },
+    { role: 'subhead', box: { x: 0.06, y: 0.67, w: 0.88, h: 0.05 } },
+    { role: 'body', box: { x: 0.06, y: 0.75, w: 0.88, h: 0.2 } },
+  ]);
+  const missing = unfilledSlots(r, {
+    width: PAGE_W, height: PAGE_H,
+    elements: [text('headline', 'The Headline')],
+  });
+  assert.ok(missing);
+  assert.equal(missing.images, 1, 'no photo on the page → the image slot needs one');
+  const roles = missing.texts.map((t) => t.role).sort();
+  assert.deepEqual(roles, ['body', 'subhead']);
+  for (const t of missing.texts) {
+    assert.ok(t.approxChars >= 16 && t.approxChars <= 1200, `${t.role} budget ${t.approxChars} is sane`);
+  }
+});
+
+test('with extras, a reference applied to a page with one line builds COMPLETE — no pruned holes', () => {
+  const r = reading([
+    { role: 'image', box: { x: 0, y: 0, w: 1, h: 0.5 } },
+    { role: 'headline', box: { x: 0.06, y: 0.55, w: 0.88, h: 0.1 } },
+    { role: 'body', box: { x: 0.06, y: 0.7, w: 0.88, h: 0.25 } },
+  ]);
+  const page = { width: PAGE_W, height: PAGE_H, elements: [text('headline', 'The Headline')] };
+  const missing = unfilledSlots(r, page);
+  assert.ok(missing && missing.texts.length === 1 && missing.images === 1);
+  const out = applyReadingToPage(r, page, null, undefined, {
+    texts: [{ role: 'body', text: 'A drafted paragraph of real, on-subject copy for the body slot.' }],
+    images: [{ url: 'https://x/library.jpg', assetId: 'lib1', alt: '' }],
+  });
+  assert.equal(out.why, '');
+  assert.ok(out.page);
+  const texts = out.page.elements.filter((e) => e.type === 'text' && e.text?.content);
+  const images = out.page.elements.filter((e) => e.type === 'image' && e.image?.url);
+  assert.ok(images.some((e) => e.image?.url === 'https://x/library.jpg'), 'the image slot was filled from the library');
+  assert.ok(texts.some((e) => e.text!.content.includes('drafted paragraph')), 'the body slot was filled with the draft');
+  assert.ok(texts.some((e) => e.text!.content.includes('The Headline')), "the user's headline survived");
+});
+
+// ── The cram limit (pass 2 vs pass 3 arbitration) ────────────────────────────
+//
+// Measured on a real cover apply: the page's 1,345-character body paragraph beat
+// the drafted caption into a 272-character caption strip. Rule pinned here: with
+// a drafted alternative available, a terse slot refuses copy far over its budget
+// (the long copy stays in the pool → glue or leftOver, never silently lost);
+// with NO draft, cramming still wins, because words in the wrong box beat a hole.
+
+const LONG_PROSE = 'Across six starts, the horse has run to a single template and the paragraph goes on well past any caption budget. '.repeat(8);
+
+test('a terse slot prefers the draft over copy 3× its budget', () => {
+  const { content, leftOver } = reflowContent(
+    slots(['headline', 'headline'], ['caption', 'caption']),
+    [text('headline', 'The Headline'), text('body', LONG_PROSE)],
+    undefined,
+    { texts: [{ role: 'caption', text: 'A drafted caption that fits.' }] },
+  );
+  assert.equal(content.caption?.text, 'A drafted caption that fits.');
+  assert.equal(leftOver.text, 1, 'the long paragraph is reported, not silently lost');
+});
+
+test('with no draft, cramming still beats a hole in the layout', () => {
+  const { content } = reflowContent(
+    slots(['headline', 'headline'], ['caption', 'caption']),
+    [text('headline', 'The Headline'), text('body', LONG_PROSE)],
+  );
+  assert.ok(content.caption?.text?.includes('Across six starts'), 'the long copy still lands rather than leaving a hole');
+});
+
+test('unfilledSlots lists a would-be-crammed terse slot so the draft exists at apply time', () => {
+  const r = reading([
+    { role: 'image', box: { x: 0, y: 0, w: 1, h: 0.6 } },
+    { role: 'headline', box: { x: 0.06, y: 0.65, w: 0.88, h: 0.12 } },
+    { role: 'caption', box: { x: 0.06, y: 0.9, w: 0.88, h: 0.05 } },
+  ]);
+  const missing = unfilledSlots(r, {
+    width: PAGE_W, height: PAGE_H,
+    elements: [image('https://x/p.jpg'), text('headline', 'The Headline'), text('body', LONG_PROSE)],
+  });
+  assert.ok(missing);
+  assert.ok(missing.texts.some((t) => t.role === 'caption'), 'the crammed caption is on the shopping list');
 });

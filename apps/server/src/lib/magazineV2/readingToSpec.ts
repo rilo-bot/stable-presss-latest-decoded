@@ -277,6 +277,23 @@ function spacerChild(run: number): LayoutChild {
 }
 
 /**
+ * BAND HEIGHT — the reference's own extent for a track, in px (Fix after 1c).
+ *
+ * A content-sized text band takes exactly the height its copy measures (~40px at
+ * the role default), while the reference's designer gave the band ~105px — air,
+ * or larger type. That one gap was measured to be the mechanism behind EVERY
+ * remaining "loose" fidelity verdict (contents 18%, teasers 18%, stat band 32%,
+ * lower-third cover 37%): the heights were read correctly, carried into `origin`,
+ * and then thrown away wherever sizing flipped to 'content'. This carries them
+ * as the track's floor instead — the solver takes max(measured, minPx), so a
+ * band keeps its designed height, and fitFontSize can settle type NEARER its
+ * ceiling inside the taller box. Inert on 'fr' children (fr fills regardless),
+ * so attaching it to a band that `anchored` later flips to content is exactly
+ * the point: the height survives the flip.
+ */
+const bandMinPx = (extent: number, axisPx: number): number => Math.max(0, Math.round(extent * axisPx));
+
+/**
  * Merge adjacent bands until there are at most `limit` of them.
  *
  * Merging the NARROWEST neighbouring pair each time keeps the big structural
@@ -458,7 +475,7 @@ function flatten(regions: ReadRegion[], rect: ReadBox, depth: number, ref: Alloc
   return anchored(
     'col',
     'sm',
-    kept.map((r): LayoutChild => ({ sizing: 'content', node: leafFor(r, ref) })),
+    kept.map((r): LayoutChild => ({ sizing: 'content', minPx: bandMinPx(r.box.h, PAGE_H), node: leafFor(r, ref) })),
     {
       lead: Math.max(0, top - rect.y),
       trail: Math.max(0, rect.y + rect.h - bottom),
@@ -520,7 +537,11 @@ function partition(regions: ReadRegion[], rect: ReadBox, depth: number, ref: All
   const kids: { child: LayoutChild; band: Band }[] = [];
   for (const band of bands) {
     const node = partition(band.regions, bandRect(rect, band, axis), depth + 1, ref);
-    if (node) kids.push({ child: { weight: weightFor(band), sizing: 'fr', node }, band });
+    // minPx carries the band's own reference extent. Inert while the child is
+    // 'fr' (the normal case — proportions rule); load-bearing the moment
+    // `anchored` flips an all-text cluster to content sizing, which is where
+    // band heights used to be thrown away.
+    if (node) kids.push({ child: { weight: weightFor(band), sizing: 'fr', minPx: bandMinPx(band.end - band.start, useCol ? PAGE_H : PAGE_W), node }, band });
   }
   if (kids.length === 0) return null;
   // One surviving band and nothing to anchor it against: the container adds nothing.

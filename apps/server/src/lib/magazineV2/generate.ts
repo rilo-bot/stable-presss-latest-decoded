@@ -1440,19 +1440,73 @@ async function insertComposedPage(magazineId: string, index: number, page: Compo
   });
 }
 
+/** The persisted running order (`genPlanPages`), if it is usable. Strict: any
+ *  malformed entry rejects the whole thing and the caller re-plans — a plan is
+ *  only worth resuming when it is exactly what the previous attempt used. */
+function validStoredPlan(v: unknown): GenPlanPage[] | null {
+  if (!Array.isArray(v) || v.length < 1 || v.length > MAX_PAGES_PER_ISSUE) return null;
+  const pages: GenPlanPage[] = [];
+  for (const x of v) {
+    const kind = (x as { kind?: unknown } | null)?.kind;
+    if (typeof kind !== 'string' || !(PAGE_TEMPLATE_KINDS as readonly string[]).includes(kind)) return null;
+    pages.push({
+      kind: kind as PageTemplateKind,
+      intent: str((x as { intent?: unknown }).intent, 400, 'A page in the magazine.'),
+      sectionTitle: str((x as { sectionTitle?: unknown }).sectionTitle, 120),
+    });
+  }
+  return pages;
+}
+
 /** Run full generation for an already-created 'processing' issue and persist,
  *  page by page (so the client's progress poll advances). Never throws. */
 export async function generateMagazineIssue(issueId: string, brief: string, pageCount?: number, sourceText?: string): Promise<void> {
   try {
-    // Clear any stale pages (retry safety) — a fresh 'generate' issue has none.
-    for (const p of (await db.collection(COL.pages).find({ magazineId: issueId })) as { _id: string }[]) {
-      await db.collection(COL.pages).deleteOne(p._id);
+    // ── RETRY = RESUME, NOT RESTART ──────────────────────────────────────────
+    // The queue retries a failed job up to maxAttempts. This handler used to open
+    // by DELETING every page already inserted and re-planning from scratch — so a
+    // transient failure at page 7 of 10 threw away 7 finished pages (the user
+    // watched the rail fill, empty, and refill). The plan is now persisted on the
+    // issue (`genPlanPages`), so a retry that finds it — plus pages from the
+    // previous attempt — keeps them and composes ONLY the missing indexes.
+    // (Known cost, accepted: the photo pool is re-read whole, so a resumed page
+    // can reuse a photo a kept page already placed — rare, and far better than
+    // wiping the issue.)
+    const issueDoc = (await db.collection(COL.magazines).findById(issueId)) as
+      | { _id: string; genTheme?: GenTheme; genPlanPages?: unknown }
+      | null;
+    const existing = (await db.collection(COL.pages).find({ magazineId: issueId })) as
+      { _id: string; index: number; elements?: unknown }[];
+    const storedPlan = validStoredPlan(issueDoc?.genPlanPages);
+    const gt = issueDoc?.genTheme;
+
+    let plan: GenPlan;
+    if (storedPlan && gt?.palette && gt?.fonts && existing.length > 0) {
+      // Resume: a previous attempt planned this issue and composed some pages.
+      plan = {
+        title: gt.title || 'Untitled Magazine',
+        subtitle: gt.subtitle ?? '',
+        palette: normalizePalette(gt.palette),
+        fonts: normalizeFonts(gt.fonts),
+        pages: storedPlan,
+      };
+      // Paranoia: drop anything outside the plan's index range (can only exist if
+      // a previous attempt ran with a different plan length).
+      for (const p of existing.filter((p) => !(p.index >= 0 && p.index < storedPlan.length))) {
+        await db.collection(COL.pages).deleteOne(p._id);
+      }
+    } else {
+      // Fresh run (or the failure happened before/inside planning): clear any
+      // stale pages — idempotent, and a fresh 'generate' issue has none anyway.
+      for (const p of existing) await db.collection(COL.pages).deleteOne(p._id);
+      existing.length = 0;
+      plan = await planIssue(brief, { pageCount, sourceText });
     }
 
-    const plan = await planIssue(brief, { pageCount, sourceText });
+    const have = new Map(existing.filter((p) => p.index >= 0 && p.index < plan.pages.length).map((p) => [p.index, p]));
     await db.collection(COL.magazines).updateOne(issueId, {
       pagesTotal: plan.pages.length,
-      pagesProcessed: 0,
+      pagesProcessed: have.size,
       stage: 'Designing pages',
       genTheme: {
         title: plan.title,
@@ -1461,6 +1515,8 @@ export async function generateMagazineIssue(issueId: string, brief: string, page
         fonts: plan.fonts,
         prompt: brief.slice(0, 2000),
       },
+      // The running order, persisted so a queue retry can resume instead of restart.
+      genPlanPages: plan.pages,
       updatedAt: new Date().toISOString(),
     });
 
@@ -1469,9 +1525,11 @@ export async function generateMagazineIssue(issueId: string, brief: string, page
     // planning so any images still uploading when the job was enqueued have landed.
     const photoPool = await loadUserPhotoPool(issueId);
 
-    let done = 0;
-    let coverImage = '';
+    let done = have.size;
+    // Cover: composed fresh below, or carried over from a kept page 0 on resume.
+    let coverImage = coverUrlOf({ elements: (have.get(0)?.elements as ComposedPage['elements']) ?? [] } as ComposedPage);
     await mapWithConcurrency(plan.pages, GEN_PAGE_CONCURRENCY, async (page, i) => {
+      if (have.has(i)) return; // composed by a previous attempt — keep it
       const composed = await composeOnePage(plan, page, i + 1, plan.pages.length, { magazineId: issueId, pageIndex: i }, sourceText, photoPool);
       await insertComposedPage(issueId, i, composed);
       if (i === 0) coverImage = coverUrlOf(composed);
@@ -1554,6 +1612,17 @@ export async function generateMorePages(
     const plan: GenPlan = { title, subtitle, palette, fonts, pages: specs };
     const total = existing.length + specs.length;
 
+    // Honest progress for the client's banner: this path used to leave
+    // pagesProcessed/pagesTotal at the PREVIOUS run's values for its whole
+    // duration (why the old banner sat at a full "8 of 8" while working). The
+    // new pages still land together at the end — but the counter is real.
+    let counted = existing.length;
+    await db.collection(COL.magazines).updateOne(issueId, {
+      pagesTotal: total,
+      pagesProcessed: counted,
+      updatedAt: new Date().toISOString(),
+    });
+
     // The user's OWN uploaded photos come first here too. This call used to omit the
     // pool entirely (the parameter is optional, so it failed silently), which meant
     // "add pages matching theme" always went AI-image → stock → tinted block and
@@ -1561,9 +1630,12 @@ export async function generateMorePages(
     // Resolved BEFORE the fan-out so every page composer shares one pool.
     const photoPool = await loadUserPhotoPool(issueId);
 
-    const composed = await mapWithConcurrency(specs, GEN_PAGE_CONCURRENCY, (page, i) =>
-      composeOnePage(plan, page, opts.atIndex + i + 1, total, { magazineId: issueId, pageIndex: opts.atIndex + i }, undefined, photoPool),
-    );
+    const composed = await mapWithConcurrency(specs, GEN_PAGE_CONCURRENCY, async (page, i) => {
+      const out = await composeOnePage(plan, page, opts.atIndex + i + 1, total, { magazineId: issueId, pageIndex: opts.atIndex + i }, undefined, photoPool);
+      counted += 1;
+      await db.collection(COL.magazines).updateOne(issueId, { pagesProcessed: counted });
+      return out;
+    });
 
     // Insert new pages (temp indexes), then splice their ids in at atIndex.
     const atIndex = Math.max(0, Math.min(opts.atIndex, existing.length));

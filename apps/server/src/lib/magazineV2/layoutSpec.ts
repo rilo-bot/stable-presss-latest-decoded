@@ -211,6 +211,20 @@ export interface LayoutChild {
   weight?: number;
   /** 'content' → the solver sizes this track to its measured content; 'fr' → by weight. */
   sizing?: Sizing;
+  /**
+   * Minimum MAIN-axis length in px for a `sizing:'content'` leaf track — the
+   * BAND-HEIGHT primitive. Content sizing takes exactly the copy's measured
+   * height, which is right for the generator but wrong for a layout copied from
+   * a reference: the reference's designer gave a band its height ON PURPOSE
+   * (air, or type larger than our default), and measuring only our copy shrank
+   * every text band to ~40px where the reference had ~105px — the mechanism
+   * behind every measured "loose" fidelity verdict (Fix 1c, 2026-08-16).
+   * The track becomes max(measured, minPx); a taller band also lets
+   * fitFontSize settle NEARER the role ceiling, so type grows to suit it.
+   * Ignored for `sizing:'fr'` children (fr fills anyway). Not offered to the
+   * art-director prompt — the generator's bands are its own design.
+   */
+  minPx?: number;
   node: LayoutNode;
 }
 
@@ -375,11 +389,22 @@ function coerceNode(raw: unknown, depth: number, budget: Budget): LayoutNode | n
       const co = (rc && typeof rc === 'object' ? rc : {}) as Record<string, unknown>;
       const node = coerceNode(co.node, depth + 1, budget);
       if (!node) continue;
-      children.push({
+      const child: LayoutChild = {
         weight: clampWeight(co.weight),
         sizing: co.sizing === 'content' ? 'content' : 'fr',
         node,
-      });
+      };
+      // Band height: positive finite px only, clamped to a sheet-scale ceiling so
+      // untrusted input cannot demand a kilometre-tall track. Kept on 'fr'
+      // children too (the solver ignores it there): the reference converter
+      // attaches it to fr bands so the height survives `anchored` flipping them
+      // to content sizing, and the round-trip invariant — the guillotine's
+      // output crosses this boundary UNCHANGED — must keep holding.
+      const minPx = Number(co.minPx);
+      if (Number.isFinite(minPx) && minPx > 0) {
+        child.minPx = Math.min(Math.round(minPx), 2400);
+      }
+      children.push(child);
     }
     if (children.length === 0) return null;
     const out: ContainerNode = { kind: o.kind, children };

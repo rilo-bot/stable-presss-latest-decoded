@@ -187,3 +187,67 @@ test('charBudget follows the BOX, which a per-role table never could', () => {
   assert.ok(narrow < 1400, `a 300×400 box does not hold 1400 characters (${narrow})`);
   assert.equal(at(0, 0) >= 0, true);
 });
+
+// ── The aggregates the per-box bar is blind to (C1, 2026-08-17) ──────────────
+//
+// Eight bands each wasting 4-5% slip under SLACK_SERIOUS_SHARE individually while
+// the page is a third blank — the measured "many small text bands" shape behind
+// every remaining "loose" page. The aggregate counts ONLY the small boxes, so the
+// single huge box (already a per-box defect) is never counted twice.
+
+test('many small slack bands are one defect together, none alone', () => {
+  // Labels, not entries: entry/body are PROSE roles whose line-length check would
+  // fire too and muddy the count — this test is about slack alone.
+  const bands: LeafSpec[] = Array.from({ length: 8 }, (_, i) => [
+    { role: 'label' as LeafRole, contentRef: `label${i}`, fontPt: 10 },
+    [120, 100 + i * 180, 1000, 150],
+  ]);
+  const content: ResolvedContent = {};
+  for (let i = 0; i < 8; i++) content[`label${i}`] = { text: 'One short line.' };
+  const fit = fitReport(solvedOf(bands), content, fonts);
+  const slacks = fit.findings.filter((f) => f.kind === 'slack');
+  assert.ok(slacks.length >= 6, `expected most bands slack, got ${slacks.length}`);
+  assert.ok(slacks.every((f) => (f.share ?? 0) < 0.06), 'each one is individually under the per-box bar');
+  assert.ok(fit.slackShare >= 0.15, `total waste ${fit.slackShare}`);
+  assert.equal(seriousFlaws(fit), 1, 'counted once, as a page-level defect');
+  assert.match(fitHint(fit), /THE PAGE: your SMALL boxes together waste/);
+});
+
+test('a page mostly handed to spacers is a defect, and deliberate air is not', () => {
+  const missing = fitReport(
+    solvedOf([
+      [{ role: 'headline', contentRef: 'h', fontPt: 24 }, [120, 100, 1000, 120]],
+      [{ role: 'spacer' }, [0, 300, PAGE_W, 1100]], // ~50% of the sheet
+    ]),
+    { h: { text: 'A Headline' } },
+    fonts,
+  );
+  assert.ok(missing.emptyShare >= 0.45, `emptyShare ${missing.emptyShare}`);
+  assert.ok(seriousFlaws(missing) >= 1, 'past deliberate air and into a missing page');
+  assert.match(fitHint(missing), /spacer leaves — past deliberate air/);
+
+  const breathing = fitReport(
+    solvedOf([
+      [{ role: 'headline', contentRef: 'h', fontPt: 24 }, [120, 100, 1000, 120]],
+      [{ role: 'spacer' }, [0, 300, PAGE_W, 500]], // ~23% — the blessed 15-30% budget
+    ]),
+    { h: { text: 'A Headline' } },
+    fonts,
+  );
+  assert.ok(breathing.emptyShare < 0.45);
+  assert.ok(!fitHint(breathing).includes('past deliberate air'));
+});
+
+test('type far past its role ceiling is REPORTED as giant but never counted', () => {
+  // 120pt headline (ceiling 46pt): nothing else in the pipeline checks this at all.
+  const fit = fitReport(
+    solvedOf([[{ role: 'headline', contentRef: 'h', fontPt: 120 }, [60, 200, 1100, 900]]]),
+    { h: { text: 'Big Loud Words Across The Page' } },
+    fonts,
+  );
+  assert.ok(kinds(fit).includes('giant'), `got ${kinds(fit).join(', ') || 'none'}`);
+  // Advisory: stripping the giant findings must not change the count — a cover
+  // masthead legitimately runs huge and the report cannot see the page kind.
+  const without = { ...fit, findings: fit.findings.filter((f) => f.kind !== 'giant') };
+  assert.equal(seriousFlaws(fit), seriousFlaws(without));
+});

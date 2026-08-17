@@ -503,11 +503,11 @@ export default function MagazineEditorV2() {
       </div>
 
       {/* Live-build banner — pages stream in below as the AI composes them.
-          `isAdding` matters: an "add more pages" run leaves pagesProcessed and
-          pagesTotal at the PREVIOUS run's values, so this used to sit at
-          "8 of 8 pages" — a completed bar — for the whole time it was working.
-          BuildBanner shows the indeterminate track for that case instead. */}
-      {building && <BuildBanner issue={s.issue} isAdding={s.generating} arrivedPages={s.pages.length} />}
+          `isAdding` is s.adding, NOT s.generating: `generating` is true for the
+          INITIAL build too (watchGeneration sets it), and passing it here forced
+          the indeterminate "Adding your new pages" state onto every from-scratch
+          build — hiding the real "N of M pages" counter the banner exists for. */}
+      {building && <BuildBanner issue={s.issue} isAdding={s.adding} arrivedPages={s.pages.length} />}
 
       {/* Post-generation nudge — the first pass is a short preview; offer more. */}
       {!building && s.justGenerated && s.canManage() && (
@@ -574,7 +574,7 @@ export default function MagazineEditorV2() {
               <div className="h-full text-studio-ink">
                 <BuildProgress
                   issue={s.issue}
-                  isAdding={s.generating}
+                  isAdding={s.adding}
                   arrivedPages={s.pages.length}
                   hint="Pages appear here as they’re finished — you can start editing the early ones while the rest are still being built."
                 />

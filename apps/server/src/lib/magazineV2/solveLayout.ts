@@ -108,10 +108,20 @@ function resolveMainSizes(
 
   for (let i = 0; i < n; i++) {
     const c = kids[i]!;
-    if (c.sizing === 'content' && c.node.kind === 'leaf' && measure) {
-      const m = measure({ leaf: c.node, axis, crossLen });
-      if (m != null && Number.isFinite(m) && m >= 0) {
-        const fixed = Math.min(m, available);
+    if (c.sizing === 'content' && c.node.kind === 'leaf') {
+      // Measured copy height, raised to the child's band-height floor (minPx —
+      // see LayoutChild): a reference's band keeps the height its designer gave
+      // it even when our copy is shorter. minPx alone (no measure fn, or a role
+      // the measurer declines) still fixes the track. The overfill rescale below
+      // applies unchanged, so the tiling guarantee holds.
+      let want = -1;
+      if (measure) {
+        const m = measure({ leaf: c.node, axis, crossLen });
+        if (m != null && Number.isFinite(m) && m >= 0) want = m;
+      }
+      if (typeof c.minPx === 'number' && c.minPx > 0) want = Math.max(want, c.minPx);
+      if (want >= 0) {
+        const fixed = Math.min(want, available);
         sizes[i] = fixed;
         isFr[i] = false;
         sumFixed += fixed;

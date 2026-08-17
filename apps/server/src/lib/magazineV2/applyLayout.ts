@@ -58,8 +58,44 @@ export interface ApplyResult {
   why: string;
 }
 
+/**
+ * REFERENCE-FILL — content supplied by the caller for slots the page itself
+ * cannot fill (freshly drafted copy, photos from the magazine's media library).
+ *
+ * The page's own content ALWAYS goes in first (passes 1 and 2 of reflowContent);
+ * these are a THIRD pass, touching only slots that are still empty after both.
+ * Without this, an unfilled slot was pruned and the survivors stretched over the
+ * hole — "3 boxes from the reference had nothing to put in them, so the rest
+ * grew to fill the page" — which is a warning where the user wanted a page.
+ * Extras are never counted in `leftOver` (that reports the USER's content) and
+ * unused extras are simply dropped.
+ */
+export interface ExtraContent {
+  /** Drafted copy, one per still-empty text slot, matched by exact leaf role. */
+  texts?: { role: string; text: string }[];
+  /** Library photos, used only when the page's own image pool has run dry. */
+  images?: { url: string; assetId?: string; alt?: string }[];
+}
+
 const HEX = /^#[0-9a-fA-F]{6}$/;
 const hexOr = (v: unknown, fallback: string) => (typeof v === 'string' && HEX.test(v) ? v : fallback);
+
+/** Rough per-role copy budgets (chars), shared by the reference-fill shopping list
+ *  (unfilledSlots) and pass 2's cram limit. Estimates, not law: the composer still
+ *  shrinks-to-fit and the tight-slot report still fires. */
+const ROLE_CHAR_CAP: Record<string, number> = {
+  headline: 90, subhead: 140, kicker: 48, byline: 60, caption: 180,
+  label: 36, pullquote: 200, figure: 24, entry: 260, body: 1200, qrLabel: 40,
+};
+
+/** Slots that hold a line or two, where the SHORTEST spare copy is the best guess.
+ *  Putting a 300-word paragraph in a caption box is worse than leaving it out. */
+const TERSE_SLOTS = new Set(['caption', 'label', 'byline', 'kicker']);
+
+/** How far over a terse slot's budget spare copy may run before a DRAFTED
+ *  alternative is preferred (pass 2's cram limit; unfilledSlots must use the
+ *  same number so the draft actually exists when the limit fires). */
+const CRAM_AT = 3;
 
 // ── Legibility ───────────────────────────────────────────────────────────────
 // A derived palette can be arithmetically correct and still unreadable, and one
@@ -211,8 +247,14 @@ export function reflowContent(
    * it. It goes in FIRST because it is, by definition, the biggest image on the page.
    */
   backgroundImage?: string,
+  /** Caller-supplied fill for slots the page cannot cover — see ExtraContent. */
+  extra?: ExtraContent,
 ): { content: ResolvedContent; leftOver: { text: number; images: number }; usedBackground: boolean } {
   const content: ResolvedContent = {};
+  // Kept OUTSIDE the page's own pools so they never count as the user's content
+  // (leftOver) and never join the spare-prose glue at the bottom.
+  const extraTexts = [...(extra?.texts ?? [])];
+  const extraImages = [...(extra?.images ?? [])];
 
   // Pools, each ordered so the FIRST one taken is the most important.
   //
@@ -258,10 +300,6 @@ export function reflowContent(
     body: 'body', entry: 'body',
   };
 
-  /** Slots that hold a line or two, where the SHORTEST spare copy is the best guess.
-   *  Putting a 300-word paragraph in a caption box is worse than leaving it out. */
-  const TERSE_SLOTS = new Set(['caption', 'label', 'byline', 'kicker']);
-
   /** Pass 1: a slot's own role, then unroled copy. Nothing speculative. */
   const takeMatching = (leafRole: string): MagazineElement | undefined => {
     const want = wantedTextRole[leafRole] ?? 'body';
@@ -280,12 +318,21 @@ export function reflowContent(
    * It has to be a SECOND PASS, though. Doing this inline would let an early headline
    * slot steal the body paragraph that the body slot two lines later matches exactly —
    * every slot gets its own role first, and only what is genuinely spare gets moved.
+   *
+   * THE CRAM LIMIT (`maxLen`): a terse slot may refuse copy wildly over its budget —
+   * but ONLY when the caller has a drafted alternative (pass 3) waiting. Measured on a
+   * real cover apply: the page's 1,345-character body paragraph beat the drafted
+   * caption into a 272-character caption strip — words preserved, page ruined. With a
+   * draft available the long copy is left in the pool instead, where the spare-prose
+   * glue or the leftOver count picks it up; with NO draft, cramming still wins,
+   * because real words in the wrong box beat a hole in the layout.
    */
-  const takeAny = (leafRole: string): MagazineElement | undefined => {
+  const takeAny = (leafRole: string, maxLen = Infinity): MagazineElement | undefined => {
     const pools = [...byRole.values()].filter((v) => v.length > 0);
     if (pools.length === 0) return undefined;
     const spare = pools.flat().sort((a, b) => textOf(a).length - textOf(b).length);
     const pick = TERSE_SLOTS.has(leafRole) ? spare[0]! : spare[spare.length - 1]!;
+    if (TERSE_SLOTS.has(leafRole) && textOf(pick).length > maxLen) return undefined;
     for (const v of pools) {
       const at = v.indexOf(pick);
       if (at >= 0) { v.splice(at, 1); break; }
@@ -296,10 +343,12 @@ export function reflowContent(
   for (const slot of slots) {
     const fill: LeafFill = {};
     if (slot.role === 'image') {
-      const img = images.shift();
+      // The page's own photos first, biggest slot to biggest photo; the media
+      // library only covers slots the page itself cannot.
+      const img = images.shift() ?? extraImages.shift();
       if (img) {
-        fill.image = { url: img.url, assetId: img.assetId, alt: img.alt };
-        if (img.key === BACKGROUND) usedBackground = true;
+        fill.image = { url: img.url, assetId: (img as { assetId?: string }).assetId ?? '', alt: (img as { alt?: string }).alt ?? '' };
+        if ((img as { key?: string }).key === BACKGROUND) usedBackground = true;
       }
     } else if (slot.role === 'qr') {
       const qr = qrs.shift();
@@ -319,10 +368,25 @@ export function reflowContent(
   }
 
   // Pass 2 — text slots still empty, filled from whatever copy is genuinely spare.
+  // A terse slot with a drafted alternative refuses copy over CRAM_AT× its budget
+  // (see takeAny); without one, anything beats a hole.
   for (const slot of slots) {
     if (content[slot.ref] || !TEXT_ROLES.has(slot.role) || slot.role === 'shape') continue;
-    const el = takeAny(slot.role);
+    const hasDraft = extraTexts.some((t) => t.role === slot.role && t.text.trim());
+    const cramLimit = hasDraft ? (ROLE_CHAR_CAP[slot.role] ?? 200) * CRAM_AT : Infinity;
+    const el = takeAny(slot.role, cramLimit);
     if (el?.text?.content) content[slot.ref] = { text: el.text.content };
+  }
+
+  // Pass 3 — DRAFTED copy for slots the page could not fill at all, matched by
+  // exact leaf role (the caller drafted one per missing slot). Only after both
+  // passes above, so the user's own words always win a slot before invented ones.
+  for (const slot of slots) {
+    if (content[slot.ref] || !TEXT_ROLES.has(slot.role) || slot.role === 'shape') continue;
+    const at = extraTexts.findIndex((t) => t.role === slot.role && t.text.trim());
+    if (at < 0) continue;
+    content[slot.ref] = { text: extraTexts[at]!.text };
+    extraTexts.splice(at, 1);
   }
 
   // Prose that found no slot joins the LARGEST body slot rather than vanishing —
@@ -354,6 +418,8 @@ export function applyReadingToPage(
   /** Who this page is, so its running head and folio can be put back after the rebuild.
    *  Optional: omitted, the page simply comes back without chrome. */
   furnitureCtx?: RefurnishContext,
+  /** Reference-fill: drafted copy + library photos for slots the page cannot cover. */
+  extra?: ExtraContent,
 ): ApplyResult {
   const converted = readingToSpec(reading);
   if (!converted) return { page: null, why: 'That layout could not be turned into a page structure.' };
@@ -366,7 +432,7 @@ export function applyReadingToPage(
   const dims = { width: Number(page.width) || PAGE_W, height: Number(page.height) || PAGE_H };
   const theme = themeForPage(genTheme, page);
   const bgImage = page.background?.type === 'image' && page.background.value ? String(page.background.value) : '';
-  const { content, leftOver, usedBackground } = reflowContent(specContentRefs(spec), page.elements, bgImage || undefined);
+  const { content, leftOver, usedBackground } = reflowContent(specContentRefs(spec), page.elements, bgImage || undefined, extra);
 
   // keepWhitespace: the reference's empty space is its design. Without this, pruning
   // promotes a content-sized track to `fr` to stop a strip trailing — correct for the
@@ -472,6 +538,57 @@ function tightSlots(issues: { kind: string; detail: string }[], elements: Magazi
     out.push({ role: el.text.role ?? 'other', holds, has: textOf(el).length });
   }
   return out;
+}
+
+/**
+ * Which of the reading's slots the page CANNOT fill from its own content — the
+ * caller's shopping list for reference-fill (draft this copy, find these photos)
+ * before it calls applyReadingToPage with the result as `extra`.
+ *
+ * Runs the same conversion and the same two reflow passes as the real apply, so
+ * the empty set here is exactly the set pass 3 will be asked to cover — the two
+ * cannot drift because they are the same code. Pure and model-free: the DRAFTING
+ * of the fill is the caller's business (it needs a model); knowing what to draft
+ * is layout arithmetic and belongs here where it can be tested.
+ *
+ * `approxChars` is a budget estimate from the reference's own box (fractions of
+ * the page): enough for a drafter to write to. The composer still shrinks-to-fit
+ * and the tight-slot report still fires, so a rough number is safe.
+ */
+export function unfilledSlots(
+  reading: LayoutReading,
+  page: { width?: number; height?: number; background?: { type?: string; value?: string }; elements: MagazineElement[] },
+): { texts: { role: string; approxChars: number }[]; images: number } | null {
+  const converted = readingToSpec(reading);
+  if (!converted) return null;
+  const spec = normalizeLayoutSpec(converted.spec);
+  if (!spec) return null;
+  const slots = specContentRefs(spec);
+  const bgImage = page.background?.type === 'image' && page.background.value ? String(page.background.value) : '';
+  const { content } = reflowContent(slots, page.elements, bgImage || undefined);
+
+  const dims = { width: Number(page.width) || PAGE_W, height: Number(page.height) || PAGE_H };
+  // ~1 character per 45px² at body sizes on the 150-DPI sheet — deliberately
+  // conservative; short-line display roles are capped by ROLE_CHAR_CAP.
+  const texts: { role: string; approxChars: number }[] = [];
+  let images = 0;
+  for (const slot of slots) {
+    if (slot.role === 'image') { if (!content[slot.ref]) images += 1; continue; }
+    if (!TEXT_ROLES.has(slot.role) || slot.role === 'shape') continue;
+    // A slot needs a draft when it is EMPTY — or when pass 2 filled a terse slot
+    // by cramming copy far over its budget (the 1,345-char caption case). Listing
+    // the crammed slot here is what makes the draft EXIST at apply time, which is
+    // the condition pass 2's cram limit needs before it will refuse the cram.
+    const filled = content[slot.ref]?.text ?? '';
+    const cap = ROLE_CHAR_CAP[slot.role] ?? 120;
+    const crammed = TERSE_SLOTS.has(slot.role) && filled.replace(/<[^>]*>/g, ' ').trim().length > cap * CRAM_AT;
+    if (filled && !crammed) continue;
+    const box = converted.origin[slot.ref];
+    const area = box ? box.w * dims.width * (box.h * dims.height) : 0;
+    const byArea = area > 0 ? Math.round(area / 45) : 80;
+    texts.push({ role: slot.role, approxChars: Math.max(16, Math.min(cap, byArea)) });
+  }
+  return { texts, images };
 }
 
 /** The shortfall as one sentence, for a caller that needs to show it. */

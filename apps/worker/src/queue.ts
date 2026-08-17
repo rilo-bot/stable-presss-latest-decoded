@@ -29,8 +29,11 @@ const POLL_INTERVAL_MS = Math.max(250, Number(process.env.MAGAZINE_V2_POLL_INTER
 // you ever run MORE THAN ONE worker, this must exceed the longest real job
 // runtime or a sweep on one worker could requeue a job another worker is still
 // running. With a single worker it's always safe (the loop only sweeps while
-// idle, when no job is running in-process).
-const STALE_RUNNING_MS = Math.max(60_000, Number(process.env.MAGAZINE_V2_STALE_JOB_MS ?? 5 * 60_000));
+// idle, when no job is running in-process). Default raised 5min → 45min: a
+// real 10-page generation takes 5.5–13 minutes (24 pages ≈ 30), so 5 minutes
+// was BELOW a live job's runtime and only ever safe by the single-worker
+// accident above. 45min comfortably exceeds the worst real job.
+const STALE_RUNNING_MS = Math.max(60_000, Number(process.env.MAGAZINE_V2_STALE_JOB_MS ?? 45 * 60_000));
 
 // How long a finished job is kept for diagnostics before MongoDB drops it. The
 // queue is append-only otherwise: nothing ever deleted a `done` job, so the

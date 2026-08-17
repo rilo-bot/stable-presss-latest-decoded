@@ -72,7 +72,8 @@ interface EditorState {
   zoomWidth: number; // rendered page width in px
   loading: boolean;
   error: string | null;
-  generating: boolean; // an "add AI pages" run is in flight (issue is processing)
+  generating: boolean; // ANY build run is in flight (initial generation OR add-pages)
+  adding: boolean; // specifically an "add more pages" run — drives the isAdding copy. Was conflated with `generating`, which made the INITIAL build show the indeterminate "Adding your new pages" state and hid the real page counter.
   justGenerated: boolean; // a from-scratch generation just finished this session (offer "add more pages")
   formatBusy: boolean; // a Fill/Adjust text pass is running
   publishing: boolean; // a publish/unpublish call is in flight
@@ -259,6 +260,7 @@ export const useEditorStore = create<EditorState>((set, get) => ({
   loading: false,
   error: null,
   generating: false,
+  adding: false,
   justGenerated: false,
   formatBusy: false,
   publishing: false,
@@ -311,7 +313,7 @@ export const useEditorStore = create<EditorState>((set, get) => ({
     // editedSinceLoad resets here: the freshly-loaded `issue.needsRepublish` is the
     // server's own answer, so carrying a stale local flag across a reload would keep
     // claiming changes that were already published.
-    set({ loading: true, error: null, issueId: id, generating: false, justGenerated: false, currentPageId: null, page: null, chat: [], proposals: [], proposalsPageId: null, editedSinceLoad: false, thumbs: {} });
+    set({ loading: true, error: null, issueId: id, generating: false, adding: false, justGenerated: false, currentPageId: null, page: null, chat: [], proposals: [], proposalsPageId: null, editedSinceLoad: false, thumbs: {} });
     try {
       const { issue, pages } = await api.getIssue(id);
       set({ issue, pages, loading: false, undoStack: [], redoStack: [], selectedId: null });
@@ -541,39 +543,49 @@ export const useEditorStore = create<EditorState>((set, get) => ({
   generatePages: async (count, topic, atIndex) => {
     const { issueId, generating } = get();
     if (!issueId || generating) return;
-    set({ generating: true });
+    set({ generating: true, adding: true });
     try {
       await api.generatePages(issueId, count, topic || undefined, atIndex);
     } catch (e) {
-      set({ generating: false });
+      set({ generating: false, adding: false });
       toast.error(e instanceof Error ? e.message : 'Failed to start generation');
       return;
     }
     toast.message('Designing new pages…');
-    // Poll until the issue settles out of 'processing', then refresh summaries
-    // (existing pages are untouched; the new ones just appear in the rail).
+    // Poll until the issue settles out of 'processing' — NO wall-clock cap. The
+    // old 180s deadline expired long before a real run finished (each page takes
+    // ~60–150s to design), and its else-branch then toasted "Pages added" while
+    // the worker was still working — the reported "stuck at loading until
+    // refresh" bug. The loop always terminates: the server's stuck-issue
+    // watchdog (healStuckIssue, checked by this very GET) guarantees
+    // 'processing' is finite even if the worker dies. Backs off after 5 minutes
+    // so a long run doesn't hammer the API.
     // Uses the shared, cancellable genPoll handle and guards every set() on the
     // captured issueId — otherwise navigating to a different magazine mid-run
-    // would overwrite THAT magazine's state with this one's for up to 180s.
+    // would overwrite THAT magazine's state with this one's.
     stopGenPoll();
     const start = Date.now();
+    const settle = () => { genPoll = null; set({ generating: false, adding: false }); };
     const tick = async () => {
-      if (get().issueId !== issueId) { set({ generating: false }); return; } // navigated away
+      if (get().issueId !== issueId) { settle(); return; } // navigated away
       try {
         const { issue, pages } = await api.getIssue(issueId);
-        if (get().issueId !== issueId) { set({ generating: false }); return; } // re-check after await
+        if (get().issueId !== issueId) { settle(); return; } // re-check after await
         set({ issue, pages });
-        if (issue.status === 'processing' && Date.now() - start < 180_000) {
-          genPoll = setTimeout(() => void tick(), 1500);
+        if (issue.status === 'processing') {
+          genPoll = setTimeout(() => void tick(), Date.now() - start > 300_000 ? 5000 : 1500);
         } else {
-          genPoll = null;
-          set({ generating: false });
-          if (issue.status === 'failed') toast.error(issue.processingError || 'Adding pages failed');
+          settle();
+          // The server restores the PREVIOUS status on an add-pages failure (not
+          // 'failed') and reports why in processingError — cleared to '' on
+          // success. Checking only status === 'failed' here is what made real
+          // failures toast "Pages added".
+          if (issue.status === 'failed' || issue.processingError) toast.error(issue.processingError || 'Adding pages failed');
           else toast.success('Pages added');
         }
       } catch {
-        if (get().issueId !== issueId) { set({ generating: false }); return; } // stop if we've moved on
-        genPoll = setTimeout(() => void tick(), 2000); // transient — keep polling
+        if (get().issueId !== issueId) { settle(); return; } // stop if we've moved on
+        genPoll = setTimeout(() => void tick(), Date.now() - start > 300_000 ? 10_000 : 2000); // transient — keep polling
       }
     };
     genPoll = setTimeout(() => void tick(), 1500);
@@ -972,25 +984,36 @@ export const useEditorStore = create<EditorState>((set, get) => ({
     const watchId = get().issueId;
     if (!watchId) return;
     stopGenPoll();
-    set({ generating: true });
+    set({ generating: true, adding: false });
     const start = Date.now();
     const tick = async () => {
       if (get().issueId !== watchId) { set({ generating: false }); return; } // navigated away
       try {
         const { issue, pages } = await api.getIssue(watchId);
+        if (get().issueId !== watchId) { set({ generating: false }); return; } // re-check after await — a late response must not overwrite another magazine's state
         set({ issue, pages });
         // Reveal the first page the moment it exists so the user sees the build.
         if (!get().currentPageId && pages[0]) await get().openPage(pages[0].id);
-        if (issue.status === 'processing' && Date.now() - start < 300_000) {
-          genPoll = setTimeout(() => void tick(), 1500);
+        if (issue.status === 'processing') {
+          // NO wall-clock cap. A 10-page build realistically takes 5.5–13 minutes
+          // (two pages compose at a time, each ~60–150s); the old 300s deadline
+          // expired mid-build, silently stopped polling, and left the banner up
+          // forever — the "5-6 pages then stuck until refresh" bug (refresh
+          // worked because load() re-arms this watch). The loop always ends: the
+          // server's stuck-issue watchdog guarantees 'processing' is finite.
+          // Back off after 5 minutes so a long build doesn't hammer the API.
+          genPoll = setTimeout(() => void tick(), Date.now() - start > 300_000 ? 5000 : 1500);
         } else {
           genPoll = null;
-          // Completed OK → offer "add more pages" (the preview is intentionally short).
-          set({ generating: false, justGenerated: issue.status !== 'failed' && issue.origin !== 'upload' });
+          // Completed OK → offer "add more pages" (the preview is intentionally
+          // short). 'ready' precisely — the old `!== 'failed'` also matched a
+          // still-'processing' snapshot at the poll cap.
+          set({ generating: false, justGenerated: issue.status === 'ready' && issue.origin !== 'upload' });
           if (issue.status === 'failed') toast.error(issue.processingError || 'Generation failed');
         }
       } catch {
-        genPoll = setTimeout(() => void tick(), 2500); // transient — keep polling
+        if (get().issueId !== watchId) { set({ generating: false }); return; } // moved on mid-error
+        genPoll = setTimeout(() => void tick(), Date.now() - start > 300_000 ? 10_000 : 2500); // transient — keep polling
       }
     };
     genPoll = setTimeout(() => void tick(), 1200);

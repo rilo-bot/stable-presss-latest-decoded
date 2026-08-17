@@ -106,14 +106,24 @@ const SYSTEM = (
   attachedImages?: AttachedImage[],
   /** false ⇒ the page-structure tools are not on the table this turn (see runPageAgent). */
   canEditStructure = true,
+  /** The whole magazine, as far as this caller may see it (route-scoped). */
+  issueInfo?: { title: string; subtitle?: string; pageLines: string[] },
 ) => {
   const lines = [
-    'You are the design assistant for one page of a magazine. You edit the page ONLY by calling tools;',
-    'each tool STAGES a change for the user to review & apply (staging is the safety checkpoint) — so make',
-    'the change THIS turn, do not just describe it or ask permission. You may call multiple tools in one',
-    'turn to complete a request. After staging, reply with ONE short sentence describing what you PREPARED',
-    'for review — say it is staged / ready to apply; do NOT claim it is already applied or updated.',
+    'You are the design assistant for a magazine. You work on the page the user has OPEN, and you can READ',
+    'every other page with get_page. You edit ONLY by calling tools; each tool STAGES a change for the user',
+    'to review & apply (staging is the safety checkpoint) — so make the change THIS turn, do not just',
+    'describe it or ask permission. You may call multiple tools in one turn to complete a request. After',
+    'staging, reply with ONE short sentence describing what you PREPARED for review — say it is staged /',
+    'ready to apply; do NOT claim it is already applied or updated.',
     '',
+    ...(issueInfo
+      ? [
+          `The magazine is “${issueInfo.title}”${issueInfo.subtitle ? ` — ${issueInfo.subtitle}` : ''}. What each page covers:`,
+          ...issueInfo.pageLines.map((l) => `  ${l}`),
+          '',
+        ]
+      : []),
     'Tone & approach: be warm, polite, encouraging and BRIEF — a helpful design partner, not a form to fill',
     'in. Be DECISIVE and FAST: make the smart call and do it. DEFAULT TO ACTING, never interrogating — if a',
     'request is doable with a sensible assumption, MAKE the change and note the assumption in one short line',
@@ -130,15 +140,22 @@ const SYSTEM = (
     pageMeta ? `This is page ${pageMeta.number} of ${pageMeta.total} (0-based index ${pageMeta.number - 1}).` : '',
     'Rules:',
     '- Target elements by their #id from the list below. NEVER invent ids.',
+    '- get_page(page) READS any page of the magazine (read-only). Use it whenever the user mentions another',
+    '  page, asks what the magazine contains, or wants this page consistent with another (matching wording,',
+    '  colours, sizes — read the other page, then stage the edits HERE). You can only EDIT the open page;',
+    '  if they want another page changed, read it, say what you would change, and ask them to open it.',
     '- The element marked THIS is the one the user has selected — resolve "this/that/it/the selected …" to it.',
     '- For images, only use a URL from list_media or an image already on the page: point an EXISTING image',
     '  element at it with set_element_image, or place it as a NEW element with add_media_image. To bring in a',
     '  NEW photo use add_stock_image (it sources + stores a real photo). NEVER invent image URLs.',
     '- To turn a text element INTO a photo in the same spot, use change_text_to_image.',
     canEditStructure
-      ? '- You can also change the MAGAZINE structure: add_page (blank), add_content_pages (AI-designed pages on a\n' +
-        '  topic), remove_page, reorder_pages. Page positions are 0-based. Use these only when the user asks about\n' +
-        '  pages, not individual elements.'
+      ? '- You can also change the MAGAZINE structure: add_content_pages (designed pages — the DEFAULT for any\n' +
+        '  "add a page" ask, topic optional), add_page (an EMPTY WHITE page — only when they explicitly say blank),\n' +
+        '  remove_page, reorder_pages. All page positions are 1-BASED — the number the user says ("page 3" → 3).\n' +
+        '  "Add a page at/as page 3" means position 3: the new page BECOMES page 3 and later pages shift down —\n' +
+        '  always pass the position when the user names one. Use these only when the user asks about pages, not\n' +
+        '  individual elements.'
       : '- You can change THIS PAGE only. You cannot add, remove or reorder pages — only the magazine’s owner can.\n' +
         '  If the user asks for that, say so plainly in one line and offer what you CAN do to this page instead.',
     '- Preserve real names, figures, dates and quotes unless asked to change them.',
@@ -190,6 +207,11 @@ interface AgentCtx {
   magazineId: string;
   pageIndex: number;
   seq: number;
+  /** Page ids this caller may READ (get_page). Route-scoped: a page-scoped
+   *  collaborator's assistant sees exactly the pages their screen does.
+   *  Undefined = legacy caller — get_page then refuses everything but the
+   *  open page rather than guessing at visibility. */
+  readable?: Set<string>;
 }
 
 const find = (ctx: AgentCtx, id: string) => ctx.working.find((e) => e.id === id);
@@ -251,6 +273,37 @@ function buildTools(ctx: AgentCtx, dims: { width: number; height: number }, canE
   };
 
   return {
+    get_page: tool({
+      description:
+        'READ any page of this magazine by its 1-based page number: returns that page\'s elements (same format as the open page\'s list). Read-only — you cannot edit elements on other pages; use it to answer questions about them or to match their style/wording on the OPEN page.',
+      inputSchema: z.object({ page: z.number().int().min(1).describe('1-based page number, as the user counts pages') }),
+      execute: async ({ page }) => {
+        const all = (await db.collection(COL.pages).find({ magazineId: ctx.magazineId })) as
+          { _id: string; index: number; elements?: unknown }[];
+        const ordered = all.sort((a, b) => (Number(a.index) || 0) - (Number(b.index) || 0));
+        const target = ordered[page - 1];
+        if (!target) {
+          const n = ordered.length;
+          return { ok: false as const, error: `This magazine has ${n} page${n === 1 ? '' : 's'}, so there is no page ${page}.` };
+        }
+        const isOpen = Number(target.index) === ctx.pageIndex;
+        // Visibility is the caller's, not the magazine's: a page the user cannot
+        // see on their own screen is refused, not summarised.
+        if (!isOpen && !ctx.readable?.has(String(target._id))) {
+          return { ok: false as const, error: `Page ${page} is not shared with this user, so it cannot be read here.` };
+        }
+        // The open page reads from the WORKING copy so the model sees its own
+        // staged edits; other pages read from what is stored.
+        const els = isOpen ? ctx.working : Array.isArray(target.elements) ? (target.elements as MagazineElement[]) : [];
+        return {
+          ok: true as const,
+          page,
+          isOpenPage: isOpen,
+          elements: els.slice(0, 40).map((e) => describeElement(e)),
+          ...(isOpen ? {} : { note: 'Read-only: these element ids belong to another page and cannot be edited from here.' }),
+        };
+      },
+    }),
     list_media: tool({
       description: 'List photos already in this magazine\'s media library (id, url, alt). Use these urls for set_element_image — never invent one.',
       inputSchema: z.object({}),
@@ -535,43 +588,67 @@ function buildTools(ctx: AgentCtx, dims: { width: number; height: number }, canE
     // that fails silently on apply.
     ...(canEditStructure
       ? {
+          // ALL structure tools speak 1-BASED PAGE NUMBERS — the number the user
+          // says, the number the rail shows. The proposals the client applies
+          // stay 0-based; the conversion happens HERE, at the tool boundary,
+          // exactly like use_image_as_layout's `page`. The previous schemas took
+          // an undocumented 0-based `atIndex`, so "add a page at page 3" made
+          // the model either omit it (page landed at the END) or guess the base
+          // — both read as "the AI ignored where I said".
           add_page: tool({
-            description: 'Add a NEW BLANK page to the magazine. atIndex is the 0-based insert position; omit to append.',
-            inputSchema: z.object({ atIndex: z.number().optional() }),
-            execute: async ({ atIndex }) => {
-              const summary = atIndex == null ? 'Add a blank page (at the end)' : `Add a blank page at position ${atIndex + 1}`;
-              ctx.proposals.push({ id: pid(ctx), kind: 'add-page', atIndex, summary });
+            description:
+              'Add a completely EMPTY WHITE page. ONLY use this when the user EXPLICITLY asks for a blank/empty page to fill themselves. For every other "add a page" request use add_content_pages — a bare white sheet in a designed magazine is almost never what they meant. `position` is the 1-based page number the new page should BECOME (e.g. 3 → it becomes page 3 and the old page 3 shifts to 4). Omit to add at the end.',
+            inputSchema: z.object({
+              position: z.number().int().min(1).optional().describe('1-based page number the new page becomes; omit for the end'),
+            }),
+            execute: async ({ position }) => {
+              const summary = position == null ? 'Add a blank page (at the end)' : `Add a blank page as page ${position} (later pages shift down)`;
+              ctx.proposals.push({ id: pid(ctx), kind: 'add-page', atIndex: position == null ? undefined : position - 1, summary });
               return { ok: true, summary: `Staged: ${summary}` };
             },
           }),
 
           add_content_pages: tool({
-            description: "Add 1–6 AI-DESIGNED pages that match the magazine's theme. Give a count and optional topic.",
-            inputSchema: z.object({ count: z.number(), topic: z.string().optional(), atIndex: z.number().optional() }),
-            execute: async ({ count, topic, atIndex }) => {
+            description:
+              "Add 1–6 fully DESIGNED pages matching the magazine's theme — THE DEFAULT for any 'add a page' request. `topic` is optional: without one, the page develops the magazine's own subject. `position` is the 1-based page number the FIRST new page should BECOME (e.g. 3 → the new page is page 3, the old page 3 becomes page 4). Omit position to add at the end. Position 1 is impossible — new pages are interior pages and cannot replace the cover.",
+            inputSchema: z.object({
+              count: z.number().int().min(1).max(6),
+              topic: z.string().optional(),
+              position: z.number().int().min(1).optional().describe('1-based page number the first new page becomes; omit for the end'),
+            }),
+            execute: async ({ count, topic, position }) => {
               const n = Math.max(1, Math.min(6, Math.round(count) || 1));
-              const summary = `Design ${n} new page${n === 1 ? '' : 's'}${topic ? ` on “${topic}”` : ''}`;
-              ctx.proposals.push({ id: pid(ctx), kind: 'generate-pages', count: n, topic, atIndex, summary });
+              // Refused HERE so the model can say so in the same breath — the apply
+              // endpoint refuses index 0 anyway, but only after the user approved.
+              if (position === 1) {
+                return { ok: false, error: 'New pages are interior pages, so they cannot go in front of the cover. Use position 2 or later.' };
+              }
+              const where = position == null ? '' : ` — becomes page ${position} (later pages shift down)`;
+              const summary = `Design ${n} new page${n === 1 ? '' : 's'}${topic ? ` on “${topic}”` : ''}${where}`;
+              ctx.proposals.push({ id: pid(ctx), kind: 'generate-pages', count: n, topic, atIndex: position == null ? undefined : position - 1, summary });
               return { ok: true, summary: `Staged: ${summary}` };
             },
           }),
 
           remove_page: tool({
-            description: 'Remove a page by its 0-based index. The magazine must keep at least one page.',
-            inputSchema: z.object({ targetIndex: z.number() }),
-            execute: async ({ targetIndex }) => {
-              const summary = `Remove page ${targetIndex + 1}`;
-              ctx.proposals.push({ id: pid(ctx), kind: 'remove-page', targetIndex, summary });
+            description: 'Remove a page by its 1-based page number (as the user counts pages). The magazine must keep at least one page.',
+            inputSchema: z.object({ page: z.number().int().min(1).describe('1-based page number to remove') }),
+            execute: async ({ page }) => {
+              const summary = `Remove page ${page}`;
+              ctx.proposals.push({ id: pid(ctx), kind: 'remove-page', targetIndex: page - 1, summary });
               return { ok: true, summary: `Staged: ${summary}` };
             },
           }),
 
           reorder_pages: tool({
-            description: 'Move a page from one 0-based index to another.',
-            inputSchema: z.object({ from: z.number(), to: z.number() }),
+            description: 'Move a page to a new position. Both numbers are 1-based page numbers: `from` is the page as it is now, `to` is the page number it should become.',
+            inputSchema: z.object({
+              from: z.number().int().min(1).describe('1-based page number of the page to move'),
+              to: z.number().int().min(1).describe('1-based page number it should become'),
+            }),
             execute: async ({ from, to }) => {
-              const summary = `Move page ${from + 1} → ${to + 1}`;
-              ctx.proposals.push({ id: pid(ctx), kind: 'reorder-page', from, to, summary });
+              const summary = `Move page ${from} → ${to}`;
+              ctx.proposals.push({ id: pid(ctx), kind: 'reorder-page', from: from - 1, to: to - 1, summary });
               return { ok: true, summary: `Staged: ${summary}` };
             },
           }),
@@ -599,6 +676,11 @@ export async function runPageAgent(opts: {
   /** Images the user attached this turn, already persisted to the media library. */
   attachedImages?: AttachedImage[];
   pageCount?: number; // total pages in the issue (lets the model reason about add/remove/reorder)
+  /** The magazine's identity + one digest line per page the caller may see —
+   *  what makes the assistant a MAGAZINE assistant rather than a one-page one. */
+  issue?: { title: string; subtitle?: string; pageLines: string[] };
+  /** Page ids the caller may READ via get_page (route-computed visibility). */
+  readablePageIds?: string[];
   /**
    * May this caller change the magazine's PAGE STRUCTURE? Owner-only in practice.
    *
@@ -622,6 +704,7 @@ export async function runPageAgent(opts: {
     magazineId: opts.magazineId,
     pageIndex: opts.page.index,
     seq: 0,
+    readable: opts.readablePageIds ? new Set(opts.readablePageIds) : undefined,
   };
 
   // Honour the "never throws" contract: a model/parse/timeout failure must not
@@ -641,6 +724,7 @@ export async function runPageAgent(opts: {
         },
         opts.attachedImages,
         canEditStructure,
+        opts.issue,
       ),
       messages,
       tools: buildTools(ctx, dims, canEditStructure),

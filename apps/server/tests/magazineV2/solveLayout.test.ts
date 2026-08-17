@@ -205,3 +205,49 @@ test('solving is deterministic — the same spec yields byte-identical boxes', (
   const b = solveLayout(spec(root), PAGE);
   assert.deepEqual(a.leaves.map((l) => l.box), b.leaves.map((l) => l.box));
 });
+
+// ── Band height: minPx on content children ───────────────────────────────────
+
+test('a content child with minPx gets at least that track, measured copy or not', () => {
+  const s = spec({
+    kind: 'col',
+    children: [
+      // No measure fn supplied at all — minPx alone must fix the track.
+      { sizing: 'content', minPx: 500, node: leaf('headline') },
+      { weight: 1, node: leaf('body') },
+    ],
+  } as unknown as LayoutNode, 'none');
+  const solved = solveLayout(s, PAGE);
+  const headline = solved.leaves.find((l) => l.node.role === 'headline')!;
+  assert.equal(headline.box.h, 500);
+});
+
+test('minPx raises a measured track but never lowers it', () => {
+  const measure = () => 40; // one line of copy
+  const s = spec({
+    kind: 'col',
+    children: [
+      { sizing: 'content', minPx: 300, node: leaf('kicker') },
+      { sizing: 'content', minPx: 20, node: leaf('subhead') }, // measured 40 wins
+      { weight: 1, node: leaf('body') },
+    ],
+  } as unknown as LayoutNode, 'none');
+  const solved = solveLayout(s, PAGE, { measureLeaf: measure });
+  assert.equal(solved.leaves.find((l) => l.node.role === 'kicker')!.box.h, 300);
+  assert.equal(solved.leaves.find((l) => l.node.role === 'subhead')!.box.h, 40);
+});
+
+test('minPx tracks that overfill are rescaled together — tiling holds', () => {
+  const s = spec({
+    kind: 'col',
+    children: [
+      { sizing: 'content', minPx: 1400, node: leaf('headline') },
+      { sizing: 'content', minPx: 1400, node: leaf('body') },
+    ],
+  } as unknown as LayoutNode, 'none');
+  const solved = solveLayout(s, PAGE);
+  assertIntegerBoxes(solved.leaves);
+  assertInsidePage(solved.leaves);
+  const total = solved.leaves.reduce((n, l) => n + l.box.h, 0);
+  assert.ok(total <= PAGE.height, 'rescaled tracks stay within the page');
+});

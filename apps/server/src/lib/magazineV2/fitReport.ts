@@ -52,6 +52,35 @@ const SLACK_AT = 0.55;
  * decides, so it is measured against the sheet rather than against the box.
  */
 const SLACK_SERIOUS_SHARE = 0.06;
+/**
+ * The AGGREGATE version of the same rule — over the SMALL boxes only. Eight
+ * bands each wasting 4–5% slip under the per-box bar individually while the
+ * page is a third blank — measured as exactly the "many small text bands" shape
+ * behind every remaining "loose" page. Summed across the boxes the per-box bar
+ * cannot see (share < SLACK_SERIOUS_SHARE), waste past this share of the sheet
+ * is one defect. Boxes already over the per-box bar are excluded here: they are
+ * counted individually, and counting the same waste twice punished the single
+ * huge box double.
+ */
+const AGG_SLACK_SERIOUS = 0.15;
+
+/** The aggregate the per-box threshold is blind to: total slack across findings
+ *  individually too small to count. */
+function smallSlackShare(fit: Fit): number {
+  return fit.findings.reduce(
+    (n, f) => n + (f.kind === 'slack' && (f.share ?? 0) < SLACK_SERIOUS_SHARE ? (f.share ?? 0) : 0),
+    0,
+  );
+}
+/**
+ * Deliberate emptiness (spacer leaves) has a budget too. The prompt blesses
+ * 15–30% of an interior page as air; a page MOSTLY handed to spacers is not a
+ * design, it is a missing page. Above this share, the emptiness counts.
+ */
+const EMPTY_SERIOUS = 0.45;
+/** Type asked at more than this multiple of its role's own ceiling reads as a
+ *  banner, not a headline. Advisory (see the note on `giant` below). */
+const GIANT_AT = 1.75;
 /** An icon wider than this share of the page has stopped being a mark and become art. */
 const ICON_DECOR_WIDTH = 0.12;
 /** How far from a QR its own label may sit, in multiples of the QR's side. */
@@ -64,7 +93,7 @@ const SQUARE_WASTE_AT = 0.35;
 const QR_LOUD_AT = 0.15;
 
 export interface FitFinding {
-  kind: 'overflow' | 'shrunk' | 'slack' | 'square' | 'loud' | 'measure' | 'decor' | 'orphan';
+  kind: 'overflow' | 'shrunk' | 'slack' | 'square' | 'loud' | 'measure' | 'decor' | 'orphan' | 'giant';
   /** Which leaf, in the art-director's own words (its contentRef, else its role). */
   where: string;
   detail: string;
@@ -76,6 +105,9 @@ export interface Fit {
   findings: FitFinding[];
   /** Share of the page (0–1) allocated to leaves that draw nothing. */
   emptyShare: number;
+  /** Share of the page (0–1) wasted INSIDE boxes, summed across every slack
+   *  finding — the aggregate the per-box threshold cannot see. */
+  slackShare: number;
 }
 
 const pct = (v: number) => `${Math.round(v * 100)}%`;
@@ -221,6 +253,25 @@ export function fitReport(solved: SolvedLayout, content: ResolvedContent, fonts:
       });
     }
 
+    // ── Oversized type: nothing else ever checks this ─────────────────────────
+    // The unlock let the AI name any size to 220pt, and the only counter-pressure
+    // was geometric (does it FIT). A headline asked far past its role's own
+    // ceiling fits fine in a big enough box and reads as a banner ad. ADVISORY,
+    // not counted: a cover masthead legitimately runs huge, and the report cannot
+    // see the page kind — counting this would burn attempts on good covers (the
+    // same lesson as slack). It feeds the hint so the next attempt hears it.
+    const roleCeiling = roleStyle(role).maxFontSize;
+    if (roleCeiling > 0 && size.max > roleCeiling * GIANT_AT) {
+      findings.push({
+        kind: 'giant',
+        where: ref,
+        detail:
+          `${role} is set at ${pt(size.max)} — its usual ceiling is ${pt(roleCeiling)}. ` +
+          `On a cover that can be right; anywhere else it reads as a banner, not editorial. ` +
+          `Confirm it is deliberate or bring it down.`,
+      });
+    }
+
     // ── Line length: the difference between a column and a wall of text ──────
     if (PROSE.has(role)) {
       const probe = 'abcdefghijklmnopqrstuvwxyz etaoinshrdlu';
@@ -269,7 +320,8 @@ export function fitReport(solved: SolvedLayout, content: ResolvedContent, fonts:
   }
 
   const emptyShare = emptyArea / pageArea;
-  return { findings, emptyShare };
+  const slackShare = findings.reduce((n, f) => n + (f.kind === 'slack' ? (f.share ?? 0) : 0), 0);
+  return { findings, emptyShare, slackShare };
 }
 
 /**
@@ -280,8 +332,26 @@ export function fitReport(solved: SolvedLayout, content: ResolvedContent, fonts:
  * the defects that cost the most page area come first.
  */
 export function fitHint(fit: Fit, limit = 6): string {
-  if (fit.findings.length === 0) return '';
-  const rank: Record<FitFinding['kind'], number> = { loud: 0, decor: 1, square: 2, shrunk: 3, measure: 4, orphan: 5, slack: 6, overflow: 7 };
+  // The PAGE-level lines come first and are never capped out: many small slack
+  // boxes are individually the least interesting finding and collectively the
+  // whole complaint — burying the sum under the per-box list re-creates the
+  // blindness the aggregate exists to fix.
+  const pageLines: string[] = [];
+  if (smallSlackShare(fit) >= AGG_SLACK_SERIOUS) {
+    pageLines.push(
+      `• THE PAGE: your SMALL boxes together waste ${pct(fit.slackShare)} of the sheet (blank space INSIDE boxes, ` +
+        `each too small to flag alone). Merge small bands, give them real height, set the type larger, or make the ` +
+        `air deliberate with spacer leaves.`,
+    );
+  }
+  if (fit.emptyShare >= EMPTY_SERIOUS) {
+    pageLines.push(
+      `• THE PAGE: ${pct(fit.emptyShare)} of the sheet is spacer leaves — past deliberate air and into a missing page. ` +
+        `Add real content or shrink the spacers.`,
+    );
+  }
+  if (fit.findings.length === 0 && pageLines.length === 0) return '';
+  const rank: Record<FitFinding['kind'], number> = { loud: 0, decor: 1, square: 2, shrunk: 3, giant: 4, measure: 5, orphan: 6, slack: 7, overflow: 8 };
   const lines = [...fit.findings]
     // Worst KIND first, and within slack the biggest waste first — a box swallowing a
     // fifth of the page should not be buried under three loose captions.
@@ -290,7 +360,7 @@ export function fitHint(fit: Fit, limit = 6): string {
     .map((f) => `• ${f.where}: ${f.detail}`);
   const more = fit.findings.length - lines.length;
   return (
-    `MEASUREMENTS OF THE PAGE YOU JUST BUILT — these are measured, not opinions:\n${lines.join('\n')}` +
+    `MEASUREMENTS OF THE PAGE YOU JUST BUILT — these are measured, not opinions:\n${[...pageLines, ...lines].join('\n')}` +
     (more > 0 ? `\n• …and ${more} more of the same kind.` : '')
   );
 }
@@ -343,10 +413,19 @@ export function charBudget(opts: {
  * well. Counting it would burn every attempt on pages that are fine.
  */
 export function seriousFlaws(fit: Fit): number {
-  return fit.findings.filter((f) => {
+  const perFinding = fit.findings.filter((f) => {
     if (f.kind === 'slack') return (f.share ?? 0) >= SLACK_SERIOUS_SHARE;
+    // `giant` stays advisory: the report cannot see the page kind, and a cover
+    // masthead legitimately runs far past the role ceiling.
     return f.kind === 'loud' || f.kind === 'square' || f.kind === 'shrunk' || f.kind === 'measure' || f.kind === 'decor' || f.kind === 'orphan';
   }).length;
+  // The AGGREGATES, counted once each. Many small slack boxes are individually
+  // advice and collectively THE complaint ("more space than elements") — a page
+  // wasting AGG_SLACK_SERIOUS of the sheet across boxes too small to flag alone,
+  // or handing EMPTY_SERIOUS of it to spacers, is flawed even when no single box
+  // is. Small-slack only, so a huge box (already counted above) isn't counted twice.
+  const aggregate = (smallSlackShare(fit) >= AGG_SLACK_SERIOUS ? 1 : 0) + (fit.emptyShare >= EMPTY_SERIOUS ? 1 : 0);
+  return perFinding + aggregate;
 }
 
-export { MAX_COMFORTABLE_CPL, SLACK_AT, SLACK_SERIOUS_SHARE, QR_LOUD_AT, SQUARE_WASTE_AT, ICON_DECOR_WIDTH };
+export { MAX_COMFORTABLE_CPL, SLACK_AT, SLACK_SERIOUS_SHARE, AGG_SLACK_SERIOUS, EMPTY_SERIOUS, QR_LOUD_AT, SQUARE_WASTE_AT, ICON_DECOR_WIDTH };
