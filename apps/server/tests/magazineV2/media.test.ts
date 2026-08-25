@@ -10,7 +10,7 @@
 
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { isPlaceableMedia, UNPLACEABLE_KINDS, userPhotosFrom } from '../../src/lib/magazineV2/media.ts';
+import { isPlaceableMedia, UNPLACEABLE_KINDS, userPhotosFrom, rankMediaForPage } from '../../src/lib/magazineV2/media.ts';
 
 /** A media row exactly as POST /issues/:id/media writes one. Note `source` is
  *  'upload' for BOTH an ordinary photo and a layout reference — the two differ only
@@ -87,6 +87,65 @@ test('the user photo pool still excludes documents, and still keeps real uploads
   // 'photo' with source 'upload' is a real user upload (stock/extracted rows carry a
   // different source), so it belongs in the pool.
   assert.deepEqual(photos.map((p) => p.assetId).sort(), ['a', 'b']);
+});
+
+// ── Ranking the library for one page ─────────────────────────────────────────
+
+const asset = (id: string, o: { kind?: string; pageIndex?: number | null; createdAt?: string } = {}) => ({
+  _id: id,
+  url: `https://x/${id}.jpg`,
+  alt: '',
+  kind: o.kind ?? 'photo',
+  source: 'extracted',
+  pageIndex: o.pageIndex ?? null,
+  createdAt: o.createdAt ?? '2026-01-01T00:00:00.000Z',
+});
+
+test("a page's own extracted photos come first", () => {
+  // The apply-layout top-up read the library in storage order, so rebuilding page 3
+  // could take page 12's photograph while page 3's own waited further down the array.
+  const ranked = rankMediaForPage(
+    [asset('p12', { pageIndex: 12 }), asset('p3', { pageIndex: 3 }), asset('p0', { pageIndex: 0 })],
+    3,
+  );
+  assert.equal(ranked[0]!._id, 'p3');
+});
+
+test('everything else falls back to NEWEST first — the only signal an upload has', () => {
+  // Uploads carry pageIndex null (nothing asks which page the user meant), so they can
+  // never win tier 1. Recency is what is left: a photo added minutes ago is likelier
+  // to be meant for the page being worked on than one from the first import.
+  const ranked = rankMediaForPage(
+    [
+      asset('old', { createdAt: '2026-01-01T00:00:00.000Z' }),
+      asset('new', { createdAt: '2026-08-25T00:00:00.000Z' }),
+      asset('mid', { createdAt: '2026-05-01T00:00:00.000Z' }),
+    ],
+    3,
+  );
+  assert.deepEqual(ranked.map((m) => m._id), ['new', 'mid', 'old']);
+});
+
+test('page affinity outranks recency', () => {
+  const ranked = rankMediaForPage(
+    [asset('newer-elsewhere', { createdAt: '2026-08-25T00:00:00.000Z' }), asset('this-page', { pageIndex: 3, createdAt: '2026-01-01T00:00:00.000Z' })],
+    3,
+  );
+  assert.deepEqual(ranked.map((m) => m._id), ['this-page', 'newer-elsewhere']);
+});
+
+test('ranking drops what may not be placed, so the caller cannot reintroduce it', () => {
+  const ranked = rankMediaForPage(
+    [asset('ref', { kind: 'reference', pageIndex: 3 }), asset('pdf', { kind: 'doc' }), asset('ok', { pageIndex: 3 })],
+    3,
+  );
+  assert.deepEqual(ranked.map((m) => m._id), ['ok'], 'a reference cannot win on page affinity either');
+});
+
+test('pageIndex 0 is a real page, not a missing one', () => {
+  // The cover. A truthiness test here would send every cover photo to tier 2.
+  const ranked = rankMediaForPage([asset('other', { pageIndex: 5 }), asset('cover', { pageIndex: 0 })], 0);
+  assert.equal(ranked[0]!._id, 'cover');
 });
 
 test('the pool is still defined by provenance, not merely by placeability', () => {

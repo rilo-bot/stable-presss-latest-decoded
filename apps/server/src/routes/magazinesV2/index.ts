@@ -49,7 +49,7 @@ import { formatPageText, charGuideFor } from '../../lib/magazineV2/format.js';
 import { readLayoutImage } from '../../lib/magazineV2/readLayout.js';
 import { aspectMismatch, normalizeLayoutReading } from '../../lib/magazineV2/layoutReading.js';
 import { applyReadingToPage, themeForPage, tightSummary, unfilledSlots, type ExtraContent } from '../../lib/magazineV2/applyLayout.js';
-import { isPlaceableMedia } from '../../lib/magazineV2/media.js';
+import { isPlaceableMedia, rankMediaForPage, type RankableMediaRow } from '../../lib/magazineV2/media.js';
 import { draftReferenceFill } from '../../lib/magazineV2/referenceFill.js';
 
 /* eslint-disable @typescript-eslint/no-explicit-any */
@@ -2948,14 +2948,16 @@ router.post('/issues/:id/pages/:pageId/apply-layout', rateLimit('mag2-agent', 20
       }
       if (pageShape.background?.type === 'image' && pageShape.background.value) take(String(pageShape.background.value));
       if (extraImages.length < missing.images) {
-        // Top up from the magazine's own library — never `reference` uploads
-        // (someone else's licensed page) and never docs. Same predicate as the photo
-        // picker and the generator's user-photo pool; see media.ts.
+        // Top up from the magazine's own library, BEST CANDIDATE FOR THIS PAGE FIRST.
+        // This used to read the collection in storage order, so rebuilding page 3
+        // could take page 12's photograph while page 3's own sat further down the
+        // array. rankMediaForPage puts this page's own extracted assets first, then
+        // everything else newest-first (uploads carry no pageIndex, so recency is the
+        // only signal they have), and drops what may never be placed — a reference or
+        // a doc — so neither can be reintroduced here. See media.ts.
         const media = (await db.collection(COL.media).find({ magazineId: issue._id })) as Doc[];
-        for (const m of media) {
-          if (isPlaceableMedia(m as { kind?: string; url?: string })) {
-            take(String(m.url), String(m._id), typeof m.alt === 'string' ? m.alt : '');
-          }
+        for (const m of rankMediaForPage(media as unknown as RankableMediaRow[], Number(page.index) || 0)) {
+          take(String(m.url), String(m._id), typeof m.alt === 'string' ? m.alt : '');
         }
       }
     }

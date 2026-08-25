@@ -157,3 +157,42 @@ export function userPhotosFrom(media: MediaRow[]): UserPhoto[] {
     .filter((m) => m.source === 'upload' && isPlaceableMedia(m))
     .map((m) => ({ url: m.url as string, assetId: String(m._id), alt: m.alt ?? '' }));
 }
+
+/** A media row with the two fields that decide how RELEVANT it is to a given page. */
+export interface RankableMediaRow extends MediaRow {
+  /** The page this asset came off, for extracted/stock rows. `null` for uploads —
+   *  nothing records which page a user had in mind when they uploaded a photo. */
+  pageIndex?: number | null;
+  createdAt?: string;
+}
+
+/**
+ * The magazine's placeable pictures, best candidate for THIS page first.
+ *
+ * Rebuilding a page needs photographs, and the library is the whole magazine's. Read
+ * in storage order — which is what the apply-layout top-up did — page 3's rebuild can
+ * take page 12's photograph while page 3's own sits further down the array. The
+ * pictures are technically the client's own, so nothing is leaked; the page is just
+ * wrong, in a way that reads as the feature being careless.
+ *
+ * Two tiers, and the second matters as much as the first:
+ *
+ *   1. Assets extracted from THIS page. Only extraction and stock record a
+ *      `pageIndex` — an upload is stored with `pageIndex: null`, because nothing ever
+ *      asked the user which page they meant.
+ *   2. Everything else, NEWEST first. This is the tier uploads land in, and recency is
+ *      the only signal there is: a photo added minutes ago is far likelier to be meant
+ *      for the page being worked on than one from the first import.
+ *
+ * Stable: rows that tie keep their relative order, so the result does not shuffle
+ * between two calls with the same input.
+ */
+export function rankMediaForPage<T extends RankableMediaRow>(media: T[], pageIndex: number): T[] {
+  const placeable = media.filter((m) => isPlaceableMedia(m));
+  const onThisPage = (m: T) => Number.isInteger(m.pageIndex) && m.pageIndex === pageIndex;
+  const newest = (a: T, b: T) => String(b.createdAt ?? '').localeCompare(String(a.createdAt ?? ''));
+  return [
+    ...placeable.filter(onThisPage),
+    ...placeable.filter((m) => !onThisPage(m)).sort(newest),
+  ];
+}
