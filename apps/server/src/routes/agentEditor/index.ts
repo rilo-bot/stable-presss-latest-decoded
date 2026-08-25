@@ -19,6 +19,7 @@ import { attachAccount } from '../../lib/auth.js'
 import { isAdmin } from '../../lib/rbac.js'
 import { isAgentConfigured } from '../../lib/agent/provider.js'
 import { ingestDocument, ingestKind } from '../../lib/agent/documentIngest.js'
+import { rateLimit } from '../../lib/rateLimit.js'
 
 const router = Router()
 
@@ -39,7 +40,14 @@ router.use((req, res, next) => {
 // Content-Type header = the file's type. Same proxied pattern as /api/uploads.
 const MB = 1024 * 1024
 const rawDoc = raw({ type: () => true, limit: '50mb' })
-router.post('/ingest', rawDoc, async (req, res) => {
+// A scanned PDF here costs a page-by-page OCR wave against a paid provider — by
+// far the most expensive call in the product, and this was the one AI endpoint
+// with no limit at all (compare /issues/generate at 10/min). Staff-gated is not
+// the same as metered: one stuck client retrying a 24-page scan could bill
+// hundreds of OCR pages a minute. Generous enough that no real editing session
+// notices, low enough that a runaway loop stops being a spend incident.
+const ingestLimit = rateLimit('agent-ingest', 30, 60 * 60_000)
+router.post('/ingest', ingestLimit, rawDoc, async (req, res) => {
   if (!isAgentConfigured()) {
     res.status(503).json({ error: 'The studio assistant is resting — OPENROUTER_API_KEY is not configured on the server.' })
     return
