@@ -18,7 +18,7 @@
 import { PAGE_H, PAGE_W } from './config.js';
 import { normalizeLayoutSpec } from './layoutSpec.js';
 import type { LayoutReading } from './layoutReading.js';
-import { readingToSpec, specContentRefs } from './readingToSpec.js';
+import { readingToSpec, specContentRefs, stripType } from './readingToSpec.js';
 import { measureFidelity, type Fidelity } from './layoutFidelity.js';
 import { pruneLayoutSpec } from './pruneSpec.js';
 import { solveLayout } from './solveLayout.js';
@@ -458,8 +458,18 @@ export function applyReadingToPage(
   furnitureCtx?: RefurnishContext,
   /** Reference-fill: drafted copy + library photos for slots the page cannot cover. */
   extra?: ExtraContent,
+  /**
+   * Whether to take the reference's own TYPE — its sizes, ink and weights — as well as
+   * its composition. Default true: it is the thing "make this page look like that one"
+   * most obviously means, and a reading only carries type the model could actually see,
+   * so a reference it could not read still leaves the page's own typography alone.
+   *
+   * `false` strips type at the input rather than switching on a flag downstream, so the
+   * off path is the same code that ran before type was read at all.
+   */
+  adoptType = true,
 ): ApplyResult {
-  const converted = readingToSpec(reading);
+  const converted = readingToSpec(adoptType ? reading : stripType(reading));
   if (!converted) return { page: null, why: 'That layout could not be turned into a page structure.' };
   // Through the trust boundary even though we built it ourselves: it is the one place
   // the DSL's caps are enforced, and it must never be bypassed just because the

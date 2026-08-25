@@ -13,6 +13,8 @@ import { normalizeLayoutReading } from '../../src/lib/magazineV2/layoutReading.t
 import type { MagazineElement } from '../../src/lib/magazineV2/model.ts';
 import { PAGE_H, PAGE_W } from '../../src/lib/magazineV2/config.ts';
 import { pageFurniture, restampFolio, FURNITURE_IDS, FOLIO_ELEMENT_ID } from '../../src/lib/magazineV2/pageFurniture.ts';
+import { ptToPx } from '../../src/lib/magazineV2/roleScale.ts';
+import { MIN_DISPLAY_PT } from '../../src/lib/magazineV2/layoutSpec.ts';
 
 let seq = 0;
 const el = (o: Partial<MagazineElement>): MagazineElement => ({
@@ -1088,4 +1090,104 @@ test('KNOWN GAP — on the route\'s skeleton the background raster is still repl
   const out = applyReadingToPage(TWO_BAND(), routeBlank(page), themeForPage(null, page), undefined, DRAFTED);
   assert.ok(out.page, out.why);
   assert.equal(out.page.background.type, 'color', 'the scan is replaced — still true, still open');
+});
+
+// ── The reference's own TYPE ─────────────────────────────────────────────────
+//
+// A rebuilt page could only ever set type from ROLE_SCALE defaults — two faces, five
+// palette slots — however distinctive the reference was. These cover the reading
+// reaching the built element, and the guards that stop a misread size or ink from
+// producing a page nobody can read.
+
+const TYPED_REFERENCE = () => reading([
+  { role: 'headline', box: { x: 0.08, y: 0.1, w: 0.84, h: 0.16 }, sizeFrac: 0.09, color: '#c81f24', weight: 900 },
+  { role: 'body', box: { x: 0.08, y: 0.34, w: 0.84, h: 0.56 } },
+]);
+
+/** A plain page whose own theme is nothing like the reference's, so only a real
+ *  adoption can produce the reference's values. */
+const plainPage = () => ({
+  width: PAGE_W,
+  height: PAGE_H,
+  elements: [text('headline', 'Its Own Headline'), text('body', 'Its own prose, at length.')],
+});
+
+const builtHeadline = (out: ReturnType<typeof applyTo>) =>
+  out.page!.elements.find((e) => e.type === 'text' && e.text?.role === 'headline');
+
+test("the reference's ink and weight reach the built element", () => {
+  const out = applyTo(TYPED_REFERENCE(), plainPage(), null);
+  assert.ok(out.page, out.why);
+  const h = builtHeadline(out);
+  assert.ok(h?.text, 'the headline was built');
+  assert.equal(h.text.color, '#c81f24', "the reference's red, not the page's near-black");
+  assert.equal(h.text.fontWeight, 900);
+});
+
+test("the reference's SIZE beats the role default", () => {
+  // ROLE_SCALE caps a headline at 96px. 0.09 of a 1754px sheet is ~158px, so a size
+  // that merely fell through to the default would be indistinguishable from no
+  // adoption at all — the assertion has to be that it went UP.
+  const out = applyTo(TYPED_REFERENCE(), plainPage(), null);
+  const h = builtHeadline(out)!;
+  assert.ok(h.text!.fontSize > 96, `measured size wins over the role ceiling (got ${Math.round(h.text!.fontSize)}px)`);
+});
+
+test('adoptType: false rebuilds exactly as it did before type was ever read', () => {
+  const on = applyTo(TYPED_REFERENCE(), plainPage(), null);
+  const off = applyReadingToPage(TYPED_REFERENCE(), plainPage(), themeForPage(null, plainPage()), undefined, undefined, false);
+  assert.ok(off.page, off.why);
+  const offH = off.page.elements.find((e) => e.type === 'text' && e.text?.role === 'headline')!;
+  assert.notEqual(offH.text!.color, '#c81f24', "the page's own ink is kept");
+  assert.ok(offH.text!.fontSize <= 96, 'and the role ceiling');
+  // Same composition either way — type adoption must not move the boxes.
+  const onH = builtHeadline(on)!;
+  assert.equal(Math.round(onH.y), Math.round(offH.y), 'the arrangement is identical');
+});
+
+test('a reference with no legible type leaves the page typography alone', () => {
+  const out = applyTo(TWO_BAND(), plainPage(), null);
+  assert.ok(out.page, out.why);
+  const h = builtHeadline(out)!;
+  assert.ok(h.text!.fontSize <= 96, 'the role ceiling still applies');
+});
+
+test('type adoption cannot produce unreadable type, however the size was misread', () => {
+  // The floor is the one thing nobody gets to choose. A size at the very bottom of
+  // what the trust boundary accepts still has to come out readable.
+  const tiny = reading([
+    { role: 'headline', box: { x: 0.08, y: 0.1, w: 0.84, h: 0.16 }, sizeFrac: 0.004 },
+    { role: 'body', box: { x: 0.08, y: 0.34, w: 0.84, h: 0.56 } },
+  ]);
+  const out = applyTo(tiny, plainPage(), null);
+  assert.ok(out.page, out.why);
+  const h = builtHeadline(out)!;
+  // Against the floor the codebase actually sets, not a number invented here: a
+  // headline is a display role, so MIN_DISPLAY_PT. 0.004 of the sheet is ~3.4pt, which
+  // normalizeLayoutSpec clamps to MIN_TYPE_PT and typeSizeFor then floors — the point
+  // being that a misread size lands on a readable page rather than an empty-looking one.
+  const floorPx = ptToPx(MIN_DISPLAY_PT);
+  assert.ok(
+    h.text!.fontSize >= floorPx - 0.5,
+    `the readability floor holds (got ${h.text!.fontSize.toFixed(1)}px, floor ${floorPx.toFixed(1)}px)`,
+  );
+  assert.ok(h.text!.fontSize < 40, 'and a misread size is not silently promoted to the role default either');
+});
+
+test("an adopted ink that would vanish into the ground is repaired, not printed", () => {
+  // composeFromSolved runs readableColor against what is actually behind the text. A
+  // reference whose ink matches this page's ground must not produce invisible words.
+  const white = reading([
+    { role: 'headline', box: { x: 0.08, y: 0.1, w: 0.84, h: 0.16 }, color: '#ffffff' },
+    { role: 'body', box: { x: 0.08, y: 0.34, w: 0.84, h: 0.56 } },
+  ]);
+  const page = plainPage(); // derives a white ground
+  const out = applyTo(white, page, null);
+  assert.ok(out.page, out.why);
+  const h = builtHeadline(out)!;
+  const ground = out.page.background.type === 'color' ? out.page.background.value : '#ffffff';
+  assert.ok(
+    contrastRatio(h.text!.color, /^#[0-9a-f]{6}$/i.test(ground) ? ground : '#ffffff') > 1.6,
+    `white-on-white was repaired (ink ${h.text!.color} on ${ground})`,
+  );
 });

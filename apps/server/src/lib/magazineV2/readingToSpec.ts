@@ -50,7 +50,7 @@ const MAX_CHILDREN = 8;
 const MAX_STACK_LAYERS = 5;
 import { PAGE_H, PAGE_W } from './config.js';
 import type { LayoutReading, ReadBox, ReadRegion } from './layoutReading.js';
-import { TEXT_ROLES } from './roleScale.js';
+import { TEXT_ROLES, pxToPt } from './roleScale.js';
 
 /** Roles that BACK other content: legal as the lower layers of a stack. Mirrors
  *  `isBackingLayer` in layoutSpec.ts and the scrim/panel rules in pruneSpec.ts. */
@@ -388,7 +388,49 @@ function leafFor(region: ReadRegion, ref: Alloc): LeafNode {
   if (['headline', 'pullquote', 'figure', 'kicker'].includes(region.role)) leaf.fontRef = 'display';
   else if (['body', 'caption', 'byline', 'entry', 'label', 'subhead'].includes(region.role)) leaf.fontRef = 'body';
   if (region.role === 'image') leaf.fit = 'cover';
+
+  // ── The reference's own TYPE, where it was legible ──
+  //
+  // Each of these only fires when the reading actually carries the field, so a
+  // reference whose type could not be read still lands exactly where it did before
+  // these existed: role defaults, and the page's own palette and faces. A caller that
+  // does not want the reference's type at all strips it from the reading before
+  // conversion (see stripType) rather than passing a flag down seven call sites.
+  //
+  // A MEASURED size beats the role's ceiling, and both are only ceilings: typeSizeFor
+  // hands whichever wins to fitFontSize, which shrinks to the box and never goes below
+  // the readability floor. So a misread size cannot produce type nobody can read, and
+  // cannot overflow — it produces type that is merely wrong, and visibly so.
+  //
+  // sizeFrac is a fraction of the reference's height and is resolved against the
+  // CANONICAL page, the same space this module already measures margins in. Points are
+  // a physical size: a 30pt headline should print at 30pt whatever sheet it lands on,
+  // and the box-fit shrink handles a page too small to hold it.
+  if (region.sizeFrac !== undefined) leaf.fontPt = pxToPt(region.sizeFrac * PAGE_H);
+  if (region.color) leaf.color = region.color;
+  // A weight the model actually SAW outranks one inferred from relative emphasis.
+  if (region.weight !== undefined) leaf.weightHint = region.weight;
+  // `face` is deliberately NOT applied. fontRef chooses between the PAGE's two faces,
+  // and knowing the reference's headline was a serif does not say which of ours is
+  // one — that needs a font-metrics answer, not a layout one. It is read and shown to
+  // the user; adopting it belongs with picking a pairing.
   return leaf;
+}
+
+/**
+ * The same reading with every typographic reading removed.
+ *
+ * This is how "do not adopt the reference's type" is expressed: at the INPUT, once,
+ * rather than as a flag threaded through leafFor's seven call sites and forgotten at
+ * one of them. A stripped reading converts down exactly the path that existed before
+ * type was read at all, so "off" is not a second code path that can drift — it is the
+ * original one.
+ */
+export function stripType(reading: LayoutReading): LayoutReading {
+  return {
+    ...reading,
+    regions: reading.regions.map(({ sizeFrac: _s, color: _c, weight: _w, face: _f, ...rest }) => rest),
+  };
 }
 
 /**

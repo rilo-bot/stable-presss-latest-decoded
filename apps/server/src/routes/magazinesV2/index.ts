@@ -2988,7 +2988,14 @@ router.post('/issues/:id/pages/:pageId/apply-layout', rateLimit('mag2-agent', 20
    * honest input, with the magazine's `genTheme` still winning where it exists.
    */
   const style = themeForPage(genTheme, pageShape);
-  const applied = applyReadingToPage(reading, blank, style, furnitureContextFor(issue, page), extraFill);
+  // Take the reference's own type unless the client says not to. Opt-OUT rather than
+  // opt-in: adopting the reference's sizes, ink and weights is what "make this page
+  // look like that one" plainly means, and a reading only carries type the model could
+  // actually see — so a reference it could not read leaves the page's own alone
+  // anyway. The escape hatch exists for the user who wants the arrangement and their
+  // own typography.
+  const adoptType = req.body?.adoptType !== false;
+  const applied = applyReadingToPage(reading, blank, style, furnitureContextFor(issue, page), extraFill, adoptType);
   if (!applied.page) {
     // 422: the request and the server are both fine — this layout and this page
     // cannot be put together, and the sentence says which.
