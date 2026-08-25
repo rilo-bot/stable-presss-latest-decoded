@@ -47,14 +47,20 @@ const SYSTEM = [
   '{',
   '  "aspect": <number>,            // width / height of the reference',
   '  "background": "light" | "dark" | "photo",',
-  `  "margin": <${SPACE_TOKENS.join('|')}>,   // the outer whitespace ring: none for a full-bleed design`,
+  // EVERY enum is shown with QUOTED alternatives, and none as a bare <a|b|c> token
+  // list. Three fields here used to be written the bare way, and the model mirrored
+  // that style straight into its output as an unquoted KEY — `colorRef: "text"` —
+  // which is not JSON. Measured on a real cover, 3 of 4 reads came back broken that
+  // way, and the user was told we could not make out a layout in an image the model
+  // had in fact read correctly. parseJson.ts repairs it now; this stops it happening.
+  `  "margin": ${SPACE_TOKENS.map((t) => `"${t}"`).join(' | ')},   // the outer whitespace ring: "none" for a full-bleed design`,
   '  "columns": <1-6>,              // text columns, if the design has an obvious grid',
   '  "regions": [ {',
-  '      "role": <role>,',
+  '      "role": "<one of the roles listed below>",',
   '      "box": { "x": 0-1, "y": 0-1, "w": 0-1, "h": 0-1 },   // FRACTIONS of the page, origin top-left',
   '      "z": <number>,             // only when regions overlap: higher sits on top',
   '      "emphasis": "dominant" | "normal" | "quiet",',
-  `      "colorRef": <${COLOR_REFS.join('|')}>,`,
+  `      "colorRef": ${COLOR_REFS.map((c) => `"${c}"`).join(' | ')},`,
   '      "align": "left" | "center" | "right" | "justify",',
   '      "sizeFrac": <number>,        // TEXT ONLY: cap height of the type as a FRACTION',
   '                                   // of the page height. 0.08 = a line one twelfth tall.',
@@ -78,6 +84,8 @@ const SYSTEM = [
   '    caption under a big number (a stat) · entry = one line of a contents list · qr / icon as named',
   '',
   'RULES THAT MATTER:',
+  '• STRICT JSON. EVERY key and EVERY string value is double-quoted — `"colorRef": "text"`,',
+  '  never `colorRef: "text"`. No trailing commas, no comments, no single quotes.',
   '• BOXES ARE FRACTIONS, 0 to 1. Never pixels, never percentages as 0-100.',
   '• Report the boxes you can SEE. A full-bleed photo is { x:0, y:0, w:1, h:1 }, not a guess at a',
   '  margin around it.',
