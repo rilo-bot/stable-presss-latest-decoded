@@ -3,22 +3,22 @@
 //
 // Renders the REAL read-only IssuePageCanvas as the base layer (so what you edit
 // is pixel-identical to what publishes — zero drift), then overlays a
-// transparent interaction layer: one hit box per element. A clean click on a text
-// box opens it for typing (single-click inline edit — no double-click); a
-// deliberate drag (past DRAG_THRESHOLD_PX) moves it; 8 resize handles sit on the
+// transparent interaction layer: one hit box per element. A clean click just
+// selects (Canva-style); a DOUBLE-click on a text box opens it for typing. A
+// deliberate drag (past DRAG_THRESHOLD_PX) on the body moves it, same as a drag
+// on the dedicated move handle below the selection. 8 resize handles sit on the
 // selection. Drag converts screen-pixel deltas to page-canonical deltas via the
 // measured render width. Live drag uses updateLocal (no server call); pointerup
 // commits once (one undo entry).
 // ---------------------------------------------------------------------------
 
 import React, { useEffect, useRef, useState, type CSSProperties } from 'react';
-import { Wand2, WandSparkles } from 'lucide-react';
+import { Move, Wand2, WandSparkles } from 'lucide-react';
 import { sanitizeRichText } from '@/lib/htmlInline';
 import { useEditorStore } from './store';
 import { ShimmerText } from './BuildProgress';
 import { IssuePageCanvas } from './IssuePageCanvas';
 import { pctRect, clampRect } from './geometry';
-import * as api from './api';
 import type { MagazineElement, MagazinePageV2 } from './model';
 
 type Mode = 'move' | 'n' | 's' | 'e' | 'w' | 'ne' | 'nw' | 'se' | 'sw';
@@ -295,13 +295,9 @@ function ActivePageLayer() {
     if (!d) return;
     drag.current = null;
     overlayRef.current?.releasePointerCapture(e.pointerId);
-    // A clean click (no real movement) on an element BODY opens text for typing —
-    // single-click to edit, no double-click. startEditing no-ops for non-text
-    // elements and resize handles (mode !== 'move'), so they just stay selected.
-    if (!d.moved) {
-      if (d.mode === 'move') startEditing(d.orig);
-      return;
-    }
+    // A clean click (no real movement) just selects — Canva-style, editing text
+    // needs a DOUBLE-click (see onOverlayDoubleClick below).
+    if (!d.moved) return;
     const final = useEditorStore.getState().page?.elements.find((x) => x.id === d.orig.id);
     if (final && (final.x !== d.before.x || final.y !== d.before.y || final.w !== d.before.w || final.h !== d.before.h)) {
       void commit(d.orig.id, { x: final.x, y: final.y, w: final.w, h: final.h }, d.before);
@@ -320,7 +316,7 @@ function ActivePageLayer() {
   // Pick the topmost, most-specific element under the point; near-full-page
   // elements sort LAST, so you click "past" a background to the content on it, yet
   // can still select the background where nothing sits on top.
-  const hitTest = (e: React.PointerEvent): MagazineElement | null => {
+  const hitTest = (e: { clientX: number; clientY: number }): MagazineElement | null => {
     const rect = overlayRef.current?.getBoundingClientRect();
     if (!rect || rect.width === 0 || rect.height === 0) return null;
     // Use the SAME width/height fallback as IssuePageCanvas: a page still being
@@ -352,6 +348,12 @@ function ActivePageLayer() {
     startDrag(e, target, 'move');
   };
 
+  // Canva-style: a single click only selects; typing needs a deliberate double-click.
+  const onOverlayDoubleClick = (e: React.MouseEvent) => {
+    const target = hitTest(e);
+    if (target) startEditing(target);
+  };
+
   return (
     // `isolate` creates a stacking context so the interaction overlay's very high
     // z-index (100000, needed to sit above page elements whose z caps at 9999) stays
@@ -376,6 +378,7 @@ function ActivePageLayer() {
           onPointerMove={onMove}
           onPointerUp={endDrag}
           onPointerDown={onOverlayPointerDown}
+          onDoubleClick={onOverlayDoubleClick}
         >
           {/* The text box currently being typed into. */}
           {editingElement && (
@@ -418,6 +421,32 @@ function ActivePageLayer() {
                   }}
                 />
               ))}
+              {/* Canva-style move handle: a dedicated icon below the selection you can
+                  grab to drag the element — the same 'move' mode the body itself
+                  starts on pointerdown, just as an explicit, unambiguous affordance. */}
+              <div
+                onPointerDown={(e) => startDrag(e, selected, 'move')}
+                title="Drag to move"
+                style={{
+                  position: 'absolute',
+                  left: '50%',
+                  top: '100%',
+                  marginTop: 10,
+                  transform: 'translate(-50%, 0)',
+                  width: 28,
+                  height: 28,
+                  display: 'flex',
+                  alignItems: 'center',
+                  justifyContent: 'center',
+                  background: '#fff',
+                  border: '1.5px solid var(--studio-select)',
+                  borderRadius: '9999px',
+                  cursor: 'grab',
+                  boxShadow: '0 1px 4px rgba(0,0,0,0.15)',
+                }}
+              >
+                <Move size={14} className="text-studio-ink-2" />
+              </div>
             </div>
           )}
         </div>
@@ -439,22 +468,26 @@ export function EditorCanvas() {
   const formatBusy = useEditorStore((s) => s.formatBusy);
   const setPageSelected = useEditorStore((s) => s.setPageSelected);
   const canManage = useEditorStore((s) => s.canManage());
-  const [cache, setCache] = useState<Record<string, MagazinePageV2>>({});
+  // ONE page cache for the whole studio, in the store (`thumbs`), shared with the
+  // page rail. This used to be a second, private copy of exactly the same documents:
+  // every page was fetched twice and held twice, and only this copy lacked the
+  // store's rev check and in-flight de-duplication. Two concrete bugs came out of
+  // that, both fixed by deleting it:
+  //   • Its only invalidation was "evict the page being edited", so when something
+  //     rewrote a page the user was NOT looking at — a layout rebuild the assistant
+  //     aimed at another page, a Fill pass — the rail updated and this preview kept
+  //     drawing the old page until a full reload.
+  //   • `cache` was in the lazy-fetch effect's dependencies, so every arriving page
+  //     tore down and re-observed every placeholder, re-firing them all with nothing
+  //     tracking requests already in flight: opening a long magazine turned into an
+  //     O(N²) burst of getPage calls. `ensureThumb` has always de-duplicated
+  //     properly; the effect below just asks it.
+  const thumbs = useEditorStore((s) => s.thumbs);
   const rootRef = useRef<HTMLDivElement>(null);
 
-  // Evict the page being edited from the preview cache, so when it later returns
-  // to a preview it re-fetches the freshly-edited content (never a stale copy).
-  useEffect(() => {
-    if (!currentPageId) return;
-    setCache((c) => {
-      if (!c[currentPageId]) return c;
-      const next = { ...c };
-      delete next[currentPageId];
-      return next;
-    });
-  }, [currentPageId]);
-
   // Lazy-fetch a non-active page's full content when its placeholder nears view.
+  // Deps are the things that change WHICH placeholders exist — never the cache
+  // itself, or we are back to the storm described above.
   useEffect(() => {
     const root = rootRef.current;
     if (!root || !issueId) return;
@@ -463,16 +496,15 @@ export function EditorCanvas() {
         for (const en of entries) {
           if (!en.isIntersecting) continue;
           const pid = (en.target as HTMLElement).dataset.lazy;
-          if (pid && !cache[pid]) {
-            api.getPage(issueId, pid).then((p) => setCache((c) => ({ ...c, [pid]: p }))).catch(() => {});
-          }
+          // Safe to call repeatedly: it no-ops on an in-flight or current copy.
+          if (pid) useEditorStore.getState().ensureThumb(pid);
         }
       },
       { root, rootMargin: '600px' },
     );
     root.querySelectorAll('[data-lazy]').forEach((el) => io.observe(el));
     return () => io.disconnect();
-  }, [issueId, pages, cache, currentPageId]);
+  }, [issueId, pages]);
 
   // Scroll-aware active page: the page nearest the viewport centre becomes the
   // ACTIVE (editable + AI-targeted) page, so the assistant acts on whatever the
@@ -511,7 +543,7 @@ export function EditorCanvas() {
     <div ref={rootRef} className="flex flex-col items-center gap-8 py-8">
       {pages.map((sum) => {
         const active = sum.id === currentPageId;
-        const preview = cache[sum.id];
+        const preview = thumbs[sum.id];
         return (
           <div key={sum.id} data-page={sum.id} className="shrink-0" style={{ width: zoomWidth }}>
             {/* Per-page header: number · publish checkbox · Fill / Adjust (every page) */}

@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { parseJsonObject, repairUnquotedKeys } from '../../src/lib/magazineV2/parseJson.js';
+import { parseJsonObject, repairUnquotedKeys, repairBracketMismatch } from '../../src/lib/magazineV2/parseJson.js';
 
 // ── The malformation this exists for ─────────────────────────────────────────
 // Measured, not imagined: reading one real magazine cover four times, three of the
@@ -92,4 +92,56 @@ test('repair leaves an already-quoted key untouched', () => {
 test('keys after a nested close-brace are repaired too', () => {
   const parsed = parseJsonObject('{"box": {"x": 1}, colorRef: "bg"}') as Record<string, unknown>;
   assert.deepEqual(parsed, { box: { x: 1 }, colorRef: 'bg' });
+});
+
+// ── The OTHER malformation: a closing bracket of the wrong TYPE ───────────────
+// Measured, not imagined: a real art-director layout tree — an otherwise
+// well-formed, valid page — closed a `"children":[...]` array with `}` instead of
+// `]` near the end. finishReason was 'stop' (a complete response, not a
+// truncation), JSON.parse rejected the whole object, and the scan fell through to
+// the small, valid `"page":{...}` fragment inside it — the SAME wrong-fragment
+// failure mode repairUnquotedKeys exists for for keys, just via a bracket instead.
+// The user saw "was unusable — using seed" on a page the model had designed correctly.
+
+const MISMATCHED_ARRAY_CLOSER = `{"root":{"kind":"row","children":[{"weight":1,"node":{"kind":"leaf","role":"body"}}}}}`;
+const MATCHING_VALID_SHAPE = { root: { kind: 'row', children: [{ weight: 1, node: { kind: 'leaf', role: 'body' } }] } };
+
+test('a mismatched closing bracket type still parses whole', () => {
+  const parsed = parseJsonObject(MISMATCHED_ARRAY_CLOSER);
+  assert.deepEqual(parsed, MATCHING_VALID_SHAPE);
+});
+
+test('bracket-mismatch repair alone reconstructs the intended nesting', () => {
+  const repaired = repairBracketMismatch(MISMATCHED_ARRAY_CLOSER);
+  assert.deepEqual(JSON.parse(repaired), MATCHING_VALID_SHAPE);
+});
+
+test('repairBracketMismatch leaves already-valid JSON unchanged', () => {
+  const src = '{"a":[1,2,{"b":[3,4]}],"c":{"d":5}}';
+  assert.equal(repairBracketMismatch(src), src);
+});
+
+test('repairBracketMismatch never rewrites brackets inside strings', () => {
+  const src = '{"note": "use [brackets] and {braces} in prose"}';
+  assert.equal(repairBracketMismatch(src), src);
+  assert.deepEqual(parseJsonObject(src), { note: 'use [brackets] and {braces} in prose' });
+});
+
+test('a stray closer with nothing open is dropped, not guessed at', () => {
+  assert.equal(repairBracketMismatch('{"a":1}]'), '{"a":1}');
+});
+
+test('an unquoted key AND a mismatched bracket in the same object both repair', () => {
+  const src = `{"root":{"kind":"row",children:[{"weight":1,"node":{"kind":"leaf","role":"body"}}}}}`;
+  assert.deepEqual(parseJsonObject(src), MATCHING_VALID_SHAPE);
+});
+
+test('the outermost object still wins when the outer is bracket-mismatched', () => {
+  // Same regression as the unquoted-key case, via the other malformation: a scan
+  // that merely "tries the next {" on failure is happy to return the small, valid
+  // inner "page" object instead of the real (fixable) outer one.
+  const src = `{"page":{"background":{"ref":"bg"}},"root":{"kind":"row","children":[{"weight":1,"node":{"kind":"leaf"}}}}}`;
+  const parsed = parseJsonObject(src) as Record<string, unknown>;
+  assert.ok(parsed, 'the outer object parses');
+  assert.ok('root' in parsed, 'must be the whole spec, not just the page fragment');
 });

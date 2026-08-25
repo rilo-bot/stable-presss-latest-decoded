@@ -18,7 +18,17 @@ import type { MediaAsset } from './api';
 type Tab = 'pages' | 'library' | 'upload';
 
 export function CoverPicker({ open, onClose }: { open: boolean; onClose: () => void }) {
-  const s = useEditorStore();
+  // Narrow subscriptions, not the whole store — see the note in MagazineEditorV2.
+  // This dialog sits over the canvas, so a whole-store subscription re-rendered it
+  // (and re-ran its media fetch effects' dependency comparisons) on every
+  // optimistic element update happening behind it.
+  const s = {
+    issue: useEditorStore((st) => st.issue),
+    issueId: useEditorStore((st) => st.issueId),
+    pages: useEditorStore((st) => st.pages),
+    currentPageId: useEditorStore((st) => st.currentPageId),
+    setCover: useEditorStore((st) => st.setCover),
+  };
   const [tab, setTab] = useState<Tab>('pages');
   const [assets, setAssets] = useState<MediaAsset[]>([]);
   const [loadingMedia, setLoadingMedia] = useState(false);

@@ -324,11 +324,15 @@ export function AiPanel() {
     let src: string | undefined;
     let images: AttachedImage[] | undefined;
     let attachRefs: { name: string; isImage: boolean; url?: string }[] | undefined;
+    /** The attachments THIS turn is carrying — see the note where the composer is
+     *  cleared. Anything staged after this point belongs to the next turn. */
+    const sentIds = new Set<string>();
     if (atts.length > 0) {
       setIngesting(true);
       const parts: string[] = [];
       const imgs: AttachedImage[] = [];
       const worked = atts.map((a) => ({ ...a })); // cache results without mutating state mid-flight
+      for (const a of worked) sentIds.add(a.id);
       // Persist the caches by id (never replace the list wholesale) so an
       // attachment removed or added while requests were in flight stays that way.
       const mergeWorked = () => setAtts((prev) => prev.map((p) => worked.find((w) => w.id === p.id) ?? p));
@@ -409,9 +413,17 @@ export function AiPanel() {
       t || (atts.every((a) => a.isImage) ? 'Use the attached image(s) on this page.' : 'Fill this page from the attached document.');
     // Clear the composer — text, attachments (revoking their object URLs), and the
     // side preview — so the files LEAVE the input and ride along as a sent message.
-    setInput('');
-    for (const a of atts) if (a.imgUrl) URL.revokeObjectURL(a.imgUrl);
-    setAtts([]);
+    //
+    // Only the ones we actually SENT are removed. Ingesting a document takes a while
+    // (a read, a vision digest, an upload), and anything the user attached in the
+    // meantime is not part of this turn: `setAtts([])` used to drop those too, which
+    // undid the whole point of the id-keyed merge above — the file vanished from the
+    // composer without ever having been sent anywhere.
+    // Same reasoning for the text box: clear it only if it still holds what was sent,
+    // so a prompt typed while the attachment was being read isn't wiped either.
+    setInput((prev) => (prev.trim() === t ? '' : prev));
+    for (const a of atts) if (sentIds.has(a.id) && a.imgUrl) URL.revokeObjectURL(a.imgUrl);
+    setAtts((prev) => prev.filter((a) => !sentIds.has(a.id)));
     setPreviewDoc(null);
     void sendChat(bodyText, src, images, attachRefs);
   };

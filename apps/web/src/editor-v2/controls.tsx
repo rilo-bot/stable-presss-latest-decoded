@@ -131,8 +131,64 @@ export function ColorControl({ value, onChange }: { value: string; onChange: (v:
   // Free-typing draft for the hex field: only commit when it's a complete 6-digit
   // hex, so partial values ("#", "#0a") never get persisted as the colour (which
   // would render invalid CSS and pollute the undo history). Reverts junk on blur.
+  // The draft is also what the native picker writes to while it is being dragged —
+  // see below.
   const [draft, setDraft] = useState(value);
-  useEffect(() => setDraft(value), [value]);
+
+  /**
+   * THE NATIVE COLOUR PICKER FIRES CONTINUOUSLY WHILE IT IS DRAGGED.
+   *
+   * React maps `onChange` on `<input type="color">` to the `input` event, so hauling
+   * the cursor across the gradient used to emit a change per step — and every one of
+   * those was a full commit: a rev-guarded PATCH over the network, its own undo-stack
+   * entry, and a rev bump that the next one then had to conflict with. One colour
+   * tweak could fire dozens of writes and, at 60 entries, flush the user's entire
+   * real undo history to make room for them.
+   *
+   * So the drag stays LOCAL (the swatch follows the pointer via `draft`) and only the
+   * colour the user settles on is committed: a trailing debounce, flushed on blur and
+   * on unmount so a colour picked and then dismissed is never lost. Deliberately
+   * picking three colours in a row still yields three undo entries, which is right —
+   * they were three decisions.
+   */
+  const timer = useRef<number | undefined>(undefined);
+  const pending = useRef<string | null>(null);
+  // Both of these are read by a flush that can run LONG after the render that
+  // scheduled it — from a timer, or from the unmount effect below, which by
+  // definition holds the first render's closure. The callers rebuild `onChange` every
+  // render (it closes over the selected element), so calling the captured one would
+  // commit against a stale snapshot; refs keep the flush pointed at the current pair.
+  const latest = useRef(value);
+  const notify = useRef(onChange);
+  latest.current = value;
+  notify.current = onChange;
+
+  const flush = () => {
+    window.clearTimeout(timer.current);
+    const v = pending.current;
+    pending.current = null;
+    if (v && HEX6.test(v) && v.toLowerCase() !== latest.current.toLowerCase()) notify.current(v);
+  };
+  // Unmount can beat the timer (the inspector closes, the selection changes), and a
+  // colour the user chose has to survive that.
+  useEffect(() => flush, []);
+
+  // The bound value changed under us — a different element got selected, or our own
+  // commit landed. Either way an un-flushed pick is void: it was chosen for the
+  // colour that was there before, and flushing it now would paint it onto whatever is
+  // there instead.
+  useEffect(() => {
+    setDraft(value);
+    pending.current = null;
+    window.clearTimeout(timer.current);
+  }, [value]);
+
+  const onPick = (v: string) => {
+    setDraft(v);
+    pending.current = v;
+    window.clearTimeout(timer.current);
+    timer.current = window.setTimeout(flush, 250);
+  };
 
   const onType = (v: string) => {
     setDraft(v);
@@ -146,7 +202,9 @@ export function ColorControl({ value, onChange }: { value: string; onChange: (v:
           <button
             key={c}
             type="button"
-            onClick={() => onChange(c)}
+            // A swatch is one deliberate choice — commit it immediately, and drop any
+            // debounced picker value so a half-finished drag can't land on top of it.
+            onClick={() => { pending.current = null; window.clearTimeout(timer.current); setDraft(c); onChange(c); }}
             className={cn(
               'h-5 w-5 rounded-sm border transition-transform hover:scale-110',
               value.toLowerCase() === c.toLowerCase() ? 'border-studio-gold ring-1 ring-studio-gold' : 'border-studio-edge'
@@ -159,8 +217,12 @@ export function ColorControl({ value, onChange }: { value: string; onChange: (v:
       <label className="flex items-center gap-2 text-ui-sm text-studio-ink-2">
         <input
           type="color"
-          value={HEX6.test(value) ? value : '#000000'}
-          onChange={(e) => onChange(e.target.value)}
+          // Bound to the DRAFT, so the swatch tracks the pointer through a drag that
+          // has not been committed yet (bound to `value` it would snap back on every
+          // re-render until the debounce landed).
+          value={HEX6.test(draft) ? draft : '#000000'}
+          onChange={(e) => onPick(e.target.value)}
+          onBlur={flush}
           className="h-6 w-8 rounded-sm border border-studio-edge bg-transparent p-0"
           aria-label="Pick colour"
         />

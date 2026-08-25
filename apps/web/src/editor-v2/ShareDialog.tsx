@@ -169,7 +169,10 @@ export function ShareDialog({ onClose }: { onClose: () => void }) {
     setBusy(true);
     try {
       const { emailed, emailError } = await api.addCollaborator(issueId, { email: selectedEmail, pageIds });
-      await refreshIssue();
+      // The share is committed; this only re-reads the list that renders it. When the
+      // re-read fails the person DOES have access but their row won't appear — say so,
+      // rather than leaving a dialog that looks like the share didn't take.
+      if (!(await refreshIssue())) toast.message('Shared — the list below may be a moment behind. Reopen this dialog to refresh it.');
       const shared = selectedEmail;
       const what = pageIds === 'all' ? 'this magazine' : pageListLabel(Array.from(picked).map((id) => numberOf.get(id) ?? 0));
       setSelectedEmail('');
@@ -207,7 +210,7 @@ export function ShareDialog({ onClose }: { onClose: () => void }) {
     setBusy(true);
     try {
       await api.addCollaborator(issueId, { email: c.email, pageIds });
-      await refreshIssue();
+      if (!(await refreshIssue())) toast.message('Saved — the list below may be a moment behind.');
       setEditing(null);
       const who = c.displayName || c.email;
       toast.success(`${who} now has ${pageIds === 'all' ? 'all pages' : pageListLabel(Array.from(editPicked).map((id) => numberOf.get(id) ?? 0))}.`);
@@ -222,8 +225,8 @@ export function ShareDialog({ onClose }: { onClose: () => void }) {
     if (!issueId) return;
     try {
       await api.removeCollaborator(issueId, userId);
-      await refreshIssue();
-      toast.success(`Removed ${name}.`);
+      const fresh = await refreshIssue();
+      toast.success(`Removed ${name}.${fresh ? '' : ' (The list below may be a moment behind.)'}`);
     } catch (e) {
       toast.error(e instanceof Error ? e.message : 'Could not remove access.');
     }
