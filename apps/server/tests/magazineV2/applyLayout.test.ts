@@ -936,6 +936,60 @@ test('an imported page rebuilt on the route\'s blanked skeleton KEEPS its own ty
   assert.equal(headline.text.color, '#7b1113', "and the page's own ink, not #1a1a1a");
 });
 
+test('white-on-dark survives all the way through the ROUTE\'s shape onto the built page', () => {
+  // The ground-moves-not-the-ink repair is already covered at themeForPage level ("white
+  // type over a background PHOTO never derives white-on-white"). What was NOT covered is
+  // that it composes: it only became load-bearing on the apply path when the style
+  // started coming from the real page.
+  //
+  // Before the style fix the ink here was the hardcoded #1a1a1a and this could not
+  // arise. Now an imported page holds its photography as a raster, so `pageBg` correctly
+  // refuses to read a URL as hex and falls to #ffffff — and a page of white type over a
+  // dark photograph derives ink #ffffff on ground #ffffff, 1:1, invisible. The repair is
+  // the whole margin between this feature and a page of white text on white, so the
+  // assertion that matters is on the ELEMENT the user ends up looking at.
+  const onDark = (role: string, content: string, fontSize: number) =>
+    text(role, content, {
+      text: {
+        content, role, fontFamily: 'Chronicle Display, serif', fontSize,
+        fontWeight: role === 'headline' ? 700 : 400, color: '#ffffff',
+        align: 'left', lineHeight: 1.2, autoFit: 'shrink',
+      },
+    } as Partial<MagazineElement>);
+  const page = {
+    width: PAGE_W,
+    height: PAGE_H,
+    background: { type: 'image' as const, value: 'https://x/night-scan.jpg' },
+    elements: [onDark('headline', 'Night Racing', 76), onDark('body', 'One.', 20), onDark('body', 'Two.', 20)],
+  };
+
+  const style = themeForPage(null, page);
+  const out = applyReadingToPage(TWO_BAND(), routeBlank(page), style, undefined, DRAFTED);
+  assert.ok(out.page, out.why);
+  const headline = out.page.elements.find((e) => e.type === 'text' && e.text?.content === 'A Fresh Headline');
+  assert.equal(headline?.text?.color, '#ffffff', 'the built page carries white type…');
+  assert.ok(
+    contrastRatio(headline!.text!.color, style.palette.bg) > 4,
+    '…on a ground that moved to meet it, rather than white on white',
+  );
+});
+
+test('a magazine WITH a genTheme still overrides the page it is applied to', () => {
+  // The other half of the style fix, which was reasoning rather than a checked claim:
+  // generated magazines carry a genTheme and must be unaffected by any of this. The
+  // fixture makes the two disagree on purpose — the page says Chronicle/#7b1113, the
+  // theme says Oswald/#111111 — so only a real override can pass.
+  const page = importedPage();
+  const style = themeForPage(
+    { palette: { bg: '#fdfcf7', text: '#111111', primary: '#883333', secondary: '#666666', accent: '#d4a843' }, fonts: { display: 'Oswald', body: 'Inter' } },
+    page,
+  );
+  assert.equal(style.palette.text, '#111111', "the magazine's stated ink wins over the page's");
+  assert.equal(style.palette.bg, '#fdfcf7', 'and its stated ground');
+  assert.match(style.fonts.display, /Oswald/, 'and its stated display face');
+  assert.doesNotMatch(style.fonts.display, /Chronicle/, "not the page's own");
+});
+
 test('deriving the style from the SKELETON is what the separate argument exists to prevent', () => {
   // Kept as the standing explanation of the parameter. Nothing is asserted to be
   // correct here — this is the wrong input, and this is what it produces. If someone
