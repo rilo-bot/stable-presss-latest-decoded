@@ -148,6 +148,18 @@ export function contrastRatio(a: string, b: string): number {
 const textOf = (el: MagazineElement): string => (el.text?.content ?? '').replace(/<[^>]*>/g, ' ').trim();
 
 /**
+ * The resolved look of a page: the palette and the two faces to compose in.
+ *
+ * This is a SEPARATE INPUT to `applyReadingToPage` rather than something it derives,
+ * and that is the whole point — see the note on that function. Produce one with
+ * `themeForPage`, from the page as it stands BEFORE any blanking.
+ */
+export interface PageStyle {
+  palette: GenPalette;
+  fonts: GenFonts;
+}
+
+/**
  * The theme to compose in.
  *
  * `genTheme` is the magazine's stated design intent and wins when it exists. When it
@@ -155,11 +167,17 @@ const textOf = (el: MagazineElement): string => (el.text?.content ?? '').replace
  * FROM THE PAGE ITSELF rather than synthesised by a model call. That is both cheaper
  * and more honest: applying a layout should change a page's STRUCTURE, not repaint
  * it in colours it never had.
+ *
+ * THE PAGE PASSED HERE MUST BE THE ONE THE USER CAN SEE. Everything below reads the
+ * page's own text elements — the ink most words are set in, the face of the largest
+ * line, the commonest family — so a page that has been emptied first tallies nothing
+ * and every value falls through to a hardcoded default. That is not hypothetical: it
+ * is what shipped, and what the two DIAGNOSIS tests in applyLayout.test.ts pin down.
  */
 export function themeForPage(
   genTheme: { palette?: Partial<GenPalette>; fonts?: Partial<GenFonts> } | null,
   page: { background?: { type?: string; value?: string }; elements: MagazineElement[] },
-): { palette: GenPalette; fonts: GenFonts } {
+): PageStyle {
   const p = genTheme?.palette ?? {};
   const f = genTheme?.fonts ?? {};
   const texts = page.elements.filter((e) => e.type === 'text' && e.text);
@@ -413,8 +431,28 @@ export function reflowContent(
  */
 export function applyReadingToPage(
   reading: LayoutReading,
+  /**
+   * The SKELETON the reflow runs against — the elements that may claim a slot.
+   *
+   * Callers are allowed to hand over less than the real page: "use this layout" is a
+   * RECREATE and passes a furniture-only blank so no old copy can claim a slot. That is
+   * why `style` is a separate parameter and not derived from this.
+   */
   page: { width?: number; height?: number; background?: { type?: string; value?: string }; elements: MagazineElement[] },
-  genTheme: { palette?: Partial<GenPalette>; fonts?: Partial<GenFonts> } | null,
+  /**
+   * The page's resolved look — SEPARATE from `page` on purpose.
+   *
+   * This used to be the magazine's `genTheme`, and the theme was derived in here from
+   * whatever `page` happened to contain. That coupling was the bug: when the caller
+   * started passing a blanked page (RECREATE, 2026-08-17) the derivation silently ran
+   * over nothing, and every imported page came back as #1a1a1a on #ffffff in Playfair
+   * and Inter — no type error, no failing test, no warning. Taking the resolved style
+   * as an argument means the caller must say WHERE the look came from, and passing a
+   * blanked page can no longer quietly answer that question.
+   *
+   * Build it with `themeForPage(genTheme, <the page as the user sees it>)`.
+   */
+  style: PageStyle,
   /** Who this page is, so its running head and folio can be put back after the rebuild.
    *  Optional: omitted, the page simply comes back without chrome. */
   furnitureCtx?: RefurnishContext,
@@ -430,7 +468,7 @@ export function applyReadingToPage(
   if (!spec) return { page: null, why: 'That layout could not be turned into a page structure.' };
 
   const dims = { width: Number(page.width) || PAGE_W, height: Number(page.height) || PAGE_H };
-  const theme = themeForPage(genTheme, page);
+  const theme = style;
   const bgImage = page.background?.type === 'image' && page.background.value ? String(page.background.value) : '';
   const { content, leftOver, usedBackground } = reflowContent(specContentRefs(spec), page.elements, bgImage || undefined, extra);
 

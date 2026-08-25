@@ -32,6 +32,24 @@ const image = (url: string, w = 800, h = 600) => el({
 
 const slots = (...pairs: [string, string][]) => pairs.map(([ref, role]) => ({ ref, role }));
 
+/**
+ * Apply a reading to a page the caller is handing over WHOLE.
+ *
+ * `applyReadingToPage` takes the resolved style as its own argument now, so every
+ * caller has to say where the look came from. These tests hand over the real page, so
+ * the look comes from that same page — which is what the old signature did implicitly.
+ * The tests that reproduce the /apply-layout handler's blanked skeleton call
+ * `applyReadingToPage` directly instead, because for them the two are NOT the same
+ * page, and that difference is the whole point.
+ */
+const applyTo = (
+  r: Parameters<typeof applyReadingToPage>[0],
+  page: Parameters<typeof applyReadingToPage>[1],
+  genTheme: Parameters<typeof themeForPage>[0] = null,
+  furnitureCtx?: Parameters<typeof applyReadingToPage>[3],
+  extra?: Parameters<typeof applyReadingToPage>[4],
+) => applyReadingToPage(r, page, themeForPage(genTheme, page), furnitureCtx, extra);
+
 // ── Where content lands ──────────────────────────────────────────────────────
 
 test('each role goes to its own slot', () => {
@@ -82,7 +100,7 @@ test('a background photo the layout has no room for is KEPT, not painted over', 
   // A text-only reference on an imported page: nothing consumes the background, so it
   // must survive. composeFromSolved always returns a colour, and writing it would
   // destroy the photograph.
-  const out = applyReadingToPage(
+  const out = applyTo(
     reading([
       { role: 'headline', box: { x: 0.1, y: 0.1, w: 0.8, h: 0.15 } },
       { role: 'body', box: { x: 0.1, y: 0.3, w: 0.8, h: 0.6 } },
@@ -100,7 +118,7 @@ test('a background photo the layout has no room for is KEPT, not painted over', 
 });
 
 test('but once the photo becomes a full-bleed element, the colour background is right', () => {
-  const out = applyReadingToPage(
+  const out = applyTo(
     reading([
       { role: 'image', box: { x: 0, y: 0, w: 1, h: 1 } },
       { role: 'headline', box: { x: 0.1, y: 0.7, w: 0.8, h: 0.12 } },
@@ -282,7 +300,7 @@ const reading = (regions: Record<string, unknown>[], extra: Record<string, unkno
 };
 
 test('a page and a reading become a solved page', () => {
-  const out = applyReadingToPage(
+  const out = applyTo(
     reading([
       { role: 'image', box: { x: 0, y: 0, w: 1, h: 0.55 } },
       { role: 'headline', box: { x: 0.06, y: 0.6, w: 0.88, h: 0.12 } },
@@ -308,7 +326,7 @@ test('a page and a reading become a solved page', () => {
 });
 
 test('a page with nothing on it is refused with a reason, not filled with blanks', () => {
-  const out = applyReadingToPage(
+  const out = applyTo(
     reading([
       { role: 'headline', box: { x: 0, y: 0, w: 1, h: 0.3 } },
       { role: 'body', box: { x: 0, y: 0.4, w: 1, h: 0.5 } },
@@ -330,7 +348,7 @@ test('A COVER, end to end: the empty half stays empty after pruning', () => {
   // sheet. applyReadingToPage now passes keepWhitespace, because a reference's empty
   // space IS its design.
   const H = PAGE_H;
-  const out = applyReadingToPage(
+  const out = applyTo(
     reading([
       { role: 'image', box: { x: 0, y: 0, w: 1, h: 1 } },
       { role: 'kicker', box: { x: 0.1, y: 0.03, w: 0.8, h: 0.025 } },
@@ -380,11 +398,11 @@ test('the reference decides the proportions: a taller photo band gives a taller 
     width: PAGE_W, height: PAGE_H,
     elements: [image('https://x/p.jpg', 1200, 900), text('body', 'Copy that fills the rest of the page nicely.')],
   };
-  const shallow = applyReadingToPage(reading([
+  const shallow = applyTo(reading([
     { role: 'image', box: { x: 0, y: 0, w: 1, h: 0.3 } },
     { role: 'body', box: { x: 0, y: 0.32, w: 1, h: 0.68 } },
   ]), page, null);
-  const deep = applyReadingToPage(reading([
+  const deep = applyTo(reading([
     { role: 'image', box: { x: 0, y: 0, w: 1, h: 0.75 } },
     { role: 'body', box: { x: 0, y: 0.77, w: 1, h: 0.23 } },
   ]), page, null);
@@ -468,7 +486,7 @@ test('a legitimate low-contrast BRAND accent is left alone', () => {
 test('END TO END: applying a layout to a white-type cover leaves nothing invisible', () => {
   // The reported failure, as a test. The reference's photo box is NOT full-bleed, so the
   // background photo is consumed into it and the rest of the sheet is painted.
-  const out = applyReadingToPage(
+  const out = applyTo(
     normalizeLayoutReading({
       aspect: PAGE_W / PAGE_H, background: 'light', margin: 'md', confidence: 0.9,
       regions: [
@@ -551,7 +569,7 @@ const ORDINARY_REFERENCE = [
 
 test('a rebuild does not pour the running head and folio into the article', () => {
   const { elements } = furnishedPage(7);
-  const out = applyReadingToPage(
+  const out = applyTo(
     reading(ORDINARY_REFERENCE),
     { width: PAGE_W, height: PAGE_H, background: { type: 'color', value: THEME.palette.bg }, elements },
     THEME,
@@ -578,7 +596,7 @@ test('a rebuild does not pour the running head and folio into the article', () =
 
 test("a rebuilt page keeps a folio, so a later reorder can still renumber it", () => {
   const { elements } = furnishedPage(7);
-  const out = applyReadingToPage(
+  const out = applyTo(
     reading(ORDINARY_REFERENCE),
     { width: PAGE_W, height: PAGE_H, background: { type: 'color', value: THEME.palette.bg }, elements },
     THEME,
@@ -595,7 +613,7 @@ test("a rebuilt page keeps a folio, so a later reorder can still renumber it", (
 
 test('a rebuilt page keeps the section it was already in, and invents nothing', () => {
   const { elements } = furnishedPage(4);
-  const out = applyReadingToPage(
+  const out = applyTo(
     reading(ORDINARY_REFERENCE),
     { width: PAGE_W, height: PAGE_H, background: { type: 'color', value: THEME.palette.bg }, elements },
     THEME,
@@ -613,7 +631,7 @@ test('a page that never had chrome does not acquire any from a rebuild', () => {
   // A cover carries no running head and no folio by design. Rebuilding it must not
   // introduce one, and refurnish decides that from the page rather than from a kind
   // it has no way to know.
-  const out = applyReadingToPage(
+  const out = applyTo(
     reading(ORDINARY_REFERENCE),
     {
       width: PAGE_W, height: PAGE_H,
@@ -647,7 +665,7 @@ const PICTURE_LED = [
 
 test('too much copy for the layout builds the page and says how much is over', () => {
   const tooMuch = 'The season opened in a drizzle that nobody minded, and the horses went out anyway. '.repeat(40);
-  const out = applyReadingToPage(
+  const out = applyTo(
     reading(PICTURE_LED),
     {
       width: PAGE_W, height: PAGE_H,
@@ -673,7 +691,7 @@ test('too much copy for the layout builds the page and says how much is over', (
 });
 
 test('copy that fits reports nothing at all', () => {
-  const out = applyReadingToPage(
+  const out = applyTo(
     reading(PICTURE_LED),
     {
       width: PAGE_W, height: PAGE_H,
@@ -789,7 +807,7 @@ test('with extras, a reference applied to a page with one line builds COMPLETE �
   const page = { width: PAGE_W, height: PAGE_H, elements: [text('headline', 'The Headline')] };
   const missing = unfilledSlots(r, page);
   assert.ok(missing && missing.texts.length === 1 && missing.images === 1);
-  const out = applyReadingToPage(r, page, null, undefined, {
+  const out = applyTo(r, page, null, undefined, {
     texts: [{ role: 'body', text: 'A drafted paragraph of real, on-subject copy for the body slot.' }],
     images: [{ url: 'https://x/library.jpg', assetId: 'lib1', alt: '' }],
   });
@@ -843,4 +861,137 @@ test('unfilledSlots lists a would-be-crammed terse slot so the draft exists at a
   });
   assert.ok(missing);
   assert.ok(missing.texts.some((t) => t.role === 'caption'), 'the crammed caption is on the shopping list');
+});
+
+// ── The /apply-layout ROUTE's own call shape ─────────────────────────────────
+//
+// Every test above hands the whole page over, and they all passed throughout the
+// defect — which is exactly why it shipped. The route does something different:
+// since "RECREATE, NOT REARRANGE" (2026-08-17) it builds a furniture-only `blank`,
+// dropping every text element AND the `background` key, and passes THAT.
+//
+// While the style was derived INSIDE applyReadingToPage from whatever it was given,
+// that made an imported page come back as #1a1a1a on #ffffff in Playfair and Inter:
+// the tally ran over an empty page. The style is now a separate argument, so the
+// caller has to state where the look came from and the skeleton can no longer answer
+// that question by accident. These tests hold the route's shape to it.
+
+/** Exactly what the /apply-layout handler builds before calling applyReadingToPage. */
+const routeBlank = (page: { width?: number; height?: number; elements: MagazineElement[] }) => ({
+  width: page.width,
+  height: page.height,
+  elements: page.elements.filter((e) => FURNITURE_IDS.includes(e.id)),
+});
+
+/** A PDF-imported page: real measured type from MuPDF, photography in the
+ *  background raster, and NO genTheme (only generate.ts ever writes one). */
+const importedPage = () => {
+  const styled = (role: string, content: string, fontSize: number) =>
+    text(role, content, {
+      text: {
+        content, role, fontFamily: 'Chronicle Display, serif', fontSize,
+        fontWeight: role === 'headline' ? 700 : 400, color: '#7b1113',
+        align: 'left', lineHeight: 1.2, autoFit: 'shrink',
+      },
+    } as Partial<MagazineElement>);
+  return {
+    width: PAGE_W,
+    height: PAGE_H,
+    background: { type: 'image' as const, value: 'https://x/page-3-scan.jpg' },
+    elements: [
+      styled('headline', 'The Gold Cup', 76),
+      styled('body', 'Six horses went to post on ground that had taken rain all week.', 20),
+      styled('body', 'The winner came home four lengths clear of the field.', 20),
+    ],
+  };
+};
+
+const TWO_BAND = () => reading([
+  { role: 'headline', box: { x: 0.08, y: 0.1, w: 0.84, h: 0.18 } },
+  { role: 'body', box: { x: 0.08, y: 0.34, w: 0.84, h: 0.56 } },
+]);
+
+/** The drafted copy the route hands in as `extra` — on a blanked page every slot
+ *  is unfilled, so reference-fill covers all of them. */
+const DRAFTED = {
+  texts: [
+    { role: 'headline', text: 'A Fresh Headline' },
+    { role: 'body', text: 'Fresh body copy written for this magazine by reference-fill.' },
+  ],
+  images: [],
+};
+
+test('an imported page rebuilt on the route\'s blanked skeleton KEEPS its own type', () => {
+  const page = importedPage();
+
+  // The style is read from the page as the user sees it — which is what the route now
+  // does — and the blanked skeleton is only what the reflow may draw content from.
+  const out = applyReadingToPage(TWO_BAND(), routeBlank(page), themeForPage(null, page), undefined, DRAFTED);
+  assert.ok(out.page, out.why);
+  const headline = out.page.elements.find((e) => e.type === 'text' && e.text?.content === 'A Fresh Headline');
+  assert.ok(headline?.text, 'the headline was built');
+
+  assert.match(headline.text.fontFamily, /Chronicle/, "the page's own display face survives the rebuild");
+  assert.doesNotMatch(headline.text.fontFamily, /Playfair/, 'not the hardcoded default');
+  assert.equal(headline.text.color, '#7b1113', "and the page's own ink, not #1a1a1a");
+});
+
+test('deriving the style from the SKELETON is what the separate argument exists to prevent', () => {
+  // Kept as the standing explanation of the parameter. Nothing is asserted to be
+  // correct here — this is the wrong input, and this is what it produces. If someone
+  // ever passes the skeleton again, the test above goes red and this one says why.
+  const page = importedPage();
+  const fromPage = themeForPage(null, page);
+  const fromSkeleton = themeForPage(null, routeBlank(page));
+
+  assert.match(fromPage.fonts.display, /Chronicle/, 'the page carries its own face…');
+  assert.equal(fromPage.palette.text, '#7b1113', '…and its own ink');
+  assert.match(fromSkeleton.fonts.display, /Playfair/, 'the skeleton tallies nothing and falls back');
+  assert.equal(fromSkeleton.palette.text, '#1a1a1a', 'which is the black-on-white page users reported');
+});
+
+test('the folio survives the ROUTE\'s call shape too, so a later reorder can still renumber', () => {
+  // The function-level guard for this is above ("a rebuilt page keeps a folio"), but it
+  // hands over the WHOLE page. `blank` keeps furniture by id on purpose, and that is
+  // exactly the property the upcoming signature change must not disturb: lose the folio
+  // and restampFolio can never find the page again — silent and unrecoverable.
+  const { elements } = furnishedPage(7);
+  const page = { width: PAGE_W, height: PAGE_H, background: { type: 'color' as const, value: THEME.palette.bg }, elements };
+  const out = applyReadingToPage(
+    reading(ORDINARY_REFERENCE),
+    routeBlank(page),
+    themeForPage(THEME, page),
+    { magazineTitle: 'The Stable Press', pageNumber: 7, ...THEME },
+    { texts: [{ role: 'headline', text: 'A Fresh Headline' }, { role: 'body', text: 'Fresh copy.' }, { role: 'caption', text: 'A caption.' }], images: [{ url: 'https://x/hero.jpg' }] },
+  );
+  assert.ok(out.page, out.why);
+  assert.ok(out.page.elements.find((e) => e.id === FOLIO_ELEMENT_ID), 'the folio is back on the page');
+  assert.ok(restampFolio(out.page.elements, 9), 'a later reorder can still renumber this page');
+});
+
+test('KNOWN GAP — on the route\'s skeleton the background raster is still replaced by a flat fill', () => {
+  // NOT fixed by the style change, and deliberately left alone: it is an open design
+  // question, not an oversight, so it is pinned here rather than quietly tolerated.
+  //
+  // `blank` drops the `background` key, so the "keep a photo we did not take" guard in
+  // applyReadingToPage cannot fire (bgImage is ''). For an AI-generated page that is
+  // right — RECREATE means the reference's ground wins. For a PDF import the raster is
+  // the page's photography, and the /apply-layout handler only offers it to image slots
+  // as a LAST-resort candidate, so a text-only reference loses it.
+  //
+  // The fix is not to hand `blank` the background: reflowContent unshifts it as the
+  // FIRST, hero-sized candidate, which would put a picture-of-a-page in the hero box,
+  // and the handler already pushes the same URL into `extra.images` — two pools, no
+  // shared dedupe, so it could land twice. Belongs with the image-sourcing work.
+  const page = importedPage();
+
+  // Handed the whole page, the existing guard keeps the photograph.
+  const kept = applyTo(TWO_BAND(), page, null);
+  assert.ok(kept.page);
+  assert.equal(kept.page.background.type, 'image', 'with the real page, the raster survives');
+
+  // Handed the route's skeleton, it cannot.
+  const out = applyReadingToPage(TWO_BAND(), routeBlank(page), themeForPage(null, page), undefined, DRAFTED);
+  assert.ok(out.page, out.why);
+  assert.equal(out.page.background.type, 'color', 'the scan is replaced — still true, still open');
 });

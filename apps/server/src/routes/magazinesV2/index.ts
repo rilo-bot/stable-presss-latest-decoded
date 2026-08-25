@@ -48,7 +48,7 @@ import { runPageAgent } from '../../lib/magazineV2/agent.js';
 import { formatPageText, charGuideFor } from '../../lib/magazineV2/format.js';
 import { readLayoutImage } from '../../lib/magazineV2/readLayout.js';
 import { aspectMismatch, normalizeLayoutReading } from '../../lib/magazineV2/layoutReading.js';
-import { applyReadingToPage, tightSummary, unfilledSlots, type ExtraContent } from '../../lib/magazineV2/applyLayout.js';
+import { applyReadingToPage, themeForPage, tightSummary, unfilledSlots, type ExtraContent } from '../../lib/magazineV2/applyLayout.js';
 import { draftReferenceFill } from '../../lib/magazineV2/referenceFill.js';
 
 /* eslint-disable @typescript-eslint/no-explicit-any */
@@ -2965,7 +2965,21 @@ router.post('/issues/:id/pages/:pageId/apply-layout', rateLimit('mag2-agent', 20
     if (extraTexts.length > 0 || extraImages.length > 0) extraFill = { texts: extraTexts, images: extraImages };
   }
 
-  const applied = applyReadingToPage(reading, blank, genTheme, furnitureContextFor(issue, page), extraFill);
+  /**
+   * THE STYLE COMES FROM THE PAGE AS IT STANDS, NOT FROM THE BLANK.
+   *
+   * `blank` above is the reflow's skeleton — it is deliberately stripped so no old copy
+   * can claim a slot. It is NOT a description of how the page looks, and deriving the
+   * look from it is what made every imported page come back as black type on white in
+   * two default faces: `themeForPage` tallies the ink most words are set in and the face
+   * of the largest line, and on a blanked page it tallies nothing.
+   *
+   * A page carries its own answer — `processPage` records real fontFamily/fontSize/color
+   * per element from MuPDF — so `pageShape` (the page the user can actually see) is the
+   * honest input, with the magazine's `genTheme` still winning where it exists.
+   */
+  const style = themeForPage(genTheme, pageShape);
+  const applied = applyReadingToPage(reading, blank, style, furnitureContextFor(issue, page), extraFill);
   if (!applied.page) {
     // 422: the request and the server are both fine — this layout and this page
     // cannot be put together, and the sentence says which.
