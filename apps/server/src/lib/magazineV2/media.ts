@@ -47,8 +47,38 @@
  */
 export type MediaKind = 'upload' | 'photo' | 'graphic' | 'reference' | 'doc';
 
-/** Kinds that may never be placed on a page, and why, in one place. */
-export const UNPLACEABLE_KINDS: readonly string[] = ['reference', 'doc'];
+/**
+ * May a row of this kind be placed on a page? EXHAUSTIVE, and that is the point.
+ *
+ * A `Record<MediaKind, …>` rather than a list of exclusions, so adding a kind to the
+ * union above is a COMPILE ERROR until someone answers this question for it. The bug
+ * this module exists to fix was exactly that shape: `reference` was added, the filters
+ * that already existed named only `doc`, and four of six call sites silently treated
+ * the new kind as a photograph. A deny-list rebuilds that hole one kind later.
+ *
+ * The costs are not symmetric, which is what settles it. A picture kind wrongly marked
+ * false: a photo does not appear in the picker — visible immediately, harmless, one
+ * line to fix. An unplaceable kind wrongly marked true: somebody else's licensed page
+ * on a public newsstand and inside an exported PDF. The default has to protect against
+ * the second.
+ */
+const PLACEABLE_BY_KIND: Record<MediaKind, boolean> = {
+  upload: true, // the user's own image, put there to be placed
+  photo: true, // extracted from an import, or sourced from stock/AI
+  graphic: true, // an icon/logo/QR crop lifted off an imported page
+  reference: false, // someone else's licensed page — read for structure, never placed
+  doc: false, // a source document; a PDF of race results is not a photograph
+};
+
+/** The kinds that may never be placed, derived from the table above so the two
+ *  can never disagree. Exported for tests and for anything that needs to explain
+ *  itself to a user. */
+export const UNPLACEABLE_KINDS: readonly string[] = (Object.keys(PLACEABLE_BY_KIND) as MediaKind[])
+  .filter((k) => !PLACEABLE_BY_KIND[k]);
+
+/** Unknown kinds already warned about, so a library scan logs each one once rather
+ *  than once per row per request. */
+const warnedKinds = new Set<string>();
 
 /** The shape this module needs. Deliberately loose: callers hold raw Mongo rows
  *  whose fields are all optional until proven otherwise. */
@@ -69,10 +99,27 @@ export interface MediaRowLike {
  * A row with no usable url is not placeable either: an image element pointing at
  * nothing renders as a hole, and downstream (pruneSpec) deletes its slot and
  * re-partitions the page.
+ *
+ * A kind OUTSIDE the union fails SAFE — unplaceable, with one warning per distinct
+ * value. The compile-time table above cannot reach a legacy row written before a kind
+ * existed, or one hand-edited in the database, so the runtime needs its own answer;
+ * "hide a photo and say so in the log" is a recoverable wrong answer, and "publish
+ * someone's licensed page" is not.
  */
 export function isPlaceableMedia(m: MediaRowLike): boolean {
   if (typeof m.url !== 'string' || !m.url) return false;
-  return !UNPLACEABLE_KINDS.includes(m.kind ?? '');
+  const kind = m.kind ?? '';
+  if (Object.prototype.hasOwnProperty.call(PLACEABLE_BY_KIND, kind)) {
+    return PLACEABLE_BY_KIND[kind as MediaKind];
+  }
+  if (!warnedKinds.has(kind)) {
+    warnedKinds.add(kind);
+    console.warn(
+      `[magazineV2] media kind ${JSON.stringify(kind)} is not a known MediaKind — treating it as unplaceable. ` +
+        'Add it to PLACEABLE_BY_KIND in lib/magazineV2/media.ts to decide deliberately.',
+    );
+  }
+  return false;
 }
 
 /** One of the user's own photographs, ready to hand to a composer. */

@@ -44,11 +44,31 @@ test('a row with no usable url is not placeable — it would render as a hole', 
   assert.equal(isPlaceableMedia({ kind: 'photo', url: '' }), false);
 });
 
-test('an unknown kind is placeable — only the named exclusions are excluded', () => {
-  // Deliberate: a new picture kind added later should work without touching this
-  // file, whereas a new UNPLACEABLE kind is a decision someone has to write down.
-  assert.equal(isPlaceableMedia({ kind: 'something-new', url: 'https://x/p.jpg' }), true);
+test('an unknown kind FAILS SAFE — unplaceable until someone decides', () => {
+  // The inverse of this was the bug: `reference` was added, the existing filters named
+  // only `doc`, and four call sites treated the new kind as a photograph. Defaulting
+  // unknown to placeable rebuilds that hole one kind later.
+  //
+  // The costs decide it. Wrongly unplaceable: a photo does not appear — visible,
+  // harmless. Wrongly placeable: licensed third-party material on a public newsstand.
+  assert.equal(isPlaceableMedia({ kind: 'something-new', url: 'https://x/p.jpg' }), false);
+  assert.equal(isPlaceableMedia({ url: 'https://x/p.jpg' }), false, 'a row with no kind at all, too');
+});
+
+test('the exclusion list is derived from the table, so the two cannot disagree', () => {
   assert.deepEqual([...UNPLACEABLE_KINDS].sort(), ['doc', 'reference']);
+});
+
+test('every declared MediaKind has a deliberate answer', () => {
+  // The compiler enforces this (PLACEABLE_BY_KIND is Record<MediaKind, boolean>, so a
+  // new kind is a build error until it is decided). Asserted here as well so the
+  // intent survives a refactor that loosens the type.
+  const decided = ['upload', 'photo', 'graphic', 'reference', 'doc'];
+  for (const kind of decided) {
+    const answer = isPlaceableMedia({ kind, url: 'https://x/p.jpg' });
+    assert.equal(typeof answer, 'boolean', `${kind} must have an answer`);
+  }
+  assert.equal(decided.filter((k) => !isPlaceableMedia({ kind: k, url: 'https://x/p.jpg' })).length, 2);
 });
 
 // ── The site that got it wrong ───────────────────────────────────────────────
