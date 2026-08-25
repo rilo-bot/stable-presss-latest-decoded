@@ -283,10 +283,11 @@ export default function MagazineEditorV2() {
         <div className="flex min-w-0 flex-1 items-center gap-2">
           <button
             onClick={() => navigate('/production-system/magazine-v2')}
-            className="flex h-8 w-8 flex-shrink-0 items-center justify-center rounded-sm text-studio-ink-2 hover:bg-studio-raise-2 hover:text-studio-ink"
+            className="flex h-8 flex-shrink-0 items-center gap-1.5 rounded-sm px-2 text-ui-sm text-studio-ink-2 hover:bg-studio-raise-2 hover:text-studio-ink"
             aria-label="Back to library"
+            title="Back to library"
           >
-            <ArrowLeft size={16} />
+            <ArrowLeft size={16} /> Back
           </button>
           <input
             className="min-w-0 max-w-[30ch] flex-shrink truncate rounded-sm bg-transparent px-1 py-0.5 text-ui-lg font-bold text-studio-ink outline-none hover:bg-studio-raise focus:bg-studio-raise disabled:opacity-100"
@@ -333,8 +334,11 @@ export default function MagazineEditorV2() {
             hour, so they sit in the middle where the cursor already is. */}
         <div className="flex flex-shrink-0 items-center gap-1.5">
           <div className="flex items-center rounded-sm border border-studio-edge bg-studio-raise">
-            <button onClick={() => void s.undo()} disabled={!s.undoStack.length} className="px-2 py-1.5 text-studio-ink-2 hover:bg-studio-raise-2 disabled:opacity-30 disabled:hover:bg-transparent" title="Undo (Ctrl+Z)"><Undo2 size={14} /></button>
-            <button onClick={() => void s.redo()} disabled={!s.redoStack.length} className="px-2 py-1.5 text-studio-ink-2 hover:bg-studio-raise-2 disabled:opacity-30 disabled:hover:bg-transparent" title="Redo (Ctrl+Shift+Z)"><Redo2 size={14} /></button>
+            {/* The tooltip NAMES what's next on the stack ("Undo the assistant's
+                changes"), because one entry can now be a whole AI turn — a dozen
+                writes — and "Undo" alone doesn't say how much is coming back. */}
+            <button onClick={() => void s.undo()} disabled={!s.undoStack.length} className="flex items-center gap-1 px-2 py-1.5 text-ui-sm text-studio-ink-2 hover:bg-studio-raise-2 disabled:opacity-30 disabled:hover:bg-transparent" title={`Undo${s.undoStack.length ? ` ${s.undoStack[s.undoStack.length - 1]!.label}` : ''} (Ctrl+Z)`}><Undo2 size={14} /> Undo</button>
+            <button onClick={() => void s.redo()} disabled={!s.redoStack.length} className="flex items-center gap-1 px-2 py-1.5 text-ui-sm text-studio-ink-2 hover:bg-studio-raise-2 disabled:opacity-30 disabled:hover:bg-transparent" title={`Redo${s.redoStack.length ? ` ${s.redoStack[s.redoStack.length - 1]!.label}` : ''} (Ctrl+Shift+Z)`}><Redo2 size={14} /> Redo</button>
           </div>
           <div className="flex items-center rounded-sm border border-studio-edge bg-studio-raise">
             <button onClick={() => s.setZoomWidth(s.zoomWidth - 80)} className="px-2 py-1.5 text-studio-ink-2 hover:bg-studio-raise-2" title="Zoom out"><Minus size={14} /></button>
@@ -449,10 +453,10 @@ export default function MagazineEditorV2() {
                 onClick={() => setMoreOpen((o) => !o)}
                 aria-label="More magazine actions"
                 aria-expanded={moreOpen}
-                className="flex h-8 w-8 items-center justify-center rounded-sm border border-studio-edge text-studio-ink-2 hover:bg-studio-raise-2 hover:text-studio-ink"
-                title="More"
+                className="flex h-8 flex-shrink-0 items-center gap-1 rounded-sm border border-studio-edge px-2 text-ui-sm text-studio-ink-2 hover:bg-studio-raise-2 hover:text-studio-ink"
+                title="More actions"
               >
-                <MoreHorizontal size={15} />
+                <MoreHorizontal size={15} /> More
               </button>
               {moreOpen && (
                 <div className="absolute right-0 top-full z-50 mt-1 w-56 overflow-hidden rounded-md border border-studio-edge bg-studio-panel py-1 shadow-xl">
@@ -494,7 +498,7 @@ export default function MagazineEditorV2() {
               onClick={() => setAsstOpen((o) => !o)}
               aria-pressed={asstOpen}
               className={'flex items-center gap-1 rounded-sm border px-2 py-1.5 text-ui-sm ' + (asstOpen ? 'border-studio-gold bg-studio-gold text-studio-bg' : 'border-studio-edge text-studio-ink-2 hover:bg-studio-raise-2')}
-              title="Studio Assistant"
+              title="Design Helper"
             >
               <Sparkles size={13} /> AI
             </button>

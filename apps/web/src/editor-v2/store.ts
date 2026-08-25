@@ -4,8 +4,15 @@
 // Element writes are optimistic + rev-guarded: local edits render instantly;
 // commit() sends the change with the page `rev`; a 409 means someone else wrote
 // the page, so we reconcile to the server's current page (and tell the user).
-// Undo/redo covers ELEMENT edits (move/resize/style); like the reference,
-// element add/delete and page-structure ops are NOT on the undo stack.
+// Undo/redo covers every ELEMENT write — update, add AND delete — whoever made
+// it: a drag, the inspector, a Fill/Adjust pass, or the AI assistant applying its
+// proposals. Writes are recorded as inverse-able ops and grouped into ONE stack
+// entry per user action, so "apply the assistant's changes" (often a dozen adds,
+// deletes and updates at once) undoes as a single Ctrl+Z rather than needing
+// twelve of them — half-undone being indistinguishable from broken.
+// Page-structure ops (add/remove/reorder/generate page) and a layout rebuild are
+// still NOT on the stack: they replace or destroy whole pages, and both paths warn
+// the user first.
 // ---------------------------------------------------------------------------
 
 import { create } from 'zustand';
@@ -55,11 +62,25 @@ export interface PreviewDoc {
   docUrl?: string;
 }
 
+/**
+ * One reversible element write.
+ *
+ * `add` and `delete` both carry the WHOLE element, not just its id: undoing a
+ * delete has to put the element back exactly as it was (same id — see the
+ * `restore` flag on api.addElement — same geometry, same content), and redoing an
+ * add has to re-create it the same way.
+ */
+type UndoOp =
+  | { op: 'update'; pageId: string; elementId: string; before: MagazineElement; after: MagazineElement }
+  | { op: 'add'; pageId: string; element: MagazineElement }
+  | { op: 'delete'; pageId: string; element: MagazineElement };
+
+/** One Ctrl+Z's worth of work: a single edit, or every write of one AI apply. */
 interface UndoEntry {
-  pageId: string;
-  elementId: string;
-  before: MagazineElement;
-  after: MagazineElement;
+  /** Human phrase for the toolbar tooltip ("Undo the assistant's changes"). */
+  label: string;
+  /** In the order they were applied. Undo walks them backwards, redo forwards. */
+  ops: UndoOp[];
 }
 
 interface EditorState {
@@ -153,6 +174,16 @@ interface EditorState {
   duplicateElement: (elementId: string) => Promise<void>;
   undo: () => Promise<void>;
   redo: () => Promise<void>;
+  /**
+   * Run `fn`'s element writes as ONE undo entry.
+   *
+   * Anything that makes several element writes on the user's behalf from a single
+   * click — an AI apply, a Fill/Adjust pass — must go through this, or each write
+   * lands as its own stack entry and Ctrl+Z only takes back a fraction of what the
+   * user asked to take back. Nesting joins the outer batch rather than starting a
+   * second one, so callers can compose freely.
+   */
+  batchEdits: <T>(label: string, fn: () => Promise<T>) => Promise<T>;
 
   addPage: () => Promise<void>;
   generatePages: (count: number, topic?: string, atIndex?: number) => Promise<void>;
@@ -230,6 +261,66 @@ function stopGenPoll() { if (genPoll) { clearTimeout(genPoll); genPoll = null; }
 // pure de-duplication — nothing renders from it, and putting it in state would make
 // every tile re-render each time any other tile started loading.
 const thumbsInFlight = new Set<string>();
+
+/**
+ * The undo entry currently being collected, if a batch is open.
+ *
+ * Module-scoped for the same reason as the set above: it is bookkeeping, nothing
+ * renders from it, and it must not cause a re-render on every write inside a
+ * fifteen-proposal apply.
+ */
+let openBatch: UndoEntry | null = null;
+
+/**
+ * True while undo/redo is replaying — writes made by the replay itself must not be
+ * recorded, or undo would push its own inverse back onto the stack and Ctrl+Z would
+ * toggle the same change forever instead of walking back through history.
+ */
+let replaying = false;
+
+/**
+ * Undo/redo runs one entry at a time.
+ *
+ * A replay is several awaited round trips, and each one consumes the page `rev` the
+ * previous one produced. Ctrl+Z held down (or pressed three times quickly) would
+ * otherwise start three overlapping replays against the same rev: two of them 409,
+ * and the user's history appears to skip entries at random. Serialising means a
+ * held Ctrl+Z simply walks back through the stack in order, which is what it looks
+ * like it is doing anyway.
+ */
+let replayChain: Promise<unknown> = Promise.resolve();
+function enqueueReplay<T>(task: () => Promise<T>): Promise<T> {
+  const next = replayChain.then(task, task);
+  // The chain itself must never reject, or one thrown replay would wedge every
+  // later undo behind a rejected promise.
+  replayChain = next.catch(() => {});
+  return next;
+}
+
+/**
+ * Drop every stack entry that touches `pageId`.
+ *
+ * Called when a page is DELETED or rebuilt from a reference: its elements no longer
+ * exist (or have been replaced wholesale), so entries naming them are ghosts. This
+ * matters more now that undo can re-CREATE elements — a stale `delete` op replayed
+ * against a rebuilt page would paste an orphan element back onto a layout that
+ * never had it, which is worse than the old ghost `update` that simply 404'd.
+ *
+ * An entry is dropped whole rather than filtered op-by-op: half of a batch is not a
+ * coherent thing to undo.
+ */
+const withoutPage = (stack: UndoEntry[], pageId: string) =>
+  stack.filter((entry) => !entry.ops.some((op) => op.pageId === pageId));
+
+/** Record one reversible write: into the open batch, or as its own stack entry. */
+function record(set: (fn: (st: EditorState) => Partial<EditorState>) => void, op: UndoOp, label: string) {
+  if (replaying) return;
+  if (openBatch) {
+    openBatch.ops.push(op);
+    return;
+  }
+  set((st) => ({ undoStack: [...st.undoStack.slice(-59), { label, ops: [op] }], redoStack: [] }));
+}
 
 /**
  * Scroll the canvas stack to a page.
@@ -417,10 +508,9 @@ export const useEditorStore = create<EditorState>((set, get) => ({
           page: st.page && st.page.id === pageId
             ? { ...st.page, rev: newRev, elements: st.page.elements.map((e) => (e.id === elementId ? element : e)) }
             : st.page,
-          undoStack: beforeEl ? [...st.undoStack.slice(-59), { pageId, elementId, before: beforeEl, after: element }] : st.undoStack,
-          redoStack: [],
           editedSinceLoad: true,
         }));
+        if (beforeEl) record(set, { op: 'update', pageId, elementId, before: beforeEl, after: element }, 'the edit');
       } catch (e) {
         // A stale rev (an AI/format write or a collaborator landed first) must NOT
         // discard the user's edit or their selection — that is exactly what made
@@ -442,13 +532,17 @@ export const useEditorStore = create<EditorState>((set, get) => ({
   addElement: async (partial) => {
     const s = get();
     if (!s.page || !s.issueId) return null;
+    const pageId = s.page.id;
     try {
-      const { element, rev } = await api.addElement(s.issueId, s.page.id, s.page.rev, partial);
+      const { element, rev } = await api.addElement(s.issueId, pageId, s.page.rev, partial);
       set((st) => ({
-        page: st.page ? { ...st.page, rev, elements: [...st.page.elements, element] } : st.page,
+        page: st.page && st.page.id === pageId ? { ...st.page, rev, elements: [...st.page.elements, element] } : st.page,
         selectedId: element.id,
         editedSinceLoad: true,
       }));
+      // The SERVER's element is what gets recorded, so a redo re-creates exactly what
+      // was stored (normalised geometry, canonical id) rather than what we asked for.
+      record(set, { op: 'add', pageId, element }, 'adding that');
       return element.id;
     } catch (e) {
       handleWriteError(e, set, get);
@@ -459,13 +553,18 @@ export const useEditorStore = create<EditorState>((set, get) => ({
   deleteElement: async (elementId) => {
     const s = get();
     if (!s.page || !s.issueId) return;
+    const pageId = s.page.id;
+    // Snapshot BEFORE the write: once the server has it, the only copy of a deleted
+    // element is the one we kept, and that copy is what undo puts back.
+    const victim = el(s.page, elementId);
     try {
-      const { rev } = await api.deleteElement(s.issueId, s.page.id, elementId, s.page.rev);
+      const { rev } = await api.deleteElement(s.issueId, pageId, elementId, s.page.rev);
       set((st) => ({
-        page: st.page ? { ...st.page, rev, elements: st.page.elements.filter((e) => e.id !== elementId) } : st.page,
+        page: st.page && st.page.id === pageId ? { ...st.page, rev, elements: st.page.elements.filter((e) => e.id !== elementId) } : st.page,
         selectedId: st.selectedId === elementId ? null : st.selectedId,
         editedSinceLoad: true,
       }));
+      if (victim) record(set, { op: 'delete', pageId, element: victim }, 'deleting that');
     } catch (e) {
       handleWriteError(e, set, get);
     }
@@ -485,43 +584,50 @@ export const useEditorStore = create<EditorState>((set, get) => ({
     // addElement already selects the new element.
   },
 
-  undo: async () => {
-    const entry = get().undoStack[get().undoStack.length - 1];
-    if (!entry || !get().issueId) return;
-    // The edit may live on another page (you scrolled/navigated away since). Bring
-    // that page into view first, so Undo always works — not just on the current page.
-    if (get().page?.id !== entry.pageId) await get().openPage(entry.pageId);
-    const s = get();
-    if (!s.page || s.page.id !== entry.pageId || !s.issueId) return;
+  batchEdits: async (label, fn) => {
+    // Nested → join the batch already open, so the whole outer action stays one
+    // undo entry. (runFormat inside an AI apply, say.)
+    if (openBatch) return fn();
+    const forIssue = get().issueId;
+    openBatch = { label, ops: [] };
     try {
-      const { element, rev } = await api.patchElement(s.issueId, s.page.id, entry.elementId, s.page.rev, entry.before);
-      set((st) => ({
-        page: st.page ? { ...st.page, rev, elements: st.page.elements.map((e) => (e.id === entry.elementId ? element : e)) } : st.page,
-        undoStack: st.undoStack.slice(0, -1),
-        redoStack: [...st.redoStack, entry],
-      }));
-    } catch (e) {
-      handleWriteError(e, set, get);
+      return await fn();
+    } finally {
+      const done = openBatch;
+      openBatch = null;
+      // An action that wrote nothing (every proposal refused, nothing to fill) must
+      // not leave an empty entry: the Undo button would light up and do nothing. And
+      // if the user opened a DIFFERENT magazine while this ran, the entry is dropped
+      // rather than pushed onto that one's stack, where it could only ever misfire.
+      if (done && done.ops.length > 0 && get().issueId === forIssue) {
+        set((st) => ({ undoStack: [...st.undoStack.slice(-59), done], redoStack: [] }));
+      }
     }
   },
 
-  redo: async () => {
-    const entry = get().redoStack[get().redoStack.length - 1];
-    if (!entry || !get().issueId) return;
-    if (get().page?.id !== entry.pageId) await get().openPage(entry.pageId);
-    const s = get();
-    if (!s.page || s.page.id !== entry.pageId || !s.issueId) return;
-    try {
-      const { element, rev } = await api.patchElement(s.issueId, s.page.id, entry.elementId, s.page.rev, entry.after);
-      set((st) => ({
-        page: st.page ? { ...st.page, rev, elements: st.page.elements.map((e) => (e.id === entry.elementId ? element : e)) } : st.page,
-        redoStack: st.redoStack.slice(0, -1),
-        undoStack: [...st.undoStack, entry],
-      }));
-    } catch (e) {
-      handleWriteError(e, set, get);
-    }
-  },
+  // The stack is read INSIDE the queued task, not when the key was pressed, so a
+  // queued undo acts on the state its predecessor left behind.
+  undo: () =>
+    enqueueReplay(async () => {
+      const entry = get().undoStack[get().undoStack.length - 1];
+      if (!entry || !get().issueId) return;
+      // Pop FIRST. If a replay fails half way the entry must not stay on the stack, or
+      // the next Ctrl+Z would re-apply the half that already came back.
+      set((st) => ({ undoStack: st.undoStack.slice(0, -1) }));
+      // Undo walks the ops backwards: an entry like [delete text, add photo] has to
+      // take the photo away before the text can go back where it was.
+      const ok = await replayOps([...entry.ops].reverse(), 'undo', set, get);
+      if (ok) set((st) => ({ redoStack: [...st.redoStack, entry] }));
+    }),
+
+  redo: () =>
+    enqueueReplay(async () => {
+      const entry = get().redoStack[get().redoStack.length - 1];
+      if (!entry || !get().issueId) return;
+      set((st) => ({ redoStack: st.redoStack.slice(0, -1) }));
+      const ok = await replayOps(entry.ops, 'redo', set, get);
+      if (ok) set((st) => ({ undoStack: [...st.undoStack, entry] }));
+    }),
 
   addPage: async () => {
     const s = get();
@@ -607,7 +713,10 @@ export const useEditorStore = create<EditorState>((set, get) => ({
     if (!s.issueId) return;
     const issueId = s.issueId;
     const finish = async (pages: PageSummary[]) => {
-      set({ pages, editedSinceLoad: true });
+      // The page is gone, so its stack entries can never be replayed — and undo now
+      // re-creates elements, so leaving them would have it try to restore an element
+      // onto a page that no longer exists.
+      set((st) => ({ pages, editedSinceLoad: true, undoStack: withoutPage(st.undoStack, pageId), redoStack: withoutPage(st.redoStack, pageId) }));
       if (get().currentPageId === pageId && pages[0]) await get().openPage(pages[0].id);
     };
     try {
@@ -726,11 +835,15 @@ export const useEditorStore = create<EditorState>((set, get) => ({
         toast.message(note || 'Nothing to change on this page.');
         return;
       }
-      for (const e of edits) {
-        const before = get().page?.elements.find((x) => x.id === e.elementId);
-        if (!before || before.type !== 'text' || !before.text) continue;
-        await get().commit(e.elementId, { text: { ...before.text, content: e.content } }, before);
-      }
+      // ONE undo entry for the whole pass — a Fill can rewrite a dozen blocks, and
+      // taking them back one Ctrl+Z at a time is not "undo", it's twelve undos.
+      await get().batchEdits(mode === 'fill' ? 'the text fill' : 'the text adjustment', async () => {
+        for (const e of edits) {
+          const before = get().page?.elements.find((x) => x.id === e.elementId);
+          if (!before || before.type !== 'text' || !before.text) continue;
+          await get().commit(e.elementId, { text: { ...before.text, content: e.content } }, before);
+        }
+      });
       toast.success(note || `${mode === 'fill' ? 'Filled' : 'Adjusted'} ${edits.length} text block${edits.length === 1 ? '' : 's'}. Undo with Ctrl+Z.`);
     } catch (e) {
       toast.error(e instanceof Error ? e.message : 'Text pass failed');
@@ -791,11 +904,13 @@ export const useEditorStore = create<EditorState>((set, get) => ({
         // page until something else happened to refresh it.
         pages: st.pages.map((p) => (p.id === pageId ? { ...p, elementCount: page.elements.length, rev: page.rev } : p)),
         thumbs: { ...st.thumbs, [pageId]: page },
-        // Every element on the REBUILT page is new, so undo entries pointing at them are
-        // now ghosts. Only clear when that page is the one open: since the assistant can
-        // target a page you are not looking at, wiping the stack regardless would throw
-        // away the undo history of a page this rebuild never touched.
-        ...(st.currentPageId === pageId ? { undoStack: [], redoStack: [], selectedId: null } : {}),
+        // Every element on the REBUILT page is new, so stack entries pointing at them
+        // are now ghosts — dropped by PAGE rather than by clearing everything, since the
+        // assistant can rebuild a page you are not looking at and the undo history of the
+        // pages this rebuild never touched has to survive.
+        undoStack: withoutPage(st.undoStack, pageId),
+        redoStack: withoutPage(st.redoStack, pageId),
+        ...(st.currentPageId === pageId ? { selectedId: null } : {}),
         editedSinceLoad: true,
       }));
       // Say what didn't fit. Surplus photos genuinely have nowhere to go, and a
@@ -1193,20 +1308,29 @@ export const useEditorStore = create<EditorState>((set, get) => ({
     let refused = 0;
 
     // 1) Element edits on the current page (rev-guarded CRUD; add → id remap).
-    for (const p of s.proposals.filter((x) => !isPageKind(x.kind))) {
-      try {
-        if (p.kind === 'add' && p.element) {
-          const newId = await get().addElement(p.element);
-          if (p.tempId && newId) idMap.set(p.tempId, newId);
-        } else if (p.kind === 'update' && p.elementId && p.patch) {
-          await get().commit(idMap.get(p.elementId) ?? p.elementId, p.patch);
-        } else if (p.kind === 'delete' && p.elementId) {
-          await get().deleteElement(idMap.get(p.elementId) ?? p.elementId);
+    //
+    // The whole apply is ONE undo entry. This is the fix for "we can't undo what the
+    // AI does": the writes were always going through the undoable CRUD, but a turn
+    // that swaps a photo (delete + add) or rewrites five blocks landed as five
+    // separate entries — or, for add/delete, as none at all, because only `update`
+    // used to be recorded. Now every element write is reversible and the user takes
+    // the assistant's turn back with the one Ctrl+Z they expect.
+    await get().batchEdits('the assistant’s changes', async () => {
+      for (const p of s.proposals.filter((x) => !isPageKind(x.kind))) {
+        try {
+          if (p.kind === 'add' && p.element) {
+            const newId = await get().addElement(p.element);
+            if (p.tempId && newId) idMap.set(p.tempId, newId);
+          } else if (p.kind === 'update' && p.elementId && p.patch) {
+            await get().commit(idMap.get(p.elementId) ?? p.elementId, p.patch);
+          } else if (p.kind === 'delete' && p.elementId) {
+            await get().deleteElement(idMap.get(p.elementId) ?? p.elementId);
+          }
+        } catch {
+          refused++;
         }
-      } catch {
-        refused++;
       }
-    }
+    });
 
     // 2) Page-structure edits — indices resolved against the LATEST page list each
     // step (earlier ops shift positions). Blank/reorder/remove refresh summaries;
@@ -1233,7 +1357,9 @@ export const useEditorStore = create<EditorState>((set, get) => ({
               if (get().pages.length === before) refused++;
             } else {
               const { pages } = await api.deletePage(issueId, target.id);
-              set({ pages, editedSinceLoad: true });
+              // Same pruning as deletePage's own path — this branch skips it only
+              // because it doesn't need the submitted-page confirmation.
+              set((st) => ({ pages, editedSinceLoad: true, undoStack: withoutPage(st.undoStack, target.id), redoStack: withoutPage(st.redoStack, target.id) }));
               if (get().currentPageId === target.id && pages[0]) await get().openPage(pages[0].id);
             }
           }
@@ -1252,13 +1378,132 @@ export const useEditorStore = create<EditorState>((set, get) => ({
         `Applied what I could — ${refused} change${refused === 1 ? '' : 's'} ${refused === 1 ? 'was' : 'were'} refused.`,
       );
     } else {
-      toast.success('Applied the assistant’s changes.');
+      // Say that it's reversible. The apply is one undo entry now, and users who have
+      // been burned by an assistant edit need telling that Ctrl+Z takes it all back.
+      toast.success('Applied the assistant’s changes. Undo with Ctrl+Z.');
     }
     if (deferGenerate) await get().generatePages(deferGenerate.count, deferGenerate.topic, deferGenerate.atIndex);
   },
 
   discardProposals: () => set({ proposals: [], proposalsPageId: null }),
 }));
+
+// ── Undo/redo replay ────────────────────────────────────────────────────────
+//
+// These three write through the SAME rev-guarded endpoints as everything else, but
+// deliberately bypass the store's own actions: those record undo ops, and a replay
+// that records its own inverse would make Ctrl+Z toggle one change back and forth
+// forever instead of walking back through history. (`replaying` is belt-and-braces
+// for anything that reaches them indirectly.)
+
+/** Adopt the server's page from a 409 so the ops still to come use a live rev. */
+function adoptConflict(e: unknown, pageId: string, set: any, get: any) {
+  if (e instanceof ApiError && e.status === 409 && e.body?.page) {
+    const fresh = e.body.page as MagazinePageV2;
+    if (get().page?.id === pageId) set({ page: fresh });
+  }
+}
+
+async function replayUpdate(issueId: string, pageId: string, elementId: string, target: MagazineElement, set: any, get: any) {
+  const page = get().page as MagazinePageV2 | null;
+  if (!page || page.id !== pageId) throw new Error('page not open');
+  const { element, rev } = await api.patchElement(issueId, pageId, elementId, page.rev, target);
+  set((st: EditorState) => ({
+    page: st.page && st.page.id === pageId
+      ? { ...st.page, rev, elements: st.page.elements.map((x) => (x.id === elementId ? element : x)) }
+      : st.page,
+    editedSinceLoad: true,
+  }));
+}
+
+async function replayRemove(issueId: string, pageId: string, elementId: string, set: any, get: any) {
+  const page = get().page as MagazinePageV2 | null;
+  if (!page || page.id !== pageId) throw new Error('page not open');
+  const { rev } = await api.deleteElement(issueId, pageId, elementId, page.rev);
+  set((st: EditorState) => ({
+    page: st.page && st.page.id === pageId ? { ...st.page, rev, elements: st.page.elements.filter((x) => x.id !== elementId) } : st.page,
+    selectedId: st.selectedId === elementId ? null : st.selectedId,
+    editedSinceLoad: true,
+  }));
+}
+
+/** Put a deleted element back — same id, same source (see api.addElement's
+ *  `restore`), so later stack entries naming it still resolve. */
+async function replayRestore(issueId: string, pageId: string, element: MagazineElement, set: any, get: any) {
+  const page = get().page as MagazinePageV2 | null;
+  if (!page || page.id !== pageId) throw new Error('page not open');
+  const { element: created, rev } = await api.addElement(issueId, pageId, page.rev, element, true);
+  set((st: EditorState) => ({
+    page: st.page && st.page.id === pageId ? { ...st.page, rev, elements: [...st.page.elements, created] } : st.page,
+    editedSinceLoad: true,
+  }));
+}
+
+/**
+ * Replay one stack entry's ops in the given direction.
+ *
+ * Every op is attempted even if an earlier one fails, so a single stale op can't
+ * strand the rest of the entry half-applied — but failures are COUNTED and said out
+ * loud. "Undid the assistant's changes" over a swallowed refusal is the one thing
+ * undo must never do: the user would believe the page went back and it did not.
+ *
+ * Returns true only if the entry replayed cleanly (the caller moves it to the other
+ * stack); on a partial failure the entry is dropped rather than offered for redo.
+ */
+async function replayOps(ops: UndoOp[], dir: 'undo' | 'redo', set: any, get: any): Promise<boolean> {
+  const issueId = get().issueId as string | null;
+  if (!issueId) return false;
+  replaying = true;
+  let failed = 0;
+  let abandoned = false;
+  try {
+    for (const op of ops) {
+      // Opened another magazine mid-replay (each op is a round trip) — stop rather
+      // than write this magazine's history into that one.
+      if (get().issueId !== issueId) {
+        abandoned = true;
+        break;
+      }
+      // Belt-and-braces against a page that has since been deleted elsewhere (another
+      // tab, a collaborator): openPage on a missing page would put the editor into its
+      // error state, which is a much louder failure than a skipped op deserves.
+      if (!get().pages.some((p: PageSummary) => p.id === op.pageId)) {
+        failed++;
+        continue;
+      }
+      // The op may be on a page you have scrolled away from since — bring it back, so
+      // undo works wherever you are rather than only on the page you're looking at.
+      if (get().page?.id !== op.pageId) await get().openPage(op.pageId);
+      try {
+        if (op.op === 'update') {
+          await replayUpdate(issueId, op.pageId, op.elementId, dir === 'undo' ? op.before : op.after, set, get);
+        } else if ((op.op === 'add') === (dir === 'undo')) {
+          // Undoing an add, or redoing a delete → the element goes away again.
+          await replayRemove(issueId, op.pageId, op.element.id, set, get);
+        } else {
+          // Undoing a delete, or redoing an add → the element comes back.
+          await replayRestore(issueId, op.pageId, op.element, set, get);
+        }
+      } catch (e) {
+        adoptConflict(e, op.pageId, set, get);
+        failed++;
+      }
+    }
+  } finally {
+    replaying = false;
+  }
+  // Abandoned because the user moved on: no toast (they are looking at something
+  // else) and no push onto the other stack — load() has cleared both anyway.
+  if (abandoned) return false;
+  if (failed > 0) {
+    toast.warning(
+      failed === ops.length
+        ? `Couldn't ${dir === 'undo' ? 'undo' : 'redo'} that — the page has changed since.`
+        : `${dir === 'undo' ? 'Undid' : 'Redid'} what I could — ${failed} change${failed === 1 ? '' : 's'} no longer applied.`,
+    );
+  }
+  return failed === 0;
+}
 
 /** Shared write-error handling: a 409 reconciles to the server's current page.
  *  Keeps the user's SELECTION if that element still exists on the fresh page —

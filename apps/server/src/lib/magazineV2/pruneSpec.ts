@@ -27,13 +27,30 @@
 import type { LayoutSpec, LayoutNode, LeafNode, ContainerNode, StackNode, LayoutChild } from './layoutSpec.js';
 import type { ResolvedContent } from './composeFromSolved.js';
 
+/** What the caller wants kept that would otherwise be pruned. Threaded as an object
+ *  rather than positional booleans — two adjacent `boolean` parameters in a recursive
+ *  walk is a swap waiting to happen. */
+interface PruneOpts {
+  keepWhitespace: boolean;
+  keepImagePlaceholders: boolean;
+}
+
 /** Does a non-shape leaf carry real, renderable content? (Shapes are decided by
  *  their stack context, never in isolation — see pruneStack.) */
-function leafHasContent(leaf: LeafNode, content: ResolvedContent): boolean {
+function leafHasContent(leaf: LeafNode, content: ResolvedContent, opts: PruneOpts): boolean {
   const c = content[leaf.contentRef ?? ''];
   switch (leaf.role) {
     case 'image':
-      return !!c?.image?.url; // a photo that failed to load (shapeFill only) does NOT count
+      // A photo that failed to load (shapeFill only) does NOT count — for the
+      // GENERATOR, whose job is to fill a page it invented, and which would rather
+      // re-partition than hold open a box for a picture it never got.
+      //
+      // `keepImagePlaceholders` inverts that for the layout-from-reference path,
+      // where the box is the point: the user asked for THIS composition, and a
+      // magazine with fewer photos than its reference is ordinary. composeFromSolved
+      // already paints such a leaf as a tinted block.
+      if (opts.keepImagePlaceholders && !!c?.shapeFill) return true;
+      return !!c?.image?.url;
     case 'qr':
       return !!c?.qrUrl;
     case 'icon':
@@ -68,10 +85,10 @@ function containsProse(node: LayoutNode): boolean {
   return kids.some(containsProse);
 }
 
-function pruneContainer(node: ContainerNode, content: ResolvedContent, keepWhitespace: boolean): ContainerNode | null {
+function pruneContainer(node: ContainerNode, content: ResolvedContent, opts: PruneOpts): ContainerNode | null {
   const kids: LayoutChild[] = [];
   for (const child of node.children) {
-    const pn = pruneNode(child.node, content, keepWhitespace, true);
+    const pn = pruneNode(child.node, content, opts, true);
     if (pn) kids.push({ ...child, node: pn });
   }
   if (kids.length === 0) return null;
@@ -94,7 +111,7 @@ function pruneContainer(node: ContainerNode, content: ResolvedContent, keepWhite
   // docs/MAGAZINE-V2-LAYOUT-FROM-REFERENCE.md.
   const justifyStart = !node.justify || node.justify === 'start';
   const anyFr = kids.some((c) => (c.sizing ?? 'fr') === 'fr');
-  if (justifyStart && !anyFr && !keepWhitespace) {
+  if (justifyStart && !anyFr && !opts.keepWhitespace) {
     let idx = kids.length - 1;
     for (let i = kids.length - 1; i >= 0; i--) {
       if (containsProse(kids[i]!.node)) { idx = i; break; }
@@ -104,7 +121,7 @@ function pruneContainer(node: ContainerNode, content: ResolvedContent, keepWhite
   return { ...node, children: kids };
 }
 
-function pruneStack(node: StackNode, content: ResolvedContent, keepWhitespace: boolean): StackNode | null {
+function pruneStack(node: StackNode, content: ResolvedContent, opts: PruneOpts): StackNode | null {
   const n = node.layers.length;
   const resolved: (LayoutNode | null)[] = new Array(n).fill(null);
   const survivingImage: boolean[] = new Array(n).fill(false);
@@ -112,7 +129,7 @@ function pruneStack(node: StackNode, content: ResolvedContent, keepWhitespace: b
   // Pass 1 — resolve every NON-shape layer; note which positions hold a real image.
   node.layers.forEach((layer, i) => {
     if (layer.kind === 'leaf' && layer.role === 'shape') return; // decided in pass 2
-    const pn = pruneNode(layer, content, keepWhitespace, false);
+    const pn = pruneNode(layer, content, opts, false);
     resolved[i] = pn;
     if (pn && layer.kind === 'leaf' && layer.role === 'image') survivingImage[i] = true;
   });
@@ -137,14 +154,14 @@ function pruneStack(node: StackNode, content: ResolvedContent, keepWhitespace: b
 /** `inFlow` = this node is a row/col CHILD rather than a stack layer or the root. Only a
  *  container child can be a spacer: as a stack layer it would cover the whole rectangle
  *  and draw nothing, and as the root it would be a page with nothing on it. */
-function pruneNode(node: LayoutNode, content: ResolvedContent, keepWhitespace: boolean, inFlow: boolean): LayoutNode | null {
+function pruneNode(node: LayoutNode, content: ResolvedContent, opts: PruneOpts, inFlow: boolean): LayoutNode | null {
   if (node.kind === 'leaf') {
     if (node.role === 'spacer') return inFlow ? node : null;
     if (node.role === 'shape') return null; // a bare shape in flow is dead space
-    return leafHasContent(node, content) ? node : null;
+    return leafHasContent(node, content, opts) ? node : null;
   }
-  if (node.kind === 'stack') return pruneStack(node, content, keepWhitespace);
-  return pruneContainer(node, content, keepWhitespace);
+  if (node.kind === 'stack') return pruneStack(node, content, opts);
+  return pruneContainer(node, content, opts);
 }
 
 /**
@@ -163,9 +180,9 @@ function pruneNode(node: LayoutNode, content: ResolvedContent, keepWhitespace: b
 export function pruneLayoutSpec(
   spec: LayoutSpec,
   content: ResolvedContent,
-  opts?: { keepWhitespace?: boolean },
+  opts?: { keepWhitespace?: boolean; keepImagePlaceholders?: boolean },
 ): LayoutSpec | null {
-  const root = pruneNode(spec.root, content, opts?.keepWhitespace === true, false);
+  const root = pruneNode(spec.root, content, { keepWhitespace: opts?.keepWhitespace === true, keepImagePlaceholders: opts?.keepImagePlaceholders === true }, false);
   if (!root) return null;
   return { page: spec.page, root };
 }

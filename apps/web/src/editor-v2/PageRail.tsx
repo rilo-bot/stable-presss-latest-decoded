@@ -19,7 +19,7 @@
 // ---------------------------------------------------------------------------
 
 import { memo, useEffect, useMemo, useRef, useState } from 'react';
-import { ChevronsLeft, Copy, Trash2, Plus, Sparkles, PanelLeftOpen, Lock, EyeOff, AlertTriangle } from 'lucide-react';
+import { ChevronsLeft, ChevronUp, ChevronDown, Copy, Trash2, Plus, Sparkles, PanelLeftOpen, Lock, EyeOff, AlertTriangle } from 'lucide-react';
 import { useEditorStore } from './store';
 import type { PageSummary } from './api';
 import type { IssuePageData } from './model';
@@ -159,10 +159,37 @@ function Tile({
         (dragging ? 'opacity-40' : '')
       }
     >
-      {/* min-w, not w: a 100-page magazine must widen the gutter rather than clip it. */}
-      <span className={'min-w-3.5 flex-shrink-0 pt-1 text-right text-ui-sm tabular-nums ' + (active ? 'text-studio-ink' : 'text-studio-ink-3')}>
-        {n}
-      </span>
+      {/* min-w, not w: a 100-page magazine must widen the gutter rather than clip it.
+          For editors this doubles as a non-drag, always-visible reorder control —
+          dragging asks for sustained pointer precision that not everyone has, and the
+          keyboard equivalent (Alt+↑/↓) was previously invisible on screen. */}
+      {canManage ? (
+        <div className="flex flex-shrink-0 flex-col items-center gap-0.5 pt-0.5">
+          <button
+            onClick={(e) => { e.stopPropagation(); onMove(-1); }}
+            disabled={n <= 1}
+            className="flex h-5 w-5 items-center justify-center rounded-sm text-studio-ink-3 hover:bg-studio-raise-2 hover:text-studio-ink disabled:opacity-20 disabled:hover:bg-transparent"
+            title={`Move page ${n} up`}
+            aria-label={`Move page ${n} up`}
+          >
+            <ChevronUp size={12} />
+          </button>
+          <span className={'text-center text-ui-sm tabular-nums ' + (active ? 'text-studio-ink' : 'text-studio-ink-3')}>{n}</span>
+          <button
+            onClick={(e) => { e.stopPropagation(); onMove(1); }}
+            disabled={n >= total}
+            className="flex h-5 w-5 items-center justify-center rounded-sm text-studio-ink-3 hover:bg-studio-raise-2 hover:text-studio-ink disabled:opacity-20 disabled:hover:bg-transparent"
+            title={`Move page ${n} down`}
+            aria-label={`Move page ${n} down`}
+          >
+            <ChevronDown size={12} />
+          </button>
+        </div>
+      ) : (
+        <span className={'min-w-3.5 flex-shrink-0 pt-1 text-right text-ui-sm tabular-nums ' + (active ? 'text-studio-ink' : 'text-studio-ink-3')}>
+          {n}
+        </span>
+      )}
 
       <div
         className={
@@ -203,26 +230,44 @@ function Tile({
           </div>
         )}
 
-        {/* Per-page actions, on hover or keyboard focus. They used to appear only on
-            the ACTIVE page, which meant duplicating page 9 started by navigating to it. */}
+        {/* Per-page actions. ALWAYS visible, not hover-only — a control that only
+            appears when the mouse happens to pass over it is a control that a
+            first-time or imprecise-pointer user may never discover exists. They used
+            to appear only on the ACTIVE page too, which meant duplicating page 9
+            started by navigating to it. */}
         {canManage && (
-          <div className="absolute right-0.5 top-0.5 flex gap-0.5 opacity-0 transition-opacity group-hover:opacity-100 group-focus-within:opacity-100">
+          <div className="absolute right-0.5 top-0.5 flex gap-1">
             <button
               onClick={(e) => { e.stopPropagation(); void useEditorStore.getState().duplicatePage(page.id); }}
-              className="rounded-sm bg-studio-bg/85 p-0.5 text-studio-ink-2 hover:text-studio-ink"
+              className="rounded-sm bg-studio-bg/90 p-1 text-studio-ink-2 hover:bg-studio-bg hover:text-studio-ink"
               title={`Duplicate page ${n}`}
               aria-label={`Duplicate page ${n}`}
             >
-              <Copy size={11} />
+              <Copy size={13} />
             </button>
             <button
-              onClick={(e) => { e.stopPropagation(); void useEditorStore.getState().deletePage(page.id); }}
+              onClick={(e) => {
+                e.stopPropagation();
+                // Now that this button is always visible rather than hover-only, a slip
+                // lands on it far more easily — and deletion prunes the page's own
+                // entries out of the undo stack (store.ts, withoutPage), so Ctrl+Z
+                // cannot bring it back the way it can for almost everything else here.
+                //
+                // A SUBMITTED page skips this generic confirm: store.deletePage already
+                // raises its own — naming who submitted it and that they'll be emailed —
+                // when the server refuses with page-submitted. That one is strictly more
+                // informative, and asking twice in a row for the same click would bury it
+                // behind a confirm that has nothing useful to say.
+                if (col === 'submitted' || window.confirm(`Delete page ${n}? This cannot be undone.`)) {
+                  void useEditorStore.getState().deletePage(page.id);
+                }
+              }}
               disabled={total <= 1}
-              className="rounded-sm bg-studio-bg/85 p-0.5 text-red-300/80 hover:text-red-300 disabled:opacity-30"
+              className="rounded-sm bg-studio-bg/90 p-1 text-red-300/90 hover:bg-studio-bg hover:text-red-300 disabled:opacity-30"
               title={total <= 1 ? 'A magazine needs at least one page' : `Delete page ${n}`}
               aria-label={`Delete page ${n}`}
             >
-              <Trash2 size={11} />
+              <Trash2 size={13} />
             </button>
           </div>
         )}

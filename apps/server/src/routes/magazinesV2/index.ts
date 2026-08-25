@@ -48,8 +48,10 @@ import { runPageAgent } from '../../lib/magazineV2/agent.js';
 import { formatPageText, charGuideFor } from '../../lib/magazineV2/format.js';
 import { readLayoutImage } from '../../lib/magazineV2/readLayout.js';
 import { aspectMismatch, normalizeLayoutReading } from '../../lib/magazineV2/layoutReading.js';
-import { applyReadingToPage, tightSummary, unfilledSlots, type ExtraContent } from '../../lib/magazineV2/applyLayout.js';
+import { applyReadingToPage, themeForPage, tightSummary, unfilledSlots, type ExtraContent } from '../../lib/magazineV2/applyLayout.js';
+import { isPlaceableMedia, rankMediaForPage, type RankableMediaRow } from '../../lib/magazineV2/media.js';
 import { draftReferenceFill } from '../../lib/magazineV2/referenceFill.js';
+import { createSourceDoc, listSourceDocs } from '../../lib/magazineV2/sourceDocsDb.js';
 
 /* eslint-disable @typescript-eslint/no-explicit-any */
 type Doc = { _id: string; [k: string]: any };
@@ -494,9 +496,15 @@ router.post('/issues/generate', rateLimit('mag2-generate', 10, 60_000), async (r
     return;
   }
   const prompt = typeof req.body?.prompt === 'string' ? req.body.prompt.trim() : '';
-  // Optional source document text (already ingested client-side) to build FROM.
+  // Stored source documents to build FROM — the real path. Cited by id, so the
+  // issue can re-read them for every later pass (more pages, a fill, a re-run).
+  const docIds = (Array.isArray(req.body?.docIds) ? req.body.docIds : [])
+    .filter((d: unknown): d is string => typeof d === 'string' && d.length > 0)
+    .slice(0, 20);
+  // LEGACY: document text posted inline by the older client. Kept working for one
+  // release. It cannot be re-read, which is the whole reason docIds exist.
   const sourceText = typeof req.body?.sourceText === 'string' ? req.body.sourceText.slice(0, 60_000) : '';
-  if (!prompt && !sourceText.trim()) {
+  if (!prompt && !sourceText.trim() && docIds.length === 0) {
     res.status(400).json({ error: 'Describe the magazine you want, or attach a document to build from.' });
     return;
   }
@@ -558,7 +566,26 @@ router.post('/issues/generate', rateLimit('mag2-generate', 10, 60_000), async (r
   }
   // Hand off to the worker: generation (per-page LLM + image calls) is slow, so
   // it runs out-of-process. The client polls the issue status until it settles.
-  await enqueueJob('generateIssue', { issueId: id, prompt, pageCount, sourceText, threadId });
+  // CHAINED, NOT AWAITED. With documents attached, the reads run first and
+  // generation is enqueued by whichever read finishes last. A generateIssue
+  // handler that waited for its documents would wait on jobs that can never be
+  // claimed — the worker takes one at a time — so this must never become an await.
+  //
+  // EVERY read carries the continuation, and chainIfReady() decides: it fires only
+  // once every document has settled, and claims the right to enqueue with a
+  // compare-and-set so two reads finishing together cannot build the issue twice.
+  // Handing the continuation to just the first document would have started
+  // generation while the others were still unread — the issue built from one
+  // attachment, silently.
+  if (docIds.length > 0) {
+    const onDone = {
+      type: 'generateIssue' as const,
+      payload: { issueId: id, prompt, pageCount, docIds, sourceText, threadId },
+    };
+    for (const docId of docIds) await enqueueJob('readSourceDoc', { docId, onDone });
+  } else {
+    await enqueueJob('generateIssue', { issueId: id, prompt, pageCount, sourceText, threadId });
+  }
   const created = await loadIssue(id);
   res.status(202).json({ issue: created ? withViewer(created, uid) : { id } });
 });
@@ -715,8 +742,13 @@ router.get('/issues/:id/media', async (req, res) => {
   // structure. Offering it in the photo picker would invite the one thing
   // docs/MAGAZINE-V2-LAYOUT-FROM-REFERENCE.md says we never do — put their picture
   // in the client's magazine.
+  //
+  // The rule itself lives in media.ts. It used to be written out by hand here and at
+  // two other sites, and the third (loadUserPhotoPool) had it wrong — a reference is
+  // `source:'upload'`, so its `kind !== 'doc'` test let one through into the pool
+  // generation places first. One predicate, so there is one place to be right.
   const assets = ((await db.collection(COL.media).find({ magazineId: doc._id })) as Doc[]).filter(
-    (a) => a.kind !== 'doc' && a.kind !== 'reference',
+    (a) => isPlaceableMedia(a as { kind?: string; url?: string }),
   );
   res.json({
     assets: assets.map((a) => ({ id: a._id, url: a.url, alt: a.alt, kind: a.kind, pageIndex: a.pageIndex, contentType: a.contentType, size: a.size })),
@@ -870,6 +902,111 @@ router.get('/issues/:id/uploads/:uploadId', async (req, res) => {
     contentType: asset.contentType,
     sourceText: asset.sourceText ?? '',
     digest: asset.digest ?? '',
+  });
+});
+
+// ── Source documents (the AI's reading material) ─────────────────────────────
+//
+// Distinct from /uploads above, which is a browsable LIBRARY of files. A source
+// document is something the AI reads: uploaded to S3, then read by the worker into
+// chunk rows, then cited by id for the life of the issue. Nothing here waits on
+// that read — the client polls GET /sources for status, which is what lets a
+// 200-page scan be read at all.
+
+// presign a direct-to-S3 PUT for a document the AI will read.
+router.post('/issues/:id/sources/upload-url', rateLimit('mag2-write', 300, 60_000), async (req, res) => {
+  const uid = req.account!.id;
+  const doc = await loadIssue(String(req.params.id));
+  if (!doc || !roleOnMagazine(doc, uid)) {
+    res.status(404).json({ error: 'Not found' });
+    return;
+  }
+  if (!storage.isConfigured()) {
+    res.status(503).json({ error: 'File storage is not configured on this server.' });
+    return;
+  }
+  const contentType = typeof req.body?.contentType === 'string' ? req.body.contentType.trim() : '';
+  const size = Number(req.body?.size);
+  if (!ALLOWED_DOC_MIME.has(contentType)) {
+    res.status(415).json({ error: 'I can read PDFs, Word documents and text files.' });
+    return;
+  }
+  if (!Number.isFinite(size) || size <= 0 || size > MAX_DOC_BYTES) {
+    res.status(413).json({ error: `The document must be under ${Math.round(MAX_DOC_BYTES / 1024 / 1024)} MB.` });
+    return;
+  }
+  const key = `public/magazinesV2/${doc._id}/sources/${crypto.randomUUID()}.${docExtFor(contentType)}`;
+  const uploadUrl = await storage.presignPutUrl({ key, contentType, expiresIn: 300 });
+  res.json({ uploadUrl, key, contentType });
+});
+
+// confirm an uploaded document landed → create the row → queue the read.
+router.post('/issues/:id/sources', rateLimit('mag2-write', 300, 60_000), async (req, res) => {
+  const uid = req.account!.id;
+  const doc = await loadIssue(String(req.params.id));
+  if (!doc || !roleOnMagazine(doc, uid)) {
+    res.status(404).json({ error: 'Not found' });
+    return;
+  }
+  const key = typeof req.body?.key === 'string' ? req.body.key : '';
+  if (!key.startsWith(`public/magazinesV2/${doc._id}/sources/`)) {
+    res.status(400).json({ error: 'Invalid upload key.' });
+    return;
+  }
+  // Never trust the client's size/type — read them back off the stored object.
+  let head: { contentLength: number; contentType: string };
+  try {
+    head = await storage.headObject(key);
+  } catch {
+    res.status(400).json({ error: 'Upload not found — please try again.' });
+    return;
+  }
+  if (!ALLOWED_DOC_MIME.has(head.contentType) || head.contentLength <= 0 || head.contentLength > MAX_DOC_BYTES) {
+    res.status(413).json({ error: 'That upload is not an accepted document within the size limit.' });
+    return;
+  }
+  const originalName = typeof req.body?.originalName === 'string' ? req.body.originalName.slice(0, 200) : 'document';
+  const docId = await createSourceDoc({
+    magazineId: String(doc._id),
+    ownerId: uid,
+    originalName,
+    contentType: head.contentType,
+    size: head.contentLength,
+    s3Key: key,
+    url: storage.publicUrl(key),
+  });
+  // The read happens in the worker. The response returns immediately with a
+  // docId the caller can poll and, later, cite — no request is held open on OCR.
+  await enqueueJob('readSourceDoc', { docId });
+  res.status(201).json({
+    source: { id: docId, originalName, contentType: head.contentType, size: head.contentLength, status: 'queued' },
+  });
+});
+
+// list this issue's source documents, with read status + coverage.
+router.get('/issues/:id/sources', async (req, res) => {
+  const uid = req.account!.id;
+  const doc = await loadIssue(String(req.params.id));
+  if (!doc || !roleOnMagazine(doc, uid)) {
+    res.status(404).json({ error: 'Not found' });
+    return;
+  }
+  const docs = await listSourceDocs(String(doc._id));
+  res.json({
+    sources: docs.map((d) => ({
+      id: String(d._id),
+      originalName: d.originalName,
+      contentType: d.contentType,
+      size: d.size,
+      status: d.status,
+      kind: d.kind,
+      // Coverage is surfaced, not just logged. "We read 6 of 40 pages" used to be
+      // computed and then thrown away, so a thin magazine looked like bad AI
+      // rather than a partly-read document.
+      coverage: d.coverage,
+      error: d.error,
+      createdAt: d.createdAt,
+    })),
   });
 });
 
@@ -2349,7 +2486,26 @@ router.post('/issues/:id/pages/:pageId/elements', async (req, res) => {
     res.status(409).json({ error: `A page can have at most ${MAX_ELEMENTS_PER_PAGE} elements.` });
     return;
   }
-  const [created] = normalizeElements([{ ...req.body?.element, id: undefined, source: 'manual' }], pageDims(page));
+  // A RESTORE add is undo putting back an element that was just deleted (by the
+  // user or by the assistant). It has to keep the original id — the undo/redo
+  // stacks name elements by id, so a re-created element with a fresh id would turn
+  // every other entry that mentions it into a ghost, and redo could not find it
+  // again. `source` is preserved for the same reason: an AI-added element that is
+  // undone and redone must not quietly become 'manual'.
+  //
+  // It can only ever CREATE: an id already on the page is refused, so this can't be
+  // used to overwrite an existing element. Everything else still goes through
+  // normalizeElements, so the geometry/sanitising guardrails are unchanged.
+  const raw = (req.body?.element && typeof req.body.element === 'object' ? req.body.element : {}) as Record<string, unknown>;
+  const restoreId = req.body?.restore === true && typeof raw.id === 'string' && raw.id ? raw.id.slice(0, 64) : null;
+  if (restoreId && els.some((e) => e.id === restoreId)) {
+    res.status(409).json({ error: 'That element is already on the page.', page: project(page) });
+    return;
+  }
+  const [created] = normalizeElements(
+    [{ ...raw, id: restoreId ?? undefined, source: restoreId ? raw.source : 'manual' }],
+    pageDims(page),
+  );
   if (!created) {
     res.status(400).json({ error: 'Invalid element' });
     return;
@@ -2923,13 +3079,16 @@ router.post('/issues/:id/pages/:pageId/apply-layout', rateLimit('mag2-agent', 20
       }
       if (pageShape.background?.type === 'image' && pageShape.background.value) take(String(pageShape.background.value));
       if (extraImages.length < missing.images) {
-        // Top up from the magazine's own library — never `reference` uploads
-        // (someone else's licensed page) and never docs.
+        // Top up from the magazine's own library, BEST CANDIDATE FOR THIS PAGE FIRST.
+        // This used to read the collection in storage order, so rebuilding page 3
+        // could take page 12's photograph while page 3's own sat further down the
+        // array. rankMediaForPage puts this page's own extracted assets first, then
+        // everything else newest-first (uploads carry no pageIndex, so recency is the
+        // only signal they have), and drops what may never be placed — a reference or
+        // a doc — so neither can be reintroduced here. See media.ts.
         const media = (await db.collection(COL.media).find({ magazineId: issue._id })) as Doc[];
-        for (const m of media) {
-          if (m.kind !== 'reference' && m.kind !== 'doc' && typeof m.url === 'string') {
-            take(String(m.url), String(m._id), typeof m.alt === 'string' ? m.alt : '');
-          }
+        for (const m of rankMediaForPage(media as unknown as RankableMediaRow[], Number(page.index) || 0)) {
+          take(String(m.url), String(m._id), typeof m.alt === 'string' ? m.alt : '');
         }
       }
     }
@@ -2946,7 +3105,28 @@ router.post('/issues/:id/pages/:pageId/apply-layout', rateLimit('mag2-agent', 20
     if (extraTexts.length > 0 || extraImages.length > 0) extraFill = { texts: extraTexts, images: extraImages };
   }
 
-  const applied = applyReadingToPage(reading, blank, genTheme, furnitureContextFor(issue, page), extraFill);
+  /**
+   * THE STYLE COMES FROM THE PAGE AS IT STANDS, NOT FROM THE BLANK.
+   *
+   * `blank` above is the reflow's skeleton — it is deliberately stripped so no old copy
+   * can claim a slot. It is NOT a description of how the page looks, and deriving the
+   * look from it is what made every imported page come back as black type on white in
+   * two default faces: `themeForPage` tallies the ink most words are set in and the face
+   * of the largest line, and on a blanked page it tallies nothing.
+   *
+   * A page carries its own answer — `processPage` records real fontFamily/fontSize/color
+   * per element from MuPDF — so `pageShape` (the page the user can actually see) is the
+   * honest input, with the magazine's `genTheme` still winning where it exists.
+   */
+  const style = themeForPage(genTheme, pageShape);
+  // Take the reference's own type unless the client says not to. Opt-OUT rather than
+  // opt-in: adopting the reference's sizes, ink and weights is what "make this page
+  // look like that one" plainly means, and a reading only carries type the model could
+  // actually see — so a reference it could not read leaves the page's own alone
+  // anyway. The escape hatch exists for the user who wants the arrangement and their
+  // own typography.
+  const adoptType = req.body?.adoptType !== false;
+  const applied = applyReadingToPage(reading, blank, style, furnitureContextFor(issue, page), extraFill, adoptType);
   if (!applied.page) {
     // 422: the request and the server are both fine — this layout and this page
     // cannot be put together, and the sentence says which.

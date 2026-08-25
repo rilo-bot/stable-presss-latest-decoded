@@ -238,3 +238,96 @@ test('the tolerance is a real number, not a mood', () => {
   assert.equal(aspectMismatch(justInside, A4_W, A4_H), '');
   assert.notEqual(aspectMismatch(justOutside, A4_W, A4_H), '');
 });
+
+// ── Typography ───────────────────────────────────────────────────────────────
+//
+// These fields exist so a rebuilt page can carry the REFERENCE's type rather than
+// only its boxes. Every one is optional, and an absent field means "this page keeps
+// its own" — which is the behaviour that existed before them and the right thing to
+// fall back to. So the tests are about what gets DROPPED: a fabricated measurement
+// wearing the reference's name is worse than no measurement at all.
+
+const typed = (o: Record<string, unknown>) => {
+  const r = normalizeLayoutReading({
+    regions: [{ role: 'headline', box: { x: 0.1, y: 0.1, w: 0.8, h: 0.1 }, ...o }, ...twoRegions],
+  })!;
+  return r.regions.find((g) => g.role === 'headline')!;
+};
+
+test('type is read off a region when the model reports it', () => {
+  const g = typed({ sizeFrac: 0.08, color: '#c81f24', weight: 800, face: 'serif' });
+  assert.equal(g.sizeFrac, 0.08);
+  assert.equal(g.color, '#c81f24');
+  assert.equal(g.weight, 800);
+  assert.equal(g.face, 'serif');
+});
+
+test('a region with no type reported carries none — the page keeps its own', () => {
+  const g = typed({});
+  assert.equal(g.sizeFrac, undefined);
+  assert.equal(g.color, undefined);
+  assert.equal(g.weight, undefined);
+  assert.equal(g.face, undefined);
+});
+
+test('an unbelievable size is DROPPED, not clamped', () => {
+  // Clamping would report the ceiling to the user as the reference's own measurement.
+  // Half the page tall is not a line of type; it is a photograph the model mislabelled.
+  assert.equal(typed({ sizeFrac: 0.6 }).sizeFrac, undefined);
+  assert.equal(typed({ sizeFrac: 0.0001 }).sizeFrac, undefined, 'nobody could read the reference either');
+  assert.equal(typed({ sizeFrac: -0.08 }).sizeFrac, undefined);
+  assert.equal(typed({ sizeFrac: 'big' }).sizeFrac, undefined);
+});
+
+test('a junk colour or weight is dropped rather than guessed at', () => {
+  assert.equal(typed({ color: 'red' }).color, undefined, 'named colours are not #rrggbb');
+  assert.equal(typed({ color: '#abc' }).color, undefined, 'shorthand hex is not accepted');
+  assert.equal(typed({ weight: 733 }).weight, undefined, 'not a weight the DSL has');
+  assert.equal(typed({ weight: 'bold' }).weight, undefined);
+  assert.equal(typed({ face: 'Helvetica' }).face, undefined, 'a family is not a face class');
+});
+
+test('sizeFrac follows the WHOLE READING into percent units, like the boxes do', () => {
+  // A model that reported its geometry in percent reported its type that way too.
+  // scaleOf decides once, from the box sides; this must ride the same decision or a
+  // percent reading would keep 8 as a size fraction and drop it as unbelievable.
+  const r = normalizeLayoutReading({
+    regions: [
+      { role: 'image', box: { x: 0, y: 0, w: 100, h: 60 } },
+      { role: 'headline', box: { x: 8, y: 65, w: 84, h: 12 }, sizeFrac: 8 },
+    ],
+  })!;
+  const headline = r.regions.find((g) => g.role === 'headline')!;
+  assert.equal(headline.sizeFrac, 0.08, 'read as 8% of the page, not thrown away');
+});
+
+test('a short line is quoted, and its length is known even without a count', () => {
+  const g = typed({ text: 'HORIZON' });
+  assert.equal(g.text, 'HORIZON');
+  assert.equal(g.chars, 7, 'a transcribed line is its own length');
+});
+
+test('an explicit count wins, because a quote may be a truncation', () => {
+  const g = typed({ text: 'Find Beauty', chars: 240 });
+  assert.equal(g.chars, 240);
+});
+
+test('prose is described by its length, not transcribed', () => {
+  const long = 'x'.repeat(400);
+  const g = typed({ text: long, chars: 400 });
+  assert.equal(g.text, undefined, 'we are reading a composition, not lifting an article');
+  assert.equal(g.chars, 400, 'but the length still lands');
+});
+
+test('markup in a quoted line is stripped, not trusted', () => {
+  // It reaches a drafter's prompt and, through `hint`, the user's screen.
+  assert.equal(typed({ text: '<b>HORIZON</b>' }).text, 'HORIZON');
+  assert.equal(typed({ text: '  spaced   out  ' }).text, 'spaced out');
+});
+
+test('an unbelievable character count is dropped', () => {
+  assert.equal(typed({ chars: 999999 }).chars, undefined, 'a whole page is not one region');
+  assert.equal(typed({ chars: 0 }).chars, undefined);
+  assert.equal(typed({ chars: -5 }).chars, undefined);
+  assert.equal(typed({ chars: 'lots' }).chars, undefined);
+});

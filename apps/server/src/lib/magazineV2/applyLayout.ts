@@ -17,8 +17,8 @@
 
 import { PAGE_H, PAGE_W } from './config.js';
 import { normalizeLayoutSpec } from './layoutSpec.js';
-import type { LayoutReading } from './layoutReading.js';
-import { readingToSpec, specContentRefs } from './readingToSpec.js';
+import { MAX_REGION_CHARS, type LayoutReading } from './layoutReading.js';
+import { readingToSpec, specContentRefs, stripType } from './readingToSpec.js';
 import { measureFidelity, type Fidelity } from './layoutFidelity.js';
 import { pruneLayoutSpec } from './pruneSpec.js';
 import { solveLayout } from './solveLayout.js';
@@ -148,6 +148,18 @@ export function contrastRatio(a: string, b: string): number {
 const textOf = (el: MagazineElement): string => (el.text?.content ?? '').replace(/<[^>]*>/g, ' ').trim();
 
 /**
+ * The resolved look of a page: the palette and the two faces to compose in.
+ *
+ * This is a SEPARATE INPUT to `applyReadingToPage` rather than something it derives,
+ * and that is the whole point — see the note on that function. Produce one with
+ * `themeForPage`, from the page as it stands BEFORE any blanking.
+ */
+export interface PageStyle {
+  palette: GenPalette;
+  fonts: GenFonts;
+}
+
+/**
  * The theme to compose in.
  *
  * `genTheme` is the magazine's stated design intent and wins when it exists. When it
@@ -155,11 +167,17 @@ const textOf = (el: MagazineElement): string => (el.text?.content ?? '').replace
  * FROM THE PAGE ITSELF rather than synthesised by a model call. That is both cheaper
  * and more honest: applying a layout should change a page's STRUCTURE, not repaint
  * it in colours it never had.
+ *
+ * THE PAGE PASSED HERE MUST BE THE ONE THE USER CAN SEE. Everything below reads the
+ * page's own text elements — the ink most words are set in, the face of the largest
+ * line, the commonest family — so a page that has been emptied first tallies nothing
+ * and every value falls through to a hardcoded default. That is not hypothetical: it
+ * is what shipped, and what the two DIAGNOSIS tests in applyLayout.test.ts pin down.
  */
 export function themeForPage(
   genTheme: { palette?: Partial<GenPalette>; fonts?: Partial<GenFonts> } | null,
   page: { background?: { type?: string; value?: string }; elements: MagazineElement[] },
-): { palette: GenPalette; fonts: GenFonts } {
+): PageStyle {
   const p = genTheme?.palette ?? {};
   const f = genTheme?.fonts ?? {};
   const texts = page.elements.filter((e) => e.type === 'text' && e.text);
@@ -413,15 +431,45 @@ export function reflowContent(
  */
 export function applyReadingToPage(
   reading: LayoutReading,
+  /**
+   * The SKELETON the reflow runs against — the elements that may claim a slot.
+   *
+   * Callers are allowed to hand over less than the real page: "use this layout" is a
+   * RECREATE and passes a furniture-only blank so no old copy can claim a slot. That is
+   * why `style` is a separate parameter and not derived from this.
+   */
   page: { width?: number; height?: number; background?: { type?: string; value?: string }; elements: MagazineElement[] },
-  genTheme: { palette?: Partial<GenPalette>; fonts?: Partial<GenFonts> } | null,
+  /**
+   * The page's resolved look — SEPARATE from `page` on purpose.
+   *
+   * This used to be the magazine's `genTheme`, and the theme was derived in here from
+   * whatever `page` happened to contain. That coupling was the bug: when the caller
+   * started passing a blanked page (RECREATE, 2026-08-17) the derivation silently ran
+   * over nothing, and every imported page came back as #1a1a1a on #ffffff in Playfair
+   * and Inter — no type error, no failing test, no warning. Taking the resolved style
+   * as an argument means the caller must say WHERE the look came from, and passing a
+   * blanked page can no longer quietly answer that question.
+   *
+   * Build it with `themeForPage(genTheme, <the page as the user sees it>)`.
+   */
+  style: PageStyle,
   /** Who this page is, so its running head and folio can be put back after the rebuild.
    *  Optional: omitted, the page simply comes back without chrome. */
   furnitureCtx?: RefurnishContext,
   /** Reference-fill: drafted copy + library photos for slots the page cannot cover. */
   extra?: ExtraContent,
+  /**
+   * Whether to take the reference's own TYPE — its sizes, ink and weights — as well as
+   * its composition. Default true: it is the thing "make this page look like that one"
+   * most obviously means, and a reading only carries type the model could actually see,
+   * so a reference it could not read still leaves the page's own typography alone.
+   *
+   * `false` strips type at the input rather than switching on a flag downstream, so the
+   * off path is the same code that ran before type was read at all.
+   */
+  adoptType = true,
 ): ApplyResult {
-  const converted = readingToSpec(reading);
+  const converted = readingToSpec(adoptType ? reading : stripType(reading));
   if (!converted) return { page: null, why: 'That layout could not be turned into a page structure.' };
   // Through the trust boundary even though we built it ourselves: it is the one place
   // the DSL's caps are enforced, and it must never be bypassed just because the
@@ -430,7 +478,7 @@ export function applyReadingToPage(
   if (!spec) return { page: null, why: 'That layout could not be turned into a page structure.' };
 
   const dims = { width: Number(page.width) || PAGE_W, height: Number(page.height) || PAGE_H };
-  const theme = themeForPage(genTheme, page);
+  const theme = style;
   const bgImage = page.background?.type === 'image' && page.background.value ? String(page.background.value) : '';
   const { content, leftOver, usedBackground } = reflowContent(specContentRefs(spec), page.elements, bgImage || undefined, extra);
 
@@ -438,7 +486,30 @@ export function applyReadingToPage(
   // promotes a content-sized track to `fr` to stop a strip trailing — correct for the
   // generator, which must fill the page, and catastrophic here: it stretched a cover's
   // tagline over two thirds of the sheet.
-  const pruned = pruneLayoutSpec(spec, content, { keepWhitespace: true });
+  /**
+   * AN IMAGE SLOT WITH NO PHOTOGRAPH KEEPS ITS BOX.
+   *
+   * A magazine with fewer photos than its reference is the ordinary case, not an edge
+   * one, and the old outcome was the worst available: the empty leaf was pruned, the
+   * page RE-PARTITIONED, and the type spread across the sheet — so asking for a
+   * photo-led layout you could not fill gave you a page that resembled nothing. The
+   * band is 45% of a cover; losing it is not losing a detail.
+   *
+   * `shapeFill` is the same fallback the generator uses for a photo it could not
+   * source (curateFills), and composeFromSolved already paints it as a tinted block.
+   * The colour is `secondary`, which `themeForPage` has already guaranteed to be
+   * visible against this ground.
+   *
+   * Real photography still wins every time: this only ever fills a slot that reflow
+   * and reference-fill both left empty.
+   */
+  for (const slot of specContentRefs(spec)) {
+    if (slot.role !== 'image') continue;
+    if (content[slot.ref]?.image?.url) continue;
+    content[slot.ref] = { ...content[slot.ref], shapeFill: theme.palette.secondary };
+  }
+
+  const pruned = pruneLayoutSpec(spec, content, { keepWhitespace: true, keepImagePlaceholders: true });
   if (!pruned) {
     return { page: null, why: 'This page has no content to put into that layout yet — add a headline, some text or a photo first.' };
   }
@@ -567,20 +638,32 @@ export function unfilledSlots(
   const bgImage = page.background?.type === 'image' && page.background.value ? String(page.background.value) : '';
   const { content } = reflowContent(slots, page.elements, bgImage || undefined);
 
-  // The vision's note for the region a slot came from ("masthead 'THE HORSE'") —
-  // it tells the drafter WHAT the reference said there, so the fresh copy is this
-  // magazine's version of the same thing rather than generic filler. Matched back
-  // through `origin` (the slot's source box IS the region's box); a slot with no
-  // one-to-one region (a split body, a synthesized band) simply gets no hint.
+  // The REGION a slot came from, matched back through `origin` (the slot's source box
+  // IS the region's box). A slot with no one-to-one region — a split body, a
+  // synthesized band — simply gets none, and falls back to the area estimate.
   const near = (a: number, b: number) => Math.abs(a - b) < 1e-6;
-  const hintFor = (ref: string, role: string): string | undefined => {
+  const regionFor = (ref: string, role: string): LayoutReading['regions'][number] | undefined => {
     const box = converted.origin[ref];
     if (!box) return undefined;
-    const region = reading.regions.find(
+    return reading.regions.find(
       (g) => g.role === role && near(g.box.x, box.x) && near(g.box.y, box.y) && near(g.box.w, box.w) && near(g.box.h, box.h),
     );
-    const note = region?.note?.trim();
-    return note || undefined;
+  };
+
+  /**
+   * What to tell the drafter this slot IS.
+   *
+   * The reference's own words first, because a role cannot distinguish a one-word
+   * masthead from a sixty-character article title — and told only "headline", the
+   * drafter writes the latter into the former. That is not hypothetical: it is what a
+   * real run produced on a magazine cover. The model's free-form `note` is the
+   * fallback for a region it described but did not quote.
+   */
+  const hintFor = (ref: string, role: string): string | undefined => {
+    const region = regionFor(ref, role);
+    const said = region?.text?.trim();
+    if (said) return `it reads “${said}”`;
+    return region?.note?.trim() || undefined;
   };
 
   const dims = { width: Number(page.width) || PAGE_W, height: Number(page.height) || PAGE_H };
@@ -599,11 +682,26 @@ export function unfilledSlots(
     const cap = ROLE_CHAR_CAP[slot.role] ?? 120;
     const crammed = TERSE_SLOTS.has(slot.role) && filled.replace(/<[^>]*>/g, ' ').trim().length > cap * CRAM_AT;
     if (filled && !crammed) continue;
+    /**
+     * HOW MUCH TO WRITE — from the reference's own text length where we have it.
+     *
+     * The budget used to come from box AREA alone, and that is why a rebuilt cover
+     * came back dense when its reference was airy: a masthead band is WIDE, so area
+     * bought it a sentence, and the drafter duly wrote one where the reference had a
+     * single word. Area cannot see that a design is spacious because its copy is
+     * short. `chars` can, so it wins outright when the model reported it — including
+     * over the role cap, since a 7-character masthead is well under any cap and the
+     * point is to be shorter, never longer.
+     */
     const box = converted.origin[slot.ref];
     const area = box ? box.w * dims.width * (box.h * dims.height) : 0;
     const byArea = area > 0 ? Math.round(area / 45) : 80;
+    const region = regionFor(slot.ref, slot.role);
+    const approxChars = region?.chars !== undefined
+      ? Math.max(1, Math.min(MAX_REGION_CHARS, region.chars))
+      : Math.max(16, Math.min(cap, byArea));
     const hint = hintFor(slot.ref, slot.role);
-    texts.push({ role: slot.role, approxChars: Math.max(16, Math.min(cap, byArea)), ...(hint ? { hint } : {}) });
+    texts.push({ role: slot.role, approxChars, ...(hint ? { hint } : {}) });
   }
   return { texts, images };
 }

@@ -21,9 +21,14 @@
 // ---------------------------------------------------------------------------
 
 import {
-  COLOR_REFS, LEAF_ROLES, SPACE_TOKENS, TEXT_ALIGNS, MAX_LEAVES,
-  type ColorRef, type LeafRole, type SpaceToken, type TextAlignToken,
+  COLOR_REFS, LEAF_ROLES, SPACE_TOKENS, TEXT_ALIGNS, MAX_LEAVES, FONT_WEIGHTS,
+  type ColorRef, type FontWeight, type LeafRole, type SpaceToken, type TextAlignToken,
 } from './layoutSpec.js';
+
+/** Serif or sans — the only distinction a picture honestly supports, and the only
+ *  one the DSL can act on (a leaf picks between the page's two faces, not a family). */
+export const FONT_FACES = ['serif', 'sans'] as const;
+export type FontFace = (typeof FONT_FACES)[number];
 
 /** Relative type weight. NOT a size: px would be a coordinate by another name,
  *  and the reference's pixel sizes mean nothing at our page scale. */
@@ -44,6 +49,48 @@ export interface ReadRegion {
   emphasis?: Emphasis;
   colorRef?: ColorRef;
   align?: TextAlignToken;
+  /**
+   * The text's size as a FRACTION OF THE REFERENCE'S HEIGHT (0.06 = a line one
+   * sixteenth of the page tall).
+   *
+   * A fraction, not points and not pixels, for the same reason the boxes are: the
+   * model must never author a coordinate or a physical size, and a reference read off
+   * a phone photo has no points in it to report. The page it lands on supplies the
+   * scale. Height rather than width because that is what type is measured against.
+   */
+  sizeFrac?: number;
+  /** The ink this text is ACTUALLY set in, #rrggbb — as distinct from `colorRef`,
+   *  which is a slot in our palette. A reference's red masthead is a colour; "accent"
+   *  is a guess at which of our colours it might map to. */
+  color?: string;
+  /** 400–900, the weight of the face as drawn. */
+  weight?: FontWeight;
+  /** Serif or sans, which is as much as anyone can honestly read off a picture and
+   *  all the DSL can express (`fontRef` chooses between the page's two faces). */
+  face?: FontFace;
+  /**
+   * What the reference actually SAYS here, verbatim and short ("HORIZON", "P. 26",
+   * "TRAVEL").
+   *
+   * Not so it can be copied — the drafter is told to write this magazine's own version
+   * and never the reference's brand or subject. It is here because a role cannot say
+   * what kind of thing a slot is. "headline" covers both a one-word masthead and a
+   * sixty-character article title, and told only the role the drafter writes the
+   * latter into the former, which is exactly what a real run produced.
+   *
+   * Capped hard: long prose is described by `chars`, not transcribed. We are reading a
+   * composition, not lifting someone's article.
+   */
+  text?: string;
+  /**
+   * Roughly how many characters of text this region holds ALTOGETHER.
+   *
+   * The length signal, and the more important half of the two. Slot budgets were
+   * derived from box AREA, so a wide short masthead band earned a big character
+   * allowance and got a sentence. The reference is airy because its text is short —
+   * area cannot see that, and this can.
+   */
+  chars?: number;
   /** Free text the model could not express in the fields above ("two-tone
    *  masthead", "bleeds off the left edge"). Advisory: shown to the user, and
    *  passed to the art-director when we fall back to it. Never parsed. */
@@ -78,6 +125,25 @@ const MAX_NOTES = 600;
  *  misread edge. It cannot hold content at any page size, and as a partition
  *  input it produces slivers that the solver then has to fight. */
 const MIN_SIDE = 0.01;
+/**
+ * Believable bounds for `sizeFrac`, as fractions of page height.
+ *
+ * The floor is roughly 5pt on A4 — below it nobody could have read the reference
+ * either, so a smaller number is a misread rather than a tiny typeface. The ceiling is
+ * a line a third of the page tall, which covers any masthead or cover figure; past
+ * that the model has measured a photograph or a block of colour, not a line of type.
+ * Out-of-range values are DROPPED rather than clamped: a wrong size silently pinned to
+ * the ceiling would be reported to the user as the reference's own type.
+ */
+const MIN_SIZE_FRAC = 0.004;
+const MAX_SIZE_FRAC = 0.34;
+/** Verbatim text is for DISPLAY type — a masthead, a tag, a page reference. Past this
+ *  a region is prose, and prose is described by `chars` rather than transcribed: we
+ *  are reading a composition, not lifting somebody's article. */
+export const MAX_REGION_TEXT = 160;
+/** A region holding more than this is a misread (the whole page, or a column counted
+ *  twice); one holding less than one character holds no text. */
+export const MAX_REGION_CHARS = 8000;
 
 // ── Coercion ─────────────────────────────────────────────────────────────────
 
@@ -171,6 +237,38 @@ function coerceRegion(o: unknown, scale: 1 | 0.01): ReadRegion | null {
   if (colorRef) region.colorRef = colorRef;
   const align = optOneOf(r.align, TEXT_ALIGNS);
   if (align) region.align = align;
+
+  // ── Typography ──
+  // Every one of these is OPTIONAL and DROPPED when it is not believable. A reading
+  // that reports no type is a reading whose page keeps its own, which is the
+  // behaviour that existed before these fields and the right thing to fall back to.
+  // The alternative — coercing a doubtful number into range — would hand the user a
+  // fabricated measurement wearing the reference's name.
+  //
+  // sizeFrac is scaled by the SAME whole-reading unit decision as the boxes: a model
+  // that reported its geometry in percent reported its type sizes that way too.
+  const sizeFrac = sx(r.sizeFrac ?? r.fontFrac);
+  if (sizeFrac !== null && sizeFrac >= MIN_SIZE_FRAC && sizeFrac <= MAX_SIZE_FRAC) region.sizeFrac = sizeFrac;
+  const color = hex(r.color);
+  if (color) region.color = color;
+  if (FONT_WEIGHTS.includes(num(r.weight) as FontWeight)) region.weight = num(r.weight) as FontWeight;
+  const face = optOneOf(r.face, FONT_FACES);
+  if (face) region.face = face;
+
+  // What it says, and how much of it there is. Markup is stripped rather than trusted:
+  // this reaches a drafter's prompt and, through `hint`, the user's screen.
+  const said = typeof r.text === 'string' ? r.text.replace(/<[^>]*>/g, ' ').replace(/\s+/g, ' ').trim() : '';
+  if (said && said.length <= MAX_REGION_TEXT) region.text = said;
+  const chars = num(r.chars);
+  if (chars !== null && chars >= 1 && chars <= MAX_REGION_CHARS) {
+    region.chars = Math.round(chars);
+  } else if (region.text) {
+    // A transcribed line IS its own length, so a model that gave text but no count
+    // still teaches the budget. This is the masthead case: "HORIZON" is 7 characters,
+    // whatever the band's area works out to.
+    region.chars = region.text.length;
+  }
+
   const note = optStr(r.note, MAX_NOTE);
   if (note) region.note = note;
   return region;

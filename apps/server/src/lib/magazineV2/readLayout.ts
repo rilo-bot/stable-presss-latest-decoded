@@ -22,7 +22,7 @@
 import { generateText } from 'ai';
 import { getAgentModel, isAgentConfigured } from '../agent/provider.js';
 import { parseJsonObject } from './parseJson.js';
-import { normalizeLayoutReading, MAX_REGIONS, type LayoutReading } from './layoutReading.js';
+import { normalizeLayoutReading, MAX_REGIONS, MAX_REGION_TEXT, type LayoutReading } from './layoutReading.js';
 import { LEAF_ROLES, SPACE_TOKENS, COLOR_REFS } from './layoutSpec.js';
 
 export interface ReadLayoutResult {
@@ -36,9 +36,12 @@ const SYSTEM = [
   'design (a magazine spread, a screenshot, or a hand sketch). Describe its COMPOSITION as JSON.',
   'Output ONLY the JSON object — no prose, no markdown fences.',
   '',
-  'You are NOT designing and NOT transcribing content. Report where things sit and how big they are,',
-  'relative to the page. Ignore what the words actually say — the client\'s own copy will go in these',
-  'slots — and never describe the photographs\' subjects, only their boxes.',
+  'You are NOT designing. Report where things sit and how big they are, relative to the page, and',
+  'never describe the photographs\' subjects — only their boxes.',
+  '',
+  'The client\'s own copy goes in these slots, so you are not transcribing an article. But a SHORT',
+  'line tells us what a slot IS in a way its position cannot: "HORIZON" is a masthead, "P. 26" is a',
+  'page reference, "TRAVEL" is a tag. Quote those, and say how LONG the text in each region is.',
   '',
   'JSON shape:',
   '{',
@@ -53,6 +56,13 @@ const SYSTEM = [
   '      "emphasis": "dominant" | "normal" | "quiet",',
   `      "colorRef": <${COLOR_REFS.join('|')}>,`,
   '      "align": "left" | "center" | "right" | "justify",',
+  '      "sizeFrac": <number>,        // TEXT ONLY: cap height of the type as a FRACTION',
+  '                                   // of the page height. 0.08 = a line one twelfth tall.',
+  '      "color": "#rrggbb",          // TEXT ONLY: the ink this text is actually set in',
+  '      "weight": 400|500|600|700|800|900,   // TEXT ONLY: how heavy the face is drawn',
+  '      "face": "serif" | "sans",    // TEXT ONLY',
+  `      "text": "<verbatim, ONLY if under ${MAX_REGION_TEXT} chars — a masthead, tag, page ref>",`,
+  '      "chars": <number>,           // TEXT ONLY: roughly how many characters this region holds',
   '      "note": "<short — anything the fields above cannot say>"',
   '  } ],',
   '  "palette": { "primary": "#rrggbb", "secondary": "#rrggbb", "accent": "#rrggbb" },',
@@ -76,6 +86,17 @@ const SYSTEM = [
   '• Group, do not enumerate: three paragraphs in one column is ONE body region. A caption under each',
   `  of two photos is two captions. Keep the total under ${MAX_REGIONS} regions — merge the small stuff.`,
   '• emphasis is RELATIVE type weight within this page, not a size.',
+  '• `chars` MATTERS AS MUCH AS THE BOXES. A design is airy because its text is SHORT, and a box',
+  '  cannot say so: a masthead band is wide and holds one word. Count what is actually printed —',
+  '  "HORIZON" is 7, a two-line standfirst is about 90, a column of prose is several hundred.',
+  '• `text` is for DISPLAY type only: mastheads, tags, page references, kickers, short titles. Never',
+  '  transcribe a paragraph — give its `chars` instead and leave `text` out.',
+  '• TYPE: sizeFrac / color / weight / face describe the LETTERS in a text region. Measure',
+  '  sizeFrac against the WHOLE PAGE height, never the region\'s own box — a short line in a',
+  '  tall box is small type, not large. Report `color` only when the ink is clearly not the',
+  '  ordinary body colour (a red masthead, white type on a photo); a near-black on white is',
+  '  the default and needs no mention. OMIT ANY OF THESE YOU CANNOT ACTUALLY SEE — omitting',
+  '  means "this page keeps its own", which is a good answer. A guess is not.',
   '• palette: only if the design has a clear scheme, and only as three hex values. Omit it otherwise.',
   '• confidence: be honest. A blurry photo of a printed page, or a layout you are guessing at, is low.',
 ].join('\n');

@@ -252,8 +252,10 @@ export const generatePages = (id: string, count: number, topic?: string, atIndex
   authFetch(`${BASE}/issues/${id}/pages/generate`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ count, topic, atIndex }) }).then(parse<{ issue: IssueMeta }>);
 
 // ── Elements (rev-guarded) ──
-export const addElement = (id: string, pageId: string, rev: number, element: Partial<MagazineElement>) =>
-  authFetch(`${BASE}/issues/${id}/pages/${pageId}/elements`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ rev, element }) }).then(parse<{ element: MagazineElement; rev: number }>);
+/** `restore` re-creates a deleted element with its ORIGINAL id and source — the
+ *  undo path. A normal add always gets a fresh server id and source 'manual'. */
+export const addElement = (id: string, pageId: string, rev: number, element: Partial<MagazineElement>, restore?: boolean) =>
+  authFetch(`${BASE}/issues/${id}/pages/${pageId}/elements`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ rev, element, restore: restore === true ? true : undefined }) }).then(parse<{ element: MagazineElement; rev: number }>);
 export const patchElement = (id: string, pageId: string, elementId: string, rev: number, patch: Partial<MagazineElement>) =>
   authFetch(`${BASE}/issues/${id}/pages/${pageId}/elements/${elementId}`, { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ rev, patch }) }).then(parse<{ element: MagazineElement; rev: number }>);
 export const deleteElement = (id: string, pageId: string, elementId: string, rev: number) =>

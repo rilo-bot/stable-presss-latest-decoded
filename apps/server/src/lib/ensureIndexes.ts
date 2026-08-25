@@ -32,6 +32,21 @@ const INDEX_SPECS: IndexSpec[] = [
   { collection: COL.jobs, keys: { expiresAt: 1 }, options: { expireAfterSeconds: 0 } },
   // Per-magazine media library: find({ magazineId }).
   { collection: COL.media, keys: { magazineId: 1, deletedAt: 1 } },
+  // ── Source documents (the AI's reading material) ──
+  // The issue's document list, newest first.
+  { collection: COL.sourceDocs, keys: { magazineId: 1, deletedAt: 1, createdAt: -1 } },
+  // Dedupe: has this exact file already been read? A content-hash hit reuses the
+  // existing chunks, which is what stops a re-upload paying for OCR twice.
+  { collection: COL.sourceDocs, keys: { contentHash: 1, deletedAt: 1 } },
+  // One document's chunks in document order — the ordered read, and the key the
+  // resumable reader uses to tell which pages it has already written. Identity is
+  // per PAGE, not a running counter, so re-reading page 5 after a crash rewrites
+  // exactly page 5's rows and cannot collide with page 6's.
+  { collection: COL.sourceChunks, keys: { docId: 1, pageNo: 1, seq: 1 }, options: { unique: true } },
+  // Candidate filter for retrieval: which chunks contain any of the intent's terms.
+  { collection: COL.sourceChunks, keys: { docId: 1, terms: 1 } },
+  // Scoped delete when a document or a whole magazine goes.
+  { collection: COL.sourceChunks, keys: { magazineId: 1, docId: 1 } },
   // Per-magazine chat. Grows unbounded, so it must not scan. Kept for the legacy
   // flat log (rows with no threadId), which is still queried by magazine.
   { collection: COL.chat, keys: { magazineId: 1, deletedAt: 1, createdAt: -1 } },
