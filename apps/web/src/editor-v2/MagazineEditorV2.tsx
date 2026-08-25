@@ -61,7 +61,74 @@ const ghost = 'flex items-center gap-1 rounded-sm border border-studio-edge bg-s
 export default function MagazineEditorV2() {
   const { id } = useParams<{ id: string }>();
   const navigate = useNavigate();
-  const s = useEditorStore();
+  /**
+   * FIELD-BY-FIELD subscriptions, assembled into `s` for the ~100 readers below.
+   *
+   * This was `useEditorStore()` — no selector, which subscribes to the whole state
+   * object and therefore re-renders on every `set()` the store makes. Dragging an
+   * element calls `updateLocal` on every pointermove, so this component (and with it
+   * the canvas, the inspector, the assistant and the rail — its whole subtree) was
+   * re-rendering around sixty times a second for the length of every drag. PageRail
+   * already subscribes narrowly and says why; the shell never got the same
+   * treatment, and being the root it was the expensive one.
+   *
+   * The assembled object is new on each render, which is fine — nothing memoises on
+   * its identity. What matters is that a render now happens only when one of these
+   * values actually changes.
+   */
+  // Derived predicates: the selector CALLS them, so the subscription is to their
+  // boolean result. Subscribing to the function itself would be a stable reference
+  // that never re-renders — the toolbar would go stale on a role or publish change.
+  const isOwner = useEditorStore((st) => st.canManage());
+  const mayEdit = useEditorStore((st) => st.canEdit());
+  const republishNeeded = useEditorStore((st) => st.needsRepublish());
+  const s = {
+    issue: useEditorStore((st) => st.issue),
+    pages: useEditorStore((st) => st.pages),
+    /**
+     * WHETHER there is an open page — never the page itself.
+     *
+     * `page` is the single most volatile thing in the store: `updateLocal` replaces it
+     * on every pointermove of a drag. Subscribing to it here would keep re-rendering
+     * the whole studio sixty times a second even with everything else narrowed, which
+     * was the entire point of narrowing. The shell only ever asks two things of it —
+     * "is one open?" (this) and "what are its dimensions and top z-index?" at the
+     * instant Add is clicked (read from getState in `add` below, where it is a fact
+     * about that click rather than a subscription).
+     */
+    hasPage: useEditorStore((st) => !!st.page),
+    currentPageId: useEditorStore((st) => st.currentPageId),
+    selectedId: useEditorStore((st) => st.selectedId),
+    zoomWidth: useEditorStore((st) => st.zoomWidth),
+    loading: useEditorStore((st) => st.loading),
+    error: useEditorStore((st) => st.error),
+    generating: useEditorStore((st) => st.generating),
+    adding: useEditorStore((st) => st.adding),
+    justGenerated: useEditorStore((st) => st.justGenerated),
+    publishing: useEditorStore((st) => st.publishing),
+    previewDoc: useEditorStore((st) => st.previewDoc),
+    undoStack: useEditorStore((st) => st.undoStack),
+    redoStack: useEditorStore((st) => st.redoStack),
+    // Actions are stable references — subscribing to them never causes a render.
+    load: useEditorStore((st) => st.load),
+    rename: useEditorStore((st) => st.rename),
+    reset: useEditorStore((st) => st.reset),
+    remove: useEditorStore((st) => st.remove),
+    publish: useEditorStore((st) => st.publish),
+    unpublish: useEditorStore((st) => st.unpublish),
+    undo: useEditorStore((st) => st.undo),
+    redo: useEditorStore((st) => st.redo),
+    addElement: useEditorStore((st) => st.addElement),
+    setZoomWidth: useEditorStore((st) => st.setZoomWidth),
+    setPreviewDoc: useEditorStore((st) => st.setPreviewDoc),
+    stopWatching: useEditorStore((st) => st.stopWatching),
+    clearJustGenerated: useEditorStore((st) => st.clearJustGenerated),
+    // Callable, so the ~20 existing `s.canManage()` reads below stay as they are —
+    // they now return the subscribed value rather than re-deriving it.
+    canManage: () => isOwner,
+    canEdit: () => mayEdit,
+    needsRepublish: () => republishNeeded,
+  };
   const [asstOpen, setAsstOpen] = useState(true);
   const [pagesAiOpen, setPagesAiOpen] = useState(false);
   const [aiCount, setAiCount] = useState(2);
@@ -213,9 +280,12 @@ export default function MagazineEditorV2() {
     return () => { window.removeEventListener('keydown', onKey); window.removeEventListener('mousedown', onDown); };
   }, [moreOpen, publishMenuOpen, pagesAiOpen]);
 
-  const topZ = s.page ? s.page.elements.reduce((m, e) => Math.max(m, e.zIndex), 0) : 0;
   const add = (kind: ElementType) => {
-    if (s.page) void s.addElement(newElement(kind, s.page, topZ));
+    // Read the page at CLICK time rather than subscribing to it — see `hasPage`.
+    const page = useEditorStore.getState().page;
+    if (!page) return;
+    const topZ = page.elements.reduce((m, e) => Math.max(m, e.zIndex), 0);
+    void s.addElement(newElement(kind, page, topZ));
   };
 
   if (s.loading) {
@@ -570,7 +640,7 @@ export default function MagazineEditorV2() {
 
           {/* Canvas */}
           <div className="min-h-0 flex-1 overflow-auto bg-studio-bg">
-            {s.page ? (
+            {s.hasPage ? (
               <EditorCanvas />
             ) : building ? (
               // The main event: nothing to edit yet, so this screen is what the

@@ -9,7 +9,7 @@
 
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { readingToSpec, specContentRefs } from '../../src/lib/magazineV2/readingToSpec.ts';
+import { readingToExact, readingToSpec, specContentRefs } from '../../src/lib/magazineV2/readingToSpec.ts';
 import { normalizeLayoutSpec, MAX_TREE_DEPTH, MAX_LEAVES, MAX_CHILDREN, MAX_SPACE_PX } from '../../src/lib/magazineV2/layoutSpec.ts';
 import { normalizeLayoutReading, type LayoutReading, type ReadRegion } from '../../src/lib/magazineV2/layoutReading.ts';
 import { pruneLayoutSpec } from '../../src/lib/magazineV2/pruneSpec.ts';
@@ -625,4 +625,192 @@ test('band heights survive normalize + prune on the apply path', () => {
   walk(pruned.root);
   assert.ok(mins.length >= 2, `expected minPx on the content children, found ${mins.length}`);
   assert.ok(mins.some((m) => m >= Math.round(0.12 * PAGE_H) - 2), 'the headline band carries its reference height');
+});
+
+// ── INTERIOR EMPTINESS ───────────────────────────────────────────────────────
+// The air BETWEEN bands, as distinct from the air at the two ends (which
+// `anchored` owns and which the cluster tests above cover).
+//
+// Measured on the reference the user actually uploaded — a magazine cover whose
+// text bands hold 31% of the page height and whose gaps hold the other 69%. Those
+// gaps used to collapse into the container's single `gap` token, which stops at
+// `xl` = 96px, so the bands' fr weights were normalised over the whole sheet and
+// every one of them inflated ~3.2×. End to end that read 10% "loose" on a reading
+// that was itself accurate; with the runs carried as tracks it reads 39%, and every
+// band lands within ~40px of its reference position.
+
+/** The cover above, in the vision model's own numbers. */
+const AIRY_COVER: Partial<ReadRegion>[] = [
+  { role: 'image', box: box(0, 0, 1, 1) },
+  { role: 'kicker', box: box(0.08, 0.03, 0.84, 0.03) },
+  { role: 'headline', box: box(0.23, 0.06, 0.70, 0.11) },
+  { role: 'label', box: box(0.35, 0.17, 0.40, 0.01) },
+  { role: 'headline', box: box(0.50, 0.29, 0.45, 0.14) },
+  { role: 'label', box: box(0.75, 0.96, 0.20, 0.02) },
+];
+
+test('a cover’s interior voids become weighted tracks, not one clamped gap token', () => {
+  const spec = toSpec(read(AIRY_COVER, { margin: 'none' }));
+  assert.ok(spec);
+  // Full-bleed photo under the text: the cluster is the stack's content layer.
+  assert.equal(spec.root.kind, 'stack');
+  if (spec.root.kind !== 'stack') return;
+  const col = spec.root.layers[spec.root.layers.length - 1]!;
+  assert.equal(col.kind, 'col');
+  if (col.kind !== 'col') return;
+
+  const spacers = col.children.filter((c) => c.node.kind === 'leaf' && c.node.role === 'spacer');
+  assert.equal(spacers.length, 2, 'the 11% run and the 53% void are both tracks');
+  // The void is the single biggest thing in the column — that IS the design.
+  const biggestChild = [...col.children].sort((a, b) => (b.weight ?? 1) - (a.weight ?? 1))[0]!;
+  assert.equal(biggestChild.node.kind === 'leaf' && biggestChild.node.role, 'spacer');
+});
+
+test('the bands keep the reference’s own proportions once the voids are tracks', () => {
+  const spec = toSpec(read(AIRY_COVER, { margin: 'none' }));
+  assert.ok(spec);
+  if (spec.root.kind !== 'stack') return assert.fail('expected a stack');
+  const col = spec.root.layers[spec.root.layers.length - 1]!;
+  if (col.kind !== 'col') return assert.fail('expected a col');
+
+  const total = col.children.reduce((s, c) => s + (c.weight ?? 1), 0);
+  const shareOf = (role: string) => {
+    const at = col.children.find((c) => c.node.kind === 'leaf' && c.node.role === role);
+    return at ? (at.weight ?? 1) / total : 0;
+  };
+  // The kicker is 3% of the reference. Before this it was 9.7% — the bands' weights
+  // summed to 31 and were then spread over the whole page.
+  assert.ok(Math.abs(shareOf('kicker') - 0.03) < 0.015, `kicker share ${shareOf('kicker').toFixed(3)}`);
+  assert.ok(Math.abs(shareOf('label') - 0.01) < 0.015, `label share ${shareOf('label').toFixed(3)}`);
+});
+
+test('an ordinary layout whose bands FILL their span is untouched — gaps stay rhythm', () => {
+  // 6% between a headline and its columns is rhythm, not composition, and a size
+  // test alone cannot tell it from the cover's 11%. The bands filling their span is
+  // what says so.
+  const spec = toSpec(read([
+    { role: 'headline', box: box(0.08, 0.08, 0.84, 0.12) },
+    { role: 'body', box: box(0.08, 0.26, 0.4, 0.6) },
+    { role: 'body', box: box(0.52, 0.26, 0.4, 0.6) },
+  ]));
+  assert.ok(spec);
+  assert.equal(spec.root.kind, 'col');
+  if (spec.root.kind !== 'col') return;
+  assert.equal(roles(spec.root).filter((r) => r === 'spacer').length, 0, 'no spacer children');
+  assert.notEqual(spec.root.gap, 'none', 'the 6% run is still carried, as the gap token');
+});
+
+test('an anchored all-text cluster still uses pad, not interior spacers', () => {
+  // The rule defers to `anchored` here: spacers took this exact fixture from 0.60 to
+  // 0.30, because a container's one gap is inserted beside a spacer too. Every child
+  // must stay a text leaf for that branch to fire at all.
+  const spec = toSpec(read([
+    { role: 'kicker', box: box(0.1, 0.03, 0.8, 0.025) },
+    { role: 'headline', box: box(0.08, 0.09, 0.84, 0.09) },
+    { role: 'subhead', box: box(0.28, 0.2, 0.44, 0.022) },
+    { role: 'headline', box: box(0.55, 0.3, 0.4, 0.14) },
+  ], { margin: 'none' }));
+  assert.ok(spec);
+  assert.equal(spec.root.kind, 'col');
+  if (spec.root.kind !== 'col') return;
+  assert.equal(roles(spec.root).filter((r) => r === 'spacer').length, 0, 'the cluster is padded, not spaced');
+  assert.ok(spec.root.pad !== undefined, 'and it is anchored with a pad');
+  assert.ok(spec.root.children.every((c) => c.sizing === 'content'), 'content-sized as a unit');
+});
+
+// ── EXACT MODE ───────────────────────────────────────────────────────────────
+// Same-to-same reproduction, with no frame tree in between. The guillotine above
+// ADAPTS a layout; this reproduces one, and the two lose different things.
+
+const exact = (r: LayoutReading, dims = { width: PAGE_W, height: PAGE_H }) => readingToExact(r, dims);
+
+test('every region lands on the box it was read from', () => {
+  const out = exact(read([
+    { role: 'image', box: box(0, 0, 1, 1) },
+    { role: 'headline', box: box(0.50, 0.29, 0.45, 0.14) },
+    { role: 'label', box: box(0.75, 0.96, 0.20, 0.02) },
+  ], { margin: 'none' }));
+  assert.ok(out);
+  const at = (role: string) => out.leaves.find((l) => l.node.role === role)!.box;
+  assert.deepEqual(at('headline'), {
+    x: Math.round(0.50 * PAGE_W), y: Math.round(0.29 * PAGE_H),
+    w: Math.round(0.45 * PAGE_W), h: Math.round(0.14 * PAGE_H),
+  });
+  assert.deepEqual(at('label'), {
+    x: Math.round(0.75 * PAGE_W), y: Math.round(0.96 * PAGE_H),
+    w: Math.round(0.20 * PAGE_W), h: Math.round(0.02 * PAGE_H),
+  });
+});
+
+test('THE CROSS AXIS SURVIVES — what adapt mode structurally cannot keep', () => {
+  // A cover line in the reference's right half. Through the guillotine it becomes a
+  // full-width band with `align: right` as the only trace of where it sat; that is the
+  // documented limit of a frame tree, not a tuning problem.
+  const reading = read([
+    { role: 'image', box: box(0, 0, 1, 1) },
+    { role: 'kicker', box: box(0.08, 0.03, 0.84, 0.03) },
+    { role: 'headline', box: box(0.50, 0.29, 0.45, 0.14) },
+  ], { margin: 'none' });
+
+  const viaTree = toSpec(reading);
+  assert.ok(viaTree);
+  const treeHeadline = leaves(viaTree.root).find((l) => l.kind === 'leaf' && l.role === 'headline');
+  assert.ok(treeHeadline && treeHeadline.kind === 'leaf');
+  assert.equal(treeHeadline.align, 'right', 'adapt mode can only record it as an alignment');
+
+  const out = exact(reading);
+  assert.ok(out);
+  const b = out.leaves.find((l) => l.node.role === 'headline')!.box;
+  assert.equal(b.x, Math.round(0.50 * PAGE_W), 'exact mode keeps the actual offset');
+  assert.ok(b.w < PAGE_W * 0.6, 'and does not span the sheet');
+});
+
+test('text over a PHOTOGRAPH is kept, and stacked in the reading’s own z order', () => {
+  const out = exact(read([
+    { role: 'headline', box: box(0.1, 0.6, 0.7, 0.12), z: 1 },
+    { role: 'image', box: box(0, 0, 1, 1), z: 0 },
+  ], { margin: 'none' }));
+  assert.ok(out);
+  const photo = out.leaves.find((l) => l.node.role === 'image')!;
+  const head = out.leaves.find((l) => l.node.role === 'headline')!;
+  assert.ok(photo.z < head.z, 'the photo is UNDER the type — contrast repair depends on it');
+  assert.equal(photo.box.w, PAGE_W, 'and it still bleeds');
+});
+
+test('text is never printed over text, however the reference was read', () => {
+  // Measured: a real cover read gave the masthead y 0.06–0.17 and the standfirst
+  // beneath it y 0.15–0.17, so they genuinely overlapped. Reproduced literally that is
+  // words on words, and layout QA refuses the page outright.
+  const out = exact(read([
+    { role: 'headline', box: box(0.23, 0.06, 0.70, 0.11) },
+    { role: 'subhead', box: box(0.22, 0.15, 0.60, 0.02) },
+  ], { margin: 'none' }));
+  assert.ok(out);
+  const head = out.leaves.find((l) => l.node.role === 'headline')!.box;
+  const sub = out.leaves.find((l) => l.node.role === 'subhead')!.box;
+  assert.ok(head.y + head.h <= sub.y, `headline ends ${head.y + head.h}, subhead starts ${sub.y}`);
+  // Trimmed, not moved: the box that was measured too tall is the one that gives way.
+  assert.equal(sub.y, Math.round(0.15 * PAGE_H), 'the lower line does not budge');
+  assert.equal(head.y, Math.round(0.06 * PAGE_H), 'nor does the upper one’s top');
+});
+
+test('a reading whose boxes cannot survive the page is null, not an empty page', () => {
+  // Every box below the floor once scaled. Null is a real answer the caller reports —
+  // building a page with nothing on it would be worse than saying so.
+  assert.equal(exact(read([
+    { role: 'body', box: box(0, 0, 0.02, 0.02) },
+    { role: 'label', box: box(0.2, 0.2, 0.02, 0.02) },
+  ]), { width: 20, height: 20 }), null);
+});
+
+test('origin carries only what was actually placed', () => {
+  const out = exact(read([
+    { role: 'image', box: box(0, 0, 1, 0.5) },
+    { role: 'headline', box: box(0.1, 0.6, 0.8, 0.1) },
+  ]));
+  assert.ok(out);
+  const refs = new Set(out.leaves.map((l) => l.node.contentRef));
+  for (const key of Object.keys(out.origin)) {
+    assert.ok(refs.has(key), `${key} is in origin but was never placed — fidelity would measure a box we did not build`);
+  }
 });

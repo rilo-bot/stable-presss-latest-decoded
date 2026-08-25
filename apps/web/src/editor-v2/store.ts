@@ -146,7 +146,16 @@ interface EditorState {
   ensureThumb: (pageId: string) => void;
 
   load: (id: string) => Promise<void>;
-  openPage: (pageId: string) => Promise<void>;
+  /**
+   * Open a page (fetch its elements and make it the active one).
+   *
+   * `force` re-fetches a page that is ALREADY open. Without it the call is skipped,
+   * which is right for scroll jitter but wrong for "re-read this page because its
+   * server-side state just changed" — submitPages relied on the plain call to pick
+   * up the read-only lock and got a silent no-op, leaving the canvas editable on a
+   * page the server had already closed.
+   */
+  openPage: (pageId: string, force?: boolean) => Promise<void>;
   /**
    * NAVIGATE to a page: open it AND bring it into view.
    *
@@ -166,10 +175,19 @@ interface EditorState {
 
   /** Live, local-only element update (drag/resize feedback — no server call). */
   updateLocal: (elementId: string, patch: Partial<MagazineElement>) => void;
-  /** Persist an element change (rev-guarded). `before` = state at edit start, for undo. */
-  commit: (elementId: string, patch: Partial<MagazineElement>, before?: MagazineElement) => Promise<void>;
+  /**
+   * Persist an element change (rev-guarded). `before` = state at edit start, for undo.
+   *
+   * Returns whether the server STORED it. Every write here reports success, because
+   * these actions absorb their own errors (toast + reconcile) and a caller that
+   * cannot tell a stored write from a refused one has no choice but to claim
+   * success — which is exactly what applyAllProposals used to do over a whole
+   * failed apply.
+   */
+  commit: (elementId: string, patch: Partial<MagazineElement>, before?: MagazineElement) => Promise<boolean>;
+  /** The new element's server id, or null when the write was refused. */
   addElement: (partial: Partial<MagazineElement>) => Promise<string | null>;
-  deleteElement: (elementId: string) => Promise<void>;
+  deleteElement: (elementId: string) => Promise<boolean>;
   /** Copy an element (offset slightly, on top) and select the copy. */
   duplicateElement: (elementId: string) => Promise<void>;
   undo: () => Promise<void>;
@@ -238,8 +256,11 @@ interface EditorState {
   approvePages: (pageIds: string[], note?: string) => Promise<boolean>;
   /** Owner: send pages back (doubles as reopen). `note` is required by the server. */
   requestChanges: (pageIds: string[], note: string) => Promise<boolean>;
-  /** Re-fetch issue meta (collaborators, publish state) without reloading pages. */
-  refreshIssue: () => Promise<void>;
+  /** Re-fetch issue meta (collaborators, publish state) without reloading pages.
+   *  False = the re-read failed, so what's on screen is stale; the caller decides
+   *  whether that's worth saying (the Share dialog's list is the visible half of
+   *  an action it just reported as done). */
+  refreshIssue: () => Promise<boolean>;
   /** While an issue is still generating (status 'processing'), poll and reveal
    *  its pages as they land — no blocking screen. */
   watchGeneration: () => void;
@@ -250,6 +271,37 @@ interface EditorState {
 }
 
 const el = (p: MagazinePageV2 | null, id: string | null) => p?.elements.find((e) => e.id === id) ?? null;
+
+/**
+ * Merge a META-ONLY issue response into state.
+ *
+ * Only GET /issues/:id carries the pages, and `needsRepublish` is derived FROM the
+ * pages — so every other route (PATCH, publish/unpublish, collaborators) answers
+ * `needsRepublish: false` unconditionally, not because it is false but because that
+ * response had nothing to derive it from (see withViewer server-side). A wholesale
+ * `set({ issue })` therefore ERASED a divergence the user still had to act on: rename
+ * a published magazine and the "Needs republish" badge disappeared, while readers
+ * kept seeing the old title. The flag is sticky here — only load() (which has the
+ * server's real answer) and publish() (which just resolved it) clear it.
+ */
+const mergeIssue = (st: EditorState, incoming: IssueMeta): Partial<EditorState> => ({
+  issue: {
+    ...(st.issue ?? {}),
+    ...incoming,
+    needsRepublish: incoming.needsRepublish === true || st.issue?.needsRepublish === true,
+  },
+});
+
+/**
+ * Serialises page opens.
+ *
+ * `openPage` is fired from the canvas's scroll-settle picker, so a fast scroll
+ * through a long magazine starts several fetches at once. They resolve in whatever
+ * order the network hands them back, and the LAST TO RESOLVE used to win — which is
+ * not the page the user stopped on. Each call takes a ticket; a response is applied
+ * only if no newer open has started since.
+ */
+let openSeq = 0;
 
 // Poll handle for watching a still-generating issue reveal its pages live (so
 // "Build with AI" drops the user straight into the studio instead of a blocking
@@ -404,7 +456,10 @@ export const useEditorStore = create<EditorState>((set, get) => ({
     // editedSinceLoad resets here: the freshly-loaded `issue.needsRepublish` is the
     // server's own answer, so carrying a stale local flag across a reload would keep
     // claiming changes that were already published.
-    set({ loading: true, error: null, issueId: id, generating: false, adding: false, justGenerated: false, currentPageId: null, page: null, chat: [], proposals: [], proposalsPageId: null, editedSinceLoad: false, thumbs: {} });
+    // chatBusy/formatBusy are reset here too: they belong to a turn or a pass on the
+    // magazine we are LEAVING, and an in-flight one whose response is discarded (see
+    // sendChat) would otherwise leave the new magazine's composer disabled forever.
+    set({ loading: true, error: null, issueId: id, generating: false, adding: false, justGenerated: false, currentPageId: null, page: null, chat: [], proposals: [], proposalsPageId: null, editedSinceLoad: false, thumbs: {}, chatBusy: false, formatBusy: false, layoutBusy: false });
     try {
       const { issue, pages } = await api.getIssue(id);
       set({ issue, pages, loading: false, undoStack: [], redoStack: [], selectedId: null });
@@ -433,20 +488,34 @@ export const useEditorStore = create<EditorState>((set, get) => ({
     }
   },
 
-  openPage: async (pageId) => {
+  openPage: async (pageId, force) => {
     const { issueId } = get();
     if (!issueId) return;
     // Re-opening the already-active page (scroll jitter, or clicking the active
-    // tab) would needlessly refetch and reset selection — skip it.
-    if (get().currentPageId === pageId && get().page) return;
+    // tab) would needlessly refetch and reset selection — skip it, unless the
+    // caller explicitly wants the page re-read (see `force` on the interface).
+    if (!force && get().currentPageId === pageId && get().page) return;
+    const ticket = ++openSeq;
     try {
       const page = await api.getPage(issueId, pageId);
-      // Proposals are page-scoped → reset on a page change. Selection and chat are
-      // deliberately NOT reset here: a stale selectedId harmlessly resolves to
-      // nothing on a page that doesn't contain it (every consumer looks it up on
-      // the current page), and keeping both means scrolling/switching pages no
-      // longer clears your selection or wipes the conversation. Both are cleared
-      // per-issue in load(). previewDoc is not page-scoped and survives too.
+      // A newer open (or another magazine) started while this was in flight — drop
+      // it. Applying it would land the user on a page they have already scrolled
+      // past, purely because this response was the slower one.
+      if (ticket !== openSeq || get().issueId !== issueId) return;
+      // Selection, chat AND staged proposals deliberately survive a page change.
+      //
+      // Proposals used to be cleared here, which was defensible when a page change
+      // meant a deliberate click — but the canvas's scroll-settle picker calls this
+      // on every scroll, so asking the assistant for changes and then scrolling up
+      // to look at the page silently threw them away. They stay: the tray is gated
+      // on `proposalsPageId === currentPageId`, so it hides while you are elsewhere
+      // and comes back when you return, and applyAllProposals refuses to apply a
+      // set that belongs to another page. Cleared per-issue in load(), and per
+      // conversation in openThread/newThread.
+      //
+      // A stale selectedId harmlessly resolves to nothing on a page that doesn't
+      // contain it (every consumer looks it up on the current page). previewDoc is
+      // not page-scoped and survives too.
       //
       // The page we're LEAVING goes into the thumbnail cache: every element write
       // landed on that object, so it is the freshest copy of it in existence. Without
@@ -455,11 +524,10 @@ export const useEditorStore = create<EditorState>((set, get) => ({
       set((st) => ({
         page,
         currentPageId: pageId,
-        proposals: [],
-        proposalsPageId: null,
         thumbs: { ...st.thumbs, ...(st.page ? { [st.page.id]: st.page } : {}), [pageId]: page },
       }));
     } catch (e) {
+      if (ticket !== openSeq || get().issueId !== issueId) return;
       set({ error: e instanceof Error ? e.message : 'Failed to load page' });
     }
   },
@@ -491,7 +559,7 @@ export const useEditorStore = create<EditorState>((set, get) => ({
 
   commit: async (elementId, patch, before) => {
     const s0 = get();
-    if (!s0.page || !s0.issueId) return;
+    if (!s0.page || !s0.issueId) return false;
     const pageId = s0.page.id;
     const issueId = s0.issueId;
     const beforeEl = before ?? el(s0.page, elementId) ?? undefined;
@@ -501,7 +569,7 @@ export const useEditorStore = create<EditorState>((set, get) => ({
     // the change silently. The server write then confirms (or reconciles) it.
     get().updateLocal(elementId, patch);
 
-    const send = async (rev: number, isRetry: boolean): Promise<void> => {
+    const send = async (rev: number, isRetry: boolean): Promise<boolean> => {
       try {
         const { element, rev: newRev } = await api.patchElement(issueId, pageId, elementId, rev, patch);
         set((st) => ({
@@ -511,6 +579,7 @@ export const useEditorStore = create<EditorState>((set, get) => ({
           editedSinceLoad: true,
         }));
         if (beforeEl) record(set, { op: 'update', pageId, elementId, before: beforeEl, after: element }, 'the edit');
+        return true;
       } catch (e) {
         // A stale rev (an AI/format write or a collaborator landed first) must NOT
         // discard the user's edit or their selection — that is exactly what made
@@ -520,13 +589,20 @@ export const useEditorStore = create<EditorState>((set, get) => ({
         if (fresh && !isRetry && fresh.elements.some((x) => x.id === elementId)) {
           set((st) => (st.page && st.page.id === pageId ? { page: fresh } : {}));
           get().updateLocal(elementId, patch);
-          await send(fresh.rev, true);
-          return;
+          return send(fresh.rev, true);
         }
-        handleWriteError(e, set, get);
+        // TAKE THE OPTIMISTIC PAINT BACK when nothing else is going to.
+        //
+        // updateLocal already drew this edit on the canvas. handleWriteError re-reads
+        // the stored page for the two conflict shapes, but a 403, a 500 or a dropped
+        // connection fell through to a toast alone — leaving the edit on screen,
+        // saved nowhere, with a transient message as the only clue. A write that
+        // didn't land must not still be visible.
+        if (handleWriteError(e, set, get) === 'unreconciled') revertElement(pageId, elementId, beforeEl, set, get);
+        return false;
       }
     };
-    await send(s0.page.rev, false);
+    return send(s0.page.rev, false);
   },
 
   addElement: async (partial) => {
@@ -552,7 +628,7 @@ export const useEditorStore = create<EditorState>((set, get) => ({
 
   deleteElement: async (elementId) => {
     const s = get();
-    if (!s.page || !s.issueId) return;
+    if (!s.page || !s.issueId) return false;
     const pageId = s.page.id;
     // Snapshot BEFORE the write: once the server has it, the only copy of a deleted
     // element is the one we kept, and that copy is what undo puts back.
@@ -565,8 +641,10 @@ export const useEditorStore = create<EditorState>((set, get) => ({
         editedSinceLoad: true,
       }));
       if (victim) record(set, { op: 'delete', pageId, element: victim }, 'deleting that');
+      return true;
     } catch (e) {
       handleWriteError(e, set, get);
+      return false;
     }
   },
 
@@ -672,11 +750,20 @@ export const useEditorStore = create<EditorState>((set, get) => ({
     stopGenPoll();
     const start = Date.now();
     const settle = () => { genPoll = null; set({ generating: false, adding: false }); };
+    /**
+     * Navigated away — stop, and TOUCH NOTHING.
+     *
+     * This used to call settle(), which clears `generating` unconditionally. If the
+     * magazine you moved to was itself building, its freshly-armed banner was turned
+     * off by this magazine's last tick. Whatever is open now owns those flags: load()
+     * resets them, and watchGeneration re-arms them if that issue is still processing.
+     */
+    const abandon = () => { genPoll = null; };
     const tick = async () => {
-      if (get().issueId !== issueId) { settle(); return; } // navigated away
+      if (get().issueId !== issueId) { abandon(); return; } // navigated away
       try {
         const { issue, pages } = await api.getIssue(issueId);
-        if (get().issueId !== issueId) { settle(); return; } // re-check after await
+        if (get().issueId !== issueId) { abandon(); return; } // re-check after await
         set({ issue, pages });
         if (issue.status === 'processing') {
           genPoll = setTimeout(() => void tick(), Date.now() - start > 300_000 ? 5000 : 1500);
@@ -690,7 +777,7 @@ export const useEditorStore = create<EditorState>((set, get) => ({
           else toast.success('Pages added');
         }
       } catch {
-        if (get().issueId !== issueId) { settle(); return; } // stop if we've moved on
+        if (get().issueId !== issueId) { abandon(); return; } // stop if we've moved on
         genPoll = setTimeout(() => void tick(), Date.now() - start > 300_000 ? 10_000 : 2000); // transient — keep polling
       }
     };
@@ -753,12 +840,17 @@ export const useEditorStore = create<EditorState>((set, get) => ({
     }
   },
 
+  // Both of these change the DRAFT of a magazine that may be live, so both set
+  // editedSinceLoad: a renamed or re-covered published magazine genuinely differs
+  // from what readers see, and the reply they get back cannot say so itself (see
+  // mergeIssue). Merged rather than replaced for the same reason.
   rename: async (title) => {
     const s = get();
     if (!s.issueId) return;
+    const issueId = s.issueId;
     try {
-      const issue = await api.renameIssue(s.issueId, title);
-      set({ issue });
+      const issue = await api.renameIssue(issueId, title);
+      set((st) => (st.issueId === issueId ? { ...mergeIssue(st, issue), editedSinceLoad: true } : {}));
     } catch (e) {
       toast.error(e instanceof Error ? e.message : 'Failed to rename');
     }
@@ -767,9 +859,10 @@ export const useEditorStore = create<EditorState>((set, get) => ({
   setCover: async (cover) => {
     const s = get();
     if (!s.issueId) return false;
+    const issueId = s.issueId;
     try {
-      const issue = await api.setCover(s.issueId, cover);
-      set({ issue });
+      const issue = await api.setCover(issueId, cover);
+      set((st) => (st.issueId === issueId ? { ...mergeIssue(st, issue), editedSinceLoad: true } : {}));
       toast.success(cover.coverImage === '' ? 'Cover reset to automatic.' : 'Cover updated.');
       return true;
     } catch (e) {
@@ -828,23 +921,40 @@ export const useEditorStore = create<EditorState>((set, get) => ({
     if (pageId && pageId !== get().currentPageId) await get().openPage(pageId);
     const s = get();
     if (!s.issueId || !s.currentPageId || !s.page || s.formatBusy) return;
+    // The pass is written for THIS page; the canvas's scroll-settle picker can make
+    // another one active while it runs, and the edits below would then be applied to
+    // whatever page had arrived under the cursor.
+    const forPageId = s.currentPageId;
     set({ formatBusy: true });
     try {
-      const { edits, note } = await api.formatPage(s.issueId, s.currentPageId, mode);
+      const { edits, note } = await api.formatPage(s.issueId, forPageId, mode);
       if (edits.length === 0) {
         toast.message(note || 'Nothing to change on this page.');
         return;
       }
+      if (get().currentPageId !== forPageId) {
+        toast.message('You moved to another page while that ran, so nothing was changed. Try it again on this page.');
+        return;
+      }
       // ONE undo entry for the whole pass — a Fill can rewrite a dozen blocks, and
       // taking them back one Ctrl+Z at a time is not "undo", it's twelve undos.
+      let wrote = 0;
+      let refused = 0;
       await get().batchEdits(mode === 'fill' ? 'the text fill' : 'the text adjustment', async () => {
         for (const e of edits) {
+          if (get().currentPageId !== forPageId) { refused++; continue; }
           const before = get().page?.elements.find((x) => x.id === e.elementId);
-          if (!before || before.type !== 'text' || !before.text) continue;
-          await get().commit(e.elementId, { text: { ...before.text, content: e.content } }, before);
+          if (!before || before.type !== 'text' || !before.text) { refused++; continue; }
+          if (await get().commit(e.elementId, { text: { ...before.text, content: e.content } }, before)) wrote++;
+          else refused++;
         }
       });
-      toast.success(note || `${mode === 'fill' ? 'Filled' : 'Adjusted'} ${edits.length} text block${edits.length === 1 ? '' : 's'}. Undo with Ctrl+Z.`);
+      // Report what was STORED. `edits.length` is what the model proposed, and using
+      // it here claimed a dozen rewritten blocks over a pass where the page had
+      // refused every one of them.
+      if (wrote === 0) toast.error(`Couldn't apply that text pass — the page didn't accept ${refused === 1 ? 'the change' : 'any of the changes'}.`);
+      else if (refused > 0) toast.warning(`${mode === 'fill' ? 'Filled' : 'Adjusted'} ${wrote} text block${wrote === 1 ? '' : 's'} — ${refused} ${refused === 1 ? 'was' : 'were'} refused. Undo with Ctrl+Z.`);
+      else toast.success(note || `${mode === 'fill' ? 'Filled' : 'Adjusted'} ${wrote} text block${wrote === 1 ? '' : 's'}. Undo with Ctrl+Z.`);
     } catch (e) {
       toast.error(e instanceof Error ? e.message : 'Text pass failed');
     } finally {
@@ -968,14 +1078,28 @@ export const useEditorStore = create<EditorState>((set, get) => ({
   publish: async (scope) => {
     const s = get();
     if (!s.issueId || s.publishing) return null;
+    const issueId = s.issueId;
     set({ publishing: true });
     try {
-      const { publishedIssueId } = await api.publishIssue(s.issueId, scope);
+      const { publishedIssueId } = await api.publishIssue(issueId, scope);
+      // THE PUBLISH HAS HAPPENED. Everything after this point is refreshing our view
+      // of it, and must not be able to report failure for it — the re-read used to
+      // share this try, so a flaky GET turned a successful publish into "Publish
+      // failed" and sent the owner back to republish a live edition.
+      //
       // Re-read the whole issue rather than trusting the publish reply: `needsRepublish`
       // is derived from the pages, and only GET /issues/:id carries them. Refreshing the
       // summaries also picks up any selectedForPublish the server changed.
-      const fresh = await api.getIssue(s.issueId);
-      set({ issue: fresh.issue, pages: fresh.pages, editedSinceLoad: false });
+      try {
+        const fresh = await api.getIssue(issueId);
+        if (get().issueId === issueId) set({ issue: fresh.issue, pages: fresh.pages, editedSinceLoad: false });
+      } catch {
+        // Clear the local half regardless: those edits ARE published now, and leaving
+        // the flag set would keep the "Needs republish" badge up on a magazine that is
+        // in sync. The server's own answer arrives on the next load.
+        if (get().issueId === issueId) set({ editedSinceLoad: false });
+        toast.message('Published. Couldn’t refresh the page list just now — reload to see the latest.');
+      }
       return publishedIssueId;
     } catch (e) {
       toast.error(e instanceof Error ? e.message : 'Publish failed');
@@ -1015,8 +1139,10 @@ export const useEditorStore = create<EditorState>((set, get) => ({
       set({ pages: r.pages });
       // Re-open the current page so its read-only state takes effect immediately —
       // submitting locks it, and a canvas that still looks editable would invite
-      // edits the server then refuses.
-      if (s.currentPageId && pageIds.includes(s.currentPageId)) await get().openPage(s.currentPageId);
+      // edits the server then refuses. FORCED, because the page is already the open
+      // one: without that flag openPage's "already current" short-circuit made this
+      // line a no-op and the lock only appeared on the next reload.
+      if (s.currentPageId && pageIds.includes(s.currentPageId)) await get().openPage(s.currentPageId, true);
       const what = r.label || `${r.submitted} page${r.submitted === 1 ? '' : 's'}`;
       if (r.emailed) toast.success(`Sent ${what} for review — the owner has been emailed.`);
       else toast.success(`Sent ${what} for review.${r.emailError ? ` (Couldn't email the owner: ${r.emailError})` : ''}`);
@@ -1072,10 +1198,11 @@ export const useEditorStore = create<EditorState>((set, get) => ({
   unpublish: async () => {
     const s = get();
     if (!s.issueId || !s.issue?.publishedIssueId || s.publishing) return;
+    const issueId = s.issueId;
     set({ publishing: true });
     try {
-      const { issue } = await api.unpublishIssue(s.issueId);
-      set({ issue });
+      const { issue } = await api.unpublishIssue(issueId);
+      set((st) => (st.issueId === issueId ? mergeIssue(st, issue) : {}));
       toast.success('Removed from Bulletins.');
     } catch (e) {
       toast.error(e instanceof Error ? e.message : 'Unpublish failed');
@@ -1086,12 +1213,16 @@ export const useEditorStore = create<EditorState>((set, get) => ({
 
   refreshIssue: async () => {
     const s = get();
-    if (!s.issueId) return;
+    if (!s.issueId) return false;
+    const issueId = s.issueId;
     try {
-      const { issue, pages } = await api.getIssue(s.issueId);
-      set({ issue, pages });
+      const { issue, pages } = await api.getIssue(issueId);
+      // This response DOES carry the pages, so its needsRepublish is the real answer
+      // and replaces ours outright — the one refresh entitled to do that.
+      if (get().issueId === issueId) set({ issue, pages });
+      return true;
     } catch {
-      /* keep current state */
+      return false; // keep current state; the caller decides whether to say so
     }
   },
 
@@ -1101,11 +1232,16 @@ export const useEditorStore = create<EditorState>((set, get) => ({
     stopGenPoll();
     set({ generating: true, adding: false });
     const start = Date.now();
+    // Same rule as generatePages: on navigating away we stop and leave `generating`
+    // alone. Clearing it here switched off the banner of whatever magazine had just
+    // been opened, which is the one thing this poll must never do to a build it is
+    // not watching.
+    const abandon = () => { genPoll = null; };
     const tick = async () => {
-      if (get().issueId !== watchId) { set({ generating: false }); return; } // navigated away
+      if (get().issueId !== watchId) { abandon(); return; } // navigated away
       try {
         const { issue, pages } = await api.getIssue(watchId);
-        if (get().issueId !== watchId) { set({ generating: false }); return; } // re-check after await — a late response must not overwrite another magazine's state
+        if (get().issueId !== watchId) { abandon(); return; } // re-check after await — a late response must not overwrite another magazine's state
         set({ issue, pages });
         // Reveal the first page the moment it exists so the user sees the build.
         if (!get().currentPageId && pages[0]) await get().openPage(pages[0].id);
@@ -1127,7 +1263,7 @@ export const useEditorStore = create<EditorState>((set, get) => ({
           if (issue.status === 'failed') toast.error(issue.processingError || 'Generation failed');
         }
       } catch {
-        if (get().issueId !== watchId) { set({ generating: false }); return; } // moved on mid-error
+        if (get().issueId !== watchId) { abandon(); return; } // moved on mid-error
         genPoll = setTimeout(() => void tick(), Date.now() - start > 300_000 ? 10_000 : 2500); // transient — keep polling
       }
     };
@@ -1164,6 +1300,13 @@ export const useEditorStore = create<EditorState>((set, get) => ({
         ? { chat: t.messages.map(dtoToChat), chatHasMore: t.hasMore, chatOldest: t.oldestCreatedAt }
         : {}));
     } catch (e) {
+      // DON'T LEAVE THE PANEL POINTING AT A THREAD WE COULDN'T READ. It would show an
+      // empty transcript with a live composer, so the next message would be appended
+      // to a conversation whose history is on screen nowhere — indistinguishable from
+      // a new chat, except that it isn't one. Drop to an actual new chat, which is
+      // what the emptied panel already looks like; the thread is still in the list to
+      // try again.
+      set((st) => (st.issueId === id && st.activeThreadId === threadId ? { activeThreadId: null } : {}));
       toast.error(e instanceof Error ? e.message : 'Could not open that chat.');
     }
   },
@@ -1213,23 +1356,46 @@ export const useEditorStore = create<EditorState>((set, get) => ({
     // post into a conversation the server would refuse anyway.
     const active = s.threads.find((t) => t.id === s.activeThreadId);
     if (active?.readOnly) return;
+    const issueId = s.issueId;
+    const forPageId = s.currentPageId;
+    const forThreadId = s.activeThreadId;
     set({ chat: [...s.chat, { role: 'user', content: body, attachments }], chatBusy: true });
+    /**
+     * Is this reply still wanted?
+     *
+     * A turn takes a while, and this was the one async action in the store with no
+     * such check: open another magazine mid-turn and the reply — plus its staged
+     * proposals, aimed at a page in the magazine you left — was appended to the new
+     * one's chat, straight past the clean slate load() had just set up. The thread is
+     * checked too, so a reply cannot land in a conversation the user has switched to.
+     *
+     * `chatBusy` is released on the ISSUE check alone: switching thread within the
+     * same magazine must still unlock the composer (nothing else will), while a
+     * different magazine's flag is not ours to touch — it may have a turn of its own
+     * in flight, and clearing it would let a second one start alongside.
+     */
+    const sameIssue = () => get().issueId === issueId;
+    const stillOurs = () => sameIssue() && get().activeThreadId === forThreadId;
     try {
       // ONE turn, plus the thread id. The server reads the rest of the history from
       // the thread itself — the client's transcript is for display, not the prompt.
       const { reply, proposals, threadId } = await api.chatAgent(
-        s.issueId,
-        s.currentPageId,
+        issueId,
+        forPageId,
         [{ role: 'user', content: body }],
         s.selectedId ?? undefined,
         sourceText,
         attachedImages,
-        s.activeThreadId ?? undefined,
+        forThreadId ?? undefined,
       );
+      if (!stillOurs()) {
+        if (sameIssue()) set({ chatBusy: false });
+        return;
+      }
       set((st) => ({
         chat: [...st.chat, { role: 'assistant', content: reply }],
         proposals,
-        proposalsPageId: s.currentPageId,
+        proposalsPageId: forPageId,
         chatBusy: false,
         // Adopt the thread the server used — on the first turn of a new chat this is
         // the id it just created. Without this, every turn would start another one.
@@ -1239,6 +1405,10 @@ export const useEditorStore = create<EditorState>((set, get) => ({
       // sorts to the top. Cheap, and it keeps the list honest without a socket.
       void get().loadThreads();
     } catch (e) {
+      if (!stillOurs()) {
+        if (sameIssue()) set({ chatBusy: false });
+        return;
+      }
       set((st) => ({ chat: [...st.chat, { role: 'assistant', content: 'Sorry — I hit a snag just then. Please try again.' }], chatBusy: false }));
       toast.error(e instanceof Error ? e.message : 'Assistant failed');
     }
@@ -1274,6 +1444,8 @@ export const useEditorStore = create<EditorState>((set, get) => ({
     const s = get();
     if (!s.page || s.proposalsPageId !== s.currentPageId || s.proposals.length === 0 || !s.issueId) return;
     const issueId = s.issueId;
+    /** The page these proposals were written FOR — re-checked before every write. */
+    const forPageId = s.currentPageId;
     const idMap = new Map<string, string>();
     const isPageKind = (k: AgentProposal['kind']) => k === 'add-page' || k === 'remove-page' || k === 'reorder-page' || k === 'generate-pages';
 
@@ -1306,6 +1478,7 @@ export const useEditorStore = create<EditorState>((set, get) => ({
     // "Applied the assistant's changes" over a swallowed 409 tells the user their
     // magazine changed when it did not.
     let refused = 0;
+    let applied = 0;
 
     // 1) Element edits on the current page (rev-guarded CRUD; add → id remap).
     //
@@ -1315,19 +1488,38 @@ export const useEditorStore = create<EditorState>((set, get) => ({
     // separate entries — or, for add/delete, as none at all, because only `update`
     // used to be recorded. Now every element write is reversible and the user takes
     // the assistant's turn back with the one Ctrl+Z they expect.
+    // Every write below is judged by its RETURN VALUE, not by whether it threw.
+    // These store actions absorb their own errors (that is how a conflict reconciles
+    // instead of exploding), so they never reject — which made the try/catch that
+    // used to wrap them dead code, `refused` permanently 0, and the closing toast
+    // "Applied the assistant's changes" a flat untruth over an apply where every
+    // single write had been refused.
+    //
+    // An 'add' that fails also has to STOP the proposals that depended on it: with no
+    // id in the map, a later update/delete naming the temp id would be sent to the
+    // server as if it were real, get refused for a different reason, and be counted
+    // twice. Its dependants are counted once, here, and never sent.
+    const dead = new Set<string>();
     await get().batchEdits('the assistant’s changes', async () => {
       for (const p of s.proposals.filter((x) => !isPageKind(x.kind))) {
-        try {
-          if (p.kind === 'add' && p.element) {
-            const newId = await get().addElement(p.element);
-            if (p.tempId && newId) idMap.set(p.tempId, newId);
-          } else if (p.kind === 'update' && p.elementId && p.patch) {
-            await get().commit(idMap.get(p.elementId) ?? p.elementId, p.patch);
-          } else if (p.kind === 'delete' && p.elementId) {
-            await get().deleteElement(idMap.get(p.elementId) ?? p.elementId);
-          }
-        } catch {
-          refused++;
+        // The page under us MUST NOT move mid-apply. Each write is a round trip, and
+        // the canvas's scroll-settle picker can make another page active while they
+        // run — at which point the remaining proposals, written for this page, would
+        // be applied to that one. Stop instead, and count the rest as refused.
+        if (get().currentPageId !== forPageId) { refused++; continue; }
+        if (p.kind === 'add' && p.element) {
+          const newId = await get().addElement(p.element);
+          if (!newId) { refused++; if (p.tempId) dead.add(p.tempId); continue; }
+          if (p.tempId) idMap.set(p.tempId, newId);
+          applied++;
+        } else if (p.kind === 'update' && p.elementId && p.patch) {
+          if (dead.has(p.elementId)) { refused++; continue; }
+          if (await get().commit(idMap.get(p.elementId) ?? p.elementId, p.patch)) applied++;
+          else refused++;
+        } else if (p.kind === 'delete' && p.elementId) {
+          if (dead.has(p.elementId)) { refused++; continue; }
+          if (await get().deleteElement(idMap.get(p.elementId) ?? p.elementId)) applied++;
+          else refused++;
         }
       }
     });
@@ -1341,12 +1533,17 @@ export const useEditorStore = create<EditorState>((set, get) => ({
         if (p.kind === 'add-page') {
           const { pages } = await api.addPage(issueId, p.atIndex);
           set({ pages, editedSinceLoad: true });
+          applied++;
         } else if (p.kind === 'reorder-page' && p.from != null && p.to != null) {
           const { pages } = await api.reorderPages(issueId, p.from, p.to);
           set({ pages, editedSinceLoad: true });
+          applied++;
         } else if (p.kind === 'remove-page' && p.targetIndex != null) {
           const target = get().pages[p.targetIndex];
-          if (target && get().pages.length > 1) {
+          // A target that has since gone (or the last remaining page, which the
+          // server won't delete) is a refusal, not a silent skip.
+          if (!target || get().pages.length <= 1) refused++;
+          else {
             // Deleting a SUBMITTED page is refused first time with a 409 naming who
             // submitted it. Route it through the store's own deletePage so the owner
             // gets that confirmation dialog instead of a silent no-op — the assistant
@@ -1355,17 +1552,22 @@ export const useEditorStore = create<EditorState>((set, get) => ({
               const before = get().pages.length;
               await get().deletePage(target.id);
               if (get().pages.length === before) refused++;
+              else applied++;
             } else {
               const { pages } = await api.deletePage(issueId, target.id);
               // Same pruning as deletePage's own path — this branch skips it only
               // because it doesn't need the submitted-page confirmation.
               set((st) => ({ pages, editedSinceLoad: true, undoStack: withoutPage(st.undoStack, target.id), redoStack: withoutPage(st.redoStack, target.id) }));
               if (get().currentPageId === target.id && pages[0]) await get().openPage(pages[0].id);
+              applied++;
             }
           }
         } else if (p.kind === 'generate-pages' && p.count) {
           // Only one generation run per apply (they can't overlap while processing).
+          // Counted as applied: the run is started below, so "nothing was altered"
+          // would be the wrong sentence to close on.
           deferGenerate = { count: p.count, topic: p.topic, atIndex: p.atIndex };
+          applied++;
         }
       } catch {
         refused++;
@@ -1373,9 +1575,17 @@ export const useEditorStore = create<EditorState>((set, get) => ({
     }
 
     set({ proposals: [], proposalsPageId: null });
-    if (refused > 0) {
+    // Three outcomes, not two. "Applied what I could" is the right sentence for a
+    // PARTIAL apply and the wrong one for a total refusal — where nothing was applied
+    // and there is nothing to undo, so saying otherwise sends the user to Ctrl+Z to
+    // take back a change that never happened.
+    if (refused > 0 && applied === 0) {
+      toast.error(
+        `Couldn't apply ${refused === 1 ? 'that change' : `any of those ${refused} changes`} — the page didn't accept ${refused === 1 ? 'it' : 'them'}. Nothing was altered.`,
+      );
+    } else if (refused > 0) {
       toast.warning(
-        `Applied what I could — ${refused} change${refused === 1 ? '' : 's'} ${refused === 1 ? 'was' : 'were'} refused.`,
+        `Applied ${applied} change${applied === 1 ? '' : 's'} — ${refused} ${refused === 1 ? 'was' : 'were'} refused. Undo with Ctrl+Z.`,
       );
     } else {
       // Say that it's reversible. The apply is one undo entry now, and users who have
@@ -1505,18 +1715,63 @@ async function replayOps(ops: UndoOp[], dir: 'undo' | 'redo', set: any, get: any
   return failed === 0;
 }
 
-/** Shared write-error handling: a 409 reconciles to the server's current page.
- *  Keeps the user's SELECTION if that element still exists on the fresh page —
- *  blanking it is what made the inspector snap to "Nothing selected" after a
- *  conflict and read as a dead panel. */
-function handleWriteError(e: unknown, set: any, get: any) {
+/**
+ * Put one element back the way it was after a refused write.
+ *
+ * Used only where the write was OPTIMISTIC (commit), and only when nothing else has
+ * already replaced the page. With a `before` snapshot this is exact; without one
+ * (a commit whose caller passed none, on an element that has since gone) the stored
+ * page is re-read instead, because a wrong local guess is worse than a round trip.
+ */
+function revertElement(
+  pageId: string,
+  elementId: string,
+  before: MagazineElement | undefined,
+  set: any,
+  get: any,
+) {
+  if (before) {
+    set((st: EditorState) => ({
+      page: st.page && st.page.id === pageId
+        ? { ...st.page, elements: st.page.elements.map((x) => (x.id === elementId ? before : x)) }
+        : st.page,
+    }));
+    return;
+  }
+  const issueId = get().issueId as string | null;
+  if (!issueId) return;
+  void api
+    .getPage(issueId, pageId)
+    .then((stored) => {
+      if (get().page?.id === pageId) set({ page: stored });
+    })
+    .catch(() => {
+      /* the caller's toast already said the write failed; leave state alone */
+    });
+}
+
+/**
+ * Shared write-error handling: a 409 reconciles to the server's current page.
+ * Keeps the user's SELECTION if that element still exists on the fresh page —
+ * blanking it is what made the inspector snap to "Nothing selected" after a
+ * conflict and read as a dead panel.
+ *
+ * Returns whether the page was RECONCILED (replaced with, or re-read from, what the
+ * server actually holds). 'unreconciled' means only a toast happened, so a caller
+ * that painted an optimistic change still has to take it back.
+ */
+function handleWriteError(e: unknown, set: any, get: any): 'reconciled' | 'unreconciled' {
   if (e instanceof ApiError && e.status === 409 && e.body?.page) {
     const fresh = e.body.page as MagazinePageV2;
     const keep = get().selectedId as string | null;
     const stillThere = Array.isArray(fresh.elements) && fresh.elements.some((x: MagazineElement) => x.id === keep);
+    // Only adopt it if it IS the page on screen — the user may have moved on while
+    // this write was in flight, and pasting another page's elements over the open
+    // one is a far louder failure than the conflict itself.
+    if (get().page?.id !== fresh.id) return 'reconciled';
     set({ page: fresh, selectedId: stillThere ? keep : null });
     toast.message('This page was updated elsewhere — reloaded the latest.');
-    return;
+    return 'reconciled';
   }
   // A STATE block (page-submitted / page-approved) carries a `reason`
   // and no page body. Writes are optimistic — updateLocal already painted the change —
@@ -1536,7 +1791,8 @@ function handleWriteError(e: unknown, set: any, get: any) {
         });
     }
     toast.error(e.message);
-    return;
+    return 'reconciled';
   }
   toast.error(e instanceof Error ? e.message : 'Save failed');
+  return 'unreconciled';
 }

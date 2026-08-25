@@ -9,7 +9,7 @@ import { useNavigate } from 'react-router-dom';
 import { Sparkles, Paperclip, X, FileText, FileScan, FilePlus, Globe, Trash2, ArrowUp, Pencil, Eye, LayoutTemplate } from 'lucide-react';
 import { toast } from 'sonner';
 import * as api from './api';
-import type { IssueSummary } from './api';
+import { ApiError, type IssueSummary } from './api';
 import { ingestFile, attachmentSourceText, ATTACH_ACCEPT } from '@/agent/attachments/documentUpload';
 import { ShimmerText } from './BuildProgress';
 
@@ -110,24 +110,51 @@ export default function MagazineV2Home() {
     if (pubBusy) return;
     if (!window.confirm(`Delete “${it.title}”?${it.publishedIssueId ? ' Its published edition will also be removed from Bulletins.' : ''} This cannot be undone.`)) return;
     setPubBusy(it.id);
+    const drop = () => setIssues((prev) => prev.filter((r) => r.id !== it.id));
     try {
       await api.deleteIssue(it.id);
-      setIssues((prev) => prev.filter((r) => r.id !== it.id));
+      drop();
       toast.success('Magazine deleted.');
     } catch (e) {
-      toast.error(e instanceof Error ? e.message : 'Delete failed');
+      // A magazine that is LIVE is refused the first time, because deleting it also
+      // takes the bulletin off the public newsstand; `?confirm=1` retries through it.
+      // This path used to stop at the refusal — so the dialog above promised the
+      // published edition would be removed, the user agreed, and then nothing
+      // happened but a toast of the server's objection. A lock with no key, and the
+      // studio's own delete has had the key all along.
+      if (e instanceof ApiError && e.status === 409 && e.body?.reason === 'is-live') {
+        if (window.confirm(`${e.message}\n\nDelete it anyway? This cannot be undone.`)) {
+          try {
+            await api.deleteIssue(it.id, true);
+            drop();
+            toast.success('Magazine deleted, and removed from Bulletins.');
+          } catch (err) {
+            toast.error(err instanceof Error ? err.message : 'Delete failed');
+          }
+        }
+      } else {
+        toast.error(e instanceof Error ? e.message : 'Delete failed');
+      }
     } finally {
       setPubBusy(null);
     }
   };
 
   const startBlank = async () => {
+    // `starting` has to be SET for the guard above to mean anything — without this
+    // the re-entry check never armed, and a double-click on "Blank magazine" made
+    // two of them. (The other two start paths set it; this one was missed.)
     if (starting) return;
+    setStarting(true);
+    setError(null);
+    setStartMsg('Creating your magazine…');
     try {
       const { issue } = await api.createBlankIssue('Untitled Magazine');
-      openEditor(issue.id);
+      openEditor(issue.id); // the studio takes over; `starting` dies with this view
     } catch (e) {
       setError(e instanceof Error ? e.message : 'Failed to create');
+      setStarting(false);
+      setStartMsg('');
     }
   };
 

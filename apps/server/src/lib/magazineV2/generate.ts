@@ -1229,6 +1229,12 @@ async function artDirectPage(plan: GenPlan, page: GenPlanPage, pageNumber: numbe
     '  it will wrap, so plan the lines you want or keep it short.',
     '• A QR and an icon are SQUARE: whatever box you give them, they render as the largest square that fits and',
     '  the rest of that box is wasted.',
+    '• PHOTO FIT: use "cover" for almost every photo leaf — it fills the box edge-to-edge, cropping as needed,',
+    '  which is what a designed page wants. Only use "contain" when the box\'s aspect ratio already closely',
+    '  matches the photo\'s (e.g. a near-square box for a near-square shot) — you do not know the exact photo',
+    '  in advance, so "contain" in a box shaped for something else letterboxes: the photo shrinks to fit and',
+    '  the REST OF THE BOX renders as bare background, which reads as a broken, half-empty page. Default to',
+    '  "cover"; omitting fit does this automatically.',
     '',
     'SPACE IS A MATERIAL, NOT A FAULT:',
     '• The root covers the whole page, but empty space is allowed and often right — say it OUT LOUD with a',
@@ -1267,7 +1273,7 @@ async function artDirectPage(plan: GenPlan, page: GenPlanPage, pageNumber: numbe
   ].join('\n');
 
   try {
-    const { text } = await generateText({
+    const { text, finishReason } = await generateText({
       model: getMagazineModel(),
       system,
       prompt: [
@@ -1290,6 +1296,15 @@ async function artDirectPage(plan: GenPlan, page: GenPlanPage, pageNumber: numbe
       // limit); without this they errored → fixed seed → identical tail pages. The
       // SDK backs off between attempts, so the abort budget covers all of them.
       maxRetries: 3,
+      // A tree of up to 28 leaves at depth 6, each with several optional style
+      // properties, is a genuinely large JSON payload — and this model spends part
+      // of its output budget on reasoning before the visible JSON. With no cap the
+      // provider default governed that budget; when it was too tight the response
+      // cut off mid-object, parseJsonObject's brace scanner never closed, and every
+      // such page silently became "unusable — using seed" with no way to tell why.
+      // Generous on purpose: too high only costs a few tokens on a small page, too
+      // low loses the whole page's design.
+      maxOutputTokens: 8000,
       /**
        * THE BUDGET FOR ALL FOUR ATTEMPTS AND THE BACKOFF BETWEEN THEM — not for one
        * call, which is why it is generous.
@@ -1316,7 +1331,22 @@ async function artDirectPage(plan: GenPlan, page: GenPlanPage, pageNumber: numbe
     });
     const spec = normalizeLayoutSpec(parseJsonObject(text));
     if (spec) return { spec, source: 'agent' };
-    console.warn(`[magazineV2] art-director spec for "${page.kind}" was unusable — using seed.`);
+    // WHY it was unusable, not just that it was: finishReason 'length' means the
+    // response was cut off before the JSON closed (a token-budget problem, fixable
+    // by raising maxOutputTokens further); anything else means the model returned a
+    // complete response that still didn't parse/normalize (a prompt or repair-logic
+    // problem). Without this every fallback looked identical in the logs.
+    console.warn(
+      `[magazineV2] art-director spec for "${page.kind}" was unusable ` +
+        `(finishReason: ${finishReason}, ${text.length} chars returned) — using seed.` +
+        (finishReason === 'length' ? ' TRUNCATED: response was cut off before the JSON object closed.' : ''),
+    );
+    // TEMPORARY, for diagnosis: finishReason 'stop' means the model believes it
+    // finished, so the failure is in the JSON shape itself (a malformation neither
+    // JSON.parse nor repairUnquotedKeys handles, or a normalizeLayoutSpec rejection
+    // e.g. an unusable root). Without the actual text there is no way to tell which
+    // — remove once the real cause is identified and fixed.
+    console.warn(`[magazineV2] RAW unusable art-director response for "${page.kind}":\n${text.slice(0, 4000)}`);
     return { spec: seedSpecFor(page.kind), source: 'seed' };
   } catch (err) {
     console.warn(`[magazineV2] art-director failed for "${page.kind}" (${err instanceof Error ? err.message : err}) — using seed.`);
@@ -1399,7 +1429,13 @@ async function composeOnePageAI(
         // essentially every page to the template — measured, then rejected.)
         const flaws = fit ? seriousFlaws(fit) : 0;
         if (!best || flaws < best.flaws) best = { page: aiPage, flaws, attempt, source, slots: pseudo.slots.length, density };
-        if (flaws === 0 || attempt >= AI_LAYOUT_ATTEMPTS || source === 'seed') break;
+        // NOT `|| source === 'seed'`: that used to assume retrying meant recomposing
+        // the SAME deterministic seed spec, which really would be pointless — but the
+        // top of this loop calls artDirectPage AFRESH every iteration, so a 'seed'
+        // result (the model's OWN output failed to parse/normalize) is exactly the
+        // case that most needs another attempt at the real model call, not less. This
+        // was quietly forfeiting every remaining attempt on the first JSON hiccup.
+        if (flaws === 0 || attempt >= AI_LAYOUT_ATTEMPTS) break;
         console.log(`[magazineV2] page ${pageNumber} "${page.kind}" attempt ${attempt} is legal but measured ${flaws} flaw(s) — re-asking with the measurements.`);
         // The COPY is fine; it's the geometry that needs revising, so the draft is kept
         // and re-flowed rather than re-written.
@@ -1435,9 +1471,11 @@ async function composeOnePageAI(
       // question about quality unanswerable.
       const next = !spent ? 'self-healing' : best ? `keeping attempt ${best.attempt}` : 'using template path';
       console.warn(`[magazineV2] page ${pageNumber} "${page.kind}" AI layout attempt ${attempt}/${AI_LAYOUT_ATTEMPTS} failed (${density ? `too sparse: ${density.meaningful}/${density.min}` : `QA: ${why}`}) — ${next}.`);
-      // A fixed SEED spec is deterministic — retrying it changes nothing, so don't
-      // burn an attempt; drop to the template path now.
-      if (source === 'seed') break;
+      // Same correction as above: a 'seed' result here means the MODEL's own output
+      // didn't parse/normalize, not that we recomposed an already-tried spec — so it
+      // is exactly when another attempt (a fresh artDirectPage call, next loop turn)
+      // is worth having, not a reason to stop. `attempt >= AI_LAYOUT_ATTEMPTS` already
+      // bounds the loop; no separate early-out is needed.
     } catch (err) {
       console.warn('[magazineV2] AI-layout page errored, using template path:', err instanceof Error ? err.message : err);
       break;

@@ -51,6 +51,7 @@ const MAX_STACK_LAYERS = 5;
 import { PAGE_H, PAGE_W } from './config.js';
 import type { LayoutReading, ReadBox, ReadRegion } from './layoutReading.js';
 import { TEXT_ROLES, pxToPt } from './roleScale.js';
+import type { SolvedLeaf } from './solveLayout.js';
 
 /** Roles that BACK other content: legal as the lower layers of a stack. Mirrors
  *  `isBackingLayer` in layoutSpec.ts and the scrim/panel rules in pruneSpec.ts. */
@@ -64,6 +65,9 @@ const TOUCH = 0.012;
 
 /** Below this, a "gap" is just measurement noise rather than designed whitespace. */
 const MIN_GAP = 0.008;
+
+/** Mirrors solveLayout's own MIN_SIZE: the smallest box worth emitting. */
+const MIN_LEAF_PX = 2;
 
 interface Band { start: number; end: number; regions: ReadRegion[] }
 
@@ -255,16 +259,35 @@ function spaceTokenFor(fraction: number, axisPx: number): SpaceToken {
  * separation (a band break that is really a section change) should not stretch every
  * other gap on the page.
  */
-function gapFor(bands: Band[], axisPx: number): SpaceToken {
-  const gaps: number[] = [];
-  for (let i = 1; i < bands.length; i++) {
-    const g = bands[i]!.start - bands[i - 1]!.end;
-    if (g > MIN_GAP) gaps.push(g);
-  }
+function gapFor(runs: number[], axisPx: number): SpaceToken {
+  const gaps = runs.filter((g) => g > MIN_GAP).sort((a, b) => a - b);
   if (gaps.length === 0) return 'none';
-  gaps.sort((a, b) => a - b);
   return spaceTokenFor(gaps[Math.floor(gaps.length / 2)]!, axisPx);
 }
+
+/**
+ * Do this container's interior runs have to become TRACKS, or are they rhythm?
+ *
+ * The question is asked ONCE PER CONTAINER, about the bands as a set — not per run —
+ * and that is the whole trick. Two runs of identical size mean opposite things: 6%
+ * between the headline and the columns of a feature is rhythm, and 11% above a cover
+ * line is composition. Nothing about either run distinguishes them. What does is how
+ * much of the rectangle the bands were ever going to fill.
+ *
+ * Below this, the bands are a CLUSTER floating in space and every run between them is
+ * load-bearing: on a real cover the bands held 31% of the page height, so normalising
+ * their fr weights over the whole sheet inflated each one ~3.2× and the page came back
+ * stretched top to bottom (fidelity 10%, on a reading that was accurate). At or above
+ * it the bands genuinely do fill the rectangle, fr weights already preserve the
+ * proportions, and promoting gaps to weighted tracks would turn every ordinary layout
+ * into a sandwich of empty children.
+ *
+ * Two size tests were tried first and both are wrong. Against what `gap` can express
+ * (`xl` = 96px) it fires on the feature's 6%; against EMPTY_END it leaves the cover's
+ * 11% run to a 96px token that is then repeated between every other pair. The
+ * measurement is not of a run at all — it is of the set.
+ */
+const FILLS_AXIS = 0.7;
 
 /** fr weight from an extent along the axis. Fractions are relative, so scaling by 100
  *  keeps a whole point of resolution per percent and stays inside MAX_WEIGHT. */
@@ -573,7 +596,44 @@ function partition(regions: ReadRegion[], rect: ReadBox, depth: number, ref: All
   // Two slots held back whenever there is emptiness to express, because the spacer branch
   // of `anchored` may need them and capping afterwards would let normalizeLayoutSpec slice
   // a spacer off — putting the stretched page straight back.
-  const reserve = Math.max(lead, trail) / axisLen > EMPTY_END ? 2 : 0;
+  const axisPx = useCol ? PAGE_H : PAGE_W;
+  // Slots are reserved for INTERIOR runs as well as the outer two, for the same
+  // reason and with the same consequence if we don't: normalizeLayoutSpec silently
+  // slices children past MAX_CHILDREN, and the one it slices is the last spacer.
+  //
+  // Measured across the BANDS' OWN SPAN — first band's start to last band's end — and
+  // never across the whole rectangle. The emptiness at the two ENDS belongs to
+  // `anchored`, which has a better mechanism for it (a `pad` over a content-sized
+  // cluster, measured to beat spacers there). Counting that emptiness here as well
+  // made every floating cluster look airy, so interior spacers were injected into
+  // exactly the clusters `anchored` handles best and defeated its all-text branch.
+  // This rule is about INTERIOR air only.
+  //
+  // Asked of `raw` rather than the capped bands, and before capping, because merging
+  // two bands ABSORBS the run between them: deciding afterwards would see a tidier,
+  // fuller-looking set than the reference actually had.
+  const span = Math.max(1e-6, raw[raw.length - 1]!.end - raw[0]!.start);
+  const covered = raw.reduce((sum, b) => sum + (b.end - b.start), 0) / span;
+  // AND it defers to `anchored` where `anchored` has the better mechanism.
+  //
+  // A tight all-text cluster held off one end is padded and content-sized as a UNIT,
+  // and the note on `anchored` records that measurement: spacers took that fixture
+  // from 0.60 to 0.30, because the container's one `gap` is inserted next to a spacer
+  // as well and drags every band down. Interior spacers put the children out of reach
+  // of that branch — every child has to be a text leaf for it to fire — so a rule that
+  // adds them here would silently switch those clusters to the worse mechanism. Both
+  // conditions are read the way `anchored` reads them, off the uncapped bands, so the
+  // reserve below matches what actually gets built.
+  const bandIsTextLeaf = (b: Band) => b.regions.length === 1 && TEXT_ROLES.has(b.regions[0]!.role);
+  const anchoredCluster = Math.max(lead, trail) / axisLen > EMPTY_END && raw.every(bandIsTextLeaf);
+  const runsAreTracks = covered < FILLS_AXIS && !anchoredCluster;
+  const trackRuns = (bs: Band[]) => {
+    if (!runsAreTracks) return 0;
+    let n = 0;
+    for (let i = 1; i < bs.length; i++) if ((bs[i]!.start - bs[i - 1]!.end) / axisLen > MIN_RUN) n++;
+    return n;
+  };
+  const reserve = (Math.max(lead, trail) / axisLen > EMPTY_END ? 2 : 0) + trackRuns(raw);
   const bands = capBands(raw, Math.max(2, MAX_CHILDREN - reserve));
 
   const kids: { child: LayoutChild; band: Band }[] = [];
@@ -589,8 +649,41 @@ function partition(regions: ReadRegion[], rect: ReadBox, depth: number, ref: All
   // One surviving band and nothing to anchor it against: the container adds nothing.
   if (kids.length === 1 && reserve === 0) return kids[0]!.child.node;
 
-  const axisPx = useCol ? PAGE_H : PAGE_W;
-  return anchored(useCol ? 'col' : 'row', gapFor(bands, axisPx), kids.map((k) => k.child), {
+  /**
+   * THE AIR BETWEEN THE BANDS IS PART OF THE DESIGN, and it has to be a TRACK.
+   *
+   * `anchored` already learnt this for the runs at the two ENDS of a rectangle —
+   * there is a long note there on why a spacer beats justify/content-sizing/pad.
+   * The same lesson was never applied BETWEEN bands, and interior emptiness is
+   * where a magazine cover keeps most of it.
+   *
+   * What happened instead: the interior runs were collapsed into the container's
+   * single median `gap` token, which tops out at `xl` = 96px. On a real cover the
+   * bands occupied 31% of the page height and the gaps 69% — an 11% run above the
+   * cover line and a 53% void below it. The five bands' fr weights (3:11:1:14:2)
+   * were then normalised over the WHOLE sheet, so every band inflated about 3.2×,
+   * the 53% void became 96px, and the page came back stretched top to bottom.
+   * Measured fidelity 10%, verdict "loose", on a reading that was itself accurate.
+   *
+   * Whether this happens at all is FILLS_AXIS's decision, taken once for the whole
+   * container (see `runsAreTracks`); a container whose bands do fill their rectangle
+   * keeps today's behaviour exactly, gap token and all. Where runs DO become tracks
+   * they are excluded from the gap median as well — leaving them in would drag the
+   * token up to `xl` and re-insert the void between every other pair on the page,
+   * which is the same stretch by a different route.
+   */
+  const spaced: LayoutChild[] = [];
+  const rhythm: number[] = [];
+  for (let i = 0; i < kids.length; i++) {
+    if (i > 0) {
+      const run = kids[i]!.band.start - kids[i - 1]!.band.end;
+      if (runsAreTracks && run / axisLen > MIN_RUN) spaced.push(spacerChild(run));
+      else rhythm.push(run);
+    }
+    spaced.push(kids[i]!.child);
+  }
+
+  return anchored(useCol ? 'col' : 'row', gapFor(rhythm, axisPx), spaced, {
     lead, trail, axisLen, axisPx,
   });
 }
@@ -658,3 +751,116 @@ export function specContentRefs(spec: LayoutSpec): { ref: string; role: string }
   walk(spec.root);
   return out;
 }
+
+// ── EXACT REPRODUCTION ───────────────────────────────────────────────────────
+
+/**
+ * Solve a reading straight to boxes, with NO frame tree in between.
+ *
+ * The guillotine above exists to ADAPT a layout: reflow it onto a different sheet with
+ * a different amount of copy, and guarantee a tiling while doing it. Reproducing a
+ * reference is a different job, and the tree is the wrong instrument for it — not
+ * badly tuned, but structurally unable:
+ *
+ *   • a band spans its container's whole cross axis, so a cover line sitting in the
+ *     reference's right half comes out full width with only `align` remembering where
+ *     it was — the single biggest remaining loss in adapt mode;
+ *   • MAX_TREE_DEPTH flattens a nested template (a boxed sub-line inside a headline
+ *     block, an inset photo over a full-bleed one);
+ *   • an unfillable slot is pruned and the page RE-PARTITIONS, so one missing
+ *     photograph moves everything else — "2 boxes had nothing to put in them, so the
+ *     rest grew to fill the page".
+ *
+ * None of that is needed here, because THE READING ALREADY IS THE LAYOUT. Its boxes are
+ * fractions of the reference, and `normalizeLayoutReading` has already clipped them to
+ * the page, dropped the slivers and capped the count — the same guarantees the solver
+ * gives, established at the trust boundary instead. Multiplying by the page size is the
+ * whole transform, so every box lands exactly where it was read.
+ *
+ * NO MARGIN INSET, deliberately. `readingToSpec` insets the root because a relative
+ * tree knows nothing of the reference's own margin; these boxes are absolute and
+ * already contain it, so insetting here would count it twice and shrink the page.
+ *
+ * WHAT THIS GIVES UP is real and is the point of keeping both: copy longer than the
+ * reference's own no longer reflows — it shrinks to fit and is reported in `tight` —
+ * and a reference whose proportions differ from the page is stretched rather than
+ * re-composed (`aspectMismatch` is what warns about that). Exact mode only became
+ * viable once slot budgets came from the reference's real character counts rather than
+ * from box area; before that, every slot was handed article-length prose.
+ */
+export function readingToExact(
+  reading: LayoutReading,
+  dims: { width: number; height: number },
+): { leaves: SolvedLeaf[]; origin: Origin } | null {
+  const origin: Origin = {};
+  const alloc = makeAlloc(origin);
+  const W = dims.width > 0 ? dims.width : PAGE_W;
+  const H = dims.height > 0 ? dims.height : PAGE_H;
+
+  // Stacking order: an explicit `z` from the reading wins, and reading order breaks
+  // ties. Both matter to composeFromSolved, which repairs a text leaf's contrast
+  // against the topmost LOWER-z leaf beneath it — get this wrong and white cover type
+  // is "repaired" against the page ground instead of the photograph under it.
+  const ordered = reading.regions
+    .map((region, at) => ({ region, at }))
+    .sort((a, b) => (a.region.z ?? 0) - (b.region.z ?? 0) || a.at - b.at);
+
+  const placed = ordered
+    .map(({ region }) => ({
+      region,
+      box: {
+        x: Math.round(region.box.x * W),
+        y: Math.round(region.box.y * H),
+        w: Math.round(region.box.w * W),
+        h: Math.round(region.box.h * H),
+      },
+    }))
+    // The same floor the solver applies to its own output: below this a box cannot
+    // hold anything and would only ever be an artefact on the page.
+    .filter((p) => p.box.w >= MIN_LEAF_PX && p.box.h >= MIN_LEAF_PX);
+
+  /**
+   * TEXT MAY NEVER PRINT OVER TEXT — the one thing faithfulness does not extend to.
+   *
+   * Text over a PHOTOGRAPH is the commonest idiom in magazine design and is reproduced
+   * exactly; that is what the z-order is for. Text over TEXT is never a design, it is a
+   * misread: a vision model gives a masthead a generous box, and on a real cover the
+   * headline's came back 105–298px while the standfirst underneath it read 263–298, so
+   * the two genuinely overlapped in the reading. The guillotine hid that by merging
+   * them into one band. Reproducing boxes exactly stops hiding it, and layout QA — quite
+   * rightly — refuses a page with words printed on words.
+   *
+   * So an upper text box is trimmed to where the next overlapping one begins. Bounded
+   * and local: nothing moves, only the box that was too tall gets shorter, which is the
+   * measurement that was wrong. layoutSpec.ts has a repair pass for the same shape on
+   * the tree side ("NEVER two text layers on one rectangle") — same rule, same reason.
+   */
+  const texts = placed
+    .filter((p) => TEXT_ROLES.has(p.region.role))
+    .sort((a, b) => a.box.y - b.box.y || a.box.x - b.box.x);
+  for (let i = 0; i < texts.length; i++) {
+    const a = texts[i]!;
+    for (let j = i + 1; j < texts.length; j++) {
+      const b = texts[j]!;
+      const sharesColumn = a.box.x < b.box.x + b.box.w && b.box.x < a.box.x + a.box.w;
+      if (!sharesColumn) continue;
+      if (a.box.y + a.box.h > b.box.y) a.box.h = b.box.y - a.box.y;
+    }
+  }
+
+  const leaves: SolvedLeaf[] = [];
+  for (const { region, box } of placed) {
+    // Re-checked, because a trim can take a box below the floor: a line the reading
+    // buried entirely under the next one leaves nothing to draw.
+    if (box.w < MIN_LEAF_PX || box.h < MIN_LEAF_PX) continue;
+    leaves.push({ node: leafFor(region, alloc), box, z: leaves.length });
+  }
+  if (leaves.length === 0) return null;
+
+  // Slots that never became a leaf are dropped from `origin` for the same reason as
+  // above: a fidelity score counting boxes we never claimed to build is not a measure.
+  const kept = new Set(leaves.map((l) => l.node.contentRef ?? ''));
+  for (const key of Object.keys(origin)) if (!kept.has(key)) delete origin[key];
+  return { leaves, origin };
+}
+
