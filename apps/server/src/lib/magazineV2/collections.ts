@@ -58,4 +58,17 @@ export const COL = {
    * record of who submitted what.
    */
   reviews: 'magazineReviewsV2',
+  /**
+   * COMMAND BATCHES — one row per applied instruction, holding its inverse.
+   *
+   * This is what makes a multi-page change undoable in one step, and a partially
+   * applied one recoverable. Written BEFORE the first page write, then stamped
+   * with the outcome, so a batch that died between two page writes leaves a
+   * record of exactly which pages to put back.
+   *
+   * Its own collection, and not an array on the magazine, for the same reason as
+   * `reviews`: the inverse carries a full element-array snapshot per touched
+   * page, which is far too heavy to ship on every magazine fetch.
+   */
+  batches: 'magazineBatchesV2',
 } as const;

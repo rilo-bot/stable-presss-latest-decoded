@@ -13,7 +13,7 @@
 // Together these fix the v1 clobbering class (REVIEW-FINDINGS H1/M13). Elements
 // and pages are addressed by STABLE ids (not array position), so a reorder can't
 // misdirect an in-flight edit. Staff-gated; per-magazine owner/collaborator
-// scoped; non-GET writes rate-limited (H5). All behind the MAGAZINE_V2 flag.
+// scoped; non-GET writes rate-limited (H5).
 // ---------------------------------------------------------------------------
 
 import crypto from 'crypto';
@@ -21,7 +21,7 @@ import { Router, type RequestHandler, type Request, type Response } from 'expres
 import { db, rawCollection } from '../../lib/db.js';
 import { attachAccount } from '../../lib/auth.js';
 import { can, isAdmin } from '../../lib/rbac.js';
-import { MAGAZINE_V2_ENABLED, PAGE_W, PAGE_H, MAX_PAGES_PER_ISSUE, MAX_SOURCE_BYTES, ALLOWED_SOURCE_MIME, sourceExtForMime, MAX_IMAGE_BYTES, ALLOWED_IMAGE_MIME, imageExtFor } from '../../lib/magazineV2/config.js';
+import { PAGE_W, PAGE_H, MAX_PAGES_PER_ISSUE, MAX_SOURCE_BYTES, ALLOWED_SOURCE_MIME, sourceExtForMime, MAX_IMAGE_BYTES, ALLOWED_IMAGE_MIME, imageExtFor } from '../../lib/magazineV2/config.js';
 import { COL } from '../../lib/magazineV2/collections.js';
 import { rateLimit } from '../../lib/rateLimit.js';
 import { safePublicImageUrl } from '../../lib/magazineV2/url.js';
@@ -35,7 +35,7 @@ import { pageNumbersLabel } from '../../lib/pageLabels.js';
 import { magazinePath } from '../../lib/invites.js';
 import { withIdentityDefaults } from '../../lib/identity.js';
 import { resolveAccount } from '../../lib/effectiveAccess.js';
-import { normalizeElements, normalizeElementPatch } from '../../lib/magazineV2/writePipeline.js';
+import { normalizeElements, normalizeElementPatch, isLockedAgainst } from '../../lib/magazineV2/writePipeline.js';
 import { MAX_ELEMENTS_PER_PAGE, type MagazineElement } from '../../lib/magazineV2/model.js';
 import { isAgentConfigured } from '../../lib/agent/provider.js';
 import { storage } from '../../lib/storage.js';
@@ -50,6 +50,10 @@ import { readLayoutImage } from '../../lib/magazineV2/readLayout.js';
 import { aspectMismatch, normalizeLayoutReading } from '../../lib/magazineV2/layoutReading.js';
 import { applyReadingToPage, tightSummary, unfilledSlots, type ExtraContent } from '../../lib/magazineV2/applyLayout.js';
 import { draftReferenceFill } from '../../lib/magazineV2/referenceFill.js';
+import { planBatch, summarisePlan, type PageState, type PlannedPage } from '../../lib/magazineV2/commands/plan.js';
+import { executeBatch } from '../../lib/magazineV2/commands/execute.js';
+import { loadBatch, markUndone, mongoCommandStore } from '../../lib/magazineV2/commands/store.js';
+import type { MagazineCommand } from '@rilo/schema';
 
 /* eslint-disable @typescript-eslint/no-explicit-any */
 type Doc = { _id: string; [k: string]: any };
@@ -84,14 +88,7 @@ for (const verb of ['get', 'post', 'put', 'patch', 'delete'] as const) {
     original(path, ...handlers.map(forwardAsyncErrors));
 }
 
-// ── Gates: feature flag → signed-in staff → write rate limit ──────────────────
-router.use((_req, res, next) => {
-  if (!MAGAZINE_V2_ENABLED) {
-    res.status(404).json({ error: 'Not found' });
-    return;
-  }
-  next();
-});
+// ── Gates: signed-in staff → write rate limit ─────────────────────────────────
 router.use(attachAccount);
 /**
  * Staff, AND the Magazine Builder verb for what they are doing.
@@ -2297,11 +2294,6 @@ async function loadEditablePage(req: any, res: any): Promise<{ issue: Doc; page:
  * an element can never be stranded (there is no lock affordance in the inspector
  * yet, so today this is only reachable via the API).
  */
-function isLockedAgainst(stored: MagazineElement, partial?: Record<string, unknown>): boolean {
-  if (stored.locked !== true) return false;
-  return !(partial && partial.locked === false);
-}
-
 /** Parse & require an integer `rev` from the body (concurrency token). */
 function requireRev(req: any, res: any): number | null {
   const rev = Number(req.body?.rev);
@@ -2334,6 +2326,217 @@ router.get('/issues/:id/pages/:pageId', async (req, res) => {
 });
 
 // add one element (atomic CAS on page rev)
+// ── Command batches ───────────────────────────────────────────────────────────
+// ONE instruction → one batch → one atomic apply → one undo entry. The per-page
+// element routes below stay exactly as they are: this is an ADDITIONAL path for
+// changes that span pages, not a replacement, and both share the same rev CAS and
+// the same normalize pipeline.
+//
+// Why this exists: the element routes are one HTTP PATCH per property, so an AI
+// asked to restyle six pages meant twenty round-trips with no atomicity and no
+// way to take it back. See docs/AI-INTENT-INVENTORY.md.
+
+/** Turn page documents into the planner's view of them. */
+function toPageState(p: Doc): PageState {
+  const dims = pageDims(p);
+  return {
+    id: p._id,
+    index: Number(p.index) || 0,
+    rev: Number(p.rev) || 0,
+    width: dims.width,
+    height: dims.height,
+    background: (p.background as PageState['background']) ?? { type: 'color', value: '#ffffff' },
+    elements: Array.isArray(p.elements) ? (p.elements as MagazineElement[]) : [],
+  };
+}
+
+const BLOCK_MESSAGE: Record<string, string> = {
+  'not-assigned': 'That page is not shared with you.',
+  'page-submitted': 'That page is submitted for review — it cannot be edited until it comes back.',
+  'page-approved': 'That page is approved. Ask the owner to reopen it before editing.',
+};
+
+/**
+ * Validate the incoming batch body. Deliberately strict about SHAPE only — what
+ * each command means is the planner's business.
+ */
+function readBatchBody(body: any): { label: string; origin: 'agent' | 'manual'; strict: boolean; commands: MagazineCommand[] } | string {
+  const commands = body?.commands;
+  if (!Array.isArray(commands) || commands.length === 0) return 'Send a non-empty `commands` array.';
+  if (commands.length > 200) return 'A batch is limited to 200 commands.';
+  for (const c of commands) {
+    if (!c || typeof c !== 'object' || typeof c.type !== 'string') return 'Every command needs a string `type`.';
+  }
+  const label = typeof body?.label === 'string' && body.label.trim() ? body.label.trim().slice(0, 200) : 'Batch edit';
+  const origin = body?.origin === 'agent' ? 'agent' : 'manual';
+  // An agent acting broadly should not fail because one page had no headline; a
+  // human clicking a control has picked a real target, so no match IS an error.
+  const strict = typeof body?.strict === 'boolean' ? body.strict : origin === 'manual';
+  return { label, origin, strict, commands: commands as MagazineCommand[] };
+}
+
+router.post('/issues/:id/commands', async (req, res) => {
+  const uid = req.account!.id;
+  const issue = await loadIssue(req.params.id);
+  if (!issue || !roleOnMagazine(issue, uid)) {
+    res.status(404).json({ error: 'Not found' });
+    return;
+  }
+  if (isBusy(issue)) {
+    res.status(409).json({ error: 'The magazine is still processing. Try again shortly.' });
+    return;
+  }
+  const parsed = readBatchBody(req.body);
+  if (typeof parsed === 'string') {
+    res.status(400).json({ error: parsed });
+    return;
+  }
+
+  // Two-layer access control, and the layering is the point:
+  //   VISIBILITY limits what a selector can even reach, so `scope: 'issue'` from a
+  //   page-scoped collaborator resolves against their pages only — it cannot be
+  //   used to discover or address a page they were never shared.
+  //   EDITABILITY then gates the write on the pages the plan actually touches.
+  const allPages = await pagesFor(issue._id);
+  const visible = allPages.filter((p) => canViewPage(issue, uid, p._id));
+  if (visible.length === 0) {
+    res.status(404).json({ error: 'Not found' });
+    return;
+  }
+
+  await withIssueLock(issue._id, async () => {
+    // Re-read inside the lock: planning is conditional on page revs, so it must
+    // not be based on a snapshot taken before another writer finished.
+    const fresh = (await pagesFor(issue._id)).filter((p) => canViewPage(issue, uid, p._id));
+    const plan = planBatch(parsed.commands, fresh.map(toPageState), { strict: parsed.strict, origin: parsed.origin });
+    if (!plan.ok) {
+      const status = plan.reason === 'not-found' ? 404 : plan.reason === 'locked' ? 403 : plan.reason === 'conflict' ? 409 : 400;
+      res.status(status).json({ error: plan.detail, reason: plan.reason });
+      return;
+    }
+
+    const byId = new Map(fresh.map((p) => [p._id, p]));
+    for (const page of plan.pages) {
+      const block = pageEditBlock(issue, uid, page.pageId, byId.get(page.pageId));
+      if (block) {
+        res.status(403).json({ error: BLOCK_MESSAGE[block] ?? 'That page cannot be edited.', reason: block, pageId: page.pageId });
+        return;
+      }
+    }
+
+    const result = await executeBatch(
+      plan.pages,
+      {
+        magazineId: issue._id,
+        label: parsed.label,
+        origin: parsed.origin,
+        actorId: uid,
+        commandCount: parsed.commands.length,
+      },
+      { store: mongoCommandStore(), now: () => new Date().toISOString() },
+    );
+    if (!result.ok) {
+      res.status(409).json(result);
+      return;
+    }
+    await db.collection(COL.magazines).updateOne(issue._id, { updatedAt: new Date().toISOString() });
+    res.json({ ...result, planned: summarisePlan(plan.pages) });
+  });
+});
+
+/**
+ * Undo a batch — the whole point of the batch being the unit of intent.
+ *
+ * Implemented AS a batch, which gives redo for free and reuses the compensation
+ * path rather than growing a second one: the inverse pages become the plan, and
+ * the pages as they are NOW become that plan's own inverse.
+ *
+ * Each page is rewritten conditional on the rev the original batch left it at, so
+ * a page edited since the batch refuses to revert instead of silently discarding
+ * the newer edit.
+ */
+router.post('/issues/:id/commands/:batchId/undo', async (req, res) => {
+  const uid = req.account!.id;
+  const issue = await loadIssue(req.params.id);
+  if (!issue || !roleOnMagazine(issue, uid)) {
+    res.status(404).json({ error: 'Not found' });
+    return;
+  }
+  if (isBusy(issue)) {
+    res.status(409).json({ error: 'The magazine is still processing. Try again shortly.' });
+    return;
+  }
+  const batch = await loadBatch(req.params.batchId, issue._id);
+  if (!batch) {
+    res.status(404).json({ error: 'Not found' });
+    return;
+  }
+  if (batch.status === 'undone') {
+    res.status(409).json({ error: 'That change has already been undone.' });
+    return;
+  }
+  if (batch.status !== 'applied') {
+    res.status(409).json({
+      error: 'That change did not apply cleanly, so there is nothing to undo. Check the batch before retrying.',
+      status: batch.status,
+    });
+    return;
+  }
+
+  await withIssueLock(issue._id, async () => {
+    const pages = new Map((await pagesFor(issue._id)).map((p) => [p._id, p]));
+    const plan: PlannedPage[] = [];
+    for (const inv of batch.inverse) {
+      const current = pages.get(inv.pageId);
+      if (!current) {
+        res.status(409).json({ error: 'A page this change touched no longer exists, so it cannot be undone.' });
+        return;
+      }
+      const block = pageEditBlock(issue, uid, inv.pageId, current);
+      if (block) {
+        res.status(403).json({ error: BLOCK_MESSAGE[block] ?? 'That page cannot be edited.', reason: block, pageId: inv.pageId });
+        return;
+      }
+      plan.push({
+        pageId: inv.pageId,
+        revBefore: inv.revAfter, // undo is valid only against the rev the batch left
+        elements: inv.elements,
+        background: inv.background,
+        before: {
+          elements: Array.isArray(current.elements) ? (current.elements as MagazineElement[]) : [],
+          background: (current.background as PageState['background']) ?? { type: 'color', value: '#ffffff' },
+        },
+        commands: 1,
+      });
+    }
+
+    const result = await executeBatch(
+      plan,
+      {
+        magazineId: issue._id,
+        label: `Undo: ${batch.label}`,
+        origin: 'manual',
+        actorId: uid,
+        commandCount: plan.length,
+      },
+      { store: mongoCommandStore(), now: () => new Date().toISOString() },
+    );
+    if (!result.ok) {
+      res.status(409).json({
+        ...result,
+        error:
+          result.failure?.reason === 'conflict'
+            ? 'One of those pages has been edited since — undoing would discard that newer change.'
+            : result.failure?.detail,
+      });
+      return;
+    }
+    await markUndone(batch._id, result.batchId);
+    await db.collection(COL.magazines).updateOne(issue._id, { updatedAt: new Date().toISOString() });
+    res.json(result);
+  });
+});
+
 router.post('/issues/:id/pages/:pageId/elements', async (req, res) => {
   const ctx = await loadEditablePage(req, res);
   if (!ctx) return;

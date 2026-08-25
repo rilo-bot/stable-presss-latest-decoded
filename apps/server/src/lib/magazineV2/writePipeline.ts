@@ -19,6 +19,23 @@ import { refitText } from './layout.js';
 
 type PageDims = { width: number; height: number };
 
+/**
+ * Is this write blocked by the element's lock?
+ *
+ * A locked element refuses every write EXCEPT the one that unlocks it, so a user
+ * is never stuck. Lives here, in the shared write pipeline, because it is a
+ * guardrail every caller must honour — the element PATCH route, the AI agent's
+ * tools, and the command layer. It used to be a private helper inside the routes
+ * file, which meant any second write path had to re-implement it from memory.
+ */
+export function isLockedAgainst(
+  stored: Pick<MagazineElement, 'locked'>,
+  partial?: Record<string, unknown>,
+): boolean {
+  if (stored.locked !== true) return false;
+  return !(partial && partial.locked === false);
+}
+
 /** Full-list write path (extraction, generation, bulk import, page create). */
 export function normalizeElements(raw: unknown, page: PageDims): MagazineElement[] {
   return refitText(sanitizeElements(validateElements(raw, page)));

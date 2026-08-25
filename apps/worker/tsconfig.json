@@ -9,7 +9,11 @@
     "resolveJsonModule": true,
     "verbatimModuleSyntax": false,
     "noEmit": true,
-    "types": ["node"]
+    "types": ["node"],
+    "baseUrl": ".",
+    "paths": {
+      "@rilo/schema": ["../../packages/schema/types/index.d.ts"]
+    }
   },
   "include": ["src"]
 }

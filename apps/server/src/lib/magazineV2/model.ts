@@ -19,10 +19,69 @@ import crypto from 'crypto';
 import { safeUrl, safePublicImageUrl } from './url.js';
 import { isKnownIcon, FALLBACK_ICON_NAME } from './icons.js';
 
-export const ELEMENT_TYPES = ['text', 'image', 'shape', 'qr', 'icon'] as const;
-export type ElementType = (typeof ELEMENT_TYPES)[number];
+// ── The shared contract ───────────────────────────────────────────────────────
+// The TYPES now live in @rilo/schema so apps/web renders exactly the model this
+// file validates. They used to be declared here and hand-copied into
+// apps/web/src/editor-v2/model.ts, which drifted: `justify`, `textTransform`,
+// `letterSpacing`, `minFontSize` and weight 900 were all missing on the web side,
+// and two of those were live rendering bugs. See packages/schema/README.md.
+//
+// This file remains the AUTHORITY on what a valid element is — it validates and
+// coerces every write below. It cannot move into the schema package, which is
+// dependency-free and runtime-free, because it needs `./sanitize` (dompurify)
+// and the icon registry.
+export type {
+  ElementType,
+  TextRole,
+  ElementSource,
+  ElementAutoFit,
+  ElementImageFit,
+  ElementTextAlign,
+  ElementTextTransform,
+  ElementVAlign,
+  ElementFontWeight,
+  ElementTextData,
+  ElementImageData,
+  ElementShapeData,
+  ElementQrData,
+  ElementIconData,
+  MagazineElement,
+  PageBackground,
+} from '@rilo/schema';
 
-/** What role a text block plays — set by AI classification, editable by hand. */
+// Re-exporting above does not bind these locally — the validators below need them.
+import type {
+  ElementType,
+  TextRole,
+  ElementSource,
+  ElementAutoFit,
+  ElementImageFit,
+  ElementTextAlign,
+  ElementTextTransform,
+  ElementVAlign,
+  ElementFontWeight,
+  ElementTextData,
+  ElementImageData,
+  ElementShapeData,
+  ElementQrData,
+  ElementIconData,
+  MagazineElement,
+} from '@rilo/schema';
+
+/**
+ * Compile-time proof that a runtime array lists EVERY member of a schema union.
+ *
+ * The arrays below are the runtime half of the contract (validators iterate them,
+ * routes coerce against them). A union member added in @rilo/schema and forgotten
+ * here would silently make valid input invalid — so this makes it a build error
+ * instead. Assign `true` and TypeScript checks the union is fully covered.
+ */
+type Covers<Union extends string, Arr extends readonly string[]> =
+  [Exclude<Union, Arr[number]>] extends [never] ? true : false;
+
+export const ELEMENT_TYPES = ['text', 'image', 'shape', 'qr', 'icon'] as const;
+const _elementTypesCoverUnion: Covers<ElementType, typeof ELEMENT_TYPES> = true;
+
 export const TEXT_ROLES = [
   'headline',
   'subhead',
@@ -32,90 +91,10 @@ export const TEXT_ROLES = [
   'pullquote',
   'other',
 ] as const;
-export type TextRole = (typeof TEXT_ROLES)[number];
+const _textRolesCoverUnion: Covers<TextRole, typeof TEXT_ROLES> = true;
 
-/** Who last wrote this element — lets the UI flag AI-authored/low-confidence
- *  content, and lets an AI agent's edits be told apart from a human's without a
- *  separate (weaker) write path: both go through the validators in this file. */
 export const ELEMENT_SOURCES = ['extracted', 'manual', 'ai-agent'] as const;
-export type ElementSource = (typeof ELEMENT_SOURCES)[number];
-
-export type ElementAutoFit = 'shrink' | 'clip';
-export type ElementImageFit = 'cover' | 'contain';
-export type ElementTextAlign = 'left' | 'center' | 'right' | 'justify';
-export type ElementTextTransform = 'none' | 'uppercase' | 'lowercase' | 'capitalize';
-export type ElementVAlign = 'top' | 'center' | 'bottom';
-
-export interface ElementTextData {
-  content: string; // sanitised inline HTML only (see ./sanitize)
-  role: TextRole;
-  fontFamily: string;
-  fontSize: number; // px at the page's canonical dims — the CURRENT (fit) size
-  maxFontSize?: number; // design's intended ceiling; refit shrinks from here
-  /** The design's FLOOR — refit may not shrink below it (defaults to 55% of the
-   *  ceiling). Carried on the element because the print legibility floor has to survive
-   *  every later write: without it, refitText re-fits from `maxFontSize * 0.55` and a
-   *  body slot set at an 8pt floor silently drops back to 6.6pt on the next save. */
-  minFontSize?: number;
-  fontWeight: 400 | 500 | 600 | 700 | 800 | 900;
-  color: string; // #rrggbb
-  align: ElementTextAlign;
-  lineHeight: number;
-  autoFit: ElementAutoFit;
-  vAlign?: ElementVAlign;
-  letterSpacing?: number; // px at canonical dims (default 0)
-  textTransform?: ElementTextTransform; // default 'none'
-}
-
-export interface ElementImageData {
-  assetId: string; // MediaAsset id, '' if not (yet) backed by one
-  url: string;
-  alt: string;
-  fit: ElementImageFit;
-  focalPoint?: { x: number; y: number }; // 0–1, for object-position
-}
-
-export interface ElementShapeData {
-  fill: string; // #rrggbb — a flat rectangle (rules / dividers / panels)
-  /** 0–1. <1 makes the shape a translucent overlay — a SCRIM over a photo so
-   *  text stays legible without hiding the picture. Absent/1 = solid. */
-  opacity?: number;
-}
-
-export interface ElementQrData {
-  url: string; // '' until set
-  fg: string; // #rrggbb
-  bg: string; // #rrggbb
-}
-
-export interface ElementIconData {
-  /** Curated registry glyph name (see ./icons). '' / unknown → renderer fallback. */
-  name?: string;
-  /** Uploaded custom icon URL (SVG/PNG). When set, OVERRIDES `name`. */
-  src?: string;
-  /** Optional hex tint — applies to registry glyphs only (uploaded art renders as-is). */
-  color?: string;
-}
-
-/** One positioned block on a magazine page. */
-export interface MagazineElement {
-  id: string;
-  type: ElementType;
-  x: number;
-  y: number;
-  w: number;
-  h: number;
-  rotation: number; // degrees
-  zIndex: number;
-  locked: boolean;
-  text?: ElementTextData;
-  image?: ElementImageData;
-  shape?: ElementShapeData;
-  qr?: ElementQrData;
-  icon?: ElementIconData;
-  source: ElementSource;
-  confidence?: number; // 0–1, AI extraction confidence
-}
+const _elementSourcesCoverUnion: Covers<ElementSource, typeof ELEMENT_SOURCES> = true;
 
 export const MAX_ELEMENTS_PER_PAGE = 400;
 const MAX_TEXT_HTML = 8000;

@@ -1,6 +1,10 @@
 # Magazine Builder v2 — Technical Reference
 
-**Status:** built, feature-flagged (`MAGAZINE_V2=true` in `apps/server/.env`), AI-layout path default-ON.
+**Status:** built and unconditional. The `MAGAZINE_V2` master flag and the `MAGAZINE_V2_AI_LAYOUT`
+opt-out were both **removed** (2026-08-18) — the builder is the product, and the AI-authored layout path
+is the only path. The fixed-template generator remains as a **runtime** fallback inside
+`composeOnePageAI`, reached when every art-director attempt fails QA, on error, or on a deterministic
+seed spec. It is no longer selectable by configuration.
 **Scope of this document:** the whole v2 subsystem as it exists on branch `feature/blogs` — data model, API,
 the three content-origin pipelines, the AI generation multi-agent chain, the layout DSL + deterministic
 solver, the per-page editing agent, the studio UI, the design system, rendering/publishing, security, and
@@ -1045,8 +1049,8 @@ requires raising it (or adding a heartbeat) first.
 
 | Variable | Default | Effect |
 | --- | --- | --- |
-| `MAGAZINE_V2` | `false` | Master switch; anything else 404s the router. |
-| `MAGAZINE_V2_AI_LAYOUT` | **on** | `0`/`false`/`off`/`no` forces the legacy fixed-template generator. Default-ON deliberately: a missing flag in a fresh environment once silently shipped the old templates and hid the whole AI builder in production. |
+| ~~`MAGAZINE_V2`~~ | — | **Removed 2026-08-18.** Was a master switch defaulting to `false`, so a fresh or forgotten environment 404'd every builder route — which is how the whole AI builder once went missing in production. It existed only to let v2 ship alongside the retired v1 template builder. The router is now always mounted (still staff-gated and per-magazine scoped). |
+| ~~`MAGAZINE_V2_AI_LAYOUT`~~ | — | **Removed 2026-08-18.** Was an opt-out to the legacy fixed-template generator. The AI path is now the only path; the template path survives as a runtime fallback, not a configurable one. |
 | `MAGAZINE_V2_AI_LAYOUT_ATTEMPTS` | 2 (max 4) | Art-director self-heal attempts per page. |
 | `MAGAZINE_V2_DRAFT_ATTEMPTS` | 2 (max 4) | Copywriter self-heal attempts per page. |
 | `MAGAZINE_V2_GEN_CONCURRENCY` | 2 | Pages composed in parallel. |

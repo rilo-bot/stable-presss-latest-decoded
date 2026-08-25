@@ -11,14 +11,14 @@ import { useEditorStore } from './store';
 import { ShimmerText } from './BuildProgress';
 import { LayoutReference } from './LayoutReference';
 import { columnOf, COLUMN_LABEL, COLUMN_TONE } from './review';
-import type { MagazineElement, ElementType } from './model';
+import type { MagazineElement, ElementType, ElementTextAlign, ElementFontWeight } from './model';
 import * as api from './api';
 import type { MediaAsset } from './api';
 import { Section, Stepper, Segmented, ColorControl } from '@/editor-v2/controls';
 import { ICON_NAMES, resolveIcon } from '@/lib/iconRegistry';
 import {
   Type, Image as ImageIcon, QrCode, Square, Shapes,
-  AlignLeft, AlignCenter, AlignRight, ArrowUpToLine, FoldVertical, ArrowDownToLine, Trash2,
+  AlignLeft, AlignCenter, AlignRight, AlignJustify, ArrowUpToLine, FoldVertical, ArrowDownToLine, Trash2,
   Sliders, Images, Upload, Copy, BringToFront, SendToBack, FileText,
 } from 'lucide-react';
 
@@ -301,18 +301,23 @@ function ElementPanel({ el }: { el: MagazineElement }) {
                     { value: 600, label: 'Semi' },
                     { value: 700, label: 'Bold' },
                   ]}
-                  onChange={(v) => set({ text: { ...el.text!, fontWeight: v as 400 | 500 | 600 | 700 | 800 } })}
+                  onChange={(v) => set({ text: { ...el.text!, fontWeight: v as ElementFontWeight } })}
                 />
               </div>
             </Section>
 
             <Section title="Alignment">
-              <Segmented<'left' | 'center' | 'right'>
+              {/* `justify` is a real alignment the server accepts and the generator
+                  uses for body copy. It was missing from the web's copy of the model,
+                  so this control could not offer it and a generated justified
+                  paragraph had no editable representation here. */}
+              <Segmented<ElementTextAlign>
                 value={el.text.align}
                 options={[
                   { value: 'left', label: <AlignLeft size={13} /> },
                   { value: 'center', label: <AlignCenter size={13} /> },
                   { value: 'right', label: <AlignRight size={13} /> },
+                  { value: 'justify', label: <AlignJustify size={13} /> },
                 ]}
                 onChange={(v) => set({ text: { ...el.text!, align: v } })}
               />

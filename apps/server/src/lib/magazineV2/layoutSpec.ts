@@ -387,7 +387,15 @@ function coerceNode(raw: unknown, depth: number, budget: Budget): LayoutNode | n
     const children: LayoutChild[] = [];
     for (const rc of rawChildren) {
       const co = (rc && typeof rc === 'object' ? rc : {}) as Record<string, unknown>;
-      const node = coerceNode(co.node, depth + 1, budget);
+      // TOLERATE A FLATTENED CHILD. The grammar wants a WRAPPER — {weight, sizing,
+      // node} — but "children" reads like a list of nodes, and models routinely
+      // emit the node directly. That used to drop every child, which emptied the
+      // container, which returned null for the whole root, which silently shipped a
+      // FIXED SEED spec: the "every issue looks the same" bug. Accepting the
+      // flattened form costs nothing (weight/sizing just take their defaults) and
+      // saves the model's actual design.
+      const rawNode = co.node !== undefined ? co.node : typeof co.kind === 'string' ? co : undefined;
+      const node = coerceNode(rawNode, depth + 1, budget);
       if (!node) continue;
       const child: LayoutChild = {
         weight: clampWeight(co.weight),
@@ -438,10 +446,28 @@ function coerceNode(raw: unknown, depth: number, budget: Budget): LayoutNode | n
  * null if the tree is unusable (caller then falls back to a seed spec). Clamps
  * every token/weight, enforces all caps, drops invalid nodes — never throws.
  */
+/**
+ * Find the tree in whatever the model actually returned.
+ *
+ * The prompt asks for `{ page, root }`, but a rejected spec is a TOTAL loss — the
+ * page silently falls back to a fixed seed — so it is worth accepting the obvious
+ * near-misses rather than throwing away a good design over its envelope. Anything
+ * genuinely unusable still returns undefined and still ends up at the seed.
+ */
+function pickRoot(o: Record<string, unknown>): unknown {
+  if (o.root !== undefined) return o.root;
+  // Common aliases for the same idea.
+  if (o.layout !== undefined) return o.layout;
+  if (o.tree !== undefined) return o.tree;
+  // The model skipped the envelope and returned the root node itself.
+  if (typeof o.kind === 'string') return o;
+  return undefined;
+}
+
 export function normalizeLayoutSpec(raw: unknown): LayoutSpec | null {
   if (!raw || typeof raw !== 'object') return null;
   const o = raw as Record<string, unknown>;
-  const root = coerceNode(o.root, 1, { leaves: MAX_LEAVES });
+  const root = coerceNode(pickRoot(o), 1, { leaves: MAX_LEAVES });
   if (!root) return null;
 
   const spec: LayoutSpec = { root };

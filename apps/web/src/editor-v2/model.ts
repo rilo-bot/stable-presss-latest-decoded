@@ -1,79 +1,41 @@
 // ---------------------------------------------------------------------------
-// Magazine Builder v2 — web-side element model (types only).
+// Magazine Builder — web-side element model.
 //
-// Mirrors the server model at apps/server/src/lib/magazineV2/model.ts (the
-// authority that validates/normalises on every write). Kept as a plain type
-// mirror for now; a shared package can extract these once more of the web side
-// exists (Phase 3+). If you change the server model, change this too.
+// The element types are NO LONGER declared here. They come from @rilo/schema,
+// the single shared contract, which the server validates every write against.
+//
+// This file used to hand-copy them and ask editors to "change this too". It
+// drifted, and two of the gaps were live rendering bugs, not just type lies:
+// `letterSpacing` and `textTransform` are written onto text elements by the
+// generator (composeFromSolved.ts) and were absent here, so every tracked
+// all-caps kicker the art director designed rendered as plain sentence case —
+// in the editor, the public viewer and the PDF alike. See
+// packages/schema/README.md.
+//
+// What stays here: types that are shaped by the WEB's view of the API (ids as
+// `id`, not `_id`) rather than by the document model itself.
 // ---------------------------------------------------------------------------
 
-export type ElementType = 'text' | 'image' | 'shape' | 'qr' | 'icon';
+export type {
+  ElementType,
+  TextRole,
+  ElementSource,
+  ElementAutoFit,
+  ElementImageFit,
+  ElementTextAlign,
+  ElementTextTransform,
+  ElementVAlign,
+  ElementFontWeight,
+  ElementTextData,
+  ElementImageData,
+  ElementShapeData,
+  ElementQrData,
+  ElementIconData,
+  MagazineElement,
+  PageBackground,
+} from '@rilo/schema';
 
-export type TextRole = 'headline' | 'subhead' | 'byline' | 'body' | 'caption' | 'pullquote' | 'other';
-export type ElementSource = 'extracted' | 'manual' | 'ai-agent';
-export type ElementAutoFit = 'shrink' | 'clip';
-export type ElementImageFit = 'cover' | 'contain';
-export type ElementTextAlign = 'left' | 'center' | 'right';
-export type ElementVAlign = 'top' | 'center' | 'bottom';
-
-export interface ElementTextData {
-  content: string; // sanitised inline HTML
-  role: TextRole;
-  fontFamily: string;
-  fontSize: number; // px at the page's canonical dims
-  maxFontSize?: number;
-  fontWeight: 400 | 500 | 600 | 700 | 800;
-  color: string; // #rrggbb
-  align: ElementTextAlign;
-  lineHeight: number;
-  autoFit: ElementAutoFit;
-  vAlign?: ElementVAlign;
-}
-
-export interface ElementImageData {
-  assetId: string;
-  url: string;
-  alt: string;
-  fit: ElementImageFit;
-  focalPoint?: { x: number; y: number }; // 0–1
-}
-
-export interface ElementShapeData {
-  fill: string; // #rrggbb
-  /** 0–1; <1 = translucent scrim (photo shows through, text stays legible). */
-  opacity?: number;
-}
-
-export interface ElementQrData {
-  url: string;
-  fg: string; // #rrggbb
-  bg: string; // #rrggbb
-}
-
-export interface ElementIconData {
-  name?: string; // curated Lucide registry glyph name (see editor/templates/iconRegistry)
-  src?: string; // uploaded custom icon URL — overrides `name`
-  color?: string; // #rrggbb tint (registry glyphs only)
-}
-
-export interface MagazineElement {
-  id: string;
-  type: ElementType;
-  x: number;
-  y: number;
-  w: number;
-  h: number;
-  rotation: number;
-  zIndex: number;
-  locked: boolean;
-  text?: ElementTextData;
-  image?: ElementImageData;
-  shape?: ElementShapeData;
-  qr?: ElementQrData;
-  icon?: ElementIconData;
-  source: ElementSource;
-  confidence?: number;
-}
+import type { MagazineElement, PageBackground } from '@rilo/schema';
 
 /** One staged edit from the AI editing agent (applied via the element/page CRUD). */
 export interface AgentProposal {
@@ -113,7 +75,7 @@ export interface MagazinePageV2 {
   index: number;
   width: number;
   height: number;
-  background: { type: 'image' | 'color'; value: string };
+  background: PageBackground;
   elements: MagazineElement[];
   status: 'pending' | 'extracted' | 'failed' | 'reviewed';
   selectedForPublish: boolean;
@@ -125,6 +87,6 @@ export interface IssuePageData {
   index: number;
   width: number;
   height: number;
-  background: { type: 'image' | 'color'; value: string };
+  background: PageBackground;
   elements: MagazineElement[];
 }

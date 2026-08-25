@@ -1,14 +1,15 @@
 // ---------------------------------------------------------------------------
-// Magazine Builder v2 — configuration, feature flag, and canonical constants.
+// Magazine Builder — configuration and canonical constants.
 //
-// v2 is a fresh, layout-as-data builder (free-form absolute-pixel elements +
-// deterministic extraction) that ships ALONGSIDE the existing v1 template
-// builder. Everything v2 is gated behind MAGAZINE_V2 so v1 is untouched until
-// v2 is proven. See docs/MAGAZINE-BUILDER-V2.md.
+// A layout-as-data builder: free-form absolute-pixel elements, AI-authored
+// layouts, deterministic extraction. See docs/MAGAZINE-BUILDER-V2.md.
+//
+// The MAGAZINE_V2 master flag is GONE. It existed so this could ship alongside
+// the retired v1 template builder, which no longer has any code. It defaulted to
+// OFF, so a fresh or forgotten environment silently served 404 for every builder
+// route — which is exactly how the whole AI builder once went missing in
+// production. The builder IS the product now, so it is unconditional.
 // ---------------------------------------------------------------------------
-
-/** Master switch. When false (default), no v2 route/behaviour is exposed. */
-export const MAGAZINE_V2_ENABLED = process.env.MAGAZINE_V2 === 'true';
 
 /**
  * Canonical page dimensions for generated / blank pages and the coordinate +

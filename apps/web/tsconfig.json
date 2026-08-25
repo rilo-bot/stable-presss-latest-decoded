@@ -20,7 +20,8 @@
 
     "baseUrl": ".",
     "paths": {
-      "@/*": ["./src/*"]
+      "@/*": ["./src/*"],
+      "@rilo/schema": ["../../packages/schema/types/index.d.ts"]
     }
   },
   "include": ["src"],

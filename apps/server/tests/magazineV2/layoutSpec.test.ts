@@ -28,6 +28,66 @@ test('junk input returns null rather than throwing', () => {
   }
 });
 
+// ── Near-misses that used to cost the ENTIRE design ───────────────────────────
+// A rejected spec is not a degraded page, it is a FIXED SEED page — so every page
+// in every issue came out identical. These two shapes are the ones a model
+// actually produces, and both used to be rejected outright.
+
+test('children given as BARE NODES are accepted, not dropped', () => {
+  // The grammar wants {weight, sizing, node}. "children" reads like a list of
+  // nodes, so models flatten it. That dropped every child, emptied the container,
+  // and returned null for the whole tree.
+  const spec = normalizeLayoutSpec({
+    page: { background: { ref: 'bg' }, margin: 'md' },
+    root: {
+      kind: 'col',
+      children: [
+        { kind: 'leaf', role: 'headline', contentRef: 'headline' },
+        { kind: 'leaf', role: 'body', contentRef: 'body' },
+      ],
+    },
+  });
+  assert.ok(spec, 'a flattened child list must still produce a spec');
+  assert.equal(countLeaves(spec.root), 2);
+});
+
+test('a wrapped child still wins when both forms are present', () => {
+  const spec = normalizeLayoutSpec({
+    root: {
+      kind: 'row',
+      children: [{ kind: 'col', weight: 3, node: { kind: 'leaf', role: 'body', contentRef: 'body' } }],
+    },
+  });
+  assert.ok(spec);
+  assert.equal(countLeaves(spec.root), 1);
+  // The wrapper's own `kind` must not be mistaken for the node.
+  assert.equal(spec.root.kind, 'row');
+});
+
+test('a bare root node with no envelope is accepted', () => {
+  const spec = normalizeLayoutSpec({
+    kind: 'col',
+    children: [{ weight: 1, sizing: 'fr', node: { kind: 'leaf', role: 'headline', contentRef: 'headline' } }],
+  });
+  assert.ok(spec, 'the model skipping {page, root} must not cost the whole layout');
+  assert.equal(countLeaves(spec.root), 1);
+  assert.equal(spec.page?.margin, 'md', 'the page envelope falls back to defaults');
+});
+
+test('`layout` and `tree` are accepted as aliases for `root`', () => {
+  const node = { kind: 'col', children: [{ weight: 1, node: { kind: 'leaf', role: 'body', contentRef: 'body' } }] };
+  for (const key of ['layout', 'tree']) {
+    const spec = normalizeLayoutSpec({ page: { margin: 'lg' }, [key]: node });
+    assert.ok(spec, `expected \`${key}\` to be accepted`);
+    assert.equal(countLeaves(spec.root), 1);
+  }
+});
+
+test('tolerance has limits — a genuinely unusable tree still returns null', () => {
+  assert.equal(normalizeLayoutSpec({ root: { kind: 'col', children: [{ node: { kind: 'nope' } }] } }), null);
+  assert.equal(normalizeLayoutSpec({ page: { margin: 'md' } }), null);
+});
+
 test('unknown tokens fall back instead of being passed through', () => {
   const spec = normalizeLayoutSpec({
     page: { background: { ref: 'chartreuse' }, margin: 'gigantic' },

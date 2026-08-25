@@ -86,9 +86,9 @@ const jsonAgent = express.json({ limit: '30mb' })
 
 // Published magazine issues. Public read (incl. unpublished for staff), staff write.
 router.use('/issues', jsonMagazine, adminGate({ attachOnRead: true }), issuesRouter)
-// Magazine Builder v2 (free-form element model) — self-gated inside the router
-// (feature flag → staff → per-magazine owner/collaborator → write rate limit).
-// Behind MAGAZINE_V2; invisible (404) until enabled. See docs/MAGAZINE-BUILDER-V2.md.
+// Magazine Builder (free-form element model) — self-gated inside the router
+// (staff → per-magazine owner/collaborator → write rate limit).
+// See docs/MAGAZINE-BUILDER-V2.md.
 router.use('/magazinesV2', jsonMagazine, magazinesV2Router)
 // Blogs — block-based posts with their own media pool. Public read (live posts
 // only; the gate attaches the account optionally so staff also see drafts),

@@ -42,7 +42,7 @@ import {
 import { validatePageLayout } from './layoutValidate.js';
 import { isStockConfigured, fetchAndStoreStock, type StockOrientation } from './stock.js';
 import { isImageGenConfigured, generateAndStoreImage } from './imagegen.js';
-// ── AI-authored layout path (behind MAGAZINE_V2_AI_LAYOUT) ────────────────────
+// ── AI-authored layout path ───────────────────────────────────────────────────
 import type { TextRole } from './model.js';
 import { pagesAlreadyIn } from './pageDigest.js';
 import { normalizeLayoutSpec, type LayoutSpec } from './layoutSpec.js';
@@ -937,9 +937,9 @@ async function composeOnePageTemplate(
   return buildPage(template, draft, { palette: plan.palette, fonts: plan.fonts }, fallbackHeadline, ctx, pool);
 }
 
-/** Compose one page. Dispatches to the AI-authored-layout path when the flag is
- *  set, otherwise the fixed-template path. The AI path itself falls back to the
- *  template path if it can't produce a clean page — so this never regresses.
+/** Compose one page, always through the AI-authored-layout path. That path still
+ *  falls back to a fixed template at RUNTIME when it can't produce a clean page
+ *  (see composeOnePageAI) — the fallback is live resilience, not a flag.
  *
  *  This is also the ONE seam every generation entry point funnels through (a whole
  *  issue, a persisted issue, and "add pages matching theme"), which is why page
@@ -955,9 +955,7 @@ async function composeOnePage(
   sourceText?: string,
   pool?: PhotoClaimer,
 ): Promise<ComposedPage> {
-  const composed = aiLayoutEnabled()
-    ? await composeOnePageAI(plan, page, pageNumber, totalPages, ctx, sourceText, pool)
-    : await composeOnePageTemplate(plan, page, pageNumber, totalPages, ctx, sourceText, pool);
+  const composed = await composeOnePageAI(plan, page, pageNumber, totalPages, ctx, sourceText, pool);
   const furniture = pageFurniture(composed, {
     kind: page.kind,
     sectionTitle: page.sectionTitle ?? '',
@@ -976,15 +974,6 @@ async function composeOnePage(
 // produced by the SAME tested draftPage/curateFills — we just present the spec's
 // leaves to them as a synthesized "pseudo-template". Any failure (bad spec,
 // unclean page) degrades to the fixed-template path, so output stays bug-free.
-
-function aiLayoutEnabled(): boolean {
-  // Default ON: the AI-authored layout path IS the v2 builder. Only an explicit
-  // opt-OUT falls back to the fixed-template generator — so a missing flag in a
-  // fresh environment can never silently ship the old templates (the bug that hid
-  // the whole AI builder in prod). Set MAGAZINE_V2_AI_LAYOUT=0 to force the legacy path.
-  const v = (process.env.MAGAZINE_V2_AI_LAYOUT ?? '').trim().toLowerCase();
-  return v !== '0' && v !== 'false' && v !== 'off' && v !== 'no';
-}
 
 // How many times the art-director may attempt a page: the first try, plus
 // bounded self-heal retries that feed the QA-failure reason back so it fixes its
@@ -1296,9 +1285,20 @@ async function artDirectPage(plan: GenPlan, page: GenPlanPage, pageNumber: numbe
        */
       abortSignal: AbortSignal.timeout(150_000),
     });
-    const spec = normalizeLayoutSpec(parseJsonObject(text));
+    const parsed = parseJsonObject(text);
+    const spec = normalizeLayoutSpec(parsed);
     if (spec) return { spec, source: 'agent' };
-    console.warn(`[magazineV2] art-director spec for "${page.kind}" was unusable — using seed.`);
+    // SAY WHY. This used to log "was unusable" and nothing else, so a run where
+    // EVERY page fell back to a fixed seed — which is what "every issue looks the
+    // same" actually is — looked identical in the logs to one that worked. The
+    // fallback is a total loss of the model's design, so it has to be diagnosable
+    // from one log line: did we get text at all, did it parse, and what shape was it?
+    console.warn(
+      `[magazineV2] art-director spec for "${page.kind}" was unusable — using seed. ` +
+        `text=${text?.length ?? 0}ch parsed=${parsed ? 'yes' : 'NO'} ` +
+        `keys=${parsed && typeof parsed === 'object' ? Object.keys(parsed as object).slice(0, 8).join(',') || '(none)' : 'n/a'} ` +
+        `head=${JSON.stringify((text ?? '').slice(0, 240))}`,
+    );
     return { spec: seedSpecFor(page.kind), source: 'seed' };
   } catch (err) {
     console.warn(`[magazineV2] art-director failed for "${page.kind}" (${err instanceof Error ? err.message : err}) — using seed.`);

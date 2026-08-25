@@ -50,6 +50,9 @@ const INDEX_SPECS: IndexSpec[] = [
   { collection: COL.reviews, keys: { magazineId: 1, deletedAt: 1, at: -1 } },
   // Issue library list: served newest-first by updatedAt.
   { collection: COL.magazines, keys: { deletedAt: 1, updatedAt: -1 } },
+  // One magazine's command batches, newest first — the undo stack, and the list a
+  // recovery pass scans for batches that never got stamped with an outcome.
+  { collection: COL.batches, keys: { magazineId: 1, deletedAt: 1, createdAt: -1 } },
   // Blogs: public index (published, newest first) and the staff list.
   { collection: 'blogs', keys: { deletedAt: 1, status: 1, publishedAt: -1 } },
   { collection: 'blogs', keys: { deletedAt: 1, updatedAt: -1 } },

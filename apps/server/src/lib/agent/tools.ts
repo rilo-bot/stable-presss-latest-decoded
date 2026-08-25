@@ -20,7 +20,6 @@ import { visibleHorseIds, manageablePartyIds } from '../scope.js'
 import type { AccountUser } from '../identity.js'
 import { FEATURE_GUIDES, GUIDE_TOPICS } from './guides.js'
 import { getCapabilities } from './capabilities.js'
-import { MAGAZINE_V2_ENABLED } from '../magazineV2/config.js'
 
 type Doc = Record<string, any> & { _id?: string; id?: string }
 
@@ -495,12 +494,11 @@ export function buildTools(account?: AccountUser, authHeader?: string): ToolSet 
         "Navigate the reader to a page — or OPEN an AI studio — so they can do the thing they asked about. " +
         "Studios (each has its own built-in assistant): 'story-studio' opens the Story Studio drawer in the Production System (staff write & file a draft conversationally); " +
         "'blog-studio' opens the Blog Studio drawer on the Blogs screen (staff write LONGFORM posts, and revise, publish or delete existing ones conversationally — use this for anything blog-shaped rather than story-shaped); " +
-        (MAGAZINE_V2_ENABLED ? "'magazine-v2' is the Magazine Builder (staff; pass a magazine id to open its editor); " : '') +
+        "'magazine-v2' is the Magazine Builder (staff; pass a magazine id to open its editor); " +
         "'horse-studio' (pass the horse id) is a member's private editable horse page; 'profile-studio' (pass their party id — get it via myAccount) is a member's editable profile. " +
         "'production-system' is the staff CMS — pass `screen` to land on a specific screen. " +
         "Pair navigation with a short note on what to do once there. Don't send a non-staff reader to a staff-only surface (production-system, story-studio, blog-studio" +
-        (MAGAZINE_V2_ENABLED ? ', magazine-v2' : '') +
-        ", site-content) — guide them instead; horse-studio/profile-studio only for records the member manages.",
+        ", magazine-v2, site-content) — guide them instead; horse-studio/profile-studio only for records the member manages.",
       inputSchema: z.object({
         to: z
           .enum([
@@ -515,7 +513,7 @@ export function buildTools(account?: AccountUser, authHeader?: string): ToolSet 
             'site-content', 'login', 'signup',
             'horse', 'party', 'article', 'bulletin', 'organisation',
             // The staff Magazine Builder home; with an id, that magazine's editor.
-            ...(MAGAZINE_V2_ENABLED ? (['magazine-v2'] as const) : []),
+            'magazine-v2',
           ] as [string, ...string[]])
           .describe('Destination or studio. horse/party/article/bulletin/organisation/horse-studio need an id.'),
         id: z.string().optional().describe('Entity id — required for horse/party/article/bulletin/organisation and horse-studio (a horse id) / profile-studio (a party id); optional for magazine-v2 (opens that magazine in the Builder).'),

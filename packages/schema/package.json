@@ -1,0 +1,15 @@
+{
+  "name": "@rilo/schema",
+  "private": true,
+  "version": "0.0.0",
+  "description": "Shared contract types for the magazine document model. Types only — zero dependencies, zero runtime.",
+  "types": "./types/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./types/index.d.ts"
+    }
+  },
+  "files": [
+    "types"
+  ]
+}

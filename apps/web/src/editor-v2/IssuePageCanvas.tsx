@@ -52,6 +52,19 @@ function TextElement({ el, page }: { el: MagazineElement; page: IssuePageData })
     textAlign: el.text.align,
     lineHeight: el.text.lineHeight,
     fontSize: fontSizeCqw(el.text.fontSize, page.width),
+    // TRACKING + CAPS. The generator sets these on kickers/labels (from the art
+    // director's `tracking` / `caps` — see composeFromSolved.ts) and this renderer
+    // used to drop both, so every tracked all-caps section tag rendered as plain
+    // sentence case in the editor, the viewer AND the PDF.
+    //
+    // letterSpacing is stored in canonical page px, so it MUST be converted with the
+    // same cqw helper as fontSize. A raw px value would stay fixed while the type
+    // scaled with the container, so tracking would look right at one width only.
+    letterSpacing:
+      el.text.letterSpacing !== undefined && el.text.letterSpacing !== 0
+        ? fontSizeCqw(el.text.letterSpacing, page.width)
+        : undefined,
+    textTransform: el.text.textTransform === 'none' ? undefined : el.text.textTransform,
     whiteSpace: extracted ? 'pre' : 'pre-wrap',
     overflowWrap: extracted ? undefined : 'break-word',
   };

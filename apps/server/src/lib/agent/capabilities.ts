@@ -19,7 +19,6 @@
 // ---------------------------------------------------------------------------
 
 import { db } from '../db.js'
-import { MAGAZINE_V2_ENABLED } from '../magazineV2/config.js'
 import { isAdmin, isPlatformAdmin } from '../rbac.js'
 import { accountCan, canOn } from '../effectiveAccess.js'
 
@@ -55,9 +54,9 @@ export interface CapabilityReport {
   capabilities: Capability[]
 }
 
-// The staff magazine surface: the free-form Magazine Builder (v2) when the
-// MAGAZINE_V2 flag is on, else the legacy template Magazine Studio.
-const MAGAZINE_SURFACE = MAGAZINE_V2_ENABLED ? 'Magazine Builder' : 'Magazine Studio'
+// The staff magazine surface. The legacy template "Magazine Studio" is retired,
+// so this is no longer conditional.
+const MAGAZINE_SURFACE = 'Magazine Builder'
 
 /**
  * Everything a rule is allowed to look at.

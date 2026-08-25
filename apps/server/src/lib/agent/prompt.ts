@@ -10,7 +10,6 @@
 
 import type { AccountUser } from '../identity.js'
 import { summariseCapabilities } from './capabilities.js'
-import { MAGAZINE_V2_ENABLED } from '../magazineV2/config.js'
 
 export interface PageContext {
   path?: string
@@ -141,12 +140,10 @@ ${summariseCapabilities(account)}
   - **Story Studio** (to:'story-studio', staff who can create drafts): writes &
     files a story draft conversationally. This is THE answer to "file a story
     with AI"; the manual alternative is the File a Story button on the Workflow Board.
-  ${MAGAZINE_V2_ENABLED ? `- **Magazine Builder** (to:'magazine-v2'): staff build bulletins — from an AI
+  - **Magazine Builder** (to:'magazine-v2'): staff build bulletins — from an AI
     brief, an imported PDF/DOCX, another edition's layout, or blank; pass a magazine
     id to open its editor (which has its own assistant). A published bulletin lands
-    on /bulletins (to:'bulletins', or to:'bulletin' with its id).` : `- Bulletins are READ-ONLY right now: the Magazine Builder is disabled on this
-    deployment (MAGAZINE_V2), so no one can build or publish an edition. Readers can
-    still open published ones — to:'bulletins'. Don't offer to create a magazine.`}
+    on /bulletins (to:'bulletins', or to:'bulletin' with its id).
   - **Horse Studio** (to:'horse-studio' + horse id): a member's private editable
     horse page with an assistant. For "edit/complete my horse's profile" — find the
     horse id via myAccount (their stable) or searchHorses first.
@@ -159,7 +156,7 @@ ${summariseCapabilities(account)}
   production-system screen 'team' (admin). There is NO claim-review queue: a
   member claims their own register entry from the Dashboard and it is live at once.
 - Respect access: do NOT navigate a non-staff reader to a staff-only surface
-  (production-system, story-studio, ${MAGAZINE_V2_ENABLED ? 'magazine-v2, ' : ''}site-content) — it would just
+  (production-system, story-studio, magazine-v2, site-content) — it would just
   bounce them. horse-studio/profile-studio are only for records the member manages.
   Instead explain warmly that it's a staff action and offer their best next step
   (e.g. ask an editor for access, or what they CAN do today). Guests → signup/login.
