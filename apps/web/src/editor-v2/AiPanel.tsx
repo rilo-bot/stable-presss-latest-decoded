@@ -498,7 +498,7 @@ export function AiPanel() {
           )}
           {!uploadsLoading && uploadCount === 0 && (
             <p className="text-ui leading-relaxed text-studio-ink-3">
-              No uploads yet. In <strong className="text-studio-ink">Chat</strong>, attach a document or image (<Paperclip size={12} className="inline -translate-y-px" aria-hidden />) — it’s saved here and can fill a page later.
+              No uploads yet. In <strong className="text-studio-ink">Chat</strong>, attach a document or image — it’s saved here and can fill a page later.
             </p>
           )}
           {uploads.map((u) => (
@@ -543,7 +543,7 @@ export function AiPanel() {
           <p className="text-ui leading-relaxed text-studio-ink-3">
             I’m your studio assistant for this page. Ask me to <strong className="text-studio-ink">rewrite the headline</strong>,{' '}
             <strong className="text-studio-ink">recolour a block</strong>, <strong className="text-studio-ink">add a photo</strong>,{' '}
-            or <strong className="text-studio-ink">move things around</strong>, or <strong className="text-studio-ink">attach a document (<Paperclip size={12} className="inline -translate-y-px" aria-hidden />)</strong> and ask me to fill this page from it.{' '}
+            or <strong className="text-studio-ink">move things around</strong>, or <strong className="text-studio-ink">attach a document</strong> and ask me to fill this page from it.{' '}
             <strong className="text-studio-ink">Paste an image</strong> anywhere here (Ctrl/Cmd+V) — a screenshot, a photo, anything you’ve copied — and I can put it on the page. Select an element first and say “this”. Everything I
             propose waits for your <strong className="text-studio-ink">Apply</strong>.
           </p>
@@ -606,11 +606,11 @@ export function AiPanel() {
               Ready to review
             </span>
             <div className="flex items-center gap-1.5">
-              <button onClick={() => void applyAll()} className="flex items-center gap-1 rounded-sm bg-emerald-500 px-2.5 py-1 text-ui-sm font-semibold text-studio-ink hover:bg-emerald-600" title="Keep everything the Design Helper just changed">
+              <button onClick={() => void applyAll()} className="flex items-center gap-1 rounded-sm bg-emerald-500 px-2.5 py-1 text-ui-sm font-semibold text-studio-ink hover:bg-emerald-600" title="Apply these changes to the page">
                 <Check size={12} /> Use these changes
               </button>
-              <button onClick={() => discard()} className="flex items-center gap-1 rounded-sm border border-studio-edge px-2.5 py-1 text-ui-sm text-studio-ink-2 hover:bg-studio-raise-2" title="Undo everything the Design Helper just changed">
-                <X size={12} /> Don't use these
+              <button onClick={() => discard()} className="flex items-center gap-1 rounded-sm border border-studio-edge px-2.5 py-1 text-ui-sm text-studio-ink-2 hover:bg-studio-raise-2" title="Dismiss these suggestions — nothing has been changed yet">
+                <X size={12} /> Don’t use these
               </button>
             </div>
           </div>

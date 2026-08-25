@@ -246,7 +246,22 @@ function Tile({
               <Copy size={13} />
             </button>
             <button
-              onClick={(e) => { e.stopPropagation(); void useEditorStore.getState().deletePage(page.id); }}
+              onClick={(e) => {
+                e.stopPropagation();
+                // Now that this button is always visible rather than hover-only, a slip
+                // lands on it far more easily — and deletion prunes the page's own
+                // entries out of the undo stack (store.ts, withoutPage), so Ctrl+Z
+                // cannot bring it back the way it can for almost everything else here.
+                //
+                // A SUBMITTED page skips this generic confirm: store.deletePage already
+                // raises its own — naming who submitted it and that they'll be emailed —
+                // when the server refuses with page-submitted. That one is strictly more
+                // informative, and asking twice in a row for the same click would bury it
+                // behind a confirm that has nothing useful to say.
+                if (col === 'submitted' || window.confirm(`Delete page ${n}? This cannot be undone.`)) {
+                  void useEditorStore.getState().deletePage(page.id);
+                }
+              }}
               disabled={total <= 1}
               className="rounded-sm bg-studio-bg/90 p-1 text-red-300/90 hover:bg-studio-bg hover:text-red-300 disabled:opacity-30"
               title={total <= 1 ? 'A magazine needs at least one page' : `Delete page ${n}`}
