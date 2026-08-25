@@ -51,6 +51,7 @@ const MAX_STACK_LAYERS = 5;
 import { PAGE_H, PAGE_W } from './config.js';
 import type { LayoutReading, ReadBox, ReadRegion } from './layoutReading.js';
 import { TEXT_ROLES, pxToPt } from './roleScale.js';
+import type { SolvedLeaf } from './solveLayout.js';
 
 /** Roles that BACK other content: legal as the lower layers of a stack. Mirrors
  *  `isBackingLayer` in layoutSpec.ts and the scrim/panel rules in pruneSpec.ts. */
@@ -64,6 +65,9 @@ const TOUCH = 0.012;
 
 /** Below this, a "gap" is just measurement noise rather than designed whitespace. */
 const MIN_GAP = 0.008;
+
+/** Mirrors solveLayout's own MIN_SIZE: the smallest box worth emitting. */
+const MIN_LEAF_PX = 2;
 
 interface Band { start: number; end: number; regions: ReadRegion[] }
 
@@ -747,3 +751,116 @@ export function specContentRefs(spec: LayoutSpec): { ref: string; role: string }
   walk(spec.root);
   return out;
 }
+
+// ── EXACT REPRODUCTION ───────────────────────────────────────────────────────
+
+/**
+ * Solve a reading straight to boxes, with NO frame tree in between.
+ *
+ * The guillotine above exists to ADAPT a layout: reflow it onto a different sheet with
+ * a different amount of copy, and guarantee a tiling while doing it. Reproducing a
+ * reference is a different job, and the tree is the wrong instrument for it — not
+ * badly tuned, but structurally unable:
+ *
+ *   • a band spans its container's whole cross axis, so a cover line sitting in the
+ *     reference's right half comes out full width with only `align` remembering where
+ *     it was — the single biggest remaining loss in adapt mode;
+ *   • MAX_TREE_DEPTH flattens a nested template (a boxed sub-line inside a headline
+ *     block, an inset photo over a full-bleed one);
+ *   • an unfillable slot is pruned and the page RE-PARTITIONS, so one missing
+ *     photograph moves everything else — "2 boxes had nothing to put in them, so the
+ *     rest grew to fill the page".
+ *
+ * None of that is needed here, because THE READING ALREADY IS THE LAYOUT. Its boxes are
+ * fractions of the reference, and `normalizeLayoutReading` has already clipped them to
+ * the page, dropped the slivers and capped the count — the same guarantees the solver
+ * gives, established at the trust boundary instead. Multiplying by the page size is the
+ * whole transform, so every box lands exactly where it was read.
+ *
+ * NO MARGIN INSET, deliberately. `readingToSpec` insets the root because a relative
+ * tree knows nothing of the reference's own margin; these boxes are absolute and
+ * already contain it, so insetting here would count it twice and shrink the page.
+ *
+ * WHAT THIS GIVES UP is real and is the point of keeping both: copy longer than the
+ * reference's own no longer reflows — it shrinks to fit and is reported in `tight` —
+ * and a reference whose proportions differ from the page is stretched rather than
+ * re-composed (`aspectMismatch` is what warns about that). Exact mode only became
+ * viable once slot budgets came from the reference's real character counts rather than
+ * from box area; before that, every slot was handed article-length prose.
+ */
+export function readingToExact(
+  reading: LayoutReading,
+  dims: { width: number; height: number },
+): { leaves: SolvedLeaf[]; origin: Origin } | null {
+  const origin: Origin = {};
+  const alloc = makeAlloc(origin);
+  const W = dims.width > 0 ? dims.width : PAGE_W;
+  const H = dims.height > 0 ? dims.height : PAGE_H;
+
+  // Stacking order: an explicit `z` from the reading wins, and reading order breaks
+  // ties. Both matter to composeFromSolved, which repairs a text leaf's contrast
+  // against the topmost LOWER-z leaf beneath it — get this wrong and white cover type
+  // is "repaired" against the page ground instead of the photograph under it.
+  const ordered = reading.regions
+    .map((region, at) => ({ region, at }))
+    .sort((a, b) => (a.region.z ?? 0) - (b.region.z ?? 0) || a.at - b.at);
+
+  const placed = ordered
+    .map(({ region }) => ({
+      region,
+      box: {
+        x: Math.round(region.box.x * W),
+        y: Math.round(region.box.y * H),
+        w: Math.round(region.box.w * W),
+        h: Math.round(region.box.h * H),
+      },
+    }))
+    // The same floor the solver applies to its own output: below this a box cannot
+    // hold anything and would only ever be an artefact on the page.
+    .filter((p) => p.box.w >= MIN_LEAF_PX && p.box.h >= MIN_LEAF_PX);
+
+  /**
+   * TEXT MAY NEVER PRINT OVER TEXT — the one thing faithfulness does not extend to.
+   *
+   * Text over a PHOTOGRAPH is the commonest idiom in magazine design and is reproduced
+   * exactly; that is what the z-order is for. Text over TEXT is never a design, it is a
+   * misread: a vision model gives a masthead a generous box, and on a real cover the
+   * headline's came back 105–298px while the standfirst underneath it read 263–298, so
+   * the two genuinely overlapped in the reading. The guillotine hid that by merging
+   * them into one band. Reproducing boxes exactly stops hiding it, and layout QA — quite
+   * rightly — refuses a page with words printed on words.
+   *
+   * So an upper text box is trimmed to where the next overlapping one begins. Bounded
+   * and local: nothing moves, only the box that was too tall gets shorter, which is the
+   * measurement that was wrong. layoutSpec.ts has a repair pass for the same shape on
+   * the tree side ("NEVER two text layers on one rectangle") — same rule, same reason.
+   */
+  const texts = placed
+    .filter((p) => TEXT_ROLES.has(p.region.role))
+    .sort((a, b) => a.box.y - b.box.y || a.box.x - b.box.x);
+  for (let i = 0; i < texts.length; i++) {
+    const a = texts[i]!;
+    for (let j = i + 1; j < texts.length; j++) {
+      const b = texts[j]!;
+      const sharesColumn = a.box.x < b.box.x + b.box.w && b.box.x < a.box.x + a.box.w;
+      if (!sharesColumn) continue;
+      if (a.box.y + a.box.h > b.box.y) a.box.h = b.box.y - a.box.y;
+    }
+  }
+
+  const leaves: SolvedLeaf[] = [];
+  for (const { region, box } of placed) {
+    // Re-checked, because a trim can take a box below the floor: a line the reading
+    // buried entirely under the next one leaves nothing to draw.
+    if (box.w < MIN_LEAF_PX || box.h < MIN_LEAF_PX) continue;
+    leaves.push({ node: leafFor(region, alloc), box, z: leaves.length });
+  }
+  if (leaves.length === 0) return null;
+
+  // Slots that never became a leaf are dropped from `origin` for the same reason as
+  // above: a fidelity score counting boxes we never claimed to build is not a measure.
+  const kept = new Set(leaves.map((l) => l.node.contentRef ?? ''));
+  for (const key of Object.keys(origin)) if (!kept.has(key)) delete origin[key];
+  return { leaves, origin };
+}
+

@@ -16,12 +16,12 @@
 // ---------------------------------------------------------------------------
 
 import { PAGE_H, PAGE_W } from './config.js';
-import { normalizeLayoutSpec } from './layoutSpec.js';
+import { normalizeLayoutSpec, type LayoutSpec } from './layoutSpec.js';
 import { MAX_REGION_CHARS, type LayoutReading } from './layoutReading.js';
-import { readingToSpec, specContentRefs, stripType } from './readingToSpec.js';
+import { readingToExact, readingToSpec, specContentRefs, stripType } from './readingToSpec.js';
 import { measureFidelity, type Fidelity } from './layoutFidelity.js';
 import { pruneLayoutSpec } from './pruneSpec.js';
-import { solveLayout } from './solveLayout.js';
+import { solveLayout, type SolvedLayout } from './solveLayout.js';
 import { makeMeasureLeaf } from './measureLeaf.js';
 import { composeFromSolved, type LeafFill, type ResolvedContent } from './composeFromSolved.js';
 import { charBudget } from './fitReport.js';
@@ -52,6 +52,9 @@ export interface TightSlot {
   /** What this page actually has for it. */
   has: number;
 }
+/** How faithfully the reference is reproduced. See readingToExact. */
+export type LayoutFit = 'adapt' | 'exact';
+
 export interface ApplyResult {
   page: AppliedPage | null;
   /** Why there is no page. '' on success. Shown to the user. */
@@ -468,19 +471,46 @@ export function applyReadingToPage(
    * off path is the same code that ran before type was read at all.
    */
   adoptType = true,
+  /**
+   * How faithfully to reproduce the reference — see `readingToExact`.
+   *
+   * 'adapt' compiles the reading into a frame tree and lets the solver re-compose it
+   * for this page: it survives a different sheet shape and a different amount of copy,
+   * and it is the right default for "put my page in this layout".
+   *
+   * 'exact' places every region at the box it was read from. That is what "the same
+   * layout, same to same" means, and the tree cannot do it at any setting — a band
+   * spans its container's whole cross axis, so a cover line in the reference's right
+   * half is rebuilt full width whatever the fidelity score says.
+   */
+  fit: LayoutFit = 'adapt',
 ): ApplyResult {
-  const converted = readingToSpec(adoptType ? reading : stripType(reading));
-  if (!converted) return { page: null, why: 'That layout could not be turned into a page structure.' };
-  // Through the trust boundary even though we built it ourselves: it is the one place
-  // the DSL's caps are enforced, and it must never be bypassed just because the
-  // author was local code rather than a model.
-  const spec = normalizeLayoutSpec(converted.spec);
-  if (!spec) return { page: null, why: 'That layout could not be turned into a page structure.' };
-
+  const source = adoptType ? reading : stripType(reading);
   const dims = { width: Number(page.width) || PAGE_W, height: Number(page.height) || PAGE_H };
+
+  // Both modes produce the same two things — the slots to fill, and where each one came
+  // from — so everything downstream (reflow, placeholders, compose, QA, fidelity) is
+  // shared. Only the geometry differs, which is the only thing that should.
+  const built = fit === 'exact' ? readingToExact(source, dims) : readingToSpec(source);
+  if (!built) return { page: null, why: 'That layout could not be turned into a page structure.' };
+  const origin = built.origin;
+
+  let spec: LayoutSpec | null = null;
+  let slots: { ref: string; role: string }[];
+  if ('leaves' in built) {
+    slots = built.leaves.map((l) => ({ ref: l.node.contentRef ?? '', role: l.node.role })).filter((s) => s.ref);
+  } else {
+    // Through the trust boundary even though we built it ourselves: it is the one place
+    // the DSL's caps are enforced, and it must never be bypassed just because the
+    // author was local code rather than a model.
+    spec = normalizeLayoutSpec(built.spec);
+    if (!spec) return { page: null, why: 'That layout could not be turned into a page structure.' };
+    slots = specContentRefs(spec);
+  }
+
   const theme = style;
   const bgImage = page.background?.type === 'image' && page.background.value ? String(page.background.value) : '';
-  const { content, leftOver, usedBackground } = reflowContent(specContentRefs(spec), page.elements, bgImage || undefined, extra);
+  const { content, leftOver, usedBackground } = reflowContent(slots, page.elements, bgImage || undefined, extra);
 
   // keepWhitespace: the reference's empty space is its design. Without this, pruning
   // promotes a content-sized track to `fr` to stop a strip trailing — correct for the
@@ -503,17 +533,41 @@ export function applyReadingToPage(
    * Real photography still wins every time: this only ever fills a slot that reflow
    * and reference-fill both left empty.
    */
-  for (const slot of specContentRefs(spec)) {
+  for (const slot of slots) {
     if (slot.role !== 'image') continue;
     if (content[slot.ref]?.image?.url) continue;
     content[slot.ref] = { ...content[slot.ref], shapeFill: theme.palette.secondary };
   }
 
-  const pruned = pruneLayoutSpec(spec, content, { keepWhitespace: true, keepImagePlaceholders: true });
-  if (!pruned) {
-    return { page: null, why: 'This page has no content to put into that layout yet — add a headline, some text or a photo first.' };
+  let solved: SolvedLayout;
+  if ('leaves' in built) {
+    /**
+     * NO PRUNE IN EXACT MODE, and that is a feature rather than a shortcut.
+     *
+     * Pruning exists because the tree re-composes: an empty leaf left in a `col` takes
+     * a share of the page and draws nothing, so it has to be removed and the container
+     * re-weighted. Absolute boxes have no such coupling — an unfilled slot simply
+     * renders nothing and every other box stays exactly where the reference put it.
+     *
+     * That deletes the failure the user reported in as many words: "2 boxes from the
+     * reference had nothing to put in them, so the rest grew to fill the page." In this
+     * mode the rest cannot grow. `composeFromSolved` already skips a leaf it has no
+     * content for, so the hole costs a hole and nothing else.
+     */
+    solved = {
+      background: { ref: source.background === 'dark' ? 'text' : 'bg' },
+      // Zero, not the reading's margin: these boxes are absolute and already contain it.
+      margin: 0,
+      page: dims,
+      leaves: built.leaves,
+    };
+  } else {
+    const pruned = pruneLayoutSpec(spec!, content, { keepWhitespace: true, keepImagePlaceholders: true });
+    if (!pruned) {
+      return { page: null, why: 'This page has no content to put into that layout yet — add a headline, some text or a photo first.' };
+    }
+    solved = solveLayout(pruned, dims, { measureLeaf: makeMeasureLeaf(content, theme.fonts) });
   }
-  const solved = solveLayout(pruned, dims, { measureLeaf: makeMeasureLeaf(content, theme.fonts) });
   const composed = composeFromSolved(solved, content, theme);
   const elements = normalizeElements(composed.elements, dims) as MagazineElement[];
   /**
@@ -547,7 +601,7 @@ export function applyReadingToPage(
   // The reference's own shape goes in: a landscape reference on a portrait page is an
   // adaptation however well the bands happened to line up, and the score is the only
   // place the user is told so.
-  const fidelity = measureFidelity(solved, converted.origin, dims, { aspect: reading.aspect });
+  const fidelity = measureFidelity(solved, origin, dims, { aspect: reading.aspect });
 
   /**
    * Keep a background IMAGE we did not take.

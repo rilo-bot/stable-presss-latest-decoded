@@ -48,7 +48,7 @@ import { runPageAgent } from '../../lib/magazineV2/agent.js';
 import { formatPageText, charGuideFor } from '../../lib/magazineV2/format.js';
 import { readLayoutImage } from '../../lib/magazineV2/readLayout.js';
 import { aspectMismatch, normalizeLayoutReading } from '../../lib/magazineV2/layoutReading.js';
-import { applyReadingToPage, themeForPage, tightSummary, unfilledSlots, type ExtraContent } from '../../lib/magazineV2/applyLayout.js';
+import { applyReadingToPage, themeForPage, tightSummary, unfilledSlots, type ExtraContent, type LayoutFit } from '../../lib/magazineV2/applyLayout.js';
 import { isPlaceableMedia, rankMediaForPage, type RankableMediaRow } from '../../lib/magazineV2/media.js';
 import { draftReferenceFill } from '../../lib/magazineV2/referenceFill.js';
 import { createSourceDoc, listSourceDocs } from '../../lib/magazineV2/sourceDocsDb.js';
@@ -3126,7 +3126,22 @@ router.post('/issues/:id/pages/:pageId/apply-layout', rateLimit('mag2-agent', 20
   // anyway. The escape hatch exists for the user who wants the arrangement and their
   // own typography.
   const adoptType = req.body?.adoptType !== false;
-  const applied = applyReadingToPage(reading, blank, style, furnitureContextFor(issue, page), extraFill, adoptType);
+  /**
+   * HOW FAITHFULLY, and it is the caller's call, because the two modes lose different
+   * things (see `readingToExact`).
+   *
+   * 'exact' puts every region on the box it was read from: the reference's cross-axis
+   * positions survive — a cover line in its right half stays in the right half — and an
+   * unfillable slot leaves a hole rather than re-partitioning the page around it.
+   * 'adapt' re-composes through the frame tree, which is what a reference of a
+   * different shape, or a page carrying far more copy than the reference had, actually
+   * needs.
+   *
+   * The default stays 'adapt': it is what every existing caller has been getting, and
+   * it is the safer answer when nobody has said which job this is.
+   */
+  const fit: LayoutFit = req.body?.fit === 'exact' ? 'exact' : 'adapt';
+  const applied = applyReadingToPage(reading, blank, style, furnitureContextFor(issue, page), extraFill, adoptType, fit);
   if (!applied.page) {
     // 422: the request and the server are both fine — this layout and this page
     // cannot be put together, and the sentence says which.

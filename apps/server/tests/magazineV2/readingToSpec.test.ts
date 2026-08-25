@@ -9,7 +9,7 @@
 
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { readingToSpec, specContentRefs } from '../../src/lib/magazineV2/readingToSpec.ts';
+import { readingToExact, readingToSpec, specContentRefs } from '../../src/lib/magazineV2/readingToSpec.ts';
 import { normalizeLayoutSpec, MAX_TREE_DEPTH, MAX_LEAVES, MAX_CHILDREN, MAX_SPACE_PX } from '../../src/lib/magazineV2/layoutSpec.ts';
 import { normalizeLayoutReading, type LayoutReading, type ReadRegion } from '../../src/lib/magazineV2/layoutReading.ts';
 import { pruneLayoutSpec } from '../../src/lib/magazineV2/pruneSpec.ts';
@@ -716,4 +716,101 @@ test('an anchored all-text cluster still uses pad, not interior spacers', () => 
   assert.equal(roles(spec.root).filter((r) => r === 'spacer').length, 0, 'the cluster is padded, not spaced');
   assert.ok(spec.root.pad !== undefined, 'and it is anchored with a pad');
   assert.ok(spec.root.children.every((c) => c.sizing === 'content'), 'content-sized as a unit');
+});
+
+// ── EXACT MODE ───────────────────────────────────────────────────────────────
+// Same-to-same reproduction, with no frame tree in between. The guillotine above
+// ADAPTS a layout; this reproduces one, and the two lose different things.
+
+const exact = (r: LayoutReading, dims = { width: PAGE_W, height: PAGE_H }) => readingToExact(r, dims);
+
+test('every region lands on the box it was read from', () => {
+  const out = exact(read([
+    { role: 'image', box: box(0, 0, 1, 1) },
+    { role: 'headline', box: box(0.50, 0.29, 0.45, 0.14) },
+    { role: 'label', box: box(0.75, 0.96, 0.20, 0.02) },
+  ], { margin: 'none' }));
+  assert.ok(out);
+  const at = (role: string) => out.leaves.find((l) => l.node.role === role)!.box;
+  assert.deepEqual(at('headline'), {
+    x: Math.round(0.50 * PAGE_W), y: Math.round(0.29 * PAGE_H),
+    w: Math.round(0.45 * PAGE_W), h: Math.round(0.14 * PAGE_H),
+  });
+  assert.deepEqual(at('label'), {
+    x: Math.round(0.75 * PAGE_W), y: Math.round(0.96 * PAGE_H),
+    w: Math.round(0.20 * PAGE_W), h: Math.round(0.02 * PAGE_H),
+  });
+});
+
+test('THE CROSS AXIS SURVIVES — what adapt mode structurally cannot keep', () => {
+  // A cover line in the reference's right half. Through the guillotine it becomes a
+  // full-width band with `align: right` as the only trace of where it sat; that is the
+  // documented limit of a frame tree, not a tuning problem.
+  const reading = read([
+    { role: 'image', box: box(0, 0, 1, 1) },
+    { role: 'kicker', box: box(0.08, 0.03, 0.84, 0.03) },
+    { role: 'headline', box: box(0.50, 0.29, 0.45, 0.14) },
+  ], { margin: 'none' });
+
+  const viaTree = toSpec(reading);
+  assert.ok(viaTree);
+  const treeHeadline = leaves(viaTree.root).find((l) => l.kind === 'leaf' && l.role === 'headline');
+  assert.ok(treeHeadline && treeHeadline.kind === 'leaf');
+  assert.equal(treeHeadline.align, 'right', 'adapt mode can only record it as an alignment');
+
+  const out = exact(reading);
+  assert.ok(out);
+  const b = out.leaves.find((l) => l.node.role === 'headline')!.box;
+  assert.equal(b.x, Math.round(0.50 * PAGE_W), 'exact mode keeps the actual offset');
+  assert.ok(b.w < PAGE_W * 0.6, 'and does not span the sheet');
+});
+
+test('text over a PHOTOGRAPH is kept, and stacked in the reading’s own z order', () => {
+  const out = exact(read([
+    { role: 'headline', box: box(0.1, 0.6, 0.7, 0.12), z: 1 },
+    { role: 'image', box: box(0, 0, 1, 1), z: 0 },
+  ], { margin: 'none' }));
+  assert.ok(out);
+  const photo = out.leaves.find((l) => l.node.role === 'image')!;
+  const head = out.leaves.find((l) => l.node.role === 'headline')!;
+  assert.ok(photo.z < head.z, 'the photo is UNDER the type — contrast repair depends on it');
+  assert.equal(photo.box.w, PAGE_W, 'and it still bleeds');
+});
+
+test('text is never printed over text, however the reference was read', () => {
+  // Measured: a real cover read gave the masthead y 0.06–0.17 and the standfirst
+  // beneath it y 0.15–0.17, so they genuinely overlapped. Reproduced literally that is
+  // words on words, and layout QA refuses the page outright.
+  const out = exact(read([
+    { role: 'headline', box: box(0.23, 0.06, 0.70, 0.11) },
+    { role: 'subhead', box: box(0.22, 0.15, 0.60, 0.02) },
+  ], { margin: 'none' }));
+  assert.ok(out);
+  const head = out.leaves.find((l) => l.node.role === 'headline')!.box;
+  const sub = out.leaves.find((l) => l.node.role === 'subhead')!.box;
+  assert.ok(head.y + head.h <= sub.y, `headline ends ${head.y + head.h}, subhead starts ${sub.y}`);
+  // Trimmed, not moved: the box that was measured too tall is the one that gives way.
+  assert.equal(sub.y, Math.round(0.15 * PAGE_H), 'the lower line does not budge');
+  assert.equal(head.y, Math.round(0.06 * PAGE_H), 'nor does the upper one’s top');
+});
+
+test('a reading whose boxes cannot survive the page is null, not an empty page', () => {
+  // Every box below the floor once scaled. Null is a real answer the caller reports —
+  // building a page with nothing on it would be worse than saying so.
+  assert.equal(exact(read([
+    { role: 'body', box: box(0, 0, 0.02, 0.02) },
+    { role: 'label', box: box(0.2, 0.2, 0.02, 0.02) },
+  ]), { width: 20, height: 20 }), null);
+});
+
+test('origin carries only what was actually placed', () => {
+  const out = exact(read([
+    { role: 'image', box: box(0, 0, 1, 0.5) },
+    { role: 'headline', box: box(0.1, 0.6, 0.8, 0.1) },
+  ]));
+  assert.ok(out);
+  const refs = new Set(out.leaves.map((l) => l.node.contentRef));
+  for (const key of Object.keys(out.origin)) {
+    assert.ok(refs.has(key), `${key} is in origin but was never placed — fidelity would measure a box we did not build`);
+  }
 });
