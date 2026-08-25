@@ -2349,7 +2349,26 @@ router.post('/issues/:id/pages/:pageId/elements', async (req, res) => {
     res.status(409).json({ error: `A page can have at most ${MAX_ELEMENTS_PER_PAGE} elements.` });
     return;
   }
-  const [created] = normalizeElements([{ ...req.body?.element, id: undefined, source: 'manual' }], pageDims(page));
+  // A RESTORE add is undo putting back an element that was just deleted (by the
+  // user or by the assistant). It has to keep the original id — the undo/redo
+  // stacks name elements by id, so a re-created element with a fresh id would turn
+  // every other entry that mentions it into a ghost, and redo could not find it
+  // again. `source` is preserved for the same reason: an AI-added element that is
+  // undone and redone must not quietly become 'manual'.
+  //
+  // It can only ever CREATE: an id already on the page is refused, so this can't be
+  // used to overwrite an existing element. Everything else still goes through
+  // normalizeElements, so the geometry/sanitising guardrails are unchanged.
+  const raw = (req.body?.element && typeof req.body.element === 'object' ? req.body.element : {}) as Record<string, unknown>;
+  const restoreId = req.body?.restore === true && typeof raw.id === 'string' && raw.id ? raw.id.slice(0, 64) : null;
+  if (restoreId && els.some((e) => e.id === restoreId)) {
+    res.status(409).json({ error: 'That element is already on the page.', page: project(page) });
+    return;
+  }
+  const [created] = normalizeElements(
+    [{ ...raw, id: restoreId ?? undefined, source: restoreId ? raw.source : 'manual' }],
+    pageDims(page),
+  );
   if (!created) {
     res.status(400).json({ error: 'Invalid element' });
     return;

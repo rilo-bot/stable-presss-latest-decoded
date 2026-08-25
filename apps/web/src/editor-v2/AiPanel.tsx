@@ -12,6 +12,8 @@ import type { UIMessage } from 'ai';
 import { toast } from 'sonner';
 import { MarkdownMessage } from '@/components/MarkdownMessage';
 import { ingestFile, attachmentSourceText, ATTACH_ACCEPT } from '@/agent/attachments/documentUpload';
+import { filesFromClipboard, isPasteImage } from '@/agent/attachments/clipboard';
+import { compressImageToBlob } from '@/lib/upload';
 import { useVoiceChat } from '@/agent/voice/useVoiceChat';
 import { useEditorStore } from './store';
 import { ShimmerText, WorkingLine } from './BuildProgress';
@@ -31,6 +33,9 @@ interface PanelAttachment {
   imgUrl?: string;
   text?: string; // cached ingest text (fullText for docs, vision digest for images)
   mediaUrl?: string; // cached media-library URL (images only, set on first send)
+  /** Came off the clipboard rather than the picker. Only used to keep "Pasted
+   *  image N" numbering continuous across separate pastes. */
+  pasted?: boolean;
 }
 
 /** PDFs are the one document type the browser renders natively, so they get a
@@ -40,6 +45,37 @@ const isPdfType = (contentType?: string) => (contentType ?? '').toLowerCase() ==
 const MAX_PANEL_ATTACHMENTS = 5;
 let attSeq = 0;
 const attId = () => `att_${Date.now().toString(36)}_${(++attSeq).toString(36)}`;
+
+/** What the magazine's media library accepts — mirrors ALLOWED_IMAGE_MIME and
+ *  MAX_IMAGE_BYTES in apps/server/src/lib/magazineV2/config.ts. */
+const MEDIA_IMAGE_TYPES = /^image\/(png|jpeg|webp|gif)$/i;
+const MEDIA_MAX_BYTES = 15 * 1024 * 1024;
+
+/**
+ * The version of an image the media library will actually take.
+ *
+ * Paste made this matter. A file chosen through the picker is usually something
+ * the user already exported, but a clipboard screenshot is a raw full-resolution
+ * PNG straight off the display — a 4K grab lands at 15–25 MB and the library
+ * refuses it, so the image the user pasted specifically in order to place could
+ * be described to the assistant and then not placed. Re-encoding brings it inside
+ * the cap at a size well above the 1275×1650 page.
+ *
+ * Only touches images the library would REJECT: anything already within type and
+ * size is uploaded byte-for-byte, so a deliberately chosen PNG keeps its
+ * transparency and its quality. An image `compressImageToBlob` cannot decode is
+ * returned unchanged and the server's own refusal is what the user sees.
+ */
+async function placeableImage(file: File): Promise<File> {
+  if (MEDIA_IMAGE_TYPES.test(file.type) && file.size <= MEDIA_MAX_BYTES) return file;
+  try {
+    const blob = await compressImageToBlob(file, { maxDim: 2400, quality: 0.85 });
+    const stem = (file.name || 'image').replace(/\.[^.]+$/, '');
+    return new File([blob], `${stem}.jpg`, { type: 'image/jpeg', lastModified: file.lastModified });
+  } catch {
+    return file;
+  }
+}
 
 const kindIcon = (k: AgentProposal['kind']) =>
   k === 'add' ? <Plus size={11} />
@@ -185,9 +221,9 @@ export function AiPanel() {
     ta.style.height = `${Math.min(ta.scrollHeight, 160)}px`;
   }, [input]);
 
-  // Stage newly picked/dropped files (multi-attach: an article + its graphs can
+  // Stage newly picked/pasted files (multi-attach: an article + its graphs can
   // ride the same turn). Images get an object URL for the inline preview.
-  const addFiles = (list: FileList | null) => {
+  const addFiles = (list: FileList | File[] | null, opts: { pasted?: boolean } = {}) => {
     if (!list || list.length === 0) return;
     const room = Math.max(0, MAX_PANEL_ATTACHMENTS - atts.length);
     if (list.length > room) toast.message(`Up to ${MAX_PANEL_ATTACHMENTS} attachments — the rest were skipped.`);
@@ -195,10 +231,53 @@ export function AiPanel() {
       const isImage = f.type.startsWith('image/');
       // Images AND PDFs get an object URL — both render in the preview pane.
       const renderable = isImage || isPdfType(f.type);
-      return { id: attId(), file: f, isImage, imgUrl: renderable ? URL.createObjectURL(f) : undefined };
+      return {
+        id: attId(),
+        file: f,
+        isImage,
+        imgUrl: renderable ? URL.createObjectURL(f) : undefined,
+        ...(opts.pasted ? { pasted: true } : {}),
+      };
     });
     if (staged.length > 0) setAtts((prev) => [...prev, ...staged]);
     if (fileRef.current) fileRef.current.value = '';
+  };
+
+  /**
+   * Ctrl/Cmd+V anywhere in the chat stages what's on the clipboard.
+   *
+   * Bound to the PANEL, not the textarea, because a screenshot is usually pasted
+   * straight after taking it — with the cursor wherever the last click left it,
+   * which is very often a message in the transcript rather than the input. The
+   * root carries `tabIndex={-1}` so a click on any non-focusable part of the panel
+   * makes it the paste target; a paste inside the textarea bubbles up to here too,
+   * so one handler covers both.
+   *
+   * A paste with no attachable file — plain text, a copied URL — returns without
+   * calling preventDefault, so ordinary text pasting into the composer is
+   * completely untouched.
+   */
+  const onPasteFiles = (e: React.ClipboardEvent) => {
+    if (tab !== 'chat' || readOnlyThread) return;
+    // Let the canvas's own inline text editor keep its paste (it inserts plain
+    // text into a contentEditable). Only relevant if this panel ever hosts one.
+    const target = e.target as HTMLElement | null;
+    if (target?.isContentEditable) return;
+    const files = filesFromClipboard(e.clipboardData, {
+      startIndex: atts.filter((a) => a.pasted && a.isImage).length,
+    });
+    if (files.length === 0) return; // plain text — leave the textarea alone
+    e.preventDefault();
+    if (atts.length >= MAX_PANEL_ATTACHMENTS) {
+      toast.message(`Up to ${MAX_PANEL_ATTACHMENTS} attachments — remove one to paste another.`);
+      return;
+    }
+    addFiles(files, { pasted: true });
+    // Paste is invisible until the chip renders, and the chip sits below the
+    // transcript — say what landed so the action is confirmed where the user is
+    // looking. Images only: a pasted document already reads as a deliberate act.
+    const images = files.filter(isPasteImage).length;
+    if (images > 0) toast.success(images === 1 ? 'Image attached from your clipboard.' : `${images} images attached from your clipboard.`);
   };
 
   // Open one attachment in the right pane (docks over the Inspector). Images show
@@ -260,7 +339,11 @@ export function AiPanel() {
           //    only accept library or on-page urls).
           if (!a.mediaUrl && issueId) {
             try {
-              a.mediaUrl = (await uploadMediaImage(issueId, a.file, a.file.name)).url;
+              // Re-encoded only if the library would refuse the original — see
+              // placeableImage. The staged File is left alone either way, so the
+              // composer chip and the preview pane still show what was pasted.
+              const upload = await placeableImage(a.file);
+              a.mediaUrl = (await uploadMediaImage(issueId, upload, a.file.name)).url;
             } catch (e) {
               // SAY WHAT WENT WRONG. This used to be a bare `catch {}` under a message
               // that only reported the consequence, so every cause looked identical:
@@ -334,7 +417,16 @@ export function AiPanel() {
   };
 
   return (
-    <div className="relative flex h-full flex-col bg-studio-panel text-studio-ink">
+    // tabIndex={-1} is what makes "paste anywhere in the chat" true: it lets a
+    // click on the transcript (or any other non-focusable part of the panel) put
+    // focus here, so the following Ctrl+V is delivered to this handler instead of
+    // to the document with nothing listening. Not keyboard-reachable, so it adds
+    // no tab stop — hence outline-none rather than a focus ring nobody asked for.
+    <div
+      className="relative flex h-full flex-col bg-studio-panel text-studio-ink outline-none"
+      tabIndex={-1}
+      onPaste={onPasteFiles}
+    >
       {/* Header */}
       <div
         className="flex items-center gap-2 border-b border-studio-hair px-3 py-2.5"
@@ -451,7 +543,8 @@ export function AiPanel() {
           <p className="text-ui leading-relaxed text-studio-ink-3">
             I’m your studio assistant for this page. Ask me to <strong className="text-studio-ink">rewrite the headline</strong>,{' '}
             <strong className="text-studio-ink">recolour a block</strong>, <strong className="text-studio-ink">add a photo</strong>,{' '}
-            or <strong className="text-studio-ink">move things around</strong>, or <strong className="text-studio-ink">attach a document (📎)</strong> and ask me to fill this page from it. Select an element first and say “this”. Everything I
+            or <strong className="text-studio-ink">move things around</strong>, or <strong className="text-studio-ink">attach a document (📎)</strong> and ask me to fill this page from it.{' '}
+            <strong className="text-studio-ink">Paste an image</strong> anywhere here (Ctrl/Cmd+V) — a screenshot, a photo, anything you’ve copied — and I can put it on the page. Select an element first and say “this”. Everything I
             propose waits for your <strong className="text-studio-ink">Apply</strong>.
           </p>
         )}
@@ -594,7 +687,7 @@ export function AiPanel() {
             type="button"
             onClick={() => fileRef.current?.click()}
             aria-label="Attach documents or images"
-            title="Attach documents/images — docs fill the page, images can be placed on it"
+            title="Attach documents/images — docs fill the page, images can be placed on it. You can also paste an image (Ctrl/Cmd+V)."
             className="flex h-8 w-8 flex-shrink-0 items-center justify-center rounded-full border border-studio-edge text-studio-ink-2 hover:bg-studio-raise-2 hover:text-studio-ink"
           >
             <Paperclip size={14} />

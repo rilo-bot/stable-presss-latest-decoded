@@ -333,8 +333,11 @@ export default function MagazineEditorV2() {
             hour, so they sit in the middle where the cursor already is. */}
         <div className="flex flex-shrink-0 items-center gap-1.5">
           <div className="flex items-center rounded-sm border border-studio-edge bg-studio-raise">
-            <button onClick={() => void s.undo()} disabled={!s.undoStack.length} className="px-2 py-1.5 text-studio-ink-2 hover:bg-studio-raise-2 disabled:opacity-30 disabled:hover:bg-transparent" title="Undo (Ctrl+Z)"><Undo2 size={14} /></button>
-            <button onClick={() => void s.redo()} disabled={!s.redoStack.length} className="px-2 py-1.5 text-studio-ink-2 hover:bg-studio-raise-2 disabled:opacity-30 disabled:hover:bg-transparent" title="Redo (Ctrl+Shift+Z)"><Redo2 size={14} /></button>
+            {/* The tooltip NAMES what's next on the stack ("Undo the assistant's
+                changes"), because one entry can now be a whole AI turn — a dozen
+                writes — and "Undo" alone doesn't say how much is coming back. */}
+            <button onClick={() => void s.undo()} disabled={!s.undoStack.length} className="px-2 py-1.5 text-studio-ink-2 hover:bg-studio-raise-2 disabled:opacity-30 disabled:hover:bg-transparent" title={`Undo${s.undoStack.length ? ` ${s.undoStack[s.undoStack.length - 1]!.label}` : ''} (Ctrl+Z)`}><Undo2 size={14} /></button>
+            <button onClick={() => void s.redo()} disabled={!s.redoStack.length} className="px-2 py-1.5 text-studio-ink-2 hover:bg-studio-raise-2 disabled:opacity-30 disabled:hover:bg-transparent" title={`Redo${s.redoStack.length ? ` ${s.redoStack[s.redoStack.length - 1]!.label}` : ''} (Ctrl+Shift+Z)`}><Redo2 size={14} /></button>
           </div>
           <div className="flex items-center rounded-sm border border-studio-edge bg-studio-raise">
             <button onClick={() => s.setZoomWidth(s.zoomWidth - 80)} className="px-2 py-1.5 text-studio-ink-2 hover:bg-studio-raise-2" title="Zoom out"><Minus size={14} /></button>
