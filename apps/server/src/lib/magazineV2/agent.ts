@@ -20,6 +20,7 @@ import { safeUrl } from './url.js';
 import { normalizeElements } from './writePipeline.js';
 import { MAX_ELEMENTS_PER_PAGE, type MagazineElement } from './model.js';
 import { fetchAndStoreStock, isStockConfigured, type StockOrientation } from './stock.js';
+import { isPlaceableMedia } from './media.js';
 import { renderSource } from './sourceEnvelope.js';
 import { SOURCE_BUDGET } from './sourceLimits.js';
 import { readLayoutImage } from './readLayout.js';
@@ -319,8 +320,12 @@ function buildTools(ctx: AgentCtx, dims: { width: number; height: number }, canE
       description: 'List photos already in this magazine\'s media library (id, url, alt). Use these urls for set_element_image — never invent one.',
       inputSchema: z.object({}),
       execute: async () => {
-        const media = (await db.collection(COL.media).find({ magazineId: ctx.magazineId })) as { _id: string; url: string; alt?: string }[];
-        return { assets: media.slice(0, 40).map((m) => ({ assetId: m._id, url: m.url, alt: m.alt ?? '' })) };
+        // PHOTOS, as the description promises — not every row in the library. A
+        // `reference` is someone else's licensed page and a `doc` is a PDF; offering
+        // either here hands the model a url it will place as a photograph. See media.ts.
+        const media = (await db.collection(COL.media).find({ magazineId: ctx.magazineId })) as { _id: string; url: string; alt?: string; kind?: string }[];
+        const assets = media.filter((m) => isPlaceableMedia(m));
+        return { assets: assets.slice(0, 40).map((m) => ({ assetId: m._id, url: m.url, alt: m.alt ?? '' })) };
       },
     }),
 
@@ -386,8 +391,10 @@ function buildTools(ctx: AgentCtx, dims: { width: number; height: number }, canE
         const el = find(ctx, elementId);
         if (!el || el.type !== 'image') return { ok: false, error: 'Not an image element.' };
         const known = new Set(ctx.working.filter((e) => e.type === 'image' && e.image?.url).map((e) => e.image!.url));
-        const media = (await db.collection(COL.media).find({ magazineId: ctx.magazineId })) as unknown as { url: string }[];
-        for (const m of media) known.add(m.url);
+        // PLACEABLE rows only. The allow-list exists to stop the model inventing a
+        // url; it must not become a route to the one url it is forbidden to place.
+        const media = (await db.collection(COL.media).find({ magazineId: ctx.magazineId })) as unknown as { url: string; kind?: string }[];
+        for (const m of media) if (isPlaceableMedia(m)) known.add(m.url);
         if (!known.has(url)) return { ok: false, error: 'That url is not in the media library or on the page. Use list_media or add_stock_image.' };
         return stageUpdate(elementId, { image: { url, alt: alt ?? '' } }, 'Set the image');
       },
@@ -447,6 +454,12 @@ function buildTools(ctx: AgentCtx, dims: { width: number; height: number }, canE
         // The same allow-list as every other image tool — the model can never point
         // this at an arbitrary URL, which would spend a vision call on any image on
         // the internet and make our server the thing that fetched it.
+        //
+        // DELIBERATELY NOT `isPlaceableMedia`. Every other image tool filters
+        // `kind:'reference'` out because a reference must never be PLACED; this tool
+        // exists to READ one, so filtering here would break the feature it serves.
+        // Reading a reference's structure is the whole point; only its pixels are
+        // off-limits. Do not "make this consistent" with the tools above.
         const media = (await db.collection(COL.media).find({ magazineId: ctx.magazineId })) as unknown as { _id: string; url: string }[];
         if (!media.some((m) => m.url === url)) {
           return { ok: false, error: 'That url is not in this magazine. Ask the user to attach the layout image, then use its url.' };
@@ -504,8 +517,9 @@ function buildTools(ctx: AgentCtx, dims: { width: number; height: number }, canE
         if (ctx.working.length >= MAX_ELEMENTS_PER_PAGE) return { ok: false, error: 'The page is full.' };
         // Same allow-list as set_element_image: the media library + images already
         // on the page. The model can never introduce an arbitrary/invented URL.
-        const media = (await db.collection(COL.media).find({ magazineId: ctx.magazineId })) as unknown as { _id: string; url: string; alt?: string }[];
-        const asset = media.find((m) => m.url === url);
+        const media = (await db.collection(COL.media).find({ magazineId: ctx.magazineId })) as unknown as { _id: string; url: string; alt?: string; kind?: string }[];
+        // Placeable rows only — same reason as set_element_image above.
+        const asset = media.filter((m) => isPlaceableMedia(m)).find((m) => m.url === url);
         const onPage = ctx.working.some((e) => e.type === 'image' && e.image?.url === url);
         if (!asset && !onPage) return { ok: false, error: 'That url is not in the media library or on the page. Use list_media or add_stock_image.' };
         const [clean] = normalizeElements(

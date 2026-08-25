@@ -41,6 +41,7 @@ import {
 } from './templates.js';
 import { validatePageLayout } from './layoutValidate.js';
 import { isStockConfigured, fetchAndStoreStock, type StockOrientation } from './stock.js';
+import { userPhotosFrom, type UserPhoto } from './media.js';
 import { isImageGenConfigured, generateAndStoreImage } from './imagegen.js';
 // ── AI-authored layout path (behind MAGAZINE_V2_AI_LAYOUT) ────────────────────
 import type { TextRole } from './model.js';
@@ -742,11 +743,6 @@ const IMAGE_SLOT_CONCURRENCY = 4;
 /** A pool of the user's OWN uploaded photos (from the magazine's media library)
  *  that generation places BEFORE falling back to AI/stock. `claim()` is synchronous
  *  (no await) so concurrent page/slot composers can never take the same photo. */
-interface UserPhoto {
-  url: string;
-  assetId: string;
-  alt: string;
-}
 function makeUserPhotoPool(photos: UserPhoto[]) {
   const remaining = [...photos];
   return {
@@ -780,9 +776,7 @@ async function loadUserPhotoPool(magazineId: string): Promise<UserPhotoPool | un
     kind?: string;
     source?: string;
   }[];
-  const photos: UserPhoto[] = media
-    .filter((m) => m.source === 'upload' && m.kind !== 'doc' && typeof m.url === 'string' && !!m.url)
-    .map((m) => ({ url: m.url as string, assetId: String(m._id), alt: m.alt ?? '' }));
+  const photos = userPhotosFrom(media);
   if (photos.length === 0) return undefined;
   console.log(`[magazineV2] magazine ${magazineId}: placing ${photos.length} uploaded photo(s) first`);
   return makeUserPhotoPool(photos);

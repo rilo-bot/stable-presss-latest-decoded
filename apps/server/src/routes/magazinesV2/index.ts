@@ -49,6 +49,7 @@ import { formatPageText, charGuideFor } from '../../lib/magazineV2/format.js';
 import { readLayoutImage } from '../../lib/magazineV2/readLayout.js';
 import { aspectMismatch, normalizeLayoutReading } from '../../lib/magazineV2/layoutReading.js';
 import { applyReadingToPage, themeForPage, tightSummary, unfilledSlots, type ExtraContent } from '../../lib/magazineV2/applyLayout.js';
+import { isPlaceableMedia } from '../../lib/magazineV2/media.js';
 import { draftReferenceFill } from '../../lib/magazineV2/referenceFill.js';
 
 /* eslint-disable @typescript-eslint/no-explicit-any */
@@ -715,8 +716,13 @@ router.get('/issues/:id/media', async (req, res) => {
   // structure. Offering it in the photo picker would invite the one thing
   // docs/MAGAZINE-V2-LAYOUT-FROM-REFERENCE.md says we never do — put their picture
   // in the client's magazine.
+  //
+  // The rule itself lives in media.ts. It used to be written out by hand here and at
+  // two other sites, and the third (loadUserPhotoPool) had it wrong — a reference is
+  // `source:'upload'`, so its `kind !== 'doc'` test let one through into the pool
+  // generation places first. One predicate, so there is one place to be right.
   const assets = ((await db.collection(COL.media).find({ magazineId: doc._id })) as Doc[]).filter(
-    (a) => a.kind !== 'doc' && a.kind !== 'reference',
+    (a) => isPlaceableMedia(a as { kind?: string; url?: string }),
   );
   res.json({
     assets: assets.map((a) => ({ id: a._id, url: a.url, alt: a.alt, kind: a.kind, pageIndex: a.pageIndex, contentType: a.contentType, size: a.size })),
@@ -2943,10 +2949,11 @@ router.post('/issues/:id/pages/:pageId/apply-layout', rateLimit('mag2-agent', 20
       if (pageShape.background?.type === 'image' && pageShape.background.value) take(String(pageShape.background.value));
       if (extraImages.length < missing.images) {
         // Top up from the magazine's own library — never `reference` uploads
-        // (someone else's licensed page) and never docs.
+        // (someone else's licensed page) and never docs. Same predicate as the photo
+        // picker and the generator's user-photo pool; see media.ts.
         const media = (await db.collection(COL.media).find({ magazineId: issue._id })) as Doc[];
         for (const m of media) {
-          if (m.kind !== 'reference' && m.kind !== 'doc' && typeof m.url === 'string') {
+          if (isPlaceableMedia(m as { kind?: string; url?: string })) {
             take(String(m.url), String(m._id), typeof m.alt === 'string' ? m.alt : '');
           }
         }
