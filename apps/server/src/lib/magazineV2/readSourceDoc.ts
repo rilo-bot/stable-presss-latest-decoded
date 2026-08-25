@@ -22,12 +22,16 @@ import { readDocumentUnits, JOB_MAX_OCR_PAGES } from '../agent/documentIngest.js
 import {
   chunkDocument,
   coverageOf,
+  isReadable,
   type SourceCoverage,
   type SourceDoc,
   type SourceDocKind,
 } from './sourceStore.js';
+import { enqueueJob } from './jobs.js';
 import {
   beginReading,
+  claimGeneration,
+  contentHashOf,
   deleteChunks,
   failReading,
   findReadableTwin,
@@ -36,6 +40,7 @@ import {
   loadChunks,
   noteProgress,
   pagesWithChunks,
+  setContentHash,
   writeChunks,
 } from './sourceDocsDb.js';
 
@@ -110,15 +115,7 @@ export async function readSourceDoc(payload: ReadSourceDocPayload): Promise<'rea
     return doc.status;
   }
 
-  const twin = await findReadableTwin(doc.contentHash, String(doc._id));
-  if (twin) {
-    if (!(await beginReading(String(doc._id)))) throw new Error('Could not claim that document for reading.');
-    const adopted = await adoptTwin(doc, twin);
-    if (adopted) return adopted;
-    // The twin turned out to have no chunks after all — fall through and read.
-  } else if (!(await beginReading(String(doc._id)))) {
-    throw new Error('Could not claim that document for reading.');
-  }
+  if (!(await beginReading(String(doc._id)))) throw new Error('Could not claim that document for reading.');
 
   let bytes: Buffer;
   try {
@@ -126,6 +123,21 @@ export async function readSourceDoc(payload: ReadSourceDocPayload): Promise<'rea
   } catch (e) {
     // Storage is transient often enough that this must be retryable, not terminal.
     throw new Error(`Could not fetch “${doc.originalName}” from storage: ${e instanceof Error ? e.message : e}`);
+  }
+
+  // Hash HERE, not at upload: the API would have had to pull the whole file
+  // through itself to do it, and the job already holds the bytes. Persisted before
+  // the twin lookup so a concurrent read of the same file can see this one.
+  const contentHash = doc.contentHash || contentHashOf(bytes);
+  if (contentHash !== doc.contentHash) await setContentHash(String(doc._id), contentHash);
+
+  // An identical file already read? Adopt its chunks rather than paying for OCR
+  // twice — the same brief attached to three issues is read once.
+  const twin = await findReadableTwin(contentHash, String(doc._id));
+  if (twin) {
+    const adopted = await adoptTwin(doc, twin);
+    if (adopted) return adopted;
+    // The twin turned out to have no chunks after all — fall through and read.
   }
 
   // What we already hold. THE resume decision, and it comes from the rows.
@@ -191,6 +203,41 @@ export async function readSourceDoc(payload: ReadSourceDocPayload): Promise<'rea
     await failReading(String(doc._id), message);
     throw err; // the queue decides whether to retry
   }
+}
+
+/**
+ * Enqueue the follow-on work, but only once EVERY document has settled.
+ *
+ * The barrier without the wait. Handing the continuation to one document would
+ * start generation while the others were still being read, and the issue would be
+ * built from one attachment with nobody told — the silent-partial failure this
+ * whole design is against. So every read carries the continuation and this decides
+ * whether it is the last one out.
+ *
+ * "Settled" includes FAILED on purpose: one unreadable attachment must not strand
+ * the issue in `processing` forever waiting for a read that will never come. We go
+ * ahead with whatever was readable, and only refuse when nothing was.
+ *
+ * The compare-and-set is what makes it safe under concurrency: two reads finishing
+ * in the same instant both see every document settled, and exactly one wins the
+ * right to enqueue. Without it the issue would be generated twice.
+ */
+export async function chainIfReady(onDone: ReadContinuation | null | undefined): Promise<'enqueued' | 'waiting' | 'nothing-readable' | 'already-chained' | 'no-continuation'> {
+  if (!onDone) return 'no-continuation';
+  const payload = onDone.payload as { issueId?: string; docIds?: string[] };
+  const issueId = String(payload.issueId ?? '');
+  const docIds = Array.isArray(payload.docIds) ? payload.docIds : [];
+  if (!issueId || docIds.length === 0) return 'no-continuation';
+
+  const docs = await Promise.all(docIds.map((id) => getSourceDoc(id)));
+  const settled = docs.every((d) => !d || d.status === 'ready' || d.status === 'partial' || d.status === 'failed');
+  if (!settled) return 'waiting';
+  if (!docs.some((d) => d && isReadable(d.status))) return 'nothing-readable';
+
+  const claimed = await claimGeneration(issueId);
+  if (!claimed) return 'already-chained';
+  await enqueueJob(onDone.type, payload as never);
+  return 'enqueued';
 }
 
 /** Discard a document's chunks so the next read starts clean. For a corrupted

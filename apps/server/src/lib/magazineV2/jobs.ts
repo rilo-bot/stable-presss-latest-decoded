@@ -20,8 +20,23 @@ export interface JobPayloads {
   processIssue: { issueId: string };
   /** Re-run extraction for a single page (the per-page retry). */
   processPage: { issueId: string; pageId: string; index: number };
-  /** Build a whole issue from a brief / source document (from-scratch AI generation). */
-  generateIssue: { issueId: string; prompt: string; pageCount?: number; sourceText?: string; threadId?: string };
+  /**
+   * Build a whole issue from a brief / source document (from-scratch AI generation).
+   *
+   * `docIds` is the real source; `sourceText` is the compatibility shim for the
+   * client that still posts a raw string, and it goes when that client does. The
+   * difference matters beyond tidiness: docIds are persisted on the issue as
+   * `genSources`, so every later pass can re-read them, while a string dies with
+   * this payload — which is why "add more pages" used to invent from the title.
+   */
+  generateIssue: {
+    issueId: string;
+    prompt: string;
+    pageCount?: number;
+    docIds?: string[];
+    sourceText?: string;
+    threadId?: string;
+  };
   /** Design + insert N on-theme pages into an existing issue ("add pages"). */
   generatePages: { issueId: string; count: number; topic?: string; atIndex: number; prevStatus: string };
   /**

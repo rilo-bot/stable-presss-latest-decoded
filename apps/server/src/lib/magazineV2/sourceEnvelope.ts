@@ -25,6 +25,7 @@
 // ---------------------------------------------------------------------------
 
 import { retrieveSourceDetailed, type IntentKind, type RetrievalStrategy } from './retrieval.js';
+import { receiptLine, type RetrievedSource } from './sourceRetrieval.js';
 
 /** Fence lines. Distinctive on purpose: a document is far likelier to contain a
  *  stray `"""` (the delimiter these replace) than this, and any line that does
@@ -115,10 +116,40 @@ export function renderSource(source: string | undefined, opts: RenderSourceOpts)
   const excerpt = neutraliseFences(got.text).trim();
   if (!excerpt) return '';
 
+  return wrap(opts.task, coverageLine(got.strategy), excerpt);
+}
+
+/**
+ * Render text already selected from the STORED chunks, with its receipt.
+ *
+ * The chunk-backed sibling of renderSource, and it goes through the same wrap()
+ * for the same reason the guard is not a call-site convention: two renderers
+ * would eventually disagree about whether the guard is present, and the whole
+ * point of this file is that they cannot.
+ *
+ * The coverage sentence comes from the receipt — which counted chunks as they were
+ * packed — so it describes the payload rather than the request that produced it.
+ */
+export function renderRetrieved(retrieved: RetrievedSource, opts: { task: string }): string {
+  const excerpt = neutraliseFences(retrieved.text).trim();
+  if (!excerpt) return '';
+  const { receipt } = retrieved;
+  const coverage = receipt.truncated
+    ? `COVERAGE: ${receiptLine(receipt)}${
+        receipt.strategy === 'relevance'
+          ? ' These are the passages most relevant to THIS page; other parts of the document belong to other pages.'
+          : ' This spans the whole of what was read, so cover its breadth rather than just the opening.'
+      }`
+    : '';
+  return wrap(opts.task, coverage, excerpt);
+}
+
+/** The one assembler. Guard is not optional here, which is the entire design. */
+function wrap(task: string, coverage: string, excerpt: string): string {
   const block = [
-    `SOURCE DOCUMENT — ${opts.task}:`,
+    `SOURCE DOCUMENT — ${task}:`,
     GUARD,
-    coverageLine(got.strategy),
+    coverage,
     BEGIN_FENCE,
     excerpt,
     END_FENCE,

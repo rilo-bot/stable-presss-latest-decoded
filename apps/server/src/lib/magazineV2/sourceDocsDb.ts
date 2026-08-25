@@ -46,7 +46,16 @@ export interface NewSourceDoc {
   size: number;
   s3Key: string;
   url: string;
-  contentHash: string;
+  /**
+   * Filled in by the READ JOB, not at upload.
+   *
+   * Hashing needs the bytes, and the API has no business pulling 50MB through
+   * itself to compute one — the whole point of the job is that the heavy handling
+   * happens where nothing is waiting. The job downloads the file anyway, so it
+   * hashes there and looks for a twin before doing the expensive part. Dedupe
+   * exists to skip OCR, not to skip a download.
+   */
+  contentHash?: string;
 }
 
 /** Insert a document in `queued`. The read job is what moves it on. */
@@ -54,6 +63,7 @@ export async function createSourceDoc(input: NewSourceDoc): Promise<string> {
   const at = nowIso();
   return db.collection(COL.sourceDocs).insertOne({
     ...input,
+    contentHash: input.contentHash ?? '',
     status: 'queued' satisfies SourceDocStatus,
     kind: 'text' satisfies SourceDocKind, // corrected by the reader once it knows
     coverage: { pagesRead: 0, pagesTotal: 0, truncated: false, reason: '' } satisfies SourceCoverage,
@@ -217,6 +227,25 @@ export async function failReading(docId: string, message: string): Promise<void>
   await db
     .collection(COL.sourceDocs)
     .updateOne(String(docId), { status: 'failed', error: message.slice(0, 500), updatedAt: nowIso() });
+}
+
+/**
+ * Claim the exclusive right to enqueue an issue's generation, once.
+ *
+ * Compare-and-set against a field that starts absent — Mongo matches a missing
+ * field with `null` — so of N reads finishing simultaneously, exactly one wins and
+ * the issue is generated once rather than N times.
+ */
+export async function claimGeneration(issueId: string): Promise<boolean> {
+  return !!(await db
+    .collection(COL.magazines)
+    .updateOneIf(String(issueId), { genChained: null }, { genChained: true, updatedAt: nowIso() }));
+}
+
+/** Record the content hash once the job has the bytes. Written before the twin
+ *  lookup, so a concurrent read of the same file can find this one. */
+export async function setContentHash(docId: string, contentHash: string): Promise<void> {
+  await db.collection(COL.sourceDocs).updateOne(String(docId), { contentHash, updatedAt: nowIso() });
 }
 
 /** Progress for the UI while a read is running. Advisory ONLY — never the input

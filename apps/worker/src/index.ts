@@ -18,8 +18,7 @@ import './env.js'; // MUST be first: loads MONGODB_URI before db.ts reads it.
 import { startQueueLoop, type JobHandlers } from './queue.js';
 import { processIssue, processPageJob } from './jobs/processIssue.js';
 import { generateMagazineIssue, generateMorePages } from '../../server/src/lib/magazineV2/generate.js';
-import { readSourceDoc, type ReadSourceDocPayload } from '../../server/src/lib/magazineV2/readSourceDoc.js';
-import { shouldChain } from '../../server/src/lib/magazineV2/sourceStore.js';
+import { readSourceDoc, chainIfReady, type ReadSourceDocPayload } from '../../server/src/lib/magazineV2/readSourceDoc.js';
 import { enqueueJob } from '../../server/src/lib/magazineV2/jobs.js';
 
 const handlers: JobHandlers = {
@@ -29,8 +28,23 @@ const handlers: JobHandlers = {
   processPage: (payload) => processPageJob(payload as { issueId: string; pageId: string; index: number }),
   // Build a whole issue from a brief / source document (from-scratch AI gen).
   generateIssue: (payload) => {
-    const p = payload as { issueId: string; prompt: string; pageCount?: number; sourceText?: string; threadId?: string };
-    return generateMagazineIssue(p.issueId, p.prompt, p.pageCount, p.sourceText, p.threadId);
+    const p = payload as {
+      issueId: string;
+      prompt: string;
+      pageCount?: number;
+      docIds?: string[];
+      sourceText?: string;
+      threadId?: string;
+    };
+    // Stored documents when we have them, the legacy string otherwise. resolveSource
+    // prefers docIds when both are present, so the transition needs no branch here.
+    return generateMagazineIssue(
+      p.issueId,
+      p.prompt,
+      p.pageCount,
+      { docIds: p.docIds, text: p.sourceText },
+      p.threadId,
+    );
   },
   // Design + insert N on-theme pages into an existing issue.
   generatePages: (payload) => {
@@ -41,18 +55,15 @@ const handlers: JobHandlers = {
   // waiting on it. The chain is the point: this worker claims one job at a time,
   // so a handler that AWAITED another job would wait on a job that can never be
   // claimed. Nothing here waits — it enqueues and returns.
+  // Read one uploaded document into the source store, then let chainIfReady decide
+  // whether this was the LAST of the issue's documents to settle. Nothing here
+  // waits on another job: this worker claims one at a time, so an await would be a
+  // deadlock. It enqueues and returns.
   readSourceDoc: async (payload) => {
     const p = payload as ReadSourceDocPayload;
     const status = await readSourceDoc(p);
-    if (!p.onDone) return;
-    if (!shouldChain(status)) {
-      // An unread document must not become a magazine invented from nothing while
-      // the user believes it came from their file. Failing loudly beats that.
-      console.warn(`[worker] readSourceDoc ${p.docId} ended ${status} — not chaining ${p.onDone.type}`);
-      return;
-    }
-    await enqueueJob(p.onDone.type, p.onDone.payload as never);
-    console.log(`[worker] readSourceDoc ${p.docId} ${status} — chained ${p.onDone.type}`);
+    const outcome = await chainIfReady(p.onDone);
+    console.log(`[worker] readSourceDoc ${p.docId} → ${status}; continuation: ${outcome}`);
   },
   // Harmless heartbeat / liveness + smoke-test handler.
   noop: async () => {

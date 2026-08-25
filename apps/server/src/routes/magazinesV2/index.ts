@@ -51,6 +51,7 @@ import { aspectMismatch, normalizeLayoutReading } from '../../lib/magazineV2/lay
 import { applyReadingToPage, themeForPage, tightSummary, unfilledSlots, type ExtraContent } from '../../lib/magazineV2/applyLayout.js';
 import { isPlaceableMedia, rankMediaForPage, type RankableMediaRow } from '../../lib/magazineV2/media.js';
 import { draftReferenceFill } from '../../lib/magazineV2/referenceFill.js';
+import { createSourceDoc, listSourceDocs } from '../../lib/magazineV2/sourceDocsDb.js';
 
 /* eslint-disable @typescript-eslint/no-explicit-any */
 type Doc = { _id: string; [k: string]: any };
@@ -495,9 +496,15 @@ router.post('/issues/generate', rateLimit('mag2-generate', 10, 60_000), async (r
     return;
   }
   const prompt = typeof req.body?.prompt === 'string' ? req.body.prompt.trim() : '';
-  // Optional source document text (already ingested client-side) to build FROM.
+  // Stored source documents to build FROM — the real path. Cited by id, so the
+  // issue can re-read them for every later pass (more pages, a fill, a re-run).
+  const docIds = (Array.isArray(req.body?.docIds) ? req.body.docIds : [])
+    .filter((d: unknown): d is string => typeof d === 'string' && d.length > 0)
+    .slice(0, 20);
+  // LEGACY: document text posted inline by the older client. Kept working for one
+  // release. It cannot be re-read, which is the whole reason docIds exist.
   const sourceText = typeof req.body?.sourceText === 'string' ? req.body.sourceText.slice(0, 60_000) : '';
-  if (!prompt && !sourceText.trim()) {
+  if (!prompt && !sourceText.trim() && docIds.length === 0) {
     res.status(400).json({ error: 'Describe the magazine you want, or attach a document to build from.' });
     return;
   }
@@ -559,7 +566,26 @@ router.post('/issues/generate', rateLimit('mag2-generate', 10, 60_000), async (r
   }
   // Hand off to the worker: generation (per-page LLM + image calls) is slow, so
   // it runs out-of-process. The client polls the issue status until it settles.
-  await enqueueJob('generateIssue', { issueId: id, prompt, pageCount, sourceText, threadId });
+  // CHAINED, NOT AWAITED. With documents attached, the reads run first and
+  // generation is enqueued by whichever read finishes last. A generateIssue
+  // handler that waited for its documents would wait on jobs that can never be
+  // claimed — the worker takes one at a time — so this must never become an await.
+  //
+  // EVERY read carries the continuation, and chainIfReady() decides: it fires only
+  // once every document has settled, and claims the right to enqueue with a
+  // compare-and-set so two reads finishing together cannot build the issue twice.
+  // Handing the continuation to just the first document would have started
+  // generation while the others were still unread — the issue built from one
+  // attachment, silently.
+  if (docIds.length > 0) {
+    const onDone = {
+      type: 'generateIssue' as const,
+      payload: { issueId: id, prompt, pageCount, docIds, sourceText, threadId },
+    };
+    for (const docId of docIds) await enqueueJob('readSourceDoc', { docId, onDone });
+  } else {
+    await enqueueJob('generateIssue', { issueId: id, prompt, pageCount, sourceText, threadId });
+  }
   const created = await loadIssue(id);
   res.status(202).json({ issue: created ? withViewer(created, uid) : { id } });
 });
@@ -876,6 +902,111 @@ router.get('/issues/:id/uploads/:uploadId', async (req, res) => {
     contentType: asset.contentType,
     sourceText: asset.sourceText ?? '',
     digest: asset.digest ?? '',
+  });
+});
+
+// ── Source documents (the AI's reading material) ─────────────────────────────
+//
+// Distinct from /uploads above, which is a browsable LIBRARY of files. A source
+// document is something the AI reads: uploaded to S3, then read by the worker into
+// chunk rows, then cited by id for the life of the issue. Nothing here waits on
+// that read — the client polls GET /sources for status, which is what lets a
+// 200-page scan be read at all.
+
+// presign a direct-to-S3 PUT for a document the AI will read.
+router.post('/issues/:id/sources/upload-url', rateLimit('mag2-write', 300, 60_000), async (req, res) => {
+  const uid = req.account!.id;
+  const doc = await loadIssue(String(req.params.id));
+  if (!doc || !roleOnMagazine(doc, uid)) {
+    res.status(404).json({ error: 'Not found' });
+    return;
+  }
+  if (!storage.isConfigured()) {
+    res.status(503).json({ error: 'File storage is not configured on this server.' });
+    return;
+  }
+  const contentType = typeof req.body?.contentType === 'string' ? req.body.contentType.trim() : '';
+  const size = Number(req.body?.size);
+  if (!ALLOWED_DOC_MIME.has(contentType)) {
+    res.status(415).json({ error: 'I can read PDFs, Word documents and text files.' });
+    return;
+  }
+  if (!Number.isFinite(size) || size <= 0 || size > MAX_DOC_BYTES) {
+    res.status(413).json({ error: `The document must be under ${Math.round(MAX_DOC_BYTES / 1024 / 1024)} MB.` });
+    return;
+  }
+  const key = `public/magazinesV2/${doc._id}/sources/${crypto.randomUUID()}.${docExtFor(contentType)}`;
+  const uploadUrl = await storage.presignPutUrl({ key, contentType, expiresIn: 300 });
+  res.json({ uploadUrl, key, contentType });
+});
+
+// confirm an uploaded document landed → create the row → queue the read.
+router.post('/issues/:id/sources', rateLimit('mag2-write', 300, 60_000), async (req, res) => {
+  const uid = req.account!.id;
+  const doc = await loadIssue(String(req.params.id));
+  if (!doc || !roleOnMagazine(doc, uid)) {
+    res.status(404).json({ error: 'Not found' });
+    return;
+  }
+  const key = typeof req.body?.key === 'string' ? req.body.key : '';
+  if (!key.startsWith(`public/magazinesV2/${doc._id}/sources/`)) {
+    res.status(400).json({ error: 'Invalid upload key.' });
+    return;
+  }
+  // Never trust the client's size/type — read them back off the stored object.
+  let head: { contentLength: number; contentType: string };
+  try {
+    head = await storage.headObject(key);
+  } catch {
+    res.status(400).json({ error: 'Upload not found — please try again.' });
+    return;
+  }
+  if (!ALLOWED_DOC_MIME.has(head.contentType) || head.contentLength <= 0 || head.contentLength > MAX_DOC_BYTES) {
+    res.status(413).json({ error: 'That upload is not an accepted document within the size limit.' });
+    return;
+  }
+  const originalName = typeof req.body?.originalName === 'string' ? req.body.originalName.slice(0, 200) : 'document';
+  const docId = await createSourceDoc({
+    magazineId: String(doc._id),
+    ownerId: uid,
+    originalName,
+    contentType: head.contentType,
+    size: head.contentLength,
+    s3Key: key,
+    url: storage.publicUrl(key),
+  });
+  // The read happens in the worker. The response returns immediately with a
+  // docId the caller can poll and, later, cite — no request is held open on OCR.
+  await enqueueJob('readSourceDoc', { docId });
+  res.status(201).json({
+    source: { id: docId, originalName, contentType: head.contentType, size: head.contentLength, status: 'queued' },
+  });
+});
+
+// list this issue's source documents, with read status + coverage.
+router.get('/issues/:id/sources', async (req, res) => {
+  const uid = req.account!.id;
+  const doc = await loadIssue(String(req.params.id));
+  if (!doc || !roleOnMagazine(doc, uid)) {
+    res.status(404).json({ error: 'Not found' });
+    return;
+  }
+  const docs = await listSourceDocs(String(doc._id));
+  res.json({
+    sources: docs.map((d) => ({
+      id: String(d._id),
+      originalName: d.originalName,
+      contentType: d.contentType,
+      size: d.size,
+      status: d.status,
+      kind: d.kind,
+      // Coverage is surfaced, not just logged. "We read 6 of 40 pages" used to be
+      // computed and then thrown away, so a thin magazine looked like bad AI
+      // rather than a partly-read document.
+      coverage: d.coverage,
+      error: d.error,
+      createdAt: d.createdAt,
+    })),
   });
 });
 
