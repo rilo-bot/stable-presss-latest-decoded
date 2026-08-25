@@ -58,4 +58,27 @@ export const COL = {
    * record of who submitted what.
    */
   reviews: 'magazineReviewsV2',
+  /**
+   * UPLOADED SOURCE DOCUMENTS — one row per file a user attached for the AI to
+   * build from, and the copy of record for its extracted text.
+   *
+   * Before this existed, a document was a transient STRING: read on an HTTP
+   * request, concatenated in React state, posted back as a form field, truncated
+   * by whoever happened to hold it, then discarded. Nobody owned it, so nobody
+   * could bound it — which is why "add more pages" invented copy instead of
+   * reading the document, why attachments four and five could vanish into a
+   * `slice(0, 60_000)`, and why a 40-page scan had to be cut to six pages to fit
+   * a browser timeout. Every one of those is the same missing owner.
+   */
+  sourceDocs: 'magazineSourceDocsV2',
+  /**
+   * The chunks of one source document, with their search terms precomputed.
+   *
+   * Chunked at INGEST rather than at read because retrieval used to substring-scan
+   * the whole document once per page — a 24-page issue rescanned it 24 times, and
+   * the old 80k character cap existed largely to keep that affordable. Scoring a
+   * precomputed term set instead means a 500-page report is ~5,000 rows of which
+   * one page-draft touches perhaps eight.
+   */
+  sourceChunks: 'magazineSourceChunksV2',
 } as const;

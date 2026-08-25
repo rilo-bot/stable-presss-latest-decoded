@@ -72,26 +72,34 @@ export function chunkSource(text: string, maxChunk = 900): string[] {
 }
 
 /**
- * Distinct subject keywords from an intent string (lowercased, de-stopworded).
- *
- * The split used to be `/[^a-z0-9]+/`, which yields ZERO keywords for an intent
- * written in Arabic, Chinese, Cyrillic or Greek — so those issues lost per-page
- * retrieval entirely and every page silently fell back to the same generic
- * whole-document sample. Unicode property escapes fix it without a word list.
+ * Split text into comparable tokens. THE one tokenizer, used for both sides of a
+ * match: the terms stored on a chunk at ingest and the terms pulled from an
+ * intent at query time. If those two ever came from different code, a token could
+ * be indexed in one form and searched for in another — a whole document that
+ * silently matches nothing, with no error anywhere. Same function, no drift.
  */
-function keywords(intent: string, kind: IntentKind): string[] {
+export function tokenize(text: string): string[] {
   const out = new Set<string>();
-  for (const w of intent.toLowerCase().split(/[^\p{L}\p{N}]+/u)) {
+  for (const w of text.toLowerCase().split(/[^\p{L}\p{N}]+/u)) {
     if (!w) continue;
-    if (kind === 'chat' && REQUEST_WORDS.has(w)) continue;
     // Space-delimited scripts need 3+ characters before a token carries subject
     // meaning. Scripts that do NOT separate words carry it in two — 東京 is a
     // place, not a fragment — so holding those to 3 would discard most of the
     // real terms in a CJK document.
     const min = /^[\p{Script=Latin}\p{Nd}]+$/u.test(w) ? 3 : 2;
-    if (w.length >= min && !STOPWORDS.has(w)) out.add(w);
+    if (w.length >= min) out.add(w);
   }
   return [...out];
+}
+
+/**
+ * Subject keywords from an intent: tokenized, then de-noised for where it came
+ * from. The old `/[^a-z0-9]+/` split yielded ZERO keywords for an intent written
+ * in Arabic, Chinese, Cyrillic or Greek, so those issues lost per-page retrieval
+ * entirely and every page silently fell back to the same generic sample.
+ */
+export function intentTerms(intent: string, kind: IntentKind = 'editorial'): string[] {
+  return tokenize(intent).filter((w) => !STOPWORDS.has(w) && !(kind === 'chat' && REQUEST_WORDS.has(w)));
 }
 
 const RE_SPECIALS = /[.*+?^${}()|[\]\\]/g;
@@ -121,6 +129,19 @@ interface Matcher {
  *  thousands of chunks and the keyword set is fixed for the whole call. */
 function matchers(kws: string[]): Matcher[] {
   return kws.map((kw) => ({ kw, re: matcherFor(kw) }));
+}
+
+/**
+ * A scorer bound to one term set: `score(text)` → relevance, 0 for no match.
+ *
+ * Exported so retrieval over stored CHUNKS scores identically to retrieval over a
+ * raw string. Two implementations of "how relevant is this passage" would drift,
+ * and the drift would show up as the chunk-backed path quietly choosing different
+ * passages than the string path it replaced — a regression with no error to catch.
+ */
+export function buildScorer(terms: string[]): (text: string) => number {
+  const ms = matchers(terms);
+  return (text: string) => scoreChunk(text.toLowerCase(), ms);
 }
 
 /** Relevance of one chunk to the keyword set: distinct keywords present (primary
@@ -213,12 +234,12 @@ export function retrieveSourceDetailed(source: string | undefined, opts: Retriev
   if (text.length <= maxChars) return { text, strategy: 'verbatim' };
 
   const chunks = chunkSource(text);
-  const kws = opts.intent ? keywords(opts.intent, opts.kind ?? 'editorial') : [];
+  const kws = opts.intent ? intentTerms(opts.intent, opts.kind ?? 'editorial') : [];
 
   if (kws.length > 0) {
-    const ms = matchers(kws);
+    const score = buildScorer(kws);
     const ranked = chunks
-      .map((c, i) => ({ i, c, score: scoreChunk(c.toLowerCase(), ms) }))
+      .map((c, i) => ({ i, c, score: score(c) }))
       .filter((s) => s.score > 0)
       // Equal scores break on document position, never on sort implementation:
       // retrieval has to be deterministic to be testable, and "same document,
