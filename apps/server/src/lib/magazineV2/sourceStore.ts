@@ -165,3 +165,22 @@ export function statusForCoverage(coverage: SourceCoverage): Extract<SourceDocSt
 export function isReadable(status: SourceDocStatus): boolean {
   return status === 'ready' || status === 'partial';
 }
+
+/**
+ * Whether the work waiting on a document's read should go ahead, given how the
+ * read ended.
+ *
+ * Lives HERE, in the pure module, and not beside the job that calls it — because
+ * importing the job pulls in the database layer, which throws at import time
+ * without a MONGODB_URI. Putting this policy next to its caller made the whole
+ * test file unrunnable; policy about a status needs no database and should not
+ * drag one in.
+ *
+ * A FAILED read must not chain: a magazine invented from nothing, while the user
+ * believes it came from their document, is worse than an honest failure because it
+ * looks like it worked. A PARTIAL read does chain — some of the document beats
+ * none, and the coverage receipt discloses what was missed.
+ */
+export function shouldChain(status: SourceDocStatus | null): boolean {
+  return status === 'ready' || status === 'partial';
+}

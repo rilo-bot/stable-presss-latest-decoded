@@ -346,6 +346,167 @@ export interface IngestResult {
   fullText: string
 }
 
+// ---------------------------------------------------------------------------
+// PAGE-AT-A-TIME READING, for the background read job.
+//
+// ingestDocument (below) answers "give me this whole document, now" — the shape a
+// blocking HTTP request needs, and the reason a scanned PDF had to be cut to six
+// pages to fit a browser timeout. A job has no client waiting, so it can read
+// every page; but it can also be KILLED half way, and then the work already done
+// must not be thrown away.
+//
+// So this hands each page back as it completes, letting the caller persist it
+// before the next one starts, and skips pages the caller says it already holds.
+// That is the whole of resume: no page is read twice, and no page is lost.
+// ---------------------------------------------------------------------------
+
+/** How many pages of a scanned PDF the JOB path will OCR. Far above the legacy
+ *  route's 24, because nothing is waiting on it. */
+export const JOB_MAX_OCR_PAGES = 200
+/** Wall-clock ceiling for one document's OCR. A hard stop that yields an honest
+ *  `partial` rather than a job that never ends. */
+export const JOB_OCR_BUDGET_MS = 30 * 60_000
+/** Pages in flight at once on the job path. Higher than the request path's 2:
+ *  there is no request timeout to blow, only provider throughput. */
+const JOB_VISION_CONCURRENCY = 4
+
+/** One unit of reading. `ok:false` means the call FAILED — distinct from a page
+ *  that genuinely had no text, which is `ok:true` with an empty string. */
+export interface PageRead {
+  pageNo: number
+  text: string
+  ok: boolean
+}
+
+export interface ReadPagesResult {
+  kind: 'pdf-text' | 'pdf-ocr' | 'docx' | 'text' | 'image'
+  /** Read UNITS, not necessarily printed pages: a text layer or a Word body is
+   *  extracted in ONE unit covering the whole document, while a scan is one unit
+   *  per page. Coverage is counted in the same unit the reader used, so it can
+   *  never imply a document was partly read just because it was read at once. */
+  unitsTotal: number
+  unitsRead: number
+  /** Units whose read FAILED (OCR error), as opposed to being empty. */
+  failed: number
+  /** Set when the read stopped short — page cap or wall-clock. '' otherwise. */
+  reason: string
+}
+
+/**
+ * Read a document, handing each unit to `onUnit` as it lands.
+ *
+ * `skipUnits` are units the caller already has stored; they are neither read nor
+ * reported as failures, and they count towards `unitsRead` because the caller
+ * holds them.
+ */
+export async function readDocumentUnits(opts: {
+  bytes: Buffer
+  contentType: string
+  name: string
+  skipUnits?: Set<number>
+  maxPages?: number
+  budgetMs?: number
+  onUnit: (unit: PageRead) => Promise<void>
+}): Promise<ReadPagesResult> {
+  const kind = ingestKind(opts.contentType)
+  if (!kind) throw new Error(`Unsupported file type: ${opts.contentType}`)
+  const skip = opts.skipUnits ?? new Set<number>()
+
+  /** Emit a single whole-document unit (everything but a scanned PDF). */
+  const single = async (text: string, k: ReadPagesResult['kind']): Promise<ReadPagesResult> => {
+    if (!skip.has(0)) await opts.onUnit({ pageNo: 0, text, ok: true })
+    return { kind: k, unitsTotal: 1, unitsRead: 1, failed: 0, reason: '' }
+  }
+
+  if (kind === 'text') {
+    const text = opts.bytes.toString('utf8')
+    if (!text.trim()) throw new Error('That text file looks empty.')
+    return single(text, 'text')
+  }
+
+  if (kind === 'docx') {
+    let text = ''
+    try {
+      const out = await mammoth.extractRawText({ buffer: opts.bytes })
+      text = (out.value ?? '').trim()
+    } catch (e) {
+      console.warn('[ingest] DOCX text extraction failed:', e instanceof Error ? e.message : e)
+      throw new Error("I couldn't read that Word document — it may be corrupted. Try re-saving it or exporting to PDF.")
+    }
+    if (text.length < 2) throw new Error('That Word document looks empty.')
+    return single(text, 'docx')
+  }
+
+  if (kind === 'image') {
+    // Vision-only: there is no verbatim text, so the digest is the content. The
+    // job stores that on the document row rather than as chunks.
+    return { kind: 'image', unitsTotal: 1, unitsRead: 0, failed: 0, reason: 'images carry no extractable text' }
+  }
+
+  // ── PDF ──
+  let text = ''
+  try {
+    const parsed = await withTimeout(pdfParse(opts.bytes), PDF_PARSE_MS, 'PDF text extraction')
+    text = (parsed.text ?? '').trim()
+  } catch (e) {
+    console.warn('[ingest] PDF text extraction failed/slow, falling back to OCR:', e instanceof Error ? e.message : e)
+  }
+  if (text.length >= 40) return single(text, 'pdf-text')
+
+  // Image-based/scanned: one unit per page, persisted as each completes.
+  if (opts.bytes.length > VISION_MAX_BYTES) {
+    throw new Error(
+      "This PDF looks image-based (no selectable text), and it's too large for me to read visually. " +
+        'Please upload a text-based PDF or a smaller version.',
+    )
+  }
+  const cap = Math.max(1, Math.min(JOB_MAX_OCR_PAGES, opts.maxPages ?? JOB_MAX_OCR_PAGES))
+  const { pages, total } = await splitPdfPages(opts.bytes, cap)
+  if (pages.length === 0) throw new Error('That PDF has no pages I can read.')
+
+  const model = getOcrModel()
+  const deadline = Date.now() + Math.max(60_000, opts.budgetMs ?? JOB_OCR_BUDGET_MS)
+  // 1-based page numbers, so unit 0 is never a scanned page — it means "the whole
+  // document as one body", and the two must not collide in `skipUnits`.
+  const todo = pages.map((buf, i) => ({ buf, pageNo: i + 1 })).filter((p) => !skip.has(p.pageNo))
+  let failed = 0
+  let readNow = 0
+  let ranOut = false
+
+  await mapLimit(todo, JOB_VISION_CONCURRENCY, async (p) => {
+    if (Date.now() > deadline) {
+      ranOut = true
+      return
+    }
+    const got = await ocrPdfPage(model, p.buf, p.pageNo)
+    if (!got.ok) {
+      failed += 1
+      return
+    }
+    // Persisted BEFORE the next page is claimed, which is what makes a kill
+    // between pages cost one page rather than the document.
+    await opts.onUnit({ pageNo: p.pageNo, text: got.text, ok: true })
+    if (got.text.trim()) readNow += 1
+  })
+
+  const capped = total > pages.length
+  const reason = ranOut
+    ? `stopped after ${readNow + skip.size} of ${total} pages (time limit)`
+    : capped
+      ? `read the first ${pages.length} of ${total} pages`
+      : failed > 0
+        ? `${failed} page${failed === 1 ? '' : 's'} could not be read`
+        : ''
+
+  return {
+    kind: 'pdf-ocr',
+    unitsTotal: total,
+    unitsRead: readNow + skip.size,
+    failed,
+    reason,
+  }
+}
+
 /** Analyse one uploaded file. Throws on unsupported/empty/failed input. */
 export async function ingestDocument(opts: {
   bytes: Buffer

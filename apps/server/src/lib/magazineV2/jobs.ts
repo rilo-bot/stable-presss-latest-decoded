@@ -13,7 +13,7 @@
 import { db } from '../db.js';
 import { COL } from './collections.js';
 
-export type MagazineJobType = 'processIssue' | 'processPage' | 'generateIssue' | 'generatePages';
+export type MagazineJobType = 'processIssue' | 'processPage' | 'generateIssue' | 'generatePages' | 'readSourceDoc';
 
 export interface JobPayloads {
   /** Digitize a freshly-uploaded PDF into pages + elements (the whole issue). */
@@ -24,6 +24,21 @@ export interface JobPayloads {
   generateIssue: { issueId: string; prompt: string; pageCount?: number; sourceText?: string; threadId?: string };
   /** Design + insert N on-theme pages into an existing issue ("add pages"). */
   generatePages: { issueId: string; count: number; topic?: string; atIndex: number; prevStatus: string };
+  /**
+   * Read one uploaded document into the source store (chunks + coverage).
+   *
+   * `onDone` CHAINS the follow-on work instead of the follow-on job awaiting this
+   * one. That is not a style choice: the worker claims ONE job at a time, so a
+   * generateIssue handler that waited for its document's read would be waiting on
+   * a job that can never be claimed — a deadlock presenting as "generation hangs
+   * sometimes". The read handler enqueues the continuation as its last act, which
+   * is deadlock-free at any worker count and needs no change to the atomic claim.
+   */
+  readSourceDoc: {
+    docId: string;
+    maxPages?: number;
+    onDone?: { type: 'generateIssue'; payload: Record<string, unknown> } | null;
+  };
 }
 
 /** How many times a failing job is retried before it's marked `failed`. */

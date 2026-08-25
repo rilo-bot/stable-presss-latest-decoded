@@ -18,6 +18,9 @@ import './env.js'; // MUST be first: loads MONGODB_URI before db.ts reads it.
 import { startQueueLoop, type JobHandlers } from './queue.js';
 import { processIssue, processPageJob } from './jobs/processIssue.js';
 import { generateMagazineIssue, generateMorePages } from '../../server/src/lib/magazineV2/generate.js';
+import { readSourceDoc, type ReadSourceDocPayload } from '../../server/src/lib/magazineV2/readSourceDoc.js';
+import { shouldChain } from '../../server/src/lib/magazineV2/sourceStore.js';
+import { enqueueJob } from '../../server/src/lib/magazineV2/jobs.js';
 
 const handlers: JobHandlers = {
   // Digitize a freshly-uploaded PDF into pages + editable elements.
@@ -33,6 +36,23 @@ const handlers: JobHandlers = {
   generatePages: (payload) => {
     const p = payload as { issueId: string; count: number; topic?: string; atIndex: number; prevStatus: string };
     return generateMorePages(p.issueId, { count: p.count, topic: p.topic, atIndex: p.atIndex, prevStatus: p.prevStatus });
+  },
+  // Read one uploaded document into the source store, then CHAIN whatever was
+  // waiting on it. The chain is the point: this worker claims one job at a time,
+  // so a handler that AWAITED another job would wait on a job that can never be
+  // claimed. Nothing here waits — it enqueues and returns.
+  readSourceDoc: async (payload) => {
+    const p = payload as ReadSourceDocPayload;
+    const status = await readSourceDoc(p);
+    if (!p.onDone) return;
+    if (!shouldChain(status)) {
+      // An unread document must not become a magazine invented from nothing while
+      // the user believes it came from their file. Failing loudly beats that.
+      console.warn(`[worker] readSourceDoc ${p.docId} ended ${status} — not chaining ${p.onDone.type}`);
+      return;
+    }
+    await enqueueJob(p.onDone.type, p.onDone.payload as never);
+    console.log(`[worker] readSourceDoc ${p.docId} ${status} — chained ${p.onDone.type}`);
   },
   // Harmless heartbeat / liveness + smoke-test handler.
   noop: async () => {

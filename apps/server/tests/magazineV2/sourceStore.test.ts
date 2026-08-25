@@ -22,6 +22,7 @@ import {
   coverageOf,
   statusForCoverage,
   isReadable,
+  shouldChain,
   type SourceChunk,
 } from '../../src/lib/magazineV2/sourceStore.js';
 import {
@@ -268,6 +269,20 @@ test('retrieval over chunks is deterministic', () => {
   const d = docs(3, 6, 1);
   const opts = { intent: 'Bloodstock commissions', budgetChars: 2_000 };
   assert.equal(retrieveForIntent(d, opts).text, retrieveForIntent(d, opts).text);
+});
+
+// ── what may follow a read ──────────────────────────────────────────────────
+
+test('a partial read chains the follow-on work; a failed read never does', () => {
+  // The distinction matters more than it looks. Chaining after a FAILED read
+  // would build a magazine invented from nothing while the user believed it came
+  // from their document — worse than an honest failure, because it looks like it
+  // worked. A PARTIAL read does chain: some of the document beats none, and the
+  // coverage receipt is what tells the model and the user what was missed.
+  assert.equal(shouldChain('ready'), true);
+  assert.equal(shouldChain('partial'), true);
+  assert.equal(shouldChain('failed'), false);
+  assert.equal(shouldChain(null), false, 'an unknown outcome must not chain');
 });
 
 test('no documents means no text and an honest empty receipt', () => {
