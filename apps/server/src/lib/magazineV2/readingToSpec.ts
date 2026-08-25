@@ -255,16 +255,35 @@ function spaceTokenFor(fraction: number, axisPx: number): SpaceToken {
  * separation (a band break that is really a section change) should not stretch every
  * other gap on the page.
  */
-function gapFor(bands: Band[], axisPx: number): SpaceToken {
-  const gaps: number[] = [];
-  for (let i = 1; i < bands.length; i++) {
-    const g = bands[i]!.start - bands[i - 1]!.end;
-    if (g > MIN_GAP) gaps.push(g);
-  }
+function gapFor(runs: number[], axisPx: number): SpaceToken {
+  const gaps = runs.filter((g) => g > MIN_GAP).sort((a, b) => a - b);
   if (gaps.length === 0) return 'none';
-  gaps.sort((a, b) => a - b);
   return spaceTokenFor(gaps[Math.floor(gaps.length / 2)]!, axisPx);
 }
+
+/**
+ * Do this container's interior runs have to become TRACKS, or are they rhythm?
+ *
+ * The question is asked ONCE PER CONTAINER, about the bands as a set — not per run —
+ * and that is the whole trick. Two runs of identical size mean opposite things: 6%
+ * between the headline and the columns of a feature is rhythm, and 11% above a cover
+ * line is composition. Nothing about either run distinguishes them. What does is how
+ * much of the rectangle the bands were ever going to fill.
+ *
+ * Below this, the bands are a CLUSTER floating in space and every run between them is
+ * load-bearing: on a real cover the bands held 31% of the page height, so normalising
+ * their fr weights over the whole sheet inflated each one ~3.2× and the page came back
+ * stretched top to bottom (fidelity 10%, on a reading that was accurate). At or above
+ * it the bands genuinely do fill the rectangle, fr weights already preserve the
+ * proportions, and promoting gaps to weighted tracks would turn every ordinary layout
+ * into a sandwich of empty children.
+ *
+ * Two size tests were tried first and both are wrong. Against what `gap` can express
+ * (`xl` = 96px) it fires on the feature's 6%; against EMPTY_END it leaves the cover's
+ * 11% run to a 96px token that is then repeated between every other pair. The
+ * measurement is not of a run at all — it is of the set.
+ */
+const FILLS_AXIS = 0.7;
 
 /** fr weight from an extent along the axis. Fractions are relative, so scaling by 100
  *  keeps a whole point of resolution per percent and stays inside MAX_WEIGHT. */
@@ -573,7 +592,44 @@ function partition(regions: ReadRegion[], rect: ReadBox, depth: number, ref: All
   // Two slots held back whenever there is emptiness to express, because the spacer branch
   // of `anchored` may need them and capping afterwards would let normalizeLayoutSpec slice
   // a spacer off — putting the stretched page straight back.
-  const reserve = Math.max(lead, trail) / axisLen > EMPTY_END ? 2 : 0;
+  const axisPx = useCol ? PAGE_H : PAGE_W;
+  // Slots are reserved for INTERIOR runs as well as the outer two, for the same
+  // reason and with the same consequence if we don't: normalizeLayoutSpec silently
+  // slices children past MAX_CHILDREN, and the one it slices is the last spacer.
+  //
+  // Measured across the BANDS' OWN SPAN — first band's start to last band's end — and
+  // never across the whole rectangle. The emptiness at the two ENDS belongs to
+  // `anchored`, which has a better mechanism for it (a `pad` over a content-sized
+  // cluster, measured to beat spacers there). Counting that emptiness here as well
+  // made every floating cluster look airy, so interior spacers were injected into
+  // exactly the clusters `anchored` handles best and defeated its all-text branch.
+  // This rule is about INTERIOR air only.
+  //
+  // Asked of `raw` rather than the capped bands, and before capping, because merging
+  // two bands ABSORBS the run between them: deciding afterwards would see a tidier,
+  // fuller-looking set than the reference actually had.
+  const span = Math.max(1e-6, raw[raw.length - 1]!.end - raw[0]!.start);
+  const covered = raw.reduce((sum, b) => sum + (b.end - b.start), 0) / span;
+  // AND it defers to `anchored` where `anchored` has the better mechanism.
+  //
+  // A tight all-text cluster held off one end is padded and content-sized as a UNIT,
+  // and the note on `anchored` records that measurement: spacers took that fixture
+  // from 0.60 to 0.30, because the container's one `gap` is inserted next to a spacer
+  // as well and drags every band down. Interior spacers put the children out of reach
+  // of that branch — every child has to be a text leaf for it to fire — so a rule that
+  // adds them here would silently switch those clusters to the worse mechanism. Both
+  // conditions are read the way `anchored` reads them, off the uncapped bands, so the
+  // reserve below matches what actually gets built.
+  const bandIsTextLeaf = (b: Band) => b.regions.length === 1 && TEXT_ROLES.has(b.regions[0]!.role);
+  const anchoredCluster = Math.max(lead, trail) / axisLen > EMPTY_END && raw.every(bandIsTextLeaf);
+  const runsAreTracks = covered < FILLS_AXIS && !anchoredCluster;
+  const trackRuns = (bs: Band[]) => {
+    if (!runsAreTracks) return 0;
+    let n = 0;
+    for (let i = 1; i < bs.length; i++) if ((bs[i]!.start - bs[i - 1]!.end) / axisLen > MIN_RUN) n++;
+    return n;
+  };
+  const reserve = (Math.max(lead, trail) / axisLen > EMPTY_END ? 2 : 0) + trackRuns(raw);
   const bands = capBands(raw, Math.max(2, MAX_CHILDREN - reserve));
 
   const kids: { child: LayoutChild; band: Band }[] = [];
@@ -589,8 +645,41 @@ function partition(regions: ReadRegion[], rect: ReadBox, depth: number, ref: All
   // One surviving band and nothing to anchor it against: the container adds nothing.
   if (kids.length === 1 && reserve === 0) return kids[0]!.child.node;
 
-  const axisPx = useCol ? PAGE_H : PAGE_W;
-  return anchored(useCol ? 'col' : 'row', gapFor(bands, axisPx), kids.map((k) => k.child), {
+  /**
+   * THE AIR BETWEEN THE BANDS IS PART OF THE DESIGN, and it has to be a TRACK.
+   *
+   * `anchored` already learnt this for the runs at the two ENDS of a rectangle —
+   * there is a long note there on why a spacer beats justify/content-sizing/pad.
+   * The same lesson was never applied BETWEEN bands, and interior emptiness is
+   * where a magazine cover keeps most of it.
+   *
+   * What happened instead: the interior runs were collapsed into the container's
+   * single median `gap` token, which tops out at `xl` = 96px. On a real cover the
+   * bands occupied 31% of the page height and the gaps 69% — an 11% run above the
+   * cover line and a 53% void below it. The five bands' fr weights (3:11:1:14:2)
+   * were then normalised over the WHOLE sheet, so every band inflated about 3.2×,
+   * the 53% void became 96px, and the page came back stretched top to bottom.
+   * Measured fidelity 10%, verdict "loose", on a reading that was itself accurate.
+   *
+   * Whether this happens at all is FILLS_AXIS's decision, taken once for the whole
+   * container (see `runsAreTracks`); a container whose bands do fill their rectangle
+   * keeps today's behaviour exactly, gap token and all. Where runs DO become tracks
+   * they are excluded from the gap median as well — leaving them in would drag the
+   * token up to `xl` and re-insert the void between every other pair on the page,
+   * which is the same stretch by a different route.
+   */
+  const spaced: LayoutChild[] = [];
+  const rhythm: number[] = [];
+  for (let i = 0; i < kids.length; i++) {
+    if (i > 0) {
+      const run = kids[i]!.band.start - kids[i - 1]!.band.end;
+      if (runsAreTracks && run / axisLen > MIN_RUN) spaced.push(spacerChild(run));
+      else rhythm.push(run);
+    }
+    spaced.push(kids[i]!.child);
+  }
+
+  return anchored(useCol ? 'col' : 'row', gapFor(rhythm, axisPx), spaced, {
     lead, trail, axisLen, axisPx,
   });
 }
