@@ -37,7 +37,13 @@ function cleanDraft(v: unknown, approxChars: number): string {
   const plain = v.replace(/<[^>]*>/g, ' ').replace(/\s+/g, ' ').trim();
   // A little headroom over the estimate — the composer shrinks-to-fit and the
   // tight-slot report covers real overruns; a hard cut mid-sentence is worse.
-  return plain.slice(0, Math.max(24, Math.round(approxChars * 1.5)));
+  //
+  // The 24-character floor stops a short slot being cut mid-word, but it must not
+  // become a licence: at a 7-character masthead budget a flat floor of 24 is more than
+  // three times the ask, which is the shape of the problem this budget exists to fix.
+  // So the floor itself is capped at twice the budget.
+  const headroom = Math.max(Math.min(24, approxChars * 2), Math.round(approxChars * 1.5));
+  return plain.slice(0, headroom);
 }
 
 /**
@@ -68,7 +74,13 @@ export async function draftReferenceFill(opts: {
     '  like "Lorem", "Your text here", or generic mission statements.',
     '- Match each slot’s role: a kicker is a few words; a caption describes an image plausibly;',
     '  a label is 1–3 words; body copy is full sentences.',
-    '- Respect each slot’s character budget (a rough fit for its box). Under is fine; far over is not.',
+    '- THE CHARACTER COUNT IS THE LENGTH OF THE REFERENCE’S OWN TEXT THERE, AND IT IS THE POINT.',
+    '  A design is spacious because its copy is short: a slot asking for 7 characters wants ONE',
+    '  WORD, not a headline that happens to fit the box. Write to the count, not to the space.',
+    '  Going far over is what makes a rebuilt page look nothing like the reference.',
+    '- Where a slot quotes what the reference reads, match its KIND and its LENGTH: a masthead',
+    '  becomes this magazine’s masthead in as few words, "P. 26" becomes a page reference, a tag',
+    '  stays a tag. Never reuse the reference’s own wording, brand or subject.',
     '- Plain text only — no HTML, no markdown.',
     '- Output ONLY a JSON object: { "items": [ { "slot": <number>, "text": "<copy>" } ] } with one',
     '  item per slot, `slot` being the number given below.',

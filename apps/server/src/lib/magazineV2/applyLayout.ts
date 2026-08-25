@@ -17,7 +17,7 @@
 
 import { PAGE_H, PAGE_W } from './config.js';
 import { normalizeLayoutSpec } from './layoutSpec.js';
-import type { LayoutReading } from './layoutReading.js';
+import { MAX_REGION_CHARS, type LayoutReading } from './layoutReading.js';
 import { readingToSpec, specContentRefs, stripType } from './readingToSpec.js';
 import { measureFidelity, type Fidelity } from './layoutFidelity.js';
 import { pruneLayoutSpec } from './pruneSpec.js';
@@ -638,20 +638,32 @@ export function unfilledSlots(
   const bgImage = page.background?.type === 'image' && page.background.value ? String(page.background.value) : '';
   const { content } = reflowContent(slots, page.elements, bgImage || undefined);
 
-  // The vision's note for the region a slot came from ("masthead 'THE HORSE'") —
-  // it tells the drafter WHAT the reference said there, so the fresh copy is this
-  // magazine's version of the same thing rather than generic filler. Matched back
-  // through `origin` (the slot's source box IS the region's box); a slot with no
-  // one-to-one region (a split body, a synthesized band) simply gets no hint.
+  // The REGION a slot came from, matched back through `origin` (the slot's source box
+  // IS the region's box). A slot with no one-to-one region — a split body, a
+  // synthesized band — simply gets none, and falls back to the area estimate.
   const near = (a: number, b: number) => Math.abs(a - b) < 1e-6;
-  const hintFor = (ref: string, role: string): string | undefined => {
+  const regionFor = (ref: string, role: string): LayoutReading['regions'][number] | undefined => {
     const box = converted.origin[ref];
     if (!box) return undefined;
-    const region = reading.regions.find(
+    return reading.regions.find(
       (g) => g.role === role && near(g.box.x, box.x) && near(g.box.y, box.y) && near(g.box.w, box.w) && near(g.box.h, box.h),
     );
-    const note = region?.note?.trim();
-    return note || undefined;
+  };
+
+  /**
+   * What to tell the drafter this slot IS.
+   *
+   * The reference's own words first, because a role cannot distinguish a one-word
+   * masthead from a sixty-character article title — and told only "headline", the
+   * drafter writes the latter into the former. That is not hypothetical: it is what a
+   * real run produced on a magazine cover. The model's free-form `note` is the
+   * fallback for a region it described but did not quote.
+   */
+  const hintFor = (ref: string, role: string): string | undefined => {
+    const region = regionFor(ref, role);
+    const said = region?.text?.trim();
+    if (said) return `it reads “${said}”`;
+    return region?.note?.trim() || undefined;
   };
 
   const dims = { width: Number(page.width) || PAGE_W, height: Number(page.height) || PAGE_H };
@@ -670,11 +682,26 @@ export function unfilledSlots(
     const cap = ROLE_CHAR_CAP[slot.role] ?? 120;
     const crammed = TERSE_SLOTS.has(slot.role) && filled.replace(/<[^>]*>/g, ' ').trim().length > cap * CRAM_AT;
     if (filled && !crammed) continue;
+    /**
+     * HOW MUCH TO WRITE — from the reference's own text length where we have it.
+     *
+     * The budget used to come from box AREA alone, and that is why a rebuilt cover
+     * came back dense when its reference was airy: a masthead band is WIDE, so area
+     * bought it a sentence, and the drafter duly wrote one where the reference had a
+     * single word. Area cannot see that a design is spacious because its copy is
+     * short. `chars` can, so it wins outright when the model reported it — including
+     * over the role cap, since a 7-character masthead is well under any cap and the
+     * point is to be shorter, never longer.
+     */
     const box = converted.origin[slot.ref];
     const area = box ? box.w * dims.width * (box.h * dims.height) : 0;
     const byArea = area > 0 ? Math.round(area / 45) : 80;
+    const region = regionFor(slot.ref, slot.role);
+    const approxChars = region?.chars !== undefined
+      ? Math.max(1, Math.min(MAX_REGION_CHARS, region.chars))
+      : Math.max(16, Math.min(cap, byArea));
     const hint = hintFor(slot.ref, slot.role);
-    texts.push({ role: slot.role, approxChars: Math.max(16, Math.min(cap, byArea)), ...(hint ? { hint } : {}) });
+    texts.push({ role: slot.role, approxChars, ...(hint ? { hint } : {}) });
   }
   return { texts, images };
 }

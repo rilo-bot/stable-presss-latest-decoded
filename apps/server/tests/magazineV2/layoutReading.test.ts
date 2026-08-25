@@ -300,3 +300,34 @@ test('sizeFrac follows the WHOLE READING into percent units, like the boxes do',
   const headline = r.regions.find((g) => g.role === 'headline')!;
   assert.equal(headline.sizeFrac, 0.08, 'read as 8% of the page, not thrown away');
 });
+
+test('a short line is quoted, and its length is known even without a count', () => {
+  const g = typed({ text: 'HORIZON' });
+  assert.equal(g.text, 'HORIZON');
+  assert.equal(g.chars, 7, 'a transcribed line is its own length');
+});
+
+test('an explicit count wins, because a quote may be a truncation', () => {
+  const g = typed({ text: 'Find Beauty', chars: 240 });
+  assert.equal(g.chars, 240);
+});
+
+test('prose is described by its length, not transcribed', () => {
+  const long = 'x'.repeat(400);
+  const g = typed({ text: long, chars: 400 });
+  assert.equal(g.text, undefined, 'we are reading a composition, not lifting an article');
+  assert.equal(g.chars, 400, 'but the length still lands');
+});
+
+test('markup in a quoted line is stripped, not trusted', () => {
+  // It reaches a drafter's prompt and, through `hint`, the user's screen.
+  assert.equal(typed({ text: '<b>HORIZON</b>' }).text, 'HORIZON');
+  assert.equal(typed({ text: '  spaced   out  ' }).text, 'spaced out');
+});
+
+test('an unbelievable character count is dropped', () => {
+  assert.equal(typed({ chars: 999999 }).chars, undefined, 'a whole page is not one region');
+  assert.equal(typed({ chars: 0 }).chars, undefined);
+  assert.equal(typed({ chars: -5 }).chars, undefined);
+  assert.equal(typed({ chars: 'lots' }).chars, undefined);
+});

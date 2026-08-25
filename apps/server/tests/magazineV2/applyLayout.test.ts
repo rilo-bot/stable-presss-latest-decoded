@@ -1191,3 +1191,44 @@ test("an adopted ink that would vanish into the ground is repaired, not printed"
     `white-on-white was repaired (ink ${h.text!.color} on ${ground})`,
   );
 });
+
+// ── How much to write ────────────────────────────────────────────────────────
+//
+// Reported from a real run on a magazine cover: the reference's masthead is the one
+// word HORIZON, and the rebuilt page put a sixty-character article headline there,
+// wrapped over two lines. The reference reads airy because its copy is SHORT, and the
+// slot budget came from box AREA — a masthead band is wide, so area bought a sentence.
+
+test('a masthead slot asks for a masthead, not a headline that fits the box', () => {
+  const cover = reading([
+    // Wide and short, exactly the shape area over-rewards.
+    { role: 'headline', box: { x: 0.1, y: 0.06, w: 0.8, h: 0.09 }, text: 'HORIZON', sizeFrac: 0.07 },
+    { role: 'body', box: { x: 0.1, y: 0.3, w: 0.8, h: 0.6 }, chars: 900 },
+  ]);
+  const missing = unfilledSlots(cover, { width: PAGE_W, height: PAGE_H, elements: [] });
+  assert.ok(missing);
+
+  const masthead = missing.texts.find((t) => t.role === 'headline');
+  assert.ok(masthead, 'the masthead slot is on the shopping list');
+  assert.ok(
+    masthead.approxChars <= 12,
+    `the budget is the reference's own length, not its box (got ${masthead.approxChars})`,
+  );
+  assert.match(masthead.hint ?? '', /HORIZON/, 'and the drafter is told what kind of thing it is');
+
+  // The prose slot keeps a prose-sized budget — this must not simply shrink everything.
+  const body = missing.texts.find((t) => t.role === 'body');
+  assert.ok(body && body.approxChars > 400, `prose still asks for prose (got ${body?.approxChars})`);
+});
+
+test('without a reported length the budget still falls back to the box', () => {
+  // A reference the model could not read text from behaves exactly as it did before.
+  const plain = reading([
+    { role: 'headline', box: { x: 0.1, y: 0.06, w: 0.8, h: 0.09 } },
+    { role: 'body', box: { x: 0.1, y: 0.3, w: 0.8, h: 0.6 } },
+  ]);
+  const missing = unfilledSlots(plain, { width: PAGE_W, height: PAGE_H, elements: [] });
+  const masthead = missing!.texts.find((t) => t.role === 'headline')!;
+  assert.ok(masthead.approxChars >= 16, 'the area estimate is still there when nothing better exists');
+  assert.equal(masthead.hint, undefined);
+});

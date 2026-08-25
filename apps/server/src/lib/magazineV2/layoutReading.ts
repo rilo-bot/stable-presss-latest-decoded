@@ -68,6 +68,29 @@ export interface ReadRegion {
   /** Serif or sans, which is as much as anyone can honestly read off a picture and
    *  all the DSL can express (`fontRef` chooses between the page's two faces). */
   face?: FontFace;
+  /**
+   * What the reference actually SAYS here, verbatim and short ("HORIZON", "P. 26",
+   * "TRAVEL").
+   *
+   * Not so it can be copied — the drafter is told to write this magazine's own version
+   * and never the reference's brand or subject. It is here because a role cannot say
+   * what kind of thing a slot is. "headline" covers both a one-word masthead and a
+   * sixty-character article title, and told only the role the drafter writes the
+   * latter into the former, which is exactly what a real run produced.
+   *
+   * Capped hard: long prose is described by `chars`, not transcribed. We are reading a
+   * composition, not lifting someone's article.
+   */
+  text?: string;
+  /**
+   * Roughly how many characters of text this region holds ALTOGETHER.
+   *
+   * The length signal, and the more important half of the two. Slot budgets were
+   * derived from box AREA, so a wide short masthead band earned a big character
+   * allowance and got a sentence. The reference is airy because its text is short —
+   * area cannot see that, and this can.
+   */
+  chars?: number;
   /** Free text the model could not express in the fields above ("two-tone
    *  masthead", "bleeds off the left edge"). Advisory: shown to the user, and
    *  passed to the art-director when we fall back to it. Never parsed. */
@@ -114,6 +137,13 @@ const MIN_SIDE = 0.01;
  */
 const MIN_SIZE_FRAC = 0.004;
 const MAX_SIZE_FRAC = 0.34;
+/** Verbatim text is for DISPLAY type — a masthead, a tag, a page reference. Past this
+ *  a region is prose, and prose is described by `chars` rather than transcribed: we
+ *  are reading a composition, not lifting somebody's article. */
+export const MAX_REGION_TEXT = 160;
+/** A region holding more than this is a misread (the whole page, or a column counted
+ *  twice); one holding less than one character holds no text. */
+export const MAX_REGION_CHARS = 8000;
 
 // ── Coercion ─────────────────────────────────────────────────────────────────
 
@@ -224,6 +254,20 @@ function coerceRegion(o: unknown, scale: 1 | 0.01): ReadRegion | null {
   if (FONT_WEIGHTS.includes(num(r.weight) as FontWeight)) region.weight = num(r.weight) as FontWeight;
   const face = optOneOf(r.face, FONT_FACES);
   if (face) region.face = face;
+
+  // What it says, and how much of it there is. Markup is stripped rather than trusted:
+  // this reaches a drafter's prompt and, through `hint`, the user's screen.
+  const said = typeof r.text === 'string' ? r.text.replace(/<[^>]*>/g, ' ').replace(/\s+/g, ' ').trim() : '';
+  if (said && said.length <= MAX_REGION_TEXT) region.text = said;
+  const chars = num(r.chars);
+  if (chars !== null && chars >= 1 && chars <= MAX_REGION_CHARS) {
+    region.chars = Math.round(chars);
+  } else if (region.text) {
+    // A transcribed line IS its own length, so a model that gave text but no count
+    // still teaches the budget. This is the masthead case: "HORIZON" is 7 characters,
+    // whatever the band's area works out to.
+    region.chars = region.text.length;
+  }
 
   const note = optStr(r.note, MAX_NOTE);
   if (note) region.note = note;
