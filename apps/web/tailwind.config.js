@@ -10,18 +10,24 @@ module.exports = {
     },
     extend: {
       /*
-       * THE UI-CHROME TYPE SCALE — three sizes, floor 12px.
+       * THE UI-CHROME TYPE SCALE — three sizes, floor 14px.
        *
        * The magazine studio had seven (9 · 10 · 11 · 12 · 12.5 · 15 · 16) and all
        * but four sites were 12px or smaller: 58 uses of 11px and 48 of 10px. The
        * distinction between 10 and 11 carries no information a reader can perceive,
        * so it was noise that read as inconsistency. `ui-sm` is the floor and
        * nothing in application chrome should go below it.
+       *
+       * Raised +2px across all three sizes (was 12/13/15) for the low-vision /
+       * first-time-user accessibility pass — see the Aug 2026 audit. A uniform
+       * shift keeps the original rhythm (1px gap ui-sm→ui, 2px gap ui→ui-lg)
+       * instead of inventing a new one. The one fixed-size container that held
+       * ui-sm text (AiPanel's proposal-count badge) was widened to match.
        */
       fontSize: {
-        'ui-lg': ['0.9375rem', { lineHeight: '1.35' }], // 15px — panel + dialog titles
-        ui: ['0.8125rem', { lineHeight: '1.45' }], //       13px — body, chat, inputs
-        'ui-sm': ['0.75rem', { lineHeight: '1.4' }], //     12px — labels, meta, buttons
+        'ui-lg': ['1.0625rem', { lineHeight: '1.35' }], // 17px — panel + dialog titles
+        ui: ['0.9375rem', { lineHeight: '1.45' }], //       15px — body, chat, inputs
+        'ui-sm': ['0.875rem', { lineHeight: '1.4' }], //    14px — labels, meta, buttons
       },
       colors: {
         /*

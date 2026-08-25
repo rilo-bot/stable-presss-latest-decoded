@@ -194,7 +194,7 @@ export function AiPanel() {
     busy: chatBusy,
     active: true,
     // Spoken replies are strictly opt-in: silent by default, only when the
-    // read-aloud (🔊) toggle is on — even after speaking via the mic.
+    // read-aloud (Volume2) toggle is on — even after speaking via the mic.
     autoSpeakOnMic: false,
   });
 
@@ -434,7 +434,7 @@ export function AiPanel() {
       >
         <Sparkles size={16} style={{ color: 'var(--gold-bright)' }} />
         <div className="leading-tight">
-          <div className="text-ui font-bold" style={{ color: 'var(--parchment)' }}>Studio Assistant</div>
+          <div className="text-ui font-bold" style={{ color: 'var(--parchment)' }}>Design Helper</div>
           <div className="text-ui-sm" style={{ color: 'var(--gold-mid)' }}>Edits this page — staged for your approval</div>
         </div>
         {voice.voiceReady && (
@@ -498,7 +498,7 @@ export function AiPanel() {
           )}
           {!uploadsLoading && uploadCount === 0 && (
             <p className="text-ui leading-relaxed text-studio-ink-3">
-              No uploads yet. In <strong className="text-studio-ink">Chat</strong>, attach a document or image (📎) — it’s saved here and can fill a page later.
+              No uploads yet. In <strong className="text-studio-ink">Chat</strong>, attach a document or image (<Paperclip size={12} className="inline -translate-y-px" aria-hidden />) — it’s saved here and can fill a page later.
             </p>
           )}
           {uploads.map((u) => (
@@ -543,7 +543,7 @@ export function AiPanel() {
           <p className="text-ui leading-relaxed text-studio-ink-3">
             I’m your studio assistant for this page. Ask me to <strong className="text-studio-ink">rewrite the headline</strong>,{' '}
             <strong className="text-studio-ink">recolour a block</strong>, <strong className="text-studio-ink">add a photo</strong>,{' '}
-            or <strong className="text-studio-ink">move things around</strong>, or <strong className="text-studio-ink">attach a document (📎)</strong> and ask me to fill this page from it.{' '}
+            or <strong className="text-studio-ink">move things around</strong>, or <strong className="text-studio-ink">attach a document (<Paperclip size={12} className="inline -translate-y-px" aria-hidden />)</strong> and ask me to fill this page from it.{' '}
             <strong className="text-studio-ink">Paste an image</strong> anywhere here (Ctrl/Cmd+V) — a screenshot, a photo, anything you’ve copied — and I can put it on the page. Select an element first and say “this”. Everything I
             propose waits for your <strong className="text-studio-ink">Apply</strong>.
           </p>
@@ -600,17 +600,17 @@ export function AiPanel() {
       {/* Review & apply tray */}
       {showTray && (
         <div className="max-h-[46%] space-y-2 overflow-y-auto border-t-2 px-3 py-2.5" style={{ borderColor: 'var(--gold-mid)', background: 'rgba(212,168,67,0.08)' }}>
-          <div className="flex items-center justify-between gap-2">
+          <div className="flex flex-wrap items-center justify-between gap-2">
             <span className="flex items-center gap-1.5 text-ui-sm font-bold uppercase tracking-wider" style={{ color: 'var(--gold-light)' }}>
-              <span className="flex h-4 min-w-4 items-center justify-center rounded-full px-1 text-ui-sm font-bold text-studio-bg" style={{ background: 'var(--gold-bright)' }}>{proposals.length}</span>
-              Review &amp; apply
+              <span className="flex h-5 min-w-5 items-center justify-center rounded-full px-1 text-ui-sm font-bold text-studio-bg" style={{ background: 'var(--gold-bright)' }}>{proposals.length}</span>
+              Ready to review
             </span>
-            <div className="flex items-center gap-1">
-              <button onClick={() => void applyAll()} className="flex items-center gap-1 rounded-sm bg-emerald-500 px-2 py-0.5 text-ui-sm font-semibold text-studio-ink hover:bg-emerald-600">
-                <Check size={11} /> Apply all
+            <div className="flex items-center gap-1.5">
+              <button onClick={() => void applyAll()} className="flex items-center gap-1 rounded-sm bg-emerald-500 px-2.5 py-1 text-ui-sm font-semibold text-studio-ink hover:bg-emerald-600" title="Keep everything the Design Helper just changed">
+                <Check size={12} /> Use these changes
               </button>
-              <button onClick={() => discard()} className="flex items-center gap-1 rounded-sm border border-studio-edge px-2 py-0.5 text-ui-sm text-studio-ink-2 hover:bg-studio-raise-2">
-                <X size={11} /> Discard
+              <button onClick={() => discard()} className="flex items-center gap-1 rounded-sm border border-studio-edge px-2.5 py-1 text-ui-sm text-studio-ink-2 hover:bg-studio-raise-2" title="Undo everything the Design Helper just changed">
+                <X size={12} /> Don't use these
               </button>
             </div>
           </div>

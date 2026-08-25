@@ -59,15 +59,15 @@ const matchFontOption = (stack: string) => FONT_OPTIONS.find((f) => primaryFamil
  */
 function AddRow({ onAdd, disabled }: { onAdd: (kind: ElementType) => void; disabled: boolean }) {
   const tools: { kind: ElementType; label: string; icon: ReactNode }[] = [
-    { kind: 'text', label: 'Text', icon: <Type size={14} /> },
-    { kind: 'image', label: 'Photo', icon: <ImageIcon size={14} /> },
-    { kind: 'shape', label: 'Shape', icon: <Square size={14} /> },
-    { kind: 'qr', label: 'QR code', icon: <QrCode size={14} /> },
-    { kind: 'icon', label: 'Icon', icon: <Shapes size={14} /> },
+    { kind: 'text', label: 'Text', icon: <Type size={17} /> },
+    { kind: 'image', label: 'Photo', icon: <ImageIcon size={17} /> },
+    { kind: 'shape', label: 'Shape', icon: <Square size={17} /> },
+    { kind: 'qr', label: 'QR code', icon: <QrCode size={17} /> },
+    { kind: 'icon', label: 'Icon', icon: <Shapes size={17} /> },
   ];
   return (
-    <div className="flex flex-shrink-0 items-center gap-1 border-b border-studio-hair px-2 py-1.5">
-      <span className="pr-1 text-ui-sm uppercase tracking-wide text-studio-ink-4">Add</span>
+    <div className="flex flex-shrink-0 flex-wrap items-center gap-1.5 border-b border-studio-hair px-2 py-2">
+      <span className="w-full pb-0.5 text-ui-sm uppercase tracking-wide text-studio-ink-4">Add to this page</span>
       {tools.map((t) => (
         <button
           key={t.kind}
@@ -75,9 +75,10 @@ function AddRow({ onAdd, disabled }: { onAdd: (kind: ElementType) => void; disab
           disabled={disabled}
           title={`Add ${t.label.toLowerCase()} to this page`}
           aria-label={`Add ${t.label.toLowerCase()}`}
-          className="flex h-7 w-7 items-center justify-center rounded-sm border border-studio-edge text-studio-ink-2 hover:bg-studio-raise-2 hover:text-studio-ink disabled:opacity-30 disabled:hover:bg-transparent"
+          className="flex min-w-[52px] flex-col items-center justify-center gap-0.5 rounded-sm border border-studio-edge px-1.5 py-1.5 text-studio-ink-2 hover:bg-studio-raise-2 hover:text-studio-ink disabled:opacity-30 disabled:hover:bg-transparent"
         >
           {t.icon}
+          <span className="text-ui-sm leading-none">{t.label}</span>
         </button>
       ))}
     </div>
@@ -372,7 +373,7 @@ function ElementPanel({ el }: { el: MagazineElement }) {
               <input
                 key={`iu${el.id}`}
                 defaultValue={el.image.url}
-                placeholder="https://…  (or use the Studio Assistant to add a photo)"
+                placeholder="https://…  (or use the Design Helper to add a photo)"
                 onBlur={(e) => set({ image: { ...el.image!, url: e.target.value } })}
                 className="w-full rounded-sm border border-studio-edge bg-studio-raise px-2 py-1.5 text-ui-sm text-studio-ink outline-none focus:border-studio-edge-strong"
               />
@@ -554,7 +555,7 @@ function AssetsTab() {
         <Images size={26} className="mb-3 text-studio-ink-4" />
         <p className="text-ui font-semibold text-studio-ink-2">No media yet</p>
         <p className="mt-1 text-ui-sm leading-relaxed text-studio-ink-3">
-          Photos appear here when you generate a magazine, import a PDF, or ask the Studio Assistant to add a photo.
+          Photos appear here when you generate a magazine, import a PDF, or ask the Design Helper to add a photo.
         </p>
       </div>
     );

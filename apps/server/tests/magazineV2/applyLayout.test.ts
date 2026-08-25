@@ -1023,6 +1023,46 @@ test('the folio survives the ROUTE\'s call shape too, so a later reorder can sti
   assert.ok(restampFolio(out.page.elements, 9), 'a later reorder can still renumber this page');
 });
 
+// ── An image slot with no photograph ─────────────────────────────────────────
+
+/** A photo-led reference: a hero band over a title and prose. The hero is 45% of
+ *  the sheet, so losing it does not lose a detail — it loses the composition. */
+const PHOTO_LED = () => reading([
+  { role: 'image', box: { x: 0, y: 0, w: 1, h: 0.45 } },
+  { role: 'headline', box: { x: 0.08, y: 0.52, w: 0.84, h: 0.12 } },
+  { role: 'body', box: { x: 0.08, y: 0.68, w: 0.84, h: 0.24 } },
+]);
+
+test('a reference photo band survives even when there is no photograph for it', () => {
+  // THE "DUMMY IMAGE" REQUIREMENT, and the mechanism behind "the layout makes things
+  // worse". An image leaf that resolves to nothing is deleted by pruneSpec and the
+  // page RE-PARTITIONS, so the type spreads across the sheet and the arrangement the
+  // user asked to copy is gone. A magazine with fewer photos than its reference is an
+  // ordinary case, not an edge one.
+  //
+  // composeFromSolved already knows what to do with an unfilled image slot — it paints
+  // a tinted block (composeFromSolved.ts:166). Nothing ever reached that branch here
+  // because the leaf was pruned first.
+  const page = {
+    width: PAGE_W,
+    height: PAGE_H,
+    elements: [text('headline', 'No Photographs Today'), text('body', 'The prose of the page.')],
+  };
+  const out = applyTo(PHOTO_LED(), page, null);
+  assert.ok(out.page, out.why);
+
+  // The band must still be THERE, and still be roughly the height the reference gave it.
+  const band = out.page.elements.find((e) => (e.type === 'image' || e.type === 'shape') && e.w > PAGE_W * 0.8);
+  assert.ok(band, 'the reference\'s hero band is still on the page');
+  const share = band.h / PAGE_H;
+  assert.ok(share > 0.3, `the band keeps its share of the sheet (got ${(share * 100).toFixed(0)}%, reference had 45%)`);
+
+  // And the type stays where the reference put it, instead of expanding into the gap.
+  const headline = out.page.elements.find((e) => e.type === 'text' && e.text?.role === 'headline');
+  assert.ok(headline, 'the headline is on the page');
+  assert.ok(headline.y > PAGE_H * 0.35, `the headline stays below the band (y=${Math.round(headline.y)} of ${PAGE_H})`);
+});
+
 test('KNOWN GAP — on the route\'s skeleton the background raster is still replaced by a flat fill', () => {
   // NOT fixed by the style change, and deliberately left alone: it is an open design
   // question, not an oversight, so it is pinned here rather than quietly tolerated.

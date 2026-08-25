@@ -476,7 +476,30 @@ export function applyReadingToPage(
   // promotes a content-sized track to `fr` to stop a strip trailing — correct for the
   // generator, which must fill the page, and catastrophic here: it stretched a cover's
   // tagline over two thirds of the sheet.
-  const pruned = pruneLayoutSpec(spec, content, { keepWhitespace: true });
+  /**
+   * AN IMAGE SLOT WITH NO PHOTOGRAPH KEEPS ITS BOX.
+   *
+   * A magazine with fewer photos than its reference is the ordinary case, not an edge
+   * one, and the old outcome was the worst available: the empty leaf was pruned, the
+   * page RE-PARTITIONED, and the type spread across the sheet — so asking for a
+   * photo-led layout you could not fill gave you a page that resembled nothing. The
+   * band is 45% of a cover; losing it is not losing a detail.
+   *
+   * `shapeFill` is the same fallback the generator uses for a photo it could not
+   * source (curateFills), and composeFromSolved already paints it as a tinted block.
+   * The colour is `secondary`, which `themeForPage` has already guaranteed to be
+   * visible against this ground.
+   *
+   * Real photography still wins every time: this only ever fills a slot that reflow
+   * and reference-fill both left empty.
+   */
+  for (const slot of specContentRefs(spec)) {
+    if (slot.role !== 'image') continue;
+    if (content[slot.ref]?.image?.url) continue;
+    content[slot.ref] = { ...content[slot.ref], shapeFill: theme.palette.secondary };
+  }
+
+  const pruned = pruneLayoutSpec(spec, content, { keepWhitespace: true, keepImagePlaceholders: true });
   if (!pruned) {
     return { page: null, why: 'This page has no content to put into that layout yet — add a headline, some text or a photo first.' };
   }
