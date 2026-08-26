@@ -59,9 +59,11 @@ const handlers: JobHandlers = {
   // whether this was the LAST of the issue's documents to settle. Nothing here
   // waits on another job: this worker claims one at a time, so an await would be a
   // deadlock. It enqueues and returns.
-  readSourceDoc: async (payload) => {
+  readSourceDoc: async (payload, ctx) => {
     const p = payload as ReadSourceDocPayload;
-    const status = await readSourceDoc(p);
+    // ctx.beat is what keeps a multi-hour read from being reaped by the watchdog
+    // that fires on the studio's own progress poll.
+    const status = await readSourceDoc(p, ctx.beat);
     const outcome = await chainIfReady(p.onDone);
     console.log(`[worker] readSourceDoc ${p.docId} → ${status}; continuation: ${outcome}`);
   },

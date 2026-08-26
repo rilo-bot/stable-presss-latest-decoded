@@ -14,10 +14,35 @@
 
 import { db } from '../../server/src/lib/db.js';
 import { COL } from '../../server/src/lib/magazineV2/collections.js';
+import { jobIsPresumedDead, silentForMs, type JobLiveness } from '../../server/src/lib/magazineV2/jobHealth.js';
 
 /* eslint-disable @typescript-eslint/no-explicit-any */
-export type JobHandler = (payload: any) => Promise<void>;
+
+/**
+ * What a handler is given besides its payload.
+ *
+ * `beat()` is how a long job stays alive. Both watchdogs used to judge liveness by
+ * START TIME, which cannot tell "working for an hour" from "dead for an hour" — so
+ * a document read that legitimately runs for hours was reaped by the very endpoint
+ * the studio polls to show its progress. A handler that beats is alive however
+ * long it runs. See lib/magazineV2/jobHealth.ts.
+ *
+ * Call it freely: it is throttled, so beating once per page costs one write every
+ * BEAT_INTERVAL_MS however fast the pages come.
+ */
+export interface JobContext {
+  jobId: string;
+  beat: () => Promise<void>;
+}
+
+/** The second argument is optional for handlers that do not need it, so short
+ *  handlers keep their one-parameter shape. */
+export type JobHandler = (payload: any, ctx: JobContext) => Promise<void>;
 export type JobHandlers = Record<string, JobHandler>;
+
+/** Minimum gap between heartbeat writes. Well under NO_BEAT_MS (5 min), so a
+ *  live job is never mistaken for a dead one, and cheap enough to ignore. */
+const BEAT_INTERVAL_MS = 15_000;
 
 const POLL_INTERVAL_MS = Math.max(250, Number(process.env.MAGAZINE_V2_POLL_INTERVAL_MS ?? 2000));
 
@@ -80,9 +105,34 @@ export async function processNextJob(handlers: JobHandlers): Promise<boolean> {
   const attempts = Number(job.attempts) || 1;
   const maxAttempts = Number(job.maxAttempts) || 3;
   console.log(`[worker] claimed job ${job._id} (${job.type}) — attempt ${attempts}/${maxAttempts}`);
+
+  // Throttled heartbeat. A handler may call ctx.beat() per page without thinking
+  // about write volume; only one write per BEAT_INTERVAL_MS actually lands.
+  let lastBeat = 0;
+  const ctx: JobContext = {
+    jobId: String(job._id),
+    beat: async () => {
+      const now = Date.now();
+      if (now - lastBeat < BEAT_INTERVAL_MS) return;
+      lastBeat = now;
+      // Best-effort: a failed beat must never fail the work. The worst case is one
+      // missed beat, and the watchdog tolerates NO_BEAT_MS of silence.
+      try {
+        await db.collection(COL.jobs).updateOne(String(job._id), { lastBeatAt: nowIso() });
+      } catch (err) {
+        console.warn('[worker] heartbeat write failed (job continues):', err instanceof Error ? err.message : err);
+      }
+    },
+  };
+
   try {
     if (!handler) throw new Error(`No handler registered for job type "${job.type}".`);
-    await handler(job.payload);
+    // NO beat up front, deliberately. A job only earns the strict NO_BEAT_MS rule
+    // by actually reporting progress; one that never calls beat() keeps the long
+    // grace it has always had. Beating here would have handed every job a
+    // lastBeatAt — including generation, which does not beat internally and
+    // legitimately runs for half an hour — and reaped it after five minutes.
+    await handler(job.payload, ctx);
     await db.collection(COL.jobs).updateOne(job._id, { status: 'done', lastError: '', ...terminalStamp() });
     console.log(`[worker] job ${job._id} (${job.type}) done`);
   } catch (err) {
@@ -139,10 +189,16 @@ async function recoverOrphanedJobs(): Promise<void> {
     console.error('[worker] orphaned-job scan failed:', err instanceof Error ? err.message : err);
     return;
   }
-  const cutoff = Date.now() - STALE_RUNNING_MS;
+  const now = Date.now();
   for (const job of running) {
-    const startedMs = Date.parse(String(job.startedAt ?? job.updatedAt ?? ''));
-    if (Number.isFinite(startedMs) && startedMs > cutoff) continue; // still within its grace window
+    // Liveness comes from lib/magazineV2/jobHealth.ts, shared with the API's
+    // heal-on-read so the two cannot disagree about what "dead" means. A job that
+    // BEATS is judged on its beat (minutes), one that never beat on its start time
+    // (the long grace) — which is what lets a document read run for hours without
+    // being mistaken for a crash.
+    if (!jobIsPresumedDead(job as JobLiveness, now, { graceMs: STALE_RUNNING_MS })) continue;
+    const silent = silentForMs(job as JobLiveness, now);
+    const silence = silent === null ? 'unknown' : `${Math.round(silent / 60_000)}min`;
 
     const attempts = Number(job.attempts) || 0;
     const maxAttempts = Number(job.maxAttempts) || 3;
@@ -150,7 +206,7 @@ async function recoverOrphanedJobs(): Promise<void> {
 
     if (attempts >= maxAttempts) {
       // Died repeatedly (e.g. OOM every run) — give up rather than loop forever.
-      const msg = `Abandoned after ${attempts}/${maxAttempts} interrupted attempts (worker crashed/restarted mid-job — likely OOM).`;
+      const msg = `Abandoned after ${attempts}/${maxAttempts} interrupted attempts, silent ${silence} (worker crashed/restarted mid-job — likely OOM).`;
       const failed = await db
         .collection(COL.jobs)
         .updateOneIf(job._id, { status: 'running' }, { status: 'failed', lastError: msg, ...terminalStamp() });
@@ -168,8 +224,8 @@ async function recoverOrphanedJobs(): Promise<void> {
     } else {
       const requeued = await db
         .collection(COL.jobs)
-        .updateOneIf(job._id, { status: 'running' }, { status: 'queued', lastError: 'Requeued after worker restart (was stuck in running).', updatedAt: nowIso() });
-      if (requeued) console.warn(`[worker] requeued orphaned job ${job._id} (${job.type}) — attempt ${attempts}/${maxAttempts}`);
+        .updateOneIf(job._id, { status: 'running' }, { status: 'queued', lastError: `Requeued after worker restart (silent ${silence}).`, updatedAt: nowIso() });
+      if (requeued) console.warn(`[worker] requeued orphaned job ${job._id} (${job.type}) — silent ${silence}, attempt ${attempts}/${maxAttempts}`);
     }
   }
 }

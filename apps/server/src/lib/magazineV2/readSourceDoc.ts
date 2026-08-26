@@ -63,6 +63,14 @@ export interface ReadSourceDocPayload {
   onDone?: ReadContinuation | null;
 }
 
+/**
+ * Report that work is still happening. Called per page, throttled by the caller.
+ *
+ * Without this a long read is killed by the watchdog on GET /issues/:id — the very
+ * endpoint the studio polls to show reading progress. See jobHealth.ts.
+ */
+export type Beat = () => Promise<void>;
+
 /** Digest shown in the Uploads list — a cheap preview, never what generation reads. */
 function previewOf(name: string, text: string, coverage: SourceCoverage): { title: string; summary: string } {
   const lines = text
@@ -104,7 +112,7 @@ async function adoptTwin(doc: SourceDoc, twin: SourceDoc): Promise<'ready' | 'pa
  * THROWS on a failure worth retrying — the queue owns retry policy, and this
  * handler must not quietly succeed on a document it could not read.
  */
-export async function readSourceDoc(payload: ReadSourceDocPayload): Promise<'ready' | 'partial' | 'failed'> {
+export async function readSourceDoc(payload: ReadSourceDocPayload, beat?: Beat): Promise<'ready' | 'partial' | 'failed'> {
   const doc = await getSourceDoc(payload.docId);
   if (!doc) throw new Error(`Source document ${payload.docId} not found.`);
 
@@ -156,6 +164,10 @@ export async function readSourceDoc(payload: ReadSourceDocPayload): Promise<'rea
       skipUnits: already,
       maxPages: payload.maxPages ?? JOB_MAX_OCR_PAGES,
       onUnit: async (unit) => {
+        // Beat FIRST, and for every unit including blank ones: a run of blank
+        // pages is still progress, and going quiet through them would look like
+        // death to the watchdog.
+        await beat?.();
         if (!unit.text.trim()) return; // a genuinely blank page stores no rows
         if (!firstText) firstText = unit.text;
         // Persisted per unit, BEFORE the next is read: a kill here costs one unit.
