@@ -16,9 +16,19 @@
 //   • a box three times taller than the copy inside it (the "more space than elements"
 //     complaint, measured rather than eyeballed)
 //   • a body column 1080px wide — about 120 characters a line, when 45–75 is readable
+//   • a page 40% of which has nothing drawn on it at all (`inkShare`)
 //
 // Fed back into the retry hint, it turns a blind retry into a corrected one. It is also
 // what makes the raised leaf cap safe: density arrives with feedback attached.
+//
+// ONE MEASURE HERE IS NOT LIKE THE OTHERS. Everything above is reported BY the leaf
+// that owns the space, and that is a real blind spot: emptiness had to be DECLARED as
+// a spacer to be counted, and waste had to sit INSIDE somebody's box. Space belonging
+// to nothing — a container's `pad`, the `gap` between its children — was invisible to
+// all of it, which is how a shipped issue came to have pages 35-40% bare that measured
+// perfectly clean and never bought themselves a retry. `inkShare` is taken from the
+// page rather than from the report: union what actually gets painted, compare with the
+// sheet. No leaf can hide anything from it because no leaf is asked.
 //
 // Pure + server-safe: arithmetic over measured font metrics. No DOM, no LLM, no I/O.
 // ---------------------------------------------------------------------------
@@ -76,8 +86,39 @@ function smallSlackShare(fit: Fit): number {
  * Deliberate emptiness (spacer leaves) has a budget too. The prompt blesses
  * 15–30% of an interior page as air; a page MOSTLY handed to spacers is not a
  * design, it is a missing page. Above this share, the emptiness counts.
+ *
+ * SET TO MATCH THE BRIEF. This bar was 0.45 while the art-director was told
+ * "roughly 15–30% of an interior page as deliberate air" — a fifteen-point band
+ * where the model was graded 50% looser than the standard it was given, and
+ * every page that landed in it scored ZERO flaws and shipped on the first
+ * attempt without a retry. That band is where the half-empty pages came from.
+ * 0.30 is the top of what the prompt actually blesses, so the grader and the
+ * brief now say the same number.
  */
-const EMPTY_SERIOUS = 0.45;
+const EMPTY_SERIOUS = 0.3;
+/**
+ * THE HONEST MEASURE: how much of the sheet the page never draws on at all.
+ *
+ * Every other number here is reported by the leaf that owns the space, which is
+ * exactly why a page could be visibly half-empty and measure clean. Emptiness had
+ * to be DECLARED (a spacer) to be counted, and waste inside a box had to belong to
+ * a box. Space that belongs to NOTHING — a container's `pad`, the `gap` between its
+ * children, both of which the art-director may set as high as MAX_SPACE_PX (400) —
+ * was invisible to all of it. So was a leaf that draws nothing at all.
+ *
+ * `inkShare` is measured the other way round: union the boxes that actually PAINT
+ * something and compare that with the sheet. It cannot be evaded by whose account
+ * the emptiness sits in.
+ *
+ * Counted against the emptiness NOBODY DECLARED — the bare sheet less whatever the
+ * art-director owned up to with spacer leaves, which EMPTY_SERIOUS already judges.
+ *
+ * The bar is derived, not felt. The page margin is `md` = 36px on 1240×1754, which
+ * is ~10% of the sheet no page can ever draw on; the prompt blesses up to 30% more
+ * as deliberate air. 10 + 30 = 40, so undeclared bareness past 40% of the sheet has
+ * gone beyond what the page was told it could have, whoever's account it sits in.
+ */
+const BARE_SERIOUS = 0.4;
 /** Type asked at more than this multiple of its role's own ceiling reads as a
  *  banner, not a headline. Advisory (see the note on `giant` below). */
 const GIANT_AT = 1.75;
@@ -108,12 +149,77 @@ export interface Fit {
   /** Share of the page (0–1) wasted INSIDE boxes, summed across every slack
    *  finding — the aggregate the per-box threshold cannot see. */
   slackShare: number;
+  /** Share of the page (0–1) that something actually PAINTS, overlap counted once.
+   *  The one measure here that no leaf can hide from: see BARE_SERIOUS. */
+  inkShare: number;
 }
 
 const pct = (v: number) => `${Math.round(v * 100)}%`;
 const pt = (px: number) => `${Math.round(pxToPt(px))}pt`;
 
 interface Box { x: number; y: number; w: number; h: number }
+
+const HEX = /^#[0-9a-f]{6}$/i;
+
+/**
+ * The rectangle this leaf actually PAINTS, or null if it paints nothing.
+ *
+ * Deliberately mirrors `buildElement` in composeFromSolved.ts case for case,
+ * including the two square devices: a QR and an icon are shrunk to the largest
+ * square that fits and centred, so a QR handed a 1200×160 band paints 160×160 and
+ * the rest of that band is bare page. Measuring the BOX there would credit the
+ * page with ink it never puts down — which is the same blindness this whole
+ * measure exists to remove. A report that disagrees with the renderer is worse
+ * than no report, so when that function changes, this one has to change with it.
+ */
+function drawnBox(leaf: SolvedLayout['leaves'][number], content: ResolvedContent): Box | null {
+  const role = leaf.node.role as LeafRole;
+  const box = leaf.box;
+  const fill = content[leaf.node.contentRef ?? ''];
+  // Takes its fr share of the track and draws nothing — that is its entire job.
+  if (role === 'spacer') return null;
+  if (role === 'image') {
+    if (fill?.image?.url) return box;
+    return fill?.shapeFill && HEX.test(fill.shapeFill) ? box : null; // tinted stand-in still paints
+  }
+  if (role === 'shape') return box; // scrim or panel — always painted
+  if (role === 'qr' || role === 'icon') {
+    if (role === 'qr' && !fill?.qrUrl) return null;
+    const side = Math.max(1, Math.min(box.w, box.h));
+    return { x: box.x + (box.w - side) / 2, y: box.y + (box.h - side) / 2, w: side, h: side };
+  }
+  if (TEXT_ROLES.has(role)) return fill?.text?.trim() ? box : null;
+  return null;
+}
+
+/**
+ * Total area covered by these rectangles, counting overlap ONCE.
+ *
+ * Summing areas would be wrong by exactly the amount a page uses stacks — a
+ * full-bleed photo with a scrim and a headline over it would measure 200%+ of the
+ * sheet and make every layered page look impossibly dense. Coordinate compression
+ * gives the exact union: cut the plane along every box edge and count each cell
+ * that any box covers. A page holds a couple of dozen leaves, so the O(n³) shape of
+ * this is nothing (~50k cheap checks) and it is exact rather than sampled.
+ */
+function unionArea(boxes: Box[]): number {
+  if (boxes.length === 0) return 0;
+  const xs = [...new Set(boxes.flatMap((b) => [b.x, b.x + b.w]))].sort((a, b) => a - b);
+  const ys = [...new Set(boxes.flatMap((b) => [b.y, b.y + b.h]))].sort((a, b) => a - b);
+  let total = 0;
+  for (let i = 0; i < xs.length - 1; i++) {
+    const x0 = xs[i]!;
+    const x1 = xs[i + 1]!;
+    for (let j = 0; j < ys.length - 1; j++) {
+      const y0 = ys[j]!;
+      const y1 = ys[j + 1]!;
+      if (boxes.some((b) => b.x <= x0 && b.x + b.w >= x1 && b.y <= y0 && b.y + b.h >= y1)) {
+        total += (x1 - x0) * (y1 - y0);
+      }
+    }
+  }
+  return total;
+}
 
 /** Distance between two boxes' nearest edges (0 when they touch or overlap). */
 function gapBetween(a: Box, b: Box): number {
@@ -321,7 +427,14 @@ export function fitReport(solved: SolvedLayout, content: ResolvedContent, fonts:
 
   const emptyShare = emptyArea / pageArea;
   const slackShare = findings.reduce((n, f) => n + (f.kind === 'slack' ? (f.share ?? 0) : 0), 0);
-  return { findings, emptyShare, slackShare };
+  // Measured over EVERY leaf, not just the ones that produced a finding — the
+  // point of this number is that it is taken from the page rather than from the
+  // report, so nothing above can have hidden anything from it.
+  const painted = solved.leaves
+    .map((l) => drawnBox(l, content))
+    .filter((b): b is Box => b !== null);
+  const inkShare = Math.min(1, unionArea(painted) / pageArea);
+  return { findings, emptyShare, slackShare, inkShare };
 }
 
 /**
@@ -348,6 +461,20 @@ export function fitHint(fit: Fit, limit = 6): string {
     pageLines.push(
       `• THE PAGE: ${pct(fit.emptyShare)} of the sheet is spacer leaves — past deliberate air and into a missing page. ` +
         `Add real content or shrink the spacers.`,
+    );
+  }
+  // Independent of the spacer line above, and deliberately so: they describe two
+  // different faults, and a page can have both. See seriousFlaws.
+  if (Math.max(0, 1 - fit.inkShare - fit.emptyShare) >= BARE_SERIOUS) {
+    // Says WHERE to look, because this is the one complaint the art-director cannot
+    // trace back to a leaf: by construction the empty part of the page belongs to
+    // nothing it named. Listing the usual culprits is the difference between a
+    // measurement it can act on and one it can only feel bad about.
+    pageLines.push(
+      `• THE PAGE: only ${pct(fit.inkShare)} of the sheet has ANYTHING drawn on it — the other ${pct(1 - fit.inkShare)} ` +
+        `is bare background. This is not one loose box; it is the page as a whole. Look for a large "pad" or "gap" ` +
+        `on a container, a track whose weight is far larger than what sits in it, or content clustered into part of ` +
+        `the sheet with the rest left over. Spread the content across the page, or give the leftover to something real.`,
     );
   }
   if (fit.findings.length === 0 && pageLines.length === 0) return '';
@@ -424,8 +551,23 @@ export function seriousFlaws(fit: Fit): number {
   // wasting AGG_SLACK_SERIOUS of the sheet across boxes too small to flag alone,
   // or handing EMPTY_SERIOUS of it to spacers, is flawed even when no single box
   // is. Small-slack only, so a huge box (already counted above) isn't counted twice.
-  const aggregate = (smallSlackShare(fit) >= AGG_SLACK_SERIOUS ? 1 : 0) + (fit.emptyShare >= EMPTY_SERIOUS ? 1 : 0);
+  // TWO KINDS OF EMPTINESS, each counted once at its own bar. `emptyShare` is the
+  // air the art-director DECLARED with spacer leaves; `undeclaredBare` is the rest
+  // of the unpainted sheet — a container's pad, the gap between its children, a
+  // track far wider than what sits in it — which it left bare without saying so.
+  //
+  // Subtracting the declared part is what keeps one fault from being charged twice
+  // (the same rule the small-slack aggregate follows above, where boxes already
+  // over the per-box bar are excluded). Simply suppressing the bare check whenever
+  // spacers tripped would be the opposite error: a page that declares 35% air AND
+  // leaks another 35% into gaps has two different faults, and would have been
+  // charged for one.
+  const undeclaredBare = Math.max(0, 1 - fit.inkShare - fit.emptyShare);
+  const aggregate =
+    (smallSlackShare(fit) >= AGG_SLACK_SERIOUS ? 1 : 0) +
+    (fit.emptyShare >= EMPTY_SERIOUS ? 1 : 0) +
+    (undeclaredBare >= BARE_SERIOUS ? 1 : 0);
   return perFinding + aggregate;
 }
 
-export { MAX_COMFORTABLE_CPL, SLACK_AT, SLACK_SERIOUS_SHARE, AGG_SLACK_SERIOUS, EMPTY_SERIOUS, QR_LOUD_AT, SQUARE_WASTE_AT, ICON_DECOR_WIDTH };
+export { MAX_COMFORTABLE_CPL, SLACK_AT, SLACK_SERIOUS_SHARE, AGG_SLACK_SERIOUS, EMPTY_SERIOUS, BARE_SERIOUS, QR_LOUD_AT, SQUARE_WASTE_AT, ICON_DECOR_WIDTH };

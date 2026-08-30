@@ -15,7 +15,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 
-import { fitReport, fitHint, seriousFlaws, charBudget } from '../../src/lib/magazineV2/fitReport.js';
+import { fitReport, fitHint, seriousFlaws, charBudget, EMPTY_SERIOUS } from '../../src/lib/magazineV2/fitReport.js';
 import { PAGE_W, PAGE_H } from '../../src/lib/magazineV2/config.js';
 import { ptToPx } from '../../src/lib/magazineV2/roleScale.js';
 import type { SolvedLayout } from '../../src/lib/magazineV2/solveLayout.js';
@@ -26,15 +26,36 @@ const fonts = { display: 'Playfair Display', body: 'Inter' };
 
 type LeafSpec = [Partial<LeafNode> & { role: LeafRole }, [number, number, number, number]];
 
-const solvedOf = (leaves: LeafSpec[]): SolvedLayout => ({
+/**
+ * A fixture page.
+ *
+ * Every fixture here isolates ONE finding and names only the leaves that produce
+ * it — which is right for the per-leaf checks and a lie about the page. A real
+ * solved layout ALWAYS tiles its whole sheet: the solver partitions the page, so
+ * every pixel belongs to some leaf. To the page-level coverage check
+ * (BARE_SERIOUS) a two-leaf fixture therefore reads as a page with almost nothing
+ * on it, and every one of these tests would carry a second, spurious defect.
+ *
+ * So a backdrop covers the sheet by default, making each fixture the whole page it
+ * was always pretending to be. A `shape` leaf yields no findings of its own, so it
+ * changes nothing else about what these tests measure.
+ *
+ * `bare: true` opts out — for the tests that are ABOUT coverage.
+ */
+const solvedOf = (leaves: LeafSpec[], opts: { bare?: boolean } = {}): SolvedLayout => ({
   background: { ref: 'bg' },
   margin: 0,
   page: { width: PAGE_W, height: PAGE_H },
-  leaves: leaves.map(([node, [x, y, w, h]], i) => ({
-    node: { kind: 'leaf', ...node } as LeafNode,
-    box: { x, y, w, h },
-    z: i,
-  })),
+  leaves: [
+    ...(opts.bare
+      ? []
+      : [{ node: { kind: 'leaf', role: 'shape' } as LeafNode, box: { x: 0, y: 0, w: PAGE_W, h: PAGE_H }, z: -1 }]),
+    ...leaves.map(([node, [x, y, w, h]], i) => ({
+      node: { kind: 'leaf', ...node } as LeafNode,
+      box: { x, y, w, h },
+      z: i,
+    })),
+  ],
 });
 
 const kinds = (fit: { findings: { kind: string }[] }) => fit.findings.map((f) => f.kind);
@@ -222,7 +243,7 @@ test('a page mostly handed to spacers is a defect, and deliberate air is not', (
     { h: { text: 'A Headline' } },
     fonts,
   );
-  assert.ok(missing.emptyShare >= 0.45, `emptyShare ${missing.emptyShare}`);
+  assert.ok(missing.emptyShare >= EMPTY_SERIOUS, `emptyShare ${missing.emptyShare}`);
   assert.ok(seriousFlaws(missing) >= 1, 'past deliberate air and into a missing page');
   assert.match(fitHint(missing), /spacer leaves — past deliberate air/);
 
@@ -234,8 +255,87 @@ test('a page mostly handed to spacers is a defect, and deliberate air is not', (
     { h: { text: 'A Headline' } },
     fonts,
   );
-  assert.ok(breathing.emptyShare < 0.45);
+  // 23% is inside the 15–30% the prompt blesses — and the bar is now that same
+  // number, so this asserts against the constant rather than the 0.45 it used to be.
+  assert.ok(breathing.emptyShare < EMPTY_SERIOUS);
+  assert.equal(seriousFlaws(breathing), 0, 'deliberate air is not a defect');
   assert.ok(!fitHint(breathing).includes('past deliberate air'));
+});
+
+// ── The page nobody owned (2026-08-30) ──────────────────────────────────────
+//
+// A shipped issue had pages roughly 35-40% bare — and they measured CLEAN, on the
+// first attempt, with no retry. Every check above is reported BY the leaf that owns
+// the space: emptiness had to be declared as a spacer to count, and waste had to
+// sit inside a box. Space belonging to NOTHING — a container's `pad`, the `gap`
+// between its children, either of which may be set as high as 400px — was invisible
+// to all of it. `inkShare` measures the other way round: what actually gets painted.
+
+test('a page that paints almost nothing is a defect, however the emptiness is spelled', () => {
+  // Content clustered into the top third, the rest given to gaps no leaf owns.
+  // NO spacer leaf, so `emptyShare` is 0 and every per-leaf check is happy.
+  const fit = fitReport(
+    solvedOf(
+      [
+        [{ role: 'headline', contentRef: 'h', fontPt: 34 }, [120, 100, 1000, 200]],
+        [{ role: 'body', contentRef: 'b', fontPt: 11 }, [120, 320, 1000, 360]],
+      ],
+      { bare: true },
+    ),
+    { h: { text: 'What Promise Costs' }, b: { text: 'A yearling’s price begins long before the ring. '.repeat(24) } },
+    fonts,
+  );
+  assert.equal(fit.emptyShare, 0, 'nothing was DECLARED as air — that is the point');
+  assert.ok(fit.inkShare < 0.4, `only the cluster is painted (inkShare ${fit.inkShare})`);
+  assert.ok(seriousFlaws(fit) >= 1, 'the bare page is counted even with no spacer and no slack');
+  assert.match(fitHint(fit), /has ANYTHING drawn on it/);
+});
+
+test('a page that covers its sheet is clean, and a full-bleed one is not "bare"', () => {
+  // A photo bleeding to the edges paints the whole sheet: high air, zero bareness.
+  const bled = fitReport(
+    solvedOf(
+      [
+        [{ role: 'image', contentRef: 'hero' }, [0, 0, PAGE_W, PAGE_H]],
+        [{ role: 'headline', contentRef: 'h', fontPt: 34 }, [120, 1200, 1000, 200]],
+      ],
+      { bare: true },
+    ),
+    { hero: { image: { url: 'https://s3/x.jpg', assetId: 'a', alt: '' } }, h: { text: 'The Deciding Eighth' } },
+    fonts,
+  );
+  assert.equal(bled.inkShare, 1, 'the photo covers the sheet');
+  assert.equal(seriousFlaws(bled), 0);
+});
+
+test('overlap is counted once — a stack is not denser than the page it sits on', () => {
+  // hero + scrim + headline all cover the same ground. Summing areas would report
+  // ~250% and make every layered page look impossibly full.
+  const stacked = fitReport(
+    solvedOf(
+      [
+        [{ role: 'image', contentRef: 'hero' }, [0, 0, PAGE_W, PAGE_H]],
+        [{ role: 'shape' }, [0, 0, PAGE_W, PAGE_H]],
+        [{ role: 'headline', contentRef: 'h', fontPt: 34 }, [120, 800, 1000, 200]],
+      ],
+      { bare: true },
+    ),
+    { hero: { image: { url: 'https://s3/x.jpg', assetId: 'a', alt: '' } }, h: { text: 'The Deciding Eighth' } },
+    fonts,
+  );
+  assert.equal(stacked.inkShare, 1, 'never above 1, however many layers overlap');
+});
+
+test('a square device is credited with the square it paints, not the band it was given', () => {
+  // The QR-in-a-1200×160-band defect, seen from the coverage side: the band is not
+  // ink. Measuring the box here would credit the page for space it leaves bare.
+  const fit = fitReport(
+    solvedOf([[{ role: 'qr', contentRef: 'qr' }, [20, 800, 1200, 160]]], { bare: true }),
+    { qr: { qrUrl: 'https://x' } },
+    fonts,
+  );
+  // 160² of a 1240×1754 sheet ≈ 1.2%, not the 8.8% the band would have claimed.
+  assert.ok(fit.inkShare < 0.02, `inkShare ${fit.inkShare}`);
 });
 
 test('type far past its role ceiling is REPORTED as giant but never counted', () => {

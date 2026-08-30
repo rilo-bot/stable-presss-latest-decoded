@@ -610,10 +610,25 @@ export interface LayoutFidelity {
   /** Reference boxes that never reached the page (nothing to put in them). */
   missing: number;
 }
+/**
+ * How faithfully the reference is reproduced.
+ *
+ * 'exact'  — every region lands on the box it was read from. An unfillable slot
+ *            leaves a HOLE and nothing else moves. This is "same layout".
+ * 'adapt'  — the reference is re-composed through its frame tree, so empty slots
+ *            are pruned and their siblings grow to take the space. Right when the
+ *            reference is a different shape from the page, or the page carries far
+ *            more copy than the reference had.
+ *
+ * The server defaults to 'adapt' for callers that say nothing; this client always
+ * states which job it is (see the store's applyLayout).
+ */
+export type LayoutFit = 'adapt' | 'exact';
+
 export const applyLayoutToPage = (
   id: string,
   pageId: string,
-  body: { rev: number; reading: LayoutReading },
+  body: { rev: number; reading: LayoutReading; fit: LayoutFit },
 ) =>
   authFetch(`${BASE}/issues/${id}/pages/${pageId}/apply-layout`, {
     method: 'POST',

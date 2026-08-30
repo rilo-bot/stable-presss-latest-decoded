@@ -89,6 +89,15 @@ export function LayoutReference() {
   const [busy, setBusy] = useState(false);
   const [shot, setShot] = useState<{ url: string; reading: LayoutReading; warning: string } | null>(null);
   const [fidelity, setFidelity] = useState<api.LayoutFidelity | null>(null);
+  /**
+   * EXACT BY DEFAULT: pointing at a reference and pressing the button means "make this
+   * page look like that one", so the default has to be the mode that reproduces it.
+   *
+   * 'adapt' stays offered rather than removed — it is the right answer for a reference
+   * of a different shape, or a page whose copy far outruns what the reference held, and
+   * those are real jobs. It is just no longer the silent default it was.
+   */
+  const [fit, setFit] = useState<api.LayoutFit>('exact');
 
   /**
    * The confirm lives in `store.applyLayout`, NOT here.
@@ -99,7 +108,7 @@ export function LayoutReference() {
    * between both ways in. One irreversible action, one place that asks.
    */
   const apply = async (reading: LayoutReading) => {
-    const measured = await useEditorStore.getState().applyLayout(reading);
+    const measured = await useEditorStore.getState().applyLayout(reading, undefined, fit);
     // The reading STAYS on success, with its measured result beside it. Two reasons:
     // the user can see how close it came while looking at the page it produced, and
     // the same reference can then be applied to the next page — which is the whole of
@@ -208,6 +217,37 @@ export function LayoutReference() {
             <p className="border-l-2 border-studio-edge pl-2 text-ui-sm italic text-studio-ink-3">{shot.reading.notes}</p>
           )}
 
+          {/* WHICH JOB THIS IS. The two modes lose different things, and until now the
+              user was silently given the adapting one — which re-partitions the page
+              around any slot it cannot fill. */}
+          <div className="flex flex-col gap-1">
+            {([
+              { v: 'exact' as const, label: 'Copy the layout exactly', hint: 'Every box where the reference had it. An empty box stays empty.' },
+              { v: 'adapt' as const, label: 'Adapt it to my content', hint: 'Re-composes to fit this page. Empty boxes close up and the rest grow.' },
+            ]).map((o) => (
+              <label
+                key={o.v}
+                className={
+                  'flex cursor-pointer items-start gap-2 rounded-sm border px-2 py-1.5 text-ui-sm ' +
+                  (fit === o.v ? 'border-[var(--gold-bright)]/60 bg-studio-raise-2 text-studio-ink' : 'border-studio-edge text-studio-ink-2 hover:bg-studio-raise')
+                }
+              >
+                <input
+                  type="radio"
+                  name="layout-fit"
+                  checked={fit === o.v}
+                  disabled={layoutBusy}
+                  onChange={() => setFit(o.v)}
+                  className="mt-0.5 accent-studio-gold"
+                />
+                <span>
+                  {o.label}
+                  <span className="block text-studio-ink-4">{o.hint}</span>
+                </span>
+              </label>
+            ))}
+          </div>
+
           <button
             onClick={() => void apply(shot.reading)}
             disabled={layoutBusy}
@@ -232,10 +272,16 @@ export function LayoutReference() {
             </div>
           )}
 
+          {/* Says what the SELECTED mode does. It used to state flatly that the page was
+              matched "rather than cloning the page exactly" — true of adapt, and the only
+              mode reachable at the time, but the opposite of what exact does. */}
           <p className="text-ui-sm text-studio-ink-4">
-            Your headline, text and photos move into the new structure — nothing is retyped.
-            It <b className="text-studio-ink-3">replaces this page's arrangement and cannot be undone</b>, and it matches the
-            composition rather than cloning the page exactly.
+            The page is cleared and rebuilt in the reference's design — fresh words are written for your
+            magazine and your own photos are placed where it wants pictures.
+            It <b className="text-studio-ink-3">replaces this page's arrangement and cannot be undone</b>.
+            {fit === 'exact'
+              ? ' Boxes land where the reference had them; one with nothing to fill it is left empty.'
+              : ' The composition is matched rather than cloned — boxes shift to suit what this page holds.'}
           </p>
         </>
       )}
