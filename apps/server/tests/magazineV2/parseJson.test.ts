@@ -1,6 +1,12 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { parseJsonObject, repairUnquotedKeys, repairBracketMismatch } from '../../src/lib/magazineV2/parseJson.js';
+import {
+  parseJsonObject,
+  repairUnquotedKeys,
+  repairBracketMismatch,
+  repairBalance,
+  repairCloserCount,
+} from '../../src/lib/magazineV2/parseJson.js';
 
 // ── The malformation this exists for ─────────────────────────────────────────
 // Measured, not imagined: reading one real magazine cover four times, three of the
@@ -144,4 +150,119 @@ test('the outermost object still wins when the outer is bracket-mismatched', () 
   const parsed = parseJsonObject(src) as Record<string, unknown>;
   assert.ok(parsed, 'the outer object parses');
   assert.ok('root' in parsed, 'must be the whole spec, not just the page fragment');
+});
+
+// ── The THIRD malformation: a miscounted closing RUN ──────────────────────────
+// Measured, not imagined, and it ran in both directions. Two real art-director
+// responses, both `finishReason: 'stop'` — complete responses, nothing truncated —
+// where the design was finished and good and the long tail of `}]` characters was
+// the only thing wrong.
+//
+// This is worse than a wrong closer TYPE, because the COUNT is wrong: with a closer
+// missing or spare, the outermost object never balances, so parseJsonObject's scan
+// never forms a group for it at all — and the type/key repairs, which only ever run
+// on a group that closed, never even executed. The scan fell through to the next
+// `{`, which is the value of `"page"`: a small, perfectly-valid fragment with no
+// `root` in it. normalizeLayoutSpec returned null, and the worker logged
+// "was unusable — using seed" on a page the model had designed correctly.
+//
+// Both cases below are reduced from the real responses, keeping the exact defect.
+// Each is paired with the control the model MEANT to write, and the repair has to
+// reproduce it byte for byte — "it parses" is not the bar; "it parses into the tree
+// that was designed" is.
+
+/** …col > child > leaf. The run that closes all of it, written correctly. */
+const A_HEAD =
+  '{"page":{"background":{"ref":"bg"},"margin":"lg"},"root":{"kind":"row","children":[' +
+  '{"weight":1.7,"node":{"kind":"stack","layers":[' +
+  '{"kind":"leaf","role":"shape"},' +
+  '{"kind":"col","children":[{"sizing":"content","node":{"kind":"leaf","role":"byline"';
+const A_CONTROL = `${A_HEAD}}}]}]}}]}}`;
+// `}}]}}}` where `}}]}]}}` was due: one closer of the wrong type, and one absent.
+const A_MISSING_A_CLOSER = `${A_HEAD}}}]}}}]}}`;
+
+const B_HEAD =
+  '{"page":{"background":{"ref":"primary"},"margin":"none"},"root":{"kind":"row","children":[' +
+  '{"weight":6.4,"node":{"kind":"stack","layers":[' +
+  '{"kind":"leaf","role":"image"},' +
+  '{"kind":"col","children":[{"sizing":"content","node":{"kind":"leaf","role":"label"';
+const B_TAIL = ',{"weight":1.2,"node":{"kind":"leaf","role":"entry"}}]}}';
+const B_CONTROL = `${B_HEAD}}}]}]}}${B_TAIL}`;
+// `}}]}}]}}` where `}}]}]}}` was due: one closer too MANY, which shuts the root's
+// own children array early and strands the second page element outside it.
+const B_EXTRA_CLOSER = `${B_HEAD}}}]}}]}}${B_TAIL}`;
+
+test('the controls are the JSON the model meant to write', () => {
+  // Guards the fixtures themselves: a typo in a control would make the two tests
+  // below agree with each other about the wrong tree.
+  assert.deepEqual((JSON.parse(A_CONTROL) as Record<string, unknown>).page, { background: { ref: 'bg' }, margin: 'lg' });
+  assert.equal((JSON.parse(B_CONTROL) as any).root.children.length, 2, 'both page elements are inside root');
+});
+
+test('a closer MISSING from the middle of the run is restored', () => {
+  assert.throws(() => JSON.parse(A_MISSING_A_CLOSER), 'the fixture really is broken');
+  assert.deepEqual(parseJsonObject(A_MISSING_A_CLOSER), JSON.parse(A_CONTROL));
+});
+
+test('a closer too MANY in the middle of the run is dropped', () => {
+  assert.throws(() => JSON.parse(B_EXTRA_CLOSER), 'the fixture really is broken');
+  const parsed = parseJsonObject(B_EXTRA_CLOSER) as any;
+  assert.deepEqual(parsed, JSON.parse(B_CONTROL));
+  assert.equal(parsed.root.children.length, 2, 'the second element is back inside root, not stranded after it');
+});
+
+test('the repair reconstructs the intended text exactly, in both directions', () => {
+  assert.equal(repairCloserCount(A_MISSING_A_CLOSER), A_CONTROL);
+  assert.equal(repairCloserCount(B_EXTRA_CLOSER), B_CONTROL);
+});
+
+test('a miscounted run never yields the inner "page" fragment', () => {
+  // The actual bug as the user saw it: `{background, margin}` reaching
+  // normalizeLayoutSpec, which finds no root and returns null → seed page.
+  for (const broken of [A_MISSING_A_CLOSER, B_EXTRA_CLOSER]) {
+    const parsed = parseJsonObject(broken) as Record<string, unknown>;
+    assert.ok('root' in parsed, 'must be the whole spec, not the page fragment');
+  }
+});
+
+// ── The repair must not be a licence, part two ───────────────────────────────
+
+test('repairBalance and repairCloserCount leave already-valid JSON identical', () => {
+  const src = '{"a":[1,2,{"b":[3,4]}],"c":{"d":5}}';
+  assert.equal(repairBalance(src), src);
+  assert.equal(repairCloserCount(src), src);
+});
+
+test('a response cut off mid-tree yields the tree built so far', () => {
+  // finishReason 'length'. Closing what is still open beats returning nothing: the
+  // page keeps the design the model got through before the budget ran out.
+  const truncated = '{"root":{"kind":"row","children":[{"node":{"kind":"leaf","role":"body"';
+  assert.deepEqual(parseJsonObject(truncated), {
+    root: { kind: 'row', children: [{ node: { kind: 'leaf', role: 'body' } }] },
+  });
+});
+
+test('an unterminated string is closed rather than dropped', () => {
+  assert.deepEqual(parseJsonObject('{"root":{"contentRef":"headl'), { root: { contentRef: 'headl' } });
+});
+
+test('brackets inside strings are still never counted or rewritten', () => {
+  assert.deepEqual(parseJsonObject('{"note":"a [b] and {c}"}'), { note: 'a [b] and {c}' });
+  assert.equal(repairCloserCount('{"note":"a [b] and {c}"}'), '{"note":"a [b] and {c}"}');
+});
+
+test('unparseable junk is still null — the count repair invents nothing', () => {
+  // Only `}` and `]` are ever added or removed, and only where JSON.parse has
+  // already refused to continue. Nothing here is a bracket problem, so nothing here
+  // gets a tree.
+  assert.equal(parseJsonObject('no braces here'), null);
+  assert.equal(parseJsonObject('{"a": undefined}'), null);
+  assert.equal(parseJsonObject('{"a": , "b": }'), null);
+});
+
+test('prose and fences around the object still work', () => {
+  // The count repair runs per candidate, so it must not hijack a document whose
+  // first `{` is prose and whose real object comes later.
+  assert.deepEqual(parseJsonObject('Here:\n```json\n{"a":1}\n```\ndone'), { a: 1 });
+  assert.deepEqual(parseJsonObject('a {note} then {"a":1}'), { a: 1 });
 });

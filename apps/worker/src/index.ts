@@ -61,9 +61,16 @@ const handlers: JobHandlers = {
   // deadlock. It enqueues and returns.
   readSourceDoc: async (payload, ctx) => {
     const p = payload as ReadSourceDocPayload;
-    // ctx.beat is what keeps a multi-hour read from being reaped by the watchdog
-    // that fires on the studio's own progress poll.
+    // ctx.beat is what keeps a long read from being reaped by the watchdog that
+    // fires on the studio's own progress poll.
     const status = await readSourceDoc(p, ctx.beat);
+    // 'reading' means one BATCH finished and the next is already queued: the read
+    // handed the worker back so other magazines can move, and nothing downstream is
+    // owed anything yet. chainIfReady would answer 'waiting' — skip the round trip.
+    if (status === 'reading') {
+      console.log(`[worker] readSourceDoc ${p.docId} → batch done, next batch queued`);
+      return;
+    }
     const outcome = await chainIfReady(p.onDone);
     console.log(`[worker] readSourceDoc ${p.docId} → ${status}; continuation: ${outcome}`);
   },

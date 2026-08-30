@@ -4,13 +4,18 @@
 // into the studio — pages stream in live there — instead of a blocking loader.
 // Import (pixel-faithful) and Blank are quiet secondary starts.
 
-import { useEffect, useRef, useState, type DragEvent } from 'react';
+import { useEffect, useRef, useState, type ClipboardEvent, type DragEvent } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { Sparkles, Paperclip, X, FileText, FileScan, FilePlus, Globe, Trash2, ArrowUp, Pencil, Eye, LayoutTemplate } from 'lucide-react';
 import { toast } from 'sonner';
 import * as api from './api';
 import { ApiError, type IssueSummary } from './api';
-import { ingestFile, attachmentSourceText, ATTACH_ACCEPT } from '@/agent/attachments/documentUpload';
+// ingestFile / attachmentSourceText are deliberately NOT imported any more: this
+// screen no longer reads documents in the browser. Reading happens in the worker,
+// which is what removed the six-page cap. ATTACH_ACCEPT still governs the picker.
+import { ATTACH_ACCEPT } from '@/agent/attachments/documentUpload';
+import { filesFromClipboard, isPasteImage } from '@/agent/attachments/clipboard';
+import { fullTimestamp, relativeTime, shortDate } from '@/lib/relativeTime';
 import { ShimmerText } from './BuildProgress';
 
 /**
@@ -38,10 +43,49 @@ const STATUS_LABEL: Record<string, string> = {
 /** The two that mean "work is happening right now", so they shimmer. */
 const STATUS_BUSY = new Set(['uploading', 'processing']);
 
+/** Below this, "started" and "edited" are the same event said twice — a magazine
+ *  that was created and never touched since. One minute is generously past the
+ *  few seconds the create + first write take. */
+const EDIT_IS_DISTINCT_MS = 60_000;
+
+/**
+ * The two dates a card can carry, already decided.
+ *
+ * `started` is absolute: the date a magazine was begun is a fact you file it
+ * under, and "43 days ago" is arithmetic. `edited` is relative, because the only
+ * question anyone asks of it is how fresh this is.
+ *
+ * `edited` is omitted in two cases, both of which would be saying nothing. A
+ * magazine nobody has touched since it was made has no second date to give. And
+ * one that is mid-build has its `updatedAt` bumped by the build itself — the
+ * status beside it already shimmers "Building", so "edited just now" would credit
+ * the machine's work to the user.
+ */
+function cardDates(it: IssueSummary): { started: string; startedFull: string; edited: string; editedFull: string } {
+  const startedAt = Date.parse(it.createdAt);
+  const updatedAt = Date.parse(it.updatedAt);
+  const distinct =
+    Number.isFinite(startedAt) && Number.isFinite(updatedAt) && updatedAt - startedAt > EDIT_IS_DISTINCT_MS;
+  const show = distinct && !STATUS_BUSY.has(it.status);
+  return {
+    started: shortDate(it.createdAt),
+    startedFull: fullTimestamp(it.createdAt),
+    edited: show ? relativeTime(it.updatedAt) : '',
+    editedFull: show ? fullTimestamp(it.updatedAt) : '',
+  };
+}
+
 const IMPORT_ACCEPT =
   'application/pdf,.pdf,application/vnd.openxmlformats-officedocument.wordprocessingml.document,.docx,image/jpeg,image/png,.jpg,.jpeg,.png';
 
 const MAX_SOURCE_FILES = 5;
+/** The name `filesFromClipboard` gives a browser-named bitmap. Matched to continue
+ *  the numbering across pastes; must stay in step with that helper. */
+const PASTED_IMAGE_NAME = /^Pasted image \d+\./i;
+/** Mirrors MAX_SOURCE_BYTES on the server (`lib/magazineV2/config.ts`). Checked here
+ *  so an oversized file is refused before it is uploaded rather than after — the
+ *  server still enforces it, this only stops the wasted upload. */
+const MAX_SOURCE_BYTES = 150 * 1024 * 1024;
 
 const WORD_NUMS: Record<string, number> = {
   one: 1, two: 2, three: 3, four: 4, five: 5, six: 6, seven: 7, eight: 8,
@@ -165,50 +209,73 @@ export default function MagazineV2Home() {
     setError(null);
     setStarting(true);
     try {
-      let sourceText: string | undefined;
-      const docFiles: { file: File; text: string }[] = []; // non-image attachments to persist to the Uploads library
-      if (files.length > 0) {
-        setStartMsg(files.length === 1 ? 'Reading your document…' : 'Reading your attachments…');
-        // A generated issue is a SHORT preview, so we only need the first few
-        // pages of each doc read up front. For a scanned PDF this is decisive:
-        // OCR'ing all pages takes minutes, so we cap it here and note the
-        // coverage — the rest can be pulled in later via "Add more pages".
-        const parts: string[] = [];
-        const skipped: string[] = [];
-        for (const f of files) {
-          const isImage = f.type.startsWith('image/');
-          let text = '';
+      // UPLOAD FIRST, THEN GENERATE. The old order was the reverse — every
+      // attachment was read through the API before the issue existed, so the user
+      // watched a spinner for the length of the read. That is precisely why the read
+      // was capped at six pages: any more and the wait became intolerable, and a
+      // 40-page report silently contributed six pages of itself.
+      //
+      // Now the issue is reserved first, the bytes go straight to S3 with a real
+      // progress bar, and the reading happens in the worker while the studio is
+      // already open. Nothing waits on the read, so nothing has to cap it.
+      const docIds: string[] = [];
+      let preparedId: string | undefined;
+      const docFiles = files.filter((f) => !f.type.startsWith('image/'));
+
+      if (docFiles.length > 0) {
+        setStartMsg('Preparing…');
+        preparedId = (await api.prepareIssue()).issue.id;
+        const failed: string[] = [];
+        for (let i = 0; i < docFiles.length; i++) {
+          const f = docFiles[i]!;
+          const label = docFiles.length > 1 ? ` (${i + 1} of ${docFiles.length})` : '';
           try {
-            text = attachmentSourceText(await ingestFile(f, { maxPages: 6 }));
-            if (text) {
-              const label = isImage ? 'Attached image' : 'Attached document';
-              parts.push(files.length > 1 ? `[${label} “${f.name}” — content]\n${text}` : text);
-            }
-          } catch {
-            skipped.push(f.name);
+            const docId = await api.uploadSourceDoc(
+              preparedId,
+              f,
+              (fraction) => {
+                // A percentage, not a spinner: with no page cap a source file can be
+                // hundreds of megabytes, and an indeterminate spinner over a long
+                // upload is indistinguishable from a hang.
+                setStartMsg(`Uploading “${f.name}”${label} — ${Math.round(fraction * 100)}%`);
+              },
+              // Defer the read: the generate call below enqueues one per document,
+              // carrying the continuation. Without this the document is read twice.
+              true,
+            );
+            docIds.push(docId);
+          } catch (e) {
+            console.warn('[magazine] source upload failed', f.name, e);
+            failed.push(f.name);
           }
-          // Persist every document (even one we couldn't read client-side) so it's
-          // browsable in the Uploads library; images are stored separately below.
-          if (!isImage) docFiles.push({ file: f, text });
         }
-        // Don't dead-end the user on a patchy read: build from whatever else they
-        // gave and note what was skipped; only hard-fail when nothing is readable.
-        if (skipped.length > 0) {
-          if (parts.length > 0 || brief.trim()) {
-            toast.message(`Couldn't read ${skipped.map((n) => `“${n}”`).join(', ')} — building from the rest.`);
+        // Do not dead-end the user on one bad file: build from the rest, and only
+        // stop when there is nothing left to build from at all.
+        if (failed.length > 0) {
+          if (docIds.length > 0 || brief.trim()) {
+            toast.message(`Couldn't upload ${failed.map((n) => `“${n}”`).join(', ')} — building from the rest.`);
           } else {
-            setError('Could not read those attachments. Add a short description and try again.');
+            setError('Those files could not be uploaded. Check your connection, or add a short description instead.');
             setStarting(false);
             setStartMsg('');
             return;
           }
         }
-        sourceText = parts.join('\n\n') || undefined;
       }
+
       setStartMsg('Opening the studio…');
       // Honor an explicit "N page(s)" from the brief; otherwise the AI plans a
-      // short preview — more pages can always be added afterwards.
-      const { issue } = await api.generateIssue(brief.trim(), parsePageCount(brief), sourceText);
+      // short preview — more pages can always be added afterwards. The documents are
+      // cited by ID: unlike the text that used to be posted here, an id can be
+      // re-read by every later pass, which is what makes "add more pages" able to
+      // consult the document instead of inventing from the title.
+      const { issue } = await api.generateIssue(
+        brief.trim(),
+        parsePageCount(brief),
+        undefined,
+        docIds.length > 0 ? docIds : undefined,
+        preparedId,
+      );
       // Persist attached IMAGES into the new issue's media library so the studio
       // assistant can actually place them on pages (generation itself writes from
       // the text digests above; the pixels ride along here).
@@ -225,18 +292,37 @@ export default function MagazineV2Home() {
           }),
         );
       }
-      // Persist attached DOCUMENTS into the issue's Uploads library so they're
-      // browsable & previewable there (generation already consumed their text above).
-      if (docFiles.length > 0 && issue?.id) {
+      // Also list the documents in the issue's browsable Uploads library.
+      //
+      // This IS a second upload of the same bytes, and it is a rough edge rather than
+      // a design: the Uploads library and the source-document store are two
+      // collections that grew separately, and the panel that renders Uploads reads
+      // only the former. Dropping it would make an attached document vanish from a
+      // place the user can currently see it, which is a worse trade than a duplicate
+      // upload of a small file.
+      //
+      // So: small files behave exactly as before, and a large one is skipped with the
+      // reason said out loud — re-sending two hundred megabytes to populate a list is
+      // not defensible, and now that the caps are gone that size is reachable. The
+      // real fix is for the panel to read the source store; see step 8.
+      const UPLOADS_COPY_LIMIT = 25 * 1024 * 1024;
+      const copyable = docFiles.filter((f) => f.size <= UPLOADS_COPY_LIMIT);
+      const tooBigToCopy = docFiles.filter((f) => f.size > UPLOADS_COPY_LIMIT);
+      if (copyable.length > 0 && issue?.id) {
         setStartMsg('Saving your documents…');
         await Promise.all(
-          docFiles.map(async ({ file, text }) => {
+          copyable.map(async (file) => {
             try {
-              await api.uploadMediaDoc(issue.id, file, { sourceText: text });
+              await api.uploadMediaDoc(issue.id, file);
             } catch {
               toast.message(`Couldn't save “${file.name}” to the magazine's uploads.`);
             }
           }),
+        );
+      }
+      if (tooBigToCopy.length > 0) {
+        toast.message(
+          `${tooBigToCopy.map((f) => `“${f.name}”`).join(', ')} ${tooBigToCopy.length === 1 ? 'is' : 'are'} attached and being read — too large to also copy into Uploads.`,
         );
       }
       openEditor(issue.id); // studio takes over — pages appear as they build
@@ -269,11 +355,27 @@ export default function MagazineV2Home() {
     }
   };
 
-  const addFiles = (list: FileList | null) => {
-    if (!list || list.length === 0) return;
+  // Takes a FileList (picker, drop) or a plain array (paste) — the clipboard
+  // helper hands back real Files, not a FileList, because it renames some of them.
+  const addFiles = (list: FileList | File[] | null) => {
+    const incoming = list ? Array.from(list) : [];
+    if (incoming.length === 0) return;
     const room = Math.max(0, MAX_SOURCE_FILES - files.length);
-    if (list.length > room) toast.message(`Up to ${MAX_SOURCE_FILES} attachments — the rest were skipped.`);
-    const picked = Array.from(list).slice(0, room);
+    if (incoming.length > room) toast.message(`Up to ${MAX_SOURCE_FILES} attachments — the rest were skipped.`);
+
+    // Check the size HERE, at the picker. There was no client-side check at all, so
+    // an oversized file was uploaded in full and only then refused — the user spent
+    // the whole upload to be told the file was too big, and on a slow connection
+    // that is minutes of wasted time and bandwidth. The size is known the instant
+    // the file is chosen; there is no reason to send a byte of it.
+    const chosen = incoming.slice(0, room);
+    const picked = chosen.filter((f) => f.size <= MAX_SOURCE_BYTES);
+    const oversize = chosen.filter((f) => f.size > MAX_SOURCE_BYTES);
+    if (oversize.length > 0) {
+      toast.message(
+        `${oversize.map((f) => `“${f.name}”`).join(', ')} ${oversize.length === 1 ? 'is' : 'are'} over the ${Math.round(MAX_SOURCE_BYTES / 1024 / 1024)} MB limit.`,
+      );
+    }
     if (picked.length > 0) setFiles((prev) => [...prev, ...picked]);
     setError(null);
     if (fileRef.current) fileRef.current.value = '';
@@ -283,6 +385,47 @@ export default function MagazineV2Home() {
     e.preventDefault();
     setDragOver(false);
     addFiles(e.dataTransfer.files);
+  };
+
+  /**
+   * Paste a screenshot (or a copied file) straight into the brief.
+   *
+   * The studio's assistant has had this; this composer — the one every magazine
+   * actually starts from — did not, so the only way in was the picker, and a
+   * region grab (Win+Shift+S, Cmd+Ctrl+Shift+4) never touches disk for the picker
+   * to find. `filesFromClipboard` is the same helper AiPanel uses: it reads both
+   * clipboard shapes, de-duplicates, and gives browser-named bitmaps a numbered
+   * name so three chips don't all read "image.png".
+   *
+   * The handler sits on the composer wrapper, so a paste into the textarea bubbles
+   * up to it and a paste anywhere else in the box is caught too. A paste carrying
+   * no attachable file returns WITHOUT preventDefault, leaving ordinary text
+   * pasting into the brief exactly as it was.
+   */
+  const onPasteFiles = (e: ClipboardEvent) => {
+    if (starting) return; // the issue is already being created; a new attachment can't join it
+    const target = e.target as HTMLElement | null;
+    if (target?.isContentEditable) return;
+    const pasted = filesFromClipboard(e.clipboardData, {
+      // Continue the numbering across separate pastes rather than restarting at 1.
+      // Counted off the staged names because this screen keeps plain Files with no
+      // room for a "came from the clipboard" flag.
+      startIndex: files.filter((f) => PASTED_IMAGE_NAME.test(f.name)).length,
+    });
+    if (pasted.length === 0) return; // plain text — the textarea keeps its paste
+    e.preventDefault();
+    if (files.length >= MAX_SOURCE_FILES) {
+      toast.message(`Up to ${MAX_SOURCE_FILES} attachments — remove one to paste another.`);
+      return;
+    }
+    addFiles(pasted);
+    // A paste is invisible until the chip renders below the textarea, which is not
+    // where the user is looking — so say what landed. Images only: pasting a
+    // document is already a deliberate enough act to need no confirmation.
+    const images = pasted.filter(isPasteImage).length;
+    if (images > 0) {
+      toast.success(images === 1 ? 'Image attached from your clipboard.' : `${images} images attached from your clipboard.`);
+    }
   };
 
   const canGenerate = (!!brief.trim() || files.length > 0) && !starting;
@@ -310,6 +453,7 @@ export default function MagazineV2Home() {
           onDragOver={(e) => { e.preventDefault(); setDragOver(true); }}
           onDragLeave={() => setDragOver(false)}
           onDrop={onDrop}
+          onPaste={onPasteFiles}
         >
           <textarea
             ref={taRef}
@@ -340,7 +484,7 @@ export default function MagazineV2Home() {
                 onClick={() => fileRef.current?.click()}
                 disabled={starting}
                 className="inline-flex items-center gap-1.5 rounded-lg px-3 py-2 text-ui text-muted-foreground hover:bg-muted hover:text-foreground disabled:opacity-50"
-                title="Attach a document or image to build from"
+                title="Attach a document or image to build from — you can also paste or drop one"
               >
                 <Paperclip size={16} /> <span className="hidden sm:inline">Attach</span>
               </button>
@@ -417,6 +561,7 @@ export default function MagazineV2Home() {
               {issues.map((it) => {
                 const published = !!it.publishedIssueId;
                 const busy = pubBusy === it.id;
+                const when = cardDates(it);
                 return (
                   <div key={it.id} className="flex flex-col rounded-lg border border-border p-4 transition-colors hover:border-brand-accent">
                     <button className="min-w-0 flex-1 text-left" onClick={() => openEditor(it.id)}>
@@ -443,6 +588,21 @@ export default function MagazineV2Home() {
                         )}{' '}
                         · {it.pageCount} page{it.pageCount === 1 ? '' : 's'}{it.ownerName ? ` · ${it.ownerName}` : ''}
                       </div>
+                      {/* When, on its own quieter line — the line above is what the
+                          magazine IS, this is when it happened, and running the two
+                          together made a five-clause sentence nobody finished reading.
+                          Absolute for the start, relative for the edit; see cardDates. */}
+                      {(when.started || when.edited) && (
+                        <div className="mt-0.5 text-ui-sm text-muted-foreground/80">
+                          {when.started && (
+                            <span title={when.startedFull || undefined}>Started {when.started}</span>
+                          )}
+                          {when.started && when.edited && ' · '}
+                          {when.edited && (
+                            <span title={when.editedFull || undefined}>Edited {when.edited}</span>
+                          )}
+                        </div>
+                      )}
                       {!it.myRole && (
                         <span className="mt-1.5 inline-block rounded bg-muted px-1.5 py-0.5 text-ui-sm font-medium text-muted-foreground">View only</span>
                       )}

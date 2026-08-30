@@ -104,6 +104,12 @@ function Tile({
   }, [active, cached, liveRev, page.id]);
   const pending = page.status === 'pending';
   const failed = page.status === 'failed';
+  // AI proposals survive a page change (store.ts) so nothing is lost by scrolling
+  // away — but that also means they can sit waiting with zero sign they exist. A
+  // small badge here is the only place a non-active page can say "come back and
+  // decide on this" instead of the Review & Apply tray, which only ever shows for
+  // the page you're currently on.
+  const hasPendingReview = useEditorStore((st) => st.proposalsPageId === page.id && st.proposals.length > 0);
 
   // Ask for the thumbnail the first time this tile is anywhere near the viewport.
   // The observer accounts for the rail's own scroll clipping, so an unscrolled
@@ -138,7 +144,7 @@ function Tile({
       tabIndex={0}
       aria-current={active ? 'page' : undefined}
       aria-label={`Page ${n} of ${total}`}
-      title={tileTitle(page, n) + (canManage ? '\n\nDrag to reorder · Alt+↑/↓ to move' : '')}
+      title={tileTitle(page, n) + (hasPendingReview ? '\n\nThe Design Helper made changes here waiting for your review' : '') + (canManage ? '\n\nDrag to reorder · Alt+↑/↓ to move' : '')}
       draggable={canManage}
       onDragStart={onDragStart}
       onDragOver={onDragOver}
@@ -222,9 +228,10 @@ function Tile({
             and the whole point of a thumbnail is that you can see the page. The
             element count that the old numbered tab carried is gone with it: you can
             now see how full a page is. */}
-        {(showDot || page.selectedForPublish === false || !editable) && (
+        {(showDot || page.selectedForPublish === false || !editable || hasPendingReview) && (
           <div className="pointer-events-none absolute inset-x-0 bottom-0 flex items-center gap-1 bg-studio-bg/70 px-1 py-0.5">
             {showDot && <span className={'h-1.5 w-1.5 flex-shrink-0 rounded-full ' + (page.approvalStale ? 'bg-amber-400' : tone.dot)} />}
+            {hasPendingReview && <Sparkles size={9} className="flex-shrink-0 text-[var(--gold-bright)]" />}
             {page.selectedForPublish === false && <EyeOff size={9} className="flex-shrink-0 text-studio-ink-3" />}
             {!editable && <Lock size={9} className="flex-shrink-0 text-studio-ink-3" />}
           </div>

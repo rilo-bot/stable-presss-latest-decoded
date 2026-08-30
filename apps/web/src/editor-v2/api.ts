@@ -43,6 +43,11 @@ export interface IssueSummary {
   ownerName: string;
   /** Id of the frozen Bulletins snapshot when published (null while unpublished). */
   publishedIssueId: string | null;
+  /** When the magazine was started. '' on rows written before this was returned. */
+  createdAt: string;
+  /** Newest of the magazine's own stamp and its newest PAGE's — an element write
+   *  bumps only the page, so the magazine stamp alone is not a record of editing.
+   *  The server folds the two together; see the /issues list route. */
   updatedAt: string;
 }
 
@@ -113,8 +118,97 @@ export const listIssues = () => authFetchRetry(`${BASE}/issues`).then(parse<Issu
 export const getIssue = (id: string) => authFetchRetry(`${BASE}/issues/${id}`).then(parse<IssueBundle>);
 export const createBlankIssue = (title?: string) =>
   authFetch(`${BASE}/issues/blank`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ title }) }).then(parse<IssueBundle>);
-export const generateIssue = (prompt: string, pageCount?: number, sourceText?: string) =>
-  authFetch(`${BASE}/issues/generate`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ prompt, pageCount, sourceText }) }).then(parse<{ issue: IssueMeta }>);
+export const generateIssue = (
+  prompt: string,
+  pageCount?: number,
+  sourceText?: string,
+  /** Stored documents to build FROM, cited by id. The real path: an id can be
+   *  re-read by every later pass, where `sourceText` dies with this request. */
+  docIds?: string[],
+  /** A prepared issue to build INTO — see prepareIssue. */
+  issueId?: string,
+) =>
+  authFetch(`${BASE}/issues/generate`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ prompt, pageCount, sourceText, docIds, issueId }),
+  }).then(parse<{ issue: IssueMeta }>);
+
+/**
+ * Reserve an issue to upload documents against, before generating.
+ *
+ * The order matters and it is the whole point. Reading the documents first meant
+ * the browser waited for the read, which is why reads were capped at six pages.
+ * With an issue in hand, the files go straight to S3 and the studio opens while the
+ * worker reads — so there is nothing left for a page cap to protect.
+ */
+export const prepareIssue = () =>
+  authFetch(`${BASE}/issues/prepare`, { method: 'POST' }).then(parse<{ issue: { id: string } }>);
+
+/** A source document attached to an issue, as the reading panel sees it. */
+export interface SourceDocSummary {
+  id: string;
+  originalName: string;
+  contentType: string;
+  size: number;
+  status: 'queued' | 'reading' | 'partial' | 'ready' | 'failed';
+  kind: string;
+  coverage?: { pagesRead: number; pagesTotal: number; truncated: boolean; reason: string };
+  pagesRead: number;
+  pagesTotal: number;
+  estimate?: {
+    pagesTotal: number;
+    pagesSeen: number;
+    ocrPages: number;
+    ocrPagesExpected: number;
+    usd: number;
+    projected: boolean;
+  } | null;
+  error?: string;
+  createdAt?: string;
+}
+
+/** This issue's source documents, with read progress. Polled while they are read. */
+export const listSources = (id: string) =>
+  authFetchRetry(`${BASE}/issues/${id}/sources`)
+    .then(parse<{ sources: SourceDocSummary[] }>)
+    .then((r) => r.sources);
+
+/**
+ * Upload one source document: presign → PUT straight to S3 → register the row,
+ * which queues the read. Returns the docId to cite in generateIssue.
+ *
+ * The bytes never pass through our API. That is not only faster — it is what lets
+ * the file be larger than anything an API request could carry.
+ */
+export async function uploadSourceDoc(
+  id: string,
+  file: File,
+  onProgress?: (fraction: number) => void,
+  /**
+   * Pass true when a generate call follows immediately.
+   *
+   * Generation enqueues its own read per document — it must, because that read
+   * carries the continuation that starts the build — so letting the upload start one
+   * too gets the document read by two jobs. Harmless on a small file, and twice the
+   * downloads on a long one once reads are batched.
+   */
+  deferRead?: boolean,
+): Promise<string> {
+  const { uploadUrl, key } = await authFetch(`${BASE}/issues/${id}/sources/upload-url`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ filename: file.name, contentType: file.type, size: file.size }),
+  }).then(parse<{ uploadUrl: string; key: string }>);
+  if (onProgress) await putToS3WithProgress(uploadUrl, file, onProgress);
+  else await putToS3(uploadUrl, file);
+  const { source } = await authFetch(`${BASE}/issues/${id}/sources`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ key, originalName: file.name, defer: deferRead === true }),
+  }).then(parse<{ source: { id: string } }>);
+  return source.id;
+}
 /** Start a NEW magazine from an existing one's LAYOUT — same pages, boxes, fonts
  *  and decoration, with all copy/photos stripped. The source is never modified,
  *  so any staff member can reuse any magazine's design. */
@@ -359,6 +453,54 @@ export const uploadIssue = (filename: string, contentType: string, size: number)
   authFetch(`${BASE}/issues/upload`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ filename, contentType, size }) }).then(
     parse<{ issue: IssueMeta; uploadUrl: string; key: string }>,
   );
+
+/**
+ * PUT the bytes to S3 with a REAL progress callback.
+ *
+ * XHR and not fetch, for one reason: `fetch` cannot report upload progress. There
+ * is no request-progress event and no upload stream in any shipping browser, so a
+ * fetch-based upload can only show a spinner. That was tolerable while documents
+ * were read through the API in seconds; with the caps gone a source file can be
+ * hundreds of megabytes, and a spinner over a four-minute upload is indistinguishable
+ * from a hang — users cancel and retry, which makes it worse.
+ *
+ * Falls back to `putToS3` when no callback is given, so nothing else has to change.
+ */
+export function putToS3WithProgress(
+  uploadUrl: string,
+  file: File,
+  onProgress: (fraction: number) => void,
+): Promise<void> {
+  return new Promise<void>((resolve, reject) => {
+    const xhr = new XMLHttpRequest();
+    xhr.open('PUT', uploadUrl, true);
+    xhr.setRequestHeader('Content-Type', file.type || 'application/pdf');
+    xhr.upload.onprogress = (e) => {
+      // `lengthComputable` is false for a chunked body; report nothing rather than
+      // a made-up number, and the caller keeps its indeterminate state.
+      if (e.lengthComputable && e.total > 0) onProgress(Math.min(1, e.loaded / e.total));
+    };
+    xhr.onload = () => {
+      if (xhr.status >= 200 && xhr.status < 300) {
+        onProgress(1);
+        resolve();
+        return;
+      }
+      reject(new Error(`Upload failed (HTTP ${xhr.status}). Check the storage bucket's CORS policy.`));
+    };
+    // A CORS-blocked PUT lands here with no status, exactly as it rejects in fetch.
+    // Same explanation for the same reason — see putToS3 below.
+    xhr.onerror = () =>
+      reject(
+        new Error(
+          'Upload could not reach storage. ' +
+            `If this is a new host, check the bucket's CORS policy allows ${window.location.origin}.`,
+        ),
+      );
+    xhr.onabort = () => reject(new Error('Upload cancelled.'));
+    xhr.send(file);
+  });
+}
 
 /** 2) PUT the raw bytes straight to S3 (never through our API). Content-Type MUST
  *  match what was signed. Not authFetch — this hits S3 directly. */

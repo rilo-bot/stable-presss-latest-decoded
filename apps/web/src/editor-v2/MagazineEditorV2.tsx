@@ -24,8 +24,12 @@ import { ShareDialog } from './ShareDialog';
 import { ReviewBoard } from './ReviewBoard';
 import { PageRail } from './PageRail';
 import { BuildProgress, BuildBanner, ShimmerText } from './BuildProgress';
+import { SourceReadingPanel } from './SourceReadingPanel';
 import { awaitingOwner, submittablePages, publishBlockedReason, readOnlyReason } from './review';
 import type { ElementType, MagazineElement } from './model';
+
+// Shared by the resize drag AND the saved-width restore below.
+const PANE_MIN = 240, PANE_MAX = 560;
 
 function newElement(kind: ElementType, page: { width: number; height: number }, topZ: number): Partial<MagazineElement> {
   const w = kind === 'qr' ? 200 : kind === 'icon' ? 120 : kind === 'shape' ? 320 : 440;
@@ -201,7 +205,12 @@ export default function MagazineEditorV2() {
   const [panes, setPanes] = useState<{ leftW: number; rightW: number }>(() => {
     try {
       const saved = JSON.parse(localStorage.getItem('mag2.v2.paneWidths') || 'null');
-      if (saved && typeof saved.leftW === 'number' && typeof saved.rightW === 'number') return saved;
+      if (saved && typeof saved.leftW === 'number' && typeof saved.rightW === 'number') {
+        return {
+          leftW: Math.max(PANE_MIN, Math.min(PANE_MAX, saved.leftW)),
+          rightW: Math.max(PANE_MIN, Math.min(PANE_MAX, saved.rightW)),
+        };
+      }
     } catch { /* ignore */ }
     return { leftW: 340, rightW: 300 };
   });
@@ -215,9 +224,8 @@ export default function MagazineEditorV2() {
   };
   const onBodyMove = (e: React.PointerEvent) => {
     if (!dragging.current) return;
-    const MIN = 240, MAX = 560;
-    if (dragging.current === 'left') setPanes((p) => ({ ...p, leftW: Math.max(MIN, Math.min(MAX, e.clientX)) }));
-    else setPanes((p) => ({ ...p, rightW: Math.max(MIN, Math.min(MAX, window.innerWidth - e.clientX)) }));
+    if (dragging.current === 'left') setPanes((p) => ({ ...p, leftW: Math.max(PANE_MIN, Math.min(PANE_MAX, e.clientX)) }));
+    else setPanes((p) => ({ ...p, rightW: Math.max(PANE_MIN, Math.min(PANE_MAX, window.innerWidth - e.clientX)) }));
   };
   const endDivider = () => { dragging.current = null; };
   const divider = 'w-1 flex-shrink-0 cursor-col-resize bg-studio-raise hover:bg-[var(--gold-bright)]/60';
@@ -582,6 +590,18 @@ export default function MagazineEditorV2() {
           the indeterminate "Adding your new pages" state onto every from-scratch
           build — hiding the real "N of M pages" counter the banner exists for. */}
       {building && <BuildBanner issue={s.issue} isAdding={s.adding} arrivedPages={s.pages.length} />}
+
+      {/* Reading progress for attached documents. The BuildBanner above counts PAGES
+          BUILT, which is still 0 for as long as the documents are being read — so on
+          its own it shows a build that never moves. This says what is actually
+          happening, per document, and renders nothing when there are no attachments.
+          It matters more now the page caps are gone: a long read is minutes of
+          apparent silence, and a studio that looks stuck gets reloaded. */}
+      {building && s.issue?.id && (
+        <div className="border-b border-border px-4 py-2">
+          <SourceReadingPanel issueId={s.issue.id} />
+        </div>
+      )}
 
       {/* Post-generation nudge — the first pass is a short preview; offer more. */}
       {!building && s.justGenerated && s.canManage() && (

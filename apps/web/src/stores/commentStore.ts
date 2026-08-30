@@ -446,25 +446,11 @@ export const useCommentStore = create<CommentState>((set, get) => ({
 }));
 
 /**
- * "just now" / "14 minutes ago" / "3 Aug".
- *
- * Relative inside a day, absolute beyond it. A thread is read for its recency, so
- * "2 hours ago" is the useful fact about a comment from today; "17 days ago" is
- * arithmetic nobody asked for, and the date is shorter to read. The full instant
- * is always on the element's `title`.
+ * "just now" / "14 minutes ago" / "3 Aug". Now lives in `@/lib/relativeTime` —
+ * it is a pure date function and screens with no comments on them were pulling
+ * this whole store in to reach it. Re-exported so existing callers are unchanged.
  */
-export function relativeTime(iso: string, now = Date.now()): string {
-  const at = Date.parse(iso);
-  if (!Number.isFinite(at)) return '';
-  const seconds = Math.round((now - at) / 1000);
-  if (seconds < 45) return 'just now';
-  if (seconds < 90) return 'a minute ago';
-  const minutes = Math.round(seconds / 60);
-  if (minutes < 60) return `${minutes} minutes ago`;
-  const hours = Math.round(minutes / 60);
-  if (hours < 24) return hours === 1 ? 'an hour ago' : `${hours} hours ago`;
-  return new Date(at).toLocaleDateString(undefined, { day: 'numeric', month: 'short' });
-}
+export { relativeTime } from '@/lib/relativeTime';
 
 /** Is this comment still inside its author's edit window? */
 export function withinEditWindow(comment: Comment, now = Date.now()): boolean {

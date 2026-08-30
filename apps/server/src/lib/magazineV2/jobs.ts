@@ -52,7 +52,20 @@ export interface JobPayloads {
    */
   readSourceDoc: {
     docId: string;
+    /**
+     * The issue whose generation is waiting on this read. Present ONLY then.
+     *
+     * Not decoration: healStuckIssue finds an issue's live jobs by
+     * `payload.issueId`, so without this the read was invisible to it — and an issue
+     * created from an attached document, with nothing else queued against it, was
+     * marked failed twenty seconds later while the worker read on. A read that
+     * nothing is waiting for (a document uploaded on its own) deliberately omits it,
+     * so its failure cannot fail an unrelated issue that happens to be generating.
+     */
+    issueId?: string;
     maxPages?: number;
+    /** Pages one run may read before re-enqueueing itself. See JOB_BATCH_PAGES. */
+    batchPages?: number;
     onDone?: { type: 'generateIssue'; payload: Record<string, unknown> } | null;
   };
 }

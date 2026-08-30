@@ -43,13 +43,15 @@ Six stages. Stages 1–4 are `lib/agent/documentIngest.ts`; 5–6 are the new st
 |---|---|:---:|
 | `.txt` `.csv` `.md` | UTF-8 decode | no |
 | `.docx` | `mammoth.extractRawText` | no |
-| `.pdf` (text layer) | `pdf-parse`, 30 s ceiling | no |
-| `.pdf` (scan) | `pdf-lib` split → per-page OCR | **yes, per page** |
+| `.pdf` (text layer) | `pdfjs`, **per page**, 20 s/page | no |
+| `.pdf` (scanned **page**) | `pdf-lib` split → per-page OCR | **yes, per page** |
 | image | vision digest (`generateObject`) | yes |
 
-**3. The text/scan fork.** `documentIngest.ts:454` and `:558` —
-`if (text.length >= 40)` the PDF is treated as text-based. Under 40 characters it
-goes to OCR. **This threshold is a defect — see 4.2.**
+**3. The text/scan fork — now PER PAGE.** Each page is asked for itself: a text
+layer is stored; no text but something drawn means OCR that page; neither means a
+blank page, read and empty. The old whole-document `if (text.length >= 40)` test is
+gone — 40 characters anywhere in a 300-page scan skipped OCR for all of it, and a
+typeset report with a scanned cover took the opposite wrong turn. See §9.3.
 
 **4. OCR, page by page.** `pdf-lib` splits the PDF into single-page PDFs; each goes
 separately to OpenRouter's `mistral-ocr` engine (`provider.ts:58`). Deliberately
@@ -98,10 +100,10 @@ request (`magazinesV2/index.ts:503`).
 
 ### Pages
 
-**Text-based PDF:** no page limit — `pdf-parse` reads all of them. But the request
-path caps extracted text at **80,000 characters** (`FULLTEXT_CHARS`), roughly
-25–40 pages of dense text; the tail is dropped silently. The job path has no
-character cap.
+**Text-based PDF:** no page limit — every page is read, `JOB_SCAN_PAGES` (400) at a
+time. The request path still caps extracted text at **80,000 characters**
+(`FULLTEXT_CHARS`), roughly 25–40 pages of dense text, and drops the tail silently;
+the job path has no character cap. Removing `FULLTEXT_CHARS` is step 4.
 
 **Scanned PDF:**
 
@@ -315,7 +317,7 @@ studio immediately; show the read progressing there, page by page; no rush.
 
 The architecture already points this way, but three prerequisites must land first.
 
-### 7.1 Prerequisite — the heartbeat
+### 7.1 Prerequisite — the heartbeat *(shipped — `01118b4`)*
 
 A long read is currently **killed by the studio watching it**. `STUCK_JOB_MS` is
 45 minutes (`jobs.ts:82`) and `healStuckIssue` fires from `GET /issues/:id`
@@ -332,7 +334,7 @@ both watchdogs compare against that instead of `startedAt`. This is also the
 prerequisite `MAGAZINE-V2-SCALABILITY-REVIEW.md` names for ever running a second
 worker.
 
-### 7.2 Prerequisite — self-requeueing batch reads
+### 7.2 Prerequisite — self-requeueing batch reads *(shipped — see §9.1)*
 
 Removing the 30-minute budget without this means **one big upload freezes every
 other user**: the worker claims one job at a time, FIFO, so a 5,000-page scan
@@ -402,17 +404,17 @@ scans. Needs verifying the output is reliably separable per page first.
 
 | Cap | Now | After |
 |---|---|---|
-| Landing scanned pages | 6 | all |
-| Studio scanned pages | 24 | all |
-| Job OCR pages | 200 | all |
-| OCR **document** budget | 30 min | none (heartbeat replaces it) |
+| Landing scanned pages | 6 | **all — done**; the screen no longer reads in-browser |
+| Studio chat scanned pages | 24 | kept until the chat moves to `docIds` (300 s client abort) |
+| Job OCR pages | 200 | **all — done**, constant deleted |
+| OCR **document** budget | 30 min | **kept, re-scoped**: now bounds one BATCH, so it caps nothing |
 | OCR **per-page** timeout | 75 s | **keep** — stops a stalled provider hanging a batch |
-| Extracted text | 80,000 chars | all |
+| Extracted text | 80,000 chars | job path: no cap **done**. Chat path: kept, see §9.8 |
 | `sourceText` on the wire | 60,000 chars | gone — `docIds` |
-| Size through the API | 50 MB | gone — S3 direct |
+| Size through the API | 50 MB | gone — S3 direct. Reader guard now = `MAX_SOURCE_BYTES` **done** |
 | Max file size | 150 MB | 500 MB (engineering ceiling) |
-| Candidate chunks | first 400 | top 400 **by rank** |
-| Text/scan fork | 40 chars total | chars ÷ pages |
+| Candidate chunks | first 400 | top 400 **by rank — done** |
+| Text/scan fork | 40 chars total | **per page — done** (§9.3); no threshold left |
 
 ### 7.6 The new flow
 
@@ -479,19 +481,377 @@ says no.
 
 ## 9. Work order
 
-1. **Heartbeat** + both watchdogs — nothing else is safe without it
-2. **Self-requeueing batch reads** + lazy page splitting
-3. **`pdf-parse` → `pdfjs-dist`**, per-page extraction
-4. **Remove the caps** + density fork check
-5. **Database-side ranking**
-6. **Client flow** — prepare → S3 with progress → navigate → reading panel
-7. **Outline layer** for the planner
-8. Cleanup: delete client-side ingest, `sourceText`, the concatenation loop; batch
-   `bulkWrite`; client-side size check; cost estimate
+1. ~~**Heartbeat** + both watchdogs~~ — **done** (`01118b4`). Liveness is now
+   "is it reporting?" rather than "when did it start?", shared by both watchdogs
+   from one pure function (`jobHealth.ts`).
+2. ~~**Self-requeueing batch reads** + lazy page splitting~~ — **done**. A read
+   sweeps `JOB_BATCH_PAGES` (25), persists, re-enqueues and returns. Details in
+   §9.1.
+3. ~~**`pdf-parse` → `pdfjs-dist`**, per-page extraction~~ — **done**. See §9.3.
+   Subsumed step 4's density fork: the text/scan decision is now per PAGE, so there
+   is no whole-document threshold left to tune.
+4. ~~**Remove the caps**~~ — **done**. See §9.4. The LANDING 6-page cap went with
+   step 6 (that screen no longer reads in the browser at all). The STUDIO CHAT’s 24
+   and `FULLTEXT_CHARS` remain, and correctly: they bound a synchronous HTTP
+   request, and they go when the chat moves to `docIds` — §9.8.
+5. ~~**Database-side ranking**~~ — **done**. See §9.5.
+6. ~~**Client flow**~~ — **done**. See §9.6.
+7. ~~**Outline layer** for the planner~~ — **done**. See §9.7.
+8. Cleanup — **partly done** (§9.8). Batched `bulkWrite`, client-side size check and
+   the cost estimate are in. Deleting the client ingest path and `sourceText` is
+   BLOCKED on migrating `AiPanel.tsx` (the studio chat) to `docIds` — it is the last
+   consumer, and it is a file another session has open.
 
-1–5 are server-side and uncontested. 6 touches `MagazineV2Home.tsx` and the studio,
-where other sessions work — coordinate first.
+**1–7 are done; 8 is partly done.** What remains is the studio chat’s migration to
+`docIds`, which unblocks deleting the legacy string path — see §9.8.
 
+### 9.1 What batching actually required
+
+The batch loop itself is four lines. Everything below is what made it safe, and
+each item is a way it would otherwise have failed **quietly**.
+
+**A cursor, because the rows cannot answer this one.** Progress had been derived
+from the chunk rows on principle — a counter is a second answer, and a crash
+between two writes makes them disagree. But rows answer "which pages do I hold?",
+not "which pages have been looked at?", and a page can be swept and produce no rows
+at all: a blank page in a scan, or a page whose OCR errored. Without a cursor those
+pages are re-read for ever. So `readSwept` exists, and the rule is that it states a
+fact about the past, only ever moves forward, and never decides completeness. Losing
+it costs a re-read of pages we already hold (the rows make that a skip); it can
+never cause a page to be passed over.
+
+**Monotonicity as a compare-and-set.** `noteSweep` updates on `$lt`, so a duplicate
+or retried batch cannot rewind the cursor. A rewind is not a slow re-read but an
+infinite one. The `$or` covers documents written before the field existed, where a
+bare `$lt` matches nothing and the read would never advance at all.
+
+**A refusal, not a bound.** `sweepAdvanced` refuses to requeue a batch that did not
+move the cursor. The failure mode it prevents is the worst one available here: the
+queue looks busy, the document sits in `reading`, the issue waiting on it is never
+generated, and nothing errors, so nothing is reported.
+
+**Coverage had to change meaning.** Counting rows would report a 400-page scan with
+a dozen blank pages as `partial` for ever — and a `partial` that is always true is a
+warning nobody reads. `sweptCoverage` counts what was *looked at* minus what
+demonstrably could not be read. Failed pages are stored as a set, not a count (a
+count double-counts a retry), and an entry that later produced chunks is discarded —
+which is what makes the two writes safe to do separately.
+
+**A provider outage is not an unreadable document.** A batch where every page's OCR
+call failed throws *before* the cursor moves, so the queue's retry re-reads that
+batch instead of sweeping past 25 pages it never saw. Bounded by `maxAttempts`.
+
+**An early exit.** A first batch that is legibly blank ends the read there rather
+than paying OCR on the remaining hundreds of pages — only on the first batch, and
+only when nothing errored, because a run of blank pages mid-document is normal.
+
+**The digest broke and had to be re-sourced.** It was built from whatever text the
+run happened to hold, which under batching is the *last* batch — so a 500-page
+report would be titled after page 476. It now reads the opening back from the rows
+(`firstChunkText`), which is correct at any batch count.
+
+### 9.2 A live defect found while wiring this up
+
+`healStuckIssue` finds an issue's jobs by `payload.issueId`, and the `readSourceDoc`
+payload did not carry one. So an issue created from an attached document — created
+`processing`, with a read job as its only queued work — had **no live job as far as
+the watchdog was concerned**, and was marked failed 20 seconds later while the
+worker read on. Generating from a document was broken end to end.
+
+Fixed by putting `issueId` on the read payload at the generate route. Deliberately
+*not* on the standalone `POST /issues/:id/sources` read: nothing is waiting on that
+one, and giving it an issueId would let an unrelated failed read fail an issue that
+happened to be generating.
+
+Worth noting how it was found — not by testing, but by asking what the watchdog
+would see now that a read takes even longer. The heartbeat work made reads safe from
+being reaped for *running* too long; this was the same watchdog killing them for
+appearing not to exist.
+
+### 9.3 Replacing the parser, and what changed with it
+
+`pdf-parse@1.1.1` was published in 2018 and vendors pdf.js 1.10.100, also 2018.
+Three problems, in order of seriousness:
+
+1. **Security.** We parse PDFs uploaded by users. pdf.js has had real CVEs since —
+   CVE-2024-4367 among them — and a *vendored* copy receives none of the fixes.
+   `npm audit` cannot even see it, because the parser is bundled rather than
+   depended on. This is the reason the swap was not optional.
+2. **All-or-nothing.** One string for the whole document: no page numbers, no
+   progress, no resumability. A read killed at 90% started again from nothing.
+3. **It could not tell a page from a document.** A 300-page report with a scanned
+   cover looked, to a "does this have text?" test on one concatenated string,
+   exactly like a 300-page scan — and vice versa.
+
+Now `pdfjs-dist@4.10.38`, in a new `lib/agent/pdfText.ts`. Version choice was
+deliberate: v4.10 is the widest Node support (`>=20`) among releases *patched* for
+CVE-2024-4367, and nothing in the repo pins a deploy Node version, so v5/v6's
+`>=22` floor was a risk not worth taking for text extraction.
+
+**The fork became per page, which removes step 4's density heuristic entirely.**
+Each page is asked for itself: text layer → store it; no text but something drawn →
+OCR that page; neither → a blank page, read and empty. So a mixed document is read
+correctly throughout, and OCR is paid for only on the pages that actually need it.
+There is no whole-document threshold left to get wrong.
+
+Four things this forced, each a bug avoided:
+
+- **`pdf-text` is now paginated**, so every `kind === 'pdf-ocr'` test in
+  `readSourceDoc` had silently become a wrong test for "is this paginated?".
+  Replaced by `isPaginated(kind)` — a function precisely because the answer changed.
+- **OCR is sticky** (`mergeKind`). A 400-page report whose scanned pages were in
+  batch 2 must not report itself as a clean text extraction because batch 9 was
+  typeset. `kind` exists to tell a consumer the text was transcribed, not extracted.
+- **Two budgets, not one.** Text extraction is local and takes milliseconds; OCR is
+  a paid model call taking up to 75 s. Bounding both at 25 pages would make a
+  2,000-page typeset report take 80 batches to do what it can do in four. So
+  `JOB_BATCH_PAGES` (25) bounds OCR pages and `JOB_SCAN_PAGES` (400) bounds pages
+  looked at.
+- **The 50 MB guard had to stop being fatal.** It used to sit in front of the whole
+  PDF path, where "no text" meant the entire file. Per page, one scanned insert in a
+  60 MB typeset report would have failed the lot. Now: if any text was found, keep it
+  and own up to the skipped pages; only a document with *no* text is refused.
+
+Also fixed on the way, both silent-quality problems rather than errors:
+`standardFontDataUrl` (pdfjs warns and degrades glyph→unicode mapping without it)
+and `cMapUrl` (without it, CJK text encoded with a predefined CMap does not come out
+at all — and this codebase deliberately supports CJK, see the two-character token
+floor in `retrieval.ts`). And text items are joined on `hasEOL` rather than
+concatenated, so a heading no longer fuses into the body it sits above.
+
+**One migration hazard, self-healing.** A PDF read under the old scheme stored one
+chunk at `pageNo 0`, which cannot be merged with per-page rows — retrieval would
+serve the same passage twice, once numbered and once not. A half-read document
+carrying one now drops its chunks and starts again. Only reachable for a document
+left queued/reading/failed across the change; a finished one returns early.
+
+**Verified against the compiled output, not just dev.** pdfjs is ESM-only and this
+server compiles to CommonJS, where `tsc` rewrites `import()` into `require()`. The
+loader hides the import behind `new Function` so it survives as a real dynamic
+import; `dist/lib/agent/pdfText.js` was then run under plain `node` to prove it,
+because "works in tsx, breaks in production" is the whole failure mode of that trick.
+
+### 9.4 Removing the caps — and the two that had to stay
+
+**The job path has no page cap.** `JOB_MAX_OCR_PAGES` is deleted, not raised:
+`maxPages` is now optional and absent means every page. Every cap before it (6, 24,
+200) was really a proxy for something else — a browser waiting on the read, or one
+upload monopolising the single worker — and both are now addressed directly, by the
+heartbeat and by batching. A cap that outlives its reason is the worst kind: it
+returns two thirds of a report, and nothing in the system can tell that from a short
+document.
+
+**Two caps stayed, and the plan's own table (§7.5) was wrong to list them.** It said
+landing 6 → all and studio 24 → all. Those bound a *synchronous HTTP request* with a
+300 s client abort, not the reading. Removing them before the client moves to the job
+path (step 6) would make a 40-page scan take 25 minutes against that abort — the
+exact failure §3 already describes as caveat 2, reintroduced deliberately. They come
+off with step 6, and the table now says so. `FULLTEXT_CHARS` (80 k) is the same case:
+a response-size bound on the legacy path, not a reading bound.
+
+**The size guard now matches what we accept.** `VISION_MAX_BYTES` was 50 MB against
+a 150 MB upload limit, so a file the upload endpoint agreed to store could be refused
+by the reader — two limits disagreeing, which nobody notices until a user hits it. It
+is now `MAX_SOURCE_BYTES`, env-overridable, because it is a memory bound (pdf-lib
+loads the whole PDF to copy a page out) rather than a policy.
+
+**`JOB_OCR_BUDGET_MS` (30 min) also stayed, and the table entry no longer applies.**
+It used to be a *document* budget, which truncated. Batching changed what it means:
+it now bounds ONE batch, so it is a fairness limit, not a cap — a document takes as
+many batches as it needs.
+
+**What removing the caps costs, made visible.** A page cap was also an accidental
+spend ceiling: 200 pages could not cost more than 200 pages. So `ReadEstimate` now
+rides on the document row and is surfaced by `GET /issues/:id/sources`, updated every
+batch while the read runs — the number is only useful to somebody deciding whether to
+let a 900-page scan finish.
+
+It extrapolates from pages *seen* rather than assuming the worst, which is what makes
+it worth showing: a 900-page report with a scanned appendix is not 900 OCR pages, and
+an estimate reading "$0.90" for every long document says nothing about the user's
+document. It never projects below what has already been spent, `projected` flags
+which half is still a guess, and `OCR_USD_PER_PAGE` is env-configurable (0 turns the
+money off and keeps the page counts) because a rate hardcoded in this repo *will*
+drift from the provider contract.
+
+Pages OCR'd are stored as a SET (`ocrUnits`), like `failedUnits` and for the same
+reason: a retried batch would inflate a counter, and over-reporting spend is a worse
+failure than a slightly larger document. Both sets are now written in one `$addToSet
+… $each` rather than one round trip per page.
+
+**Still open, and still yours:** a per-account spend budget. The estimate makes the
+cost visible; it does not stop anyone. I have not invented a policy for that.
+
+### 9.5 Ranking candidates instead of truncating them
+
+`loadCandidateChunks` matched chunks by term, sorted them by POSITION, and cut at
+400. In a long document that means every match past the cut was invisible to
+scoring: a passage on page 300 could not be retrieved **at all**, however well it
+matched, because 400 weaker matches came earlier in the document. The bound was
+right; bounding by position rather than by relevance was not.
+
+Now an aggregation ranks by how many of the query's distinct terms each chunk
+carries — `$size: {$setIntersection: ['$terms', terms]}` over the precomputed terms,
+so no text is scanned and the `{docId, terms}` index still serves the match. That is
+the same primary signal the real scorer uses (`buildScorer`: distinct terms × 1000 +
+occurrences), so the 400 kept are the 400 the scorer would have chosen. The scorer
+still re-scores them from `text`; this only decides who gets in. Ties break on
+position, so retrieval stays deterministic.
+
+**The no-terms fallback had the same bug and it was worse.** It took the first 400
+chunks and retrieval then drew what it believed was "a representative spread across
+the whole document" from a set covering only the opening pages — so for anything long
+the planner saw the front matter and thought it had seen the document. Now
+`sampleChunksAcross` samples evenly by position: one light keys-only query, then
+fetch the chosen rows by `_id`. Two round trips, but exact and deterministic without
+depending on `$setWindowFields` for a query that runs on every page draft.
+
+### 9.6 The client flow — upload first, then generate
+
+The old order was: read every attachment through the API, then create the issue.
+The user watched a spinner for the length of the read, and that is the whole reason
+the read was capped at six pages — any more and the wait became intolerable, so a
+40-page report silently contributed six pages of itself.
+
+Reversing the order is what frees the browser. `POST /issues/prepare` reserves an
+issue, its documents go **straight to S3** with a real progress bar, and the studio
+opens immediately while the worker reads. Nothing waits on the read, so nothing has
+to cap it.
+
+- **`status: 'preparing'`**, deliberately not `'processing'`: nothing is queued for
+  it yet, so the stuck-issue watchdog must not see it as work that has stalled. It
+  is also hidden from the issue list — a placeholder is not a magazine, and showing
+  it would leave a permanent "New magazine" row for anyone who abandoned an upload.
+- **Generate ADOPTS a prepared issue** via compare-and-set on `'preparing'`, so a
+  double-submitted form generates one issue and the second request is told 409
+  rather than quietly building a duplicate.
+- **`startGeneration` was extracted** so both entry points share one path. Two
+  copies would drift, and the way they would drift is the worst available: one
+  enqueuing reads without the continuation, or without the `issueId` the watchdog
+  needs, and generation silently never starting.
+- **Abandoned prepared issues are reaped** on the next `prepare` by the same owner —
+  not on a timer or a list read. The cleanup then runs exactly when somebody starts
+  another one, costs one query, and can only ever touch its own owner's rows.
+- **XHR, not fetch**, for the upload. `fetch` cannot report upload progress — there
+  is no request-progress event in any shipping browser — so a fetch-based upload can
+  only show a spinner. Tolerable at 50 MB through an API; not at 150 MB direct to S3,
+  where a spinner over a four-minute upload is indistinguishable from a hang and
+  users cancel and retry.
+- **The size check moved to the picker.** There was none at all client-side, so an
+  oversized file was uploaded in full and only then refused. The size is known the
+  instant the file is chosen; there is no reason to send a byte of it.
+
+**`SourceReadingPanel`** polls `GET /issues/:id/sources` and reports pages read of
+pages total, per document, plus the cost. It exists because removing the caps
+changed what waiting looks like: the existing BuildBanner counts pages BUILT, which
+stays at zero for as long as the documents are being read, so on its own it shows a
+build that never moves. A studio that looks stuck gets reloaded — the worst possible
+response to a read you are paying for. It renders nothing when there are no
+attachments, and stops polling when every document has settled rather than after N
+attempts, because a read has no predictable length any more.
+
+### 9.7 The document map (step 7)
+
+The planner picks an issue's running order from `SOURCE_BUDGET.plan` — 14,000
+characters. For a 500-page report that is three per cent of the document, so it was
+choosing the shape of a magazine from a sample of its source and could not know what
+it had not seen. Raising the budget does not fix it either: it costs tokens on every
+call and moves three per cent to six.
+
+So `sourceOutline.ts` builds a MAP — one short line per page — which fits the whole
+document into a few thousand characters. It gets its own budget
+(`OUTLINE_BUDGET = 3,000`) on top of the excerpt's rather than inside it, because the
+two buy different things: the excerpt buys depth on part of the document, the map
+buys the shape of all of it.
+
+Four things it had to get right, three of which the first draft got wrong:
+
+- **Thinning, not truncating.** Cutting to the first N pages that fit would
+  reproduce the exact bug the map exists to fix, one level up — a complete-looking
+  map of the document's opening. It samples evenly instead, always keeping the first
+  and last page, and the gaps are visible because the numbers jump.
+- **The budget is a real ceiling.** Sizing the selection from the average entry cost
+  overshoots on a document whose headings vary; the guess is now checked against the
+  actual cost and walked down until it fits. A budget too small for a map worth
+  reading yields NO map — two pages out of five hundred is not a map of a document,
+  it is a claim to be one. (A test caught this producing "2 of 100 pages" from a
+  zero budget.)
+- **Running headers are dropped**, found by looking at the whole document: pages 13
+  to 400 all saying "ANNUAL REVIEW 2025 | 12" is what gives a header away, and no
+  single page can tell. Counting only each page's FIRST line is what makes this safe
+  — comparing every line near the top conflated running headers with numbered
+  section headings ("Section 1", "Section 2" fold to the same shape as a folio does),
+  and a document whose every page carried its own heading lost all of them.
+- **The map goes INSIDE the guard fences.** It is text derived from the user's
+  document, so it is untrusted for exactly the reason the excerpt is. Putting it
+  outside would open a second channel into the prompt that the guard does not cover
+  — the shape of the original bug `sourceEnvelope.ts` was written to make impossible.
+  Fence neutralisation also **moved into the assembler** for the same reason: it used
+  to be each renderer's job, which was fine while there was one channel of document
+  text, and the map quietly became a second one.
+
+### 9.8 Cleanup (step 8) — and what is deliberately left
+
+Done:
+
+- **`bulkWrite` batched at 500.** Mongo splits a larger batch itself, but only after
+  the whole thing is built and shipped as one message — so an unbounded batch is our
+  memory problem, not the server's. Adopting a twin's chunks is where it bites: that
+  copies every chunk of a document in one call.
+- **Client-side size check** (see §9.6).
+- **The client-side ingest call is gone from the landing screen** — it no longer
+  reads documents in the browser at all.
+
+**NOT done, and not safely doable right now: deleting the client ingest path and the
+`sourceText` route parameter.** `AiPanel.tsx` — the studio chat — still calls
+`ingestFile` in four places and posts `sourceText`, and moving it onto `docIds` is a
+real change in a file another session currently has uncommitted work in. Deleting
+the path underneath it would break the studio chat; rewriting it would collide.
+Sequence: migrate the chat path to `docIds` first (it is the last consumer), then the
+legacy string and the 60,000-character slice can go together.
+
+**One rough edge introduced, knowingly.** Attached documents are still copied a
+second time into the browsable Uploads library, because the panel that renders
+Uploads reads only that collection and dropping the copy would make an attached
+document vanish from somewhere the user can currently see it. Files over 25 MB skip
+the copy with the reason said out loud — re-sending two hundred megabytes to
+populate a list is not defensible, and that size is now reachable. The real fix is
+for the panel to read the source store, which belongs with the AiPanel migration
+above.
+
+### 9.9 Found in the first live run
+
+The end-to-end flow worked on the first try: prepare → S3 → studio open in ~50ms,
+13/13 pages read per page by pdfjs, continuation chained, pages built. One real bug
+showed up in the worker log, and only because the log named the same docId twice:
+
+```
+readSourceDoc …fff4 → ready; continuation: no-continuation   ← job from POST /sources
+readSourceDoc …fff4 → already ready, nothing to do
+readSourceDoc …fff4 → ready; continuation: enqueued           ← job from generate
+```
+
+**Every attached document was read-queued twice.** `POST /sources` enqueues a read
+eagerly, and the generate route enqueues one per docId as well — it must, because
+that read is what carries the continuation that starts the build.
+
+It WORKED, by luck of the queue’s ordering: the second job found the document
+already read, no-op’d, and chained. But once a read is batched the two jobs
+interleave batches instead, and every batch re-downloads the file and re-opens the
+PDF — so on a 500-page document that luck costs twice the S3 traffic for the whole
+read, and the log would have shown two jobs leapfrogging through one document.
+
+Fixed with an explicit `defer` on `POST /sources`: the client says whether a
+generate call follows. Eager stays the default, so a document uploaded on its own is
+still read without being asked. Chosen over having the generate route mutate the
+queued job’s payload — that has a race (the job can be claimed between the check
+and the write) whose failure mode is the continuation being dropped and generation
+never starting.
+
+Also added: `buildMap` logs what it mapped. The map lives inside a prompt, so “did
+the planner get the shape of the document?” had no observable answer at all — and a
+document that maps to nothing (all running headers, or too small a budget) was
+indistinguishable from one that mapped fine.
 ---
 
 ## 10. Testing notes

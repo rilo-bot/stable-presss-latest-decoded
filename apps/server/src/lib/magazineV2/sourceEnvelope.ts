@@ -113,7 +113,7 @@ export function renderSource(source: string | undefined, opts: RenderSourceOpts)
 
   const maxChars = Math.max(500, Math.floor(opts.maxChars));
   const got = retrieveSourceDetailed(text, { intent: opts.intent, maxChars, kind: opts.kind });
-  const excerpt = neutraliseFences(got.text).trim();
+  const excerpt = got.text.trim();
   if (!excerpt) return '';
 
   return wrap(opts.task, coverageLine(got.strategy), excerpt);
@@ -130,8 +130,11 @@ export function renderSource(source: string | undefined, opts: RenderSourceOpts)
  * The coverage sentence comes from the receipt — which counted chunks as they were
  * packed — so it describes the payload rather than the request that produced it.
  */
-export function renderRetrieved(retrieved: RetrievedSource, opts: { task: string }): string {
-  const excerpt = neutraliseFences(retrieved.text).trim();
+export function renderRetrieved(
+  retrieved: RetrievedSource,
+  opts: { task: string; map?: string },
+): string {
+  const excerpt = retrieved.text.trim();
   if (!excerpt) return '';
   const { receipt } = retrieved;
   const coverage = receipt.truncated
@@ -141,17 +144,33 @@ export function renderRetrieved(retrieved: RetrievedSource, opts: { task: string
           : ' This spans the whole of what was read, so cover its breadth rather than just the opening.'
       }`
     : '';
-  return wrap(opts.task, coverage, excerpt);
+  return wrap(opts.task, coverage, excerpt, opts.map);
 }
 
-/** The one assembler. Guard is not optional here, which is the entire design. */
-function wrap(task: string, coverage: string, excerpt: string): string {
+/**
+ * The one assembler. Guard is not optional here, which is the entire design.
+ *
+ * NEUTRALISATION HAPPENS HERE, not at the call sites, and that is a deliberate
+ * move. It used to be each renderer's job, which was fine while there was exactly
+ * one channel of document text — and then the document MAP was added and quietly
+ * became a second one, unneutralised, able to close its own fence from a crafted
+ * heading. Doing it in the assembler means every channel of document-derived text
+ * is covered by construction, including the next one somebody adds.
+ */
+function wrap(task: string, coverage: string, excerpt: string, map?: string): string {
+  // The map goes INSIDE the fences for the same reason: it is text derived from the
+  // user's document, so it is untrusted exactly as the excerpt is. Outside, it would
+  // be a channel into the prompt that the guard does not cover — the shape of the
+  // original bug this file was written to make impossible.
+  const inner = map
+    ? [map, '', '[TEXT FROM THE DOCUMENT]', excerpt].join('\n')
+    : excerpt;
   const block = [
     `SOURCE DOCUMENT — ${task}:`,
     GUARD,
     coverage,
     BEGIN_FENCE,
-    excerpt,
+    neutraliseFences(inner),
     END_FENCE,
   ]
     .filter(Boolean)

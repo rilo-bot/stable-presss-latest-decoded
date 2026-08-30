@@ -6,13 +6,14 @@
 // verbatim full text. The digest rides along in the editor context (small +
 // reusable); the full text feeds the bulk compose/fill pass.
 //
-//   • PDF (text-based) → text is extracted server-side with pdf-parse
-//            (deterministic; no model round-trip).
-//   • PDF (image-based / scanned) → no extractable text, so the PDF is SPLIT into
-//            single pages (pdf-lib) and each page is OCR'd by the vision model in
-//            parallel. This keeps every model call small + reliable (instead of
-//            one giant multi-page call that blows the timeout) AND yields real
-//            verbatim text so the bulletin fill has something to work from.
+//   • PDF → text is extracted server-side, PAGE BY PAGE, with pdfjs (see
+//            pdfText.ts; deterministic, no model round-trip). Any page with no text
+//            layer but something drawn on it is SPLIT out as a single-page PDF
+//            (pdf-lib) and OCR'd by the vision model. This keeps every model call
+//            small and reliable instead of one giant multi-page call that blows the
+//            timeout, and — because the decision is per page, not per document — a
+//            typeset report with a scanned appendix is read correctly throughout,
+//            paying for OCR only on the pages that actually need it.
 //   • images → sent to the model as a file part (vision).
 //   • text / csv / markdown → decoded and passed inline.
 // ---------------------------------------------------------------------------
@@ -23,12 +24,8 @@ import { z } from 'zod'
 import { PDFDocument } from 'pdf-lib'
 import mammoth from 'mammoth'
 import { getAgentModel, getOcrModel } from './provider.js'
-
-// pdf-parse ships a debug block in its index.js that reads a sample file on
-// import; importing the lib entry point directly avoids it. Server is CommonJS.
-// eslint-disable-next-line @typescript-eslint/no-var-requires
-const pdfParse: (data: Buffer) => Promise<{ text?: string; numpages?: number }> =
-  require('pdf-parse/lib/pdf-parse.js')
+import { openPdf, type PdfPageProbe } from './pdfText.js'
+import { MAX_SOURCE_BYTES } from '../magazineV2/config.js'
 
 export type IngestKind = 'pdf' | 'image' | 'text' | 'docx'
 
@@ -100,7 +97,6 @@ const OCR_SYSTEM =
 // request forever (the route would otherwise wait indefinitely on the network).
 const FULLTEXT_CHARS = 80_000 // verbatim text kept for the bulk compose/fill pass
 const MODEL_ABORT_MS = 90_000 // generateObject ceiling (single-image vision path)
-const PDF_PARSE_MS = 30_000 // text-extraction ceiling
 const PAGE_OCR_MS = 75_000 // per-page OCR ceiling (image-based PDF path)
 // OCR pages this many at a time. Kept LOW on purpose: firing several large scanned
 // pages at the vision provider at once makes them queue/throttle, so each call's
@@ -109,7 +105,21 @@ const PAGE_OCR_MS = 75_000 // per-page OCR ceiling (image-based PDF path)
 // headroom to actually return — fewer-but-completing beats more-but-aborted.
 const VISION_CONCURRENCY = 2
 const MAX_VISION_PAGES = 24 // cap OCR work (matches the 24-page bulletin template)
-const VISION_MAX_BYTES = 50 * 1024 * 1024 // cap the image/scanned-PDF fallback (matches the /ingest 50mb body limit)
+/**
+ * Largest file we will split pages out of for a visual read.
+ *
+ * This is a MEMORY bound, not a policy one: pdf-lib loads the whole PDF to copy a
+ * page out of it. Set to the size we actually accept (MAX_SOURCE_BYTES), so the rule
+ * is simply "anything we took, we can read" — a smaller number here means refusing
+ * to read a file the upload endpoint already agreed to store, which is the sort of
+ * disagreement between two limits that nobody notices until a user hits it.
+ *
+ * Overridable, because it is the one number here tied to the host, not the design.
+ */
+const VISION_MAX_BYTES = Math.max(
+  1024 * 1024,
+  Number(process.env.MAGAZINE_V2_VISION_MAX_BYTES ?? MAX_SOURCE_BYTES),
+)
 
 function withTimeout<T>(p: Promise<T>, ms: number, label: string): Promise<T> {
   return Promise.race([
@@ -263,27 +273,52 @@ async function ocrPdfPage(model: LanguageModel, pageBytes: Buffer, pageNo: numbe
   }
 }
 
-/** Split a PDF into single-page PDF buffers (pure JS, no rendering). Capped. */
-async function splitPdfPages(bytes: Buffer, maxPages: number): Promise<{ pages: Buffer[]; total: number }> {
+/**
+ * Copy the NAMED pages out of a PDF as single-page PDF buffers (pure JS, no
+ * rendering). `pageNos` are 1-based; the result is aligned to it index for index.
+ *
+ * An explicit list rather than "the first N", for two reasons. A batched read only
+ * ever needs its own slice — splitting the whole document up front held every
+ * single-page PDF in memory at once, tolerable behind a 24-page cap and thousands
+ * of buffers without one. And the pages needing OCR are not a contiguous range at
+ * all now that the text/scan decision is made per page: a report with a scanned
+ * insert asks for pages 4, 5 and 91.
+ *
+ * Page numbers outside the document are skipped rather than throwing, and the
+ * returned array is then shorter — so callers must not assume a one-to-one mapping
+ * when they may have passed junk. The reader never does: its numbers come from
+ * pdfjs's own page count.
+ */
+export async function splitPdfPagesAt(bytes: Buffer, pageNos: number[]): Promise<Buffer[]> {
+  if (pageNos.length === 0) return []
   const src = await PDFDocument.load(bytes, { ignoreEncryption: true, updateMetadata: false })
   const total = src.getPageCount()
-  const n = Math.min(total, maxPages)
-  const pages: Buffer[] = []
-  for (let i = 0; i < n; i++) {
+  const out: Buffer[] = []
+  for (const pageNo of pageNos) {
+    const index = Math.floor(pageNo) - 1
+    if (index < 0 || index >= total) continue
     const doc = await PDFDocument.create()
-    const [pg] = await doc.copyPages(src, [i])
+    const [pg] = await doc.copyPages(src, [index])
     doc.addPage(pg)
-    pages.push(Buffer.from(await doc.save()))
+    out.push(Buffer.from(await doc.save()))
   }
-  return { pages, total }
+  return out
 }
 
 /** Image-based / scanned PDF: split into pages and OCR them in parallel, then
  *  stitch the verbatim text back together so the bulk fill has real content. */
-async function ocrPdfByPage(name: string, bytes: Buffer, maxPages: number = MAX_VISION_PAGES): Promise<IngestResult> {
+async function ocrPdfByPage(
+  name: string,
+  bytes: Buffer,
+  maxPages: number = MAX_VISION_PAGES,
+  pageCount = 0,
+): Promise<IngestResult> {
   let split: { pages: Buffer[]; total: number }
   try {
-    split = await splitPdfPages(bytes, Math.max(1, Math.min(MAX_VISION_PAGES, maxPages)))
+    const want = Math.max(1, Math.min(MAX_VISION_PAGES, maxPages))
+    const total = pageCount > 0 ? pageCount : want
+    const wanted = Array.from({ length: Math.min(want, total) }, (_, i) => i + 1)
+    split = { pages: await splitPdfPagesAt(bytes, wanted), total }
   } catch (e) {
     // Couldn't split (corrupt/odd PDF) — last resort: one bounded vision call on
     // the whole file. Better a thin digest than a hard failure.
@@ -358,14 +393,58 @@ export interface IngestResult {
 // So this hands each page back as it completes, letting the caller persist it
 // before the next one starts, and skips pages the caller says it already holds.
 // That is the whole of resume: no page is read twice, and no page is lost.
+//
+// It also reads a BOUNDED RANGE rather than the whole document, because the worker
+// runs one job at a time: a handler that read a 5,000-page scan to the end would
+// hold the only lane for hours, and every other magazine in the system would wait
+// on it. The caller sweeps in batches and re-enqueues between them.
 // ---------------------------------------------------------------------------
 
-/** How many pages of a scanned PDF the JOB path will OCR. Far above the legacy
- *  route's 24, because nothing is waiting on it. */
-export const JOB_MAX_OCR_PAGES = 200
-/** Wall-clock ceiling for one document's OCR. A hard stop that yields an honest
- *  `partial` rather than a job that never ends. */
+/**
+ * THERE IS NO PAGE CAP ON THE JOB PATH. A document is read to its last page.
+ *
+ * There used to be one (200), and before that 24 and 6, and every one of them was
+ * really a proxy for something else: a browser waiting on the read, or one big
+ * upload monopolising the single worker. Both are now addressed directly — the read
+ * is a background job (heartbeat, so watching it cannot kill it) swept in batches
+ * (so it cannot hold the lane) — which leaves nothing for a page cap to protect.
+ *
+ * A cap that stays after its reason has gone is the worst kind: it silently returns
+ * two thirds of a report and nothing in the system knows the difference between
+ * that and a short document.
+ *
+ * `maxPages` remains available per call, for a caller that genuinely wants a
+ * PREVIEW of the first few pages. Absent means all of them.
+ */
+/** Wall-clock ceiling for ONE BATCH's OCR (not the document's — a document may
+ *  take as many batches as it needs). A hard stop, so a provider that has slowed to
+ *  a crawl yields an honest short batch instead of a job that never ends. */
 export const JOB_OCR_BUDGET_MS = 30 * 60_000
+/**
+ * Pages one batch reads before handing the queue back to everybody else.
+ *
+ * The worker claims ONE job at a time, so a read that ran to the end of a
+ * 5,000-page scan would hold the only lane for hours and no other magazine in the
+ * system could generate meanwhile — one user's upload becomes everyone's outage.
+ * The caller sweeps in batches and re-enqueues between them; the requeued row is
+ * new, and claimOne takes the oldest first, so it lands BEHIND whatever arrived
+ * while this batch ran. Fairness falls out of the ordering, with no scheduler.
+ *
+ * Sized so a batch is minutes, not hours: 25 pages at the worst-case per-page OCR
+ * ceiling, four in flight, is well under ten minutes.
+ */
+export const JOB_BATCH_PAGES = 25
+/**
+ * Pages one batch will LOOK AT — a far larger number than JOB_BATCH_PAGES, because
+ * the two bound different costs.
+ *
+ * Extracting a page's text layer is local and takes milliseconds; OCR'ing a page is
+ * a model call taking up to 75 seconds and costing money. Bounding both at 25 would
+ * make a 2,000-page typeset report take 80 batches to read something it can do in
+ * four, for no benefit to anyone waiting behind it. So the OCR budget is what keeps
+ * a run short, and this only keeps a run finite.
+ */
+export const JOB_SCAN_PAGES = 400
 /** Pages in flight at once on the job path. Higher than the request path's 2:
  *  there is no request timeout to blow, only provider throughput. */
 const JOB_VISION_CONCURRENCY = 4
@@ -378,6 +457,13 @@ export interface PageRead {
   ok: boolean
 }
 
+/**
+ * What ONE batch of reading did.
+ *
+ * Deliberately facts and not prose: the reader reports what it looked at and what
+ * failed, and the store phrases the coverage (sweptCoverage). When both did it,
+ * they disagreed — the reader's page-cap wording outlived the cap it described.
+ */
 export interface ReadPagesResult {
   kind: 'pdf-text' | 'pdf-ocr' | 'docx' | 'text' | 'image'
   /** Read UNITS, not necessarily printed pages: a text layer or a Word body is
@@ -385,25 +471,76 @@ export interface ReadPagesResult {
    *  per page. Coverage is counted in the same unit the reader used, so it can
    *  never imply a document was partly read just because it was read at once. */
   unitsTotal: number
-  unitsRead: number
-  /** Units whose read FAILED (OCR error), as opposed to being empty. */
-  failed: number
-  /** Set when the read stopped short — page cap or wall-clock. '' otherwise. */
-  reason: string
+  /** The highest unit this read will ever reach — `unitsTotal`, or lower if the
+   *  caller imposed a page cap. Kept apart from the total so a capped read stops
+   *  without the coverage arithmetic forgetting how long the document really was. */
+  unitsCeiling: number
+  /** Units this batch tried to read (skipped ones excluded). */
+  attempted: number
+  /** Units this batch read WITHOUT error — a blank page counts, a timeout does not. */
+  ok: number
+  /** Units whose read errored this batch. Numbers, not a count, so the caller can
+   *  union them across batches without double-counting a retry. */
+  failedUnits: number[]
+  /** Units this batch sent to the OCR model — the only pages that cost anything.
+   *  Numbers rather than a count for the same reason: a retried batch must not be
+   *  able to inflate what the read is reported to have cost. */
+  ocrUnits: number[]
+  /** The last unit this batch passed over. Everything in [1, sweptTo] has now been
+   *  looked at, by this batch or an earlier one. Where the NEXT batch starts is the
+   *  caller's decision (sourceStore.nextBatchFrom) — the reader reports how far it
+   *  got and does not also get an opinion about what that means. */
+  sweptTo: number
+  /** True when the wall-clock budget, rather than the end of the range, stopped it. */
+  outOfTime: boolean
 }
 
 /**
- * Read a document, handing each unit to `onUnit` as it lands.
+ * How far a batch actually got — the resume point, and an off-by-one with teeth.
  *
- * `skipUnits` are units the caller already has stored; they are neither read nor
- * reported as failures, and they count towards `unitsRead` because the caller
- * holds them.
+ * Normally a batch covers its whole range. When the wall-clock stops it, pages are
+ * abandoned mid-flight: mapLimit walks the range in order through a shared cursor,
+ * so what it drops is broadly a suffix, but with several pages in flight the
+ * boundary is not exact. Resuming at the LOWEST abandoned page is the only choice
+ * that cannot skip one, and any page past it that did get read is already stored,
+ * so the next batch skips it for free.
+ *
+ * Returns `from - 1` — no progress — when the clock stopped the batch before its
+ * first page. The caller must refuse to requeue that rather than loop for ever;
+ * see sourceStore.sweepAdvanced.
+ */
+export function sweptThrough(opts: { from: number; pageCount: number; firstMissed?: number | null }): number {
+  const from = Math.max(1, Math.floor(opts.from))
+  const last = from - 1 + Math.max(0, Math.floor(opts.pageCount))
+  const missed = opts.firstMissed
+  if (missed == null || !Number.isFinite(missed)) return last
+  // Clamp both ways: a missed page outside the range says nothing about it.
+  return Math.min(last, Math.max(from - 1, Math.floor(missed) - 1))
+}
+
+/**
+ * Read part of a document, handing each unit to `onUnit` as it lands.
+ *
+ * `skipUnits` are units the caller already has stored: neither read nor reported as
+ * failures. `startUnit` says where to resume, and the two budgets bound the batch:
+ * `ocrBudget` pages sent to the model, `scanBudget` pages looked at. A PDF sweeps
+ * forward until one of them runs out and reports how far it got; every other kind is
+ * a single unit and always completes in one call.
  */
 export async function readDocumentUnits(opts: {
   bytes: Buffer
   contentType: string
   name: string
   skipUnits?: Set<number>
+  /** 1-based page to resume the sweep at. Defaults to the start of the document. */
+  startUnit?: number
+  /** Pages needing OCR that this batch may read before handing the queue back.
+   *  Defaults to JOB_BATCH_PAGES. This is the budget that matters: OCR is the slow,
+   *  paid part, so it is what decides how long one run holds the worker. */
+  ocrBudget?: number
+  /** Pages this batch may LOOK AT. Defaults to JOB_SCAN_PAGES — see there for why
+   *  it is much larger than the OCR budget. */
+  scanBudget?: number
   maxPages?: number
   budgetMs?: number
   onUnit: (unit: PageRead) => Promise<void>
@@ -414,8 +551,19 @@ export async function readDocumentUnits(opts: {
 
   /** Emit a single whole-document unit (everything but a scanned PDF). */
   const single = async (text: string, k: ReadPagesResult['kind']): Promise<ReadPagesResult> => {
-    if (!skip.has(0)) await opts.onUnit({ pageNo: 0, text, ok: true })
-    return { kind: k, unitsTotal: 1, unitsRead: 1, failed: 0, reason: '' }
+    const held = skip.has(0)
+    if (!held) await opts.onUnit({ pageNo: 0, text, ok: true })
+    return {
+      kind: k,
+      unitsTotal: 1,
+      unitsCeiling: 1,
+      attempted: held ? 0 : 1,
+      ok: held ? 0 : 1,
+      failedUnits: [],
+      ocrUnits: [],
+      sweptTo: 1,
+      outOfTime: false,
+    }
   }
 
   if (kind === 'text') {
@@ -440,70 +588,167 @@ export async function readDocumentUnits(opts: {
   if (kind === 'image') {
     // Vision-only: there is no verbatim text, so the digest is the content. The
     // job stores that on the document row rather than as chunks.
-    return { kind: 'image', unitsTotal: 1, unitsRead: 0, failed: 0, reason: 'images carry no extractable text' }
+    return {
+      kind: 'image',
+      unitsTotal: 1,
+      unitsCeiling: 1,
+      attempted: 0,
+      ok: 0,
+      failedUnits: [],
+      ocrUnits: [],
+      sweptTo: 0,
+      outOfTime: false,
+    }
   }
 
   // ── PDF ──
-  let text = ''
-  try {
-    const parsed = await withTimeout(pdfParse(opts.bytes), PDF_PARSE_MS, 'PDF text extraction')
-    text = (parsed.text ?? '').trim()
-  } catch (e) {
-    console.warn('[ingest] PDF text extraction failed/slow, falling back to OCR:', e instanceof Error ? e.message : e)
-  }
-  if (text.length >= 40) return single(text, 'pdf-text')
-
-  // Image-based/scanned: one unit per page, persisted as each completes.
-  if (opts.bytes.length > VISION_MAX_BYTES) {
-    throw new Error(
-      "This PDF looks image-based (no selectable text), and it's too large for me to read visually. " +
-        'Please upload a text-based PDF or a smaller version.',
-    )
-  }
-  const cap = Math.max(1, Math.min(JOB_MAX_OCR_PAGES, opts.maxPages ?? JOB_MAX_OCR_PAGES))
-  const { pages, total } = await splitPdfPages(opts.bytes, cap)
-  if (pages.length === 0) throw new Error('That PDF has no pages I can read.')
-
-  const model = getOcrModel()
+  //
+  // ONE PAGE AT A TIME, AND THE DECISION IS PER PAGE. The old reader asked "does
+  // this DOCUMENT have text?" of one concatenated string, and a single answer had
+  // to serve every page: a 300-page report with a scanned cover looked exactly
+  // like a 300-page scan. Now each page is asked for itself, so a typeset body
+  // with a scanned appendix is read the right way throughout — and, because text
+  // extraction is nearly free while OCR is not, only the pages that actually need
+  // the model are paid for.
+  // No cap unless the caller asked for one. Infinity rather than a big number, so
+  // nobody later reads a large constant here as a limit worth respecting.
+  const cap = opts.maxPages == null ? Number.POSITIVE_INFINITY : Math.max(1, Math.floor(opts.maxPages))
+  // 1-based page numbers throughout, so unit 0 is never a PDF page — it means "the
+  // whole document as one body", and the two must not collide in `skipUnits`.
+  const from = Math.max(1, Math.floor(opts.startUnit ?? 1))
+  const ocrBudget = Math.max(1, Math.floor(opts.ocrBudget ?? JOB_BATCH_PAGES))
+  const scanBudget = Math.max(1, Math.floor(opts.scanBudget ?? JOB_SCAN_PAGES))
   const deadline = Date.now() + Math.max(60_000, opts.budgetMs ?? JOB_OCR_BUDGET_MS)
-  // 1-based page numbers, so unit 0 is never a scanned page — it means "the whole
-  // document as one body", and the two must not collide in `skipUnits`.
-  const todo = pages.map((buf, i) => ({ buf, pageNo: i + 1 })).filter((p) => !skip.has(p.pageNo))
-  let failed = 0
-  let readNow = 0
-  let ranOut = false
 
-  await mapLimit(todo, JOB_VISION_CONCURRENCY, async (p) => {
-    if (Date.now() > deadline) {
-      ranOut = true
-      return
+  const pdf = await openPdf(opts.bytes)
+  const failedUnits: number[] = []
+  /** Pages actually handed to the OCR model, for the cost reading. */
+  const ocrUnits: number[] = []
+  let ok = 0
+  let outOfTime = false
+  let sawScan = false
+  /** The lowest page we did not get to. See sweptThrough. */
+  let firstMissed = Number.POSITIVE_INFINITY
+
+  try {
+    const total = pdf.pageCount
+    if (total === 0) throw new Error('That PDF has no pages I can read.')
+    const ceiling = Math.min(total, cap)
+    /** Result shape for every exit from here, so the arithmetic is written once. */
+    const done = (sweptTo: number, attempted: number): ReadPagesResult => ({
+      kind: sawScan ? 'pdf-ocr' : 'pdf-text',
+      unitsTotal: total,
+      unitsCeiling: ceiling,
+      attempted,
+      ok,
+      failedUnits,
+      ocrUnits,
+      sweptTo,
+      outOfTime,
+    })
+
+    // Resuming past the ceiling: nothing to do, and the sweep is already over. Can
+    // happen after a cap change, or on a duplicate delivery of the last batch.
+    if (from > ceiling) return done(ceiling, 0)
+
+    // Pass one: extract the text layer, page by page, emitting as we go. Pages with
+    // no text but something drawn on them are collected for OCR; pages with neither
+    // are BLANK — read, empty, and not worth a model call.
+    const needOcr: number[] = []
+    let attempted = 0
+    let scanned = 0
+    let lastScanned = from - 1
+
+    for (let pageNo = from; pageNo <= ceiling; pageNo++) {
+      if (Date.now() > deadline) {
+        outOfTime = true
+        firstMissed = Math.min(firstMissed, pageNo)
+        break
+      }
+      // Both budgets stop the run, and for different reasons: the OCR budget keeps
+      // one document from holding the worker for hours, the scan budget keeps a
+      // 5,000-page text PDF from doing the same far more cheaply.
+      if (needOcr.length >= ocrBudget || scanned >= scanBudget) break
+      if (skip.has(pageNo)) {
+        // Already stored. Still counts as swept — it is behind us either way.
+        lastScanned = pageNo
+        continue
+      }
+      scanned += 1
+      attempted += 1
+      let probe: PdfPageProbe
+      try {
+        probe = await pdf.probe(pageNo)
+      } catch (e) {
+        // One unreadable page must not sink the document. Recorded as failed so the
+        // coverage owns up to it, and the sweep moves on.
+        console.warn(`[ingest] page ${pageNo}: text extraction failed:`, e instanceof Error ? e.message : e)
+        failedUnits.push(pageNo)
+        lastScanned = pageNo
+        continue
+      }
+      if (probe.text) {
+        ok += 1
+        // Persisted BEFORE the next page is read, so a kill costs one page.
+        await opts.onUnit({ pageNo, text: probe.text, ok: true })
+      } else if (probe.hasImage) {
+        needOcr.push(pageNo)
+      } else {
+        ok += 1 // a genuinely blank page: successfully read, nothing on it
+      }
+      lastScanned = pageNo
     }
-    const got = await ocrPdfPage(model, p.buf, p.pageNo)
-    if (!got.ok) {
-      failed += 1
-      return
+
+    if (needOcr.length === 0) return done(sweptThrough({ from, pageCount: lastScanned - from + 1, firstMissed }), attempted)
+
+    // Pass two: OCR the pages with no text layer. Guarded on size, because splitting
+    // a page out means loading the whole file into pdf-lib.
+    //
+    // Too large is NOT a reason to fail a document we can partly read. The guard
+    // used to sit in front of the whole PDF path, where "no text" meant the entire
+    // file; per-page, one scanned insert in a 60MB typeset report would have failed
+    // the lot. So: if we found text, keep it and own up to the pages we skipped. If
+    // we found none, the document really is an unreadable scan and saying so is the
+    // useful answer.
+    if (opts.bytes.length > VISION_MAX_BYTES) {
+      if (ok === 0) {
+        throw new Error(
+          "This PDF's pages are images (no selectable text), and the file is too large for me to read them " +
+            'visually. Please upload a text-based PDF or a smaller version.',
+        )
+      }
+      console.warn(
+        `[ingest] "${opts.name}": ${needOcr.length} image page(s) skipped — file is ${Math.round(opts.bytes.length / 1e6)}MB, over the visual-read limit`,
+      )
+      failedUnits.push(...needOcr)
+      return done(sweptThrough({ from, pageCount: lastScanned - from + 1, firstMissed }), attempted)
     }
-    // Persisted BEFORE the next page is claimed, which is what makes a kill
-    // between pages cost one page rather than the document.
-    await opts.onUnit({ pageNo: p.pageNo, text: got.text, ok: true })
-    if (got.text.trim()) readNow += 1
-  })
+    sawScan = true
+    const buffers = await splitPdfPagesAt(opts.bytes, needOcr)
+    const model = getOcrModel()
+    await mapLimit(buffers, JOB_VISION_CONCURRENCY, async (buf, i) => {
+      const pageNo = needOcr[i]!
+      if (Date.now() > deadline) {
+        outOfTime = true
+        firstMissed = Math.min(firstMissed, pageNo)
+        return
+      }
+      const got = await ocrPdfPage(model, buf, pageNo)
+      if (!got.ok) {
+        // A failed CALL is not an unread page for resume purposes: sweeping past it
+        // is what stops one flaky page being retried for ever. It is recorded so the
+        // coverage can own up to it.
+        failedUnits.push(pageNo)
+        return
+      }
+      ok += 1
+      ocrUnits.push(pageNo)
+      await opts.onUnit({ pageNo, text: got.text, ok: true })
+    })
 
-  const capped = total > pages.length
-  const reason = ranOut
-    ? `stopped after ${readNow + skip.size} of ${total} pages (time limit)`
-    : capped
-      ? `read the first ${pages.length} of ${total} pages`
-      : failed > 0
-        ? `${failed} page${failed === 1 ? '' : 's'} could not be read`
-        : ''
-
-  return {
-    kind: 'pdf-ocr',
-    unitsTotal: total,
-    unitsRead: readNow + skip.size,
-    failed,
-    reason,
+    return done(sweptThrough({ from, pageCount: lastScanned - from + 1, firstMissed }), attempted)
+  } finally {
+    await pdf.close()
   }
 }
 
@@ -545,12 +790,27 @@ export async function ingestDocument(opts: {
 
   if (kind === 'pdf') {
     // Reliable + FAST path: pull the text out of the PDF ourselves (no model call).
+    // Page by page, and only as far as this request needs — a preview asks for a
+    // handful, so there is no reason to parse three hundred.
     let text = ''
     let pages = 0
+    const want = Math.max(1, opts.maxOcrPages ?? MAX_VISION_PAGES)
     try {
-      const parsed = await withTimeout(pdfParse(opts.bytes), PDF_PARSE_MS, 'PDF text extraction')
-      text = (parsed.text ?? '').trim()
-      pages = parsed.numpages ?? 0
+      const pdf = await openPdf(opts.bytes)
+      try {
+        pages = pdf.pageCount
+        const parts: string[] = []
+        for (let n = 1; n <= Math.min(pages, want); n++) {
+          // No image probe: this path only needs to know whether there is text, and
+          // the operator-list scan is the expensive half.
+          const probe = await pdf.probe(n, { probeImages: false })
+          if (probe.text) parts.push(probe.text)
+          if (parts.join('\n\n').length >= FULLTEXT_CHARS) break
+        }
+        text = parts.join('\n\n').trim()
+      } finally {
+        await pdf.close()
+      }
     } catch (e) {
       console.warn('[ingest] PDF text extraction failed/slow, falling back to OCR:', e instanceof Error ? e.message : e)
     }
@@ -566,7 +826,7 @@ export async function ingestDocument(opts: {
           'Please upload a text-based PDF or a smaller version.',
       )
     }
-    return await ocrPdfByPage(opts.name, opts.bytes, opts.maxOcrPages ?? MAX_VISION_PAGES)
+    return await ocrPdfByPage(opts.name, opts.bytes, want, pages)
   }
 
   // image → vision. The structured digest call is strict (schema'd generateObject),

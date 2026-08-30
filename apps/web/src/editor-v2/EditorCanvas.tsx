@@ -445,7 +445,7 @@ function ActivePageLayer() {
                   boxShadow: '0 1px 4px rgba(0,0,0,0.15)',
                 }}
               >
-                <Move size={14} className="text-studio-ink-2" />
+                <Move size={14} style={{ color: 'var(--forest-deep)' }} />
               </div>
             </div>
           )}

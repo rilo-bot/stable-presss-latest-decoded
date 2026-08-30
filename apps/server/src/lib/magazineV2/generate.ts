@@ -247,6 +247,9 @@ export async function planIssue(
   // wire or was read into chunks by the worker last week.
   const sourceBlock = await renderSourceFor(options?.source, {
     maxChars: SOURCE_BUDGET.plan,
+    // The planner chooses a running order, so it needs the shape of the WHOLE
+    // document, not only the part that fits in the excerpt budget.
+    withMap: true,
     task: 'build the issue from this',
   });
   const hasSource = !!sourceBlock;
@@ -1272,82 +1275,120 @@ async function artDirectPage(plan: GenPlan, page: GenPlanPage, pageNumber: numbe
     archetypeLibraryText(),
   ].join('\n');
 
+  /**
+   * ONE budget for the whole function, shared by the malformed-JSON re-ask below —
+   * not one budget per call. A page must not become twice as expensive because the
+   * model fumbled its brackets, and the queue arithmetic in the abortSignal note
+   * (this budget × the page count vs STALE_RUNNING_MS) has to keep holding.
+   */
+  const deadline = Date.now() + 150_000;
+  const remaining = () => Math.max(1_000, deadline - Date.now());
+
+  // The re-ask only ever happens after a response we could not parse, so this is
+  // empty on the first call and never competes with `retryHint` (which is about
+  // DESIGN quality, from the caller's attempt loop — a different conversation).
+  let jsonNudge = '';
+
   try {
-    const { text, finishReason } = await generateText({
-      model: getMagazineModel(),
-      system,
-      prompt: [
-        `Design a distinct, modern layout tree for a "${page.kind}" page.`,
-        `Intent: ${page.intent}${page.sectionTitle ? ` (section: ${page.sectionTitle})` : ''}.`,
-        // The Editorial Director's own visual direction outranks the structural
-        // family: when a look is given, the page should read as THAT design.
-        page.look ? `THE EDITORIAL DIRECTOR'S VISUAL DIRECTION for this page — design to this: ${page.look}` : '',
-        archetypeSteer(page.kind, pageNumber),
-        // The remedy travels WITH the reason (see the hint sites in composeOnePageAI):
-        // a fixed "simplify it" tail here told the model to thin the very pages that
-        // had failed for being too thin.
-        retryHint
-          ? `\nYOUR PREVIOUS LAYOUT FAILED THE QUALITY CHECK: ${retryHint}.\nProduce a CORRECTED layout that fixes exactly that. Do not repeat the same mistake.`
-          : '',
-        'Return ONLY the JSON.',
-      ].join('\n'),
-      temperature: 0.95,
-      // Retry throttled tail calls (concurrent pages burst the provider's rate
-      // limit); without this they errored → fixed seed → identical tail pages. The
-      // SDK backs off between attempts, so the abort budget covers all of them.
-      maxRetries: 3,
-      // A tree of up to 28 leaves at depth 6, each with several optional style
-      // properties, is a genuinely large JSON payload — and this model spends part
-      // of its output budget on reasoning before the visible JSON. With no cap the
-      // provider default governed that budget; when it was too tight the response
-      // cut off mid-object, parseJsonObject's brace scanner never closed, and every
-      // such page silently became "unusable — using seed" with no way to tell why.
-      // Generous on purpose: too high only costs a few tokens on a small page, too
-      // low loses the whole page's design.
-      maxOutputTokens: 8000,
-      /**
-       * THE BUDGET FOR ALL FOUR ATTEMPTS AND THE BACKOFF BETWEEN THEM — not for one
-       * call, which is why it is generous.
-       *
-       * Raised from 90s on evidence rather than taste. On a real three-page run the
-       * art-director timed out on `feature-full-bleed`, fell back to the fixed seed
-       * spec, and shipped a FIVE-ELEMENT page: `art-director failed … (The operation
-       * was aborted due to timeout) — using seed`. That is the "sparse, lame page" the
-       * client has been reporting, and on that page it was not a design decision at
-       * all — it was a network deadline. One page in three.
-       *
-       * The cost of being wrong in each direction is not symmetrical. Too high and a
-       * slow model makes generation slower, which the progress banner already covers.
-       * Too low and the page silently loses its design, which is the thing this whole
-       * plan exists to stop.
-       *
-       * Safe against the queue's stale-job sweep only because there is ONE worker: the
-       * sweep runs while the loop is idle, so an in-process job is never reclaimed
-       * however long it takes (queue.ts, STALE_RUNNING_MS). Run a second worker and
-       * that stops being true, and this budget × the page count is what has to fit
-       * inside it — a twelve-page issue at GEN_PAGE_CONCURRENCY 2 already would not.
-       */
-      abortSignal: AbortSignal.timeout(150_000),
-    });
-    const spec = normalizeLayoutSpec(parseJsonObject(text));
-    if (spec) return { spec, source: 'agent' };
-    // WHY it was unusable, not just that it was: finishReason 'length' means the
-    // response was cut off before the JSON closed (a token-budget problem, fixable
-    // by raising maxOutputTokens further); anything else means the model returned a
-    // complete response that still didn't parse/normalize (a prompt or repair-logic
-    // problem). Without this every fallback looked identical in the logs.
-    console.warn(
-      `[magazineV2] art-director spec for "${page.kind}" was unusable ` +
-        `(finishReason: ${finishReason}, ${text.length} chars returned) — using seed.` +
-        (finishReason === 'length' ? ' TRUNCATED: response was cut off before the JSON object closed.' : ''),
-    );
-    // TEMPORARY, for diagnosis: finishReason 'stop' means the model believes it
-    // finished, so the failure is in the JSON shape itself (a malformation neither
-    // JSON.parse nor repairUnquotedKeys handles, or a normalizeLayoutSpec rejection
-    // e.g. an unusable root). Without the actual text there is no way to tell which
-    // — remove once the real cause is identified and fixed.
-    console.warn(`[magazineV2] RAW unusable art-director response for "${page.kind}":\n${text.slice(0, 4000)}`);
-    return { spec: seedSpecFor(page.kind), source: 'seed' };
+    // Unconditioned because every path out of the body returns; the only `continue`
+    // is the single re-ask below, guarded on `jsonAttempt === 1`, so this runs at
+    // most twice. A bound in the header would just add an unreachable exit.
+    for (let jsonAttempt = 1; ; jsonAttempt++) {
+      const { text, finishReason } = await generateText({
+        model: getMagazineModel(),
+        system,
+        prompt: [
+          `Design a distinct, modern layout tree for a "${page.kind}" page.`,
+          `Intent: ${page.intent}${page.sectionTitle ? ` (section: ${page.sectionTitle})` : ''}.`,
+          // The Editorial Director's own visual direction outranks the structural
+          // family: when a look is given, the page should read as THAT design.
+          page.look ? `THE EDITORIAL DIRECTOR'S VISUAL DIRECTION for this page — design to this: ${page.look}` : '',
+          archetypeSteer(page.kind, pageNumber),
+          // The remedy travels WITH the reason (see the hint sites in composeOnePageAI):
+          // a fixed "simplify it" tail here told the model to thin the very pages that
+          // had failed for being too thin.
+          retryHint
+            ? `\nYOUR PREVIOUS LAYOUT FAILED THE QUALITY CHECK: ${retryHint}.\nProduce a CORRECTED layout that fixes exactly that. Do not repeat the same mistake.`
+            : '',
+          jsonNudge,
+          'Return ONLY the JSON.',
+        ].join('\n'),
+        temperature: 0.95,
+        // Retry throttled tail calls (concurrent pages burst the provider's rate
+        // limit); without this they errored → fixed seed → identical tail pages. The
+        // SDK backs off between attempts, so the abort budget covers all of them.
+        maxRetries: 3,
+        // A tree of up to 28 leaves at depth 6, each with several optional style
+        // properties, is a genuinely large JSON payload — and this model spends part
+        // of its output budget on reasoning before the visible JSON. With no cap the
+        // provider default governed that budget; when it was too tight the response
+        // cut off mid-object, parseJsonObject's brace scanner never closed, and every
+        // such page silently became "unusable — using seed" with no way to tell why.
+        // Generous on purpose: too high only costs a few tokens on a small page, too
+        // low loses the whole page's design.
+        maxOutputTokens: 8000,
+        /**
+         * THE BUDGET FOR ALL FOUR ATTEMPTS AND THE BACKOFF BETWEEN THEM — not for one
+         * call, which is why it is generous.
+         *
+         * Raised from 90s on evidence rather than taste. On a real three-page run the
+         * art-director timed out on `feature-full-bleed`, fell back to the fixed seed
+         * spec, and shipped a FIVE-ELEMENT page: `art-director failed … (The operation
+         * was aborted due to timeout) — using seed`. That is the "sparse, lame page" the
+         * client has been reporting, and on that page it was not a design decision at
+         * all — it was a network deadline. One page in three.
+         *
+         * The cost of being wrong in each direction is not symmetrical. Too high and a
+         * slow model makes generation slower, which the progress banner already covers.
+         * Too low and the page silently loses its design, which is the thing this whole
+         * plan exists to stop.
+         *
+         * Safe against the queue's stale-job sweep only because there is ONE worker: the
+         * sweep runs while the loop is idle, so an in-process job is never reclaimed
+         * however long it takes (queue.ts, STALE_RUNNING_MS). Run a second worker and
+         * that stops being true, and this budget × the page count is what has to fit
+         * inside it — a twelve-page issue at GEN_PAGE_CONCURRENCY 2 already would not.
+         *
+         * Derived from the shared `deadline` above so the re-ask below spends what is
+         * LEFT of it rather than opening a second budget of its own.
+         */
+        abortSignal: AbortSignal.timeout(remaining()),
+      });
+      const spec = normalizeLayoutSpec(parseJsonObject(text));
+      if (spec) return { spec, source: 'agent' };
+
+      // WHY it was unusable, not just that it was: finishReason 'length' means the
+      // response was cut off before the JSON closed (a token-budget problem, fixable
+      // by raising maxOutputTokens further); anything else means the model returned a
+      // complete response that still didn't parse/normalize.
+      const why =
+        `(finishReason: ${finishReason}, ${text.length} chars returned)` +
+        (finishReason === 'length' ? ' TRUNCATED: response was cut off before the JSON object closed.' : '');
+
+      // RE-ASK RATHER THAN SEED. parseJsonObject now recovers a miscounted closing run
+      // (see repairCloserCount — it fixes both measured cases), so reaching here means
+      // something it cannot repair. That is a coin-flip of a failure, not a property of
+      // the page: asking again at temperature 0.95 is very likely to produce a parseable
+      // tree, whereas the seed costs this page its design outright. Only ONE re-ask —
+      // the caller's own attempt loop calls artDirectPage afresh anyway, so a second
+      // failure is better spent there than here, and the shared deadline is finite.
+      if (jsonAttempt === 1) {
+        console.warn(`[magazineV2] art-director spec for "${page.kind}" did not parse ${why} — asking once more.`);
+        jsonNudge =
+          '\nYOUR PREVIOUS RESPONSE WAS NOT VALID JSON and had to be discarded. The design was not the ' +
+          'problem — the brackets were. Close every "children" and "layers" ARRAY with `]` and every ' +
+          'object with `}`, count them as you close, and emit nothing but the JSON object itself.';
+        continue;
+      }
+
+      console.warn(`[magazineV2] art-director spec for "${page.kind}" was unusable ${why} — using seed.`);
+      // The response itself, because by this point every cheap explanation is exhausted:
+      // it parsed as nothing repairable and re-asking did not help either, so the shape
+      // of the text is the only remaining evidence. Two attempts deep, this is rare
+      // enough to be worth the log lines.
+      console.warn(`[magazineV2] RAW unusable art-director response for "${page.kind}":\n${text.slice(0, 4000)}`);
+      return { spec: seedSpecFor(page.kind), source: 'seed' };
+    }
   } catch (err) {
     console.warn(`[magazineV2] art-director failed for "${page.kind}" (${err instanceof Error ? err.message : err}) — using seed.`);
     return { spec: seedSpecFor(page.kind), source: 'seed' };

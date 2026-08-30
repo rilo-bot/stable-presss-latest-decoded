@@ -18,16 +18,23 @@
 // ---------------------------------------------------------------------------
 
 import { storage } from '../storage.js';
-import { readDocumentUnits, JOB_MAX_OCR_PAGES } from '../agent/documentIngest.js';
+import { readDocumentUnits, JOB_BATCH_PAGES } from '../agent/documentIngest.js';
 import {
   chunkDocument,
   coverageOf,
+  isPaginated,
   isReadable,
+  mergeKind,
+  nextBatchFrom,
+  projectRead,
+  sweepAdvanced,
+  sweptCoverage,
   type SourceCoverage,
   type SourceDoc,
   type SourceDocKind,
 } from './sourceStore.js';
 import { enqueueJob } from './jobs.js';
+import { OCR_USD_PER_PAGE } from './config.js';
 import {
   beginReading,
   claimGeneration,
@@ -36,10 +43,14 @@ import {
   failReading,
   findReadableTwin,
   finishReading,
+  firstChunkText,
   getSourceDoc,
   loadChunks,
+  noteEstimate,
   noteProgress,
+  noteSweep,
   pagesWithChunks,
+  resetSweep,
   setContentHash,
   writeChunks,
 } from './sourceDocsDb.js';
@@ -58,8 +69,23 @@ export interface ReadContinuation {
 
 export interface ReadSourceDocPayload {
   docId: string;
-  /** OCR page cap for this document. Defaults to the job path's full cap. */
+  /** The issue whose generation is waiting on this read — see JobPayloads. Set only
+   *  when something IS waiting, so an unrelated read cannot fail a live issue. */
+  issueId?: string;
+  /**
+   * A page cap for this document. Absent means EVERY page, which is both the
+   * default and the point — the job path has no cap. Present only for a caller that
+   * deliberately wants a preview of the first few pages.
+   */
   maxPages?: number;
+  /**
+   * Pages this batch may read. Defaults to JOB_BATCH_PAGES.
+   *
+   * Note what is NOT here: where to resume. That lives on the document row and
+   * nowhere else. A copy in the payload would be a second answer to the same
+   * question, and a stale one would either re-read pages or — far worse — skip them.
+   */
+  batchPages?: number;
   onDone?: ReadContinuation | null;
 }
 
@@ -105,14 +131,19 @@ async function adoptTwin(doc: SourceDoc, twin: SourceDoc): Promise<'ready' | 'pa
 }
 
 /**
- * Read one document into chunks. Idempotent and resumable: re-running it after a
- * crash re-reads only the units that have no rows.
+ * Read ONE BATCH of a document into chunks, re-enqueueing itself while pages
+ * remain. Idempotent and resumable: re-running it after a crash re-reads only the
+ * units that have no rows.
  *
- * Returns the terminal status so the worker can decide about the continuation.
- * THROWS on a failure worth retrying — the queue owns retry policy, and this
- * handler must not quietly succeed on a document it could not read.
+ * Returns `'reading'` when a batch finished and another is queued, or the terminal
+ * status so the worker can decide about the continuation. THROWS on a failure worth
+ * retrying — the queue owns retry policy, and this handler must not quietly succeed
+ * on a document it could not read.
  */
-export async function readSourceDoc(payload: ReadSourceDocPayload, beat?: Beat): Promise<'ready' | 'partial' | 'failed'> {
+export async function readSourceDoc(
+  payload: ReadSourceDocPayload,
+  beat?: Beat,
+): Promise<'ready' | 'partial' | 'failed' | 'reading'> {
   const doc = await getSourceDoc(payload.docId);
   if (!doc) throw new Error(`Source document ${payload.docId} not found.`);
 
@@ -148,8 +179,26 @@ export async function readSourceDoc(payload: ReadSourceDocPayload, beat?: Beat):
     // The twin turned out to have no chunks after all — fall through and read.
   }
 
+  // Where this batch starts. THE DOCUMENT ROW IS THE AUTHORITY — see the payload
+  // type for why there is no copy of this in the job.
+  let cursor = Math.max(0, Math.floor(Number(doc.readSwept) || 0));
+
   // What we already hold. THE resume decision, and it comes from the rows.
-  const already = await pagesWithChunks(String(doc._id));
+  let already = await pagesWithChunks(String(doc._id));
+
+  // Rows from before text extraction was paginated: a PDF's text layer used to be
+  // stored as ONE chunk at pageNo 0. Those cannot be merged with per-page rows —
+  // retrieval would serve the same passage twice, once numbered and once not — so a
+  // half-read document carrying one starts again. Only reachable for a document
+  // still queued/reading/failed across the change; a finished one returned above.
+  if (already.has(0) && doc.contentType === 'application/pdf') {
+    console.warn(`[readSourceDoc] ${doc.originalName}: dropping pre-pagination rows and re-reading`);
+    await deleteChunks(String(doc._id));
+    await resetSweep(String(doc._id));
+    already = new Set<number>();
+    cursor = 0; // the cursor described rows that no longer exist
+  }
+
   if (already.size > 0) {
     console.log(`[readSourceDoc] ${doc.originalName}: resuming — ${already.size} unit(s) already stored`);
   }
@@ -162,7 +211,11 @@ export async function readSourceDoc(payload: ReadSourceDocPayload, beat?: Beat):
       contentType: doc.contentType,
       name: doc.originalName,
       skipUnits: already,
-      maxPages: payload.maxPages ?? JOB_MAX_OCR_PAGES,
+      startUnit: cursor + 1,
+      ocrBudget: payload.batchPages ?? JOB_BATCH_PAGES,
+      // Undefined means EVERY page. The job path has no page cap — see
+      // documentIngest, where the constant that used to be here was deleted.
+      maxPages: payload.maxPages,
       onUnit: async (unit) => {
         // Beat FIRST, and for every unit including blank ones: a run of blank
         // pages is still progress, and going quiet through them would look like
@@ -174,19 +227,105 @@ export async function readSourceDoc(payload: ReadSourceDocPayload, beat?: Beat):
         await writeChunks(String(doc._id), String(doc.magazineId), chunkDocument(unit.text, { pageNo: unit.pageNo }));
       },
     });
-    kind = result.kind;
+    // OCR is sticky across batches — see mergeKind. A document whose scanned pages
+    // were in batch 2 must not report itself as a clean text extraction because
+    // batch 9 happened to be typeset.
+    kind = mergeKind(doc.kind, result.kind);
+    const paginated = isPaginated(kind);
 
-    // Coverage from the ROWS, not from the reader's own count — the two can differ
-    // if a unit produced no chunks, and the rows are what consumers will read.
+    // Every page of this batch errored — a provider outage, not a document we
+    // cannot read. Throw BEFORE the cursor moves, so the queue's retry re-reads
+    // THIS batch rather than sweeping past 25 pages it never saw. Bounded by
+    // maxAttempts, after which the job fails honestly.
+    if (result.attempted > 0 && result.ok === 0) {
+      throw new Error(
+        `Reading “${doc.originalName}” failed on every page of this batch — the reader hit a temporary error. The batch will be retried.`,
+      );
+    }
+
+    // Record the sweep, and only now: failures first, then the cursor. See noteSweep
+    // — that order is what makes a crash here cost a re-read rather than a document
+    // that claims to have been read in full.
+    if (paginated) {
+      await noteSweep(String(doc._id), {
+        swept: result.sweptTo,
+        failedUnits: result.failedUnits,
+        ocrUnits: result.ocrUnits,
+      });
+    }
+
     const stored = await pagesWithChunks(String(doc._id));
-    const coverage = coverageOf({
-      pagesRead: kind === 'pdf-ocr' ? stored : stored.size > 0 ? 1 : 0,
-      pagesTotal: kind === 'pdf-ocr' ? result.unitsTotal : 1,
-      skipped: result.failed,
-      reason: result.reason,
-    });
 
-    if (coverage.pagesRead === 0) {
+    // A scan whose first batch is legibly blank is not a document we can read, and
+    // saying so now saves OCR on the remaining hundreds of pages. Only on the FIRST
+    // batch, and only when nothing errored: a later run of blank pages mid-document
+    // is normal, and a batch that was entirely skipped proves nothing.
+    if (paginated && cursor === 0 && stored.size === 0 && result.attempted > 0 && result.failedUnits.length === 0) {
+      throw new Error(
+        kind === 'pdf-ocr'
+          ? "I couldn't read any text from this PDF — it looks like a photo/scan with no legible text."
+          : `The first ${result.attempted} page${result.attempted === 1 ? '' : 's'} of “${doc.originalName}” are blank — there is nothing here to read.`,
+      );
+    }
+
+    // Coverage, computed ONCE and used both mid-read and at the end. Paginated
+    // documents count what was swept minus what demonstrably could not be read, so
+    // a scan with blank pages is `ready` rather than eternally `partial`; everything
+    // else is one unit and counts rows.
+    const coverage =
+      paginated
+        ? sweptCoverage({
+            swept: result.sweptTo,
+            total: result.unitsTotal,
+            failedUnits: [...(doc.failedUnits ?? []), ...result.failedUnits],
+            storedPages: stored,
+            outOfTime: result.outOfTime,
+          })
+        : coverageOf({ pagesRead: stored.size > 0 ? 1 : 0, pagesTotal: 1 });
+
+    // What this read has cost, and what it is going to. Recomputed every batch from
+    // the SETS on the document, never accumulated — so a retried batch cannot inflate
+    // it. Stored while the read is still running, because the number is only useful
+    // to somebody deciding whether to let a 900-page scan finish.
+    if (paginated) {
+      const ocrSoFar = new Set([...(doc.ocrUnits ?? []), ...result.ocrUnits]).size;
+      await noteEstimate(
+        String(doc._id),
+        projectRead({
+          pagesSeen: result.sweptTo,
+          ocrPages: ocrSoFar,
+          pagesTotal: result.unitsTotal,
+          usdPerOcrPage: OCR_USD_PER_PAGE,
+        }),
+      );
+    }
+
+    // More to read: persist progress for the UI, then re-enqueue and hand the
+    // worker back. The requeued row is NEW, so claimOne's oldest-first ordering
+    // puts it behind whatever arrived while this batch ran — which is the whole
+    // point, and why a 5,000-page scan no longer blocks every other magazine.
+    const resumeAt = paginated ? nextBatchFrom(result.sweptTo, result.unitsCeiling) : null;
+    if (resumeAt !== null) {
+      // The termination guarantee. A batch that requeues itself where it started
+      // would run for ever, and quietly: the queue looks busy, the document stays
+      // `reading`, and the issue waiting on it is never generated.
+      if (!sweepAdvanced(cursor, resumeAt)) {
+        throw new Error(
+          `Reading “${doc.originalName}” made no progress at page ${cursor + 1} — refusing to requeue. It will be retried.`,
+        );
+      }
+      await noteProgress(String(doc._id), coverage);
+      await enqueueJob('readSourceDoc', payload);
+      console.log(
+        `[readSourceDoc] ${doc.originalName}: batch ${cursor + 1}–${result.sweptTo} of ${result.unitsTotal} done (${stored.size} pages stored); requeued from ${resumeAt}`,
+      );
+      return 'reading';
+    }
+
+    // Nothing readable came out of the whole document. Distinct from the blank-scan
+    // check above: that one is an early exit on the first batch, this one is the
+    // verdict once the sweep is over.
+    if (stored.size === 0) {
       throw new Error(
         kind === 'pdf-ocr'
           ? "I couldn't read any text from this PDF — it looks like a photo/scan with no legible text."
@@ -194,10 +333,15 @@ export async function readSourceDoc(payload: ReadSourceDocPayload, beat?: Beat):
       );
     }
 
+    // The digest describes the DOCUMENT, so it comes from the document's opening —
+    // read back from the rows, not from whatever text this run happened to end
+    // holding. Once a read is batched, the last batch's text is page 476 of 500, and
+    // a report titled after page 476 is worse than one titled after its filename.
+    const opening = (await firstChunkText(String(doc._id))) || firstText;
     const status = await finishReading(String(doc._id), {
       coverage,
       kind,
-      digest: previewOf(doc.originalName, firstText, coverage),
+      digest: previewOf(doc.originalName, opening, coverage),
     });
     if (!status) {
       // Someone else moved this document on while we read (watchdog, or a second
@@ -256,6 +400,10 @@ export async function chainIfReady(onDone: ReadContinuation | null | undefined):
  *  partial read — not part of the normal resume path, which keeps them. */
 export async function resetSourceDoc(docId: string): Promise<void> {
   const removed = await deleteChunks(docId);
+  // Rewind the batch cursor TOGETHER with dropping the chunks. Either alone is a
+  // bug: the cursor without the chunks re-reads pages we hold, and the chunks
+  // without the cursor leaves a document the sweep believes it has already covered.
+  await resetSweep(docId);
   await noteProgress(docId, { pagesRead: 0, pagesTotal: 0, truncated: false, reason: '' });
   console.log(`[readSourceDoc] reset ${docId}: dropped ${removed} chunk(s)`);
 }
