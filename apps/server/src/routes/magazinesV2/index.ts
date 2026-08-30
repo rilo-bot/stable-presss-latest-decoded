@@ -161,6 +161,52 @@ async function pagesFor(magazineId: string): Promise<Doc[]> {
   return pages.sort((a, b) => (a.index as number) - (b.index as number));
 }
 
+/**
+ * The pages of a magazine WITHOUT their elements — everything `pageSummary`,
+ * `visiblePages` and `needsRepublish` read, and nothing else.
+ *
+ * `pagesFor` loads each page's full `elements[]`, which is by far the heaviest
+ * field in the system. Any caller that only wants counts, stamps and review flags
+ * was therefore pulling megabytes across the wire to compute a `.length` — and the
+ * worst of them was GET /issues/:id, the route the studio POLLS while a magazine
+ * generates or a document is read. The list route already avoids this with a
+ * `$group` rollup; this is the same idea for one magazine's rail.
+ *
+ * `aggregate` does NOT get the wrapper's implicit soft-delete filter, so the
+ * `deletedAt: null` match is explicit — drop it and deleted pages come back.
+ * Sorted in the query (the {magazineId, deletedAt, index} index serves it) rather
+ * than in JS, since there is no longer a reason to hold the whole list to sort it.
+ */
+async function pageSummariesFor(magazineId: string): Promise<Doc[]> {
+  return (await db.collection(COL.pages).aggregate([
+    { $match: { magazineId, deletedAt: null } },
+    {
+      $project: {
+        index: 1,
+        width: 1,
+        height: 1,
+        status: 1,
+        rev: 1,
+        selectedForPublish: 1,
+        // needsRepublish / editedSincePublish compare this against publishedAt.
+        updatedAt: 1,
+        review: 1,
+        reviewRound: 1,
+        approvedAtRev: 1,
+        submitNote: 1,
+        reviewNote: 1,
+        submittedBy: 1,
+        submittedAt: 1,
+        // The ONE thing anybody wanted the elements for. `$isArray` rather than a
+        // bare `$size` because `$size` throws on a non-array, which would fail the
+        // whole read for one malformed page — the JS it replaces just returned 0.
+        elementCount: { $cond: [{ $isArray: '$elements' }, { $size: '$elements' }, 0] },
+      },
+    },
+    { $sort: { index: 1 } },
+  ])) as Doc[];
+}
+
 async function pageById(pageId: string): Promise<Doc | null> {
   return (await db.collection(COL.pages).findById(pageId)) as Doc | null;
 }
@@ -301,7 +347,9 @@ function pageSummary(p: Doc, issue?: Doc) {
     status: p.status,
     rev: p.rev ?? 0,
     selectedForPublish: p.selectedForPublish !== false,
-    elementCount: Array.isArray(p.elements) ? p.elements.length : 0,
+    // Either shape works: a full page document (elements loaded) or a projected
+    // summary from pageSummariesFor, which counts them in the query instead.
+    elementCount: typeof p.elementCount === 'number' ? p.elementCount : Array.isArray(p.elements) ? p.elements.length : 0,
     /** Touched since the live edition was frozen, so a republish would change it. */
     editedSincePublish: issue ? pageEditedSincePublish(issue, p) : false,
     // The review axis, always resolved through the accessors so a page that
@@ -336,12 +384,31 @@ function maxIso(a: string, b: string): string {
 // collaborator's assignment; `myRole` + `ownerName` tell the client its rights.
 router.get('/issues', async (req, res) => {
   const uid = req.account!.id;
-  const all = (await db.collection(COL.magazines).find()) as Doc[];
-  // Page counts in ONE aggregation. Previously this was an N+1 that called
-  // pagesFor() per issue — each loading every page's FULL elements array from
-  // Mongo just to read .length (O(issues × pages × element-bytes) transferred to
-  // build a list). aggregate() doesn't auto-filter soft-deletes, so match
-  // deletedAt: null explicitly to mirror find()'s behaviour.
+  // THE ACCESS RULE IS THE QUERY, not a filter after the fact.
+  //
+  // This used to be a bare `find()` — every magazine ever created, loaded into the
+  // API and then filtered down to the caller's in JS. Nobody noticed because the
+  // answer was right; what was wrong was the cost, and it grows with the whole
+  // library rather than with one person's share of it. Each of those documents now
+  // also carries `genPlanPages` and `genTheme`, so a staff member opening their
+  // library was pulling every generation plan in the system across the wire.
+  //
+  // `$or` on owner OR collaborator membership is exactly `roleOnMagazine(d, uid)
+  // !== null`, so the two cannot disagree — and MongoDB can serve each branch from
+  // its own index (see ensureIndexes). 'preparing' is excluded here too: it is a
+  // placeholder waiting for its documents, not a magazine, and showing it would put
+  // a permanent "New magazine" row in the list of anyone who abandoned an upload.
+  const mine = (await db.collection(COL.magazines).find({
+    $or: [{ ownerId: uid }, { 'collaborators.userId': uid }],
+    status: { $ne: 'preparing' },
+  })) as Doc[];
+  // Page counts in ONE aggregation, SCOPED to the magazines just loaded. Previously
+  // this was an N+1 that called pagesFor() per issue — each loading every page's
+  // FULL elements array from Mongo just to read .length. Collapsing it to a $group
+  // fixed that, but the $match still covered the entire pages collection, so a
+  // library load rolled up every page of every magazine in the system to use a
+  // handful of the rows. aggregate() doesn't auto-filter soft-deletes, so
+  // deletedAt: null is explicit, mirroring find().
   //
   // The same rollup also carries the newest page `updatedAt`, because the
   // magazine's own stamp is NOT a record of editing: writing an element bumps the
@@ -350,22 +417,16 @@ router.get('/issues', async (req, res) => {
   // touched the issue three days ago. `lib/magazineV2/review.ts` already has to
   // take the max of both for exactly this reason; this is the same fact, computed
   // in the query rather than by loading every page.
-  const countRows = (await db.collection(COL.pages).aggregate([
-    { $match: { deletedAt: null } },
+  const ids = mine.map((d) => String(d._id));
+  const countRows = ids.length === 0 ? [] : ((await db.collection(COL.pages).aggregate([
+    { $match: { magazineId: { $in: ids }, deletedAt: null } },
     { $group: { _id: '$magazineId', count: { $sum: 1 }, lastPageAt: { $max: '$updatedAt' } } },
-  ])) as Doc[];
+  ])) as Doc[]);
   const countByMag = new Map<string, number>(countRows.map((r) => [String(r._id), Number(r.count) || 0]));
   const lastPageAtByMag = new Map<string, string>(
     countRows.map((r) => [String(r._id), typeof r.lastPageAt === 'string' ? r.lastPageAt : '']),
   );
-  const rows = all
-    // Access is by SHARING only: a magazine appears solely for its owner and the
-    // staff it's been shared with. (Was a "shared admin library" where every staff
-    // member saw every magazine — roleOnMagazine null now hides it entirely.)
-    // A 'preparing' issue is a placeholder waiting for its documents, not a
-    // magazine. Showing it would put a permanent "New magazine" row in the list
-    // for anyone who ever abandoned an upload.
-    .filter((d) => roleOnMagazine(d, uid) !== null && String(d.status) !== 'preparing')
+  const rows = mine
     .map((d) => ({
       id: d._id,
       title: d.title,
@@ -1396,7 +1457,13 @@ router.get('/issues/:id', async (req, res) => {
   // ALL pages feed needsRepublish (any edited page means the live edition is behind),
   // while only the VISIBLE ones are returned — a page-scoped collaborator still needs
   // to know the magazine is out of sync, without learning which other pages exist.
-  const allPages = await pagesFor(doc._id);
+  //
+  // SUMMARIES, not full pages: nothing on this route reads an element. The client
+  // fetches a page's elements separately when it opens one, and this is the route it
+  // polls every couple of seconds while a magazine builds — so loading every page's
+  // elements here was re-transferring the entire magazine on a timer to compute
+  // counts and timestamps.
+  const allPages = await pageSummariesFor(doc._id);
   res.json({
     issue: withViewer(doc, uid, allPages),
     pages: visiblePages(doc, uid, allPages).map((p) => pageSummary(p, doc)),

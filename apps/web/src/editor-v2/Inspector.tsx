@@ -11,14 +11,14 @@ import { useEditorStore } from './store';
 import { ShimmerText } from './BuildProgress';
 import { LayoutReference } from './LayoutReference';
 import { columnOf, COLUMN_LABEL, COLUMN_TONE } from './review';
-import type { MagazineElement, ElementType } from './model';
+import type { MagazineElement, ElementType, ElementTextAlign, ElementTextWeight } from './model';
 import * as api from './api';
 import type { MediaAsset } from './api';
-import { Section, Stepper, Segmented, ColorControl } from '@/editor-v2/controls';
+import { Section, Stepper, Segmented, ColorControl, FontFamilyMenu } from '@/editor-v2/controls';
 import { ICON_NAMES, resolveIcon } from '@/lib/iconRegistry';
 import {
   Type, Image as ImageIcon, QrCode, Square, Shapes,
-  AlignLeft, AlignCenter, AlignRight, ArrowUpToLine, FoldVertical, ArrowDownToLine, Trash2,
+  AlignLeft, AlignCenter, AlignRight, AlignJustify, ArrowUpToLine, FoldVertical, ArrowDownToLine, Trash2,
   Sliders, Images, Upload, Copy, BringToFront, SendToBack, FileText,
 } from 'lucide-react';
 
@@ -30,24 +30,16 @@ const KIND_META = {
   icon: { label: 'Icon', icon: Shapes },
 } as const;
 
-// The curated font stacks the studio uses (mirrors the generator's font lists).
-const FONT_OPTIONS: { label: string; stack: string }[] = [
-  { label: 'Playfair Display', stack: 'Playfair Display, Georgia, serif' },
-  { label: 'DM Serif Display', stack: 'DM Serif Display, Georgia, serif' },
-  { label: 'Georgia', stack: "Georgia, 'Times New Roman', serif" },
-  { label: 'Montserrat', stack: 'Montserrat, Arial, sans-serif' },
-  { label: 'Oswald', stack: 'Oswald, Arial, sans-serif' },
-  { label: 'Inter', stack: 'Inter, Arial, sans-serif' },
-  { label: 'Arial', stack: 'Arial, Helvetica, sans-serif' },
-];
-
-/** Match an element's stored CSS stack to an option by its PRIMARY family name,
- *  so 'Georgia, serif' or a quoted/extracted stack still shows its font as active.
- *  Exact-string matching left the dropdown blank for most elements (defaults, AI-
- *  and PDF-extracted text carry differently-spelled stacks), which read as "the
- *  font control does nothing". */
-const primaryFamily = (stack: string) => (stack.split(',')[0] ?? '').trim().replace(/^['"]+|['"]+$/g, '').toLowerCase();
-const matchFontOption = (stack: string) => FONT_OPTIONS.find((f) => primaryFamily(f.stack) === primaryFamily(stack));
+/** Hover names for the numeric weight buttons — the numbers are what the pipeline
+ *  speaks, but not everyone reads 600 as "Semibold" at a glance. */
+const WEIGHT_TITLE: Record<ElementTextWeight, string> = {
+  400: 'Regular',
+  500: 'Medium',
+  600: 'Semibold',
+  700: 'Bold',
+  800: 'Extrabold',
+  900: 'Black',
+};
 
 /**
  * ADD TO PAGE — the five insert tools, moved here from the top toolbar.
@@ -273,47 +265,49 @@ function ElementPanel({ el }: { el: MagazineElement }) {
             </Section>
 
             <Section title="Font">
-              <select
-                value={matchFontOption(el.text!.fontFamily)?.stack ?? ''}
-                onChange={(e) => set({ text: { ...el.text!, fontFamily: e.target.value } })}
-                className="w-full rounded-sm border border-studio-edge bg-studio-raise px-2.5 py-2 text-ui text-studio-ink outline-none hover:bg-studio-raise-2"
-                // `colorScheme: dark` makes the browser render the native OPTION popup
-                // dark; without it the popup defaults to white and the inherited white
-                // text is invisible (white-on-white). Explicit per-option colours below
-                // are the belt-and-braces fallback for engines that ignore it.
-                style={{ fontFamily: el.text.fontFamily, colorScheme: 'dark' }}
-              >
-                {!matchFontOption(el.text!.fontFamily) && (
-                  <option value="" style={{ backgroundColor: 'var(--studio-panel)', color: '#fff' }}>{primaryFamily(el.text.fontFamily) || 'Custom'}</option>
-                )}
-                {FONT_OPTIONS.map((f) => (
-                  <option key={f.stack} value={f.stack} style={{ fontFamily: f.stack, backgroundColor: 'var(--studio-panel)', color: '#fff' }}>{f.label}</option>
-                ))}
-              </select>
+              {/* The curated registry (lib/fonts/registry.ts), grouped and previewed in
+                  each face. It replaced a hand-kept list of seven stacks that had drifted
+                  from both the registry AND the generator's own font lists. */}
+              <FontFamilyMenu
+                value={el.text.fontFamily}
+                onChange={(stack) => set({ text: { ...el.text!, fontFamily: stack } })}
+              />
             </Section>
 
             <Section title="Size & weight">
-              <div className="grid grid-cols-2 gap-2">
-                <Stepper value={Math.round(el.text.fontSize)} min={6} max={400} suffix="px" onChange={(v) => set({ text: { ...el.text!, fontSize: v, maxFontSize: v } })} />
-                <Segmented<number>
-                  value={el.text.fontWeight >= 700 ? 700 : el.text.fontWeight >= 600 ? 600 : 400}
-                  options={[
-                    { value: 400, label: 'Reg' },
-                    { value: 600, label: 'Semi' },
-                    { value: 700, label: 'Bold' },
-                  ]}
-                  onChange={(v) => set({ text: { ...el.text!, fontWeight: v as 400 | 500 | 600 | 700 | 800 } })}
+              <Stepper value={Math.round(el.text.fontSize)} min={6} max={400} suffix="px" onChange={(v) => set({ text: { ...el.text!, fontSize: v, maxFontSize: v } })} />
+              {/* EVERY weight the model allows, on its own row.
+                  Three buttons that collapsed anything ≥700 to "Bold" could not tell the
+                  truth about the type on the page: templates and roleScale set headlines,
+                  cover titles and stat figures at 800, and the layout DSL emits 900 — all
+                  of which displayed as "Bold" and were silently demoted to 700 the moment
+                  the control was touched. Numeric labels because that is how the weights
+                  are named everywhere else in the pipeline. */}
+              <div className="mt-2">
+                <Segmented<ElementTextWeight>
+                  value={el.text.fontWeight}
+                  options={[400, 500, 600, 700, 800, 900].map((w) => ({
+                    value: w as ElementTextWeight,
+                    label: String(w),
+                    title: WEIGHT_TITLE[w as ElementTextWeight],
+                  }))}
+                  onChange={(v) => set({ text: { ...el.text!, fontWeight: v } })}
                 />
               </div>
             </Section>
 
             <Section title="Alignment">
-              <Segmented<'left' | 'center' | 'right'>
+              {/* Justify is offered because the server can already STORE it: the layout
+                  spec lists it (lib/magazineV2/layoutSpec.ts) and generation emits it for
+                  body copy. Without the fourth option a justified column showed no
+                  selected alignment here and could never be set back to justify by hand. */}
+              <Segmented<ElementTextAlign>
                 value={el.text.align}
                 options={[
                   { value: 'left', label: <AlignLeft size={13} /> },
                   { value: 'center', label: <AlignCenter size={13} /> },
                   { value: 'right', label: <AlignRight size={13} /> },
+                  { value: 'justify', label: <AlignJustify size={13} /> },
                 ]}
                 onChange={(v) => set({ text: { ...el.text!, align: v } })}
               />

@@ -6,7 +6,7 @@
 import { useState, useRef, useEffect, type ReactNode } from 'react';
 import { cn } from '@/lib/utils';
 import { ChevronDown, Minus, Plus, Check } from 'lucide-react';
-import { FONTS_BY_CATEGORY, getFontDef, type FontCategory } from '@/lib/fonts/registry';
+import { FONTS_BY_CATEGORY, findFontByStack, primaryFamily, type FontCategory } from '@/lib/fonts/registry';
 
 export function Section({ title, children }: { title: string; children: ReactNode }) {
   return (
@@ -197,7 +197,14 @@ export function ColorControl({ value, onChange }: { value: string; onChange: (v:
 
   return (
     <div className="space-y-2">
-      <div className="grid grid-cols-8 gap-1.5">
+      {/* WRAP, don't grid.
+          These are 24px now (the target floor, up from 20), and a fixed 8-column grid
+          could not carry that: the inspector pane is user-resizable down to 240px,
+          where eight columns plus gaps leave ~21px each and a fixed-width swatch
+          overflows its own cell. Wrapping fits however many the current width holds —
+          nine per row at the default, seven at the narrowest — and cannot overflow at
+          any pane size. */}
+      <div className="flex flex-wrap gap-1.5">
         {SWATCHES.map((c) => (
           <button
             key={c}
@@ -206,7 +213,7 @@ export function ColorControl({ value, onChange }: { value: string; onChange: (v:
             // debounced picker value so a half-finished drag can't land on top of it.
             onClick={() => { pending.current = null; window.clearTimeout(timer.current); setDraft(c); onChange(c); }}
             className={cn(
-              'h-5 w-5 rounded-sm border transition-transform hover:scale-110',
+              'h-6 w-6 flex-shrink-0 rounded-sm border transition-transform hover:scale-110',
               value.toLowerCase() === c.toLowerCase() ? 'border-studio-gold ring-1 ring-studio-gold' : 'border-studio-edge'
             )}
             style={{ background: c }}
@@ -246,24 +253,40 @@ const CATEGORY_LABEL: Record<FontCategory, string> = {
   script: 'Script',
 };
 
+/**
+ * The font picker. `value` and `onChange` both speak RAW CSS STACKS, because that
+ * is what `ElementTextData.fontFamily` holds everywhere in the system — templates,
+ * the DSL composer, PDF extraction and the renderers all read and write a stack.
+ * The registry entry is looked up by primary family so an element authored by any
+ * of those paths still shows its real face as the active option.
+ */
 export function FontFamilyMenu({
   value,
   onChange,
 }: {
   value: string;
-  onChange: (id: string) => void;
+  onChange: (stack: string) => void;
 }) {
   const [open, setOpen] = useState(false);
   const ref = useRef<HTMLDivElement>(null);
-  const current = getFontDef(value);
+  const current = findFontByStack(value);
 
   useEffect(() => {
     if (!open) return;
     const onDoc = (e: MouseEvent) => {
       if (ref.current && !ref.current.contains(e.target as Node)) setOpen(false);
     };
+    // A dropdown that traps the user is worse than no dropdown: Escape closes it
+    // without touching the element, same as clicking away.
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') setOpen(false);
+    };
     document.addEventListener('mousedown', onDoc);
-    return () => document.removeEventListener('mousedown', onDoc);
+    document.addEventListener('keydown', onKey);
+    return () => {
+      document.removeEventListener('mousedown', onDoc);
+      document.removeEventListener('keydown', onKey);
+    };
   }, [open]);
 
   return (
@@ -273,8 +296,10 @@ export function FontFamilyMenu({
         onClick={() => setOpen((o) => !o)}
         className="flex w-full items-center justify-between rounded-sm border border-studio-edge bg-studio-raise px-2.5 py-2 text-left hover:bg-studio-raise-2"
       >
-        <span className="text-ui text-studio-ink truncate" style={{ fontFamily: current?.stack }}>
-          {current?.label ?? value}
+        {/* An unknown family (an extracted PDF face we don't stock) still previews in
+            its own stack and names itself, rather than showing a blank control. */}
+        <span className="text-ui text-studio-ink truncate" style={{ fontFamily: current?.stack ?? value }}>
+          {current?.label ?? (primaryFamily(value) || 'Custom')}
         </span>
         <ChevronDown size={13} className="text-studio-ink-3 flex-shrink-0" />
       </button>
@@ -290,7 +315,7 @@ export function FontFamilyMenu({
                   key={f.id}
                   type="button"
                   onClick={() => {
-                    onChange(f.id);
+                    onChange(f.stack);
                     setOpen(false);
                   }}
                   className="flex w-full items-center justify-between px-2.5 py-1.5 text-left hover:bg-studio-raise-2"
@@ -298,7 +323,7 @@ export function FontFamilyMenu({
                   <span className="text-ui text-studio-ink" style={{ fontFamily: f.stack }}>
                     {f.label}
                   </span>
-                  {value === f.id && <Check size={13} className="text-studio-gold" />}
+                  {current?.id === f.id && <Check size={13} className="text-studio-gold" />}
                 </button>
               ))}
             </div>

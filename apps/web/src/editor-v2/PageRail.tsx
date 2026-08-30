@@ -170,25 +170,29 @@ function Tile({
           dragging asks for sustained pointer precision that not everyone has, and the
           keyboard equivalent (Alt+↑/↓) was previously invisible on screen. */}
       {canManage ? (
-        <div className="flex flex-shrink-0 flex-col items-center gap-0.5 pt-0.5">
+        /* 24×24 each, which is the floor — they were 20 with 2px between them, so the
+           two opposite actions sat inside one fingertip. This is the control that
+           exists BECAUSE dragging asks for precision not everyone has; it cannot
+           itself demand precision. */
+        <div className="flex flex-shrink-0 flex-col items-center gap-1 pt-0.5">
           <button
             onClick={(e) => { e.stopPropagation(); onMove(-1); }}
             disabled={n <= 1}
-            className="flex h-5 w-5 items-center justify-center rounded-sm text-studio-ink-3 hover:bg-studio-raise-2 hover:text-studio-ink disabled:opacity-20 disabled:hover:bg-transparent"
+            className="flex h-6 w-6 items-center justify-center rounded-sm text-studio-ink-3 hover:bg-studio-raise-2 hover:text-studio-ink disabled:opacity-20 disabled:hover:bg-transparent"
             title={`Move page ${n} up`}
             aria-label={`Move page ${n} up`}
           >
-            <ChevronUp size={12} />
+            <ChevronUp size={14} />
           </button>
           <span className={'text-center text-ui-sm tabular-nums ' + (active ? 'text-studio-ink' : 'text-studio-ink-3')}>{n}</span>
           <button
             onClick={(e) => { e.stopPropagation(); onMove(1); }}
             disabled={n >= total}
-            className="flex h-5 w-5 items-center justify-center rounded-sm text-studio-ink-3 hover:bg-studio-raise-2 hover:text-studio-ink disabled:opacity-20 disabled:hover:bg-transparent"
+            className="flex h-6 w-6 items-center justify-center rounded-sm text-studio-ink-3 hover:bg-studio-raise-2 hover:text-studio-ink disabled:opacity-20 disabled:hover:bg-transparent"
             title={`Move page ${n} down`}
             aria-label={`Move page ${n} down`}
           >
-            <ChevronDown size={12} />
+            <ChevronDown size={14} />
           </button>
         </div>
       ) : (
@@ -243,14 +247,21 @@ function Tile({
             to appear only on the ACTIVE page too, which meant duplicating page 9
             started by navigating to it. */}
         {canManage && (
-          <div className="absolute right-0.5 top-0.5 flex gap-1">
+          <>
+            {/* OPPOSITE CORNERS, not a pair 4px apart.
+                These were adjacent 21px buttons, and one of them cannot be undone:
+                deletePage prunes the page's own entries out of both undo stacks
+                (store.ts, withoutPage), so Ctrl+Z will not bring it back the way it
+                does for everything else in this studio. Adjacent + small + permanent is
+                the combination to never ship; putting the width of the thumbnail
+                between them costs nothing, and both now clear 24px. */}
             <button
               onClick={(e) => { e.stopPropagation(); void useEditorStore.getState().duplicatePage(page.id); }}
-              className="rounded-sm bg-studio-bg/90 p-1 text-studio-ink-2 hover:bg-studio-bg hover:text-studio-ink"
+              className="absolute left-0.5 top-0.5 rounded-sm bg-studio-bg/90 p-1.5 text-studio-ink-2 hover:bg-studio-bg hover:text-studio-ink"
               title={`Duplicate page ${n}`}
               aria-label={`Duplicate page ${n}`}
             >
-              <Copy size={13} />
+              <Copy size={14} />
             </button>
             <button
               onClick={(e) => {
@@ -270,13 +281,13 @@ function Tile({
                 }
               }}
               disabled={total <= 1}
-              className="rounded-sm bg-studio-bg/90 p-1 text-red-300/90 hover:bg-studio-bg hover:text-red-300 disabled:opacity-30"
+              className="absolute right-0.5 top-0.5 rounded-sm bg-studio-bg/90 p-1.5 text-red-300/90 hover:bg-studio-bg hover:text-red-300 disabled:opacity-30"
               title={total <= 1 ? 'A magazine needs at least one page' : `Delete page ${n}`}
               aria-label={`Delete page ${n}`}
             >
-              <Trash2 size={13} />
+              <Trash2 size={14} />
             </button>
-          </div>
+          </>
         )}
       </div>
     </div>

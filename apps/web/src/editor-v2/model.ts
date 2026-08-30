@@ -13,21 +13,27 @@ export type TextRole = 'headline' | 'subhead' | 'byline' | 'body' | 'caption' | 
 export type ElementSource = 'extracted' | 'manual' | 'ai-agent';
 export type ElementAutoFit = 'shrink' | 'clip';
 export type ElementImageFit = 'cover' | 'contain';
-export type ElementTextAlign = 'left' | 'center' | 'right';
+export type ElementTextAlign = 'left' | 'center' | 'right' | 'justify';
+export type ElementTextTransform = 'none' | 'uppercase' | 'lowercase' | 'capitalize';
 export type ElementVAlign = 'top' | 'center' | 'bottom';
+/** Mirrors the server's ElementTextData['fontWeight'] (lib/magazineV2/model.ts). */
+export type ElementTextWeight = 400 | 500 | 600 | 700 | 800 | 900;
 
 export interface ElementTextData {
   content: string; // sanitised inline HTML
   role: TextRole;
   fontFamily: string;
-  fontSize: number; // px at the page's canonical dims
-  maxFontSize?: number;
-  fontWeight: 400 | 500 | 600 | 700 | 800;
+  fontSize: number; // px at the page's canonical dims — the CURRENT (fit) size
+  maxFontSize?: number; // the design's intended ceiling; refit shrinks from here
+  minFontSize?: number; // the design's floor; refit may not shrink below it
+  fontWeight: ElementTextWeight;
   color: string; // #rrggbb
   align: ElementTextAlign;
   lineHeight: number;
   autoFit: ElementAutoFit;
   vAlign?: ElementVAlign;
+  letterSpacing?: number; // px at canonical dims (default 0)
+  textTransform?: ElementTextTransform; // default 'none'
 }
 
 export interface ElementImageData {

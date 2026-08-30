@@ -1,8 +1,13 @@
 // ---------------------------------------------------------------------------
 // Magazine Builder v2 — stock photos for AI generation.
 //
-// The generation art-director writes an image BRIEF per photo slot (draftPage);
-// this turns that brief into a real, stored MediaAsset.
+// The generation art-director writes PHOTO SEARCH TERMS per photo slot (draftPage);
+// this turns those terms into a real, stored MediaAsset.
+//
+// This is the ONLY way a photograph enters a generated page that the user did not
+// upload themselves. Photographs are FOUND, never generated (user direction
+// 2026-08-30) — the OpenRouter image-generation rung that used to sit between the
+// user's own photos and this one is gone. See curateFills in generate.ts.
 //
 // The SOURCING now lives in lib/stock.ts, shared with the Blog Studio. This file
 // keeps what is genuinely magazine-specific: the S3 key namespace and the

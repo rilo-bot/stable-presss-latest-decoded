@@ -14,6 +14,7 @@ import { ArrowLeft, Undo2, Redo2, Plus, Minus, Trash2, ChevronDown, ChevronsRigh
 import { useEditorStore } from './store';
 import { useStudioChrome } from '@/stores/studioChromeStore';
 import { useCan } from '@/lib/permissions';
+import { useEditorFonts } from '@/lib/fonts/useEditorFonts';
 import { EditorCanvas } from './EditorCanvas';
 import { Inspector } from './Inspector';
 import { AiPanel } from './AiPanel';
@@ -63,6 +64,11 @@ const menuItem = 'flex w-full items-center gap-2 px-3 py-2 text-left text-ui-sm 
 const ghost = 'flex items-center gap-1 rounded-sm border border-studio-edge bg-studio-raise px-2 py-1.5 text-ui-sm text-studio-ink-2 hover:bg-studio-raise-2 disabled:opacity-30 disabled:hover:bg-studio-raise';
 
 export default function MagazineEditorV2() {
+  // The editor draws real pages, so it needs the same faces the public viewer and
+  // the PDF renderer load (BulletinViewer does this too). Without it the font picker
+  // offers the curated registry while the canvas silently substitutes a fallback —
+  // the editor would disagree with what the reader and the print file actually get.
+  useEditorFonts();
   const { id } = useParams<{ id: string }>();
   const navigate = useNavigate();
   /**

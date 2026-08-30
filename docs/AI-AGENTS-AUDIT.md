@@ -6,16 +6,21 @@
 
 ## 1. Executive summary
 
-The portal runs **7 conversational AI agents**, **5 one-shot AI features**, **5 background AI pipelines**, and **1 shared voice subsystem** — served by **16 model-invoking server endpoints** across **4 external AI services**:
+The portal runs **7 conversational AI agents**, **5 one-shot AI features**, **4 background AI pipelines**, and **1 shared voice subsystem** — served by **16 model-invoking server endpoints** across **3 external AI services**:
 
 | Service | Used for | Config |
 |---|---|---|
 | OpenRouter → `anthropic/claude-sonnet-4.6` | Every text/vision agent & pipeline | `AGENT_MODEL`, `OPENROUTER_API_KEY` (`lib/agent/provider.ts`) |
 | OpenRouter `file-parser` plugin (`mistral-ocr`) | Scanned-PDF OCR | `getOcrModel()` (`provider.ts:43`) |
-| OpenRouter → `google/gemini-2.5-flash-image` | Magazine v2 AI image generation | `MAGAZINE_V2_IMAGE_MODEL` (`magazineV2/imagegen.ts`) |
 | OpenAI direct | Voice STT (`gpt-4o-mini-transcribe`) + TTS (`gpt-4o-mini-tts`) | `OPENAI_API_KEY`, `VOICE_*` (`lib/agent/voice.ts`) |
 
 (Pexels supplies stock photos — external API, not a model.)
+
+**No image is ever generated.** Photographs are FOUND — the user's own uploads first, then a
+Pexels search — or the slot degrades to a tinted block. `magazineV2/imagegen.ts` (OpenRouter →
+`google/gemini-2.5-flash-image`, config `MAGAZINE_V2_IMAGE_MODEL`) was removed on 2026-08-30:
+it was gated on `OPENROUTER_API_KEY`, the same key every text agent needs, so it ran wherever
+the builder worked at all and Pexels was effectively unreachable behind it.
 
 **Overall verdict:** the architecture is genuinely good — one provider module, RBAC-safe tool design (reads mirror route visibility; writes go through the app's own gated REST or a proposal/apply step), consistent graceful degradation. The weaknesses are **operational**: most AI endpoints are unmetered and several are reachable without auth, there is no output-token cap or cost accounting anywhere, and observability is near zero.
 
@@ -71,21 +76,21 @@ The portal runs **7 conversational AI agents**, **5 one-shot AI features**, **5 
 
 ---
 
-## 4. Background / generation pipelines (5)
+## 4. Background / generation pipelines (4)
 
 ### 4.1 Magazine v2 "Build with AI" — the flagship multi-agent pipeline
 `POST /issues/generate` (10/min) → 202 → worker job → `generate.ts`:
 1. **Editorial Director** (`planIssue`, temp 0.8) — title/palette/fonts/page plan; source via deterministic retrieval (not truncation).
 2. Per page (concurrency 2): **Copywriter** (temp 0.75, self-heal loop feeding back which slots came back thin, best-of-attempts) + **Art Director** (free-form DSL `generateText`, temp 0.95 → normalize → deterministic solver → QA; retries with the QA failure as a hint; seed-spec and fixed-template fallbacks).
-3. **Asset Curator** — per image slot: user upload → **AI image gen (Gemini)** → Pexels → palette block.
+3. **Asset Curator** — per image slot: user upload → Pexels search → palette block. No model renders an image.
 4. Deterministic compose + layout QA; safe-template swap on failure.
 
-Cost controls: default 4–5-page preview, 60k source chars, page count 3–16, copy drafted once and re-flowed across layout retries. ⚠️ No per-issue image-gen budget or spend counter.
+Cost controls: default 4–5-page preview, 60k source chars, page count 3–16, copy drafted once and re-flowed across layout retries. Photo slots cost nothing per image — they are Pexels searches, not renders.
 
 ### 4.2 Add-pages-matching-theme — `POST /issues/:id/pages/generate` (owner, 1–12 pages); also staged by the v2 chat agent's `add_content_pages` tool.
 ### 4.3 PDF/DOCX import extraction (worker) — MuPDF raster + **one low-temp vision call per page** (`worker/lib/ai.ts`) that only assigns text roles / flags icons & QRs (repositioning forbidden — the historical doubled-text bug). Per-page failures contained with individual retry.
 ### 4.4 Document ingest/OCR (`lib/agent/documentIngest.ts`) — 4 paths, only 2 cost a model (scanned-PDF OCR at concurrency 2 / 24-page cap; image vision digest). Careful blank-vs-failed distinction → retryable 502 instead of blaming the scan.
-### 4.5 AI image generation (`imagegen.ts`) — Gemini via raw OpenRouter fetch, S3 + `mediaAssetsV2`, never throws (falls through to stock).
+### 4.5 ~~AI image generation (`imagegen.ts`)~~ — **REMOVED 2026-08-30.** Photo slots are filled by search only (uploads → Pexels → tinted block); no model renders a picture anywhere in the portal. Assets written by the old path keep `source: 'ai-image'` and stay placeable.
 
 **Worker queue** (`worker/src/queue.ts`): hand-rolled Mongo poll queue, atomic claim, 3 attempts, orphan sweep. ⚠️ Stale-job window (5 min default) is **shorter than a real generation job**; safe only because the sweep runs while the single worker is idle — a second worker would requeue live jobs. ⚠️ Worker registers v2 handlers even when `MAGAZINE_V2` is off. No dead-letter, no heartbeat.
 
@@ -115,7 +120,7 @@ Prompt-injection defenses exist in all 7 conversational prompts ("tool results /
 
 ### Critical
 1. **Unmetered, partially unauthenticated model endpoints.** Only 2 of 16 model endpoints are rate-limited (`agent-chat` 20/min; `mag2-*`). Guests can invoke: `/api/agent/compose` (arbitrary prompt → arbitrary output = open LLM proxy), `/api/agent/voice/transcribe` + `/speak` (OpenAI spend), and the story/article/profile chat streams (8–12 tool steps each). **Fix:** require sign-in on all `/api/agent/*` except the concierge; staff-gate story chat; add `rateLimit()` to every model endpoint (compose 10/min, voice 15/min, studio chats 20/min, editor ingest/compose 5/min).
-2. **No output-token cap and no cost accounting anywhere.** No `maxOutputTokens` on any call; no per-user/per-issue spend tracking; no cap on image-gen calls per issue. **Fix:** central wrapper around `getAgentModel()` calls setting `maxOutputTokens`, logging `{user, endpoint, model, usage, latency}` per call.
+2. **No output-token cap and no cost accounting anywhere.** No `maxOutputTokens` on any call; no per-user/per-issue spend tracking. **Fix:** central wrapper around `getAgentModel()` calls setting `maxOutputTokens`, logging `{user, endpoint, model, usage, latency}` per call.
 
 ### High
 3. **Rate limiter is per-process, in-memory, and skips GETs** (`lib/rateLimit.ts`) — meaningless once the API scales horizontally (matches the scalability review's single-instance ceiling).

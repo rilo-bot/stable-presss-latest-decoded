@@ -327,13 +327,13 @@ and **pages appear in the studio as they are composed** (no blocking loader).
    ├────────────────────────────────────────────────────────────────────────────────┤
    │ AGENT 3  draftPage — "Copywriter + Art Director"                               │
    │   generateObject, temp 0.75, 60s, DRAFT_ATTEMPTS self-heal (default 2)          │
-   │   ⇒ { texts[slotId], images[slotId]=photo brief, qr[slotId] }                    │
+   │   ⇒ { texts[slotId], images[slotId]=photo SEARCH TERMS, qr[slotId] }             │
    ├────────────────────────────────────────────────────────────────────────────────┤
    │ curateFills — the ASSET CURATOR (concurrency 4 per page)                        │
+   │   PHOTOGRAPHS ARE FOUND, NEVER GENERATED                                        │
    │   1. the user's OWN uploaded photo (claimed at most once)                       │
-   │   2. AI image generation (OpenRouter, gemini-2.5-flash-image)                   │
-   │   3. Pexels stock                                                               │
-   │   4. a tinted palette block                                                     │
+   │   2. Pexels stock, searched with the art director's terms                       │
+   │   3. a tinted palette block                                                     │
    ├────────────────────────────────────────────────────────────────────────────────┤
    │ pruneLayoutSpec  → drop leaves with no real content, RE-SOLVE the pruned tree    │
    │ solveLayout(+measureLeaf)  → absolute integer boxes    ← the ONLY pixel authority │
@@ -1051,13 +1051,12 @@ requires raising it (or adding a heartbeat) first.
 | `MAGAZINE_V2_DRAFT_ATTEMPTS` | 2 (max 4) | Copywriter self-heal attempts per page. |
 | `MAGAZINE_V2_GEN_CONCURRENCY` | 2 | Pages composed in parallel. |
 | `MAGAZINE_V2_PAGE_CONCURRENCY` | 3 | Pages extracted in parallel (worker). |
-| `MAGAZINE_V2_IMAGE_MODEL` | `google/gemini-2.5-flash-image` | OpenRouter image-output model. |
 | `MAGAZINE_V2_POLL_INTERVAL_MS` | 2000 | Worker queue poll. |
 | `MAGAZINE_V2_STALE_JOB_MS` | 300 000 | Orphaned-job threshold. |
 | `MAGAZINE_V2_JOB_TTL_MS` | 7 days | Terminal-job retention. |
 | `MAGAZINE_V2_MAX_RASTER_EDGE_PX` | 6000 | Raster ceiling (WASM-heap crash guard). |
 | `MAGAZINE_V2_MAX_IMAGE_DECODE_MP` | 40 | Embedded-image decode ceiling. |
-| `OPENROUTER_API_KEY` | — | Gates the agent, generation, image-gen and the vision tagger. Absent ⇒ 503 on AI routes; extraction still works with `role:'other'`. |
+| `OPENROUTER_API_KEY` | — | Gates the agent, generation and the vision tagger. Absent ⇒ 503 on AI routes; extraction still works with `role:'other'`. Does NOT affect photos — those come from `PEXELS_API_KEY`. |
 | `PEXELS_API_KEY` | — | Gates stock photos; absent ⇒ image slots degrade to tinted palette blocks. |
 | S3 (`storage`) | — | Absent ⇒ 501/503 on upload routes; generation degrades gracefully. |
 
@@ -1123,7 +1122,6 @@ Observed while reading the current code. Not a full audit — see `docs/MAGAZINE
 | `fontMetrics.ts` + `.data.ts` | 160 + 8256 | Measured glyph advances, CSS-cascade family resolution |
 | `layoutArchetypes.ts` | 153 | 11 prose layout recipes + per-page steer |
 | `retrieval.ts` | 140 | Source-document chunking + relevance retrieval |
-| `imagegen.ts` | 137 | OpenRouter image generation → S3 → MediaAsset |
 | `pruneSpec.ts` | 132 | Drop empty leaves, keep the tree valid, FR-guarantee |
 | `layoutValidate.ts` | 106 | Deterministic page QA |
 | `layoutSpecSchema.ts` | 94 | Zod mirror of the DSL |

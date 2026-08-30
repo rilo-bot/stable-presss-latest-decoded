@@ -36,7 +36,14 @@ const HANDLES: { m: Mode; cx: number; cy: number; cur: string }[] = [
 // Screen-pixel movement below which a pointer gesture counts as a CLICK (select /
 // open text for typing) rather than a drag — this is what lets a single click
 // start editing a text box while a deliberate drag still moves it.
-const DRAG_THRESHOLD_PX = 4;
+//
+// Measured as |dx| + |dy| (Manhattan), so a diagonal wobble reaches it sooner than
+// the number suggests: at 4, a 3px-by-3px tremor was already a drag. Hand tremor is
+// common past 70 and easily covers that in the moment between press and release, and
+// the failure is silent — the user means to select a headline and instead nudges it
+// somewhere they may not notice. 8 costs a deliberate drag nothing (you are moving
+// tens of pixels) and takes most incidental movement out of the drag path.
+const DRAG_THRESHOLD_PX = 8;
 
 /**
  * An element that carries no content yet, so the read-only renderer draws nothing
@@ -162,6 +169,13 @@ function TextEditingOverlay({
     textAlign: t.align,
     lineHeight: t.lineHeight,
     fontSize: Math.max(1, t.fontSize * scale),
+    // Same tracking/caps the read-only renderer applies (IssuePageCanvas), scaled to
+    // screen px like the font-size beside it — otherwise typing into a box swaps the
+    // type out from under the user and the copy re-wraps the moment they click away.
+    // textTransform stays a STYLE: the stored content keeps the case it was written
+    // in, exactly as the viewer and the PDF treat it.
+    letterSpacing: t.letterSpacing ? t.letterSpacing * scale : undefined,
+    textTransform: t.textTransform,
     whiteSpace: 'pre-wrap',
     overflowWrap: 'break-word',
   };
@@ -244,7 +258,12 @@ function ActivePageLayer() {
       }
       const step = e.shiftKey ? 10 : 1;
       if (e.key === 'Escape') return select(null);
-      if (e.key === 'Delete' || e.key === 'Backspace') { e.preventDefault(); return void deleteElement(selectedId); }
+      // DELETE ONLY — Backspace used to do this too, and it is the one key on the
+      // board people press meaning something else entirely ("go back", "erase what I
+      // just typed"). With an element selected but no text field focused, that reflex
+      // silently removed the element. Delete is unambiguous; the inspector's own
+      // "Delete element" button covers anyone who does not have one.
+      if (e.key === 'Delete') { e.preventDefault(); return void deleteElement(selectedId); }
       const nudge: Record<string, [number, number]> = { ArrowLeft: [-step, 0], ArrowRight: [step, 0], ArrowUp: [0, -step], ArrowDown: [0, step] };
       const d = nudge[e.key];
       if (d && page) {
@@ -305,6 +324,27 @@ function ActivePageLayer() {
   };
 
   const selected = page.elements.find((x) => x.id === selectedId) ?? null;
+
+  /**
+   * HOW BIG THE RESIZE HANDLES MAY BE, given what they are attached to.
+   *
+   * They want to be 28px (the 10px originals were half the accessible minimum and
+   * genuinely hard to hit). But handle size is SCREEN px while the element is drawn
+   * at `scale`, so a fixed 28 is only reasonable for a fairly large element at a
+   * fairly normal zoom: eight 28px boxes around a 60px-on-screen icon cover the icon
+   * completely, and then the body underneath can no longer be grabbed to move it —
+   * the handles would have eaten the element they belong to.
+   *
+   * So: 28 when there is room, shrinking with the element, never below 12 (still
+   * better than the 10 it replaced). Anyone stuck at the small end has the move
+   * handle below the selection and the inspector's W/H steppers, both full-size.
+   */
+  const handlePx = (() => {
+    if (!selected) return 28;
+    const shortestSide = Math.min(selected.w, selected.h) * scale;
+    return Math.max(12, Math.min(28, Math.round(shortestSide / 2.2)));
+  })();
+  const handleDotPx = Math.max(8, Math.min(14, Math.round(handlePx * 0.5)));
   const editingElement = editingId ? (page.elements.find((x) => x.id === editingId && x.type === 'text' && !!x.text) ?? null) : null;
 
   // A near-full-page element is a background/scrim: the user almost never means to
@@ -403,6 +443,18 @@ function ActivePageLayer() {
           {selected && !editingId && (
             <div className="absolute" style={{ ...pctRect(selected, page), zIndex: 10000 }}>
               <div className="pointer-events-none absolute inset-0 ring-2 ring-studio-select" />
+              {/* TWO BOXES PER HANDLE: a transparent target, and the smaller square
+                  you actually see inside it.
+
+                  The handle used to be a single 10×10 div — the whole grab area, well
+                  under the 24×24 floor, and a genuinely hard thing to hit for anyone
+                  whose pointer is not steady. Growing the SQUARE that far would have
+                  buried small elements under their own chrome, so the target grows and
+                  the mark stays modest. Both are sized by `handlePx`, which backs off
+                  on an element too small to carry them — see there. No aria here: these
+                  are pointer-only affordances, and labelling a div nothing can focus
+                  just puts a promise in the tree that the keyboard cannot keep. The
+                  keyboard path to the same values is the inspector's W/H steppers. */}
               {HANDLES.map((h) => (
                 <div
                   key={h.m}
@@ -411,15 +463,28 @@ function ActivePageLayer() {
                     position: 'absolute',
                     left: `${h.cx * 100}%`,
                     top: `${h.cy * 100}%`,
-                    width: 10,
-                    height: 10,
+                    width: handlePx,
+                    height: handlePx,
                     transform: 'translate(-50%, -50%)',
-                    background: '#fff',
-                    border: '1.5px solid var(--studio-select)',
-                    borderRadius: 2,
+                    display: 'flex',
+                    alignItems: 'center',
+                    justifyContent: 'center',
+                    background: 'transparent',
                     cursor: h.cur,
+                    touchAction: 'none',
                   }}
-                />
+                >
+                  <div
+                    style={{
+                      width: handleDotPx,
+                      height: handleDotPx,
+                      background: '#fff',
+                      border: '1.5px solid var(--studio-select)',
+                      borderRadius: 2,
+                      boxShadow: '0 1px 3px rgba(0,0,0,0.2)',
+                    }}
+                  />
+                </div>
               ))}
               {/* Canva-style move handle: a dedicated icon below the selection you can
                   grab to drag the element — the same 'move' mode the body itself
@@ -550,19 +615,22 @@ export function EditorCanvas() {
             <div className="mb-1.5 flex items-center gap-2 text-ui-sm text-studio-ink-3">
               <span>Page {sum.index + 1}</span>
               {canManage && (
-                <label className="flex cursor-pointer items-center gap-1 text-studio-ink-3 hover:text-studio-ink-2" title="Include this page when publishing selected pages">
+                /* The box was 12×12 — half the 24px floor. The label has always been
+                   the real target (it wraps the input), so it now carries the padding
+                   to prove it, and the box itself is 16. */
+                <label className="-my-1 flex cursor-pointer items-center gap-1.5 rounded-sm px-1 py-1.5 text-studio-ink-3 hover:bg-studio-raise hover:text-studio-ink-2" title="Include this page when publishing selected pages">
                   <input
                     type="checkbox"
                     checked={sum.selectedForPublish}
                     onChange={(e) => void setPageSelected(sum.id, e.target.checked)}
-                    className="h-3 w-3 accent-emerald-500"
+                    className="h-4 w-4 accent-emerald-500"
                   />
                   publish
                 </label>
               )}
               <span className="ml-auto flex items-center gap-1">
                 <button
-                  className="flex items-center gap-1 rounded-sm border border-studio-edge px-1.5 py-0.5 text-studio-ink-2 hover:bg-studio-raise-2 hover:text-studio-ink disabled:opacity-30"
+                  className="flex items-center gap-1 rounded-sm border border-studio-edge px-2 py-1 text-studio-ink-2 hover:bg-studio-raise-2 hover:text-studio-ink disabled:opacity-30"
                   disabled={formatBusy}
                   onClick={() => void runFormat('fill', sum.id)}
                   title="Fill empty boxes & tighten crowded text on this page (AI)"
@@ -570,7 +638,7 @@ export function EditorCanvas() {
                   <Wand2 size={11} /> {formatBusy && active ? <ShimmerText>Filling…</ShimmerText> : 'Fill'}
                 </button>
                 <button
-                  className="flex items-center gap-1 rounded-sm border border-studio-edge px-1.5 py-0.5 text-studio-ink-2 hover:bg-studio-raise-2 hover:text-studio-ink disabled:opacity-30"
+                  className="flex items-center gap-1 rounded-sm border border-studio-edge px-2 py-1 text-studio-ink-2 hover:bg-studio-raise-2 hover:text-studio-ink disabled:opacity-30"
                   disabled={formatBusy}
                   onClick={() => void runFormat('adjust', sum.id)}
                   title="Tighten crowded text on this page (AI)"

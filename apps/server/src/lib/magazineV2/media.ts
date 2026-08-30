@@ -20,7 +20,7 @@
 //   agent set_element_image       (no filter)                              ✗ LEAKED
 //   agent add_media_image         (no filter)                              ✗ LEAKED
 //
-// loadUserPhotoPool fed the pool generation places FIRST, ahead of AI and stock: use
+// loadUserPhotoPool fed the pool generation places FIRST, ahead of stock: use
 // a reference layout on a page, ask for more pages, and the reference was composed
 // into the client's magazine as a hero photograph — publishable to the public
 // newsstand and exportable to PDF. The three agent tools were a shorter path to the
@@ -40,7 +40,9 @@
  * The kinds of row the media library holds.
  *
  *   upload    — an image the user put in themselves, to place
- *   photo     — a photograph: extracted from an imported PDF, or sourced from stock/AI
+ *   photo     — a photograph: extracted from an imported PDF, or found on stock. Rows
+ *               written before generation was retired carry `source: 'ai-image'`; they
+ *               are still photographs and still placeable.
  *   graphic   — an icon, logo or QR crop lifted off an imported page
  *   reference — a LAYOUT REFERENCE: read for its composition, never placed
  *   doc       — an uploaded source document (PDF/Word/text), never placed
@@ -64,7 +66,7 @@ export type MediaKind = 'upload' | 'photo' | 'graphic' | 'reference' | 'doc';
  */
 const PLACEABLE_BY_KIND: Record<MediaKind, boolean> = {
   upload: true, // the user's own image, put there to be placed
-  photo: true, // extracted from an import, or sourced from stock/AI
+  photo: true, // extracted from an import, or found on stock
   graphic: true, // an icon/logo/QR crop lifted off an imported page
   reference: false, // someone else's licensed page — read for structure, never placed
   doc: false, // a source document; a PDF of race results is not a photograph
@@ -142,13 +144,13 @@ export interface MediaRow extends MediaRowLike {
  * Lives HERE rather than in generate.ts for two reasons. It is the same question
  * this module already answers, one filter clause further on — and generate.ts
  * reaches the database at import time, so anything defined there cannot be tested
- * without one. This is the pool generation places FIRST, ahead of AI and stock, so
+ * without one. This is the pool generation places FIRST, ahead of stock, so
  * whatever reaches it reaches the client's magazine; it has to be testable.
  *
  * Two INDEPENDENT conditions, and conflating them is what caused the leak:
  *   • `source === 'upload'` is the pool's DEFINITION — photos the user put in
  *     themselves. An extracted photo is a fine picture but already sits on its own
- *     page, so it must not be promoted ahead of AI/stock by this pool.
+ *     page, so it must not be promoted ahead of stock by this pool.
  *   • `isPlaceableMedia` is whether the row may be placed AT ALL. A layout reference
  *     is `source: 'upload'` too, so provenance alone can never exclude it.
  */

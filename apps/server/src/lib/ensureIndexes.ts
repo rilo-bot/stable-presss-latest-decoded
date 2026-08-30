@@ -65,6 +65,13 @@ const INDEX_SPECS: IndexSpec[] = [
   { collection: COL.reviews, keys: { magazineId: 1, deletedAt: 1, at: -1 } },
   // Issue library list: served newest-first by updatedAt.
   { collection: COL.magazines, keys: { deletedAt: 1, updatedAt: -1 } },
+  // The library list is SHARE-ONLY, so its query is `$or: [owner, collaborator]`.
+  // MongoDB serves an $or by unioning one index per branch, so both branches need
+  // their own — with neither, the $or degrades to the collection scan the query was
+  // written to avoid. Equality keys lead; updatedAt trails for the newest-first read.
+  { collection: COL.magazines, keys: { ownerId: 1, deletedAt: 1, updatedAt: -1 } },
+  // Multikey: `collaborators` is an array, so this indexes each member's userId.
+  { collection: COL.magazines, keys: { 'collaborators.userId': 1, deletedAt: 1, updatedAt: -1 } },
   // Blogs: public index (published, newest first) and the staff list.
   { collection: 'blogs', keys: { deletedAt: 1, status: 1, publishedAt: -1 } },
   { collection: 'blogs', keys: { deletedAt: 1, updatedAt: -1 } },

@@ -11,7 +11,7 @@
 //   Agent 1  planIssue   — the whole-issue brief (title, subtitle, palette, font
 //                          pairing, ordered page list of kinds + intents).
 //   Agent 2+3 draftPage  — per page: copywriter + art-director fill the template's
-//                          named slots (copy, image briefs, qr urls).
+//                          named slots (copy, photo search terms, qr urls).
 //   (polishCoverDraft)   — deterministic: guarantee the cover reads well.
 //   buildPage            — compose → validate → layout-QA → SAFE_TEMPLATE fallback.
 //
@@ -42,7 +42,6 @@ import {
 import { validatePageLayout } from './layoutValidate.js';
 import { isStockConfigured, fetchAndStoreStock, type StockOrientation } from './stock.js';
 import { userPhotosFrom, type UserPhoto } from './media.js';
-import { isImageGenConfigured, generateAndStoreImage } from './imagegen.js';
 // ── AI-authored layout path (behind MAGAZINE_V2_AI_LAYOUT) ────────────────────
 import type { TextRole } from './model.js';
 import { pagesAlreadyIn } from './pageDigest.js';
@@ -84,13 +83,14 @@ const BODY_FONTS = [
 // The magazine's subject is DERIVED from the user's brief (and source document,
 // if any) — never a preset. The planner establishes it from the brief/source;
 // these helpers then ground the per-page copywriter/art-director in that derived
-// subject so copy, terminology and photo briefs stay on-topic, without hardcoding
+// subject so copy, terminology and photo search terms stay on-topic, without hardcoding
 // any particular domain into a general-purpose builder.
 const PLANNER_DOMAIN = [
   'SUBJECT: establish the magazine’s subject from the brief (and the source document, if provided).',
   'Do NOT default to any preset topic or industry. Ground the title, section ideas, copy, names,',
-  'terminology and especially PHOTO briefs in THAT subject. Photo briefs: never text in the image,',
-  'no identifiable real individuals.',
+  'terminology and especially PHOTO SEARCH TERMS in THAT subject. Photos are FOUND in a stock',
+  'library, so those terms are a few concrete nouns to search for — never a scene to render, never',
+  'text in the image, no identifiable real individuals.',
 ].join('\n');
 
 /** Per-page grounding derived from the plan the Editorial Director produced (so
@@ -98,9 +98,10 @@ const PLANNER_DOMAIN = [
 function domainGrounding(plan: { title: string; subtitle: string }): string {
   return [
     `SUBJECT — GROUND EVERYTHING HERE: this magazine is “${plan.title}”${plan.subtitle ? ` — ${plan.subtitle}` : ''}.`,
-    'Keep the copy, section ideas, names, terminology and especially PHOTO briefs within THIS subject',
-    'and the page intent below; do not drift to unrelated topics. Photo briefs: never text in the',
-    'image, no identifiable real individuals.',
+    'Keep the copy, section ideas, names, terminology and especially PHOTO SEARCH TERMS within THIS',
+    'subject and the page intent below; do not drift to unrelated topics. Photos are FOUND in a stock',
+    'library, so those terms are a few concrete nouns to search for — never a scene to render, never',
+    'text in the image, no identifiable real individuals.',
   ].join('\n');
 }
 
@@ -165,7 +166,7 @@ export interface GenPlan {
 }
 export interface PageDraft {
   texts: Record<string, string>; // slotId → copy
-  images: Record<string, string>; // slotId → photo brief (used by the curator, STAGE 3)
+  images: Record<string, string>; // slotId → photo SEARCH TERMS (the curator searches Pexels with these)
   qr: Record<string, string>; // slotId → destination URL
 }
 export interface ComposedPage {
@@ -542,7 +543,11 @@ export async function draftPage(opts: {
         }
         return `- ${s.id} (text, ${s.textRole ?? 'body'}, ≤${max} chars — that is what its box holds)`;
       }
-      if (s.role === 'image') return `- ${s.id} (image BRIEF — describe the photo to create: subject, setting, mood, lighting. No text in image.)`;
+      // SEARCH TERMS, not a scene to render. Photos are FOUND in a stock library
+      // (curateFills → Pexels), and a keyword search matches nouns: "chestnut horse
+      // jumping" finds pictures, "a chestnut mare mid-flight over an oxer at golden
+      // hour, shallow depth of field" finds nothing and leaves a blank block.
+      if (s.role === 'image') return `- ${s.id} (PHOTO SEARCH TERMS — 2–5 words naming what to LOOK FOR in a photo library, e.g. "chestnut horse jumping", "empty stable aisle", "farrier shoeing hoof". Concrete nouns only: no mood, lighting, camera or composition words, no sentences. No text in image.)`;
       if (s.role === 'qr') return `- ${s.id} (qr — a full https:// destination URL)`;
       return null;
     })
@@ -573,8 +578,11 @@ export async function draftPage(opts: {
     '- pullquote slots: a vivid, quotable line; its attribution/byline may name a plausible ROLE',
     '  ("— A Cambridge breeder", "— Owner, Waikato"), NEVER a real named individual.',
     '- cta / qrLabel slots: short action text, or a short URL, for the call-to-action ("Scan to join", "Learn more").',
-    '- image BRIEF slots: describe a single photograph for this page — subject + setting +',
-    '  mood + lighting, on-theme. NO text/words in the image, no identifiable named individuals.',
+    '- PHOTO SEARCH TERM slots: these are SEARCH TERMS for a stock photo library, not a description',
+    '  of a picture to create. Give 2–5 concrete nouns naming what to look for, on-theme — "chestnut',
+    '  horse jumping", "empty stable aisle". A full sentence, or mood/lighting/camera words ("golden',
+    '  hour", "shallow depth of field", "cinematic"), matches NOTHING and leaves the page with a blank',
+    '  block. NO text/words in the image, no identifiable named individuals.',
     '- qr slots: a plausible https:// destination for the call-to-action.',
     'Fill every REQUIRED slot; omit an optional slot only if it truly does not apply.',
     'Do not invent statistics as facts; keep figures illustrative.',
@@ -751,13 +759,13 @@ function slotOrientation(box: { w: number; h: number }): StockOrientation {
 }
 
 // Image slots within a page are sourced concurrently (each is an independent
-// image-gen or Pexels call, up to ~60s). A photo-grid page has 4 image slots, so
-// serial sourcing made one page take ~4× longer than necessary. Bounded so a
+// Pexels search + download). A photo-grid page has 4 image slots, so serial
+// sourcing made one page take ~4× longer than necessary. Bounded so a
 // pathological template can't fan out without limit.
 const IMAGE_SLOT_CONCURRENCY = 4;
 
 /** A pool of the user's OWN uploaded photos (from the magazine's media library)
- *  that generation places BEFORE falling back to AI/stock. `claim()` is synchronous
+ *  that generation places BEFORE falling back to stock. `claim()` is synchronous
  *  (no await) so concurrent page/slot composers can never take the same photo. */
 function makeUserPhotoPool(photos: UserPhoto[]) {
   const remaining = [...photos];
@@ -848,6 +856,22 @@ function makePagePhotos(pool?: PhotoClaimer): { claim(): UserPhoto | null; reset
  * a `ctx` (persisting run) + stock are configured; otherwise degrade to a tinted
  * palette block so the page still ships looking designed. Slots resolve in
  * parallel (bounded); output order matches template.slots.
+ *
+ * PHOTOGRAPHS ARE FOUND, NEVER GENERATED (user direction 2026-08-30). There used
+ * to be a rung between the user's own photos and Pexels that rendered a bespoke
+ * image on OpenRouter, and because it was gated on OPENROUTER_API_KEY — the same
+ * key every text agent needs — it was on wherever the builder worked at all, so
+ * in practice Pexels never ran and every page photo was synthetic. The ladder is
+ * now three rungs, all of them real pictures or an honest blank:
+ *
+ *   1. the user's OWN uploaded photo (claimed at most once per issue)
+ *   2. a Pexels photograph found from the art-director's search terms
+ *   3. a tinted palette block
+ *
+ * That makes rung 2 LOAD-BEARING with nothing behind it but a colour block, which
+ * is why draftPage asks the art director for SEARCH TERMS rather than a scene to
+ * render: a sentence written for a generative model finds nothing on a keyword
+ * search, and "finds nothing" is now visible on the page.
  */
 async function curateFills(
   template: PageTemplate,
@@ -876,13 +900,13 @@ async function curateFills(
         //    same one — each user photo is placed at most once.
         const mine = pool?.claim();
         if (mine) stored = { url: mine.url, assetId: mine.assetId, alt: mine.alt };
-        // 2) Top up with an AI-generated editorial photo (bespoke to the brief), then
-        //    Pexels stock, then a tinted palette block. All degrade gracefully when a
-        //    provider/storage isn't configured (e.g. local dev without S3).
+        // 2) Top up by FINDING a real photograph on Pexels, then a tinted palette
+        //    block. Photographs are only ever SOURCED, never generated — see the
+        //    note above curateFills. Degrades gracefully when Pexels/S3 isn't
+        //    configured (e.g. local dev without S3).
         if (!stored && ctx && brief) {
           const orientation = slotOrientation(slot.box);
-          if (isImageGenConfigured()) stored = await generateAndStoreImage({ prompt: brief, orientation }, ctx);
-          if (!stored && isStockConfigured()) stored = await fetchAndStoreStock({ query: brief, orientation }, ctx);
+          if (isStockConfigured()) stored = await fetchAndStoreStock({ query: brief, orientation }, ctx);
         }
         return stored ? { slotId: slot.id, image: stored } : { slotId: slot.id, shapeFill: palette.secondary };
       }
@@ -1202,7 +1226,7 @@ async function artDirectPage(plan: GenPlan, page: GenPlanPage, pageNumber: numbe
     '  its qrLabel in the SAME row or col — a label on the other side of the page explains nothing.',
     '• ICONS ARE MARKS, NOT PICTURES. An icon belongs in a row/col WITH a label or caption, at about 6–9% of the',
     '  page width. A big unlabelled glyph floating on a page reads as clip-art and cheapens it — if you want a',
-    '  large graphic, use a photograph ("image" leaf with a real brief).',
+    '  large graphic, use a photograph (an "image" leaf, filled with a real photo found from search terms).',
     'Icon glyph names (choose the closest): Trophy, Award, Medal, Crown, Star, Users, UsersGroup, Horse,',
     'Horseshoe, Helmet, Flag, Target, Calendar, Clock, MapPin, Phone, Mail, Globe, Instagram, Facebook,',
     'Youtube, Camera, Video, BookOpen, GraduationCap, TrendingUp, PieChart, DollarSign, Handshake, Briefcase,',
@@ -1706,7 +1730,7 @@ export async function generateMagazineIssue(issueId: string, brief: string, page
     });
 
     // The user's OWN uploaded photos (from the media library) — generation places
-    // these FIRST, topping up with AI/stock only once they run out. Loaded AFTER
+    // these FIRST, topping up from stock only once they run out. Loaded AFTER
     // planning so any images still uploading when the job was enqueued have landed.
     const photoPool = await loadUserPhotoPool(issueId);
 
