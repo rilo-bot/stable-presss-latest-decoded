@@ -23,6 +23,27 @@ const NEW_CODE = [
   'apps/worker/src/jobs/publishMagazine.ts',
 ];
 
+/**
+ * Import bans every new-code file carries.
+ *
+ * Held in a constant because ESLint flat config REPLACES a rule entry rather
+ * than merging it: any per-package block that sets `no-restricted-imports` drops
+ * these unless it spreads them back in. That is silent — nothing reports the
+ * guards going missing.
+ */
+const SHARED_IMPORT_BANS = [
+  {
+    group: ['**/magazine-builder/features/*/**', '../features/*/**', '../../features/*'],
+    message:
+      'Lanes must not import from each other. Ask Lane 0 to move shared code into packages/.',
+  },
+  {
+    group: ['**/editor-v2/**', '**/magazineV2/**', '**/magazinesV2/**'],
+    message:
+      'The existing builder is off limits. See CLAUDE.md — build alongside, never against it.',
+  },
+];
+
 /** Test files relax the rules that only make sense in shipped code. */
 const TEST_FILES = [
   'packages/**/*.test.{ts,tsx}',
@@ -91,6 +112,15 @@ export default tseslint.config(
       // — RULES §2.4, no circular imports ————————————————————————————
       'import/no-cycle': ['error', { maxDepth: Infinity }],
 
+      // — FOUNDATION §4, a package may import only what it declares ————
+      // This is what actually enforces the dependency contract: mb-schema's
+      // package.json lists no dependencies, so every npm import in it is an
+      // error, and mb-commands can reach immer and fractional-indexing because
+      // it declares them and nothing else. The contract lives in package.json
+      // where it belongs, rather than in a hand-maintained denylist that lets
+      // through whatever nobody thought to name.
+      'import/no-extraneous-dependencies': 'error',
+
       // — RULES §5, no magic numbers ————————————————————————————————
       // RULES sets this to 'warn'; the lint script runs --max-warnings=0, so in
       // practice it fails the build either way. Left as 'warn' to match RULES.
@@ -115,27 +145,21 @@ export default tseslint.config(
 
       // — FOUNDATION §4, lane boundaries ————————————————————————————
       // A lane never imports another lane. Shared code moves into packages/.
-      'no-restricted-imports': [
-        'error',
-        {
-          patterns: [
-            {
-              group: ['**/magazine-builder/features/*/**', '../features/*/**', '../../features/*'],
-              message:
-                'Lanes must not import from each other. Ask Lane 0 to move shared code into packages/.',
-            },
-            {
-              group: ['**/editor-v2/**', '**/magazineV2/**', '**/magazinesV2/**'],
-              message:
-                'The existing builder is off limits. See CLAUDE.md — build alongside, never against it.',
-            },
-          ],
-        },
-      ],
+      'no-restricted-imports': ['error', { patterns: SHARED_IMPORT_BANS }],
     },
   },
 
-  // packages/mb-schema has zero dependencies, by contract (FOUNDATION §4).
+  // packages/mb-schema imports NOTHING (FOUNDATION §4).
+  //
+  // An allowlist, not a denylist. A denylist naming a few packages lets
+  // `nanoid`, `lodash` and every `node:` builtin straight through while the
+  // message claims the package imports nothing — a rule reading stronger than
+  // it enforces, which is the specific failure RULES §10 is about. The
+  // zero-dependency contract is load-bearing: everything depends on this one.
+  //
+  // NOTE flat config REPLACES a rule entry rather than merging it, so the shared
+  // bans have to be repeated here. Leaving them out would silently drop the
+  // lane-boundary and existing-builder guards for this package.
   {
     files: ['packages/mb-schema/**/*.ts'],
     rules: {
@@ -143,9 +167,11 @@ export default tseslint.config(
         'error',
         {
           patterns: [
+            ...SHARED_IMPORT_BANS,
             {
-              group: ['@rilo/*', '../../*', 'immer', 'react', 'yjs'],
-              message: 'mb-schema imports nothing. It is the one package everything else depends on.',
+              group: ['node:*', 'fs', 'path', 'crypto', 'os', 'util'],
+              message:
+                'mb-schema imports nothing — not npm packages, not node: builtins. It runs in the browser too. Inject anything environmental.',
             },
           ],
         },
@@ -159,6 +185,9 @@ export default tseslint.config(
       // A literal is the assertion in a test — "A4 is 210 x 297mm" is the point.
       'no-magic-numbers': 'off',
       '@typescript-eslint/no-magic-numbers': 'off',
+      // The dependency contract governs what SHIPS. Test runners come from the
+      // root workspace and are deliberately not declared per package.
+      'import/no-extraneous-dependencies': 'off',
       'max-lines': 'off',
       '@typescript-eslint/no-non-null-assertion': 'off',
       '@typescript-eslint/explicit-module-boundary-types': 'off',

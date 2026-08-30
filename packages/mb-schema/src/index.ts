@@ -14,6 +14,8 @@ export {
   formatMm,
   formatPt,
   mmToPx,
+  parseMm,
+  parsePt,
   ptToPx,
   pxToMm,
   pxToPt,

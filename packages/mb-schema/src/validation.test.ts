@@ -197,12 +197,15 @@ describe('invariant 3 — chains are acyclic and share one story', () => {
   it('flags a cycle', () => {
     const m = blank();
     m.stories['s1'] = story('s1');
-    // t1 -> t2 -> t1. Neither has a null prev, so this is also headless.
+    // t1 -> t2 -> t1, with symmetric links so invariant 2 is satisfied. This is
+    // the only shape a cycle can take without also being asymmetric, which is
+    // why the sweep detects it directly rather than inferring it from a chain
+    // having no head.
     withItems(m, [
       textBox('t1', 'a0', 's1', { nextBoxId: 't2', prevBoxId: 't2' }),
       textBox('t2', 'a1', 's1', { nextBoxId: 't1', prevBoxId: 't1' }),
     ]);
-    expect(codes(validateStructure(m))).toContain('thread-headless');
+    expect(codes(validateStructure(m))).toContain('thread-cycle');
   });
 
   it('flags boxes in one chain showing different stories', () => {
@@ -331,5 +334,113 @@ describe('invariants 9, 11, 12 — spread page counts', () => {
     m.pageSetup.facingPages = false;
     m.spreads = [cover('c1'), interior('i1')];
     expect(codes(validateMagazine(m))).toContain('facing-pages-off');
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Findings from QA pass 1. Each of these validated clean before the fix.
+// ---------------------------------------------------------------------------
+
+describe('QA-01 — every addressable id is unique', () => {
+  it('flags a duplicate paragraph id, which the text write path addresses', () => {
+    const m = blank();
+    const s = story('s1');
+    s.paragraphs = [
+      { ...s.paragraphs[0]!, id: 'dup', order: 'a0' },
+      { ...s.paragraphs[0]!, id: 'dup', order: 'a1' },
+    ];
+    m.stories['s1'] = s;
+    withItems(m, [textBox('t1', 'a0', 's1')]);
+    expect(codes(validateStructure(m))).toContain('duplicate-paragraph-id');
+  });
+
+  it('flags a duplicate page id, which item.create addresses', () => {
+    const m = blank();
+    m.spreads = [cover('c1'), interior('i1'), cover('c2')];
+    const left = m.spreads[1]?.pages[0];
+    const right = m.spreads[1]?.pages[1];
+    if (left && right) right.id = left.id;
+    expect(codes(validateStructure(m))).toContain('duplicate-page-id');
+  });
+
+  it('flags a duplicate spread id', () => {
+    const m = blank();
+    m.spreads = [cover('c1'), cover('c1')];
+    expect(codes(validateStructure(m))).toContain('duplicate-spread-id');
+  });
+
+  it('flags a record key that disagrees with the id inside it', () => {
+    const m = blank();
+    m.stories['s1'] = story('s2');
+    withItems(m, [textBox('t1', 'a0', 's1')]);
+    expect(codes(validateStructure(m))).toContain('record-key-mismatch');
+  });
+});
+
+describe('QA-02 — page backgrounds resolve', () => {
+  it('flags a dangling backgroundId', () => {
+    const m = blank();
+    const page = m.spreads[0]?.pages[0];
+    if (page) page.backgroundId = 'no-such-background';
+    expect(codes(validateStructure(m))).toContain('background-missing');
+  });
+});
+
+describe('QA-03 — a magazine has at least one page', () => {
+  it('flags an empty document', () => {
+    const m = blank();
+    m.spreads = [];
+    expect(codes(validateMagazine(m))).toContain('no-pages');
+  });
+});
+
+describe('QA-04 — column counts are usable', () => {
+  it('flags zero columns on a text box, which would divide by zero', () => {
+    const m = blank();
+    m.stories['s1'] = story('s1');
+    withItems(m, [{ ...textBox('t1', 'a0', 's1'), columns: { count: 0, gutter: 0 } }]);
+    expect(codes(validateMagazine(m))).toContain('columns-invalid');
+  });
+
+  it('flags a negative gutter on a page', () => {
+    const m = blank();
+    const page = m.spreads[0]?.pages[0];
+    if (page) page.columns = { count: 2, gutter: -5 };
+    expect(codes(validateMagazine(m))).toContain('columns-invalid');
+  });
+});
+
+describe('QA-05 — documented ranges are enforced', () => {
+  it('flags an opacity outside 0..1, which the AI phase will emit', () => {
+    const m = withItems(blank(), [{ ...shape('s1', 'a0'), opacity: 5 }]);
+    expect(codes(validateMagazine(m))).toContain('value-out-of-range');
+  });
+
+  it('flags a non-positive minFontScale', () => {
+    const m = blank();
+    m.stories['s1'] = story('s1');
+    withItems(m, [{ ...textBox('t1', 'a0', 's1'), minFontScale: -3 }]);
+    expect(codes(validateMagazine(m))).toContain('value-out-of-range');
+  });
+});
+
+describe('QA-08 — thread-cycle is reachable as a primary signal', () => {
+  it('reports a symmetric cycle as a cycle, not as headlessness', () => {
+    const m = blank();
+    m.stories['s1'] = story('s1');
+    withItems(m, [
+      textBox('t1', 'a0', 's1', { nextBoxId: 't2', prevBoxId: 't2' }),
+      textBox('t2', 'a1', 's1', { nextBoxId: 't1', prevBoxId: 't1' }),
+    ]);
+    const found = codes(validateStructure(m));
+    expect(found).toContain('thread-cycle');
+    expect(found).not.toContain('thread-headless');
+  });
+});
+
+describe('QA-12 — one fault produces one error', () => {
+  it('reports a duplicate order key once, not also as unsorted', () => {
+    const m = withItems(blank(), [shape('s1', 'a0'), shape('s2', 'a0')]);
+    expect(codes(validateStructure(m))).toEqual(['duplicate-order-key']);
   });
 });

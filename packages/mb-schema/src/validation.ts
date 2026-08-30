@@ -1,5 +1,5 @@
 // ---------------------------------------------------------------------------
-// Invariants — the twelve rules a magazine must satisfy.
+// Invariants — the rules a magazine must satisfy.
 //
 // This module REPORTS. It never repairs. The old system's `validateElements()`
 // clamps and drops silently, which is how invalid state becomes invisible: the
@@ -15,6 +15,13 @@
 // checks are id lookups and array scans — microseconds on a 24-page magazine —
 // and they catch exactly the failures that corrupt a document, so they run
 // always.
+//
+// NUMBERING. FOUNDATION v0.3 §5.7 lists eleven invariants. Three more are
+// enforced here and are pending ratification in the specification: 12 (facing
+// pages off means one page per spread), 13 (a magazine has at least one page),
+// and 14 (documented numeric ranges hold). All three sit in the FULL pass
+// alongside invariant 8, because like it they are about values being sensible
+// rather than about the document being addressable. See BLOCKERS QA-03/04/05.
 // ---------------------------------------------------------------------------
 
 import type { Id, OrderKey } from './primitives.js';
@@ -27,22 +34,30 @@ import type { Magazine, Page } from './magazine.js';
  * — a message is prose and drifts, a code is a contract.
  */
 export type ValidationCode =
-  | 'story-missing' //          1
-  | 'thread-dangling' //        2
-  | 'thread-not-a-textbox' //   2
-  | 'thread-asymmetric' //      2
-  | 'thread-cycle' //           3
-  | 'thread-story-mismatch' //  3
-  | 'thread-headless' //        4
-  | 'look-missing' //           5
-  | 'asset-missing' //          6
-  | 'duplicate-item-id' //      7
-  | 'frame-not-positive' //     8
-  | 'cover-not-single' //       9
-  | 'duplicate-order-key' //   10
-  | 'collection-unsorted' //   10
-  | 'spread-page-count' //     11
-  | 'facing-pages-off'; //     12
+  | 'story-missing' //           1
+  | 'background-missing' //      1 (extended — the fourth reference kind)
+  | 'thread-dangling' //         2
+  | 'thread-not-a-textbox' //    2
+  | 'thread-asymmetric' //       2
+  | 'thread-cycle' //            3
+  | 'thread-story-mismatch' //   3
+  | 'thread-headless' //         4
+  | 'look-missing' //            5
+  | 'asset-missing' //           6
+  | 'duplicate-item-id' //       7
+  | 'duplicate-page-id' //       7 (extended — pages are addressable)
+  | 'duplicate-spread-id' //     7 (extended)
+  | 'duplicate-paragraph-id' //  7 (extended — text.insert addresses these)
+  | 'record-key-mismatch' //     7 (extended — key and .id are used as one)
+  | 'frame-not-positive' //      8
+  | 'cover-not-single' //        9
+  | 'duplicate-order-key' //    10
+  | 'collection-unsorted' //    10
+  | 'spread-page-count' //      11
+  | 'facing-pages-off' //       12 — pending ratification
+  | 'no-pages' //               13 — pending ratification
+  | 'columns-invalid' //        14 — pending ratification
+  | 'value-out-of-range'; //    14 — pending ratification
 
 export interface ValidationError {
   code: ValidationCode;
@@ -57,6 +72,14 @@ const PAGES_PER_COVER_SPREAD = 1;
 
 /** Every other interior spread holds two. */
 const PAGES_PER_INTERIOR_SPREAD = 2;
+
+/** Columns must divide the box at least once. */
+const MIN_COLUMN_COUNT = 1;
+
+const MIN_OPACITY = 0;
+const MAX_OPACITY = 1;
+const MIN_ROTATION_DEGREES = -360;
+const MAX_ROTATION_DEGREES = 360;
 
 // ---------------------------------------------------------------------------
 // Traversal
@@ -137,10 +160,10 @@ function allPages(magazine: Magazine): Page[] {
 }
 
 // ---------------------------------------------------------------------------
-// Structural invariants — 1, 2, 3, 4, 5, 6, 7, 10
+// Structural invariants — 1 to 7 and 10
 // ---------------------------------------------------------------------------
 
-/** 1, 5, 6 — every reference resolves. */
+/** 1, 5, 6 — every reference resolves, including page backgrounds. */
 function checkReferences(magazine: Magazine, located: LocatedItem[]): ValidationError[] {
   const errors: ValidationError[] = [];
 
@@ -161,6 +184,23 @@ function checkReferences(magazine: Magazine, located: LocatedItem[]): Validation
     }
   }
 
+  // A dangling backgroundId is worse than an ordinary missing reference: under
+  // `noUncheckedIndexedAccess` the renderer's lookup is `… | undefined`, and
+  // RULES §1.1 requires it to throw rather than fall back — so without this the
+  // failure surfaces as an unexplained error in the render path with nothing
+  // naming the cause.
+  magazine.spreads.forEach((spread, spreadIndex) => {
+    spread.pages.forEach((page, pageIndex) => {
+      if (page.backgroundId === null) return;
+      if (page.backgroundId in magazine.backgrounds) return;
+      errors.push({
+        code: 'background-missing',
+        message: `Page references repeating background "${page.backgroundId}", which does not exist`,
+        path: `spreads[${spreadIndex}].pages[${pageIndex}]`,
+      });
+    });
+  });
+
   for (const [storyId, story] of Object.entries(magazine.stories)) {
     story.paragraphs.forEach((paragraph, index) => {
       if (!(paragraph.lookId in magazine.looks)) {
@@ -176,22 +216,83 @@ function checkReferences(magazine: Magazine, located: LocatedItem[]): Validation
   return errors;
 }
 
-/** 7 — item ids are unique across the whole magazine. */
-function checkUniqueItemIds(located: LocatedItem[]): ValidationError[] {
+/**
+ * 7 — every ADDRESSABLE id is unique, and record keys agree with the `.id`
+ * inside them.
+ *
+ * Not only items. The command set addresses pages (`item.create { pageId }`) and
+ * paragraphs (`text.insert { paragraphId }`), and a duplicate paragraph id means
+ * typing lands in the wrong paragraph with nothing reporting it — silent
+ * corruption on the text write path.
+ */
+function checkUniqueIds(magazine: Magazine, located: LocatedItem[]): ValidationError[] {
   const errors: ValidationError[] = [];
-  const seen = new Map<Id, string>();
 
-  for (const { item, path } of located) {
-    const first = seen.get(item.id);
-    if (first === undefined) {
-      seen.set(item.id, path);
-      continue;
+  const unique = (
+    entries: Array<{ id: Id; path: string }>,
+    code: ValidationCode,
+    kind: string,
+  ): void => {
+    const seen = new Map<Id, string>();
+    for (const entry of entries) {
+      const first = seen.get(entry.id);
+      if (first === undefined) {
+        seen.set(entry.id, entry.path);
+        continue;
+      }
+      errors.push({
+        code,
+        message: `${kind} id "${entry.id}" is used twice — also at ${first}`,
+        path: entry.path,
+      });
     }
-    errors.push({
-      code: 'duplicate-item-id',
-      message: `Item id "${item.id}" is used twice — also at ${first}`,
-      path,
+  };
+
+  unique(
+    located.map(({ item, path }) => ({ id: item.id, path })),
+    'duplicate-item-id',
+    'Item',
+  );
+
+  const spreadEntries: Array<{ id: Id; path: string }> = [];
+  const pageEntries: Array<{ id: Id; path: string }> = [];
+  magazine.spreads.forEach((spread, spreadIndex) => {
+    spreadEntries.push({ id: spread.id, path: `spreads[${spreadIndex}]` });
+    spread.pages.forEach((page, pageIndex) => {
+      pageEntries.push({ id: page.id, path: `spreads[${spreadIndex}].pages[${pageIndex}]` });
     });
+  });
+  unique(spreadEntries, 'duplicate-spread-id', 'Spread');
+  unique(pageEntries, 'duplicate-page-id', 'Page');
+
+  const paragraphEntries: Array<{ id: Id; path: string }> = [];
+  for (const [storyId, story] of Object.entries(magazine.stories)) {
+    story.paragraphs.forEach((paragraph, index) => {
+      paragraphEntries.push({
+        id: paragraph.id,
+        path: `stories.${storyId}.paragraphs[${index}]`,
+      });
+    });
+  }
+  unique(paragraphEntries, 'duplicate-paragraph-id', 'Paragraph');
+
+  // Record keys and the `.id` inside are used interchangeably by callers, so a
+  // mismatch means two names for one object and no way to tell which is right.
+  const records: Array<[string, Record<Id, { id: Id }>]> = [
+    ['stories', magazine.stories],
+    ['looks', magazine.looks],
+    ['assets', magazine.assets],
+    ['backgrounds', magazine.backgrounds],
+  ];
+  for (const [name, record] of records) {
+    for (const [key, value] of Object.entries(record)) {
+      if (value.id === key) continue;
+      errors.push({
+        code: 'record-key-mismatch',
+        message: `${name}["${key}"] holds an object whose id is "${value.id}"`,
+        path: `${name}.${key}`,
+      });
+    }
   }
 
   return errors;
@@ -206,7 +307,8 @@ function checkOrderKeys(magazine: Magazine): ValidationError[] {
     let previous: OrderKey | null = null;
 
     collection.members.forEach((member, index) => {
-      if (seen.has(member.order)) {
+      const isDuplicate = seen.has(member.order);
+      if (isDuplicate) {
         errors.push({
           code: 'duplicate-order-key',
           message: `Order key "${member.order}" is used twice in this collection`,
@@ -215,7 +317,10 @@ function checkOrderKeys(magazine: Magazine): ValidationError[] {
       }
       seen.add(member.order);
 
-      if (previous !== null && member.order <= previous) {
+      // Only report unsorted when the keys genuinely go backwards. An equal key
+      // is already reported above, and counting it twice makes error totals
+      // unreliable for any UI saying "N problems" and any test asserting length.
+      if (!isDuplicate && previous !== null && member.order < previous) {
         errors.push({
           code: 'collection-unsorted',
           message: `Order key "${member.order}" follows "${previous}" — the array is not sorted`,
@@ -246,7 +351,14 @@ function checkThreads(located: LocatedItem[]): ValidationError[] {
     }
   }
 
-  const pathOf = (id: Id): string => paths.get(id) ?? `item(${id})`;
+  /** Every id here came from `paths` a moment ago; the map is total by construction. */
+  const pathOf = (id: Id): string => {
+    const path = paths.get(id);
+    if (path === undefined) {
+      throw new Error(`checkThreads: no path recorded for text box "${id}"`);
+    }
+    return path;
+  };
 
   // 2 — links resolve, point at text boxes, and agree with each other.
   for (const box of boxes.values()) {
@@ -287,8 +399,7 @@ function checkThreads(located: LocatedItem[]): ValidationError[] {
     }
   }
 
-  // 3, 4 — walk each chain from its head. Anything unreached afterwards sits in
-  // a component with no head, which means a cycle.
+  // 3 — every box in a chain shows the same story. Walk from each head.
   const reached = new Set<Id>();
 
   for (const head of boxes.values()) {
@@ -301,15 +412,7 @@ function checkThreads(located: LocatedItem[]): ValidationError[] {
     while (current.nextBoxId !== null) {
       const next = boxes.get(current.nextBoxId);
       if (next === undefined) break; // already reported as dangling above
-
-      if (walked.has(next.id)) {
-        errors.push({
-          code: 'thread-cycle',
-          message: `Thread chain from "${head.id}" returns to "${next.id}"`,
-          path: pathOf(current.id),
-        });
-        break;
-      }
+      if (walked.has(next.id)) break; // reported by the cycle sweep below
 
       if (next.storyId !== head.storyId) {
         errors.push({
@@ -325,20 +428,52 @@ function checkThreads(located: LocatedItem[]): ValidationError[] {
     }
   }
 
+  // 3, 4 — anything not reached from a head is either in a cycle or in a chain
+  // whose head is missing. Detect the cycle case directly rather than inferring
+  // it: a symmetric cycle is the only kind that can exist without also breaking
+  // invariant 2, and walking forward from heads can never see one, so
+  // `thread-cycle` would otherwise be unreachable as a primary signal.
+  const accountedFor = new Set<Id>(reached);
+
   for (const box of boxes.values()) {
-    if (reached.has(box.id)) continue;
-    errors.push({
-      code: 'thread-headless',
-      message: `Text box "${box.id}" is in a chain with no head — every chain needs exactly one box whose prevBoxId is null`,
-      path: pathOf(box.id),
-    });
+    if (accountedFor.has(box.id)) continue;
+
+    const ring: Id[] = [];
+    const visiting = new Set<Id>();
+    let current: TextBox | undefined = box;
+
+    while (current !== undefined && !visiting.has(current.id)) {
+      visiting.add(current.id);
+      ring.push(current.id);
+      current = current.nextBoxId === null ? undefined : boxes.get(current.nextBoxId);
+    }
+
+    const closesOnItself = current !== undefined;
+    for (const id of ring) accountedFor.add(id);
+
+    if (closesOnItself) {
+      errors.push({
+        code: 'thread-cycle',
+        message: `Thread chain ${ring.join(' -> ')} loops back on itself`,
+        path: pathOf(box.id),
+      });
+      continue;
+    }
+
+    for (const id of ring) {
+      errors.push({
+        code: 'thread-headless',
+        message: `Text box "${id}" is in a chain with no head — every chain needs exactly one box whose prevBoxId is null`,
+        path: pathOf(id),
+      });
+    }
   }
 
   return errors;
 }
 
 // ---------------------------------------------------------------------------
-// Full-pass invariants — 8, 9, 11, 12
+// Full-pass invariants — 8, 9, 11, and the three pending ratification
 // ---------------------------------------------------------------------------
 
 /** 8 — no frame has zero or negative width or height. */
@@ -358,7 +493,68 @@ function checkFrames(located: LocatedItem[]): ValidationError[] {
 }
 
 /**
- * 9, 11, 12 — spread page counts.
+ * 14 (pending) — documented numeric ranges hold.
+ *
+ * These are documented in the types and enforced nowhere, which matters more
+ * than usual here: FWD-02 means the AI phase emits these values, and a model is
+ * exactly the caller that hands you `opacity: 100`.
+ */
+function checkRanges(located: LocatedItem[]): ValidationError[] {
+  const errors: ValidationError[] = [];
+
+  const columns = (
+    count: number,
+    gutter: number,
+    path: string,
+  ): void => {
+    if (count < MIN_COLUMN_COUNT || !Number.isInteger(count)) {
+      errors.push({
+        code: 'columns-invalid',
+        message: `Column count is ${count}; it must be a whole number of at least ${MIN_COLUMN_COUNT}`,
+        path,
+      });
+    }
+    if (gutter < 0) {
+      errors.push({
+        code: 'columns-invalid',
+        message: `Column gutter is ${gutter}; it cannot be negative`,
+        path,
+      });
+    }
+  };
+
+  for (const { item, path } of located) {
+    if (item.opacity < MIN_OPACITY || item.opacity > MAX_OPACITY) {
+      errors.push({
+        code: 'value-out-of-range',
+        message: `Opacity is ${item.opacity}; it must be between ${MIN_OPACITY} and ${MAX_OPACITY}`,
+        path,
+      });
+    }
+    if (item.rotation < MIN_ROTATION_DEGREES || item.rotation > MAX_ROTATION_DEGREES) {
+      errors.push({
+        code: 'value-out-of-range',
+        message: `Rotation is ${item.rotation} degrees; it must be between ${MIN_ROTATION_DEGREES} and ${MAX_ROTATION_DEGREES}`,
+        path,
+      });
+    }
+    if (isTextBox(item)) {
+      if (item.minFontScale <= 0 || item.minFontScale > MAX_OPACITY) {
+        errors.push({
+          code: 'value-out-of-range',
+          message: `minFontScale is ${item.minFontScale}; it must be greater than 0 and at most 1`,
+          path,
+        });
+      }
+      columns(item.columns.count, item.columns.gutter, `${path}.columns`);
+    }
+  }
+
+  return errors;
+}
+
+/**
+ * 9, 11, 12, 13 — spread and page counts.
  *
  * With facing pages on: the first spread is the front cover and the last is the
  * back cover, each a single page. Interiors hold two, except that a final
@@ -371,6 +567,19 @@ function checkFrames(located: LocatedItem[]): ValidationError[] {
 function checkSpreads(magazine: Magazine): ValidationError[] {
   const errors: ValidationError[] = [];
   const { spreads } = magazine;
+
+  // 13 (pending) — a magazine is always at least one page. DOC-04 needs a floor
+  // to refuse a delete against, and without this an empty document validates
+  // clean because every other check has nothing to walk.
+  if (allPages(magazine).length === 0) {
+    errors.push({
+      code: 'no-pages',
+      message: 'A magazine must have at least one page',
+      path: 'spreads',
+    });
+    return errors;
+  }
+
   const lastIndex = spreads.length - 1;
 
   if (!magazine.pageSetup.facingPages) {
@@ -424,9 +633,47 @@ function checkSpreads(magazine: Magazine): ValidationError[] {
   return errors;
 }
 
+/** Also checks page columns, which live on Page rather than on an item. */
+function checkPageColumns(magazine: Magazine): ValidationError[] {
+  const errors: ValidationError[] = [];
+
+  magazine.spreads.forEach((spread, spreadIndex) => {
+    spread.pages.forEach((page, pageIndex) => {
+      if (page.columns === null) return;
+      const path = `spreads[${spreadIndex}].pages[${pageIndex}].columns`;
+      if (page.columns.count < MIN_COLUMN_COUNT || !Number.isInteger(page.columns.count)) {
+        errors.push({
+          code: 'columns-invalid',
+          message: `Column count is ${page.columns.count}; it must be a whole number of at least ${MIN_COLUMN_COUNT}`,
+          path,
+        });
+      }
+      if (page.columns.gutter < 0) {
+        errors.push({
+          code: 'columns-invalid',
+          message: `Column gutter is ${page.columns.gutter}; it cannot be negative`,
+          path,
+        });
+      }
+    });
+  });
+
+  return errors;
+}
+
 // ---------------------------------------------------------------------------
 // Entry points
 // ---------------------------------------------------------------------------
+
+/** Shared by both entry points so the document is walked once, not twice. */
+function structuralChecks(magazine: Magazine, located: LocatedItem[]): ValidationError[] {
+  return [
+    ...checkReferences(magazine, located),
+    ...checkThreads(located),
+    ...checkUniqueIds(magazine, located),
+    ...checkOrderKeys(magazine),
+  ];
+}
 
 /**
  * The cheap checks — invariants 1 to 7 and 10.
@@ -436,24 +683,24 @@ function checkSpreads(magazine: Magazine): ValidationError[] {
  * document rather than merely making it look wrong.
  */
 export function validateStructure(magazine: Magazine): ValidationError[] {
-  const located = walkItems(magazine);
-  return [
-    ...checkReferences(magazine, located),
-    ...checkThreads(located),
-    ...checkUniqueItemIds(located),
-    ...checkOrderKeys(magazine),
-  ];
+  return structuralChecks(magazine, walkItems(magazine));
 }
 
 /**
- * Every invariant, including geometry and spread parity.
+ * Every invariant, including geometry, spread parity and numeric ranges.
  *
  * Development and tests only — it walks the whole document and is not worth
  * running on every keystroke in production.
  */
 export function validateMagazine(magazine: Magazine): ValidationError[] {
   const located = walkItems(magazine);
-  return [...validateStructure(magazine), ...checkFrames(located), ...checkSpreads(magazine)];
+  return [
+    ...structuralChecks(magazine, located),
+    ...checkFrames(located),
+    ...checkRanges(located),
+    ...checkSpreads(magazine),
+    ...checkPageColumns(magazine),
+  ];
 }
 
 /** Convenience for tests and for the dirty-list work in mb-store. */

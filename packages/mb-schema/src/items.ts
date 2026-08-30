@@ -108,6 +108,18 @@ export interface Shape extends ItemBase {
   textWrap: TextWrap | null;
 }
 
+/**
+ * Several items treated as one (ARR-13).
+ *
+ * Children hold ALL the geometry, in page space, and the renderer draws them
+ * there — it never composes a group transform on top of them. `frame` is the
+ * axis-aligned box of the children's frames, maintained by the transform
+ * commands, and `rotation` records the accumulated turn so a panel can show it.
+ * Applying both would turn every child twice.
+ *
+ * That is what makes ungrouping exact: it moves children up into the parent
+ * array and changes no coordinates at all. D-21, LANE-1 §7.4.
+ */
 export interface Group extends ItemBase {
   type: 'group';
   /** Sorted by `order`, like every other item collection. Invariant 10. */
@@ -126,8 +138,15 @@ export type ItemType = Item['type'];
  * instruction" would degrade to one instruction meaning anything. Type-specific
  * changes are named commands owned by their lane — `photo.setCornerRadius`,
  * `shape.setFill`, `text.setAlign`.
+ *
+ * Narrow to ONE field, because the others already have commands that do more
+ * than assign. `frame` and `rotation` on a group have to transform every
+ * descendant (LANE-1 §7.4), so `item.move`, `item.resize` and `item.rotate` own
+ * them; `locked` gates those three, so a general setter able to clear it would
+ * be a hole in ARR-11. This is the extension point for a base property that is
+ * genuinely a plain assignment.
  */
-export type ItemBaseProps = Pick<ItemBase, 'frame' | 'rotation' | 'opacity' | 'locked'>;
+export type ItemBaseProps = Pick<ItemBase, 'opacity'>;
 
 /** Narrowing helper, so lanes do not each write their own `type === 'text'`. */
 export function isTextBox(item: Item): item is TextBox {

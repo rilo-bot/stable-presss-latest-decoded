@@ -1,6 +1,16 @@
 import { describe, expect, it } from 'vitest';
 import { A4_PORTRAIT } from './defaults.js';
-import { DPI, formatMm, formatPt, mmToPx, ptToPx, pxToMm, pxToPt } from './units.js';
+import {
+  DPI,
+  formatMm,
+  formatPt,
+  mmToPx,
+  parseMm,
+  parsePt,
+  ptToPx,
+  pxToMm,
+  pxToPt,
+} from './units.js';
 
 describe('units', () => {
   it('uses the canonical 150 DPI page space', () => {
@@ -34,6 +44,36 @@ describe('units', () => {
 
   it('formats for display without showing spurious precision', () => {
     expect(formatMm(mmToPx(47.3821))).toBe('47.4');
-    expect(formatPt(ptToPx(11.4))).toBe('11');
+    expect(formatPt(ptToPx(11.44))).toBe('11.4');
+  });
+});
+
+describe('units — read and write are separate (QA-09)', () => {
+  it('parses what a person typed, at full precision', () => {
+    // 10.5pt is an ordinary body size. TXT-04 requires the typed route and the
+    // list route to produce identical results, so half points must survive.
+    expect(parsePt('10.5')).toBeCloseTo(ptToPx(10.5), 10);
+    expect(parseMm('15')).toBeCloseTo(mmToPx(15), 10);
+  });
+
+  it('shows half points rather than rounding them away', () => {
+    expect(formatPt(ptToPx(10.5))).toBe('10.5');
+    expect(formatPt(ptToPx(12))).toBe('12');
+  });
+
+  it('returns null for a blank or unparseable field, never a silent zero', () => {
+    // A blank field and a typo both mean "no value yet", not "move to the
+    // origin". The caller decides what to tell the user (GL-12).
+    expect(parseMm('')).toBeNull();
+    expect(parseMm('   ')).toBeNull();
+    expect(parseMm('abc')).toBeNull();
+    expect(parsePt('12mm')).toBeNull();
+  });
+
+  it('round-trips a typed value without drift', () => {
+    const typed = '15.1';
+    const px = parseMm(typed);
+    expect(px).not.toBeNull();
+    expect(formatMm(px ?? 0)).toBe(typed);
   });
 });

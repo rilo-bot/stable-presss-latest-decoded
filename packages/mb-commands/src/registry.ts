@@ -1,19 +1,27 @@
+import type { Magazine } from '@rilo/mb-schema';
 import type { CommandHandler, CommandOutcome } from './types.js';
 
-// eslint-disable-next-line @typescript-eslint/no-explicit-any -- the registry is
-// heterogeneous by nature: it maps a string to a handler whose payload type is
-// known only to its own module. `unknown` cannot be used, because a handler
-// declared for a specific payload is not assignable to one taking `unknown`.
-// Every registered handler is type-checked at its own registerCommand call.
-type AnyHandler = CommandHandler<any>;
+/**
+ * A handler with its payload type erased, for storage.
+ *
+ * `never` rather than `any` or `unknown`, and it is not a trick: parameters are
+ * contravariant, so a `CommandHandler<MovePayload>` IS assignable to a function
+ * accepting `never` — which means registration needs no cast at all and stays
+ * fully type-checked at each call site.
+ */
+type StoredHandler = (draft: Magazine, payload: never) => CommandOutcome;
 
-const registry = new Map<string, AnyHandler>();
+/** What a caller can actually invoke. See the note in `getHandler`. */
+export type ErasedHandler = (draft: Magazine, payload: unknown) => CommandOutcome;
+
+const registry = new Map<string, StoredHandler>();
 
 /**
  * Register a command type.
  *
  * Throwing on a duplicate is how two lanes choosing the same name surfaces
- * immediately rather than weeks later, when one silently overwrote the other.
+ * immediately rather than weeks later, when one had silently overwritten the
+ * other.
  */
 export function registerCommand<T>(type: string, handler: CommandHandler<T>): void {
   if (registry.has(type)) {
@@ -22,8 +30,18 @@ export function registerCommand<T>(type: string, handler: CommandHandler<T>): vo
   registry.set(type, handler);
 }
 
-export function getHandler(type: string): ((draft: never, payload: never) => CommandOutcome) | undefined {
-  return registry.get(type) as ((draft: never, payload: never) => CommandOutcome) | undefined;
+/**
+ * The handler for a command type, callable with an unknown payload.
+ *
+ * The single type assertion in this package, and it is the erasure boundary: a
+ * registry maps one string to handlers whose payload types differ, and no type
+ * can express "this string's handler takes exactly this payload". The
+ * correspondence is checked where it can be — at `registerCommand`, against the
+ * handler's own declared payload — and asserted once here rather than pushing
+ * `any` out into every caller.
+ */
+export function getHandler(type: string): ErasedHandler | undefined {
+  return registry.get(type) as ErasedHandler | undefined;
 }
 
 export function registeredCommandTypes(): string[] {

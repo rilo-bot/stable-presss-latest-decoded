@@ -202,6 +202,89 @@ indefinitely.
 
 ## Reported blockers
 
+### [ANSWERED] D-21 — `Group.frame` has no defined relationship to its children
+**Lane:** 0 · **Raised:** 2026-08-30 · **Answered:** 2026-08-30 · **From:** QA-06
+
+**Answered by `implmentations/lane-1/LANE-1-INTERACTION.md` §7.4**, which states it directly:
+*"A group's frame is the bounding box of its children"*, moving a group moves children by the
+same delta, resizing scales each child's frame proportionally, turning rotates children about
+the group's centre, and *"ungrouping must restore exact positions, sizes, and rotations"*.
+That is the derived reading recommended below, so `item.resize` is unblocked and built.
+
+**One thing the lane document does not settle, decided here and recorded so Lane 1 can
+object:** children hold ALL the geometry in page space and the renderer never composes a group
+transform on top of them. `Group.rotation` records the accumulated turn for the panel to
+display; applying it as well would turn every child twice. This is also what makes ungrouping
+exact — it moves children into the parent array and changes no coordinates at all, so
+LANE-1 §12 gate 5 passes by construction rather than by careful arithmetic.
+
+`Group.frame` ignores child rotation, so a turned child's painted extent can exceed it. Lane 1's
+selection overlay computes its own visual extent where it needs one.
+
+Still open from LANE-1 §13: whether a group resize should scale type size. Built as
+**geometry only**, per §7.3. That is a UI expectation, not a schema question — it changes no
+stored shape either way.
+
+---
+
+### [SUPERSEDED] D-21 (original text)
+**Lane:** 0 · **Raised:** 2026-08-30 · **Blocks:** `item.resize` in `mb-commands` · **From:** QA-06
+
+FOUNDATION v0.3 does not say whether a group's frame is *derived* — a computed bounding box,
+in which case storing it creates a second source of truth — or *authoritative*, with children
+positioned relative to it, in which case `Rect` means something different inside a group.
+Today it is stored and means nothing, and `item.resize` on a group has no defined behaviour.
+
+`item.resize` is a Lane 0 foundation command; ARR-13 (group) is Lane 1. This is the seam.
+
+**Recommended:** the frame is **derived** — recomputed from the children's bounding box on
+every change, and children keep page coordinates. Resizing a group scales each child's frame
+proportionally. This keeps one source of truth for a child's position and means ungrouping is
+free. The stored `Group.frame` becomes a cache the commands maintain, with an invariant
+asserting it matches.
+
+---
+
+### [OPEN] D-22 — may a thread chain cross a group boundary?
+**Lane:** 0 · **Raised:** 2026-08-30 · **Blocks:** `item.delete` in `mb-commands` · **From:** QA-07
+
+Nothing forbids it, so `item.delete` — specified as "must repair thread links" — has to handle
+deleting a group that contains half a chain. That compounds D-17, which already had no
+expressible inverse for a mid-chain box.
+
+**Recommended:** forbid it. A new invariant: every box in a thread chain sits in the same
+containing collection. Grouping is a visual convenience (ARR-13, a SHOULD); threading is a
+MUST and the product's differentiator. Making the harder one refuse the easier one is the
+cheaper trade, and it removes an entire class of repair logic from `item.delete`.
+
+**Built on the recommendation, 2026-08-30, to unblock the handlers.** `text.connectBox` refuses
+when the two boxes have different enclosing groups: *"Text cannot continue into a box in a
+different group."* Enforced at the point a chain is FORMED rather than at every point one might
+be disturbed, so `item.delete`, `items.group` and `items.ungroup` need no repair logic at all.
+
+Not yet an invariant in `validateStructure` — a document loaded from before this rule could
+violate it, and validation reports rather than repairs. **This still needs ratifying**, at which
+point it becomes invariant 15 and the check moves into the structural pass. Until then a chain
+crossing a group boundary is unreachable through the command set but not reported if present.
+
+---
+
+### [OPEN] D-23 — `Spread` has no order key, so page reordering cannot be mergeable
+**Lane:** 0 · **Raised:** 2026-08-30 · **Blocks:** DOC-05, Lane 4 · **From:** QA-16
+
+Amendment 2 §5.1 requires entity-relative ordering for "item z-order, **page order**, and
+paragraph order". `ItemBase.order` and `Paragraph.order` shipped. FOUNDATION v0.3's invariant
+10 lists only `Page.items`, `Group.children`, `RepeatingBackground.items` and
+`Story.paragraphs` — page order was dropped somewhere in the consolidation. There is also no
+`page.reorder` in the foundation command set.
+
+DOC-05 is a MUST. As it stands Lane 4 writes an array splice, which §5.1 forbids.
+
+**Recommended:** add `Spread.order` now, while nothing depends on the shape. A field costs an
+afternoon today and a migration later. D-01 should not be closed until this is settled.
+
+---
+
 ### [OPEN] D-16 — `item.create` has two sources for `order`
 **Lane:** 0 · **Raised:** 2026-08-30 · **Blocks:** `mb-commands` step 3
 
@@ -266,3 +349,51 @@ every spread after it.
 
 **Suggested:** Lane 0's handover names the invariants each page command must preserve, and
 `validateMagazine` in the tests is what proves it.
+
+---
+
+### [OPEN] D-24 — the overflow default: grow-then-warn, or warn immediately?
+**Lane:** 0 · **Raised:** 2026-08-30 · **Blocks:** nothing yet · **Decide before:** Lane 2 starts TXT-01
+**From:** `implmentations/Lan-2/LANE-2-TEXT.md` §6, raised here because it changes `mb-schema`
+
+Lane 2 is instructed to file this before building anything, and it lands on a shipped file.
+`TextBox.overflow` is `'warn' | 'shrink'`, default `'warn'` (FOUNDATION §9.3, D-03). Lane 2
+argues for a third behaviour first: a free-standing box **grows downward** as text is typed,
+Canva-style, stopping at the page bottom and warning there; a box in a thread chain never
+grows, because a fixed frame is what connecting means.
+
+I think Lane 2 is right, and the reasoning is the same one behind `'warn'` being the default:
+nothing should silently disappear. Growing hides less than warning does.
+
+**What it costs.** `OverflowBehaviour` gains a member or `TextBox` gains a `growth` field, and
+the mb-schema range checks and defaults follow. That is cheap now — `mb-commands` does not
+read `overflow`, and no lane has started. After Lane 2 has built TXT-01, TXT-02 and TXT-12
+against the current shape it is a migration of stored documents.
+
+**Recommended:** decide it now, before the vertical slice, rather than at TXT-12.
+
+---
+
+### Recorded during the `mb-commands` build — not blockers, decisions taken
+
+**`item.setProps` writes one field.** `ItemBaseProps` narrowed from
+`Pick<ItemBase, 'frame' | 'rotation' | 'opacity' | 'locked'>` to `Pick<ItemBase, 'opacity'>`.
+Frame and rotation need commands that transform a group's descendants, and `locked` gates
+those commands — a general setter able to write it would be a hole in ARR-11 rather than a
+convenience. Type-level, not a runtime rejection: a rule that reads stronger than it enforces
+is the failure QA-10 was about.
+
+**Two more inverse-payload variants**, alongside the three FOUNDATION §6.7 already chose.
+`restore` on `item.move` / `item.resize` / `item.rotate` carries a geometry snapshot per
+descendant, and `order` on `item.reorder` carries the original key. Both exist because an
+inverse must reproduce the ORIGINAL VALUE: regenerating a fractional key between the same
+neighbours is valid but is not the same string, and scaling a group back by the reciprocal
+ratio drifts. The undo property test compares whole documents, so both would have failed it.
+
+**`text.disconnectBox` gives the downstream boxes a new EMPTY story.** The words stay with the
+chain they were typed into, which is what InDesign does. Splitting the text at the break would
+mean an unrelated later edit silently moves where the split lands.
+
+**`item.delete` takes the story with the last box showing it**, and the inverse carries it
+back. Leaving it behind would strand text nothing displays, and would make redo of a create
+fail on "that text is already in this magazine".

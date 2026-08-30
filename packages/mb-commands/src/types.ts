@@ -1,5 +1,22 @@
 // ---------------------------------------------------------------------------
 // The command surface. Seven lanes read this file.
+//
+// THE INVERSE-PAYLOAD PATTERN. Several payloads carry an optional field used
+// only when the command is serving as another command's inverse — `order` on
+// `item.create` and `item.reorder`, `runs` on `text.insert`, `restore` on
+// `text.splitParagraph`, `restore` on the three transform commands, and
+// `restoreStory` on `text.disconnectBox`.
+//
+// It exists because an inverse must reproduce the ORIGINAL VALUE, not merely a
+// value that looks equivalent. A reorder computes a fresh fractional key between
+// the same neighbours, and that key is not the string the item had; a deletion
+// spanning runs with different formatting cannot be undone by inserting plain
+// text; scaling a group's children back by the reciprocal ratio drifts by an ulp
+// per round trip, and LANE-1 §12 gate 5 requires no drift at all. In each case
+// the inverse carries the original verbatim.
+//
+// FOUNDATION §6.7 already chose this pattern for `splitParagraph`. Using it
+// consistently keeps the surface at fourteen commands instead of twenty-two.
 // ---------------------------------------------------------------------------
 
 import type {
@@ -31,6 +48,19 @@ export type NewItem<T = Item> = T extends unknown
   ? Omit<T, 'order'> & { order?: OrderKey }
   : never;
 
+/**
+ * One item's geometry, captured so an inverse can restore it exactly.
+ *
+ * A group transform touches every descendant, and recomputing the reverse
+ * transform accumulates floating-point drift. Restoring the recorded numbers
+ * does not.
+ */
+export interface FrameSnapshot {
+  itemId: Id;
+  frame: Rect;
+  rotation: number;
+}
+
 // ── Payloads ────────────────────────────────────────────────────────────────
 
 export interface CreateItemPayload {
@@ -59,25 +89,30 @@ export interface MoveItemPayload {
   itemId: Id;
   x: number;
   y: number;
+  /** Inverse path — restore these frames verbatim instead of translating. */
+  restore?: FrameSnapshot[];
 }
 
 export interface ResizeItemPayload {
   itemId: Id;
   frame: Rect;
+  /** Inverse path — restore these frames verbatim instead of scaling. */
+  restore?: FrameSnapshot[];
 }
 
 export interface RotateItemPayload {
   itemId: Id;
   degrees: number;
+  /** Inverse path — restore these frames and rotations verbatim. */
+  restore?: FrameSnapshot[];
 }
 
 /**
- * Deliberately narrow — `ItemBase` fields only.
+ * One field today, and that is deliberate — see `ItemBaseProps`.
  *
- * A setter that accepted anything would absorb every lane's typed commands, and
- * FWD-02's "everything is a named instruction" would degrade to one instruction
- * meaning anything. Type-specific changes are named commands owned by their
- * lane: `photo.setCornerRadius`, `shape.setFill`, `text.setAlign`.
+ * Geometry and lock each have a command that does more than assign, so a
+ * general setter able to write them would be a second, weaker path to the same
+ * state.
  */
 export interface SetPropsPayload {
   itemId: Id;
@@ -88,6 +123,13 @@ export interface ReorderItemPayload {
   itemId: Id;
   afterId: Id | null;
   beforeId: Id | null;
+  /**
+   * Inverse path — take this key rather than generating one.
+   *
+   * Generating between the original neighbours produces a valid key but not the
+   * original string, and undo has to land on the document it started from.
+   */
+  order?: OrderKey;
 }
 
 export interface SetLockedPayload {
@@ -121,8 +163,15 @@ export interface SplitParagraphPayload {
   offset: number;
   /** Caller-supplied so the inverse can name it, and so undo/redo reproduce it. */
   newParagraphId: Id;
-  /** Present only when serving as the inverse of a merge. */
+  /**
+   * Present only when serving as the inverse of a merge.
+   *
+   * A merge destroys the second paragraph's own look, overrides, list type and
+   * order key. Splitting again would copy the first paragraph's instead, so the
+   * inverse carries what was lost.
+   */
   restore?: {
+    order: OrderKey;
     lookId: Id;
     overrides: Paragraph['overrides'];
     listType: Paragraph['listType'];
@@ -145,6 +194,15 @@ export interface DisconnectBoxPayload {
   boxId: Id;
   /** The story the downstream chain takes. Supplied so undo can name it. */
   newStoryId: Id;
+  /**
+   * Present only when serving as the inverse of a connect.
+   *
+   * Connecting adopts the downstream chain into the upstream story, which
+   * strands the story those boxes used to show. Disconnecting normally hands
+   * them a new EMPTY story — the text belongs to the chain it was typed into —
+   * so undo has to bring the original back with its paragraphs intact.
+   */
+  restoreStory?: Story;
 }
 
 // ── Command envelope ────────────────────────────────────────────────────────
@@ -173,6 +231,9 @@ export interface CommandApplied {
  * A refusal is expected — a locked item, a merge with nothing before it. It is
  * not a defect, so nothing throws and nothing commits. `InvariantError` is
  * reserved for a handler that produced an invalid document.
+ *
+ * The string is shown to the user (GL-12: never silently do nothing), so it is
+ * written in the Section 9 vocabulary, not in schema terms.
  */
 export interface CommandRejected {
   rejected: string;

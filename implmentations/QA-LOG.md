@@ -46,7 +46,8 @@ asserting it. Every finding below is a gap in coverage, not sloppiness in what w
 
 ## Open findings
 
-### [OPEN] QA-01 — Only *item* ids are checked for uniqueness; four other id kinds address commands
+### [FIXED] QA-01 — Only *item* ids are checked for uniqueness; four other id kinds address commands
+**Closed:** `validation.ts` — `checkUniqueIds` now covers items, pages, spreads and paragraphs, plus a record-key-matches-`.id` check for stories, looks, assets and backgrounds. Four new codes, four regression tests.
 **Severity:** High · **Raised:** pass 1 · **Where:** `packages/mb-schema/src/validation.ts` — `checkUniqueItemIds`
 
 Invariant 7 covers items. The foundation command set (FOUNDATION v0.3 §6.7) addresses by four
@@ -76,7 +77,8 @@ Amendment 2 §5.2. A duplicate paragraph id is silent corruption with no error a
 
 ---
 
-### [OPEN] QA-02 — `Page.backgroundId` is never checked to resolve
+### [FIXED] QA-02 — `Page.backgroundId` is never checked to resolve
+**Closed:** `validation.ts` — `background-missing` added to `checkReferences`, alongside the other three reference kinds. One regression test.
 **Severity:** High · **Raised:** pass 1 · **Where:** `packages/mb-schema/src/validation.ts` — `checkReferences`
 
 Invariants 1, 5 and 6 cover `storyId`, `lookId` and `assetId`. `backgroundId` is the fourth
@@ -98,7 +100,8 @@ precisely the failure `validateStructure` exists to prevent.
 
 ---
 
-### [OPEN] QA-09 — The unit formatters are a lossy round trip, and nothing stops a panel using them as one
+### [FIXED] QA-09 — The unit formatters are a lossy round trip, and nothing stops a panel using them as one
+**Closed:** `units.ts` — `parseMm`/`parsePt` added as the named write path, returning null rather than a silent zero; `formatPt` keeps one decimal so 10.5pt survives; the header states that formatted output is never a write source. Four regression tests.
 **Severity:** High (product) · **Raised:** pass 1 · **Where:** `packages/mb-schema/src/units.ts` — `formatPt`, `formatMm`
 
 `formatPt` rounds to whole points; `formatMm` to one decimal.
@@ -148,7 +151,8 @@ until page order is settled the same way, or §5.1 is amended to exclude it.
 
 ---
 
-### [OPEN] QA-03 — No invariant requires a magazine to have at least one page
+### [FIXED] QA-03 — No invariant requires a magazine to have at least one page
+**Closed:** `validation.ts` — `no-pages` in `checkSpreads`, returning early so nothing else walks an empty document. Full pass; pending ratification as invariant 13.
 **Severity:** Medium · **Raised:** pass 1 · **Where:** `packages/mb-schema/src/validation.ts` — `checkSpreads`
 
 **Proof**
@@ -163,7 +167,8 @@ at least one page").
 
 ---
 
-### [OPEN] QA-04 — `columns.count === 0` validates clean
+### [FIXED] QA-04 — `columns.count === 0` validates clean
+**Closed:** `validation.ts` — `columns-invalid` for page and text-box columns: count a whole number >= 1, gutter not negative. Full pass; pending ratification as invariant 14.
 **Severity:** Medium · **Raised:** pass 1 · **Where:** `magazine.ts` (`Page.columns`), `items.ts` (`TextBox.columns`)
 
 **Proof**
@@ -176,7 +181,8 @@ Negative `gutter` is equally unguarded.
 
 ---
 
-### [OPEN] QA-05 — Documented numeric ranges are unenforced
+### [FIXED] QA-05 — Documented numeric ranges are unenforced
+**Closed:** `validation.ts` — `value-out-of-range` for opacity 0..1, rotation -360..360, and a positive `minFontScale`. Full pass; pending ratification as invariant 14.
 **Severity:** Medium · **Raised:** pass 1 · **Where:** `items.ts` — `opacity`, `rotation`, `minFontScale`
 
 **Proof**
@@ -225,7 +231,8 @@ not.
 
 ---
 
-### [OPEN] QA-08 — `thread-cycle` is unreachable as a primary signal
+### [FIXED] QA-08 — `thread-cycle` is unreachable as a primary signal
+**Closed:** `validation.ts` — cycles are detected by a sweep over boxes unreached from any head, so `thread-cycle` fires as a primary signal. The invariant-3 test now asserts it directly.
 **Severity:** Medium · **Raised:** pass 1 · **Where:** `validation.ts` — `checkThreads`
 
 **Proof**
@@ -246,7 +253,8 @@ existing test acknowledges this in a comment and asserts `thread-headless` inste
 
 ---
 
-### [OPEN] QA-10 — The mb-schema "imports nothing" rule does not enforce that
+### [FIXED] QA-10 — The mb-schema "imports nothing" rule does not enforce that
+**Closed:** `eslint.config.mjs` — the denylist is replaced by `import/no-extraneous-dependencies`, so the contract is mb-schema’s own (empty) package.json, plus an explicit `node:*` ban. Verified by probe: `node:fs` and `nanoid` are both refused.
 **Severity:** Low · **Raised:** pass 1 · **Where:** `eslint.config.mjs` — the `packages/mb-schema/**` block
 
 **Proof** — a file inside `packages/mb-schema/src` importing `node:fs` lints clean. Only the
@@ -267,7 +275,8 @@ imports nothing."*
 
 ---
 
-### [OPEN] QA-11 — A per-package `no-restricted-imports` replaces the global one
+### [FIXED] QA-11 — A per-package `no-restricted-imports` replaces the global one
+**Closed:** `eslint.config.mjs` — shared bans extracted to `SHARED_IMPORT_BANS` and spread into every per-package block, with a comment naming the replace-not-merge behaviour that caused it.
 **Severity:** Low · **Raised:** pass 1 · **Where:** `eslint.config.mjs`
 
 In ESLint flat config a rule entry is **replaced**, not merged. So for `packages/mb-schema/**`
@@ -283,7 +292,8 @@ package-specific rule under a differently-named restriction so the two compose.
 
 ---
 
-### [OPEN] QA-12 — One duplicate order key produces two errors
+### [FIXED] QA-12 — One duplicate order key produces two errors
+**Closed:** `validation.ts` — the sort check skips a key already reported as a duplicate. Test asserts exactly one error.
 **Severity:** Low · **Raised:** pass 1 · **Where:** `validation.ts` — `checkOrderKeys`
 
 **Proof**
@@ -297,7 +307,8 @@ asserting a length.
 
 ---
 
-### [OPEN] QA-13 — `validateMagazine` walks the document twice
+### [FIXED] QA-13 — `validateMagazine` walks the document twice
+**Closed:** `validation.ts` — both entry points share `structuralChecks(magazine, located)`; the document is walked once.
 **Severity:** Low · **Raised:** pass 1 · **Where:** `validation.ts:454`
 
 `walkItems()` is called directly and again inside `validateStructure()`. Correct, wasteful.
@@ -305,7 +316,8 @@ It runs on every command in dev.
 
 ---
 
-### [OPEN] QA-14 — Dead fallback
+### [FIXED] QA-14 — Dead fallback
+**Closed:** `validation.ts` — `pathOf` throws instead of falling back, so a broken assumption reports rather than producing a plausible-looking path.
 **Severity:** Low · **Raised:** pass 1 · **Where:** `validation.ts:249`
 
 `paths.get(id) ?? \`item(${id})\`` — every caller passes an id that is in the map, so the

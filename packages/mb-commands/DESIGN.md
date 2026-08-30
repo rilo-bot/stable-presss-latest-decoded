@@ -87,3 +87,47 @@ one more thing seven lanes each interpret once.
 
 **Dispatching from inside handlers to compose.** FOUNDATION §6.4 forbids it and it would
 break coalescing and the inverse contract. Composition happens in the caller.
+
+---
+
+## Addendum — decisions taken during the build
+
+The note above was written before the code and is left as it was. These are the things the
+build itself forced, recorded here rather than by rewriting history.
+
+**Two more inverse-payload variants.** `restore` on `item.move`, `item.resize` and
+`item.rotate`, and `order` on `item.reorder`. Same reason as the original three: an inverse has
+to reproduce the *original value*. Regenerating a fractional key between the same neighbours is
+a valid key but not the same string, and undoing a group resize by scaling by the reciprocal
+ratio drifts by an ulp per round trip — LANE-1 §12 gate 5 allows none. The undo property test
+compares whole documents, so both shortcuts fail it rather than passing quietly.
+
+**`item.setProps` writes one field.** `ItemBaseProps` narrowed to `Pick<ItemBase, 'opacity'>`,
+resolving D-11. Frame and rotation need handlers that transform a group's descendants; `locked`
+gates those handlers. Narrowed at the type level rather than rejected at runtime — a payload
+that permits what the handler refuses is the "rule reads stronger than it enforces" failure.
+
+**A group's own frame and rotation are descriptive, not applied.** Children hold all geometry in
+page space and the renderer draws them there. `Group.frame` is the children's bounding box,
+maintained by the transform commands; `Group.rotation` records the accumulated turn for the
+panel. Applying both would turn every child twice. This makes ungrouping exact by construction:
+it moves children into the parent array and changes no coordinates.
+
+**D-22 enforced at connect time.** `text.connectBox` refuses two boxes with different enclosing
+groups. Refusing where a chain is *formed* rather than at every point one might be disturbed
+means `item.delete` and Lane 1's group commands need no chain-repair logic at all. Not yet an
+invariant — see BLOCKERS.
+
+**`text.disconnectBox` hands the downstream boxes a new empty story**, and `item.delete` takes
+the story with the last box showing it. Both keep the inverse exact and stop stories being
+stranded.
+
+**A fifteenth file in `commands/`.** `commands/index.ts` does the registering, so handlers stay
+plain functions that a test can call without a registry, and one import is the whole
+registration — no "was the module imported" failure mode under lazy bundling.
+
+## What is not here
+
+`internal/threads.ts` reads chains; it does not lay them out. Thread layout — measuring where a
+story overflows and computing split points — is `mb-render`'s, and Lane 2 consumes it. Nothing
+in this package computes or stores a derived value.
