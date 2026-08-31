@@ -3365,8 +3365,27 @@ router.post('/issues/:id/pages/:pageId/apply-layout', rateLimit('mag2-agent', 20
     height: pageShape.height,
     elements: pageShape.elements.filter((e) => FURNITURE_IDS.includes(e.id)),
   };
+  /**
+   * HOW FAITHFULLY, and it is the caller's call, because the two modes lose different
+   * things (see `readingToExact`).
+   *
+   * 'exact' puts every region on the box it was read from: the reference's cross-axis
+   * positions survive — a cover line in its right half stays in the right half — and an
+   * unfillable slot leaves a hole rather than re-partitioning the page around it.
+   * 'adapt' re-composes through the frame tree, which is what a reference of a
+   * different shape, or a page carrying far more copy than the reference had, actually
+   * needs.
+   *
+   * The default stays 'adapt': it is what a caller that says nothing has always been
+   * getting, and it is the safer answer when nobody has said which job this is.
+   *
+   * READ HERE, ABOVE THE FILL, not beside the apply. `unfilledSlots` plans what copy to
+   * draft and it has to plan against the geometry the page will actually be built with
+   * — planning in adapt and building in exact drafts for slots that will not exist.
+   */
+  const fit: LayoutFit = req.body?.fit === 'exact' ? 'exact' : 'adapt';
   let extraFill: ExtraContent | undefined;
-  const missing = unfilledSlots(reading, blank);
+  const missing = unfilledSlots(reading, blank, fit);
   if (missing && (missing.texts.length > 0 || missing.images > 0)) {
     const extraImages: { url: string; assetId?: string; alt?: string }[] = [];
     if (missing.images > 0) {
@@ -3431,21 +3450,8 @@ router.post('/issues/:id/pages/:pageId/apply-layout', rateLimit('mag2-agent', 20
   // anyway. The escape hatch exists for the user who wants the arrangement and their
   // own typography.
   const adoptType = req.body?.adoptType !== false;
-  /**
-   * HOW FAITHFULLY, and it is the caller's call, because the two modes lose different
-   * things (see `readingToExact`).
-   *
-   * 'exact' puts every region on the box it was read from: the reference's cross-axis
-   * positions survive — a cover line in its right half stays in the right half — and an
-   * unfillable slot leaves a hole rather than re-partitioning the page around it.
-   * 'adapt' re-composes through the frame tree, which is what a reference of a
-   * different shape, or a page carrying far more copy than the reference had, actually
-   * needs.
-   *
-   * The default stays 'adapt': it is what every existing caller has been getting, and
-   * it is the safer answer when nobody has said which job this is.
-   */
-  const fit: LayoutFit = req.body?.fit === 'exact' ? 'exact' : 'adapt';
+  // `fit` was read above the fill block — it decides what gets drafted as well as how
+  // the page is built, and the two must agree.
   const applied = applyReadingToPage(reading, blank, style, furnitureContextFor(issue, page), extraFill, adoptType, fit);
   if (!applied.page) {
     // 422: the request and the server are both fine — this layout and this page
@@ -3517,6 +3523,79 @@ router.post('/issues/:id/pages/:pageId/format', rateLimit('mag2-agent', 20, 60_0
     console.error('[magazineV2] format error:', err instanceof Error ? err.message : err);
     res.status(500).json({ error: 'The text pass hit a snag. Please try again.' });
   }
+});
+
+/**
+ * COPY ONE PAGE OF AN ATTACHED PDF ONTO THIS PAGE — verbatim.
+ *
+ * The sibling of `apply-layout`, and the distinction between them is the whole
+ * point of having two:
+ *
+ *   apply-layout  takes a reference's ARRANGEMENT and writes this magazine's own
+ *                 copy into it. It deliberately never reuses the reference's words
+ *                 (see referenceFill) — that rule is what stops us reprinting
+ *                 somebody else's magazine.
+ *   this route    takes the PAGE. Its real text, at its measured size, in its own
+ *                 colours, over its own artwork. A digitisation, not a design copy.
+ *
+ * Asking one endpoint to do both was never viable: they disagree about the single
+ * most important question, which is whether the words come across.
+ *
+ * 202 + a job, not a synchronous rebuild. The work is rasterize → erase the
+ * original glyphs → reconstruct the text → classify the graphics, which is exactly
+ * the load that makes PDF import a job. The client polls the page the same way it
+ * polls a retry.
+ */
+router.post('/issues/:id/pages/:pageId/copy-document-page', rateLimit('mag2-generate', 20, 60_000), async (req, res) => {
+  // The page-write gate, not an owner check: replacing every element on a page is a
+  // write, so a collaborator assigned to it may do this and a submitted/approved page
+  // is refused — the same answer they would get for typing into it.
+  const ctx = await loadEditablePage(req, res);
+  if (!ctx) return;
+  const { issue, page } = ctx;
+  if (isBusy(issue)) {
+    res.status(409).json({ error: 'That magazine is still being built — try again once it finishes.' });
+    return;
+  }
+  const docId = typeof req.body?.docId === 'string' ? req.body.docId.trim() : '';
+  if (!docId) {
+    res.status(400).json({ error: 'A docId (the PDF to copy from) is required.' });
+    return;
+  }
+  // THE MAGAZINE IS THE ALLOW-LIST. `docId` arrives from a request body, and this
+  // lookup — across both document stores — is what stops it being a way to read any
+  // PDF in the system. Same check the agent's layout tool makes.
+  const source = await magazineDocument(String(issue._id), docId);
+  if (!source) {
+    res.status(404).json({ error: 'That document is not in this magazine.' });
+    return;
+  }
+  if (!canCopyLayout(source)) {
+    res.status(415).json({ error: 'I can only copy a page from a PDF — a Word or text file has no page to copy.' });
+    return;
+  }
+  const raw = Number(req.body?.sourcePage);
+  const sourcePage = Number.isInteger(raw) && raw > 0 ? raw : 1;
+  // Checked HERE as well as in the worker, because a number the user typed deserves an
+  // answer now rather than a job that fails a minute later. `pages` is 0 when nothing
+  // has counted them (a chat attachment), and 0 must not be read as "empty" — see
+  // magazineDocs.ts — so an unknown count simply skips the check.
+  if (source.pages > 0 && sourcePage > source.pages) {
+    res.status(400).json({
+      error: `“${source.name}” has ${source.pages} page${source.pages === 1 ? '' : 's'}, so there is no page ${sourcePage} to copy.`,
+    });
+    return;
+  }
+  const now = new Date().toISOString();
+  await db.collection(COL.pages).updateOne(page._id, { status: 'pending', error: '', updatedAt: now });
+  await enqueueJob('copyDocumentPage', {
+    issueId: String(issue._id),
+    pageId: String(page._id),
+    docId: source.docId,
+    sourcePage,
+  });
+  await db.collection(COL.magazines).updateOne(String(issue._id), { updatedAt: now });
+  res.status(202).json({ ok: true, from: { name: source.name, sourcePage, pageCount: source.pages } });
 });
 
 export default router;

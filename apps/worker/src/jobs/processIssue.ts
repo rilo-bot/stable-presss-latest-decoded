@@ -13,6 +13,7 @@ import { COL } from '../../../server/src/lib/magazineV2/collections.js';
 import { PAGE_W, PAGE_H, MAX_PAGES_PER_ISSUE } from '../../../server/src/lib/magazineV2/config.js';
 import { normalizeElements } from '../../../server/src/lib/magazineV2/writePipeline.js';
 import { openPdf, countPages } from '../lib/pdf.js';
+import { magazineDocument } from '../../../server/src/lib/magazineV2/magazineDocs.js';
 import { convertDocxToPdf } from '../lib/docx.js';
 import { toStoredImportImage } from '../lib/image.js';
 import { mapWithConcurrency } from '../lib/pool.js';
@@ -273,4 +274,73 @@ export async function processPageJob(payload: { issueId: string; pageId: string;
       updatedAt: now(),
     });
   }
+}
+
+/**
+ * Copy ONE page of an ATTACHED PDF onto ONE page of this magazine, verbatim.
+ *
+ * The same extractor as import and retry — `processSinglePage` already takes the
+ * opened document as an argument, so nothing about the extraction changes here.
+ * What changes is only where the bytes come from: any PDF the magazine holds,
+ * resolved through `magazineDocument`, rather than the single `sourceFile` the
+ * magazine was born from. That one substitution is the whole feature.
+ *
+ * THE TARGET PAGE TAKES THE SOURCE PAGE'S DIMENSIONS. `processSinglePage` writes
+ * the raster's width/height onto the page, so copying an A4 page onto a page of
+ * another shape re-shapes it. That is deliberate and is what "copy this page"
+ * means — a page reproduced at a different aspect is not a copy — but it does mean
+ * one page of a magazine can end up a different shape from its neighbours. The
+ * route's confirm says so before it is enqueued.
+ *
+ * Never throws for a per-page problem: the page records `failed` + the reason, the
+ * same contract processPageJob follows, so a bad page is visible in the rail rather
+ * than as a dead job.
+ */
+export async function copyDocumentPageJob(payload: {
+  issueId: string;
+  pageId: string;
+  docId: string;
+  sourcePage: number;
+}): Promise<void> {
+  const { issueId, pageId, docId, sourcePage } = payload;
+  const now = () => new Date().toISOString();
+  const fail = async (message: string) => {
+    await db.collection(COL.pages).updateOne(pageId, { status: 'failed', error: message, updatedAt: now() });
+  };
+
+  // Re-resolved in the worker rather than trusted from the payload: the job may have
+  // sat in the queue while the document was deleted, and this is also the scope check
+  // (the magazine is the allow-list) applied a second time at the point of use.
+  const source = await magazineDocument(String(issueId), String(docId));
+  if (!source) {
+    await fail('That document is no longer attached to this magazine.');
+    return;
+  }
+
+  let doc: ReturnType<typeof openPdf> | null = null;
+  try {
+    const buffer = await storage.downloadObject(source.s3Key);
+    doc = openPdf(buffer);
+    // 1-based as a person says it; the extractor indexes from 0.
+    const index = Math.max(1, Math.floor(sourcePage)) - 1;
+    const total = countPages(doc);
+    if (index >= total) {
+      await fail(`“${source.name}” has ${total} page${total === 1 ? '' : 's'}, so there is no page ${sourcePage} to copy.`);
+      return;
+    }
+    await processSinglePage(doc, index, { issueId, pageId });
+    console.log(`[magazineV2] copied page ${sourcePage} of “${source.name}” onto page ${pageId}`);
+  } catch (err) {
+    const message = err instanceof Error ? err.message : 'Copying that page failed';
+    console.warn('[magazineV2] copyDocumentPage failed:', message);
+    await fail(message);
+  } finally {
+    doc?.destroy();
+  }
+
+  // The magazine's own stamp, so the studio's poll sees the change. No status
+  // reconciliation here: unlike import, this touches ONE page of a magazine that was
+  // already 'ready', and flipping the magazine's status off the back of one page
+  // would be wrong.
+  await db.collection(COL.magazines).updateOne(issueId, { updatedAt: now() });
 }

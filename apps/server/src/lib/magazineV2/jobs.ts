@@ -14,13 +14,38 @@ import { db } from '../db.js';
 import { COL } from './collections.js';
 import { jobIsPresumedDead, silentForMs, type JobLiveness } from './jobHealth.js';
 
-export type MagazineJobType = 'processIssue' | 'processPage' | 'generateIssue' | 'generatePages' | 'readSourceDoc';
+export type MagazineJobType =
+  | 'processIssue'
+  | 'processPage'
+  | 'copyDocumentPage'
+  | 'generateIssue'
+  | 'generatePages'
+  | 'readSourceDoc';
 
 export interface JobPayloads {
   /** Digitize a freshly-uploaded PDF into pages + elements (the whole issue). */
   processIssue: { issueId: string };
   /** Re-run extraction for a single page (the per-page retry). */
   processPage: { issueId: string; pageId: string; index: number };
+  /**
+   * Reproduce ONE page of an attached PDF onto ONE page of this magazine — the
+   * "copy this page" door, as opposed to "use this design".
+   *
+   * The distinction is the whole reason this exists. `apply-layout` takes a
+   * reference's ARRANGEMENT and writes new copy for this magazine, deliberately
+   * never reusing the reference's words. This takes the PAGE: its real text, at its
+   * real size, in its real colours, over its own artwork. Same extractor the PDF
+   * import uses (`processSinglePage`) — it already accepts the opened document as an
+   * argument, so nothing about the extraction changes; only where the bytes come
+   * from, which is any PDF this magazine holds rather than the one it was born from.
+   *
+   * `sourcePage` is 1-based, as a person says it.
+   *
+   * A job rather than a request because the work is rasterize → erase the original
+   * glyphs → rebuild the text → classify the graphics. That is the same load that
+   * made import a job, and it would block the event loop in the API.
+   */
+  copyDocumentPage: { issueId: string; pageId: string; docId: string; sourcePage: number };
   /**
    * Build a whole issue from a brief / source document (from-scratch AI generation).
    *

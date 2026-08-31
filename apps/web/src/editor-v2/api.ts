@@ -586,7 +586,19 @@ export interface LayoutReading {
  * nothing is written, so the user sees what we understood first. A 422 carries the
  * reason the image could not be read, which is a sentence worth showing verbatim.
  */
-export const readLayoutReference = (id: string, body: { assetId: string; pageId?: string; hint?: string }) =>
+/**
+ * WHERE A READING COMES FROM, and the two are not equally good.
+ *
+ * `assetId` is a picture: a vision model looks at pixels and ESTIMATES every number.
+ * `docId` + `pageNo` is a PDF: the file states where its words and pictures are, so
+ * the layout is MEASURED and nothing is guessed. Same endpoint and same
+ * `LayoutReading` out — the difference is only how much you should trust it, which
+ * is why the panel labels them rather than hiding the distinction.
+ */
+export const readLayoutReference = (
+  id: string,
+  body: { assetId?: string; docId?: string; pageNo?: number; pageId?: string; hint?: string },
+) =>
   authFetch(`${BASE}/issues/${id}/layout-reference`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
@@ -657,6 +669,25 @@ export interface MagazineUpload {
   hasText: boolean;
   createdAt?: string;
 }
+
+/**
+ * COPY one page of an attached PDF onto one page of this magazine — words and all.
+ *
+ * The other half of the pair, and deliberately a different endpoint from
+ * apply-layout rather than a flag on it: that one takes a reference's ARRANGEMENT
+ * and writes this magazine's own copy into it, while this takes the PAGE — its real
+ * text, at its measured size, in its own colours, over its own artwork.
+ *
+ * 202 and a background job, so the caller polls the page rather than awaiting a
+ * rebuild. The target page also takes the SOURCE page's dimensions: a page
+ * reproduced at another aspect is not a copy.
+ */
+export const copyDocumentPage = (id: string, pageId: string, body: { docId: string; sourcePage: number }) =>
+  authFetch(`${BASE}/issues/${id}/pages/${pageId}/copy-document-page`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(body),
+  }).then(parse<{ ok: true; from: { name: string; sourcePage: number; pageCount: number } }>);
 
 /** The magazine's uploaded documents (PDF/Word/text), newest first. */
 export const listUploads = (id: string) =>

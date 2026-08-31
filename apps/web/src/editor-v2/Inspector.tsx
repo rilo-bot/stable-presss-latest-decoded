@@ -10,6 +10,7 @@ import { toast } from 'sonner';
 import { useEditorStore } from './store';
 import { ShimmerText } from './BuildProgress';
 import { LayoutReference } from './LayoutReference';
+import { CopyDocumentPage } from './CopyDocumentPage';
 import { columnOf, COLUMN_LABEL, COLUMN_TONE } from './review';
 import type { MagazineElement, ElementType, ElementTextAlign, ElementTextWeight } from './model';
 import * as api from './api';
@@ -146,9 +147,20 @@ function PagePanel() {
         )}
       </Section>
 
+      {/* TWO DOORS, NAMED FOR WHAT THEY DO TO THE WORDS — the one question that
+          separates them. "Match a layout" borrows an arrangement and writes fresh
+          copy; "Copy a page exactly" reproduces a PDF page verbatim. They were one
+          feature for a while, and "make this page like that one" is ambiguous enough
+          that people reached for the wrong half and got a 29% match they could not
+          explain. */}
       {canManage && (
         <Section title="Match a layout">
           <LayoutReference />
+        </Section>
+      )}
+      {canManage && (
+        <Section title="Copy a page exactly">
+          <CopyDocumentPage />
         </Section>
       )}
 

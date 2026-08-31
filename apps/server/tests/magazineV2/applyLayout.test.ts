@@ -781,6 +781,47 @@ test('unfilledSlots names exactly what the page cannot cover, with sane budgets'
   }
 });
 
+test('unfilledSlots PLANS IN THE MODE THE PAGE WILL BE BUILT IN', () => {
+  // The regression this guards: unfilledSlots called readingToSpec unconditionally
+  // while the apply used readingToExact whenever the caller asked for exact. Planning
+  // in one geometry and building in the other drafts copy for slots that will not
+  // exist — invisible while adapt was the only reachable mode, and wrong the moment
+  // exact had a caller.
+  //
+  // A cover line in the RIGHT HALF is the case that separates them: the frame tree
+  // cannot hold a cross-axis offset, so adapt turns it into a full-width band, while
+  // exact keeps the box where the reference put it.
+  const r = reading([
+    { role: 'image', box: { x: 0, y: 0, w: 1, h: 1 } },
+    { role: 'kicker', box: { x: 0.08, y: 0.03, w: 0.84, h: 0.03 } },
+    { role: 'headline', box: { x: 0.5, y: 0.29, w: 0.45, h: 0.14 } },
+    { role: 'body', box: { x: 0.5, y: 0.46, w: 0.45, h: 0.2 } },
+  ]);
+  const page = { width: PAGE_W, height: PAGE_H, elements: [] };
+
+  const adapted = unfilledSlots(r, page, 'adapt');
+  const exact = unfilledSlots(r, page, 'exact');
+  assert.ok(adapted && exact, 'both modes plan something for a blank page');
+
+  // Whatever else differs, each mode must ask for copy in the roles its own geometry
+  // actually has — that is the property the apply depends on.
+  for (const [name, out] of [['adapt', adapted], ['exact', exact]] as const) {
+    assert.ok(out.texts.length > 0, `${name} lists the empty text slots`);
+    assert.equal(out.images, 1, `${name}: no photo on the page → the image slot needs one`);
+    for (const t of out.texts) {
+      assert.ok(t.approxChars >= 1, `${name} ${t.role} budget ${t.approxChars} is positive`);
+    }
+  }
+
+  // And the default is still adapt, so a caller that says nothing gets what it always
+  // got. This is the compatibility half of the fix.
+  assert.deepEqual(
+    unfilledSlots(r, page)?.texts.map((t) => t.role).sort(),
+    adapted.texts.map((t) => t.role).sort(),
+    'omitting fit plans exactly as adapt does',
+  );
+});
+
 test("unfilledSlots carries each region's vision note as the drafting hint", () => {
   // RECREATE mode: the drafter is told what the reference page SHOWED in each
   // region ("masthead 'THE HORSE'") so the fresh copy says the same thing,
