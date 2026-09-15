@@ -16,6 +16,7 @@
     "sync:roles": "tsx scripts/sync-role-catalogue.ts",
     "grant:superadmin": "tsx scripts/grant-superadmin.ts",
     "sweep:orphans": "tsx scripts/sweep-orphan-objects.ts",
+    "migrate:cluster": "tsx scripts/migrate-cluster.ts",
     "test": "tsx --test tests/**/*.test.ts",
     "check:fidelity": "tsx scripts/check-fidelity.ts",
     "check:pages": "tsx scripts/check-pages.ts"

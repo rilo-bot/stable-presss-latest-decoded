@@ -80,6 +80,29 @@ export async function processNextJob(handlers: JobHandlers): Promise<boolean> {
   const attempts = Number(job.attempts) || 1;
   const maxAttempts = Number(job.maxAttempts) || 3;
   console.log(`[worker] claimed job ${job._id} (${job.type}) — attempt ${attempts}/${maxAttempts}`);
+
+  // The issue a job targets can be deleted while the job waits its turn — a user
+  // who cancels and re-generates leaves the abandoned run queued behind them.
+  // Generating pages for a tombstoned issue burns a full run (minutes of CPU and
+  // model spend) producing output nobody can ever open, and delays every live
+  // issue behind it. findById() treats a soft-deleted doc as gone, so a null here
+  // means "don't bother". Fails OPEN: a DB blip must never discard a real job.
+  const targetIssueId = (job.payload as { issueId?: string } | undefined)?.issueId;
+  let issueGone = false;
+  if (targetIssueId) {
+    try {
+      issueGone = !(await db.collection(COL.magazines).findById(targetIssueId));
+    } catch {
+      issueGone = false;
+    }
+  }
+  if (issueGone) {
+    await db
+      .collection(COL.jobs)
+      .updateOne(job._id, { status: 'done', lastError: 'Skipped: the issue was deleted before this job ran.', ...terminalStamp() });
+    console.log(`[worker] job ${job._id} (${job.type}) skipped — issue ${targetIssueId} was deleted`);
+    return true;
+  }
   try {
     if (!handler) throw new Error(`No handler registered for job type "${job.type}".`);
     await handler(job.payload);
