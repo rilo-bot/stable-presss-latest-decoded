@@ -227,7 +227,8 @@ interface EditorState {
    */
   /** `targetPageId` rebuilds a page other than the open one — the assistant resolves it
    *  server-side from a page number the user said. Omitted = the page on screen. */
-  applyLayout: (reading: api.LayoutReading, targetPageId?: string) => Promise<api.LayoutFidelity | null>;
+  /** `fit` defaults to 'exact' — "same layout" means same-to-same. See the implementation. */
+  applyLayout: (reading: api.LayoutReading, targetPageId?: string, fit?: api.LayoutFit) => Promise<api.LayoutFidelity | null>;
   /** An "apply this layout" call is in flight. */
   layoutBusy: boolean;
   /** Publish (or republish) to Bulletins ('full' = all pages, 'selected' =
@@ -965,7 +966,21 @@ export const useEditorStore = create<EditorState>((set, get) => ({
   // Toggle a page's inclusion in "publish selected pages".
   layoutBusy: false,
 
-  applyLayout: async (reading, targetPageId) => {
+  /**
+   * `fit` defaults to 'exact' because of what this action MEANS to the person who
+   * triggered it. Both callers — the reference panel's button and the assistant's
+   * `apply-layout` — are answering "make this page look like that one", and the
+   * honest reading of that is same-to-same.
+   *
+   * It used to send nothing, so the server fell back to 'adapt' and re-composed the
+   * reference through its frame tree: an unfillable slot was PRUNED and its siblings
+   * grew to take the space. That is why a rebuilt page came back at 29% with "1 box
+   * from the reference had nothing to put in it, so the rest grew to fill the page" —
+   * the mode was doing exactly what it says, for a job the user had not asked for.
+   * 'exact' leaves the hole instead and keeps every other box where the reference
+   * put it.
+   */
+  applyLayout: async (reading, targetPageId, fit = 'exact') => {
     const s = get();
     if (!s.issueId || !s.page || s.layoutBusy) return null;
     const issueId = s.issueId;
@@ -1005,7 +1020,7 @@ export const useEditorStore = create<EditorState>((set, get) => ({
     if (!ok) return null;
     set({ layoutBusy: true });
     try {
-      const { page, leftOver, fidelity, warning, tightSummary } = await api.applyLayoutToPage(issueId, pageId, { rev, reading });
+      const { page, leftOver, fidelity, warning, tightSummary } = await api.applyLayoutToPage(issueId, pageId, { rev, reading, fit });
       set((st) => ({
         // The returned page is authoritative — it is what the solver produced.
         page: st.currentPageId === pageId ? page : st.page,

@@ -307,7 +307,12 @@ export function AgentWidget() {
         onClick={toggle}
         whileHover={{ scale: 1.08 }}
         whileTap={{ scale: 0.9 }}
-        className="fixed bottom-5 right-5 z-50 flex h-14 w-14 items-center justify-center rounded-full"
+        // `print:hidden` like NavBar and the bulletin viewer's own header: this is
+        // screen chrome, and the server PRINTS real routes to make the published
+        // PDF. Without it the launcher was composited into the bottom-right of
+        // every downloaded issue — a gold horse and a sparkle badge stamped onto
+        // the last page of a magazine a reader paid attention to.
+        className="fixed bottom-5 right-5 z-50 flex h-14 w-14 items-center justify-center rounded-full print:hidden"
         style={{
           background: FOREST,
           border: '1px solid var(--gold-mid)',
@@ -365,7 +370,9 @@ export function AgentWidget() {
             className={
               // max-h keeps the panel within the viewport so the header is never
               // clipped at the top, regardless of the bottom anchor / expanded size.
-              'fixed bottom-24 right-5 z-50 flex max-h-[calc(100dvh-7rem)] flex-col overflow-hidden rounded-xl border border-border bg-card shadow-2xl ' +
+              // print:hidden for the same reason as the launcher — an open panel
+              // would print an entire chat transcript over the page.
+              'fixed bottom-24 right-5 z-50 flex max-h-[calc(100dvh-7rem)] flex-col overflow-hidden rounded-xl border border-border bg-card shadow-2xl print:hidden ' +
               (expanded ? 'h-[min(88dvh,820px)] w-[min(96vw,640px)]' : 'h-[min(70dvh,560px)] w-[min(92vw,400px)]')
             }
           >

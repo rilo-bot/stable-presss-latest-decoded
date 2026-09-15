@@ -16,6 +16,7 @@
 // ---------------------------------------------------------------------------
 
 import { useRef, useState } from 'react';
+import { PdfPagePicker } from './PdfPagePicker';
 import { Upload, AlertTriangle, ScanLine, Wand2, Check } from 'lucide-react';
 import { toast } from 'sonner';
 import { useEditorStore } from './store';
@@ -45,10 +46,18 @@ function confidenceLabel(c: number): { text: string; tone: string } {
   return { text: 'Barely legible — a flatter, straight-on shot would read better', tone: 'text-amber-200' };
 }
 
+/**
+ * `url` is EMPTY for a PDF reference, and that is not a missing value to guard —
+ * there is no picture, because nothing was photographed. The regions are drawn on
+ * the page's own aspect instead, which is exactly as informative: they are the
+ * measurement, not an annotation of an image.
+ */
 function Preview({ url, reading }: { url: string; reading: LayoutReading }) {
   return (
     <div className="relative w-full overflow-hidden rounded-sm border border-studio-edge bg-studio-bg">
-      <img src={url} alt="The uploaded layout reference" className="block w-full" />
+      {url
+        ? <img src={url} alt="The uploaded layout reference" className="block w-full" />
+        : <div className="w-full" style={{ aspectRatio: String(reading.aspect || 0.707) }} />}
       {/* The read regions, over the reference. Absolute % boxes — the reading is
           normalised, so this needs no measuring and no resize handling. */}
       <div className="absolute inset-0">
@@ -89,6 +98,15 @@ export function LayoutReference() {
   const [busy, setBusy] = useState(false);
   const [shot, setShot] = useState<{ url: string; reading: LayoutReading; warning: string } | null>(null);
   const [fidelity, setFidelity] = useState<api.LayoutFidelity | null>(null);
+  /**
+   * EXACT BY DEFAULT: pointing at a reference and pressing the button means "make this
+   * page look like that one", so the default has to be the mode that reproduces it.
+   *
+   * 'adapt' stays offered rather than removed — it is the right answer for a reference
+   * of a different shape, or a page whose copy far outruns what the reference held, and
+   * those are real jobs. It is just no longer the silent default it was.
+   */
+  const [fit, setFit] = useState<api.LayoutFit>('exact');
 
   /**
    * The confirm lives in `store.applyLayout`, NOT here.
@@ -99,7 +117,7 @@ export function LayoutReference() {
    * between both ways in. One irreversible action, one place that asks.
    */
   const apply = async (reading: LayoutReading) => {
-    const measured = await useEditorStore.getState().applyLayout(reading);
+    const measured = await useEditorStore.getState().applyLayout(reading, undefined, fit);
     // The reading STAYS on success, with its measured result beside it. Two reasons:
     // the user can see how close it came while looking at the page it produced, and
     // the same reference can then be applied to the next page — which is the whole of
@@ -131,15 +149,53 @@ export function LayoutReference() {
     }
   };
 
+  /**
+   * Read a layout from an attached PDF page — MEASURED, not estimated.
+   *
+   * The distinction is worth the extra control. A picture is read by a vision model
+   * and every number in it is a guess; a PDF states where its words and pictures
+   * are, so the same endpoint returns a reading with nothing inferred but the roles.
+   * The panel was images-only, so the better of the two paths was unreachable from
+   * here even though the server had supported it all along.
+   */
+  const readPdf = async (docId: string, pageNo: number) => {
+    if (!issueId || busy) return;
+    setBusy(true);
+    setShot(null);
+    setFidelity(null);
+    try {
+      const { reading, warning } = await api.readLayoutReference(issueId, {
+        docId,
+        pageNo,
+        pageId: currentPageId ?? undefined,
+      });
+      // No url: there is no picture of a measured page. Preview draws the regions on
+      // the reading's own aspect instead.
+      setShot({ url: '', reading, warning });
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : 'Could not read that page’s layout');
+    } finally {
+      setBusy(false);
+    }
+  };
+
   const conf = shot ? confidenceLabel(shot.reading.confidence) : null;
 
   return (
     <div className="flex flex-col gap-2">
       <p className="text-ui-sm leading-relaxed text-studio-ink-3">
-        Upload a page whose layout you want — a magazine spread, a screenshot, a sketch. The AI reads
-        its structure: <b className="text-studio-ink-2">where things sit and how big they are</b>. Your own
-        words and photos fill it; nothing is copied from the picture.
+        Take a page's <b className="text-studio-ink-2">arrangement</b> — where things sit and how big they are.
+        Your own words and photos fill it; nothing is copied from the reference.
       </p>
+
+      {/* THE MEASURED PATH FIRST, because it is the better one and was the hidden one.
+          A PDF states its own geometry; a picture has to be guessed at. */}
+      <PdfPagePicker
+        disabled={busy}
+        actionLabel={busy ? 'Reading…' : 'Measure it'}
+        emptyNote="Attach a PDF to measure a page's layout exactly. A picture works too — see below."
+        onRead={(docId, pageNo) => void readPdf(docId, pageNo)}
+      />
 
       <input
         ref={fileRef}
@@ -153,8 +209,16 @@ export function LayoutReference() {
         disabled={busy || !issueId}
         className="flex items-center justify-center gap-1.5 rounded-sm border border-studio-edge bg-studio-raise px-2 py-1.5 text-ui-sm text-studio-ink-2 hover:bg-studio-raise-2 disabled:opacity-40"
       >
-        {busy ? <><ScanLine size={13} /> <ShimmerText>Reading the layout…</ShimmerText></> : <><Upload size={13} /> Upload a reference</>}
+        {busy ? <><ScanLine size={13} /> <ShimmerText>Reading the layout…</ShimmerText></> : <><Upload size={13} /> Or upload a picture</>}
       </button>
+      {/* Says which of the two the user is choosing, because the difference is not a
+          matter of degree: a PDF is measured, a picture is estimated by a vision
+          model. Someone comparing a 97% result with a 29% one deserves to know that
+          the gap was decided before either ran. */}
+      <p className="text-ui-sm text-studio-ink-4">
+        A PDF page is <b className="text-studio-ink-3">measured</b> — the file says where everything is.
+        A picture is <b className="text-studio-ink-3">estimated</b> from what the AI can see in it, so it comes out close rather than exact.
+      </p>
 
       {shot && (
         <>
@@ -208,6 +272,37 @@ export function LayoutReference() {
             <p className="border-l-2 border-studio-edge pl-2 text-ui-sm italic text-studio-ink-3">{shot.reading.notes}</p>
           )}
 
+          {/* WHICH JOB THIS IS. The two modes lose different things, and until now the
+              user was silently given the adapting one — which re-partitions the page
+              around any slot it cannot fill. */}
+          <div className="flex flex-col gap-1">
+            {([
+              { v: 'exact' as const, label: 'Copy the layout exactly', hint: 'Every box where the reference had it. An empty box stays empty.' },
+              { v: 'adapt' as const, label: 'Adapt it to my content', hint: 'Re-composes to fit this page. Empty boxes close up and the rest grow.' },
+            ]).map((o) => (
+              <label
+                key={o.v}
+                className={
+                  'flex cursor-pointer items-start gap-2 rounded-sm border px-2 py-1.5 text-ui-sm ' +
+                  (fit === o.v ? 'border-[var(--gold-bright)]/60 bg-studio-raise-2 text-studio-ink' : 'border-studio-edge text-studio-ink-2 hover:bg-studio-raise')
+                }
+              >
+                <input
+                  type="radio"
+                  name="layout-fit"
+                  checked={fit === o.v}
+                  disabled={layoutBusy}
+                  onChange={() => setFit(o.v)}
+                  className="mt-0.5 accent-studio-gold"
+                />
+                <span>
+                  {o.label}
+                  <span className="block text-studio-ink-4">{o.hint}</span>
+                </span>
+              </label>
+            ))}
+          </div>
+
           <button
             onClick={() => void apply(shot.reading)}
             disabled={layoutBusy}
@@ -232,10 +327,16 @@ export function LayoutReference() {
             </div>
           )}
 
+          {/* Says what the SELECTED mode does. It used to state flatly that the page was
+              matched "rather than cloning the page exactly" — true of adapt, and the only
+              mode reachable at the time, but the opposite of what exact does. */}
           <p className="text-ui-sm text-studio-ink-4">
-            Your headline, text and photos move into the new structure — nothing is retyped.
-            It <b className="text-studio-ink-3">replaces this page's arrangement and cannot be undone</b>, and it matches the
-            composition rather than cloning the page exactly.
+            The page is cleared and rebuilt in the reference's design — fresh words are written for your
+            magazine and your own photos are placed where it wants pictures.
+            It <b className="text-studio-ink-3">replaces this page's arrangement and cannot be undone</b>.
+            {fit === 'exact'
+              ? ' Boxes land where the reference had them; one with nothing to fill it is left empty.'
+              : ' The composition is matched rather than cloned — boxes shift to suit what this page holds.'}
           </p>
         </>
       )}

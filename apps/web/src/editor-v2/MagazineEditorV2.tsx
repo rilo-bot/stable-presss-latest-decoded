@@ -14,6 +14,7 @@ import { ArrowLeft, Undo2, Redo2, Plus, Minus, Trash2, ChevronDown, ChevronsRigh
 import { useEditorStore } from './store';
 import { useStudioChrome } from '@/stores/studioChromeStore';
 import { useCan } from '@/lib/permissions';
+import { useEditorFonts } from '@/lib/fonts/useEditorFonts';
 import { EditorCanvas } from './EditorCanvas';
 import { Inspector } from './Inspector';
 import { AiPanel } from './AiPanel';
@@ -24,8 +25,12 @@ import { ShareDialog } from './ShareDialog';
 import { ReviewBoard } from './ReviewBoard';
 import { PageRail } from './PageRail';
 import { BuildProgress, BuildBanner, ShimmerText } from './BuildProgress';
+import { SourceTrouble, readingSummary, useSourceReading } from './SourceReadingPanel';
 import { awaitingOwner, submittablePages, publishBlockedReason, readOnlyReason } from './review';
 import type { ElementType, MagazineElement } from './model';
+
+// Shared by the resize drag AND the saved-width restore below.
+const PANE_MIN = 240, PANE_MAX = 560;
 
 function newElement(kind: ElementType, page: { width: number; height: number }, topZ: number): Partial<MagazineElement> {
   const w = kind === 'qr' ? 200 : kind === 'icon' ? 120 : kind === 'shape' ? 320 : 440;
@@ -59,6 +64,11 @@ const menuItem = 'flex w-full items-center gap-2 px-3 py-2 text-left text-ui-sm 
 const ghost = 'flex items-center gap-1 rounded-sm border border-studio-edge bg-studio-raise px-2 py-1.5 text-ui-sm text-studio-ink-2 hover:bg-studio-raise-2 disabled:opacity-30 disabled:hover:bg-studio-raise';
 
 export default function MagazineEditorV2() {
+  // The editor draws real pages, so it needs the same faces the public viewer and
+  // the PDF renderer load (BulletinViewer does this too). Without it the font picker
+  // offers the curated registry while the canvas silently substitutes a fallback —
+  // the editor would disagree with what the reader and the print file actually get.
+  useEditorFonts();
   const { id } = useParams<{ id: string }>();
   const navigate = useNavigate();
   /**
@@ -201,7 +211,12 @@ export default function MagazineEditorV2() {
   const [panes, setPanes] = useState<{ leftW: number; rightW: number }>(() => {
     try {
       const saved = JSON.parse(localStorage.getItem('mag2.v2.paneWidths') || 'null');
-      if (saved && typeof saved.leftW === 'number' && typeof saved.rightW === 'number') return saved;
+      if (saved && typeof saved.leftW === 'number' && typeof saved.rightW === 'number') {
+        return {
+          leftW: Math.max(PANE_MIN, Math.min(PANE_MAX, saved.leftW)),
+          rightW: Math.max(PANE_MIN, Math.min(PANE_MAX, saved.rightW)),
+        };
+      }
     } catch { /* ignore */ }
     return { leftW: 340, rightW: 300 };
   });
@@ -215,9 +230,8 @@ export default function MagazineEditorV2() {
   };
   const onBodyMove = (e: React.PointerEvent) => {
     if (!dragging.current) return;
-    const MIN = 240, MAX = 560;
-    if (dragging.current === 'left') setPanes((p) => ({ ...p, leftW: Math.max(MIN, Math.min(MAX, e.clientX)) }));
-    else setPanes((p) => ({ ...p, rightW: Math.max(MIN, Math.min(MAX, window.innerWidth - e.clientX)) }));
+    if (dragging.current === 'left') setPanes((p) => ({ ...p, leftW: Math.max(PANE_MIN, Math.min(PANE_MAX, e.clientX)) }));
+    else setPanes((p) => ({ ...p, rightW: Math.max(PANE_MIN, Math.min(PANE_MAX, window.innerWidth - e.clientX)) }));
   };
   const endDivider = () => { dragging.current = null; };
   const divider = 'w-1 flex-shrink-0 cursor-col-resize bg-studio-raise hover:bg-[var(--gold-bright)]/60';
@@ -288,6 +302,24 @@ export default function MagazineEditorV2() {
     void s.addElement(newElement(kind, page, topZ));
   };
 
+  // Still being built by "Build with AI" / import — pages stream in live below.
+  // The counts that used to live here now belong to buildStatus.ts, which is also
+  // where the rule about when they may be trusted is written down.
+  const building = s.generating || s.issue?.status === 'processing';
+
+  // ONE poll for the source documents, shared by the two things that report on them:
+  // the build display (live progress, in the middle of the canvas) and the trouble
+  // strip (a failed or truncated document). Polling in each would be two requests
+  // every four seconds for the same rows. Empty id while not building = no poll.
+  //
+  // ABOVE THE EARLY RETURNS, and this is the whole reason `building` is computed up
+  // here rather than beside the JSX that uses it. There are two bail-outs below —
+  // loading and error — and a hook after them runs on some renders and not others,
+  // which React reports as "Rendered fewer hooks than expected" and which neither
+  // tsc nor the production build can see.
+  const sources = useSourceReading(building && s.issue?.id ? s.issue.id : '');
+  const reading = readingSummary(sources);
+
   if (s.loading) {
     // No issue document yet, so there are no counts: explicit title, the
     // 'finishing' lines, and the INDETERMINATE track. A determinate bar here
@@ -327,11 +359,6 @@ export default function MagazineEditorV2() {
   const publishBlocked = blockedFull && blockedSelected ? blockedFull : '';
   const currentSummary = s.pages.find((p) => p.id === s.currentPageId);
   const lockedReason = readOnlyReason(s.issue, currentSummary);
-
-  // Still being built by "Build with AI" / import — pages stream in live below.
-  // The counts that used to live here now belong to buildStatus.ts, which is also
-  // where the rule about when they may be trusted is written down.
-  const building = s.generating || s.issue?.status === 'processing';
 
   return (
     <div className="fixed inset-0 z-[60] flex flex-col bg-studio-bg">
@@ -580,8 +607,23 @@ export default function MagazineEditorV2() {
           `isAdding` is s.adding, NOT s.generating: `generating` is true for the
           INITIAL build too (watchGeneration sets it), and passing it here forced
           the indeterminate "Adding your new pages" state onto every from-scratch
-          build — hiding the real "N of M pages" counter the banner exists for. */}
-      {building && <BuildBanner issue={s.issue} isAdding={s.adding} arrivedPages={s.pages.length} />}
+          build — hiding the real "N of M pages" counter the banner exists for.
+
+          ONCE THERE IS A PAGE, and not before. That is what the banner is for by its
+          own description — one line high so it can sit over a magazine somebody is
+          already editing. While the canvas is still empty the full build display is
+          in the middle of it, and the banner was a second progress bar three inches
+          above the first, saying the same phase in different words. */}
+      {building && s.hasPage && <BuildBanner issue={s.issue} isAdding={s.adding} arrivedPages={s.pages.length} />}
+
+      {/* A document that FAILED or was cut short — the only part of a read that gets
+          a strip of its own, because it explains a thin magazine long after the
+          build screen is gone. Live progress is not here any more: it belongs to the
+          one progress display in the middle of the canvas (see BuildProgress), and
+          having it in both places meant two bars saying different things while a
+          third, the gold banner, said "Planning your issue" during a read where
+          nothing was being planned. Renders nothing when there is no trouble. */}
+      <SourceTrouble sources={sources} />
 
       {/* Post-generation nudge — the first pass is a short preview; offer more. */}
       {!building && s.justGenerated && s.canManage() && (
@@ -650,6 +692,7 @@ export default function MagazineEditorV2() {
                   issue={s.issue}
                   isAdding={s.adding}
                   arrivedPages={s.pages.length}
+                  reading={reading}
                   hint="Pages appear here as they’re finished — you can start editing the early ones while the rest are still being built."
                 />
               </div>

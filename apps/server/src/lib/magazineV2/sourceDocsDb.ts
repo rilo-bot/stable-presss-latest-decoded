@@ -18,6 +18,8 @@
 
 import crypto from 'crypto';
 
+import { ObjectId } from 'mongodb';
+
 import { db, rawCollection } from '../db.js';
 import { COL } from './collections.js';
 import {
@@ -28,6 +30,7 @@ import {
   type SourceDoc,
   type SourceDocKind,
   type SourceDocStatus,
+  type ReadEstimate,
   type SourceChunk,
 } from './sourceStore.js';
 
@@ -69,6 +72,10 @@ export async function createSourceDoc(input: NewSourceDoc): Promise<string> {
     coverage: { pagesRead: 0, pagesTotal: 0, truncated: false, reason: '' } satisfies SourceCoverage,
     digest: { title: input.originalName, summary: '' },
     error: '',
+    // The batch cursor, initialised so the first sweep starts at page 1.
+    readSwept: 0,
+    failedUnits: [] as number[],
+    ocrUnits: [] as number[],
     createdAt: at,
     updatedAt: at,
     readyAt: null,
@@ -122,15 +129,29 @@ export async function beginReading(docId: string, expected: SourceDocStatus[] = 
 }
 
 /**
- * Write one page's chunks. IDEMPOTENT: keyed on {docId, pageNo, seq}, so a page
- * written twice is overwritten rather than duplicated, and a resumed read needs
- * no cleanup pass. Uses the raw driver because the shared wrapper only updates by
- * _id and this needs a compound-key upsert.
+ * Operations per bulkWrite. MongoDB splits a larger batch itself, but only after
+ * the whole thing has been built and shipped as one message — so an unbounded batch
+ * is a memory and 16MB-document-limit problem on our side of the wire, not the
+ * server's. Adopting a twin's chunks is where this bites: that copies EVERY chunk of
+ * a document in one call, which for a thousand-page report is tens of thousands of
+ * operations built in memory at once.
+ */
+const BULK_CHUNK_OPS = 500;
+
+/**
+ * Write chunks. IDEMPOTENT: keyed on {docId, pageNo, seq}, so a page written twice
+ * is overwritten rather than duplicated, and a resumed read needs no cleanup pass.
+ * Uses the raw driver because the shared wrapper only updates by _id and this needs
+ * a compound-key upsert.
+ *
+ * Batched, and `ordered: false` within each batch: order is irrelevant here (every
+ * operation targets a distinct key), and unordered lets one bad row fail without
+ * taking the rest of the page with it.
  */
 export async function writeChunks(docId: string, magazineId: string, drafts: ChunkDraft[]): Promise<number> {
   if (drafts.length === 0) return 0;
   const col = await rawCollection(COL.sourceChunks);
-  const ops = drafts.map((d) => ({
+  const opFor = (d: ChunkDraft) => ({
     updateOne: {
       // String ids: the raw driver does not get the wrapper's _id coercion, and a
       // mismatched type here matches nothing and silently inserts a duplicate.
@@ -148,9 +169,13 @@ export async function writeChunks(docId: string, magazineId: string, drafts: Chu
       },
       upsert: true,
     },
-  }));
-  const res = await col.bulkWrite(ops, { ordered: false });
-  return (res.upsertedCount ?? 0) + (res.modifiedCount ?? 0);
+  });
+  let written = 0;
+  for (let i = 0; i < drafts.length; i += BULK_CHUNK_OPS) {
+    const res = await col.bulkWrite(drafts.slice(i, i + BULK_CHUNK_OPS).map(opFor), { ordered: false });
+    written += (res.upsertedCount ?? 0) + (res.modifiedCount ?? 0);
+  }
+  return written;
 }
 
 /**
@@ -163,6 +188,49 @@ export async function pagesWithChunks(docId: string): Promise<Set<number>> {
   return new Set(pages.map((p) => Number(p)));
 }
 
+/**
+ * The document's OPENING text — its first chunk in document order.
+ *
+ * Exists because the digest shown in the Uploads list must describe the document,
+ * and a batched read finishes holding the text of the LAST batch. Taking the digest
+ * from whatever the reader happened to have in hand gave a 500-page report a title
+ * lifted from page 476. One indexed query answers it properly, at any batch count.
+ */
+export async function firstChunkText(docId: string): Promise<string> {
+  const col = await rawCollection(COL.sourceChunks);
+  const rows = (await col
+    .find({ docId: String(docId) })
+    .sort({ pageNo: 1, seq: 1 })
+    .limit(1)
+    .toArray()) as unknown as SourceChunk[];
+  return rows[0]?.text ?? '';
+}
+
+/**
+ * The opening of every page, for the document map (sourceOutline.ts).
+ *
+ * `seq: 0` is the first chunk of each page, so this is one small row per page
+ * rather than the document — and it is projected to a prefix server-side, so a
+ * 500-page report costs a few tens of kilobytes to map rather than megabytes to
+ * load. Uses the {docId, pageNo, seq} index it already has for the sort.
+ *
+ * Page 0 is excluded: that is the "whole document as one body" unit a DOCX or text
+ * file produces, and a map of one entry is not a map.
+ */
+export async function loadOutlineHeads(docId: string): Promise<Array<{ pageNo: number; text: string }>> {
+  const col = await rawCollection(COL.sourceChunks);
+  const rows = (await col
+    .aggregate([
+      { $match: { docId: String(docId), seq: 0, pageNo: { $gt: 0 } } },
+      { $sort: { pageNo: 1 } },
+      // Only the top of the chunk: the heading is in the first line or two, and
+      // pulling whole chunks here would defeat the point of a cheap map.
+      { $project: { _id: 0, pageNo: 1, text: { $substrCP: ['$text', 0, 400] } } },
+    ])
+    .toArray()) as Array<{ pageNo: number; text: string }>;
+  return rows;
+}
+
 /** Every chunk of a document, in document order. */
 export async function loadChunks(docId: string): Promise<SourceChunk[]> {
   const col = await rawCollection(COL.sourceChunks);
@@ -173,27 +241,89 @@ export async function loadChunks(docId: string): Promise<SourceChunk[]> {
 }
 
 /**
- * Candidate chunks for a retrieval: those carrying any of `terms`, plus — when
- * terms are absent or match nothing — the document's chunks in order so a breadth
- * sample is still possible. `limit` bounds the read so a 500-page report cannot
- * pull its whole self into memory for one page draft.
+ * Chunks spread EVENLY across a document, for a retrieval with nothing to match on.
+ *
+ * The fallback used to be `.sort({pageNo,seq}).limit(400)`, which is the first 400
+ * chunks — the head of the document. Retrieval then took what it believed was a
+ * "representative spread across the whole document" from a set that only ever
+ * covered the opening pages, so for anything long the planner saw the front matter
+ * and nothing else. A silent one, because the text it got was real text.
+ *
+ * Two queries rather than one, deliberately. The first pulls only the KEYS (a few
+ * bytes each), the second fetches the chosen rows by `_id`. That keeps the sampling
+ * exact and deterministic without depending on `$setWindowFields`, which would tie
+ * this to a MongoDB version for a query that runs on every page draft.
+ */
+async function sampleChunksAcross(docId: string, limit: number): Promise<SourceChunk[]> {
+  const col = await rawCollection(COL.sourceChunks);
+  const keys = (await col
+    .find({ docId: String(docId) })
+    .project({ _id: 1 })
+    .sort({ pageNo: 1, seq: 1 })
+    .toArray()) as Array<{ _id: unknown }>;
+  if (keys.length === 0) return [];
+  if (keys.length <= limit) {
+    return (await col
+      .find({ docId: String(docId) })
+      .sort({ pageNo: 1, seq: 1 })
+      .toArray()) as unknown as SourceChunk[];
+  }
+  // Evenly spaced by position, so the sample covers the beginning, middle and end
+  // in the same proportions the document does.
+  const picked: unknown[] = [];
+  for (let i = 0; i < limit; i++) {
+    picked.push(keys[Math.floor((i * keys.length) / limit)]!._id);
+  }
+  const rows = (await col
+    .find({ _id: { $in: picked } as never })
+    .sort({ pageNo: 1, seq: 1 })
+    .toArray()) as unknown as SourceChunk[];
+  return rows;
+}
+
+/**
+ * Candidate chunks for a retrieval: the ones most likely to be worth scoring.
+ *
+ * `limit` bounds the read so a 500-page report cannot pull its whole self into
+ * memory for one page draft. The bug this replaces was in HOW it bounded: matching
+ * chunks were sorted by POSITION and then cut at 400, so in a long document every
+ * match past the cut was invisible to scoring — a passage on page 300 could not be
+ * retrieved at all, however well it matched, because 400 weaker matches came first
+ * in the document. The candidate set has to be ranked before it is cut.
+ *
+ * Ranked here by how many of the query's DISTINCT terms a chunk carries, which is
+ * the same primary signal the real scorer uses (`buildScorer`: distinct terms ×
+ * 1000 + occurrences), so the 400 kept are the 400 the scorer would have wanted.
+ * The scorer still re-scores them from `text` — this only decides who gets in.
  */
 export async function loadCandidateChunks(docId: string, terms: string[], limit = 400): Promise<SourceChunk[]> {
   const col = await rawCollection(COL.sourceChunks);
-  const query = terms.length > 0 ? { docId: String(docId), terms: { $in: terms } } : { docId: String(docId) };
-  const hit = (await col
-    .find(query)
-    .sort({ pageNo: 1, seq: 1 })
-    .limit(limit)
-    .toArray()) as unknown as SourceChunk[];
-  if (hit.length > 0) return hit;
-  // No term matched: fall back to an ordered slice so retrieval can still take a
-  // representative spread rather than reporting the document empty.
-  return (await col
-    .find({ docId: String(docId) })
-    .sort({ pageNo: 1, seq: 1 })
-    .limit(limit)
-    .toArray()) as unknown as SourceChunk[];
+  if (terms.length > 0) {
+    const hit = (await col
+      .aggregate(
+        [
+          { $match: { docId: String(docId), terms: { $in: terms } } },
+          // $setIntersection over the precomputed terms: no text scanning, and it
+          // uses the {docId, terms} index for the match.
+          { $addFields: { _overlap: { $size: { $setIntersection: ['$terms', terms] } } } },
+          // Position breaks ties, so the same query always returns the same rows —
+          // retrieval is expected to be deterministic.
+          { $sort: { _overlap: -1, pageNo: 1, seq: 1 } },
+          { $limit: Math.max(1, Math.floor(limit)) },
+          { $project: { _overlap: 0 } },
+        ],
+        { allowDiskUse: true },
+      )
+      .toArray()) as unknown as SourceChunk[];
+    if (hit.length > 0) {
+      // Back into document order: the scorer ranks, but the prompt reads better when
+      // the passages it keeps arrive in the order the document put them in.
+      return hit.sort((a, b) => a.pageNo - b.pageNo || a.seq - b.seq);
+    }
+  }
+  // Nothing to match on, or nothing matched: a spread across the whole document, so
+  // retrieval's breadth sample is actually a breadth sample.
+  return sampleChunksAcross(String(docId), Math.max(1, Math.floor(limit)));
 }
 
 /** Drop a document's chunks (a re-read from scratch, or a deleted document). */
@@ -252,4 +382,78 @@ export async function setContentHash(docId: string, contentHash: string): Promis
  *  to a resume decision, which reads the rows. */
 export async function noteProgress(docId: string, coverage: SourceCoverage): Promise<void> {
   await db.collection(COL.sourceDocs).updateOne(String(docId), { coverage, updatedAt: nowIso() });
+}
+
+/** Rewind the batch cursor for a read that is starting over from scratch. The ONE
+ *  place allowed to move it backwards, and only alongside dropping the chunks it
+ *  described — a rewind without that is the infinite re-read noteSweep prevents. */
+export async function resetSweep(docId: string): Promise<void> {
+  await db
+    .collection(COL.sourceDocs)
+    .updateOne(String(docId), { readSwept: 0, failedUnits: [] as number[], ocrUnits: [] as number[], updatedAt: nowIso() });
+}
+
+/**
+ * Add page numbers to the document's `failedUnits` / `ocrUnits` sets, in ONE write.
+ *
+ * The shared wrapper's addToSet takes a single value, so recording a batch through
+ * it meant up to fifty round trips per batch for bookkeeping. `$each` does it in
+ * one. Sets rather than counters throughout: a retried batch must not be able to
+ * inflate either the pages reported unread or the pages reported as costing money.
+ *
+ * The id coercion mirrors db.ts because the raw driver does not get the wrapper's —
+ * these rows are inserted with ObjectId ids, and a string filter would match nothing
+ * and report success.
+ */
+async function addUnits(docId: string, sets: Record<string, number[]>): Promise<void> {
+  const add: Record<string, { $each: number[] }> = {};
+  for (const [field, values] of Object.entries(sets)) {
+    const clean = [...new Set(values.map((v) => Math.floor(v)).filter((v) => Number.isFinite(v)))];
+    if (clean.length > 0) add[field] = { $each: clean };
+  }
+  if (Object.keys(add).length === 0) return;
+  const col = await rawCollection(COL.sourceDocs);
+  const update = { $addToSet: add };
+  try {
+    await col.updateOne({ _id: new ObjectId(String(docId)) }, update);
+  } catch {
+    await col.updateOne({ _id: String(docId) as never }, update);
+  }
+}
+
+/** Store the latest cost reading. Advisory only — nothing branches on it, so a
+ *  failed write costs a stale number on a screen, never a wrong read. */
+export async function noteEstimate(docId: string, estimate: ReadEstimate): Promise<void> {
+  await db.collection(COL.sourceDocs).updateOne(String(docId), { estimate, updatedAt: nowIso() });
+}
+
+/**
+ * Record what a batch swept, so the next one knows where to start.
+ *
+ * TWO PROPERTIES, both load-bearing:
+ *
+ *   1. The cursor only moves FORWARD. The compare-and-set is on `$lt`, so a
+ *      duplicate or retried batch cannot rewind it — and a rewind is not a slow
+ *      re-read but an infinite one, the batch that requeues itself at the page it
+ *      started on. The `$or` covers a document written before this field existed,
+ *      where a bare `$lt` matches nothing and the read would never advance.
+ *
+ *   2. Failures are written BEFORE the cursor, in that order, deliberately. A crash
+ *      between the two leaves failures recorded for pages the cursor has not passed
+ *      — so those pages are simply read again, and sweptCoverage discards the stale
+ *      entries once they produce rows. The other order would sweep past a failed
+ *      page with nothing recording that it failed, and the document would claim to
+ *      have been read in full.
+ */
+export async function noteSweep(
+  docId: string,
+  opts: { swept: number; failedUnits?: number[]; ocrUnits?: number[] },
+): Promise<void> {
+  const id = String(docId);
+  const at = nowIso();
+  await addUnits(id, { failedUnits: opts.failedUnits ?? [], ocrUnits: opts.ocrUnits ?? [] });
+  const swept = Math.max(0, Math.floor(opts.swept));
+  await db
+    .collection(COL.sourceDocs)
+    .updateOneIf(id, { $or: [{ readSwept: null }, { readSwept: { $lt: swept } }] }, { readSwept: swept, updatedAt: at });
 }

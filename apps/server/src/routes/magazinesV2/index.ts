@@ -47,11 +47,15 @@ import type { GenFonts, GenPalette } from '../../lib/magazineV2/templates.js';
 import { runPageAgent } from '../../lib/magazineV2/agent.js';
 import { formatPageText, charGuideFor } from '../../lib/magazineV2/format.js';
 import { readLayoutImage } from '../../lib/magazineV2/readLayout.js';
-import { aspectMismatch, normalizeLayoutReading } from '../../lib/magazineV2/layoutReading.js';
+import { aspectMismatch, normalizeLayoutReading, type LayoutReading } from '../../lib/magazineV2/layoutReading.js';
+// The document door onto the same LayoutReading the image door produces — see the
+// layout-reference route for why both live behind one endpoint.
+import { readLayoutPdfPage } from '../../lib/magazineV2/readLayoutPdf.js';
 import { applyReadingToPage, themeForPage, tightSummary, unfilledSlots, type ExtraContent, type LayoutFit } from '../../lib/magazineV2/applyLayout.js';
 import { isPlaceableMedia, rankMediaForPage, type RankableMediaRow } from '../../lib/magazineV2/media.js';
 import { draftReferenceFill } from '../../lib/magazineV2/referenceFill.js';
 import { createSourceDoc, listSourceDocs } from '../../lib/magazineV2/sourceDocsDb.js';
+import { canCopyLayout, magazineDocument } from '../../lib/magazineV2/magazineDocs.js';
 
 /* eslint-disable @typescript-eslint/no-explicit-any */
 type Doc = { _id: string; [k: string]: any };
@@ -155,6 +159,52 @@ async function loadIssue(id: string): Promise<Doc | null> {
 async function pagesFor(magazineId: string): Promise<Doc[]> {
   const pages = (await db.collection(COL.pages).find({ magazineId })) as Doc[];
   return pages.sort((a, b) => (a.index as number) - (b.index as number));
+}
+
+/**
+ * The pages of a magazine WITHOUT their elements — everything `pageSummary`,
+ * `visiblePages` and `needsRepublish` read, and nothing else.
+ *
+ * `pagesFor` loads each page's full `elements[]`, which is by far the heaviest
+ * field in the system. Any caller that only wants counts, stamps and review flags
+ * was therefore pulling megabytes across the wire to compute a `.length` — and the
+ * worst of them was GET /issues/:id, the route the studio POLLS while a magazine
+ * generates or a document is read. The list route already avoids this with a
+ * `$group` rollup; this is the same idea for one magazine's rail.
+ *
+ * `aggregate` does NOT get the wrapper's implicit soft-delete filter, so the
+ * `deletedAt: null` match is explicit — drop it and deleted pages come back.
+ * Sorted in the query (the {magazineId, deletedAt, index} index serves it) rather
+ * than in JS, since there is no longer a reason to hold the whole list to sort it.
+ */
+async function pageSummariesFor(magazineId: string): Promise<Doc[]> {
+  return (await db.collection(COL.pages).aggregate([
+    { $match: { magazineId, deletedAt: null } },
+    {
+      $project: {
+        index: 1,
+        width: 1,
+        height: 1,
+        status: 1,
+        rev: 1,
+        selectedForPublish: 1,
+        // needsRepublish / editedSincePublish compare this against publishedAt.
+        updatedAt: 1,
+        review: 1,
+        reviewRound: 1,
+        approvedAtRev: 1,
+        submitNote: 1,
+        reviewNote: 1,
+        submittedBy: 1,
+        submittedAt: 1,
+        // The ONE thing anybody wanted the elements for. `$isArray` rather than a
+        // bare `$size` because `$size` throws on a non-array, which would fail the
+        // whole read for one malformed page — the JS it replaces just returned 0.
+        elementCount: { $cond: [{ $isArray: '$elements' }, { $size: '$elements' }, 0] },
+      },
+    },
+    { $sort: { index: 1 } },
+  ])) as Doc[];
 }
 
 async function pageById(pageId: string): Promise<Doc | null> {
@@ -297,7 +347,9 @@ function pageSummary(p: Doc, issue?: Doc) {
     status: p.status,
     rev: p.rev ?? 0,
     selectedForPublish: p.selectedForPublish !== false,
-    elementCount: Array.isArray(p.elements) ? p.elements.length : 0,
+    // Either shape works: a full page document (elements loaded) or a projected
+    // summary from pageSummariesFor, which counts them in the query instead.
+    elementCount: typeof p.elementCount === 'number' ? p.elementCount : Array.isArray(p.elements) ? p.elements.length : 0,
     /** Touched since the live edition was frozen, so a republish would change it. */
     editedSincePublish: issue ? pageEditedSincePublish(issue, p) : false,
     // The review axis, always resolved through the accessors so a page that
@@ -320,27 +372,61 @@ function pageSummary(p: Doc, issue?: Doc) {
 
 // ── Issue lifecycle ─────────────────────────────────────────────────────────
 
+/** The later of two ISO-8601 stamps, tolerating either being absent. Every stamp
+ *  in this collection is written with `toISOString()` — fixed width, always UTC —
+ *  so a lexical compare is a chronological one, no parsing needed. */
+function maxIso(a: string, b: string): string {
+  return a > b ? a : b;
+}
+
 // list — SHARE-ONLY: a magazine is listed only for its owner and the staff it's
 // shared with (roleOnMagazine != null). Editing is further gated per-page by the
 // collaborator's assignment; `myRole` + `ownerName` tell the client its rights.
 router.get('/issues', async (req, res) => {
   const uid = req.account!.id;
-  const all = (await db.collection(COL.magazines).find()) as Doc[];
-  // Page counts in ONE aggregation. Previously this was an N+1 that called
-  // pagesFor() per issue — each loading every page's FULL elements array from
-  // Mongo just to read .length (O(issues × pages × element-bytes) transferred to
-  // build a list). aggregate() doesn't auto-filter soft-deletes, so match
-  // deletedAt: null explicitly to mirror find()'s behaviour.
-  const countRows = (await db.collection(COL.pages).aggregate([
-    { $match: { deletedAt: null } },
-    { $group: { _id: '$magazineId', count: { $sum: 1 } } },
-  ])) as Doc[];
+  // THE ACCESS RULE IS THE QUERY, not a filter after the fact.
+  //
+  // This used to be a bare `find()` — every magazine ever created, loaded into the
+  // API and then filtered down to the caller's in JS. Nobody noticed because the
+  // answer was right; what was wrong was the cost, and it grows with the whole
+  // library rather than with one person's share of it. Each of those documents now
+  // also carries `genPlanPages` and `genTheme`, so a staff member opening their
+  // library was pulling every generation plan in the system across the wire.
+  //
+  // `$or` on owner OR collaborator membership is exactly `roleOnMagazine(d, uid)
+  // !== null`, so the two cannot disagree — and MongoDB can serve each branch from
+  // its own index (see ensureIndexes). 'preparing' is excluded here too: it is a
+  // placeholder waiting for its documents, not a magazine, and showing it would put
+  // a permanent "New magazine" row in the list of anyone who abandoned an upload.
+  const mine = (await db.collection(COL.magazines).find({
+    $or: [{ ownerId: uid }, { 'collaborators.userId': uid }],
+    status: { $ne: 'preparing' },
+  })) as Doc[];
+  // Page counts in ONE aggregation, SCOPED to the magazines just loaded. Previously
+  // this was an N+1 that called pagesFor() per issue — each loading every page's
+  // FULL elements array from Mongo just to read .length. Collapsing it to a $group
+  // fixed that, but the $match still covered the entire pages collection, so a
+  // library load rolled up every page of every magazine in the system to use a
+  // handful of the rows. aggregate() doesn't auto-filter soft-deletes, so
+  // deletedAt: null is explicit, mirroring find().
+  //
+  // The same rollup also carries the newest page `updatedAt`, because the
+  // magazine's own stamp is NOT a record of editing: writing an element bumps the
+  // page and leaves the magazine untouched (see the element CRUD below). Read
+  // alone it would tell a user who spent an hour rewriting copy that they last
+  // touched the issue three days ago. `lib/magazineV2/review.ts` already has to
+  // take the max of both for exactly this reason; this is the same fact, computed
+  // in the query rather than by loading every page.
+  const ids = mine.map((d) => String(d._id));
+  const countRows = ids.length === 0 ? [] : ((await db.collection(COL.pages).aggregate([
+    { $match: { magazineId: { $in: ids }, deletedAt: null } },
+    { $group: { _id: '$magazineId', count: { $sum: 1 }, lastPageAt: { $max: '$updatedAt' } } },
+  ])) as Doc[]);
   const countByMag = new Map<string, number>(countRows.map((r) => [String(r._id), Number(r.count) || 0]));
-  const rows = all
-    // Access is by SHARING only: a magazine appears solely for its owner and the
-    // staff it's been shared with. (Was a "shared admin library" where every staff
-    // member saw every magazine — roleOnMagazine null now hides it entirely.)
-    .filter((d) => roleOnMagazine(d, uid) !== null)
+  const lastPageAtByMag = new Map<string, string>(
+    countRows.map((r) => [String(r._id), typeof r.lastPageAt === 'string' ? r.lastPageAt : '']),
+  );
+  const rows = mine
     .map((d) => ({
       id: d._id,
       title: d.title,
@@ -352,7 +438,10 @@ router.get('/issues', async (req, res) => {
       myRole: roleOnMagazine(d, uid),
       ownerName: d.ownerName ?? '',
       publishedIssueId: d.publishedIssueId ?? null,
-      updatedAt: d.updatedAt,
+      createdAt: d.createdAt ?? '',
+      // ISO-8601 UTC strings compare correctly as strings, which is what makes a
+      // plain max honest here and what the sort below already assumes.
+      updatedAt: maxIso(String(d.updatedAt ?? ''), lastPageAtByMag.get(d._id) ?? ''),
     }))
     .sort((a, b) => String(b.updatedAt).localeCompare(String(a.updatedAt)));
   res.json(rows);
@@ -486,48 +575,29 @@ router.post('/issues/:id/reuse', rateLimit('mag2-write', 300, 60_000), async (re
   res.status(201).json({ issue: withViewer(created, uid), pages: (await pagesFor(id)).map((p) => pageSummary(p, created)) });
 });
 
-// Build with AI — create a 'processing' issue and generate pages in the
-// background (LLM art-director → curated templates). Client polls GET /issues/:id
-// until status flips to 'ready'/'failed'. Tighter rate limit (AI is expensive).
-router.post('/issues/generate', rateLimit('mag2-generate', 10, 60_000), async (req, res) => {
-  const uid = req.account!.id;
-  if (!isAgentConfigured()) {
-    res.status(503).json({ error: 'AI is not configured on this server.' });
-    return;
-  }
-  const prompt = typeof req.body?.prompt === 'string' ? req.body.prompt.trim() : '';
-  // Stored source documents to build FROM — the real path. Cited by id, so the
-  // issue can re-read them for every later pass (more pages, a fill, a re-run).
-  const docIds = (Array.isArray(req.body?.docIds) ? req.body.docIds : [])
-    .filter((d: unknown): d is string => typeof d === 'string' && d.length > 0)
-    .slice(0, 20);
-  // LEGACY: document text posted inline by the older client. Kept working for one
-  // release. It cannot be re-read, which is the whole reason docIds exist.
-  const sourceText = typeof req.body?.sourceText === 'string' ? req.body.sourceText.slice(0, 60_000) : '';
-  if (!prompt && !sourceText.trim() && docIds.length === 0) {
-    res.status(400).json({ error: 'Describe the magazine you want, or attach a document to build from.' });
-    return;
-  }
-  const pc = Number(req.body?.pageCount);
-  const pageCount = Number.isInteger(pc) && pc >= 3 && pc <= 16 ? pc : undefined;
+/**
+ * Everything that happens AFTER an issue exists and is marked processing: its
+ * birth thread, and the background work that will build it.
+ *
+ * Extracted because there are now two ways in — a brand-new issue, and a PREPARED
+ * one the client created first so it could upload documents against it. Two copies
+ * of this would drift, and the way they would drift is the worst available: one
+ * path enqueuing reads without the continuation, or without the issueId the
+ * watchdog needs, and generation silently never starting.
+ */
+async function startGeneration(
+  issueId: string,
+  ctx: {
+    uid: string;
+    req: Request;
+    prompt: string;
+    pageCount?: number;
+    docIds: string[];
+    sourceText: string;
+  },
+): Promise<void> {
+  const { uid, req, prompt, pageCount, docIds, sourceText } = ctx;
   const now = new Date().toISOString();
-  const id = await db.collection(COL.magazines).insertOne({
-    title: 'Generating…',
-    slug: await uniqueSlug('issue'),
-    status: 'processing',
-    origin: 'scratch',
-    coverImage: '',
-    pagesProcessed: 0,
-    pagesTotal: pageCount ?? 8,
-    stage: 'Designing the issue',
-    ownerId: uid,
-    ownerName: req.account!.name,
-    collaborators: [],
-    publishedIssueIds: [],
-    schemaVersion: 2,
-    createdAt: now,
-    updatedAt: now,
-  });
   // THE BIRTH THREAD (user direction 2026-08-17): the very first prompt IS the
   // first message of the magazine's conversation. The planner's read-back and
   // the completion note land here as assistant turns, so the user can reply and
@@ -537,7 +607,7 @@ router.post('/issues/generate', rateLimit('mag2-generate', 10, 60_000), async (r
   try {
     const firstMsg = prompt || 'Build a magazine from the attached document.';
     const tid = await db.collection(COL.threads).insertOne({
-      magazineId: id,
+      magazineId: issueId,
       userId: uid,
       userName: req.account!.name || req.account!.email || 'Someone',
       title: titleFromMessage(firstMsg),
@@ -553,7 +623,7 @@ router.post('/issues/generate', rateLimit('mag2-generate', 10, 60_000), async (r
     await db.collection(COL.chat).insertOne({
       threadId,
       userId: uid,
-      magazineId: id,
+      magazineId: issueId,
       pageId: null,
       pageIndex: 0,
       role: 'user',
@@ -580,12 +650,166 @@ router.post('/issues/generate', rateLimit('mag2-generate', 10, 60_000), async (r
   if (docIds.length > 0) {
     const onDone = {
       type: 'generateIssue' as const,
-      payload: { issueId: id, prompt, pageCount, docIds, sourceText, threadId },
+      payload: { issueId, prompt, pageCount, docIds, sourceText, threadId },
     };
-    for (const docId of docIds) await enqueueJob('readSourceDoc', { docId, onDone });
+    // `issueId` is what makes these reads visible to the stuck-issue watchdog. The
+    // issue is already 'processing' and no other job is queued against it, so
+    // without it healStuckIssue saw an issue with no live job and failed it twenty
+    // seconds later — while the worker was still reading.
+    for (const docId of docIds) await enqueueJob('readSourceDoc', { docId, issueId, onDone });
   } else {
-    await enqueueJob('generateIssue', { issueId: id, prompt, pageCount, sourceText, threadId });
+    await enqueueJob('generateIssue', { issueId, prompt, pageCount, sourceText, threadId });
   }
+}
+
+// Reserve an issue to attach documents to, BEFORE anything is generated.
+//
+// WHY THIS EXISTS. The old flow read every attachment through the API and only
+// then created the issue, so the user watched a spinner for as long as the read
+// took — which is exactly why the reads were capped at six pages. Now there is no
+// cap, so a read can take minutes and that shape is impossible: the browser has to
+// be able to leave.
+//
+// Reversing the order is what frees it. An issue exists first, its documents are
+// uploaded straight to S3 against it, and the studio opens immediately while the
+// worker reads. The issue is created 'preparing', which is deliberately NOT
+// 'processing': nothing is queued for it yet, so the stuck-issue watchdog must not
+// see it as work that has stalled.
+router.post('/issues/prepare', rateLimit('mag2-generate', 20, 60_000), async (req, res) => {
+  const uid = req.account!.id;
+  if (!isAgentConfigured()) {
+    res.status(503).json({ error: 'AI is not configured on this server.' });
+    return;
+  }
+  // Clear this user's abandoned attempts first. A prepared issue whose browser
+  // closed before generating is a row nobody will ever finish, and reaping here —
+  // rather than on a timer or a list read — means the cleanup runs exactly when
+  // somebody starts another one, costs one query, and can only ever touch its own
+  // owner's rows.
+  await reapPreparedIssues(uid);
+
+  const now = new Date().toISOString();
+  const id = await db.collection(COL.magazines).insertOne({
+    title: 'New magazine',
+    slug: await uniqueSlug('issue'),
+    status: 'preparing',
+    origin: 'scratch',
+    coverImage: '',
+    pagesProcessed: 0,
+    pagesTotal: 0,
+    stage: 'Waiting for your documents',
+    ownerId: uid,
+    ownerName: req.account!.name,
+    collaborators: [],
+    publishedIssueIds: [],
+    schemaVersion: 2,
+    createdAt: now,
+    updatedAt: now,
+    deletedAt: null,
+  });
+  res.status(201).json({ issue: { id } });
+});
+
+/** How long a prepared-but-never-generated issue is kept before it is reaped. Long
+ *  enough to survive a slow upload of a very large file, short enough that an
+ *  abandoned attempt does not linger. */
+const PREPARED_TTL_MS = 6 * 60 * 60_000;
+
+/**
+ * Soft-delete this owner's prepared issues that were never generated.
+ *
+ * Scoped to `status: 'preparing'`, which only ever means "created to receive
+ * documents, generation not yet started" — the generate route moves it off that
+ * status as its first act, so a live generation can never match. Soft delete, like
+ * everything else here, so a mistake is recoverable.
+ */
+async function reapPreparedIssues(ownerId: string): Promise<void> {
+  try {
+    const rows = (await db.collection(COL.magazines).find({ ownerId: String(ownerId), status: 'preparing' })) as Doc[];
+    const cutoff = Date.now() - PREPARED_TTL_MS;
+    for (const row of rows) {
+      const at = Date.parse(String(row.createdAt ?? ''));
+      if (!Number.isFinite(at) || at > cutoff) continue;
+      await db.collection(COL.magazines).deleteOne(String(row._id));
+      console.log(`[magazineV2] reaped abandoned prepared issue ${row._id}`);
+    }
+  } catch (err) {
+    // Housekeeping must never fail the request that triggered it.
+    console.warn('[magazineV2] reaping prepared issues failed:', err instanceof Error ? err.message : err);
+  }
+}
+
+// Build with AI — create a 'processing' issue and generate pages in the
+// background (LLM art-director → curated templates). Client polls GET /issues/:id
+// until status flips to 'ready'/'failed'. Tighter rate limit (AI is expensive).
+router.post('/issues/generate', rateLimit('mag2-generate', 10, 60_000), async (req, res) => {
+  const uid = req.account!.id;
+  if (!isAgentConfigured()) {
+    res.status(503).json({ error: 'AI is not configured on this server.' });
+    return;
+  }
+  const prompt = typeof req.body?.prompt === 'string' ? req.body.prompt.trim() : '';
+  // Stored source documents to build FROM — the real path. Cited by id, so the
+  // issue can re-read them for every later pass (more pages, a fill, a re-run).
+  const docIds = (Array.isArray(req.body?.docIds) ? req.body.docIds : [])
+    .filter((d: unknown): d is string => typeof d === 'string' && d.length > 0)
+    .slice(0, 20);
+  // LEGACY: document text posted inline by the older client. Kept working for one
+  // release. It cannot be re-read, which is the whole reason docIds exist.
+  const sourceText = typeof req.body?.sourceText === 'string' ? req.body.sourceText.slice(0, 60_000) : '';
+  if (!prompt && !sourceText.trim() && docIds.length === 0) {
+    res.status(400).json({ error: 'Describe the magazine you want, or attach a document to build from.' });
+    return;
+  }
+  const pc = Number(req.body?.pageCount);
+  const pageCount = Number.isInteger(pc) && pc >= 3 && pc <= 16 ? pc : undefined;
+  const now = new Date().toISOString();
+
+  // ADOPT a prepared issue when the client made one (POST /issues/prepare) so it
+  // could upload documents against it before generating. Compare-and-set from
+  // 'preparing', which is what makes this safe to expose: the status can only be
+  // claimed once, so a double-submitted form generates one issue and the second
+  // request is told the issue is gone rather than quietly building a duplicate.
+  const prepared = typeof req.body?.issueId === 'string' ? req.body.issueId.trim() : '';
+  if (prepared) {
+    const existing = await loadIssue(prepared);
+    if (!existing || roleOnMagazine(existing, uid) !== 'owner') {
+      res.status(404).json({ error: 'Not found' });
+      return;
+    }
+    const claimed = await db.collection(COL.magazines).updateOneIf(
+      String(existing._id),
+      { status: 'preparing' },
+      { title: 'Generating…', status: 'processing', stage: 'Designing the issue', pagesTotal: pageCount ?? 8, updatedAt: now },
+    );
+    if (!claimed) {
+      res.status(409).json({ error: 'That magazine has already started generating.' });
+      return;
+    }
+    await startGeneration(String(existing._id), { uid, req, prompt, pageCount, docIds, sourceText });
+    const adopted = await loadIssue(String(existing._id));
+    res.status(202).json({ issue: adopted ? withViewer(adopted, uid) : { id: existing._id } });
+    return;
+  }
+
+  const id = await db.collection(COL.magazines).insertOne({
+    title: 'Generating…',
+    slug: await uniqueSlug('issue'),
+    status: 'processing',
+    origin: 'scratch',
+    coverImage: '',
+    pagesProcessed: 0,
+    pagesTotal: pageCount ?? 8,
+    stage: 'Designing the issue',
+    ownerId: uid,
+    ownerName: req.account!.name,
+    collaborators: [],
+    publishedIssueIds: [],
+    schemaVersion: 2,
+    createdAt: now,
+    updatedAt: now,
+  });
+  await startGeneration(id, { uid, req, prompt, pageCount, docIds, sourceText });
   const created = await loadIssue(id);
   res.status(202).json({ issue: created ? withViewer(created, uid) : { id } });
 });
@@ -975,9 +1199,23 @@ router.post('/issues/:id/sources', rateLimit('mag2-write', 300, 60_000), async (
     s3Key: key,
     url: storage.publicUrl(key),
   });
-  // The read happens in the worker. The response returns immediately with a
-  // docId the caller can poll and, later, cite — no request is held open on OCR.
-  await enqueueJob('readSourceDoc', { docId });
+  // The read happens in the worker. The response returns immediately with a docId
+  // the caller can poll and, later, cite — no request is held open on OCR.
+  //
+  // `defer` exists because a caller that is ABOUT TO GENERATE from this document
+  // would otherwise get it read twice. The generate route enqueues a read per docId
+  // — it has to, since that read carries the continuation that starts generation —
+  // so an eager read here is a second job for the same document. Observed in
+  // testing: two readSourceDoc jobs on one upload, the first reading it and the
+  // second finding it already done.
+  //
+  // It worked, by luck of the queue's ordering. But once a read is batched the two
+  // jobs interleave batches, and every batch re-downloads the file and re-opens the
+  // PDF — so on a 500-page document that luck costs twice the S3 traffic for the
+  // whole read. The client says which it means; eager stays the default, so a
+  // document uploaded on its own is still read without being asked for.
+  const defer = req.body?.defer === true;
+  if (!defer) await enqueueJob('readSourceDoc', { docId });
   res.status(201).json({
     source: { id: docId, originalName, contentType: head.contentType, size: head.contentLength, status: 'queued' },
   });
@@ -1004,6 +1242,15 @@ router.get('/issues/:id/sources', async (req, res) => {
       // computed and then thrown away, so a thin magazine looked like bad AI
       // rather than a partly-read document.
       coverage: d.coverage,
+      // Progress DURING the read, not only after it. There is no page cap any more,
+      // so a long document is legitimately still being read minutes later, and a
+      // spinner with no numbers behind it is indistinguishable from a stall.
+      pagesRead: d.coverage?.pagesRead ?? 0,
+      pagesTotal: d.coverage?.pagesTotal ?? 0,
+      // What the read is costing. Removing the caps removed an accidental spend
+      // ceiling with them, so this is the number that keeps "no cap" a decision
+      // somebody made rather than one nobody saw. See ReadEstimate.
+      estimate: d.estimate ?? null,
       error: d.error,
       createdAt: d.createdAt,
     })),
@@ -1105,22 +1352,71 @@ router.post('/issues/:id/layout-reference', rateLimit('mag2-layout-read', 10, 60
     res.status(404).json({ error: 'Not found' });
     return;
   }
-  const assetId = typeof req.body?.assetId === 'string' ? req.body.assetId.trim() : '';
-  if (!assetId) {
-    res.status(400).json({ error: 'assetId is required.' });
-    return;
-  }
-  const asset = (await db.collection(COL.media).findById(assetId)) as Doc | null;
-  if (!asset || asset.magazineId !== doc._id || asset.kind === 'doc' || !asset.url) {
-    res.status(404).json({ error: 'That image is not in this magazine.' });
-    return;
-  }
   const hint = typeof req.body?.hint === 'string' ? req.body.hint.slice(0, 400) : '';
-  const { reading, error } = await readLayoutImage(String(asset.url), hint);
+
+  // TWO SOURCES, ONE READING. A layout can come from a picture the user uploaded
+  // or from a page of a document they attached, and everything downstream — the
+  // aspect warning below, apply-layout, referenceFill — takes a LayoutReading and
+  // cannot tell which. Keeping them one endpoint rather than two is what stops
+  // "match this layout" quietly becoming two features with different behaviour.
+  //
+  // They are NOT equally good, and the difference runs the way you would not
+  // guess: the picture is read by a vision model and every number in it is an
+  // estimate, while the PDF is MEASURED — it states where its words and pictures
+  // are, so nothing has to be guessed at all.
+  const docId = typeof req.body?.docId === 'string' ? req.body.docId.trim() : '';
+  let reading: LayoutReading | null = null;
+  let error = '';
+  let from: Record<string, unknown> = {};
+
+  if (docId) {
+    // Both stores, one lookup — the same one the agent's use_document_as_layout
+    // uses, so a PDF attached in the chat behaves here exactly as one uploaded on
+    // the way in. See magazineDocs.ts.
+    const source = await magazineDocument(String(doc._id), docId);
+    if (!source) {
+      res.status(404).json({ error: 'That document is not in this magazine.' });
+      return;
+    }
+    if (!canCopyLayout(source)) {
+      res.status(415).json({ error: 'I can only take a layout from a PDF — a Word or text file has no page design to copy.' });
+      return;
+    }
+    const pn = Number(req.body?.pageNo);
+    const pageNo = Number.isInteger(pn) && pn > 0 ? pn : 1;
+    let bytes: Buffer;
+    try {
+      bytes = await storage.downloadObject(source.s3Key);
+    } catch (e) {
+      console.warn('[magazineV2] layout reference: could not fetch the document', e instanceof Error ? e.message : e);
+      res.status(502).json({ error: 'I could not fetch that document just now — please try again.' });
+      return;
+    }
+    const out = await readLayoutPdfPage(bytes, pageNo);
+    reading = out.reading;
+    error = out.error;
+    from = { docId: source.docId, originalName: source.name, pageNo, pageCount: out.pageCount };
+  } else {
+    const assetId = typeof req.body?.assetId === 'string' ? req.body.assetId.trim() : '';
+    if (!assetId) {
+      res.status(400).json({ error: 'An assetId (an image) or a docId (a PDF) is required.' });
+      return;
+    }
+    const asset = (await db.collection(COL.media).findById(assetId)) as Doc | null;
+    if (!asset || asset.magazineId !== doc._id || asset.kind === 'doc' || !asset.url) {
+      res.status(404).json({ error: 'That image is not in this magazine.' });
+      return;
+    }
+    const out = await readLayoutImage(String(asset.url), hint);
+    reading = out.reading;
+    error = out.error;
+    from = { assetId: String(asset._id), url: String(asset.url) };
+  }
+
   if (!reading) {
-    // 422, not 500: the request was fine and the server is fine — the image could
-    // not be read. The sentence is the user's to act on.
-    res.status(422).json({ error: error || 'Could not read a layout from that image.' });
+    // 422, not 500: the request was fine and the server is fine — the reference
+    // could not be read. The sentence is the user's to act on.
+    res.status(422).json({ error: error || 'Could not read a layout from that reference.' });
     return;
   }
   // Optional: judge the reference against the page it is destined for, so the
@@ -1136,7 +1432,10 @@ router.post('/issues/:id/layout-reference', rateLimit('mag2-layout-read', 10, 60
       warning = aspectMismatch(reading, dims.width, dims.height);
     }
   }
-  res.json({ reading, warning, asset: { id: String(asset._id), url: String(asset.url) } });
+  // `from` says which door this came through — an image asset or a document page —
+  // so the client can label what it is about to copy. `asset` is kept alongside it
+  // for the callers written before documents were a source.
+  res.json({ reading, warning, from, ...(from.assetId ? { asset: { id: from.assetId, url: from.url } } : {}) });
 });
 
 // get issue meta + page summaries (NOT full element payloads). Owner/collaborator
@@ -1158,7 +1457,13 @@ router.get('/issues/:id', async (req, res) => {
   // ALL pages feed needsRepublish (any edited page means the live edition is behind),
   // while only the VISIBLE ones are returned — a page-scoped collaborator still needs
   // to know the magazine is out of sync, without learning which other pages exist.
-  const allPages = await pagesFor(doc._id);
+  //
+  // SUMMARIES, not full pages: nothing on this route reads an element. The client
+  // fetches a page's elements separately when it opens one, and this is the route it
+  // polls every couple of seconds while a magazine builds — so loading every page's
+  // elements here was re-transferring the entire magazine on a timer to compute
+  // counts and timestamps.
+  const allPages = await pageSummariesFor(doc._id);
   res.json({
     issue: withViewer(doc, uid, allPages),
     pages: visiblePages(doc, uid, allPages).map((p) => pageSummary(p, doc)),
@@ -3060,8 +3365,27 @@ router.post('/issues/:id/pages/:pageId/apply-layout', rateLimit('mag2-agent', 20
     height: pageShape.height,
     elements: pageShape.elements.filter((e) => FURNITURE_IDS.includes(e.id)),
   };
+  /**
+   * HOW FAITHFULLY, and it is the caller's call, because the two modes lose different
+   * things (see `readingToExact`).
+   *
+   * 'exact' puts every region on the box it was read from: the reference's cross-axis
+   * positions survive — a cover line in its right half stays in the right half — and an
+   * unfillable slot leaves a hole rather than re-partitioning the page around it.
+   * 'adapt' re-composes through the frame tree, which is what a reference of a
+   * different shape, or a page carrying far more copy than the reference had, actually
+   * needs.
+   *
+   * The default stays 'adapt': it is what a caller that says nothing has always been
+   * getting, and it is the safer answer when nobody has said which job this is.
+   *
+   * READ HERE, ABOVE THE FILL, not beside the apply. `unfilledSlots` plans what copy to
+   * draft and it has to plan against the geometry the page will actually be built with
+   * — planning in adapt and building in exact drafts for slots that will not exist.
+   */
+  const fit: LayoutFit = req.body?.fit === 'exact' ? 'exact' : 'adapt';
   let extraFill: ExtraContent | undefined;
-  const missing = unfilledSlots(reading, blank);
+  const missing = unfilledSlots(reading, blank, fit);
   if (missing && (missing.texts.length > 0 || missing.images > 0)) {
     const extraImages: { url: string; assetId?: string; alt?: string }[] = [];
     if (missing.images > 0) {
@@ -3126,21 +3450,8 @@ router.post('/issues/:id/pages/:pageId/apply-layout', rateLimit('mag2-agent', 20
   // anyway. The escape hatch exists for the user who wants the arrangement and their
   // own typography.
   const adoptType = req.body?.adoptType !== false;
-  /**
-   * HOW FAITHFULLY, and it is the caller's call, because the two modes lose different
-   * things (see `readingToExact`).
-   *
-   * 'exact' puts every region on the box it was read from: the reference's cross-axis
-   * positions survive — a cover line in its right half stays in the right half — and an
-   * unfillable slot leaves a hole rather than re-partitioning the page around it.
-   * 'adapt' re-composes through the frame tree, which is what a reference of a
-   * different shape, or a page carrying far more copy than the reference had, actually
-   * needs.
-   *
-   * The default stays 'adapt': it is what every existing caller has been getting, and
-   * it is the safer answer when nobody has said which job this is.
-   */
-  const fit: LayoutFit = req.body?.fit === 'exact' ? 'exact' : 'adapt';
+  // `fit` was read above the fill block — it decides what gets drafted as well as how
+  // the page is built, and the two must agree.
   const applied = applyReadingToPage(reading, blank, style, furnitureContextFor(issue, page), extraFill, adoptType, fit);
   if (!applied.page) {
     // 422: the request and the server are both fine — this layout and this page
@@ -3212,6 +3523,79 @@ router.post('/issues/:id/pages/:pageId/format', rateLimit('mag2-agent', 20, 60_0
     console.error('[magazineV2] format error:', err instanceof Error ? err.message : err);
     res.status(500).json({ error: 'The text pass hit a snag. Please try again.' });
   }
+});
+
+/**
+ * COPY ONE PAGE OF AN ATTACHED PDF ONTO THIS PAGE — verbatim.
+ *
+ * The sibling of `apply-layout`, and the distinction between them is the whole
+ * point of having two:
+ *
+ *   apply-layout  takes a reference's ARRANGEMENT and writes this magazine's own
+ *                 copy into it. It deliberately never reuses the reference's words
+ *                 (see referenceFill) — that rule is what stops us reprinting
+ *                 somebody else's magazine.
+ *   this route    takes the PAGE. Its real text, at its measured size, in its own
+ *                 colours, over its own artwork. A digitisation, not a design copy.
+ *
+ * Asking one endpoint to do both was never viable: they disagree about the single
+ * most important question, which is whether the words come across.
+ *
+ * 202 + a job, not a synchronous rebuild. The work is rasterize → erase the
+ * original glyphs → reconstruct the text → classify the graphics, which is exactly
+ * the load that makes PDF import a job. The client polls the page the same way it
+ * polls a retry.
+ */
+router.post('/issues/:id/pages/:pageId/copy-document-page', rateLimit('mag2-generate', 20, 60_000), async (req, res) => {
+  // The page-write gate, not an owner check: replacing every element on a page is a
+  // write, so a collaborator assigned to it may do this and a submitted/approved page
+  // is refused — the same answer they would get for typing into it.
+  const ctx = await loadEditablePage(req, res);
+  if (!ctx) return;
+  const { issue, page } = ctx;
+  if (isBusy(issue)) {
+    res.status(409).json({ error: 'That magazine is still being built — try again once it finishes.' });
+    return;
+  }
+  const docId = typeof req.body?.docId === 'string' ? req.body.docId.trim() : '';
+  if (!docId) {
+    res.status(400).json({ error: 'A docId (the PDF to copy from) is required.' });
+    return;
+  }
+  // THE MAGAZINE IS THE ALLOW-LIST. `docId` arrives from a request body, and this
+  // lookup — across both document stores — is what stops it being a way to read any
+  // PDF in the system. Same check the agent's layout tool makes.
+  const source = await magazineDocument(String(issue._id), docId);
+  if (!source) {
+    res.status(404).json({ error: 'That document is not in this magazine.' });
+    return;
+  }
+  if (!canCopyLayout(source)) {
+    res.status(415).json({ error: 'I can only copy a page from a PDF — a Word or text file has no page to copy.' });
+    return;
+  }
+  const raw = Number(req.body?.sourcePage);
+  const sourcePage = Number.isInteger(raw) && raw > 0 ? raw : 1;
+  // Checked HERE as well as in the worker, because a number the user typed deserves an
+  // answer now rather than a job that fails a minute later. `pages` is 0 when nothing
+  // has counted them (a chat attachment), and 0 must not be read as "empty" — see
+  // magazineDocs.ts — so an unknown count simply skips the check.
+  if (source.pages > 0 && sourcePage > source.pages) {
+    res.status(400).json({
+      error: `“${source.name}” has ${source.pages} page${source.pages === 1 ? '' : 's'}, so there is no page ${sourcePage} to copy.`,
+    });
+    return;
+  }
+  const now = new Date().toISOString();
+  await db.collection(COL.pages).updateOne(page._id, { status: 'pending', error: '', updatedAt: now });
+  await enqueueJob('copyDocumentPage', {
+    issueId: String(issue._id),
+    pageId: String(page._id),
+    docId: source.docId,
+    sourcePage,
+  });
+  await db.collection(COL.magazines).updateOne(String(issue._id), { updatedAt: now });
+  res.status(202).json({ ok: true, from: { name: source.name, sourcePage, pageCount: source.pages } });
 });
 
 export default router;

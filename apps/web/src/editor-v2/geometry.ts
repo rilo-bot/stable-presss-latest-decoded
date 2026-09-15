@@ -19,9 +19,18 @@ export function pctRect(el: Pick<MagazineElement, 'x' | 'y' | 'w' | 'h'>, page: 
   };
 }
 
-/** font-size as a fraction of the page's own width, in container-query units. */
-export function fontSizeCqw(fontSizePx: number, pageWidth: number): string {
-  return `${(fontSizePx / pageWidth) * 100}cqw`;
+/**
+ * A canonical-pixel LENGTH as a fraction of the page's own width, in
+ * container-query units.
+ *
+ * Every typographic length has to come through here, not just font-size. Tracking
+ * is stored in the same canonical px as the type it belongs to, so a `letterSpacing`
+ * left in raw px would stay fixed while the font-size scaled with the container —
+ * the tracking would visibly tighten as the page grew. Negative values are fine
+ * (the server clamps letterSpacing to -20…100).
+ */
+export function pxCqw(px: number, pageWidth: number): string {
+  return `${(px / pageWidth) * 100}cqw`;
 }
 
 /** Convert a screen-pixel delta to page-canonical-pixel delta given the rendered

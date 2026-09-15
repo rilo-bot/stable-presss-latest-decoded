@@ -15,7 +15,9 @@
 import { renderRetrieved, renderSource } from './sourceEnvelope.js';
 import { retrieveForIntent, type RetrievalReceipt } from './sourceRetrieval.js';
 import { intentTerms, type IntentKind } from './retrieval.js';
-import { getSourceDoc, loadCandidateChunks } from './sourceDocsDb.js';
+import { getSourceDoc, loadCandidateChunks, loadOutlineHeads } from './sourceDocsDb.js';
+import { buildOutline, formatOutline } from './sourceOutline.js';
+import { OUTLINE_BUDGET } from './sourceLimits.js';
 import { isReadable } from './sourceStore.js';
 
 /**
@@ -58,6 +60,61 @@ export interface ResolveOpts {
   task: string;
   /** Chunks earlier pages of this issue already cited, so this page prefers others. */
   usedKeys?: Set<string>;
+  /**
+   * Include a MAP of the document — one line per page — alongside the excerpt.
+   *
+   * For the issue PLANNER, which chooses a running order and would otherwise be
+   * doing it from a three-per-cent sample of a long document. Not for a page draft:
+   * that page needs depth on its own subject, and a map of the other 499 pages is
+   * budget spent on material it must not use.
+   */
+  withMap?: boolean;
+}
+
+/**
+ * Build the document map for one or more documents.
+ *
+ * With several documents each gets its own map under its own name, because a
+ * merged list of page numbers from three files is worse than no map at all — the
+ * planner would read "page 4" without knowing which document it belongs to.
+ *
+ * The budget is split between them, so attaching four documents cannot quietly
+ * quadruple the prompt.
+ */
+async function buildMap(docIds: string[]): Promise<string> {
+  if (docIds.length === 0) return '';
+  const share = Math.floor(OUTLINE_BUDGET / docIds.length);
+  const parts: string[] = [];
+  for (const docId of docIds) {
+    let heads;
+    try {
+      heads = await loadOutlineHeads(docId);
+    } catch (e) {
+      // A map is an enhancement. Losing it must never lose the excerpt with it.
+      console.warn('[sourceForPrompt] outline failed for', docId, e instanceof Error ? e.message : e);
+      continue;
+    }
+    // buildOutline, not a per-page map: the running headers can only be spotted by
+    // looking at the whole document, and a map that repeats one of them 400 times is
+    // the main way a document map turns out worthless.
+    const entries = buildOutline(heads);
+    const text = formatOutline(entries, { budgetChars: share });
+    // Logged because it is otherwise invisible: the map lives inside a prompt, so
+    // "did the planner get the shape of the document?" has no observable answer
+    // without this. Says what was mapped and what was dropped, so a document that
+    // maps to nothing (all running headers, or a budget too small) is diagnosable
+    // rather than just absent.
+    const mapped = entries.filter((e) => e.head).length;
+    console.log(
+      `[sourceForPrompt] map ${docId}: ${heads.length} page(s) read → ${mapped} mappable → ${
+        text ? `${text.split('\n').length - 1} on the map, ${text.length} chars` : 'no map'
+      }`,
+    );
+    if (!text) continue;
+    const doc = docIds.length > 1 ? await getSourceDoc(docId) : null;
+    parts.push(doc ? [doc.originalName, text].join('\n') : text);
+  }
+  return parts.join('\n\n');
 }
 
 /**
@@ -98,8 +155,12 @@ export async function resolveSource(sel: SourceSelector | undefined, opts: Resol
       budgetChars: opts.maxChars,
       usedKeys: opts.usedKeys,
     });
+    // The map is built from the same documents, and only when asked: it is one
+    // cheap projected query per document, but it is still a query.
+    const map = opts.withMap ? await buildMap(docs.map((d) => d.docId)) : '';
+
     return {
-      block: renderRetrieved(retrieved, { task: opts.task }),
+      block: renderRetrieved(retrieved, { task: opts.task, map: map || undefined }),
       receipt: retrieved.receipt,
       unavailable,
     };

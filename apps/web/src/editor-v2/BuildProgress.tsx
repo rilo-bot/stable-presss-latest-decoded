@@ -21,6 +21,7 @@
 
 import { useEffect, useRef, useState } from 'react';
 import { buildStatus, linesFor, elapsedLabel, type BuildPhase } from './buildStatus';
+import type { ReadingSummary } from './SourceReadingPanel';
 
 const GOLD = 'var(--gold-bright)';
 
@@ -139,6 +140,7 @@ export function BuildProgress({
   arrivedPages = 0,
   title,
   hint,
+  reading,
 }: {
   issue: IssueLike | null | undefined;
   isAdding?: boolean;
@@ -146,12 +148,26 @@ export function BuildProgress({
   /** Overrides the factual headline. For states with no build behind them. */
   title?: string;
   hint?: string;
+  /**
+   * The live document read, when one is running (see readingSummary).
+   *
+   * It takes over this display rather than sitting beside it. Before, reading had
+   * its own bordered box above the canvas while THIS said "Planning your issue" —
+   * two progress bars, and the one in the middle was describing work that had not
+   * started. Nothing is planned until the documents are read: the read IS the
+   * progress, so for its duration it owns the headline, the second line and the bar.
+   */
+  reading?: ReadingSummary | null;
 }) {
   const st = buildStatus(issue, isAdding);
-  const { line, tick } = useRotatingLine(title ? 'finishing' : st.phase);
+  // No rotating flavour during a read. Its lines are about planning ("Sketching a
+  // running order", "Mixing a colour palette") and none of it is happening yet —
+  // the document's own progress is both truer and more use.
+  const { line, tick } = useRotatingLine(title || reading ? 'finishing' : st.phase);
   const elapsed = useElapsed();
   const total = st.count?.total ?? Math.max(0, Math.floor(Number(issue?.pagesTotal) || 0));
   const shown = Math.max(arrivedPages, st.count?.done ?? 0);
+  const headline = title ?? reading?.headline ?? st.headline;
 
   return (
     <div className="flex h-full w-full flex-col items-center justify-center px-6">
@@ -162,32 +178,47 @@ export function BuildProgress({
             changes a handful of times, and the count stays reachable at any
             moment through the progressbar's aria-valuenow below. */}
         <span className="sr-only" role="status" aria-live="polite">
-          {title ?? (st.phase === 'digitizing' ? 'Reading your document' : st.phase === 'composing' ? 'Building your pages' : 'Planning your issue')}
+          {title ??
+            reading?.headline ??
+            (st.phase === 'digitizing' ? 'Reading your document' : st.phase === 'composing' ? 'Building your pages' : 'Planning your issue')}
         </span>
         <p aria-hidden="true" className="text-center text-ui-lg font-semibold tracking-tight">
-          <span className="shimmer-text">{title ?? st.headline}</span>
+          <span className="shimmer-text">{headline}</span>
         </p>
 
-        {/* Flavour. Keyed on `tick` so React remounts it and the flip-in replays. */}
-        <p key={tick} aria-hidden="true" className="build-line-in mt-1.5 text-center text-ui text-studio-ink-3">
-          {line}
+        {/* Second line: the document being read, or the rotating flavour. Keyed on
+            `tick` so React remounts it and the flip-in replays. */}
+        <p
+          key={reading ? 'reading' : tick}
+          aria-hidden="true"
+          className="build-line-in mt-1.5 truncate text-center text-ui text-studio-ink-3"
+          title={reading?.detail}
+        >
+          {reading?.detail ?? line}
         </p>
 
         <div className="mt-4">
-          <Track fraction={st.fraction} />
+          <Track fraction={reading ? reading.fraction : st.fraction} />
           <div className="mt-1.5 flex items-center justify-between text-ui-sm tabular-nums text-studio-ink-4">
-            <span>{st.count ? `${st.count.done} of ${st.count.total} pages` : 'working'}</span>
+            <span>{reading ? reading.cost || 'reading' : st.count ? `${st.count.done} of ${st.count.total} pages` : 'working'}</span>
             <span>{elapsed}</span>
           </div>
         </div>
 
-        {total > 0 && (
+        {/* No tiles during a read. `pagesTotal` is the DEFAULT the issue was created
+            with, not a plan — one tile per page of a magazine nobody has designed
+            yet, filling up for reasons unrelated to the tiles. */}
+        {!reading && total > 0 && (
           <div className="mt-4">
             <PageTiles arrived={shown} total={total} />
           </div>
         )}
 
-        {hint && <p className="mt-4 text-center text-ui-sm leading-relaxed text-studio-ink-4">{hint}</p>}
+        <p className="mt-4 text-center text-ui-sm leading-relaxed text-studio-ink-4">
+          {reading
+            ? 'You can leave this open — the magazine starts building itself as soon as the reading finishes.'
+            : hint}
+        </p>
       </div>
     </div>
   );

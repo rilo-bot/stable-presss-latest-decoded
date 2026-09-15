@@ -177,6 +177,38 @@ export function AiPanel() {
     }
   };
 
+  // ── Adding files straight from the Uploads tab ──
+  // The tab could previously only ever be filled by going to Chat and using its
+  // paperclip — the empty-state text said so, but a tab named "Uploads" that
+  // can't itself add anything is a dead end for anyone who lands here first.
+  const uploadsFileRef = useRef<HTMLInputElement>(null);
+  const [uploadsAdding, setUploadsAdding] = useState(false);
+  const addUploadFiles = async (list: FileList | null) => {
+    if (!list || list.length === 0 || !issueId) return;
+    setUploadsAdding(true);
+    for (const f of Array.from(list)) {
+      try {
+        if (f.type.startsWith('image/')) {
+          const media = await uploadMediaImage(issueId, await placeableImage(f), f.name);
+          setUploadImages((prev) => [media, ...prev]);
+        } else {
+          let sourceText = '';
+          try {
+            sourceText = attachmentSourceText(await ingestFile(f));
+          } catch {
+            /* still stored below even if the text couldn't be read client-side */
+          }
+          const doc = await uploadMediaDoc(issueId, f, { sourceText });
+          setUploads((prev) => [doc, ...prev]);
+        }
+      } catch (e) {
+        toast.error(e instanceof Error ? e.message : `Could not add “${f.name}”.`);
+      }
+    }
+    setUploadsAdding(false);
+    if (uploadsFileRef.current) uploadsFileRef.current.value = '';
+  };
+
   // Revoke every attachment's object URL on unmount (removal revokes eagerly).
   const attsRef = useRef<PanelAttachment[]>([]);
   attsRef.current = atts;
@@ -258,7 +290,11 @@ export function AiPanel() {
    * completely untouched.
    */
   const onPasteFiles = (e: React.ClipboardEvent) => {
-    if (tab !== 'chat' || readOnlyThread) return;
+    // Not while a previous turn is still going out (ingesting) or the assistant
+    // is still replying (chatBusy) — a paste landing here would join the NEXT
+    // turn regardless, but showing it as if it's part of what's currently
+    // sending is exactly the confusion this composer needs to avoid.
+    if (tab !== 'chat' || readOnlyThread || ingesting || chatBusy) return;
     // Let the canvas's own inline text editor keep its paste (it inserts plain
     // text into a contentEditable). Only relevant if this panel ever hosts one.
     const target = e.target as HTMLElement | null;
@@ -446,8 +482,8 @@ export function AiPanel() {
       >
         <Sparkles size={16} style={{ color: 'var(--gold-bright)' }} />
         <div className="leading-tight">
-          <div className="text-ui font-bold" style={{ color: 'var(--parchment)' }}>Design Helper</div>
-          <div className="text-ui-sm" style={{ color: 'var(--gold-mid)' }}>Edits this page — staged for your approval</div>
+          <div className="text-ui font-bold" style={{ color: 'var(--parchment)' }}>Magazine AI Studio</div>
+          {/* <div className="text-ui-sm" style={{ color: 'var(--gold-mid)' }}>Edits this page — staged for your approval</div> */}
         </div>
         {voice.voiceReady && (
           <button
@@ -504,13 +540,29 @@ export function AiPanel() {
       {threadsOpen && <ThreadList onClose={() => setThreadsOpen(false)} />}
 
       {tab === 'uploads' ? (
-        <div className="min-h-0 flex-1 space-y-1.5 overflow-y-auto px-3 py-3">
+        <div className="studio-scroll min-h-0 flex-1 space-y-1.5 overflow-y-auto px-3 py-3">
+          <input
+            ref={uploadsFileRef}
+            type="file"
+            accept={ATTACH_ACCEPT}
+            multiple
+            className="hidden"
+            onChange={(e) => void addUploadFiles(e.target.files)}
+          />
+          <button
+            type="button"
+            onClick={() => uploadsFileRef.current?.click()}
+            disabled={uploadsAdding}
+            className="flex w-full items-center justify-center gap-1.5 rounded-md border border-dashed border-studio-edge py-2 text-ui-sm font-semibold text-studio-ink-2 hover:border-[var(--gold-bright)]/60 hover:text-studio-ink disabled:opacity-50"
+          >
+            {uploadsAdding ? <ShimmerText>Adding…</ShimmerText> : <><Paperclip size={13} /> Add a document or photo</>}
+          </button>
           {uploadsLoading && (
             <div className="text-ui text-studio-ink-3" role="status" aria-live="polite"><ShimmerText>Loading your uploads</ShimmerText></div>
           )}
           {!uploadsLoading && uploadCount === 0 && (
             <p className="text-ui leading-relaxed text-studio-ink-3">
-              No uploads yet. In <strong className="text-studio-ink">Chat</strong>, attach a document or image — it’s saved here and can fill a page later.
+              No uploads yet. Add a document or photo above — it’s saved here and can fill this page later.
             </p>
           )}
           {uploads.map((u) => (
@@ -520,8 +572,8 @@ export function AiPanel() {
                 {u.originalName}
               </button>
               {u.hasText && (
-                <button type="button" onClick={() => void fillFromUpload(u)} disabled={chatBusy} className="flex-shrink-0 rounded-sm border border-studio-edge px-1.5 py-0.5 text-ui-sm text-studio-ink-2 hover:bg-studio-raise-2 disabled:opacity-40">
-                  Fill page
+                <button type="button" onClick={() => void fillFromUpload(u)} disabled={chatBusy} className="flex-shrink-0 rounded-sm border border-studio-edge px-1.5 py-0.5 text-ui-sm text-studio-ink-2 hover:bg-studio-raise-2 disabled:opacity-40" title="Use this document to fill the page you're currently on">
+                  Fill this page
                 </button>
               )}
             </div>
@@ -539,7 +591,7 @@ export function AiPanel() {
           below its content, pushing the composer past the panel's clipped bottom edge
           (the "input slides off the bottom" bug). With it, this scrolls and the
           composer stays pinned and visible. */}
-      <div ref={scrollRef} className="min-h-0 flex-1 space-y-3 overflow-y-auto px-3 py-3">
+      <div ref={scrollRef} className="studio-scroll min-h-0 flex-1 space-y-3 overflow-y-auto px-3 py-3">
         {chatHasMore && (
           <div className="flex justify-center">
             <button
@@ -553,11 +605,13 @@ export function AiPanel() {
         )}
         {chat.length === 0 && (
           <p className="text-ui leading-relaxed text-studio-ink-3">
-            I’m your studio assistant for this page. Ask me to <strong className="text-studio-ink">rewrite the headline</strong>,{' '}
-            <strong className="text-studio-ink">recolour a block</strong>, <strong className="text-studio-ink">add a photo</strong>,{' '}
-            or <strong className="text-studio-ink">move things around</strong>, or <strong className="text-studio-ink">attach a document</strong> and ask me to fill this page from it.{' '}
-            <strong className="text-studio-ink">Paste an image</strong> anywhere here (Ctrl/Cmd+V) — a screenshot, a photo, anything you’ve copied — and I can put it on the page. Select an element first and say “this”. Everything I
-            propose waits for your <strong className="text-studio-ink">Apply</strong>.
+            I’m your Design Helper for this page. I can:
+            <br />• <strong className="text-studio-ink">Rewrite words</strong> — "rewrite the headline"
+            <br />• <strong className="text-studio-ink">Change colours</strong> — "recolour this block"
+            <br />• <strong className="text-studio-ink">Add a photo</strong> — attach one, or paste it with Ctrl/Cmd+V
+            <br />• <strong className="text-studio-ink">Fill this page</strong> — attach a document and ask me to use it
+            <br />• <strong className="text-studio-ink">Change one thing</strong> — click it on the page first, then tell me what to do
+            <br /><br />Nothing changes until you press <strong className="text-studio-ink">Use these changes</strong>.
           </p>
         )}
         {chat.map((m, i) => (
@@ -611,7 +665,7 @@ export function AiPanel() {
 
       {/* Review & apply tray */}
       {showTray && (
-        <div className="max-h-[46%] space-y-2 overflow-y-auto border-t-2 px-3 py-2.5" style={{ borderColor: 'var(--gold-mid)', background: 'rgba(212,168,67,0.08)' }}>
+        <div className="studio-scroll max-h-[46%] space-y-2 overflow-y-auto border-t-2 px-3 py-2.5" style={{ borderColor: 'var(--gold-mid)', background: 'rgba(212,168,67,0.08)' }}>
           <div className="flex flex-wrap items-center justify-between gap-2">
             <span className="flex items-center gap-1.5 text-ui-sm font-bold uppercase tracking-wider" style={{ color: 'var(--gold-light)' }}>
               <span className="flex h-5 min-w-5 items-center justify-center rounded-full px-1 text-ui-sm font-bold text-studio-bg" style={{ background: 'var(--gold-bright)' }}>{proposals.length}</span>
@@ -694,15 +748,22 @@ export function AiPanel() {
             </span>
           </div>
         ) : (
-        <form onSubmit={(e) => { e.preventDefault(); void send(); }} className="flex items-end gap-2">
+        // ONE input: a single bordered pill holds the textarea plus every
+        // control (attach, mic, send) as plain icon buttons inside it, instead
+        // of separate labelled buttons sitting beside a separate input box.
+        <form
+          onSubmit={(e) => { e.preventDefault(); void send(); }}
+          className="flex items-end gap-1 rounded-[26px] border border-studio-edge bg-studio-raise py-1.5 pl-1.5 pr-1.5 transition-colors focus-within:border-[var(--gold-bright)]/60"
+        >
           <button
             type="button"
             onClick={() => fileRef.current?.click()}
+            disabled={ingesting || chatBusy}
             aria-label="Attach documents or images"
             title="Attach documents/images — docs fill the page, images can be placed on it. You can also paste an image (Ctrl/Cmd+V)."
-            className="flex h-8 w-8 flex-shrink-0 items-center justify-center rounded-full border border-studio-edge text-studio-ink-2 hover:bg-studio-raise-2 hover:text-studio-ink"
+            className="flex h-10 w-10 flex-shrink-0 items-center justify-center rounded-full text-studio-ink-2 hover:bg-studio-raise-2 hover:text-studio-ink disabled:opacity-40"
           >
-            <Paperclip size={14} />
+            <Paperclip size={18} />
           </button>
           <textarea
             ref={taRef}
@@ -715,40 +776,54 @@ export function AiPanel() {
                 void send();
               }
             }}
-            disabled={voice.recording || voice.transcribing}
+            // A turn already on its way (ingesting) or the assistant still replying
+            // (chatBusy) both lock the box — previously only the voice states did,
+            // so you could keep typing/attaching over a send already in flight with
+            // no sign anything was happening, and Enter would just silently do
+            // nothing (send() itself was already guarded — this makes that guard
+            // VISIBLE instead of feeling like a dead keypress).
+            disabled={voice.recording || voice.transcribing || ingesting || chatBusy}
             placeholder={
               voice.recording ? 'Listening…'
               : voice.transcribing ? 'Transcribing…'
+              : ingesting ? 'Sending…'
+              : chatBusy ? 'The Design Helper is replying…'
               : atts.length > 0 ? 'e.g. “fill this page from the document and place the graphs”'
-              : 'Ask the studio assistant…  (Shift+Enter for a new line)'
+              : 'Ask the Design Helper…'
             }
-            className="max-h-40 min-h-[38px] flex-1 resize-none overflow-y-auto rounded-2xl border border-studio-edge bg-studio-raise px-3.5 py-2 text-ui leading-snug text-studio-ink outline-none transition-colors placeholder:text-studio-ink-4 focus:border-[var(--gold-bright)]/50 focus:bg-studio-raise disabled:opacity-60"
+            className="studio-scroll max-h-40 min-h-[44px] min-w-0 flex-1 resize-none overflow-y-auto bg-transparent px-1 py-2.5 text-ui leading-snug text-studio-ink outline-none placeholder:text-studio-ink-4 disabled:opacity-60"
           />
-          {/* Mic — v1 order (after the textarea), v1 icon logic: transcribing→spinner,
-              recording→stop (■), idle→mic; hidden while a reply is generating. */}
-          {voice.voiceReady && !chatBusy && (
+          {/* Mic — v1 icon logic: transcribing→spinner, recording→stop (■);
+              hidden while a reply is generating OR a previous turn is still going
+              out. The voice hook posts straight through sendChat, bypassing this
+              panel's own ingesting guard entirely — visible here during an upload
+              risked a second turn setting chatBusy first and the store's own
+              chatBusy guard then silently dropping the attachment's message when
+              THIS send() finally tried to post it. */}
+          {voice.voiceReady && !chatBusy && !ingesting && (
             <button
               type="button"
               onClick={() => void voice.toggleMic()}
               disabled={voice.transcribing}
-              aria-label={voice.recording ? 'Stop recording' : 'Speak to the studio assistant'}
+              aria-label={voice.recording ? 'Stop recording' : 'Speak to the Design Helper'}
               title={voice.recording ? 'Stop & send' : 'Speak'}
               className={
-                'flex h-8 w-8 flex-shrink-0 items-center justify-center rounded-full border transition-colors disabled:opacity-50 ' +
-                (voice.recording ? 'animate-pulse border-red-500 bg-red-500/15 text-red-400' : 'border-studio-edge text-studio-ink-2 hover:bg-studio-raise-2')
+                'flex h-10 w-10 flex-shrink-0 items-center justify-center rounded-full transition-colors disabled:opacity-50 ' +
+                (voice.recording ? 'animate-pulse bg-red-500/15 text-red-400' : 'text-studio-ink-2 hover:bg-studio-raise-2')
               }
             >
-              {voice.transcribing ? <Loader2 size={13} className="animate-spin" /> : voice.recording ? <Square size={13} /> : <Mic size={13} />}
+              {voice.transcribing ? <Loader2 size={17} className="animate-spin" /> : voice.recording ? <Square size={17} /> : <Mic size={17} />}
             </button>
           )}
           <button
             type="submit"
             aria-label="Send"
+            title="Send"
             disabled={(!input.trim() && atts.length === 0) || chatBusy || ingesting}
-            className="flex h-8 w-8 flex-shrink-0 items-center justify-center rounded-full text-studio-bg disabled:opacity-40"
+            className="flex h-10 w-10 flex-shrink-0 items-center justify-center rounded-full text-studio-bg disabled:opacity-40"
             style={{ background: 'var(--gold-bright)' }}
           >
-            {chatBusy || ingesting ? <Loader2 size={13} className="animate-spin" /> : <Send size={13} />}
+            {chatBusy || ingesting ? <Loader2 size={17} className="animate-spin" /> : <Send size={17} />}
           </button>
         </form>
         )}

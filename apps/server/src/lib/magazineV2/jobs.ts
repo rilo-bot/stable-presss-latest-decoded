@@ -12,14 +12,40 @@
 
 import { db } from '../db.js';
 import { COL } from './collections.js';
+import { jobIsPresumedDead, silentForMs, type JobLiveness } from './jobHealth.js';
 
-export type MagazineJobType = 'processIssue' | 'processPage' | 'generateIssue' | 'generatePages' | 'readSourceDoc';
+export type MagazineJobType =
+  | 'processIssue'
+  | 'processPage'
+  | 'copyDocumentPage'
+  | 'generateIssue'
+  | 'generatePages'
+  | 'readSourceDoc';
 
 export interface JobPayloads {
   /** Digitize a freshly-uploaded PDF into pages + elements (the whole issue). */
   processIssue: { issueId: string };
   /** Re-run extraction for a single page (the per-page retry). */
   processPage: { issueId: string; pageId: string; index: number };
+  /**
+   * Reproduce ONE page of an attached PDF onto ONE page of this magazine — the
+   * "copy this page" door, as opposed to "use this design".
+   *
+   * The distinction is the whole reason this exists. `apply-layout` takes a
+   * reference's ARRANGEMENT and writes new copy for this magazine, deliberately
+   * never reusing the reference's words. This takes the PAGE: its real text, at its
+   * real size, in its real colours, over its own artwork. Same extractor the PDF
+   * import uses (`processSinglePage`) — it already accepts the opened document as an
+   * argument, so nothing about the extraction changes; only where the bytes come
+   * from, which is any PDF this magazine holds rather than the one it was born from.
+   *
+   * `sourcePage` is 1-based, as a person says it.
+   *
+   * A job rather than a request because the work is rasterize → erase the original
+   * glyphs → rebuild the text → classify the graphics. That is the same load that
+   * made import a job, and it would block the event loop in the API.
+   */
+  copyDocumentPage: { issueId: string; pageId: string; docId: string; sourcePage: number };
   /**
    * Build a whole issue from a brief / source document (from-scratch AI generation).
    *
@@ -51,7 +77,20 @@ export interface JobPayloads {
    */
   readSourceDoc: {
     docId: string;
+    /**
+     * The issue whose generation is waiting on this read. Present ONLY then.
+     *
+     * Not decoration: healStuckIssue finds an issue's live jobs by
+     * `payload.issueId`, so without this the read was invisible to it — and an issue
+     * created from an attached document, with nothing else queued against it, was
+     * marked failed twenty seconds later while the worker read on. A read that
+     * nothing is waiting for (a document uploaded on its own) deliberately omits it,
+     * so its failure cannot fail an unrelated issue that happens to be generating.
+     */
+    issueId?: string;
     maxPages?: number;
+    /** Pages one run may read before re-enqueueing itself. See JOB_BATCH_PAGES. */
+    batchPages?: number;
     onDone?: { type: 'generateIssue'; payload: Record<string, unknown> } | null;
   };
 }
@@ -117,12 +156,22 @@ export async function healStuckIssue(issue: { _id: string; status?: string; upda
     return markIssueFailed(String(issue._id), 'Generation was interrupted before it could finish. Please try again.');
   }
 
-  // A job exists — it is only "dead" once it has outlived any possible real run.
-  const stuck = live.find((j) => {
-    const t = Date.parse(String(j.startedAt ?? j.updatedAt ?? j.createdAt ?? ''));
-    return Number.isFinite(t) && now - t > STUCK_JOB_MS;
-  });
+  // A job exists — is it alive?
+  //
+  // This used to ask "has it outlived any possible real run?", judged from start
+  // time. That question has no good answer once a document read can legitimately
+  // take hours, and getting it wrong here is severe: THIS FUNCTION RUNS ON
+  // GET /issues/:id, which is exactly what the studio polls to display reading
+  // progress. So the act of watching a long read was what killed it — the
+  // watchdog retired the job and failed the issue while the worker read on,
+  // oblivious, and then chained generation into a failed issue.
+  //
+  // Now it asks "has it stopped reporting?" — see jobHealth.ts. A job that beats
+  // is alive however long it runs; one that stops beating is caught in minutes.
+  // The worker's own sweep imports the same decision, so the two cannot disagree.
+  const stuck = live.find((j) => jobIsPresumedDead(j as JobLiveness, now, { graceMs: STUCK_JOB_MS }));
   if (!stuck) return false;
+  const silent = silentForMs(stuck as JobLiveness, now);
 
   // Retire the dead job first (compare-and-set, so a job a revived worker just
   // moved on is left alone), then fail the issue. TTL stamp matches the worker's.
@@ -132,7 +181,7 @@ export async function healStuckIssue(issue: { _id: string; status?: string; upda
     { status: String(stuck.status) },
     {
       status: 'failed',
-      lastError: 'Marked failed by the API watchdog: exceeded the maximum possible job runtime (worker likely died).',
+      lastError: `Marked failed by the API watchdog: stopped reporting progress${silent === null ? '' : ` for ${Math.round(silent / 60_000)} minutes`} (worker likely died).`,
       finishedAt: nowIso,
       updatedAt: nowIso,
       expiresAt: new Date(now + 7 * 24 * 60 * 60_000),

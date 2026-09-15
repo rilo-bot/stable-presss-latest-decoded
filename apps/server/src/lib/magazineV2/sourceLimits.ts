@@ -23,6 +23,19 @@ export const SOURCE_BUDGET = {
 } as const;
 
 /**
+ * Characters the DOCUMENT MAP may use in the planner prompt (sourceOutline.ts).
+ *
+ * Its own budget, on top of SOURCE_BUDGET.plan rather than inside it, because the
+ * two buy different things: the excerpt buys detail about part of the document, the
+ * map buys the shape of all of it. Taking the map out of the excerpt budget would
+ * mean paying for breadth by giving up the depth that makes a page worth reading.
+ *
+ * 3,000 characters is roughly seventy mapped pages at full length, and far more
+ * once thinning kicks in — enough to map any real document.
+ */
+export const OUTLINE_BUDGET = 3_000;
+
+/**
  * NOT here yet, deliberately: the two INTAKE caps — the 60k slice in
  * POST /issues/generate and the 80k slice in the ingest response. They live in
  * routes owned by other work in flight this week, and Phase 2 removes both

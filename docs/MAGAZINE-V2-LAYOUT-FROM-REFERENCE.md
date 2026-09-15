@@ -339,3 +339,115 @@ anything past `MAX_TREE_DEPTH`, so a container emitted one level too deep doesn'
 has **every leaf inside it silently deleted**. The first converter had that off by one and none of
 the shape fixtures went deep enough to notice. `canContain(d) = d + 2 <= MAX_TREE_DEPTH` now states
 the arithmetic once, and the test that covers it was **verified by re-planting the off-by-one**.
+## 10. The document door — a PDF page as the reference (P5, first half)
+
+Until now "use this layout" meant "use this **picture**". A user with the design they
+want sitting in a PDF had to screenshot a page and attach the screenshot, and most
+never worked that out — they attached the PDF, asked for its layout, and got a page
+written from the document's *words* with its design ignored. Nothing in the pipeline
+had ever seen the page.
+
+### Measured, not read
+
+The obvious fix is to render the page to an image and send it down the existing
+path. That would work, and it would be worse than what a PDF makes possible.
+
+`readLayoutImage` exists because a photograph is all we have: a vision model looks at
+it and *estimates* where things are, as fractions of the reference. Every number it
+returns is a guess, which is why `confidence` is a field.
+
+A PDF does not need guessing. It states where every word and picture sits, in points,
+along with the size of the type. So the document path **measures**:
+
+| | image reference | document reference |
+|---|---|---|
+| boxes | model's estimate | measured, exact |
+| type size | model's estimate | measured, exact |
+| ink colour | model can see it | **not available** (see below) |
+| cost | one vision call | none |
+| `confidence` | model's own number | `1` |
+
+Both produce a `LayoutReading` and go through `normalizeLayoutReading`, so everything
+downstream — `readingToSpec`, `applyReadingToPage`, `referenceFill`, the fidelity
+check — is untouched and cannot tell which door a reading came through. That is the
+point: "match this layout" must not quietly be two features with different behaviour
+depending on what the user happened to attach.
+
+### What is measured and what is inferred
+
+Kept deliberately apart, in `pdfPageLayout.ts`:
+
+- **Measured** — boxes, type size, the words, page aspect, where the pictures are.
+- **Inferred** — `role` (is this a headline or a caption?), `columns`, `margin`. A PDF
+  records geometry, never intent. All three heuristics live in that one file so "why
+  did it decide that was a headline?" has one answer.
+
+Three of those heuristics are worth knowing because each fixes a failure found by its
+own test:
+
+- **Body size is weighted by CHARACTERS, not blocks.** A page with one paragraph and
+  nine small credits has nine furniture blocks and one of prose; counting blocks makes
+  the credits the body and reports the actual body copy as a headline.
+- **Lines split on a horizontal gap, not just a vertical one.** Two columns of body
+  copy sit at identical heights in identical type — a rule phrased only vertically
+  merges them into one line the width of the page, and every judgement after it
+  inherits the mistake.
+- **A kicker is defined by WHERE it is, not by being tiny.** The strap over a headline
+  is often only slightly smaller than body copy; a size-only rule called it body text
+  and the composition lost the element that says which section the page belongs to.
+
+### No colour, on purpose
+
+`ReadRegion.color`, `weight` and `face` are omitted by this path. pdfjs reports fill
+colour in the operator list, which is a separate stream from `getTextContent`'s items
+with no reliable correspondence between them — a colour here would be a guess about
+which run it belonged to. Those fields are optional precisely so an honest reader can
+leave them out, and "the page keeps its own type" is the right fallback (§2 ①).
+
+MuPDF *does* report colour per glyph, and the worker already uses it for PDF import
+(`apps/worker/src/lib/pdf.ts`). It is not reachable from here: the server's
+`rootDir: src` forbids importing across apps, and duplicating ~200 lines of that
+file's subtle line-grouping is the drift this codebase keeps paying for. If colour
+turns out to matter, the move is to promote that module into shared code — not to
+copy it.
+
+### Entry points
+
+- `POST /issues/:id/layout-reference` — now takes `{ docId, pageNo }` as well as
+  `{ assetId }`. One endpoint, because both produce the same reading. Responds with
+  `from`, saying which door it came through, so the client can label what it is about
+  to copy.
+- `use_document_as_layout` (agent tool) — `{ docId, sourcePage?, page? }`. `sourcePage`
+  is the page **of the document**; `page` is the **magazine** page to rebuild.
+- `list_documents` (agent tool) — how the model finds a `docId`, with each document's
+  page count and whether its layout can be copied at all.
+
+### Two stores, one lookup
+
+A PDF uploaded on the way into a new magazine lands in `sourceDocs`; one attached in
+the studio chat lands in the media library as `kind:'doc'`. That split is an accident
+of two features growing separately, not a distinction the user makes — they attached a
+PDF either way. `magazineDocs.ts` looks in both, and both callers use it, so the
+feature cannot be half-working for half the ways of getting a document here.
+
+### `use_image_as_layout` now refuses documents
+
+It was the one image tool with an unfiltered media lookup — deliberately, so it can
+read a `kind:'reference'` row, which every other tool must exclude. But the exemption
+was written as "no filter at all", which also let a `kind:'doc'` row through: a PDF
+handed to a vision model as an image, for a 90-second timeout, a billed call, and
+*"I could not make out a layout in that image."* It now excludes `doc` specifically,
+and the refusal names the tool that does work.
+
+### Not yet
+
+- **The page raster.** MuPDF/`sharp` could render the chosen page to a PNG, which
+  would let the user SEE what is being matched and would give the image path a
+  fallback. Deliberately deferred: the reading needs no pixels, and rasterising is the
+  expensive half.
+- **Whole-issue matching** — generation following a document page for page, rather
+  than one page at a time. This is the primitive that needs; it is the second half of
+  P5.
+- **Picking a page in the UI.** The API takes `pageNo` and the tool takes
+  `sourcePage`; nothing yet offers a picker, so a user who does not say which page
+  gets page 1.

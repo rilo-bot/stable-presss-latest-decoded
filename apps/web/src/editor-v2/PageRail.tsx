@@ -104,6 +104,12 @@ function Tile({
   }, [active, cached, liveRev, page.id]);
   const pending = page.status === 'pending';
   const failed = page.status === 'failed';
+  // AI proposals survive a page change (store.ts) so nothing is lost by scrolling
+  // away — but that also means they can sit waiting with zero sign they exist. A
+  // small badge here is the only place a non-active page can say "come back and
+  // decide on this" instead of the Review & Apply tray, which only ever shows for
+  // the page you're currently on.
+  const hasPendingReview = useEditorStore((st) => st.proposalsPageId === page.id && st.proposals.length > 0);
 
   // Ask for the thumbnail the first time this tile is anywhere near the viewport.
   // The observer accounts for the rail's own scroll clipping, so an unscrolled
@@ -138,7 +144,7 @@ function Tile({
       tabIndex={0}
       aria-current={active ? 'page' : undefined}
       aria-label={`Page ${n} of ${total}`}
-      title={tileTitle(page, n) + (canManage ? '\n\nDrag to reorder · Alt+↑/↓ to move' : '')}
+      title={tileTitle(page, n) + (hasPendingReview ? '\n\nThe Design Helper made changes here waiting for your review' : '') + (canManage ? '\n\nDrag to reorder · Alt+↑/↓ to move' : '')}
       draggable={canManage}
       onDragStart={onDragStart}
       onDragOver={onDragOver}
@@ -164,25 +170,29 @@ function Tile({
           dragging asks for sustained pointer precision that not everyone has, and the
           keyboard equivalent (Alt+↑/↓) was previously invisible on screen. */}
       {canManage ? (
-        <div className="flex flex-shrink-0 flex-col items-center gap-0.5 pt-0.5">
+        /* 24×24 each, which is the floor — they were 20 with 2px between them, so the
+           two opposite actions sat inside one fingertip. This is the control that
+           exists BECAUSE dragging asks for precision not everyone has; it cannot
+           itself demand precision. */
+        <div className="flex flex-shrink-0 flex-col items-center gap-1 pt-0.5">
           <button
             onClick={(e) => { e.stopPropagation(); onMove(-1); }}
             disabled={n <= 1}
-            className="flex h-5 w-5 items-center justify-center rounded-sm text-studio-ink-3 hover:bg-studio-raise-2 hover:text-studio-ink disabled:opacity-20 disabled:hover:bg-transparent"
+            className="flex h-6 w-6 items-center justify-center rounded-sm text-studio-ink-3 hover:bg-studio-raise-2 hover:text-studio-ink disabled:opacity-20 disabled:hover:bg-transparent"
             title={`Move page ${n} up`}
             aria-label={`Move page ${n} up`}
           >
-            <ChevronUp size={12} />
+            <ChevronUp size={14} />
           </button>
           <span className={'text-center text-ui-sm tabular-nums ' + (active ? 'text-studio-ink' : 'text-studio-ink-3')}>{n}</span>
           <button
             onClick={(e) => { e.stopPropagation(); onMove(1); }}
             disabled={n >= total}
-            className="flex h-5 w-5 items-center justify-center rounded-sm text-studio-ink-3 hover:bg-studio-raise-2 hover:text-studio-ink disabled:opacity-20 disabled:hover:bg-transparent"
+            className="flex h-6 w-6 items-center justify-center rounded-sm text-studio-ink-3 hover:bg-studio-raise-2 hover:text-studio-ink disabled:opacity-20 disabled:hover:bg-transparent"
             title={`Move page ${n} down`}
             aria-label={`Move page ${n} down`}
           >
-            <ChevronDown size={12} />
+            <ChevronDown size={14} />
           </button>
         </div>
       ) : (
@@ -222,9 +232,10 @@ function Tile({
             and the whole point of a thumbnail is that you can see the page. The
             element count that the old numbered tab carried is gone with it: you can
             now see how full a page is. */}
-        {(showDot || page.selectedForPublish === false || !editable) && (
+        {(showDot || page.selectedForPublish === false || !editable || hasPendingReview) && (
           <div className="pointer-events-none absolute inset-x-0 bottom-0 flex items-center gap-1 bg-studio-bg/70 px-1 py-0.5">
             {showDot && <span className={'h-1.5 w-1.5 flex-shrink-0 rounded-full ' + (page.approvalStale ? 'bg-amber-400' : tone.dot)} />}
+            {hasPendingReview && <Sparkles size={9} className="flex-shrink-0 text-[var(--gold-bright)]" />}
             {page.selectedForPublish === false && <EyeOff size={9} className="flex-shrink-0 text-studio-ink-3" />}
             {!editable && <Lock size={9} className="flex-shrink-0 text-studio-ink-3" />}
           </div>
@@ -236,14 +247,21 @@ function Tile({
             to appear only on the ACTIVE page too, which meant duplicating page 9
             started by navigating to it. */}
         {canManage && (
-          <div className="absolute right-0.5 top-0.5 flex gap-1">
+          <>
+            {/* OPPOSITE CORNERS, not a pair 4px apart.
+                These were adjacent 21px buttons, and one of them cannot be undone:
+                deletePage prunes the page's own entries out of both undo stacks
+                (store.ts, withoutPage), so Ctrl+Z will not bring it back the way it
+                does for everything else in this studio. Adjacent + small + permanent is
+                the combination to never ship; putting the width of the thumbnail
+                between them costs nothing, and both now clear 24px. */}
             <button
               onClick={(e) => { e.stopPropagation(); void useEditorStore.getState().duplicatePage(page.id); }}
-              className="rounded-sm bg-studio-bg/90 p-1 text-studio-ink-2 hover:bg-studio-bg hover:text-studio-ink"
+              className="absolute left-0.5 top-0.5 rounded-sm bg-studio-bg/90 p-1.5 text-studio-ink-2 hover:bg-studio-bg hover:text-studio-ink"
               title={`Duplicate page ${n}`}
               aria-label={`Duplicate page ${n}`}
             >
-              <Copy size={13} />
+              <Copy size={14} />
             </button>
             <button
               onClick={(e) => {
@@ -263,13 +281,13 @@ function Tile({
                 }
               }}
               disabled={total <= 1}
-              className="rounded-sm bg-studio-bg/90 p-1 text-red-300/90 hover:bg-studio-bg hover:text-red-300 disabled:opacity-30"
+              className="absolute right-0.5 top-0.5 rounded-sm bg-studio-bg/90 p-1.5 text-red-300/90 hover:bg-studio-bg hover:text-red-300 disabled:opacity-30"
               title={total <= 1 ? 'A magazine needs at least one page' : `Delete page ${n}`}
               aria-label={`Delete page ${n}`}
             >
-              <Trash2 size={13} />
+              <Trash2 size={14} />
             </button>
-          </div>
+          </>
         )}
       </div>
     </div>

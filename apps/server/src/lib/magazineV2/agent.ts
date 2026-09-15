@@ -24,6 +24,12 @@ import { isPlaceableMedia } from './media.js';
 import { renderSource } from './sourceEnvelope.js';
 import { SOURCE_BUDGET } from './sourceLimits.js';
 import { readLayoutImage } from './readLayout.js';
+// The document door onto the same LayoutReading — measured rather than looked at.
+import { readLayoutPdfPage } from './readLayoutPdf.js';
+import { listSourceDocs } from './sourceDocsDb.js';
+// Both document stores behind one lookup — see magazineDocs.ts for why there are two.
+import { canCopyLayout, magazineDocument } from './magazineDocs.js';
+import { storage } from '../storage.js';
 import { resolvePageOrdinal } from './pageDigest.js';
 import type { LayoutReading } from './layoutReading.js';
 
@@ -182,6 +188,11 @@ const SYSTEM = (
       '  copied, its content is not, and the page keeps the user’s own words and photos.',
       '  If they name a page ("do page 2 like this"), pass it as `page`; otherwise leave it out and it',
       '  rearranges the page they are looking at.',
+      '• ARRANGE THE PAGE LIKE A PAGE OF AN ATTACHED PDF ("match the layout of the PDF", "lay this out like',
+      '  page 4 of the brochure") → use_document_as_layout, after list_documents to get the docId. Same',
+      '  promise as above: the document’s STRUCTURE, never its words or its pictures. Say which page of the',
+      '  document you used, because they may have meant a different one.',
+      '  A PDF cannot go through use_image_as_layout — that tool LOOKS at a picture, and a document is not one.',
       'A layout rebuild replaces every element on the page, so it cannot be staged alongside other edits —',
       'do it on its own turn.',
       'IT REARRANGES AN EXISTING PAGE. It cannot create one, and it needs a page that already has content:',
@@ -251,6 +262,41 @@ function describeReading(reading: LayoutReading): string {
   for (const r of reading.regions) counts.set(r.role, (counts.get(r.role) ?? 0) + 1);
   const parts = [...counts.entries()].map(([role, n]) => (n > 1 ? `${n} ${role}s` : `a ${role}`));
   return parts.join(', ');
+}
+
+/**
+ * Stage a rebuild in a layout that has already been read — the shared tail of BOTH
+ * layout tools.
+ *
+ * Shared deliberately. The two tools differ only in where the reading came from (a
+ * picture a model looked at, a document page we measured); what happens to it
+ * afterwards must be identical, or "match this layout" behaves one way for an image
+ * and another for a PDF, which is the exact thing this feature is supposed not to do.
+ */
+function stageLayout(
+  ctx: AgentCtx,
+  reading: LayoutReading,
+  what: string,
+  pageId: string | undefined,
+  page: number | undefined,
+) {
+  const where = pageId ? `page ${page}` : 'this page';
+  const summary = `Rebuild ${where} ${what} — ${describeReading(reading)}`;
+  ctx.proposals.push({
+    id: pid(ctx),
+    kind: 'apply-layout',
+    layoutReading: reading,
+    summary,
+    ...(pageId ? { pageId, pageNumber: page } : {}),
+  });
+  // The model is told what was read so its reply can describe it, and told the
+  // honest limit so it does not promise a pixel-perfect copy.
+  return {
+    ok: true as const,
+    summary: `Staged: ${summary}`,
+    read: { regions: reading.regions.length, columns: reading.columns ?? null, confidence: reading.confidence },
+    note: "This matches the composition — where things sit and how big they are — not an exact copy. Nothing is taken from the reference itself: the page keeps the user's own words and photos.",
+  };
 }
 
 /**
@@ -460,9 +506,22 @@ function buildTools(ctx: AgentCtx, dims: { width: number; height: number }, canE
         // exists to READ one, so filtering here would break the feature it serves.
         // Reading a reference's structure is the whole point; only its pixels are
         // off-limits. Do not "make this consistent" with the tools above.
-        const media = (await db.collection(COL.media).find({ magazineId: ctx.magazineId })) as unknown as { _id: string; url: string }[];
-        if (!media.some((m) => m.url === url)) {
+        //
+        // `doc` IS excluded, though, and that is not an inconsistency. A reference is
+        // an image and this tool sends it to a vision model; a `doc` is a PDF, which
+        // that model cannot see — the call would time out, be billed, and come back
+        // "I could not make out a layout in that image". A document has its own door
+        // (use_document_as_layout) which MEASURES the page instead of looking at it.
+        const media = (await db.collection(COL.media).find({ magazineId: ctx.magazineId })) as unknown as { _id: string; url: string; kind?: string }[];
+        const row = media.find((m) => m.url === url);
+        if (!row) {
           return { ok: false, error: 'That url is not in this magazine. Ask the user to attach the layout image, then use its url.' };
+        }
+        if (row.kind === 'doc') {
+          return {
+            ok: false,
+            error: 'That is a document, not an image — I cannot look at it. Use use_document_as_layout with its docId (see list_documents) to take a layout from one of its pages.',
+          };
         }
         /**
          * THE ORDINAL IS RESOLVED HERE, AGAINST THE ISSUE'S REAL PAGE ORDER.
@@ -484,23 +543,98 @@ function buildTools(ctx: AgentCtx, dims: { width: number; height: number }, canE
 
         const { reading, error } = await readLayoutImage(url);
         if (!reading) return { ok: false, error: error || 'I could not make out a layout in that image.' };
-        const where = pageId ? `page ${page}` : 'this page';
-        const summary = `Rebuild ${where} in that layout — ${describeReading(reading)}`;
-        ctx.proposals.push({
-          id: pid(ctx),
-          kind: 'apply-layout',
-          layoutReading: reading,
-          summary,
-          ...(pageId ? { pageId, pageNumber: page } : {}),
-        });
-        // The model is told what was read so its reply can describe it, and told the
-        // honest limit so it does not promise a pixel-perfect copy.
-        return {
-          ok: true,
-          summary: `Staged: ${summary}`,
-          read: { regions: reading.regions.length, columns: reading.columns ?? null, confidence: reading.confidence },
-          note: 'This matches the composition — where things sit and how big they are — not an exact copy. Nothing is taken from the picture itself: the page keeps the user\'s own words and photos.',
-        };
+        return stageLayout(ctx, reading, 'in that layout', pageId, page);
+      },
+    }),
+
+    list_documents: tool({
+      description:
+        "List the source documents attached to this magazine (docId, name, pages, whether its layout can be copied). Use it to find the docId for use_document_as_layout, or to tell the user what the magazine was built from. These are DOCUMENTS, not photos — they can never be placed on a page.",
+      inputSchema: z.object({}),
+      execute: async () => {
+        const sources = await listSourceDocs(ctx.magazineId);
+        const rows = sources.map((d) => ({
+          docId: String(d._id),
+          name: d.originalName,
+          pages: d.coverage?.pagesTotal ?? 0,
+          status: d.status,
+          // Said plainly rather than left for the model to infer from the mime
+          // type: only a PDF has a page design, and a Word file that looks like a
+          // document in every other respect does not.
+          canCopyLayout: d.contentType === 'application/pdf',
+        }));
+        // Documents attached in the chat live in the media library instead — see
+        // magazineDocument. Listed under the same roof because the user attached a
+        // PDF either way, and BY NAME after the source rows, so a file that is in
+        // both stores (attaching one still writes to both) appears once, as the copy
+        // that knows its page count.
+        const seen = new Set(rows.map((r) => r.name.toLowerCase()));
+        const media = (await db.collection(COL.media).find({ magazineId: ctx.magazineId })) as unknown as {
+          _id: string; kind?: string; originalName?: string; alt?: string; contentType?: string;
+        }[];
+        for (const m of media) {
+          if (m.kind !== 'doc') continue;
+          const name = String(m.originalName ?? m.alt ?? 'document');
+          if (seen.has(name.toLowerCase())) continue;
+          seen.add(name.toLowerCase());
+          rows.push({
+            docId: String(m._id),
+            name,
+            // Nothing has counted this one's pages — it was never read page by page.
+            // 0 means "unknown", not "empty"; the layout tool opens it and finds out.
+            pages: 0,
+            status: 'ready',
+            canCopyLayout: String(m.contentType ?? '') === 'application/pdf',
+          });
+        }
+        return { documents: rows.slice(0, 20) };
+      },
+    }),
+
+    use_document_as_layout: tool({
+      description:
+        'The user wants this page laid out like a page of an attached PDF ("make it look like the PDF", "match the layout of the brochure", "use page 3 of the document as the design"). MEASURES that page — where its headline, columns and pictures actually sit — and stages a rebuild in the same composition, carrying the user\'s own words and photos. Nothing of the document\'s content or pictures is copied, only its structure. Find `docId` with list_documents. `sourcePage` is the page OF THE DOCUMENT (1-based, default 1) — pass it whenever the user names one ("like page 4"). `page` is the MAGAZINE page to rebuild; leave it out for the page they are looking at. It rearranges an EXISTING page and cannot create one.',
+      inputSchema: z.object({
+        docId: z.string(),
+        /** Which page OF THE DOCUMENT to copy. Not the magazine's page — see `page`. */
+        sourcePage: z.number().int().positive().optional(),
+        /** Which MAGAZINE page to rebuild, 1-based as a person says it. */
+        page: z.number().int().positive().optional(),
+      }),
+      execute: async ({ docId, sourcePage, page }) => {
+        // Exclusive, for the same reason as use_image_as_layout: it replaces every
+        // element on the page, so nothing else can be staged alongside it.
+        if (ctx.proposals.length > 0) {
+          return { ok: false, error: 'A layout rebuild replaces every element on the page, so it cannot be combined with other changes. Ask the user to apply the changes already staged first.' };
+        }
+        // THE MAGAZINE IS THE ALLOW-LIST — see magazineDocument, which is also what
+        // makes a PDF attached in the chat usable here and not just one uploaded on
+        // the way in.
+        const source = await magazineDocument(ctx.magazineId, docId);
+        if (!source) {
+          return { ok: false, error: 'That document is not attached to this magazine. Use list_documents to see what is.' };
+        }
+        if (!canCopyLayout(source)) {
+          return { ok: false, error: `“${source.name}” is not a PDF, so it has no page design to copy. Only a PDF can be used as a layout.` };
+        }
+        let pageId: string | undefined;
+        if (page !== undefined) {
+          const all = (await db.collection(COL.pages).find({ magazineId: ctx.magazineId })) as { _id: string; index: number }[];
+          const resolved = resolvePageOrdinal(all, page, ctx.pageIndex);
+          if (!resolved.ok) return { ok: false, error: resolved.error };
+          pageId = resolved.pageId;
+        }
+        const from = Math.max(1, Math.floor(sourcePage ?? 1));
+        let bytes: Buffer;
+        try {
+          bytes = await storage.downloadObject(source.s3Key);
+        } catch (e) {
+          console.warn('[magazineV2] use_document_as_layout: fetch failed', e instanceof Error ? e.message : e);
+          return { ok: false, error: 'I could not fetch that document just now — ask the user to try again in a moment.' };
+        }
+        const { reading, error } = await readLayoutPdfPage(bytes, from);
+        if (!reading) return { ok: false, error: error || 'I could not read a layout from that page.' };
+        return stageLayout(ctx, reading, `like page ${from} of “${source.name}”`, pageId, page);
       },
     }),
 

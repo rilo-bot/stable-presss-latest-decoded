@@ -260,7 +260,25 @@ export default function BulletinViewer() {
       */}
       <style>{`
         @media print {
-          @page { size: var(--page-w, 8.5in) var(--page-h, 11in); margin: 0; }
+          /* THE SHEET THE DOCUMENT IS LAID OUT ON. Written here from the FIRST
+             page's box rather than read from a custom property, because @page
+             resolves variables against the ROOT element only — and --page-w/h are
+             set by ReadonlyPage on each .bulletin-print-page, which is a
+             descendant. So this rule used to see nothing and silently take its
+             fallback, US Letter.
+
+             That is not a cosmetic mismatch, it DOUBLED every export. Chromium
+             paginated an 11.6933in page box onto an 11in sheet, so each magazine
+             page spilled its bottom 66px — the page number and the foot of the
+             artwork — onto a sheet of its own: a 5-page issue downloaded as 10.
+             The sheet CAME OUT A4 regardless, because page.pdf() is passed
+             explicit dims, which is exactly why the bug was invisible in the
+             output's page size and survived the earlier px→in fix.
+
+             First page, to match lib/pdf.ts: page.pdf() takes ONE size for the
+             whole document, so the sheet is the first page's box there too. The
+             two must agree or the pagination splits again. */
+          @page { size: ${pageInches(issue.pages[0]).w} ${pageInches(issue.pages[0]).h}; margin: 0; }
           html, body { background: #fff !important; }
           .bulletin-print-container { max-width: none !important; margin: 0 !important; padding: 0 !important; gap: 0 !important; display: block !important; }
           .bulletin-print-page { width: var(--page-w) !important; height: var(--page-h) !important; box-shadow: none !important; overflow: hidden !important; }

@@ -41,6 +41,20 @@ export const PAGE_DPI = 150;
 // ── Source-file upload caps (enforced by the v2 issue-create route, Phase 1) ──
 /** Max source PDF size accepted for import. */
 export const MAX_SOURCE_BYTES = 150 * 1024 * 1024; // 150 MB
+
+/**
+ * What one OCR’d page is reckoned to cost, in USD.
+ *
+ * A READING, not a bill. It exists because the page caps are gone: a document is
+ * now read to its last page, so a 900-page scan is real spend that nothing in the
+ * product would otherwise mention. An estimate the user can see before and during a
+ * read is what makes "no cap" a choice rather than a surprise.
+ *
+ * Env-overridable because the true rate belongs to the provider contract, not to
+ * this file, and a number hardcoded here WILL drift away from it. Set to 0 to turn
+ * the estimate off entirely.
+ */
+export const OCR_USD_PER_PAGE = Math.max(0, Number(process.env.MAGAZINE_V2_OCR_USD_PER_PAGE ?? 0.001));
 /** Accepted source mime types. DOCX is converted to PDF by the worker
  *  (LibreOffice headless) before extraction — see apps/worker/src/lib/docx.ts.
  *  A JPEG/PNG imports as a single pixel-faithful page (no MuPDF pass). */

@@ -676,6 +676,14 @@ function tightSlots(issues: { kind: string; detail: string }[], elements: Magazi
  * of the fill is the caller's business (it needs a model); knowing what to draft
  * is layout arithmetic and belongs here where it can be tested.
  *
+ * `fit` IS PART OF THAT PROMISE, and it was missing. This planned against
+ * `readingToSpec` unconditionally while the apply built with `readingToExact`
+ * whenever the caller asked for exact — so the sentence above quietly stopped being
+ * true the moment exact mode had a caller. The two modes do not agree about the
+ * slot list (the tree synthesizes bands and splits body copy; exact keeps one leaf
+ * per region) or about the boxes, so the fill was being planned for a page that was
+ * never going to be built. Pass the same `fit` the apply will use.
+ *
  * `approxChars` is a budget estimate from the reference's own box (fractions of
  * the page): enough for a drafter to write to. The composer still shrinks-to-fit
  * and the tight-slot report still fires, so a rough number is safe.
@@ -683,12 +691,23 @@ function tightSlots(issues: { kind: string; detail: string }[], elements: Magazi
 export function unfilledSlots(
   reading: LayoutReading,
   page: { width?: number; height?: number; background?: { type?: string; value?: string }; elements: MagazineElement[] },
+  fit: LayoutFit = 'adapt',
 ): { texts: { role: string; approxChars: number; hint?: string }[]; images: number } | null {
-  const converted = readingToSpec(reading);
+  // Dimensions first: exact mode needs them to place the reference's boxes, and the
+  // budget arithmetic below reads them either way.
+  const dims = { width: Number(page.width) || PAGE_W, height: Number(page.height) || PAGE_H };
+  // The SAME branch applyReadingToPage takes, for the same reason — see the note on
+  // `fit` above. Both converters return `origin`, so everything downstream is shared.
+  const converted = fit === 'exact' ? readingToExact(reading, dims) : readingToSpec(reading);
   if (!converted) return null;
-  const spec = normalizeLayoutSpec(converted.spec);
-  if (!spec) return null;
-  const slots = specContentRefs(spec);
+  let slots: { ref: string; role: string }[];
+  if ('leaves' in converted) {
+    slots = converted.leaves.map((l) => ({ ref: l.node.contentRef ?? '', role: l.node.role })).filter((s) => s.ref);
+  } else {
+    const spec = normalizeLayoutSpec(converted.spec);
+    if (!spec) return null;
+    slots = specContentRefs(spec);
+  }
   const bgImage = page.background?.type === 'image' && page.background.value ? String(page.background.value) : '';
   const { content } = reflowContent(slots, page.elements, bgImage || undefined);
 
@@ -720,7 +739,6 @@ export function unfilledSlots(
     return region?.note?.trim() || undefined;
   };
 
-  const dims = { width: Number(page.width) || PAGE_W, height: Number(page.height) || PAGE_H };
   // ~1 character per 45px² at body sizes on the 150-DPI sheet — deliberately
   // conservative; short-line display roles are capped by ROLE_CHAR_CAP.
   const texts: { role: string; approxChars: number; hint?: string }[] = [];

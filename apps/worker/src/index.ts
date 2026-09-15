@@ -16,7 +16,7 @@
 
 import './env.js'; // MUST be first: loads MONGODB_URI before db.ts reads it.
 import { startQueueLoop, type JobHandlers } from './queue.js';
-import { processIssue, processPageJob } from './jobs/processIssue.js';
+import { processIssue, processPageJob, copyDocumentPageJob } from './jobs/processIssue.js';
 import { generateMagazineIssue, generateMorePages } from '../../server/src/lib/magazineV2/generate.js';
 import { readSourceDoc, chainIfReady, type ReadSourceDocPayload } from '../../server/src/lib/magazineV2/readSourceDoc.js';
 import { enqueueJob } from '../../server/src/lib/magazineV2/jobs.js';
@@ -26,6 +26,13 @@ const handlers: JobHandlers = {
   processIssue: (payload) => processIssue(payload as { issueId: string }),
   // Re-run extraction for a single page (the retry endpoint).
   processPage: (payload) => processPageJob(payload as { issueId: string; pageId: string; index: number }),
+
+  // "Copy this page" — one page of an ATTACHED PDF onto one page of the magazine,
+  // words and all. Distinct from apply-layout, which takes the arrangement and
+  // writes fresh copy; see the payload's note in magazineV2/jobs.ts.
+  copyDocumentPage: (payload) =>
+    copyDocumentPageJob(payload as { issueId: string; pageId: string; docId: string; sourcePage: number }),
+
   // Build a whole issue from a brief / source document (from-scratch AI gen).
   generateIssue: (payload) => {
     const p = payload as {
@@ -59,9 +66,18 @@ const handlers: JobHandlers = {
   // whether this was the LAST of the issue's documents to settle. Nothing here
   // waits on another job: this worker claims one at a time, so an await would be a
   // deadlock. It enqueues and returns.
-  readSourceDoc: async (payload) => {
+  readSourceDoc: async (payload, ctx) => {
     const p = payload as ReadSourceDocPayload;
-    const status = await readSourceDoc(p);
+    // ctx.beat is what keeps a long read from being reaped by the watchdog that
+    // fires on the studio's own progress poll.
+    const status = await readSourceDoc(p, ctx.beat);
+    // 'reading' means one BATCH finished and the next is already queued: the read
+    // handed the worker back so other magazines can move, and nothing downstream is
+    // owed anything yet. chainIfReady would answer 'waiting' — skip the round trip.
+    if (status === 'reading') {
+      console.log(`[worker] readSourceDoc ${p.docId} → batch done, next batch queued`);
+      return;
+    }
     const outcome = await chainIfReady(p.onDone);
     console.log(`[worker] readSourceDoc ${p.docId} → ${status}; continuation: ${outcome}`);
   },

@@ -232,7 +232,7 @@ test('retrieval is deterministic when scores tie', () => {
 });
 
 test('chunkSource keeps every character of a document with no blank lines', () => {
-  // pdf-parse output is often single-newline separated, so this is the common
+  // Extracted PDF text is often single-newline separated, so this is the common
   // shape rather than an edge case.
   const doc = Array.from({ length: 40 }, (_, i) => `Line ${i} of the extracted page text`).join('\n');
   const joined = chunkSource(doc).join(' ');

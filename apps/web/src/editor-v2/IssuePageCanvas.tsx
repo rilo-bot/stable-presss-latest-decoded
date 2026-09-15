@@ -16,7 +16,7 @@ import type { CSSProperties } from 'react';
 import { sanitizeRichText } from '@/lib/htmlInline';
 import { resolveIcon } from '@/lib/iconRegistry';
 import type { IssuePageData, MagazineElement } from './model';
-import { pctRect, fontSizeCqw } from './geometry';
+import { pctRect, pxCqw } from './geometry';
 import { QrBlock } from './QrBlock';
 
 function elementBoxStyle(el: MagazineElement, page: IssuePageData): CSSProperties {
@@ -51,7 +51,15 @@ function TextElement({ el, page }: { el: MagazineElement; page: IssuePageData })
     color: el.text.color,
     textAlign: el.text.align,
     lineHeight: el.text.lineHeight,
-    fontSize: fontSizeCqw(el.text.fontSize, page.width),
+    fontSize: pxCqw(el.text.fontSize, page.width),
+    // TRACKING AND CAPS ARE PART OF THE FIT, not decoration. The server measures
+    // text WITH both when it sizes a box (lib/magazineV2/layout.ts passes
+    // letterSpacing/textTransform into refitText), so omitting them here renders
+    // copy at a size that was calculated for different metrics — a masthead fitted
+    // as tracked uppercase came out untracked lowercase and under-filled its box.
+    // Undefined when unset so the CSS default ('normal'/'none') applies.
+    letterSpacing: el.text.letterSpacing ? pxCqw(el.text.letterSpacing, page.width) : undefined,
+    textTransform: el.text.textTransform,
     whiteSpace: extracted ? 'pre' : 'pre-wrap',
     overflowWrap: extracted ? undefined : 'break-word',
   };
