@@ -85,6 +85,7 @@ async function clearOtps(email: string): Promise<void> {
 async function storeOtp(email: string, code: string, name: string): Promise<void> {
   await clearOtps(email);
   const now = new Date();
+  console.log("code :: ", code)
   await db.collection(OTPS).insertOne({
     email,
     codeHash: hashOtp(code),
