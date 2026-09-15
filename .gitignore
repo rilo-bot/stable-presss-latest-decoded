@@ -5,6 +5,10 @@ node_modules/
 dist/
 apps/*/dist/
 
+# Puppeteer's Chromium, relocated into the repo by .puppeteerrc.cjs so it
+# survives Render's build -> runtime hand-off. Hundreds of MB of binary.
+.cache/
+
 # Env / secrets (the bare ".env" rule already matches these in every folder,
 # listed explicitly for clarity)
 .env
