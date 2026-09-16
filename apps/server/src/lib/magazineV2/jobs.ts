@@ -20,7 +20,8 @@ export type MagazineJobType =
   | 'copyDocumentPage'
   | 'generateIssue'
   | 'generatePages'
-  | 'readSourceDoc';
+  | 'readSourceDoc'
+  | 'renderIssuePdf';
 
 export interface JobPayloads {
   /** Digitize a freshly-uploaded PDF into pages + elements (the whole issue). */
@@ -93,6 +94,28 @@ export interface JobPayloads {
     batchPages?: number;
     onDone?: { type: 'generateIssue'; payload: Record<string, unknown> } | null;
   };
+  /**
+   * Render a published issue to a PDF, store it in S3, and record the URL on the
+   * snapshot.
+   *
+   * WHY THIS IS A JOB. It used to be the `/issues/:id/pdf` request itself: the API
+   * launched headless Chromium, navigated the public viewer, and printed — per
+   * download. Chromium needs ~300-400MB, the in-process render cache was budgeted
+   * another 256MB, and the API runs on a 512MB instance, so a single download
+   * could exhaust the box. It did: Render killed the instance for running over
+   * memory, which took down EVERY endpoint, not just the download. A feature
+   * nobody was using at that moment became an availability incident.
+   *
+   * Moving it here changes two things that both matter. The API never launches a
+   * browser, so its memory stays flat whatever readers do; and the render happens
+   * ONCE PER PUBLISHED VERSION rather than once per download, on a service whose
+   * job is already to be slow and memory-hungry.
+   *
+   * Keyed by the PUBLISHED snapshot's id (COL.published), not the draft's — the
+   * snapshot is what a reader downloads, and it carries the `version` the stored
+   * PDF is stamped with.
+   */
+  renderIssuePdf: { publishedIssueId: string };
 }
 
 /** How many times a failing job is retried before it's marked `failed`. */

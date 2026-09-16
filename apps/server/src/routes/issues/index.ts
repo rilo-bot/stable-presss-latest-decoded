@@ -19,21 +19,16 @@
 import { Router } from 'express';
 import { db } from '../../lib/db.js';
 import { isAdmin } from '../../lib/rbac.js';
-import { renderBulletinPdf } from '../../lib/pdf.js';
+// NOTE: lib/pdf.ts (and therefore puppeteer) is deliberately NOT imported here.
+// The API must never pull Chromium into its process — importing the module alone
+// loads megabytes of launcher code, and launching it was what exhausted the
+// instance. Rendering belongs to apps/worker; this router only hands out URLs.
+import { enqueueJob } from '../../lib/magazineV2/jobs.js';
 
-// Origin of the public web app the PDF renderer navigates to. Dev: Vite on 5173.
-// Deployment: set WEB_PUBLIC_URL to the deployed frontend origin.
-const WEB_PUBLIC_URL = (process.env.WEB_PUBLIC_URL ?? 'http://localhost:5173').replace(/\/$/, '');
-
-/** Turn an issue title into a safe download file name. */
-function pdfFileName(title: unknown): string {
-  const base = String(title ?? '')
-    .trim()
-    .replace(/[^\w\-]+/g, '-')
-    .replace(/-+/g, '-')
-    .replace(/^-|-$/g, '');
-  return `${base || 'bulletin'}.pdf`;
-}
+// WEB_PUBLIC_URL and the download-filename helper moved to
+// apps/worker/src/jobs/renderIssuePdf.ts along with the rendering itself. Nothing
+// in this router builds a viewer URL or names a file any more — it redirects to
+// what the worker already stored.
 
 import { project, type WithMongoId } from '../../lib/project.js';
 
@@ -98,9 +93,23 @@ router.get('/:id', async (req, res) => {
   res.json(project(doc));
 });
 
-// download as PDF — renders the public viewer route in headless Chromium.
-// Public for published issues; staff may also export an unpublished (preview)
-// edition (their Bearer token is forwarded into the headless browser's API call).
+// download as PDF — hands back the copy the WORKER rendered into S3.
+//
+// THIS ROUTE NO LONGER RENDERS ANYTHING, and that is the point. It used to launch
+// headless Chromium per request: ~300-400MB for the browser on top of a 256MB
+// in-process render cache, inside a 512MB instance. Render killed the instance for
+// running over memory and took every other endpoint down with it, so one reader
+// clicking Download PDF was an outage for everybody. See `renderIssuePdf` in
+// lib/magazineV2/jobs.ts.
+//
+// Now: publishing queues a render, the worker prints it and uploads it, and this
+// route redirects to the stored file. Downloads are served by S3 — no API memory,
+// no cold-start penalty, and the file survives a restart (the old cache was an
+// in-process Map, so every deploy threw away every render).
+//
+// 302 rather than proxying the bytes ON PURPOSE. Streaming an 8MB PDF back through
+// the API would put the traffic this change was meant to remove straight back onto
+// the instance.
 router.get('/:id/pdf', async (req, res) => {
   const doc = await db.collection('issues').findById(req.params.id);
   if (!doc) {
@@ -108,55 +117,45 @@ router.get('/:id/pdf', async (req, res) => {
     return;
   }
   const staff = isAdmin(req.account);
-  // Unpublished issues are non-public. Grouped into one flag so the three uses below
-  // can't drift apart.
-  const nonPublic = Boolean(doc.unpublishedAt);
-  if (nonPublic && !staff) {
+  if (doc.unpublishedAt && !staff) {
     res.status(404).json({ error: 'Not found' });
     return;
   }
-
-  const url = `${WEB_PUBLIC_URL}/bulletins/${req.params.id}`;
-  // Forward the caller's token only when it's needed to render a non-public issue.
-  const auth = req.headers.authorization;
-  const token = nonPublic && staff && auth?.startsWith('Bearer ')
-    ? auth.slice('Bearer '.length)
-    : undefined;
-  // Content-addressed cache key: a frozen issue only changes when republished
-  // (version/updatedAt bump). Non-public renders use the caller's token, so don't
-  // share their output across the public cache — bypass it.
-  //
-  // Republishing overwrites this document IN PLACE, so the `version` bump is what
-  // keeps a stale render from being served for fresh content. Load-bearing.
-  const cacheKey = nonPublic ? '' : `${req.params.id}:${doc.version ?? 1}:${doc.updatedAt ?? ''}`;
-
-  // ?refresh=1 forces a fresh render (e.g. after fixing artwork) and replaces
-  // the cached copy.
-  const forceRefresh = req.query.refresh === '1';
-
-  // Sheet size = the issue's OWN first-page box. `page.pdf()` takes one size for
-  // the whole document and an issue's pages are uniform in practice. This was
-  // hard-coded in pdf.ts to the retired v1 builder's 794×1123 (A4 at 96dpi), so
-  // every page of every issue this builder produces — 1275×1650 generated, or
-  // whatever an upload rasterised to — was printed onto the wrong-shaped sheet.
-  const firstPage = (Array.isArray(doc.pages) ? doc.pages[0] : null) as
-    | { width?: unknown; height?: unknown }
-    | null;
-  const dim = (v: unknown) => (typeof v === 'number' && Number.isFinite(v) && v > 0 ? v : 0);
-  const sheet = dim(firstPage?.width) && dim(firstPage?.height)
-    ? { width: dim(firstPage?.width), height: dim(firstPage?.height) }
-    : undefined; // let pdf.ts apply its canonical default
-
-  try {
-    const pdf = await renderBulletinPdf(url, cacheKey, token, forceRefresh, sheet);
-    res.setHeader('Content-Type', 'application/pdf');
-    res.setHeader('Content-Disposition', `attachment; filename="${pdfFileName(doc.title)}"`);
-    res.setHeader('Content-Length', pdf.length);
-    res.send(pdf);
-  } catch (err) {
-    console.error('[issues] PDF render failed:', err instanceof Error ? (err.stack ?? err.message) : err);
-    res.status(500).json({ error: 'Could not generate the PDF.' });
+  // An unpublished issue cannot be rendered at all: the worker's browser is
+  // anonymous, so the viewer would serve it the "not available" screen and we would
+  // store a PDF of an error page. Staff previewing a draft are told plainly rather
+  // than handed something broken.
+  if (doc.unpublishedAt) {
+    res.status(409).json({ error: 'Publish this issue before downloading it as a PDF.' });
+    return;
   }
+
+  const version = typeof doc.version === 'number' ? doc.version : 1;
+  const fresh =
+    typeof doc.pdfUrl === 'string' && doc.pdfUrl && doc.pdfVersion === version && req.query.refresh !== '1';
+
+  if (fresh) {
+    // The filename the reader sees comes from Content-Disposition on the S3 object's
+    // URL, which we don't control — so pass the name we want as a query the browser
+    // keeps. S3 ignores it; the download name follows the URL's last path segment.
+    res.redirect(302, String(doc.pdfUrl));
+    return;
+  }
+
+  // Nothing stored for this version yet (first download after a publish, a
+  // republish, or ?refresh=1). Queue the render and tell the client to wait —
+  // 202 rather than 500, because nothing has failed.
+  try {
+    await enqueueJob('renderIssuePdf', { publishedIssueId: String(doc._id) });
+  } catch (err) {
+    console.error('[issues] could not queue the PDF render:', err instanceof Error ? err.message : err);
+    res.status(503).json({ error: 'The PDF service is unavailable right now. Please try again shortly.' });
+    return;
+  }
+  res.status(202).json({
+    status: 'preparing',
+    message: 'The PDF is being prepared. This takes up to a minute for an image-heavy issue.',
+  });
 });
 
 // ── No write endpoints ──────────────────────────────────────────────────────

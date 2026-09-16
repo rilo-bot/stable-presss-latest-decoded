@@ -1758,6 +1758,20 @@ router.post('/issues/:id/publish', async (req, res) => {
       // a page's own updatedAt) past it, and the studio says "needs republish".
       updatedAt: now,
     });
+    // Start the PDF now, rather than when a reader first asks for it. The render
+    // takes tens of seconds on an image-heavy issue, so doing it at publish time is
+    // what makes "Download PDF" instant instead of a wait — and the version bump
+    // above is what makes this the ONLY place that has to remember: a republish
+    // enqueues a fresh render, and the stale one stops matching on `version`.
+    //
+    // Best-effort: a queue write must never fail a publish that already succeeded.
+    // The download route enqueues on demand too, so a lost job here costs the first
+    // reader a wait, not the file.
+    try {
+      await enqueueJob('renderIssuePdf', { publishedIssueId });
+    } catch (err) {
+      console.warn('[magazineV2] publish: could not queue the PDF render:', err instanceof Error ? err.message : err);
+    }
     return { status: 200, publishedIssueId, version };
   });
 

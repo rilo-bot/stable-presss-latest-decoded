@@ -20,6 +20,7 @@ import { processIssue, processPageJob, copyDocumentPageJob } from './jobs/proces
 import { generateMagazineIssue, generateMorePages } from '../../server/src/lib/magazineV2/generate.js';
 import { readSourceDoc, chainIfReady, type ReadSourceDocPayload } from '../../server/src/lib/magazineV2/readSourceDoc.js';
 import { enqueueJob } from '../../server/src/lib/magazineV2/jobs.js';
+import { renderIssuePdfJob } from './jobs/renderIssuePdf.js';
 
 const handlers: JobHandlers = {
   // Digitize a freshly-uploaded PDF into pages + editable elements.
@@ -81,6 +82,13 @@ const handlers: JobHandlers = {
     const outcome = await chainIfReady(p.onDone);
     console.log(`[worker] readSourceDoc ${p.docId} → ${status}; continuation: ${outcome}`);
   },
+  // Print a published issue to a PDF and store it in S3. Chromium lives HERE and
+  // nowhere else now — the API used to launch it per download and be OOM-killed
+  // for it. Beats, because an image-heavy issue takes tens of seconds and the
+  // watchdog must be able to tell "rendering" from "died".
+  renderIssuePdf: (payload, ctx) =>
+    renderIssuePdfJob(payload as { publishedIssueId: string }, ctx.beat),
+
   // Harmless heartbeat / liveness + smoke-test handler.
   noop: async () => {
     /* no-op */

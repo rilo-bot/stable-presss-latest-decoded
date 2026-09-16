@@ -276,9 +276,24 @@ export async function uploadObject(opts: {
   key: string
   contentType: string
   body: Buffer | Uint8Array
+  /**
+   * Optional `Content-Disposition` stored ON the object.
+   *
+   * Needed because the bulletin PDF is delivered as a REDIRECT to S3: once the
+   * browser is talking to S3 rather than to us, the API cannot name the file or ask
+   * for it to be saved rather than opened. Setting it at upload time is the only
+   * place left that can. Images don't pass it and keep rendering inline as before.
+   */
+  contentDisposition?: string
 }): Promise<void> {
   assertPublicKey(opts.key, 'upload')
-  const base = { Bucket: BUCKET, Key: opts.key, Body: opts.body, ContentType: opts.contentType }
+  const base = {
+    Bucket: BUCKET,
+    Key: opts.key,
+    Body: opts.body,
+    ContentType: opts.contentType,
+    ...(opts.contentDisposition ? { ContentDisposition: opts.contentDisposition } : {}),
+  }
   const acl = OBJECT_ACL && OBJECT_ACL !== 'none' ? (OBJECT_ACL as ObjectCannedACL) : undefined
   try {
     await client().send(new PutObjectCommand(acl ? { ...base, ACL: acl } : base))

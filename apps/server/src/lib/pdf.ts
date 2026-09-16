@@ -14,8 +14,73 @@
 // printing so nothing is captured half-painted.
 // ---------------------------------------------------------------------------
 
-import puppeteer, { type Browser } from 'puppeteer'
+/**
+ * The slice of puppeteer this module uses, declared by hand.
+ *
+ * Same approach, and the same reason, as the pdfjs declarations in
+ * lib/agent/pdfText.ts. Importing the real types is not available to us: puppeteer
+ * is ESM-only, this file is compiled as CommonJS by the API and as NodeNext by
+ * apps/worker, and in that combination even `import type` is an error without a
+ * `resolution-mode` attribute. Declaring the surface keeps the file compiling in
+ * both builds with no per-build syntax.
+ *
+ * Narrow on purpose: these are the only members touched, so this doubles as the
+ * list of what a puppeteer upgrade has to keep.
+ */
+interface PptrRequest {
+  url(): string
+  headers(): Record<string, string>
+  continue(overrides?: { headers?: Record<string, string> }): Promise<void>
+}
+interface PptrPage {
+  setRequestInterception(enabled: boolean): Promise<void>
+  on(event: 'request', handler: (req: PptrRequest) => void): void
+  goto(url: string, opts?: { waitUntil?: string; timeout?: number }): Promise<unknown>
+  waitForSelector(selector: string, opts?: { timeout?: number }): Promise<unknown>
+  evaluate<T>(fn: () => T): Promise<T>
+  pdf(opts: Record<string, unknown>): Promise<Uint8Array>
+  close(): Promise<void>
+}
+interface Browser {
+  newPage(): Promise<PptrPage>
+  /** False once Chromium has died — the check that stops a dead singleton being reused. */
+  connected: boolean
+  on(event: 'disconnected', handler: () => void): void
+  close(): Promise<void>
+}
+interface PuppeteerNode {
+  launch(opts: Record<string, unknown>): Promise<Browser>
+}
 import { PAGE_W, PAGE_H } from './magazineV2/config.js'
+
+/**
+ * Load puppeteer through a real dynamic import, not a static one.
+ *
+ * Same problem — and the same fix — as pdfjs-dist in lib/agent/pdfText.ts. This
+ * module is compiled twice: the API builds it as CommonJS (`moduleResolution:
+ * node`, which ignores the ESM/CJS boundary) and apps/worker typechecks it as
+ * NodeNext, which does not. puppeteer is ESM-only, so the static import that the
+ * API tolerated fails the worker's build with TS1479 — and the worker is now the
+ * ONLY thing that renders, so it has to compile there.
+ *
+ * The `new Function` indirection hides the import from tsc's CommonJS emit, which
+ * would otherwise rewrite it to a `require()` that cannot load an ES module. Cached
+ * because the first load parses several megabytes of launcher.
+ */
+let puppeteerPromise: Promise<PuppeteerNode> | null = null
+async function puppeteer(): Promise<PuppeteerNode> {
+  if (!puppeteerPromise) {
+    puppeteerPromise = (new Function('s', 'return import(s)') as (s: string) => Promise<{ default: PuppeteerNode }>)(
+      'puppeteer',
+    )
+      .then((m) => m.default ?? (m as unknown as PuppeteerNode))
+      .catch((err: unknown) => {
+        puppeteerPromise = null // let a transient failure be retried
+        throw err
+      })
+  }
+  return puppeteerPromise
+}
 
 // Reuse ONE browser across requests — launching Chromium costs ~300ms+ and a
 // lot of memory, so a per-request launch would be both slow and wasteful.
@@ -69,8 +134,9 @@ function cacheSet(key: string, buf: Buffer): void {
 
 async function getBrowser(): Promise<Browser> {
   if (!browserPromise) {
-    browserPromise = puppeteer
-      .launch({
+    browserPromise = puppeteer()
+      .then((p) =>
+        p.launch({
         headless: true,
         // --no-sandbox / --disable-setuid-sandbox are required to run as root in
         // most container hosts (Render, Docker). --disable-dev-shm-usage avoids
@@ -87,7 +153,8 @@ async function getBrowser(): Promise<Browser> {
         // busy container) more than Puppeteer's default 30s to bring Chromium up
         // before failing the render.
         timeout: 60_000,
-      })
+        }),
+      )
       .then((b) => {
         currentBrowser = b
         // A crashed/killed Chromium fires 'disconnected'; drop the singleton so
