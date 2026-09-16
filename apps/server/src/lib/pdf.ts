@@ -14,6 +14,12 @@
 // printing so nothing is captured half-painted.
 // ---------------------------------------------------------------------------
 
+// Node builtins, imported statically: they resolve the same under the API's CJS
+// emit and the worker's tsx, and they are what let the puppeteer load below name
+// an absolute file instead of a bare specifier. See `puppeteer()`.
+import { createRequire } from 'node:module'
+import { pathToFileURL } from 'node:url'
+
 /**
  * The slice of puppeteer this module uses, declared by hand.
  *
@@ -67,17 +73,44 @@ import { PAGE_W, PAGE_H } from './magazineV2/config.js'
  * would otherwise rewrite it to a `require()` that cannot load an ES module. Cached
  * because the first load parses several megabytes of launcher.
  */
+const dynamicImport = new Function('u', 'return import(u)') as (u: string) => Promise<Record<string, unknown>>
+
 let puppeteerPromise: Promise<PuppeteerNode> | null = null
 async function puppeteer(): Promise<PuppeteerNode> {
   if (!puppeteerPromise) {
-    puppeteerPromise = (new Function('s', 'return import(s)') as (s: string) => Promise<{ default: PuppeteerNode }>)(
-      'puppeteer',
-    )
-      .then((m) => m.default ?? (m as unknown as PuppeteerNode))
-      .catch((err: unknown) => {
-        puppeteerPromise = null // let a transient failure be retried
-        throw err
-      })
+    puppeteerPromise = (async () => {
+      /*
+       * RESOLVE TO AN ABSOLUTE file: URL FIRST, then import that.
+       *
+       * `import('puppeteer')` — a BARE specifier — is resolved against the URL of
+       * the module doing the importing. Inside `new Function` that is whatever URL
+       * the host gave this module, and under tsx (how apps/worker runs in
+       * production: `tsx src/index.ts`) that is a `data:text/javascript,…` URL. A
+       * data: URL has no hierarchical base, so there is nothing to resolve a bare
+       * specifier against and Node fails with
+       *
+       *   Failed to resolve module specifier "puppeteer" … Invalid relative URL or
+       *   base scheme is not hierarchical
+       *
+       * — with puppeteer installed and importable the whole time. The API never hit
+       * it because it runs its own compiled CJS from real files on disk; the worker
+       * did, and the worker is the only thing that renders, so every Download PDF
+       * failed three times and left the reader polling "preparing" forever.
+       *
+       * An ABSOLUTE URL needs no base. `require.resolve` does the package lookup
+       * (puppeteer's exports map has a `require` condition, so this resolves even
+       * though the file itself is ESM — we only want its PATH), and the import then
+       * names a file directly. Correct under both runtimes, and it no longer depends
+       * on what URL this module happens to have been loaded from.
+       */
+      const from = typeof __filename === 'string' ? __filename : pathToFileURL(`${process.cwd()}/`).href
+      const entry = createRequire(from).resolve('puppeteer')
+      const mod = await dynamicImport(pathToFileURL(entry).href)
+      return (mod.default ?? mod) as PuppeteerNode
+    })().catch((err: unknown) => {
+      puppeteerPromise = null // let a transient failure be retried
+      throw err
+    })
   }
   return puppeteerPromise
 }
