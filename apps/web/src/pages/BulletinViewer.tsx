@@ -154,27 +154,49 @@ export default function BulletinViewer() {
       const POLL_MS = 3_000;
       const started = Date.now();
 
+      let told = false;
       for (;;) {
         const res = await fetch(apiUrl(`/api/issues/${id}/pdf`), { headers, redirect: 'manual' });
 
-        // An opaque redirect reports status 0 with type 'opaqueredirect'; a same-
-        // origin one reports 302. Either way the file exists, so hand the URL to
-        // the browser and let it download (the object carries its own
-        // Content-Disposition, so it saves under the issue's title).
-        if (res.type === 'opaqueredirect' || res.status === 302 || res.ok) {
-          window.location.href = apiUrl(`/api/issues/${id}/pdf`);
-          return;
-        }
+        // "STILL WORKING" IS CHECKED FIRST, and that ordering is the whole point.
+        // 202 is a 2xx, so `res.ok` is TRUE for it — testing readiness with res.ok
+        // matched the very first poll, sent the tab to the API URL, and showed the
+        // reader the raw {"status":"preparing"} JSON instead of ever downloading.
         if (res.status === 202) {
           if (Date.now() - started > DEADLINE_MS) {
             toast.message('The PDF is still being prepared. Try again in a moment.');
             return;
+          }
+          // The button already reads "Preparing PDF…"; this says it once for a wait
+          // long enough that a spinner alone looks like nothing is happening.
+          if (!told) {
+            told = true;
+            toast.message('Preparing the PDF — this takes up to a minute for an image-heavy issue.');
           }
           await new Promise((r) => setTimeout(r, POLL_MS));
           continue;
         }
         if (res.status === 409) {
           toast.error('Publish this issue before downloading it as a PDF.');
+          return;
+        }
+
+        // READY: the API answered with a redirect to the stored file. Cross-origin
+        // that arrives as an opaque redirect (status 0, type 'opaqueredirect');
+        // same-origin it is a plain 302. Nothing else counts as ready — a 2xx that
+        // is not one of the cases above is a response shape we did not expect, and
+        // guessing is what produced the JSON-in-the-tab bug.
+        if (res.type === 'opaqueredirect' || res.status === 302) {
+          // An anchor, not `location.href`: the object is served with
+          // `Content-Disposition: attachment`, so the browser saves it and leaves
+          // the reader on the page. Assigning location would ALSO navigate if the
+          // response ever came back as anything but an attachment.
+          const a = document.createElement('a');
+          a.href = apiUrl(`/api/issues/${id}/pdf`);
+          a.rel = 'noopener';
+          document.body.appendChild(a);
+          a.click();
+          a.remove();
           return;
         }
         throw new Error(`HTTP ${res.status}`);
