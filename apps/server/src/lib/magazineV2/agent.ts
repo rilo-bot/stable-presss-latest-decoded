@@ -19,7 +19,9 @@ import { COL } from './collections.js';
 import { safeUrl } from './url.js';
 import { normalizeElements } from './writePipeline.js';
 import { MAX_ELEMENTS_PER_PAGE, type MagazineElement } from './model.js';
-import { fetchAndStoreStock, isStockConfigured, type StockOrientation } from './stock.js';
+import { fetchAndStoreStock, isStockConfigured } from './stock.js';
+// The other half of the photo ladder: FIND one (above) or MAKE one (here).
+import { generateAndStoreImage, isImageGenConfigured, orientationForBox } from './imagegen.js';
 import { isPlaceableMedia } from './media.js';
 import { renderSource } from './sourceEnvelope.js';
 import { SOURCE_BUDGET } from './sourceLimits.js';
@@ -158,8 +160,12 @@ const SYSTEM = (
     '  if they want another page changed, read it, say what you would change, and ask them to open it.',
     '- The element marked THIS is the one the user has selected — resolve "this/that/it/the selected …" to it.',
     '- For images, only use a URL from list_media or an image already on the page: point an EXISTING image',
-    '  element at it with set_element_image, or place it as a NEW element with add_media_image. To bring in a',
-    '  NEW photo use add_stock_image (it sources + stores a real photo). NEVER invent image URLs.',
+    '  element at it with set_element_image, or place it as a NEW element with add_media_image. NEVER invent',
+    '  image URLs.',
+    '- To bring in a NEW picture there are two tools, and the user’s wording picks between them: add_stock_image',
+    '  FINDS a real photograph (the default — "add a photo of X"), generate_image MAKES one with AI ("generate/',
+    '  create/draw an image of X", or anything no photographer could have shot). If a stock search finds nothing,',
+    '  offer to generate it instead.',
     '- To turn a text element INTO a photo in the same spot, use change_text_to_image.',
     canEditStructure
       ? '- You can also change the MAGAZINE structure: add_content_pages (designed pages — the DEFAULT for any\n' +
@@ -670,16 +676,31 @@ function buildTools(ctx: AgentCtx, dims: { width: number; height: number }, canE
     }),
 
     add_stock_image: tool({
-      description: 'Source a real stock photo for a query and add it as an image element at the given box (page pixels).',
+      description: 'FIND a real stock photograph for a query and add it as an image element at the given box (page pixels). The default way to put a picture on a page. To MAKE a picture that does not exist, use generate_image.',
       inputSchema: z.object({ query: z.string(), x: z.number(), y: z.number(), w: z.number(), h: z.number() }),
       execute: async ({ query, x, y, w, h }) => {
         if (hasLayout(ctx)) return { ok: false, error: LAYOUT_CLASH };
-        if (!isStockConfigured()) return { ok: false, error: 'Stock photos are not configured on this server.' };
+        if (!isStockConfigured()) {
+          // Name the other door, so a server with only the image model configured
+          // still gets a picture instead of the model giving up here.
+          return {
+            ok: false,
+            error: isImageGenConfigured()
+              ? 'Stock photo search is not configured on this server — use generate_image instead.'
+              : 'Stock photos are not configured on this server.',
+          };
+        }
         if (ctx.working.length >= MAX_ELEMENTS_PER_PAGE) return { ok: false, error: 'The page is full.' };
-        const ratio = w / Math.max(1, h);
-        const orientation: StockOrientation = ratio > 1.2 ? 'landscape' : ratio < 0.85 ? 'portrait' : 'square';
+        const orientation = orientationForBox(w, h);
         const stored = await fetchAndStoreStock({ query, orientation }, { magazineId: ctx.magazineId, pageIndex: ctx.pageIndex });
-        if (!stored) return { ok: false, error: 'No photo found for that query.' };
+        if (!stored) {
+          return {
+            ok: false,
+            error: isImageGenConfigured()
+              ? `No stock photo found for "${query}". Try generate_image with the same subject, or a simpler query.`
+              : `No photo found for "${query}". Try a simpler query — a few concrete nouns.`,
+          };
+        }
         const [clean] = normalizeElements([{ type: 'image', x, y, w, h, source: 'ai-agent', image: { url: stored.url, assetId: stored.assetId, alt: stored.alt, fit: 'cover' } }], dims);
         if (!clean) return { ok: false, error: 'Could not place the photo.' };
         const tempId = `tmp_${pid(ctx)}`;
@@ -687,6 +708,53 @@ function buildTools(ctx: AgentCtx, dims: { width: number; height: number }, canE
         ctx.working.push(clean);
         ctx.proposals.push({ id: pid(ctx), kind: 'add', tempId, element: { ...clean, id: undefined }, summary: `Added a photo for "${query}"` });
         return { ok: true, tempId, summary: `Sourced and added a photo for "${query}"` };
+      },
+    }),
+
+    // MAKE a picture, rather than find one. Deliberately a separate tool from
+    // add_stock_image rather than a mode on it: the two answer different asks
+    // ("a photo of a farrier" vs "an illustration of our five-step process"),
+    // and giving the model one tool with a flag makes the choice invisible in
+    // the proposal the user is asked to approve.
+    generate_image: tool({
+      description:
+        'GENERATE a new image with AI from a description and add it as an image element at the given box (page pixels). Use this when the user asks to generate/create/make/draw a picture, or when add_stock_image found nothing. For an ordinary photograph of a real-world subject, prefer add_stock_image — a real photo beats a rendered one. The description should say subject + setting + mood; the image will contain no text and no identifiable real people.',
+      inputSchema: z.object({
+        prompt: z.string().describe('What to render: subject, setting, mood, lighting. One or two sentences.'),
+        x: z.number(),
+        y: z.number(),
+        w: z.number(),
+        h: z.number(),
+      }),
+      execute: async ({ prompt, x, y, w, h }) => {
+        if (hasLayout(ctx)) return { ok: false, error: LAYOUT_CLASH };
+        if (!isImageGenConfigured()) {
+          return {
+            ok: false,
+            error: isStockConfigured()
+              ? 'AI image generation is not configured on this server — use add_stock_image to find a real photo instead.'
+              : 'AI image generation is not configured on this server.',
+          };
+        }
+        if (ctx.working.length >= MAX_ELEMENTS_PER_PAGE) return { ok: false, error: 'The page is full.' };
+        const brief = prompt.trim().slice(0, 600);
+        if (!brief) return { ok: false, error: 'Describe what to generate.' };
+        const orientation = orientationForBox(w, h);
+        const stored = await generateAndStoreImage({ prompt: brief, orientation }, { magazineId: ctx.magazineId, pageIndex: ctx.pageIndex });
+        if (!stored) return { ok: false, error: 'The image model did not return a picture. Try again, or a simpler description.' };
+        const [clean] = normalizeElements(
+          [{ type: 'image', x, y, w, h, source: 'ai-agent', image: { url: stored.url, assetId: stored.assetId, alt: stored.alt, fit: 'cover' } }],
+          dims,
+        );
+        if (!clean) return { ok: false, error: 'Could not place the image.' };
+        const tempId = `tmp_${pid(ctx)}`;
+        clean.id = tempId;
+        ctx.working.push(clean);
+        // The summary says GENERATED, in the user's own words, because this is the
+        // line they read before approving — "added a photo" would misdescribe it.
+        const label = brief.length > 60 ? `${brief.slice(0, 57)}…` : brief;
+        ctx.proposals.push({ id: pid(ctx), kind: 'add', tempId, element: { ...clean, id: undefined }, summary: `Generated an image: “${label}”` });
+        return { ok: true, tempId, summary: `Generated and added an image for “${label}”` };
       },
     }),
 
@@ -716,10 +784,18 @@ function buildTools(ctx: AgentCtx, dims: { width: number; height: number }, canE
         const el = find(ctx, elementId);
         if (!el || el.type !== 'text') return { ok: false, error: 'Not a text element.' };
         if (el.locked === true) return { ok: false, error: `Element #${elementId} is locked — ask the user to unlock it first.` };
-        if (!isStockConfigured()) return { ok: false, error: 'Stock photos are not configured on this server.' };
-        const ratio = el.w / Math.max(1, el.h);
-        const orientation: StockOrientation = ratio > 1.2 ? 'landscape' : ratio < 0.85 ? 'portrait' : 'square';
-        const stored = await fetchAndStoreStock({ query, orientation }, { magazineId: ctx.magazineId, pageIndex: ctx.pageIndex });
+        if (!isStockConfigured() && !isImageGenConfigured()) return { ok: false, error: 'Photos are not configured on this server.' };
+        const orientation = orientationForBox(el.w, el.h);
+        // Same ladder as automatic generation: FIND a real photograph first, MAKE
+        // one only if the search comes back empty. This tool takes a box that is
+        // already on the page, so "no photo" would leave the user staring at the
+        // text they asked to replace.
+        let stored = isStockConfigured()
+          ? await fetchAndStoreStock({ query, orientation }, { magazineId: ctx.magazineId, pageIndex: ctx.pageIndex })
+          : null;
+        if (!stored && isImageGenConfigured()) {
+          stored = await generateAndStoreImage({ prompt: query, orientation }, { magazineId: ctx.magazineId, pageIndex: ctx.pageIndex });
+        }
         if (!stored) return { ok: false, error: 'No photo found for that query.' };
         // Build the REPLACEMENT before staging the delete. The delete used to be
         // pushed (and ctx.working mutated) first, so a normalizeElements miss here

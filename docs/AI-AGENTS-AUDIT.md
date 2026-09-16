@@ -16,11 +16,15 @@ The portal runs **7 conversational AI agents**, **5 one-shot AI features**, **4 
 
 (Pexels supplies stock photos — external API, not a model.)
 
-**No image is ever generated.** Photographs are FOUND — the user's own uploads first, then a
-Pexels search — or the slot degrades to a tinted block. `magazineV2/imagegen.ts` (OpenRouter →
-`google/gemini-2.5-flash-image`, config `MAGAZINE_V2_IMAGE_MODEL`) was removed on 2026-08-30:
-it was gated on `OPENROUTER_API_KEY`, the same key every text agent needs, so it ran wherever
-the builder worked at all and Pexels was effectively unreachable behind it.
+**A photograph is FOUND first, and GENERATED only if no search answers.** The ladder is the
+user's own uploads → a Pexels search → `magazineV2/imagegen.ts` (OpenRouter →
+`google/gemini-2.5-flash-image`, config `MAGAZINE_V2_IMAGE_MODEL`) → a tinted block.
+
+That generation rung was removed on 2026-08-30 and reinstated on 2026-09-16 **below Pexels
+rather than above it**, which is the whole difference: gated on `OPENROUTER_API_KEY` — the same
+key every text agent needs — it previously ran wherever the builder worked at all, so Pexels
+was effectively unreachable behind it and every page photo was synthetic. Behind the search, it
+costs a render only for the slots stock could not answer.
 
 **Overall verdict:** the architecture is genuinely good — one provider module, RBAC-safe tool design (reads mirror route visibility; writes go through the app's own gated REST or a proposal/apply step), consistent graceful degradation. The weaknesses are **operational**: most AI endpoints are unmetered and several are reachable without auth, there is no output-token cap or cost accounting anywhere, and observability is near zero.
 
@@ -85,12 +89,12 @@ the builder worked at all and Pexels was effectively unreachable behind it.
 3. **Asset Curator** — per image slot: user upload → Pexels search → palette block. No model renders an image.
 4. Deterministic compose + layout QA; safe-template swap on failure.
 
-Cost controls: default 4–5-page preview, 60k source chars, page count 3–16, copy drafted once and re-flowed across layout retries. Photo slots cost nothing per image — they are Pexels searches, not renders.
+Cost controls: default 4–5-page preview, 60k source chars, page count 3–16, copy drafted once and re-flowed across layout retries. Most photo slots cost nothing per image — they are Pexels searches; only a slot the search cannot fill falls through to a render (§4.5).
 
 ### 4.2 Add-pages-matching-theme — `POST /issues/:id/pages/generate` (owner, 1–12 pages); also staged by the v2 chat agent's `add_content_pages` tool.
 ### 4.3 PDF/DOCX import extraction (worker) — MuPDF raster + **one low-temp vision call per page** (`worker/lib/ai.ts`) that only assigns text roles / flags icons & QRs (repositioning forbidden — the historical doubled-text bug). Per-page failures contained with individual retry.
 ### 4.4 Document ingest/OCR (`lib/agent/documentIngest.ts`) — 4 paths, only 2 cost a model (scanned-PDF OCR at concurrency 2 / 24-page cap; image vision digest). Careful blank-vs-failed distinction → retryable 502 instead of blaming the scan.
-### 4.5 ~~AI image generation (`imagegen.ts`)~~ — **REMOVED 2026-08-30.** Photo slots are filled by search only (uploads → Pexels → tinted block); no model renders a picture anywhere in the portal. Assets written by the old path keep `source: 'ai-image'` and stay placeable.
+### 4.5 AI image generation (`imagegen.ts`) — **reinstated 2026-09-16, as the rung BELOW Pexels.** One OpenRouter call per image (`modalities:['image','text']`, `image_config.aspect_ratio` from the slot's shape — prompt wording alone does not move it off 1024×1024). Three doors: automatic generation (only for slots a Pexels search could not fill), the chat agent's `generate_image` tool, and `POST /issues/:id/media/generate` behind the editor's **Generate** tab. Rows are `kind:'photo'`, `source:'ai-image'` — placeable like any other. Bytes are magic-byte-sniffed and capped at `MAX_IMAGE_BYTES` before storage (`imageBytes.ts`, unit-tested), so a truncated or non-raster reply never becomes an asset. Cost control: the search-first order, plus a 10/min limiter on the manual route.
 
 **Worker queue** (`worker/src/queue.ts`): hand-rolled Mongo poll queue, atomic claim, 3 attempts, orphan sweep. ⚠️ Stale-job window (5 min default) is **shorter than a real generation job**; safe only because the sweep runs while the single worker is idle — a second worker would requeue live jobs. ⚠️ Worker registers v2 handlers even when `MAGAZINE_V2` is off. No dead-letter, no heartbeat.
 

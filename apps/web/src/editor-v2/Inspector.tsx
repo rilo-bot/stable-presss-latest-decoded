@@ -20,7 +20,7 @@ import { ICON_NAMES, resolveIcon } from '@/lib/iconRegistry';
 import {
   Type, Image as ImageIcon, QrCode, Square, Shapes,
   AlignLeft, AlignCenter, AlignRight, AlignJustify, ArrowUpToLine, FoldVertical, ArrowDownToLine, Trash2,
-  Sliders, Images, Upload, Copy, BringToFront, SendToBack, FileText,
+  Sliders, Images, Upload, Copy, BringToFront, SendToBack, FileText, Search, Sparkles,
 } from 'lucide-react';
 
 const KIND_META = {
@@ -493,9 +493,21 @@ function ElementPanel({ el }: { el: MagazineElement }) {
   );
 }
 
-// ── The media library: browse the issue's photos and place them ───────────────
-// Clicking a thumbnail sets the selected image element's source, or (if nothing
-// image-shaped is selected) drops a new image element onto the current page.
+// ── The media panel: three doors onto the same library ────────────────────────
+//
+//   In this magazine — what is already here (uploads, PDF extracts, anything the
+//                      other two doors have added). Click to place.
+//   Find a photo     — search Pexels and pick one. The server downloads the bytes
+//                      into our own bucket, so the picture is ours and does not
+//                      depend on a third party's CDN.
+//   Generate         — describe a picture that does not exist and have the image
+//                      model render it.
+//
+// Both new doors ADD TO THE LIBRARY FIRST and place second, which is the whole
+// reason they belong in this panel rather than being one-shot inserts: a photo
+// sourced once can be re-placed, alt-edited and reused on any page, exactly like
+// an upload. Each hides itself when this server has no key for it — an offer the
+// server cannot honour is worse than no offer.
 function AssetsTab() {
   const issueId = useEditorStore((s) => s.issueId);
   const selectedId = useEditorStore((s) => s.selectedId);
@@ -504,6 +516,8 @@ function AssetsTab() {
   const addElement = useEditorStore((s) => s.addElement);
   const [assets, setAssets] = useState<MediaAsset[]>([]);
   const [loading, setLoading] = useState(true);
+  const [mode, setMode] = useState<'library' | 'find' | 'make'>('library');
+  const [sources, setSources] = useState<api.MediaSources>({ stock: false, generate: false });
 
   useEffect(() => {
     if (!issueId) return;
@@ -516,6 +530,17 @@ function AssetsTab() {
     return () => { active = false; };
     // Re-fetch when the page's rev changes (a stock/AI add creates new media).
   }, [issueId, page?.rev]);
+
+  // Which doors this server can open. Asked once per magazine; a failure leaves
+  // both false, so the panel degrades to the library it has always been.
+  useEffect(() => {
+    if (!issueId) return;
+    let active = true;
+    api.mediaSources(issueId)
+      .then((s) => { if (active) setSources(s); })
+      .catch(() => {});
+    return () => { active = false; };
+  }, [issueId]);
 
   const selEl = page?.elements.find((e) => e.id === selectedId) ?? null;
 
@@ -540,6 +565,78 @@ function AssetsTab() {
     }
   };
 
+  /** A new row from Find or Generate: into the library, onto the page, and back
+   *  to the library view so the user can see where it went. */
+  const acceptNew = (a: MediaAsset) => {
+    setAssets((prev) => [a, ...prev]);
+    place(a);
+    setMode('library');
+  };
+
+  // The orientation to ASK FOR: the shape of the box it is going into, so a
+  // portrait slot gets portrait candidates rather than a crop of a wide photo.
+  const wantedOrientation = (): 'portrait' | 'landscape' | 'square' | undefined => {
+    if (!selEl || selEl.type !== 'image') return undefined;
+    const ratio = selEl.w / Math.max(1, selEl.h);
+    return ratio > 1.2 ? 'landscape' : ratio < 0.85 ? 'portrait' : 'square';
+  };
+
+  const modeBtn = (id: 'library' | 'find' | 'make', label: string, icon: ReactNode) => (
+    <button
+      onClick={() => setMode(id)}
+      className={
+        'flex flex-1 items-center justify-center gap-1 rounded-sm px-2 py-1.5 text-ui-sm font-semibold transition-colors ' +
+        (mode === id ? 'bg-studio-raise-2 text-studio-ink' : 'text-studio-ink-3 hover:text-studio-ink-2')
+      }
+    >
+      {icon} {label}
+    </button>
+  );
+
+  return (
+    <div className="flex h-full flex-col">
+      {(sources.stock || sources.generate) && (
+        <div className="flex flex-shrink-0 gap-1 border-b border-studio-hair bg-studio-raise p-1">
+          {modeBtn('library', 'In magazine', <Images size={12} />)}
+          {sources.stock && modeBtn('find', 'Find photo', <Search size={12} />)}
+          {sources.generate && modeBtn('make', 'Generate', <Sparkles size={12} />)}
+        </div>
+      )}
+      <div className="min-h-0 flex-1 overflow-y-auto">
+        {mode === 'find' && issueId ? (
+          <StockFinder issueId={issueId} orientation={wantedOrientation()} onAdded={acceptNew} />
+        ) : mode === 'make' && issueId ? (
+          <ImageGenerator issueId={issueId} orientation={wantedOrientation()} onAdded={acceptNew} />
+        ) : (
+          <MediaLibrary
+            assets={assets}
+            loading={loading}
+            forSelectedImage={selEl?.type === 'image'}
+            canFind={sources.stock}
+            canMake={sources.generate}
+            onFind={() => setMode('find')}
+            onMake={() => setMode('make')}
+            onPlace={place}
+          />
+        )}
+      </div>
+    </div>
+  );
+}
+
+/** The library grid — what this panel has always been, now one view of three. */
+function MediaLibrary({
+  assets, loading, forSelectedImage, canFind, canMake, onFind, onMake, onPlace,
+}: {
+  assets: MediaAsset[];
+  loading: boolean;
+  forSelectedImage: boolean;
+  canFind: boolean;
+  canMake: boolean;
+  onFind: () => void;
+  onMake: () => void;
+  onPlace: (a: MediaAsset) => void;
+}) {
   if (loading) {
     return (
       <div className="p-3">
@@ -563,19 +660,41 @@ function AssetsTab() {
         <p className="mt-1 text-ui-sm leading-relaxed text-studio-ink-3">
           Photos appear here when you generate a magazine, import a PDF, or ask the Design Helper to add a photo.
         </p>
+        {/* An empty library is exactly when the other two doors are the answer,
+            so say so here rather than making someone find the tabs above. */}
+        {(canFind || canMake) && (
+          <div className="mt-4 flex w-full flex-col gap-1.5">
+            {canFind && (
+              <button
+                onClick={onFind}
+                className="flex items-center justify-center gap-1.5 rounded-sm border border-studio-edge bg-studio-raise px-3 py-2 text-ui-sm font-semibold text-studio-ink-2 hover:bg-studio-raise-2"
+              >
+                <Search size={13} /> Find a photo
+              </button>
+            )}
+            {canMake && (
+              <button
+                onClick={onMake}
+                className="flex items-center justify-center gap-1.5 rounded-sm border border-studio-edge bg-studio-raise px-3 py-2 text-ui-sm font-semibold text-studio-ink-2 hover:bg-studio-raise-2"
+              >
+                <Sparkles size={13} /> Generate one with AI
+              </button>
+            )}
+          </div>
+        )}
       </div>
     );
   }
   return (
-    <div className="h-full overflow-y-auto p-3">
+    <div className="p-3">
       <p className="mb-2 text-ui-sm text-studio-ink-3">
-        {selEl?.type === 'image' ? 'Click a photo to set the selected image.' : 'Click a photo to place it on the page.'}
+        {forSelectedImage ? 'Click a photo to set the selected image.' : 'Click a photo to place it on the page.'}
       </p>
       <div className="grid grid-cols-2 gap-2">
         {assets.map((a) => (
           <button
             key={a.id}
-            onClick={() => place(a)}
+            onClick={() => onPlace(a)}
             className="relative aspect-[4/3] overflow-hidden rounded border border-studio-hair hover:border-studio-gold"
             title={a.alt || a.kind}
           >
@@ -583,6 +702,191 @@ function AssetsTab() {
           </button>
         ))}
       </div>
+    </div>
+  );
+}
+
+/**
+ * FIND: search Pexels, pick one, and it is downloaded into this magazine.
+ *
+ * Nothing is stored until a result is clicked — the point of a picker is to offer
+ * a choice you have not already committed to. Search is manual (Enter or the
+ * button), not per-keystroke: every request spends the account's Pexels quota.
+ */
+function StockFinder({
+  issueId, orientation, onAdded,
+}: {
+  issueId: string;
+  orientation?: 'portrait' | 'landscape' | 'square';
+  onAdded: (a: MediaAsset) => void;
+}) {
+  const [q, setQ] = useState('');
+  const [results, setResults] = useState<api.StockPhoto[] | null>(null);
+  const [searching, setSearching] = useState(false);
+  const [adding, setAdding] = useState<string | null>(null);
+
+  const run = async () => {
+    const query = q.trim();
+    if (!query || searching) return;
+    setSearching(true);
+    try {
+      setResults(await api.searchStock(issueId, query, orientation));
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : 'Could not search for photos.');
+    } finally {
+      setSearching(false);
+    }
+  };
+
+  const choose = async (photo: api.StockPhoto) => {
+    if (adding) return;
+    setAdding(photo.id);
+    try {
+      onAdded(await api.addStockPhoto(issueId, photo.id));
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : 'Could not add that photo.');
+    } finally {
+      setAdding(null);
+    }
+  };
+
+  return (
+    <div className="p-3">
+      <div className="flex gap-1.5">
+        <input
+          value={q}
+          onChange={(e) => setQ(e.target.value)}
+          onKeyDown={(e) => { if (e.key === 'Enter') void run(); }}
+          placeholder="chestnut horse jumping"
+          aria-label="Search stock photos"
+          className="min-w-0 flex-1 rounded-sm border border-studio-edge bg-studio-raise px-2 py-1.5 text-ui-sm text-studio-ink placeholder:text-studio-ink-4 focus:border-studio-gold focus:outline-none"
+        />
+        <button
+          onClick={() => void run()}
+          disabled={searching || !q.trim()}
+          className="flex items-center gap-1 rounded-sm border border-studio-edge bg-studio-raise px-2.5 py-1.5 text-ui-sm font-semibold text-studio-ink-2 hover:bg-studio-raise-2 disabled:opacity-40"
+        >
+          <Search size={13} /> {searching ? 'Searching…' : 'Search'}
+        </button>
+      </div>
+      <p className="mt-1.5 text-ui-sm text-studio-ink-4">
+        A few concrete words work best{orientation ? ` — showing ${orientation} photos to match the box` : ''}.
+      </p>
+
+      {searching && (
+        <p className="mt-3 text-ui-sm text-studio-ink-3" role="status" aria-live="polite">
+          <ShimmerText>Looking for photos</ShimmerText>
+        </p>
+      )}
+      {!searching && results?.length === 0 && (
+        <p className="mt-3 text-ui-sm leading-relaxed text-studio-ink-3">
+          Nothing found for that. Try fewer, plainer words — or generate the picture instead.
+        </p>
+      )}
+      {!searching && results && results.length > 0 && (
+        <div className="mt-3 grid grid-cols-2 gap-2">
+          {results.map((p) => (
+            <button
+              key={p.id}
+              onClick={() => void choose(p)}
+              disabled={adding !== null}
+              title={p.alt}
+              className="relative aspect-[4/3] overflow-hidden rounded border border-studio-hair hover:border-studio-gold disabled:opacity-50"
+            >
+              <img src={p.thumbUrl} alt={p.alt} loading="lazy" className="h-full w-full object-cover" />
+              {adding === p.id && (
+                <span className="absolute inset-0 flex items-center justify-center bg-black/50 text-ui-sm font-semibold text-white">
+                  Adding…
+                </span>
+              )}
+              {/* Pexels does not require the credit; the photographer deserves it. */}
+              {p.attribution.author && (
+                <span className="absolute inset-x-0 bottom-0 truncate bg-black/55 px-1 py-0.5 text-left text-[10px] text-white/90">
+                  {p.attribution.author}
+                </span>
+              )}
+            </button>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
+/**
+ * GENERATE: describe a picture and have the image model render it.
+ *
+ * Deliberately the second tab, not the first. A real photograph beats a rendered
+ * one for anything a camera could have taken, which is also the order automatic
+ * generation uses; this is for the pictures no search will ever return.
+ *
+ * One call is slow (tens of seconds) and paid, so the button states plainly what
+ * is happening and stays disabled for the duration rather than inviting a second
+ * identical request.
+ */
+function ImageGenerator({
+  issueId, orientation, onAdded,
+}: {
+  issueId: string;
+  orientation?: 'portrait' | 'landscape' | 'square';
+  onAdded: (a: MediaAsset) => void;
+}) {
+  const [prompt, setPrompt] = useState('');
+  const [busy, setBusy] = useState(false);
+  const [shape, setShape] = useState<'portrait' | 'landscape' | 'square'>(orientation ?? 'landscape');
+
+  const run = async () => {
+    const text = prompt.trim();
+    if (!text || busy) return;
+    setBusy(true);
+    try {
+      onAdded(await api.generateMediaImage(issueId, text, shape));
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : 'Could not generate that image.');
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  return (
+    <div className="p-3">
+      <textarea
+        value={prompt}
+        onChange={(e) => setPrompt(e.target.value)}
+        rows={4}
+        placeholder="A quiet stable aisle at dawn, light through the doorway, hay dust in the air"
+        aria-label="Describe the image to generate"
+        className="w-full resize-none rounded-sm border border-studio-edge bg-studio-raise px-2 py-1.5 text-ui-sm leading-relaxed text-studio-ink placeholder:text-studio-ink-4 focus:border-studio-gold focus:outline-none"
+      />
+      <div className="mt-2">
+        <p className="mb-1 text-ui-sm text-studio-ink-3">Shape</p>
+        <Segmented
+          value={shape}
+          onChange={(v) => setShape(v as 'portrait' | 'landscape' | 'square')}
+          options={[
+            { value: 'landscape', label: 'Wide' },
+            { value: 'portrait', label: 'Tall' },
+            { value: 'square', label: 'Square' },
+          ]}
+        />
+      </div>
+      <button
+        onClick={() => void run()}
+        disabled={busy || !prompt.trim()}
+        className="mt-2 flex w-full items-center justify-center gap-1.5 rounded-sm border border-studio-edge bg-studio-raise px-3 py-2 text-ui-sm font-semibold text-studio-ink-2 hover:bg-studio-raise-2 disabled:opacity-40"
+      >
+        <Sparkles size={13} />
+        {busy ? 'Generating…' : 'Generate image'}
+      </button>
+      {busy && (
+        <p className="mt-2 text-ui-sm text-studio-ink-3" role="status" aria-live="polite">
+          <ShimmerText>Rendering your image — this takes a few seconds</ShimmerText>
+        </p>
+      )}
+      <p className="mt-2 text-ui-sm leading-relaxed text-studio-ink-4">
+        Generated images carry no text and no real people. For an ordinary photograph of a real subject,
+        <b className="text-studio-ink-3"> Find photo</b> usually looks better.
+      </p>
     </div>
   );
 }
