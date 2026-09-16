@@ -24,6 +24,7 @@ import { isAdmin } from '../../lib/rbac.js';
 // loads megabytes of launcher code, and launching it was what exhausted the
 // instance. Rendering belongs to apps/worker; this router only hands out URLs.
 import { enqueueJob } from '../../lib/magazineV2/jobs.js';
+import { COL } from '../../lib/magazineV2/collections.js';
 
 // WEB_PUBLIC_URL and the download-filename helper moved to
 // apps/worker/src/jobs/renderIssuePdf.ts along with the rendering itself. Nothing
@@ -146,7 +147,23 @@ router.get('/:id/pdf', async (req, res) => {
   // republish, or ?refresh=1). Queue the render and tell the client to wait —
   // 202 rather than 500, because nothing has failed.
   try {
-    await enqueueJob('renderIssuePdf', { publishedIssueId: String(doc._id) });
+    // ONE render at a time per issue. Without this every poll queues another job:
+    // the client polls this same endpoint every 3s while it waits, and each 202
+    // would enqueue a fresh ~20s Chromium render of a document that is already
+    // being rendered. A reader holding down refresh could pin the worker for
+    // minutes rendering the same issue over and over.
+    //
+    // Not a lock, and does not need to be: the worst a race can do is queue a
+    // second render whose output is byte-identical, which the next poll serves
+    // anyway. A lock here would be more machinery than the failure justifies.
+    const pending = await db.collection(COL.jobs).find({
+      type: 'renderIssuePdf',
+      'payload.publishedIssueId': String(doc._id),
+      status: { $in: ['queued', 'running'] },
+    });
+    if (pending.length === 0) {
+      await enqueueJob('renderIssuePdf', { publishedIssueId: String(doc._id) });
+    }
   } catch (err) {
     console.error('[issues] could not queue the PDF render:', err instanceof Error ? err.message : err);
     res.status(503).json({ error: 'The PDF service is unavailable right now. Please try again shortly.' });
