@@ -41,6 +41,7 @@ import {
 } from './templates.js';
 import { validatePageLayout } from './layoutValidate.js';
 import { isStockConfigured, fetchAndStoreStock, type StockOrientation } from './stock.js';
+import { isImageGenConfigured, generateAndStoreImage } from './imagegen.js';
 import { userPhotosFrom, type UserPhoto } from './media.js';
 // ── AI-authored layout path (behind MAGAZINE_V2_AI_LAYOUT) ────────────────────
 import type { TextRole } from './model.js';
@@ -759,9 +760,10 @@ function slotOrientation(box: { w: number; h: number }): StockOrientation {
 }
 
 // Image slots within a page are sourced concurrently (each is an independent
-// Pexels search + download). A photo-grid page has 4 image slots, so serial
-// sourcing made one page take ~4× longer than necessary. Bounded so a
-// pathological template can't fan out without limit.
+// Pexels search + download, and possibly an image-model call after it — up to
+// ~60s). A photo-grid page has 4 image slots, so serial sourcing made one page
+// take ~4× longer than necessary. Bounded so a pathological template can't fan
+// out without limit.
 const IMAGE_SLOT_CONCURRENCY = 4;
 
 /** A pool of the user's OWN uploaded photos (from the magazine's media library)
@@ -857,21 +859,27 @@ function makePagePhotos(pool?: PhotoClaimer): { claim(): UserPhoto | null; reset
  * palette block so the page still ships looking designed. Slots resolve in
  * parallel (bounded); output order matches template.slots.
  *
- * PHOTOGRAPHS ARE FOUND, NEVER GENERATED (user direction 2026-08-30). There used
- * to be a rung between the user's own photos and Pexels that rendered a bespoke
- * image on OpenRouter, and because it was gated on OPENROUTER_API_KEY — the same
- * key every text agent needs — it was on wherever the builder worked at all, so
- * in practice Pexels never ran and every page photo was synthetic. The ladder is
- * now three rungs, all of them real pictures or an honest blank:
+ * A REAL PHOTOGRAPH IS PREFERRED; GENERATION FILLS THE GAP (user direction
+ * 2026-09-16). Four rungs, tried in order:
  *
  *   1. the user's OWN uploaded photo (claimed at most once per issue)
  *   2. a Pexels photograph found from the art-director's search terms
- *   3. a tinted palette block
+ *   3. an AI-generated editorial image from those same terms (imagegen.ts)
+ *   4. a tinted palette block
  *
- * That makes rung 2 LOAD-BEARING with nothing behind it but a colour block, which
- * is why draftPage asks the art director for SEARCH TERMS rather than a scene to
- * render: a sentence written for a generative model finds nothing on a keyword
- * search, and "finds nothing" is now visible on the page.
+ * The ORDER is the whole point, and it is the opposite of what shipped before
+ * 2026-08-30. Back then generation sat AHEAD of Pexels and was gated on
+ * OPENROUTER_API_KEY — the same key every text agent needs — so it was on
+ * wherever the builder worked at all, Pexels never ran, and every page photo was
+ * synthetic. Behind Pexels instead, it costs an image-model call only for the
+ * slots a search could not answer, and a real photograph still wins wherever one
+ * exists.
+ *
+ * draftPage still asks the art director for SEARCH TERMS rather than a scene to
+ * render, because rung 2 is the one we want to hit: a keyword search matches
+ * concrete nouns, and those same nouns are a perfectly good generation brief,
+ * while a long cinematic sentence written for a generative model finds nothing on
+ * Pexels and would push every slot down to rung 3.
  */
 async function curateFills(
   template: PageTemplate,
@@ -900,13 +908,19 @@ async function curateFills(
         //    same one — each user photo is placed at most once.
         const mine = pool?.claim();
         if (mine) stored = { url: mine.url, assetId: mine.assetId, alt: mine.alt };
-        // 2) Top up by FINDING a real photograph on Pexels, then a tinted palette
-        //    block. Photographs are only ever SOURCED, never generated — see the
-        //    note above curateFills. Degrades gracefully when Pexels/S3 isn't
-        //    configured (e.g. local dev without S3).
+        // 2) Top up by FINDING a real photograph on Pexels, 3) failing that by
+        //    GENERATING one, then 4) a tinted palette block. Each rung is
+        //    independently env-gated and returns null rather than throwing, so a
+        //    box with neither key configured (e.g. local dev without S3) simply
+        //    walks to the bottom and still ships a designed-looking page.
         if (!stored && ctx && brief) {
           const orientation = slotOrientation(slot.box);
           if (isStockConfigured()) stored = await fetchAndStoreStock({ query: brief, orientation }, ctx);
+          // Only the slots stock could not answer reach the image model, which is
+          // what keeps generation from becoming the default again (see above).
+          if (!stored && isImageGenConfigured()) {
+            stored = await generateAndStoreImage({ prompt: brief, orientation }, ctx);
+          }
         }
         return stored ? { slotId: slot.id, image: stored } : { slotId: slot.id, shapeFill: palette.secondary };
       }

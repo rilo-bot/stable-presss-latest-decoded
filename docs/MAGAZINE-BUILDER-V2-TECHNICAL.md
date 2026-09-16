@@ -330,10 +330,11 @@ and **pages appear in the studio as they are composed** (no blocking loader).
    │   ⇒ { texts[slotId], images[slotId]=photo SEARCH TERMS, qr[slotId] }             │
    ├────────────────────────────────────────────────────────────────────────────────┤
    │ curateFills — the ASSET CURATOR (concurrency 4 per page)                        │
-   │   PHOTOGRAPHS ARE FOUND, NEVER GENERATED                                        │
+   │   A PHOTOGRAPH IS FOUND FIRST; GENERATION ONLY FILLS THE GAP                    │
    │   1. the user's OWN uploaded photo (claimed at most once)                       │
    │   2. Pexels stock, searched with the art director's terms                       │
-   │   3. a tinted palette block                                                     │
+   │   3. an AI render of those same terms (imagegen.ts) — only if 2 found nothing   │
+   │   4. a tinted palette block                                                     │
    ├────────────────────────────────────────────────────────────────────────────────┤
    │ pruneLayoutSpec  → drop leaves with no real content, RE-SOLVE the pruned tree    │
    │ solveLayout(+measureLeaf)  → absolute integer boxes    ← the ONLY pixel authority │

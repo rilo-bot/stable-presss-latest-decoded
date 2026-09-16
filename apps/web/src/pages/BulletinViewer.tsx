@@ -138,19 +138,47 @@ export default function BulletinViewer() {
     setExporting(true);
     try {
       const token = useAuthStore.getState().token;
-      const res = await fetch(apiUrl(`/api/issues/${id}/pdf`), {
-        headers: token ? { Authorization: `Bearer ${token}` } : undefined,
-      });
-      if (!res.ok) throw new Error(`HTTP ${res.status}`);
-      const blob = await res.blob();
-      const objectUrl = URL.createObjectURL(blob);
-      const a = document.createElement('a');
-      a.href = objectUrl;
-      a.download = `${(issue.title || 'bulletin').replace(/[^\w-]+/g, '-').replace(/-+/g, '-')}.pdf`;
-      document.body.appendChild(a);
-      a.click();
-      a.remove();
-      URL.revokeObjectURL(objectUrl);
+      const headers = token ? { Authorization: `Bearer ${token}` } : undefined;
+
+      // The API no longer renders on demand — the worker prints each published
+      // version once and parks it in S3 (see apps/worker/src/jobs/renderIssuePdf.ts).
+      // So there are two answers here: 202 "being prepared", or a redirect to the
+      // stored file. `redirect: 'manual'` keeps us from following the redirect and
+      // pulling 8MB through JS, which would need S3 CORS and buy nothing — the
+      // browser can fetch it far better than we can.
+      //
+      // Polls rather than gives up, because the wait is bounded and short: the
+      // render is normally already done at publish time, and this path only runs
+      // for the first reader after a republish.
+      const DEADLINE_MS = 90_000;
+      const POLL_MS = 3_000;
+      const started = Date.now();
+
+      for (;;) {
+        const res = await fetch(apiUrl(`/api/issues/${id}/pdf`), { headers, redirect: 'manual' });
+
+        // An opaque redirect reports status 0 with type 'opaqueredirect'; a same-
+        // origin one reports 302. Either way the file exists, so hand the URL to
+        // the browser and let it download (the object carries its own
+        // Content-Disposition, so it saves under the issue's title).
+        if (res.type === 'opaqueredirect' || res.status === 302 || res.ok) {
+          window.location.href = apiUrl(`/api/issues/${id}/pdf`);
+          return;
+        }
+        if (res.status === 202) {
+          if (Date.now() - started > DEADLINE_MS) {
+            toast.message('The PDF is still being prepared. Try again in a moment.');
+            return;
+          }
+          await new Promise((r) => setTimeout(r, POLL_MS));
+          continue;
+        }
+        if (res.status === 409) {
+          toast.error('Publish this issue before downloading it as a PDF.');
+          return;
+        }
+        throw new Error(`HTTP ${res.status}`);
+      }
     } catch (err) {
       console.error('Bulletin PDF download failed', err);
       toast.error('Could not generate the PDF. Please try again.');

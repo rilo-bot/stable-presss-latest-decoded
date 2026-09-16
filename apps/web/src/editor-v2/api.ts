@@ -555,6 +555,56 @@ export async function uploadMediaImage(id: string, file: File, alt?: string, kin
   }).then(parse<{ asset: MediaAsset }>).then((r) => r.asset);
 }
 
+// ── Pictures you did not take: FIND one (Pexels) or MAKE one (AI) ──
+// Both add a normal placeable row to the SAME media library as an upload, so the
+// caller places the result with the element CRUD it already has.
+
+/** Which of the two sources this server can actually do — the panel hides the rest. */
+export interface MediaSources {
+  stock: boolean;
+  generate: boolean;
+}
+export const mediaSources = (id: string) =>
+  authFetchRetry(`${BASE}/issues/${id}/media/sources`).then(parse<MediaSources>);
+
+/** One Pexels result, offered before anything is stored. `id` is the provider's,
+ *  and the ONLY handle that goes back — never a URL, so there is nothing to
+ *  fabricate or swap. `thumbUrl` is provider-hosted and never stored. */
+export interface StockPhoto {
+  id: string;
+  alt: string;
+  thumbUrl: string;
+  attribution: { author: string; url: string };
+  width?: number;
+  height?: number;
+}
+
+/** Search stock photos. A POST for a read — see the route's note: the shared rate
+ *  limiter ignores GETs, and this spends a third party's quota. */
+export const searchStock = (id: string, q: string, orientation?: 'portrait' | 'landscape' | 'square') =>
+  authFetch(`${BASE}/issues/${id}/media/stock/search`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ q, ...(orientation ? { orientation } : {}) }),
+  }).then(parse<{ photos: StockPhoto[] }>).then((r) => r.photos);
+
+/** Store a chosen search result in the library (downloads the bytes server-side). */
+export const addStockPhoto = (id: string, photoId: string, alt?: string) =>
+  authFetch(`${BASE}/issues/${id}/media/stock`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ photoId, ...(alt ? { alt } : {}) }),
+  }).then(parse<{ asset: MediaAsset }>).then((r) => r.asset);
+
+/** Generate an image into the library. Slow (an image-model call) — callers
+ *  should show progress rather than a blocked button. */
+export const generateMediaImage = (id: string, prompt: string, orientation?: 'portrait' | 'landscape' | 'square') =>
+  authFetch(`${BASE}/issues/${id}/media/generate`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ prompt, ...(orientation ? { orientation } : {}) }),
+  }).then(parse<{ asset: MediaAsset }>).then((r) => r.asset);
+
 // ── Reference layouts: "take this layout" ──
 // Mirrors apps/server/src/lib/magazineV2/layoutReading.ts. Boxes are FRACTIONS of
 // the reference (0–1), never pixels — that is what lets the preview draw them over

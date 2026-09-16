@@ -53,6 +53,9 @@ import { aspectMismatch, normalizeLayoutReading, type LayoutReading } from '../.
 import { readLayoutPdfPage } from '../../lib/magazineV2/readLayoutPdf.js';
 import { applyReadingToPage, themeForPage, tightSummary, unfilledSlots, type ExtraContent, type LayoutFit } from '../../lib/magazineV2/applyLayout.js';
 import { isPlaceableMedia, rankMediaForPage, type RankableMediaRow } from '../../lib/magazineV2/media.js';
+// The two ways a picture nobody uploaded gets into the library: found, or made.
+import { getStockPhoto, isStockConfigured, searchStockPhotos, storeStockPhoto, type StockOrientation } from '../../lib/stock.js';
+import { generateAndStoreImage, isImageGenConfigured } from '../../lib/magazineV2/imagegen.js';
 import { draftReferenceFill } from '../../lib/magazineV2/referenceFill.js';
 import { createSourceDoc, listSourceDocs } from '../../lib/magazineV2/sourceDocsDb.js';
 import { canCopyLayout, magazineDocument } from '../../lib/magazineV2/magazineDocs.js';
@@ -1334,6 +1337,163 @@ router.post('/issues/:id/media', rateLimit('mag2-write', 300, 60_000), async (re
   res.status(201).json({ asset: { id: String(assetId), url, alt, kind, pageIndex: null, contentType: head.contentType, size: head.contentLength } });
 });
 
+// ── Pictures the user did not take: FIND one, or MAKE one ────────────────────
+//
+// The same two sources automatic generation uses (curateFills: Pexels, then the
+// image model), exposed as manual doors so the editor's media panel can offer
+// them directly. Until now both were reachable ONLY by asking the Design Helper
+// in chat, which is a strange way to ask for a photo of a horse.
+//
+// Both land in the SAME media library as an upload, as a normal placeable row —
+// so a photo is sourced once and can then be placed, re-placed, alt-edited and
+// re-used exactly like one the user uploaded themselves, and the client places
+// it with the element CRUD it already has.
+//
+// Every magazine member may use these (same bar as uploading an image); nothing
+// here touches a page, so there is no edit-access question to answer.
+
+/** Whether each source is usable, so the client can hide what this server can't do. */
+router.get('/issues/:id/media/sources', async (req, res) => {
+  const uid = req.account!.id;
+  const doc = await loadIssue(String(req.params.id));
+  if (!doc || !roleOnMagazine(doc, uid)) {
+    res.status(404).json({ error: 'Not found' });
+    return;
+  }
+  res.json({ stock: isStockConfigured(), generate: isImageGenConfigured() });
+});
+
+// Search Pexels WITHOUT storing anything — a picker has to be able to offer a
+// choice it has not already committed to. Returns provider ids + thumbnails; the
+// caller posts back an ID (never a URL), which is what makes a fabricated or
+// swapped-in image impossible: an id either resolves at the provider or it does
+// not. Thumbnails are provider-hosted and never stored.
+//
+// A POST for what is plainly a read, and deliberately: `rateLimit` returns early
+// on GET (see lib/rateLimit.ts), so as a GET this would be an UNLIMITED door onto
+// a third party's quota — one key, shared by every magazine, and a typing picker
+// fires a request per keystroke-pause. The limiter only binds if the verb is one
+// it inspects.
+router.post('/issues/:id/media/stock/search', rateLimit('mag2-stock', 60, 60_000), async (req, res) => {
+  const uid = req.account!.id;
+  const doc = await loadIssue(String(req.params.id));
+  if (!doc || !roleOnMagazine(doc, uid)) {
+    res.status(404).json({ error: 'Not found' });
+    return;
+  }
+  if (!isStockConfigured()) {
+    res.status(503).json({ error: 'Stock photo search is not set up on this server.' });
+    return;
+  }
+  const q = typeof req.body?.q === 'string' ? req.body.q.trim().slice(0, 200) : '';
+  if (!q) {
+    res.status(400).json({ error: 'Type what you are looking for.' });
+    return;
+  }
+  const orientation = req.body?.orientation;
+  const photos = await searchStockPhotos(q, {
+    ...(orientation === 'portrait' || orientation === 'landscape' || orientation === 'square'
+      ? { orientation }
+      : {}),
+    count: 12,
+  });
+  res.json({ photos });
+});
+
+// Store a chosen search result in the library. Takes the provider's photo id —
+// see the note above; `storeStockPhoto` re-resolves it, downloads the full-size
+// bytes into OUR bucket (nothing is hotlinked) and carries the photographer's
+// credit onto the row.
+router.post('/issues/:id/media/stock', rateLimit('mag2-write', 300, 60_000), async (req, res) => {
+  const uid = req.account!.id;
+  const doc = await loadIssue(String(req.params.id));
+  if (!doc || !roleOnMagazine(doc, uid)) {
+    res.status(404).json({ error: 'Not found' });
+    return;
+  }
+  if (!isStockConfigured()) {
+    res.status(503).json({ error: 'Stock photo search is not set up on this server.' });
+    return;
+  }
+  const photoId = typeof req.body?.photoId === 'string' ? req.body.photoId.trim() : '';
+  if (!photoId) {
+    res.status(400).json({ error: 'Pick a photo.' });
+    return;
+  }
+  const candidate = await getStockPhoto(photoId);
+  if (!candidate) {
+    res.status(404).json({ error: 'That photo is no longer available.' });
+    return;
+  }
+  const stored = await storeStockPhoto(candidate, `public/magazinesV2/${doc._id}/media`);
+  if (!stored) {
+    res.status(502).json({ error: 'Could not save that photo. Please try another.' });
+    return;
+  }
+  // The caller's alt wins over the provider's description when given — whoever is
+  // placing the picture knows what it is doing on THEIR page.
+  const alt = (typeof req.body?.alt === 'string' && req.body.alt.trim() ? req.body.alt : stored.alt).slice(0, 300);
+  const now = new Date().toISOString();
+  const assetId = await db.collection(COL.media).insertOne({
+    magazineId: doc._id,
+    pageIndex: null,
+    key: stored.key,
+    url: stored.url,
+    contentType: stored.contentType,
+    size: stored.bytes,
+    alt,
+    kind: 'photo',
+    source: 'stock',
+    attribution: stored.attribution,
+    createdAt: now,
+    updatedAt: now,
+  });
+  res.status(201).json({
+    asset: {
+      id: String(assetId),
+      url: stored.url,
+      alt,
+      kind: 'photo',
+      pageIndex: null,
+      contentType: stored.contentType,
+      size: stored.bytes,
+      attribution: stored.attribution,
+    },
+  });
+});
+
+// Generate an image into the library. Rate-limited far harder than the rest of
+// this file: each call is a slow, paid image-model request, and unlike a search
+// there is no cheap failure — so the bucket is the small one the other
+// model-spending routes use.
+router.post('/issues/:id/media/generate', rateLimit('mag2-imagegen', 10, 60_000), async (req, res) => {
+  const uid = req.account!.id;
+  const doc = await loadIssue(String(req.params.id));
+  if (!doc || !roleOnMagazine(doc, uid)) {
+    res.status(404).json({ error: 'Not found' });
+    return;
+  }
+  if (!isImageGenConfigured()) {
+    res.status(503).json({ error: 'AI image generation is not set up on this server.' });
+    return;
+  }
+  const prompt = typeof req.body?.prompt === 'string' ? req.body.prompt.trim().slice(0, 600) : '';
+  if (!prompt) {
+    res.status(400).json({ error: 'Describe the image you want.' });
+    return;
+  }
+  const o = req.body?.orientation;
+  const orientation: StockOrientation = o === 'portrait' || o === 'square' ? o : 'landscape';
+  const stored = await generateAndStoreImage({ prompt, orientation }, { magazineId: doc._id, pageIndex: null });
+  if (!stored) {
+    res.status(502).json({ error: 'The image model did not return a picture. Try again, or reword the description.' });
+    return;
+  }
+  res.status(201).json({
+    asset: { id: stored.assetId, url: stored.url, alt: stored.alt, kind: 'photo', pageIndex: null, source: 'ai-image' },
+  });
+});
+
 // ── Reference layouts: "take this layout" ────────────────────────────────────
 // Read a layout out of an image already in the magazine's media library. P1 of
 // docs/MAGAZINE-V2-LAYOUT-FROM-REFERENCE.md: this ONLY reads — it builds nothing
@@ -1758,6 +1918,20 @@ router.post('/issues/:id/publish', async (req, res) => {
       // a page's own updatedAt) past it, and the studio says "needs republish".
       updatedAt: now,
     });
+    // Start the PDF now, rather than when a reader first asks for it. The render
+    // takes tens of seconds on an image-heavy issue, so doing it at publish time is
+    // what makes "Download PDF" instant instead of a wait — and the version bump
+    // above is what makes this the ONLY place that has to remember: a republish
+    // enqueues a fresh render, and the stale one stops matching on `version`.
+    //
+    // Best-effort: a queue write must never fail a publish that already succeeded.
+    // The download route enqueues on demand too, so a lost job here costs the first
+    // reader a wait, not the file.
+    try {
+      await enqueueJob('renderIssuePdf', { publishedIssueId });
+    } catch (err) {
+      console.warn('[magazineV2] publish: could not queue the PDF render:', err instanceof Error ? err.message : err);
+    }
     return { status: 200, publishedIssueId, version };
   });
 
