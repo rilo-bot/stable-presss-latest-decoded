@@ -141,7 +141,25 @@ interface Staged {
   useText?: boolean;
 }
 
-const SLOT_ORDER: Slot[] = ['data', 'layout', 'images'];
+/**
+ * The slots this screen OFFERS, and the single switch that decides it.
+ *
+ * 'layout' is deliberately absent: the composer now asks for two things only —
+ * documents to write from, and photos to place. Removing it HERE rather than at
+ * each of its call sites is what makes the removal complete and reversible: this
+ * array drives the toolbar buttons, the group headings, the file inputs, the drop
+ * targets and the "use as …" move buttons, so a slot missing from it cannot be
+ * reached by any route, and putting it back is one word.
+ *
+ * The layout machinery downstream (`canBeLayout`, the `useText` chip, the
+ * layout-reference upload in `start`) is intact and simply unreachable — every
+ * branch of it is guarded by `slot === 'layout'`, and nothing can be staged in a
+ * slot the composer never offers. It is left standing rather than deleted because
+ * the studio's own per-page "Match a layout" is a separate, still-live feature
+ * (docs/MAGAZINE-V2-LAYOUT-FROM-REFERENCE.md); this is only the front-door.
+ */
+type OfferedSlot = Exclude<Slot, 'layout'>;
+const SLOT_ORDER: OfferedSlot[] = ['data', 'images'];
 
 /**
  * Derived from the shared picker constant rather than re-typed, so a new document
@@ -155,7 +173,7 @@ const DOC_ACCEPT = ATTACH_ACCEPT.split(',')
 /** A layout can only be copied from a PDF page or a picture — `canCopyLayout`
  *  on the server says the same thing (a Word file is a stream of words with no
  *  page in it), and the picker should not offer what the server will refuse. */
-const LAYOUT_ACCEPT = '.pdf,application/pdf,image/*';
+// const LAYOUT_ACCEPT = '.pdf,application/pdf,image/*';
 
 interface SlotMeta {
   label: string;
@@ -174,7 +192,7 @@ interface SlotMeta {
   hint: string;
 }
 
-const SLOT_META: Record<Slot, SlotMeta> = {
+const SLOT_META: Record<OfferedSlot, SlotMeta> = {
   data: {
     label: 'Data references',
     heading: 'Writing from',
@@ -184,15 +202,15 @@ const SLOT_META: Record<Slot, SlotMeta> = {
     accept: DOC_ACCEPT,
     hint: 'Documents to WRITE FROM — the AI derives the title, sections and every page’s copy from what they actually say (PDF, Word, text)',
   },
-  layout: {
-    label: 'Layout match',
-    heading: 'Matching the layout of',
-    note: 'its composition is copied — photos never are',
-    verb: 'a layout to match',
-    icon: LayoutTemplate,
-    accept: LAYOUT_ACCEPT,
-    hint: 'A design to COPY — a PDF page or a picture of a layout. Its composition is matched; its words and photos are never taken',
-  },
+  // layout: {
+  //   label: 'Layout match',
+  //   heading: 'Matching the layout of',
+  //   note: 'its composition is copied — photos never are',
+  //   verb: 'a layout to match',
+  //   icon: LayoutTemplate,
+  //   accept: LAYOUT_ACCEPT,
+  //   hint: 'A design to COPY — a PDF page or a picture of a layout. Its composition is matched; its words and photos are never taken',
+  // },
   images: {
     label: 'Images to use',
     heading: 'Photos to place',
@@ -264,10 +282,12 @@ function StagedChip({
   // Only a PDF in the layout slot has the second question to answer. A picture has
   // no text to take, and a data reference is already being written from.
   const canUseText = slot === 'layout' && !isImage;
-  // A Word or text file has no page design, so "use as a layout" is not offered
-  // rather than offered and refused — the server would say no, and a control that
-  // exists only to be rejected is worse than one that was never there.
-  const others = SLOT_ORDER.filter((s) => s !== slot && (s !== 'layout' || canBeLayout(file)));
+  // The other slots this file could move to. There used to be a second clause
+  // here keeping a Word or text file out of the layout slot — a control that
+  // exists only to be rejected is worse than one that was never there — and with
+  // the layout slot no longer offered (see SLOT_ORDER) there is nothing left to
+  // exclude: a document and a photo may each sit in either remaining slot.
+  const others = SLOT_ORDER.filter((s) => s !== slot);
   return (
     <span className="group inline-flex max-w-full items-center gap-1.5 rounded-full border border-border bg-muted/40 py-1 pl-1 pr-1 text-ui-sm transition-colors hover:border-brand-accent/60">
       {isImage ? (
@@ -734,7 +754,7 @@ export default function MagazineV2Home() {
   // helper hands back real Files, not a FileList, because it renames some of them.
   //
   // `slot` is given when a named picker was used and omitted for a drop or a
-  // paste, where nobody said which of the three they meant; defaultSlotFor keeps
+  // paste, where nobody said which of them they meant; defaultSlotFor keeps
   // those two paths behaving exactly as they did before the buttons existed, and
   // the chip lets the choice be corrected without re-picking the file.
   const addFiles = (list: FileList | File[] | null, slot?: Slot) => {
@@ -749,7 +769,7 @@ export default function MagazineV2Home() {
     // that is minutes of wasted time and bandwidth. The size is known the instant
     // the file is chosen; there is no reason to send a byte of it.
     // The cap is PER SLOT, because the server's is: a picture must clear 15 MB and a
-    // document 150 MB. One number for all three meant an oversized photo was refused
+    // document 150 MB. One number for every slot meant an oversized photo was refused
     // only after it had finished uploading.
     const chosen = incoming.map((file) => ({ file, slot: slot ?? defaultSlotFor(file) })).slice(0, room);
     const picked = chosen.filter(({ file, slot: s }) => file.size <= maxBytesFor(file, s));
@@ -958,7 +978,7 @@ export default function MagazineV2Home() {
             </div>
           )}
 
-          {/* toolbar — the three things you can hand the builder, then Generate,
+          {/* toolbar — the things you can hand the builder, then Generate,
               as one right-aligned group: they are the same act (say what you are
               giving it, then go), and a lone "Attach" on the far left read as an
               afterthought rather than as part of the request.
