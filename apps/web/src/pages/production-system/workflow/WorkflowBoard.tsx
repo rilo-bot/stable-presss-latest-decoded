@@ -166,12 +166,13 @@ export function WorkflowBoard({
             rows={4}
             placeholder="e.g. Tighten the opening and confirm the winning margin."
             aria-label="What needs changing"
+            data-agent-id="story.sendback-note"
           />
           <DialogFooter>
             <Button variant="outline" onClick={() => { setPendingBack(null); setNote(''); }}>
               Cancel
             </Button>
-            <Button onClick={confirmBack}>Send back</Button>
+            <Button onClick={confirmBack} data-agent-id="story.sendback-confirm">Send back</Button>
           </DialogFooter>
         </DialogContent>
       </Dialog>
@@ -193,12 +194,13 @@ export function WorkflowBoard({
             value={slot}
             onChange={(e) => setSlot(e.target.value)}
             aria-label="Publish date and time"
+            data-agent-id="story.schedule-input"
           />
           <DialogFooter>
             <Button variant="outline" onClick={() => { setPendingSchedule(null); setSlot(''); }}>
               Cancel
             </Button>
-            <Button onClick={confirmSchedule} disabled={!slot}>Schedule</Button>
+            <Button onClick={confirmSchedule} disabled={!slot} data-agent-id="story.schedule-confirm">Schedule</Button>
           </DialogFooter>
         </DialogContent>
       </Dialog>
@@ -227,6 +229,7 @@ function Column({
 
   return (
     <section
+      data-agent-id={`story.column-${stage.status}`}
       className="flex w-[300px] flex-shrink-0 flex-col"
       aria-label={`${stage.label} — ${articles.length} ${articles.length === 1 ? 'story' : 'stories'}`}
     >
@@ -245,6 +248,7 @@ function Column({
         {canAddHere && (
           <button
             onClick={() => onNewInColumn(stage.status)}
+            data-agent-id={`story.column-${stage.status}.new`}
             aria-label={`New story in ${stage.label}`}
             title={`New story in ${stage.label}`}
             className="flex-shrink-0 rounded-sm p-0.5 transition-opacity hover:opacity-70 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"

@@ -30,6 +30,7 @@ import { Button } from '@/components/ui/button';
 import { useCan } from '@/lib/permissions';
 import { useSiteSettingsStore } from '@/stores/siteSettingsStore';
 import { PUBLIC_NAV_KEYS, PUBLIC_NAV_SECTIONS, type PublicNavVisibility } from '@/types/siteSettings';
+import { PUBLICATION_ROWS, useSettingsOperatorActions } from '@/pages/production-system/operator/useSettingsOperatorActions';
 
 /** Same checkbox as the Roles console, so the two admin screens read alike. */
 const BOX = 'h-4 w-4 flex-shrink-0 rounded-[3px] border-input accent-[hsl(var(--primary))]';
@@ -54,6 +55,9 @@ function WebsiteCustomisation() {
     // `dirty` is derived from both; re-running on `saved` alone is the intent.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [saved]);
+
+  // Stablehand Operator: settings.read / settings.setSections drive this card.
+  useSettingsOperatorActions((key, on) => setDraft((d) => ({ ...d, [key]: on })));
 
   const visibleCount = PUBLIC_NAV_KEYS.filter((key) => draft[key] !== false).length;
   const noneVisible = visibleCount === 0;
@@ -96,6 +100,8 @@ function WebsiteCustomisation() {
                 checked={on}
                 disabled={!mayManage}
                 onChange={() => setDraft((d) => ({ ...d, [section.key]: !on }))}
+                data-agent-id={`settings.section-${section.key}`}
+                data-agent-label={`Show ${section.label} on the website`}
                 className={'mt-[3px] ' + BOX}
               />
               <span className="min-w-0 flex-1">
@@ -134,11 +140,22 @@ function WebsiteCustomisation() {
               </span>
             )}
             {dirty && !noneVisible && (
-              <Button variant="ghost" size="sm" onClick={() => setDraft(saved)} disabled={saving}>
+              <Button
+                variant="ghost"
+                size="sm"
+                onClick={() => setDraft(saved)}
+                disabled={saving}
+                data-agent-id="settings.discard"
+              >
                 Discard
               </Button>
             )}
-            <Button size="sm" onClick={onSave} disabled={!dirty || noneVisible || saving}>
+            <Button
+              size="sm"
+              onClick={onSave}
+              disabled={!dirty || noneVisible || saving}
+              data-agent-id="settings.save"
+            >
               {saving ? 'Saving…' : 'Save changes'}
             </Button>
           </>
@@ -161,13 +178,13 @@ export function SettingsView() {
             described the retired twelve-status pipeline with a legal-review gate,
             which has been five stages and one approval step since the workflow
             rebuild. */}
-        {[
-          { label: 'Publication Name', value: 'Stable Press', desc: 'Displayed across all editorial output' },
-          { label: 'Default Category', value: 'Race Report', desc: 'Applied to new stories without a category' },
-          { label: 'Approval Steps', value: '1', desc: 'One approval before a story may be scheduled or published' },
-          { label: 'Workflow Stages', value: '5', desc: 'Draft · Submitted · Approved · Scheduled · Published' },
-        ].map((setting) => (
-          <div key={setting.label} className="rounded-sm border border-border/60 bg-card p-4">
+        {PUBLICATION_ROWS.map((setting) => (
+          <div
+            key={setting.label}
+            className="rounded-sm border border-border/60 bg-card p-4"
+            data-agent-id={`settings.${setting.key}`}
+            data-agent-label={`${setting.label}: ${setting.value} (read-only)`}
+          >
             <div className="mb-1 flex items-center justify-between">
               <span className="text-sm font-semibold text-foreground">{setting.label}</span>
               <span

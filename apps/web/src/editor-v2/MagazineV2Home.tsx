@@ -36,7 +36,9 @@ import { ApiError, type IssueSummary } from './api';
 import { ATTACH_ACCEPT } from '@/agent/attachments/documentUpload';
 import { filesFromClipboard, isPasteImage } from '@/agent/attachments/clipboard';
 import { fullTimestamp, relativeTime, shortDate } from '@/lib/relativeTime';
+import { useCan } from '@/lib/permissions';
 import { ShimmerText } from './BuildProgress';
+import { useMagazineHomeActions } from './operator/useMagazineHomeActions';
 
 /**
  * Gold, in its TWO forms. The library sits on the light app surface, where the
@@ -452,6 +454,14 @@ function parsePageCount(brief: string): number | undefined {
 
 export default function MagazineV2Home() {
   const navigate = useNavigate();
+  // What the ROLE allows, from the server-resolved access payload. A role that can
+  // view and edit magazines but not create them (the usual shape for someone
+  // invited to collaborate) used to land on "What magazine shall we make?" — a
+  // composer whose every route the server now refuses. Without `create` the
+  // composer and "Reuse template" (which also makes a new magazine) are not
+  // rendered at all; without `delete` neither is the Delete button.
+  const mayCreate = useCan('magazine.create');
+  const mayDelete = useCan('magazine.delete');
   const [issues, setIssues] = useState<IssueSummary[]>([]);
   const [loading, setLoading] = useState(true);
   const [starting, setStarting] = useState(false); // brief: reading doc / creating the issue before we navigate
@@ -495,7 +505,7 @@ export default function MagazineV2Home() {
   // Start a new magazine from this one's LAYOUT (copy stripped). Any staff member
   // can reuse any magazine's design — the source is never modified.
   const reuseTemplate = async (it: IssueSummary) => {
-    if (pubBusy) return;
+    if (pubBusy || !mayCreate) return;
     setPubBusy(it.id);
     try {
       const { issue } = await api.reuseIssueTemplate(it.id);
@@ -879,14 +889,36 @@ export default function MagazineV2Home() {
   const hasData = files.some(
     (s) => s.slot === 'data' || (s.slot === 'layout' && s.useText !== false && !s.file.type.startsWith('image/')),
   );
-  const canGenerate = (hasBrief || hasData) && !starting;
+  const canGenerate = mayCreate && (hasBrief || hasData) && !starting;
   /** Shown beside the disabled Generate: a layout and a photo are not a SUBJECT,
    *  so say which half is missing rather than leaving a dead button with no reason. */
   const needsSubject = files.length > 0 && !hasBrief && !hasData && !starting;
 
+  // Stablehand Operator: the named actions this screen offers (see ./operator).
+  useMagazineHomeActions({ issues, loading, mayCreate, error, starting, pubBusy });
+
   return (
     <div className="mx-auto max-w-5xl px-4 pb-16">
+      {/* ── No `magazine.create`: a header, not a composer ─────────────────
+          The library below is the whole job for this role — open a magazine
+          you've been invited to and work on it with the assistant. */}
+      {!mayCreate && (
+        <section className="flex flex-col items-center pt-6 text-center sm:pt-10">
+          <span
+            className="mb-5 inline-flex items-center gap-1.5 rounded-full px-3 py-1 text-ui-sm font-medium"
+            style={{ backgroundColor: ACCENT_WASH, color: ACCENT_INK }}
+          >
+            <Sparkles size={13} /> AI Magazine Builder
+          </span>
+          <h1 className="text-balance text-3xl font-bold tracking-tight sm:text-4xl">Magazines shared with you</h1>
+          <p className="mt-3 max-w-xl text-balance text-ui-lg text-muted-foreground">
+            Open a magazine you’ve been invited to and make your changes with the AI assistant in the studio.
+          </p>
+        </section>
+      )}
+
       {/* ── Hero composer ─────────────────────────────────────────────── */}
+      {mayCreate && (
       <section className="flex flex-col items-center pt-6 text-center sm:pt-10">
         <span
           className="mb-5 inline-flex items-center gap-1.5 rounded-full px-3 py-1 text-ui-sm font-medium"
@@ -922,6 +954,8 @@ export default function MagazineV2Home() {
         >
           <textarea
             ref={taRef}
+            data-agent-id="mag.brief-input"
+            data-agent-label="Magazine brief"
             className="w-full resize-none rounded-[26px] bg-transparent px-5 pt-5 text-ui-lg leading-relaxed placeholder:text-muted-foreground/70 focus:outline-none"
             rows={2}
             autoFocus
@@ -1010,6 +1044,7 @@ export default function MagazineV2Home() {
                     {i > 0 && <span aria-hidden="true" className="mx-0.5 h-4 w-px bg-border" />}
                     <button
                       type="button"
+                      data-agent-id={`mag.attach-${slot}`}
                       onClick={() => pickers[slot].current?.click()}
                       disabled={starting}
                       // A slot holding files reads as FILLED — tinted ground and ink,
@@ -1044,6 +1079,8 @@ export default function MagazineV2Home() {
               })}
 
               <button
+                data-agent-id="mag.generate-submit"
+                data-agent-label="Generate"
                 onClick={() => void startAI()}
                 disabled={!canGenerate}
                 className="ml-1.5 inline-flex items-center gap-1.5 rounded-2xl px-5 py-2.5 text-ui-lg font-semibold shadow-lg shadow-[rgba(212,168,67,0.35)] transition-all hover:-translate-y-px hover:shadow-xl hover:shadow-[rgba(212,168,67,0.45)] disabled:cursor-not-allowed disabled:opacity-40 disabled:shadow-none disabled:hover:translate-y-0"
@@ -1086,9 +1123,10 @@ export default function MagazineV2Home() {
 
         {error && <p className="mt-4 text-ui text-red-600">{error}</p>}
       </section>
+      )}
 
       {/* ── Your magazines ────────────────────────────────────────────── */}
-      <section className="mt-16">
+      <section className={mayCreate ? 'mt-16' : 'mt-10'}>
         {loading ? (
           // Skeleton cards in the real grid, not a centred "Loading…" — the list
           // arrives in place instead of the page jumping when it does.
@@ -1108,7 +1146,8 @@ export default function MagazineV2Home() {
           </>
         ) : issues.length > 0 ? (
           <>
-            <h2 className="mb-3 text-ui font-semibold text-muted-foreground">Your magazines</h2>
+            {/* Without `create` the hero above already says "shared with you". */}
+            {mayCreate && <h2 className="mb-3 text-ui font-semibold text-muted-foreground">Your magazines</h2>}
             <div className="grid grid-cols-2 gap-3 sm:grid-cols-3">
               {issues.map((it) => {
                 const published = !!it.publishedIssueId;
@@ -1119,7 +1158,12 @@ export default function MagazineV2Home() {
                     key={it.id}
                     className="flex flex-col rounded-lg border border-border p-4 transition-colors hover:border-brand-accent"
                   >
-                    <button className="min-w-0 flex-1 text-left" onClick={() => openEditor(it.id)}>
+                    <button
+                      className="min-w-0 flex-1 text-left"
+                      data-agent-id={`mag.card-${it.id}`}
+                      data-agent-label={`Magazine “${it.title}”`}
+                      onClick={() => openEditor(it.id)}
+                    >
                       <div className="flex items-center gap-1.5">
                         <span className="truncate font-medium">{it.title}</span>
                         {published && (
@@ -1165,6 +1209,8 @@ export default function MagazineV2Home() {
                       {/* Open the studio. Without a role this is read-only, so it's
                           labelled honestly rather than promising an edit. */}
                       <button
+                        data-agent-id={`mag.card-${it.id}-edit`}
+                        data-agent-label={`${it.myRole ? 'Edit' : 'View'} “${it.title}”`}
                         onClick={() => openEditor(it.id)}
                         className="inline-flex items-center gap-1 rounded border border-border px-2 py-1 text-ui-sm font-medium hover:border-brand-accent hover:text-brand-accent-ink"
                         title={
@@ -1178,18 +1224,25 @@ export default function MagazineV2Home() {
                       </button>
                       {/* Reuse the DESIGN as a new magazine of your own — allowed on
                           any card, including view-only ones, because it only ever
-                          creates a new document and never touches this one. */}
-                      <button
-                        onClick={() => void reuseTemplate(it)}
-                        disabled={busy}
-                        className="inline-flex items-center gap-1 rounded border border-border px-2 py-1 text-ui-sm font-medium hover:border-brand-accent hover:text-brand-accent-ink disabled:opacity-50"
-                        title="Start a new magazine with this layout — the text and photos are cleared"
-                      >
-                        <LayoutTemplate size={12} />
-                        {busy ? <ShimmerText>Copying…</ShimmerText> : 'Reuse template'}
-                      </button>
-                      {it.myRole === 'owner' && (
+                          creates a new document and never touches this one. It IS a
+                          create, though, so it needs `magazine.create`. */}
+                      {mayCreate && (
                         <button
+                          data-agent-id={`mag.card-${it.id}-reuse`}
+                          data-agent-label={`Reuse the template of “${it.title}”`}
+                          onClick={() => void reuseTemplate(it)}
+                          disabled={busy}
+                          className="inline-flex items-center gap-1 rounded border border-border px-2 py-1 text-ui-sm font-medium hover:border-brand-accent hover:text-brand-accent-ink disabled:opacity-50"
+                          title="Start a new magazine with this layout — the text and photos are cleared"
+                        >
+                          <LayoutTemplate size={12} />
+                          {busy ? <ShimmerText>Copying…</ShimmerText> : 'Reuse template'}
+                        </button>
+                      )}
+                      {it.myRole === 'owner' && mayDelete && (
+                        <button
+                          data-agent-id={`mag.card-${it.id}-delete`}
+                          data-agent-label={`Delete “${it.title}”`}
                           onClick={() => void removeIssue(it)}
                           disabled={busy}
                           className="inline-flex items-center gap-1 rounded border border-red-300/40 px-2 py-1 text-ui-sm font-medium text-red-600 hover:bg-red-50 disabled:opacity-50 dark:text-red-300/90 dark:hover:bg-red-500/10"
@@ -1215,6 +1268,16 @@ export default function MagazineV2Home() {
               })}
             </div>
           </>
+        ) : !mayCreate ? (
+          // Without the composer there is nothing else on the page, so an empty
+          // library has to say why rather than render a blank screen.
+          <div className="mx-auto max-w-md rounded-lg border border-dashed border-border px-6 py-10 text-center">
+            <FileText size={22} className="mx-auto mb-3 text-muted-foreground" />
+            <p className="font-medium">Nothing has been shared with you yet</p>
+            <p className="mt-1 text-ui-sm text-muted-foreground">
+              When someone invites you to work on a magazine, it will appear here.
+            </p>
+          </div>
         ) : null}
       </section>
     </div>

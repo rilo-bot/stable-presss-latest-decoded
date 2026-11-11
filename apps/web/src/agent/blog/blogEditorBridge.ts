@@ -26,7 +26,7 @@
  * The gate is real because every write still leaves via PUT /api/blogs/:id.
  */
 import { useComposerStore } from '@/pages/blog-composer/composerStore';
-import { blockForItem, type BodyItem } from '@/blog/bodyItems';
+import { blockForItem, spliceBodyItems, type BodyItem } from '@/blog/bodyItems';
 import { blogFieldDef } from './blogFields';
 import type { Block, Blog, BlogMedia } from '@/types/blog';
 import { mediaById } from '@/types/blog';
@@ -343,6 +343,29 @@ export function applyReplaceSelection(postId: string, items: BodyItem[]): Bridge
   return fail(
     'Nothing is selected in the editor, so there is nothing to replace. Ask the user to click the paragraph or the part they mean, or insert instead.',
   );
+}
+
+/**
+ * Replace the whole main body's WRITING with new items — the open-editor half of
+ * the Blog Studio's replace-body tool, exported so the Stablehand Operator uses
+ * the very same path.
+ *
+ * Photos, galleries and embeds are kept and re-anchored by `spliceBodyItems`
+ * (nothing is ever dropped); one `setBodyBlocks` call means one undo step.
+ * Parts are left alone.
+ */
+export function applyReplaceBody(
+  postId: string,
+  items: BodyItem[],
+): (BridgeResult & { movedVisuals?: number }) {
+  const found = withEditor(postId);
+  if ('error' in found) return fail(found.error);
+  const { blog } = found;
+  if (items.length === 0) return fail('The new body is empty — send at least one paragraph.');
+
+  const { blocks, movedVisuals } = spliceBodyItems(blog.blocks, items);
+  useComposerStore.getState().setBodyBlocks(blocks);
+  return { ...done(`the body (${describe(items)})`), movedVisuals };
 }
 
 // ── Parts ───────────────────────────────────────────────────────────────────

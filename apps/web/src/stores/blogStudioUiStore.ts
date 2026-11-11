@@ -15,9 +15,14 @@
 //
 // The conversation itself lives in the panel's useChat hook and survives the
 // drawer being closed; "New chat" clears it.
+//
+// `chat` is a READ-ONLY MIRROR of that hook (busy flag, message count, last
+// reply), written by the panel. The Operator's `blog.askStudio` action types into
+// the drawer like a person and reads this to know when the studio has answered.
 // ---------------------------------------------------------------------------
 
 import { create } from 'zustand';
+import { EMPTY_CHAT_MIRROR, type StudioChatMirror } from './storyStudioUiStore';
 
 /** Where the drawer was opened from — decides what "it" refers to. */
 export type BlogStudioMode = 'desk' | 'post';
@@ -75,6 +80,8 @@ interface BlogStudioUiState {
   createdDraftId: string | null;
   /** A destructive action waiting on a click. */
   pendingConfirm: PendingConfirm | null;
+  /** Mirror of the panel's chat hook (see header). */
+  chat: StudioChatMirror;
 
   /** Open at the blog list, unscoped. */
   openDesk: () => void;
@@ -87,6 +94,8 @@ interface BlogStudioUiState {
   setAttachedImage: (url: string | null) => void;
   setPostList: (list: BlogPostOption[] | null) => void;
   setCreatedDraft: (id: string | null) => void;
+  /** Panel-only: mirror the chat hook's state (see header). */
+  setChatMirror: (chat: StudioChatMirror) => void;
   /** Park an action and hand back the promise the executor awaits. */
   requestConfirm: (req: Omit<PendingConfirm, 'resolve'>) => Promise<ConfirmOutcome>;
   /** Answer the parked action. */
@@ -107,6 +116,7 @@ export const useBlogStudioUi = create<BlogStudioUiState>((set, get) => ({
   postList: null,
   createdDraftId: null,
   pendingConfirm: null,
+  chat: EMPTY_CHAT_MIRROR,
 
   openDesk: () => set({ open: true, mode: 'desk', postId: null, postTitle: null, postStatus: null }),
   openForPost: (post) =>
@@ -118,6 +128,7 @@ export const useBlogStudioUi = create<BlogStudioUiState>((set, get) => ({
   setAttachedImage: (attachedImageUrl) => set({ attachedImageUrl }),
   setPostList: (postList) => set({ postList }),
   setCreatedDraft: (createdDraftId) => set({ createdDraftId }),
+  setChatMirror: (chat) => set({ chat }),
 
   requestConfirm: (req) =>
     new Promise<ConfirmOutcome>((resolve) => {

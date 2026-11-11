@@ -16,6 +16,7 @@ import { HorseForm, type ConnectFields } from '@/components/HorseForm';
 import { AddHorseChoice } from '@/components/AddHorseChoice';
 import { SectionHeading } from '@/components/SectionHeading';
 import { toast } from 'sonner';
+import { useMemberOperatorActions, claimRoleChipId } from '@/pages/operator-site/useMemberOperatorActions';
 import {
   Newspaper, Star, Mic, HelpCircle, Building2, Users, PlusCircle, Loader2, Crown, Check, BookOpen, Clock, Lock,
 } from 'lucide-react';
@@ -75,6 +76,17 @@ export default function Dashboard() {
     () => parties.filter((p) => !p.taken && p.role === claimRole),
     [parties, claimRole],
   );
+
+  // The Stable Hand: member.* actions, gated exactly like the sections below.
+  useMemberOperatorActions({
+    admin: isAdmin(currentUser),
+    myPartyId: primaryPartyId(currentUser),
+    claimRole,
+    claimable,
+    claims: currentUser?.parties ?? [],
+    stableHorses,
+    orgs: mine,
+  });
 
   if (!currentUser) return null;
   const admin = isAdmin(currentUser);
@@ -179,6 +191,8 @@ export default function Dashboard() {
               <button
                 key={r}
                 type="button"
+                data-agent-id={claimRoleChipId(r)}
+                aria-pressed={claimRole === r}
                 onClick={() => setClaimRole(r)}
                 className={
                   'rounded-full px-3 py-1.5 text-xs font-medium border transition-colors ' +
@@ -201,7 +215,7 @@ export default function Dashboard() {
               {claimable.map((p) => (
                 <li key={p.id} className="flex items-center gap-3 rounded-sm border border-border/60 bg-card px-3 py-2">
                   <span className="flex-1 min-w-0 truncate text-sm text-foreground">{p.name}</span>
-                  <Button size="sm" onClick={() => void onClaim(p.id)} disabled={busy === p.id} className="gap-1.5">
+                  <Button size="sm" onClick={() => void onClaim(p.id)} disabled={busy === p.id} className="gap-1.5" data-agent-id={`member.claim-${p.id}`} data-agent-label={`This is me — ${p.name}`}>
                     {busy === p.id ? <Loader2 size={14} className="animate-spin" /> : <Check size={14} />}
                     This is me
                   </Button>
@@ -250,6 +264,7 @@ export default function Dashboard() {
           {myPartyId && (
             <Link
               to={`/studio/${myPartyId}`}
+              data-agent-id="member.edit-profile"
               className="inline-flex items-center gap-1.5 text-xs font-semibold text-primary hover:underline"
             >
               <PlusCircle size={13} /> Edit my profile
@@ -276,6 +291,7 @@ export default function Dashboard() {
                 type="button"
                 onClick={() => setAddChooser(true)}
                 disabled={busy === 'horse'}
+                data-agent-id="member.add-horse"
                 className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-sm bg-primary text-primary-foreground text-sm font-medium hover:opacity-90 transition-opacity disabled:opacity-60"
               >
                 {busy === 'horse' ? <Loader2 size={14} className="animate-spin" /> : <PlusCircle size={14} />}
@@ -304,6 +320,7 @@ export default function Dashboard() {
                 <button
                   key={h.id}
                   type="button"
+                  data-agent-id={`member.stable-horse-${h.id}`}
                   onClick={() => navigate(`/studio/horse/${h.id}`)}
                   className="p-2 border border-border/60 rounded-sm text-sm text-foreground hover:border-primary/50 transition-colors truncate text-left"
                 >
@@ -331,6 +348,7 @@ export default function Dashboard() {
                 <li key={o.id}>
                   <Link
                     to={`/orgs/${o.id}`}
+                    data-agent-id={`member.org-${o.id}`}
                     className="flex items-center justify-between text-sm text-foreground hover:text-primary transition-colors"
                   >
                     <span>{o.name}</span>
@@ -341,8 +359,8 @@ export default function Dashboard() {
             </ul>
           )}
           <div className="flex gap-2">
-            <Input value={orgName} onChange={(e) => setOrgName(e.target.value)} placeholder="New organisation name" />
-            <Button size="sm" onClick={onCreateOrg} disabled={busy === 'org' || !orgName.trim()} className="gap-1.5">
+            <Input value={orgName} onChange={(e) => setOrgName(e.target.value)} placeholder="New organisation name" data-agent-id="member.org-name" />
+            <Button size="sm" onClick={onCreateOrg} disabled={busy === 'org' || !orgName.trim()} className="gap-1.5" data-agent-id="member.org-create">
               {busy === 'org' ? <Loader2 size={14} className="animate-spin" /> : <PlusCircle size={14} />}
               Create
             </Button>

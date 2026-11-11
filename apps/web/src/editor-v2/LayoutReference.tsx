@@ -195,6 +195,7 @@ export function LayoutReference() {
         actionLabel={busy ? 'Reading…' : 'Measure it'}
         emptyNote="Attach a PDF to measure a page's layout exactly. A picture works too — see below."
         onRead={(docId, pageNo) => void readPdf(docId, pageNo)}
+        agentPrefix="mag.layout-pdf"
       />
 
       <input
@@ -207,6 +208,8 @@ export function LayoutReference() {
       <button
         onClick={() => fileRef.current?.click()}
         disabled={busy || !issueId}
+        data-agent-id="mag.layout-upload"
+        data-agent-label="Upload a layout picture"
         className="flex items-center justify-center gap-1.5 rounded-sm border border-studio-edge bg-studio-raise px-2 py-1.5 text-ui-sm text-studio-ink-2 hover:bg-studio-raise-2 disabled:opacity-40"
       >
         {busy ? <><ScanLine size={13} /> <ShimmerText>Reading the layout…</ShimmerText></> : <><Upload size={13} /> Or upload a picture</>}
@@ -293,6 +296,8 @@ export function LayoutReference() {
                   checked={fit === o.v}
                   disabled={layoutBusy}
                   onChange={() => setFit(o.v)}
+                  data-agent-id={`mag.layout-fit-${o.v}`}
+                  data-agent-label={o.label}
                   className="mt-0.5 accent-studio-gold"
                 />
                 <span>
@@ -306,6 +311,9 @@ export function LayoutReference() {
           <button
             onClick={() => void apply(shot.reading)}
             disabled={layoutBusy}
+            aria-busy={layoutBusy}
+            data-agent-id="mag.layout-apply"
+            data-agent-label="Rebuild this page in that layout (cannot be undone)"
             className="flex items-center justify-center gap-1.5 rounded-sm px-2 py-1.5 text-ui-sm font-semibold text-studio-bg disabled:opacity-50"
             style={{ background: 'var(--gold-bright)' }}
           >

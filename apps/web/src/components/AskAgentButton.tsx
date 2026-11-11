@@ -1,5 +1,5 @@
 // ---------------------------------------------------------------------------
-// Inline entry point to the Stablehand assistant. Drop this anywhere ("Ask
+// Inline entry point to The Stable Hand assistant. Drop this anywhere ("Ask
 // about this horse", "Summarise this article", "Help me complete my profile").
 // It opens the global chat and seeds the question; the widget auto-attaches the
 // current page as context, so prompts like "this horse" resolve correctly.
@@ -22,7 +22,7 @@ interface AskAgentButtonProps {
 
 export function AskAgentButton({
   prompt,
-  label = 'Ask the Stablehand',
+  label = 'Ask The Stable Hand',
   variant = 'pill',
   className,
 }: AskAgentButtonProps) {

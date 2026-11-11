@@ -37,6 +37,7 @@ import { EmptyState } from '@/components/EmptyState';
 import { usePageMeta } from '@/lib/usePageMeta';
 import { useBlogStore, type BlogListFilters } from '@/stores/blogStore';
 import type { BlogSummary } from '@/types/blog';
+import { useBlogIndexOperatorActions } from '@/pages/operator-site/useSiteReadActions';
 
 function formatDate(iso: string | null | undefined): string | null {
   if (!iso) return null;
@@ -172,6 +173,9 @@ export default function BlogIndex() {
   useEffect(() => {
     void fetchList(filters, 1);
   }, [fetchList, filters]);
+
+  // The Stable Hand: site.readBlog reads the list this page renders.
+  useBlogIndexOperatorActions({ filters: { ...filters }, total });
 
   usePageMeta({
     title: 'The Blog',

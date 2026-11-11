@@ -55,9 +55,11 @@ function ThreadRow({ t, active, onOpen }: { t: ChatThread; active: boolean; onOp
             if (e.key === 'Enter') commit();
             if (e.key === 'Escape') { setDraft(t.title); setEditing(false); }
           }}
+          data-agent-id={`mag.ai-thread-${t.id}-name`}
+          data-agent-label="Chat name"
           className="min-w-0 flex-1 rounded-sm border border-studio-edge bg-studio-raise-2 px-1.5 py-1 text-ui text-studio-ink outline-none focus:border-studio-edge-strong"
         />
-        <button onClick={commit} aria-label="Save name" className="rounded p-1 text-emerald-300 hover:bg-studio-raise-2"><Check size={12} /></button>
+        <button onClick={commit} aria-label="Save name" data-agent-id={`mag.ai-thread-${t.id}-save`} className="rounded p-1 text-emerald-300 hover:bg-studio-raise-2"><Check size={12} /></button>
         <button onClick={() => { setDraft(t.title); setEditing(false); }} aria-label="Cancel" className="rounded p-1 text-studio-ink-3 hover:bg-studio-raise-2"><X size={12} /></button>
       </div>
     );
@@ -65,7 +67,7 @@ function ThreadRow({ t, active, onOpen }: { t: ChatThread; active: boolean; onOp
 
   return (
     <div className={'group flex items-center gap-1 rounded-sm ' + (active ? 'bg-studio-raise-2' : 'hover:bg-studio-raise')}>
-      <button onClick={onOpen} className="min-w-0 flex-1 px-2 py-1.5 text-left">
+      <button onClick={onOpen} data-agent-id={`mag.ai-thread-${t.id}`} data-agent-label={`Open chat “${t.title}”`} className="min-w-0 flex-1 px-2 py-1.5 text-left">
         <span className="flex items-center gap-1.5">
           {active && <span className="h-1.5 w-1.5 flex-shrink-0 rounded-full" style={{ background: 'var(--gold-bright)' }} />}
           {t.legacy && <History size={11} className="flex-shrink-0 text-studio-ink-4" />}
@@ -87,7 +89,7 @@ function ThreadRow({ t, active, onOpen }: { t: ChatThread; active: boolean; onOp
               initialised once from the title, so a chat that auto-titled itself from
               its first message (started life as "New chat") would open the rename box
               showing the STALE title — and saving would rename it back to "New chat". */}
-          <button onClick={() => { setDraft(t.title); setEditing(true); }} aria-label={`Rename ${t.title}`} className="rounded p-1 text-studio-ink-3 hover:bg-studio-raise-2 hover:text-studio-ink"><Pencil size={11} /></button>
+          <button onClick={() => { setDraft(t.title); setEditing(true); }} aria-label={`Rename ${t.title}`} data-agent-id={`mag.ai-thread-${t.id}-rename`} className="rounded p-1 text-studio-ink-3 hover:bg-studio-raise-2 hover:text-studio-ink"><Pencil size={11} /></button>
           <button
             onClick={() => {
               // One confirm, and it says what goes with it — a chat is cheap to make
@@ -95,6 +97,7 @@ function ThreadRow({ t, active, onOpen }: { t: ChatThread; active: boolean; onOp
               if (window.confirm(`Delete “${t.title}”? Its ${t.messageCount || 0} message${t.messageCount === 1 ? '' : 's'} go with it.`)) void remove(t.id);
             }}
             aria-label={`Delete ${t.title}`}
+            data-agent-id={`mag.ai-thread-${t.id}-delete`}
             className="rounded p-1 text-studio-ink-3 hover:bg-studio-raise-2 hover:text-red-300"
           ><Trash2 size={11} /></button>
         </span>
@@ -134,13 +137,14 @@ export function ThreadList({ onClose }: { onClose: () => void }) {
     <div className="absolute inset-0 z-20 flex flex-col bg-studio-panel">
       <div className="flex items-center gap-2 border-b border-studio-hair px-3 py-2">
         <p className="text-ui-sm font-bold uppercase tracking-[0.12em] text-studio-ink-3">Chats</p>
-        <button onClick={onClose} className="ml-auto rounded-sm p-1 text-studio-ink-3 hover:bg-studio-raise-2 hover:text-studio-ink" aria-label="Close the chat list">
+        <button onClick={onClose} data-agent-id="mag.ai-threads-close" className="ml-auto rounded-sm p-1 text-studio-ink-3 hover:bg-studio-raise-2 hover:text-studio-ink" aria-label="Close the chat list">
           <X size={14} />
         </button>
       </div>
 
       <button
         onClick={() => { newThread(); onClose(); }}
+        data-agent-id="mag.ai-threads-new"
         className="flex items-center gap-2 border-b border-studio-hair px-3 py-2.5 text-left text-ui font-semibold text-studio-ink hover:bg-studio-raise"
       >
         <MessageSquarePlus size={14} style={{ color: 'var(--gold-bright)' }} /> New chat

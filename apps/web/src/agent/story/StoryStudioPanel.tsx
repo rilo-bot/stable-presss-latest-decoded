@@ -14,7 +14,7 @@ import { Sparkles, Send, Square, X, Paperclip, SquarePen, Mic, Volume2, VolumeX,
 import { toast } from 'sonner';
 
 import { MarkdownMessage } from '@/components/MarkdownMessage';
-import { useStoryStudioUi } from '@/stores/storyStudioUiStore';
+import { EMPTY_CHAT_MIRROR, useStoryStudioUi } from '@/stores/storyStudioUiStore';
 import { useStudioChrome } from '@/stores/studioChromeStore';
 import { uploadImage } from '@/lib/upload';
 import { useCanUpload } from '@/lib/permissions';
@@ -77,6 +77,19 @@ export function StoryStudioPanel() {
     scrollRef.current?.scrollTo({ top: scrollRef.current.scrollHeight, behavior: 'smooth' });
   }, [messages, status]);
 
+  // Mirror the chat into the store (read-only) so the Operator's
+  // stories.fileWithStudio action can tell when a turn has finished.
+  useEffect(() => {
+    const lastAssistant = [...messages].reverse().find((m) => m.role === 'assistant');
+    useStoryStudioUi.getState().setChatMirror({
+      busy,
+      messageCount: messages.length,
+      lastReply: lastAssistant ? messageText(lastAssistant) : '',
+      error: error ? error.message || 'Something went wrong' : null,
+    });
+  }, [messages, busy, error]);
+  useEffect(() => () => useStoryStudioUi.getState().setChatMirror(EMPTY_CHAT_MIRROR), []);
+
   // Draft filed → open it for the user and reset the studio for next time.
   useEffect(() => {
     if (!createdDraftId) return;
@@ -138,7 +151,7 @@ export function StoryStudioPanel() {
   if (!open) return null;
 
   return (
-    <div className="fixed right-0 top-0 z-[80] flex h-screen w-[380px] max-w-[94vw] flex-col bg-[#0d1626] text-white shadow-[-8px_0_30px_rgba(0,0,0,0.5)]">
+    <div data-agent-id="story.studio-panel" data-agent-label="Story Studio AI drawer" aria-label="Story Studio AI" className="fixed right-0 top-0 z-[80] flex h-screen w-[380px] max-w-[94vw] flex-col bg-[#0d1626] text-white shadow-[-8px_0_30px_rgba(0,0,0,0.5)]">
       {/* Header */}
       <div className="flex items-center gap-2 border-b border-white/10 px-3 py-2.5" style={{ background: 'linear-gradient(180deg, var(--forest-light) 0%, var(--forest-deep) 100%)' }}>
         <Sparkles size={16} style={{ color: 'var(--gold-bright)' }} />
@@ -147,7 +160,7 @@ export function StoryStudioPanel() {
           <div className="text-[10px]" style={{ color: 'var(--gold-mid)' }}>Write a story draft with AI</div>
         </div>
         <div className="ml-auto flex items-center gap-1">
-          <button onClick={newChat} aria-label="New chat" title="Start a new story" className="flex h-7 w-7 items-center justify-center rounded-sm border border-white/15 hover:bg-white/10" style={{ color: 'var(--gold-mid)' }}>
+          <button onClick={newChat} aria-label="New chat" title="Start a new story" data-agent-id="story.studio-new-chat" className="flex h-7 w-7 items-center justify-center rounded-sm border border-white/15 hover:bg-white/10" style={{ color: 'var(--gold-mid)' }}>
             <SquarePen size={14} />
           </button>
           {voiceReady && (
@@ -155,7 +168,7 @@ export function StoryStudioPanel() {
               {voiceMode ? <Volume2 size={14} /> : <VolumeX size={14} />}
             </button>
           )}
-          <button onClick={close} aria-label="Close" className="flex h-7 w-7 items-center justify-center rounded-sm border border-white/15 text-white/70 hover:bg-white/10">
+          <button onClick={close} aria-label="Close" data-agent-id="story.studio-close" data-agent-label="Close Story Studio" className="flex h-7 w-7 items-center justify-center rounded-sm border border-white/15 text-white/70 hover:bg-white/10">
             <X size={14} />
           </button>
         </div>
@@ -281,6 +294,8 @@ export function StoryStudioPanel() {
             }
           }}
           disabled={recording || transcribing}
+          data-agent-id="story.studio-input"
+          data-agent-label="Story Studio message"
           placeholder={recording ? 'Listening…' : transcribing ? 'Transcribing…' : 'Type or speak your answer…'}
           className="flex-1 resize-none rounded-2xl border border-white/15 bg-white/5 px-3 py-1.5 text-[12px] leading-snug text-white outline-none placeholder:text-white/30 focus:border-white/30 disabled:opacity-60"
         />
@@ -290,11 +305,11 @@ export function StoryStudioPanel() {
           </button>
         )}
         {busy ? (
-          <button type="button" onClick={() => stop()} aria-label="Stop" className="flex h-8 w-8 items-center justify-center rounded-full bg-white/10 text-white/70">
+          <button type="button" onClick={() => stop()} aria-label="Stop" data-agent-id="story.studio-stop" className="flex h-8 w-8 items-center justify-center rounded-full bg-white/10 text-white/70">
             <Square size={13} />
           </button>
         ) : (
-          <button type="submit" aria-label="Send" disabled={!input.trim() && !attach.hasAttachments} className="flex h-8 w-8 items-center justify-center rounded-full text-[#0b1220] disabled:opacity-40" style={{ background: 'var(--gold-bright)' }}>
+          <button type="submit" aria-label="Send" data-agent-id="story.studio-send" data-agent-label="Send to Story Studio" disabled={!input.trim() && !attach.hasAttachments} className="flex h-8 w-8 items-center justify-center rounded-full text-[#0b1220] disabled:opacity-40" style={{ background: 'var(--gold-bright)' }}>
             <Send size={13} />
           </button>
         )}

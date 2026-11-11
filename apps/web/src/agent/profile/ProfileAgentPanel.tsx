@@ -22,6 +22,7 @@ import { useChatAttachments } from '@/agent/attachments/useChatAttachments';
 import { attachmentsToFileParts, CHAT_ATTACH_ACCEPT } from '@/agent/attachments/attachments';
 import { AttachmentBar, MessageAttachments } from '@/agent/attachments/AttachmentViews';
 import { applyProposal, discardProposal, applyAllProposals, discardAllProposals, undoLastProposal } from './applyProposals';
+import { useStudioOperatorActions } from './useStudioOperatorActions';
 
 /** Breadcrumb launcher that opens the Stable Studio drawer (edit views only). */
 export function StudioLauncher() {
@@ -30,6 +31,7 @@ export function StudioLauncher() {
     <button
       onClick={() => setOpen(true)}
       title="Open the Stable Studio assistant"
+      data-agent-id="profile.studio-launcher"
       style={{ display: 'inline-flex', alignItems: 'center', gap: 5, padding: '4px 10px', borderRadius: 3, border: '1px solid var(--gold-mid)', background: 'linear-gradient(135deg, var(--gold-bright), var(--gold-mid))', color: 'var(--forest-deep)', fontWeight: 700, fontSize: '0.56rem', textTransform: 'uppercase', letterSpacing: '0.08em', cursor: 'pointer', fontFamily: "Georgia, 'Times New Roman', serif" }}
     >
       <Sparkles size={11} /> AI Studio
@@ -46,10 +48,10 @@ function ProposalCard({ p }: { p: Proposal }) {
           {p.kind === 'field' ? p.field : `${PARTY_ROLE_LABELS[p.role] ?? p.role} connection`}
         </span>
         <div className="flex items-center gap-1">
-          <button onClick={() => void applyProposal(p)} className="flex items-center gap-1 rounded-sm bg-emerald-500 px-2 py-1 text-[10px] font-semibold text-white hover:bg-emerald-600">
+          <button onClick={() => void applyProposal(p)} data-agent-id={`profile.proposal-apply-${p.id}`} className="flex items-center gap-1 rounded-sm bg-emerald-500 px-2 py-1 text-[10px] font-semibold text-white hover:bg-emerald-600">
             <Check size={11} /> Apply
           </button>
-          <button onClick={() => discardProposal(p.id)} className="flex items-center gap-1 rounded-sm border border-white/15 px-2 py-1 text-[10px] text-white/60 hover:bg-white/10">
+          <button onClick={() => discardProposal(p.id)} data-agent-id={`profile.proposal-discard-${p.id}`} className="flex items-center gap-1 rounded-sm border border-white/15 px-2 py-1 text-[10px] text-white/60 hover:bg-white/10">
             <X size={11} /> Discard
           </button>
         </div>
@@ -85,6 +87,8 @@ export function ProfileAgentPanel() {
   const selectedName = profileBoxDef(selectedFieldId)?.label;
 
   const { messages, sendMessage, status, error, stop } = useProfileChatSession();
+  // Stablehand Operator: profile.read / askStudio / applyProposals / … drive this panel.
+  useStudioOperatorActions({ messages, status, stop });
 
   const [input, setInput] = useState('');
   const busy = status === 'submitted' || status === 'streaming';
@@ -141,7 +145,7 @@ export function ProfileAgentPanel() {
     : ['What should I complete next?', 'Suggest a profession line', 'Help me add my first horse'];
 
   return (
-    <div className="fixed right-0 top-0 z-[80] flex h-screen w-[360px] max-w-[92vw] flex-col bg-[#0d1626] text-white shadow-[-8px_0_30px_rgba(0,0,0,0.5)]">
+    <div data-agent-id="profile.studio-panel" className="fixed right-0 top-0 z-[80] flex h-screen w-[360px] max-w-[92vw] flex-col bg-[#0d1626] text-white shadow-[-8px_0_30px_rgba(0,0,0,0.5)]">
       {/* Header */}
       <div className="flex items-center gap-2 border-b border-white/10 px-3 py-2.5" style={{ background: 'linear-gradient(180deg, var(--forest-light) 0%, var(--forest-deep) 100%)' }}>
         <Sparkles size={16} style={{ color: 'var(--gold-bright)' }} />
@@ -151,7 +155,7 @@ export function ProfileAgentPanel() {
         </div>
         <div className="ml-auto flex items-center gap-1">
           {undoCount > 0 && (
-            <button onClick={() => void undoLastProposal()} title="Undo last applied change" className="flex items-center gap-1 rounded-sm border border-white/15 px-2 py-1 text-[10px] text-white/70 hover:bg-white/10">
+            <button onClick={() => void undoLastProposal()} title="Undo last applied change" data-agent-id="profile.studio-undo" className="flex items-center gap-1 rounded-sm border border-white/15 px-2 py-1 text-[10px] text-white/70 hover:bg-white/10">
               <Undo2 size={11} /> Undo
             </button>
           )}
@@ -160,7 +164,7 @@ export function ProfileAgentPanel() {
               {voiceMode ? <Volume2 size={14} /> : <VolumeX size={14} />}
             </button>
           )}
-          <button onClick={() => setOpen(false)} aria-label="Close" className="flex h-7 w-7 items-center justify-center rounded-sm border border-white/15 text-white/70 hover:bg-white/10">
+          <button onClick={() => setOpen(false)} aria-label="Close" data-agent-id="profile.studio-close" className="flex h-7 w-7 items-center justify-center rounded-sm border border-white/15 text-white/70 hover:bg-white/10">
             <X size={14} />
           </button>
         </div>
@@ -219,8 +223,8 @@ export function ProfileAgentPanel() {
             </span>
             {staged.length > 1 && (
               <div className="flex items-center gap-1">
-                <button onClick={() => void applyAllProposals()} className="rounded-sm bg-emerald-500 px-2 py-0.5 text-[10px] font-semibold text-white hover:bg-emerald-600">Apply all</button>
-                <button onClick={() => discardAllProposals()} className="rounded-sm border border-white/15 px-2 py-0.5 text-[10px] text-white/60 hover:bg-white/10">Discard all</button>
+                <button onClick={() => void applyAllProposals()} data-agent-id="profile.studio-apply-all" className="rounded-sm bg-emerald-500 px-2 py-0.5 text-[10px] font-semibold text-white hover:bg-emerald-600">Apply all</button>
+                <button onClick={() => discardAllProposals()} data-agent-id="profile.studio-discard-all" className="rounded-sm border border-white/15 px-2 py-0.5 text-[10px] text-white/60 hover:bg-white/10">Discard all</button>
               </div>
             )}
           </div>
@@ -281,6 +285,7 @@ export function ProfileAgentPanel() {
         </button>
         <textarea
           ref={inputRef}
+          data-agent-id="profile.studio-input"
           value={input}
           rows={1}
           onChange={(e) => setInput(e.target.value)}
@@ -301,11 +306,11 @@ export function ProfileAgentPanel() {
           </button>
         )}
         {busy ? (
-          <button type="button" onClick={() => stop()} aria-label="Stop" className="flex h-8 w-8 items-center justify-center rounded-full bg-white/10 text-white/70">
+          <button type="button" onClick={() => stop()} aria-label="Stop" data-agent-id="profile.studio-stop" className="flex h-8 w-8 items-center justify-center rounded-full bg-white/10 text-white/70">
             <Square size={13} />
           </button>
         ) : (
-          <button type="submit" aria-label="Send" disabled={!input.trim() && !attach.hasAttachments} className="flex h-8 w-8 items-center justify-center rounded-full text-[#0b1220] disabled:opacity-40" style={{ background: 'var(--gold-bright)' }}>
+          <button type="submit" aria-label="Send" data-agent-id="profile.studio-send" disabled={!input.trim() && !attach.hasAttachments} className="flex h-8 w-8 items-center justify-center rounded-full text-[#0b1220] disabled:opacity-40" style={{ background: 'var(--gold-bright)' }}>
             <Send size={13} />
           </button>
         )}

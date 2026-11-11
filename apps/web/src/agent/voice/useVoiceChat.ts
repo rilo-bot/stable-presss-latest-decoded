@@ -35,7 +35,7 @@ export interface VoiceChat {
   toggleMic: () => Promise<void>;
 }
 
-export function useVoiceChat({ messages, send, busy, active, autoSpeakOnMic = true }: {
+export function useVoiceChat({ messages, send, busy, active, autoSpeakOnMic = false }: {
   /** Live message list from useChat. */
   messages: UIMessage[];
   /** Send a user message (the caller's own send/clear-input fn). */
@@ -45,9 +45,10 @@ export function useVoiceChat({ messages, send, busy, active, autoSpeakOnMic = tr
   /** Whether the chat surface is open/visible — speech stops when it isn't. */
   active: boolean;
   /**
-   * When true (default), speaking a request via the mic reads the reply back
-   * aloud even if read-aloud mode is off. Set false for surfaces where spoken
-   * replies must be strictly opt-in (only when the read-aloud toggle is on).
+   * Default FALSE: replies are spoken ONLY while the read-aloud toggle is on —
+   * using the mic alone never makes the assistant talk (product decision
+   * 2026-11-11: an unexpected spoken reply was reported as a bug). Pass true
+   * only for a surface that deliberately wants mic-in → voice-out.
    */
   autoSpeakOnMic?: boolean;
 }): VoiceChat {

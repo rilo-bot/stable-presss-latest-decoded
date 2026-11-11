@@ -335,6 +335,7 @@ export function PartyForm({ open, onOpenChange, party, defaultRole, onSaved }: P
     >
       <DialogContent
         className="max-w-2xl w-full max-h-[92vh] flex flex-col p-0 gap-0 overflow-hidden"
+        data-agent-id="reg.person-form"
         aria-describedby={undefined}
       >
         {/* ── Sticky header ── */}
@@ -359,6 +360,7 @@ export function PartyForm({ open, onOpenChange, party, defaultRole, onSaved }: P
               <button
                 type="button"
                 onClick={discardDraft}
+                data-agent-id="reg.person-discard-draft"
                 className="flex items-center gap-1 px-2 py-0.5 rounded-sm border border-border/60 text-[10px] uppercase tracking-[0.08em] font-semibold text-muted-foreground hover:text-foreground transition-colors"
               >
                 <X size={9} /> Discard
@@ -374,6 +376,7 @@ export function PartyForm({ open, onOpenChange, party, defaultRole, onSaved }: P
             </Label>
             <Input
               id="party-name"
+              data-agent-id="reg.person-name"
               value={name}
               onChange={(e) => {
                 setName(e.target.value);
@@ -396,6 +399,7 @@ export function PartyForm({ open, onOpenChange, party, defaultRole, onSaved }: P
             </Label>
             <Input
               id="party-profession"
+              data-agent-id="reg.person-profession"
               value={profession}
               onChange={(e) => setProfession(e.target.value)}
               placeholder="e.g. Thoroughbred Trainer"
@@ -422,6 +426,7 @@ export function PartyForm({ open, onOpenChange, party, defaultRole, onSaved }: P
                   <Calendar size={14} className="absolute left-3 top-1/2 -translate-y-1/2 text-muted-foreground pointer-events-none" />
                   <Input
                     id="party-dob"
+                    data-agent-id="reg.person-dob"
                     type="date"
                     value={dateOfBirth}
                     max={new Date().toISOString().split('T')[0]}
@@ -458,6 +463,7 @@ export function PartyForm({ open, onOpenChange, party, defaultRole, onSaved }: P
             </Label>
             <Input
               id="party-country"
+              data-agent-id="reg.person-country"
               value={countryOfBirth}
               onChange={(e) => setCountryOfBirth(e.target.value)}
               placeholder="e.g. Australia"
@@ -471,6 +477,7 @@ export function PartyForm({ open, onOpenChange, party, defaultRole, onSaved }: P
             </Label>
             <Input
               id="party-base"
+              data-agent-id="reg.person-base"
               value={baseLocation}
               onChange={(e) => setBaseLocation(e.target.value)}
               placeholder="e.g. Flemington, VIC"
@@ -484,6 +491,7 @@ export function PartyForm({ open, onOpenChange, party, defaultRole, onSaved }: P
             </Label>
             <Input
               id="party-started-year"
+              data-agent-id="reg.person-started-year"
               type="number"
               min={1900}
               max={CURRENT_YEAR}
@@ -533,6 +541,7 @@ export function PartyForm({ open, onOpenChange, party, defaultRole, onSaved }: P
           <Button
             type="button"
             onClick={handleSave}
+            data-agent-id="reg.person-save"
             disabled={saving}
             className="min-w-[110px]"
           >

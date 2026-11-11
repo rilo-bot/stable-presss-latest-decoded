@@ -1,5 +1,5 @@
 /**
- * OnboardingGuide — "the Stablehand": a floating, gamified guide character that
+ * OnboardingGuide — "The Stable Hand": a floating, gamified guide character that
  * lives bottom-left during onboarding. It:
  *   - bobs idly and hops to celebrate each step,
  *   - optionally shows a speech bubble for the current step (`showStepBubble`);
@@ -22,9 +22,10 @@ import { useProfileChatSession, messageText } from '@/agent/profile/useProfileCh
 import { useVoiceChat } from '@/agent/voice/useVoiceChat';
 import { useAutoGrowTextarea } from '@/lib/useAutoGrowTextarea';
 import { applyProposal, discardProposal, applyAllProposals, discardAllProposals, undoLastProposal } from '@/agent/profile/applyProposals';
+import { useStudioOperatorActions } from '@/agent/profile/useStudioOperatorActions';
 import { serifStyle, displayStyle } from '@/components/profile/kit';
 
-const MASCOT = '🐎'; // the Stablehand — swap for a custom illustration later
+const MASCOT = '🐎'; // The Stable Hand — swap for a custom illustration later
 
 export interface GuideStep {
   key: string;
@@ -48,8 +49,8 @@ function ProposalCard({ p }: { p: Proposal }) {
           {p.kind === 'field' ? p.field : `${PARTY_ROLE_LABELS[p.role] ?? p.role}`}
         </span>
         <div className="flex items-center gap-1">
-          <button onClick={() => void applyProposal(p)} className="flex items-center gap-1 rounded-sm bg-emerald-500 px-1.5 py-0.5 text-[10px] font-semibold text-white hover:bg-emerald-600"><Check size={10} /> Apply</button>
-          <button onClick={() => discardProposal(p.id)} className="flex items-center gap-1 rounded-sm border border-white/15 px-1.5 py-0.5 text-[10px] text-white/60 hover:bg-white/10"><X size={10} /></button>
+          <button onClick={() => void applyProposal(p)} data-agent-id={`profile.proposal-apply-${p.id}`} className="flex items-center gap-1 rounded-sm bg-emerald-500 px-1.5 py-0.5 text-[10px] font-semibold text-white hover:bg-emerald-600"><Check size={10} /> Apply</button>
+          <button onClick={() => discardProposal(p.id)} data-agent-id={`profile.proposal-discard-${p.id}`} className="flex items-center gap-1 rounded-sm border border-white/15 px-1.5 py-0.5 text-[10px] text-white/60 hover:bg-white/10"><X size={10} /></button>
         </div>
       </div>
       <div className="text-[11px] leading-snug text-white/80">
@@ -80,6 +81,8 @@ export function OnboardingGuide({ steps, name, onShowMe, onAskStep, onSkipStep, 
   const pendingPrompt = useProfileAgentUi((s) => s.pendingPrompt);
 
   const { messages, sendMessage, status, error, stop } = useProfileChatSession();
+  // The Stable Hand Operator: the studio actions work on this popover during onboarding.
+  useStudioOperatorActions({ messages, status, stop });
   const busy = status === 'submitted' || status === 'streaming';
 
   const [input, setInput] = useState('');
@@ -94,7 +97,7 @@ export function OnboardingGuide({ steps, name, onShowMe, onAskStep, onSkipStep, 
   const activeKey = activeStep?.key;
   const activeIdx = steps.findIndex((s) => s.key === activeKey);
 
-  // Suppress the global Stablehand widget while the guide is on screen (one character).
+  // Suppress the global The Stable Hand widget while the guide is on screen (one character).
   useEffect(() => {
     useStudioChrome.getState().setSuppressGlobal(true);
     return () => useStudioChrome.getState().setSuppressGlobal(false);
@@ -213,14 +216,14 @@ export function OnboardingGuide({ steps, name, onShowMe, onAskStep, onSkipStep, 
               <div style={{ fontSize: '0.56rem', color: 'var(--gold-mid)' }}>{ctx?.name ? `Helping with ${ctx.name}` : 'Your onboarding guide'}</div>
             </div>
             {undoCount > 0 && (
-              <button onClick={() => void undoLastProposal()} title="Undo last applied change" className="flex items-center gap-1 rounded-sm border border-white/15 px-1.5 py-1 text-[10px] text-white/75 hover:bg-white/10"><Undo2 size={11} /> Undo</button>
+              <button onClick={() => void undoLastProposal()} title="Undo last applied change" data-agent-id="profile.studio-undo" className="flex items-center gap-1 rounded-sm border border-white/15 px-1.5 py-1 text-[10px] text-white/75 hover:bg-white/10"><Undo2 size={11} /> Undo</button>
             )}
             {voiceReady && (
               <button onClick={() => setVoiceMode((v) => !v)} aria-label={voiceMode ? 'Turn off spoken replies' : 'Read replies aloud'} title={voiceMode ? 'Spoken replies on' : 'Read replies aloud'} style={{ background: 'none', border: '1px solid var(--gold-dark)', borderRadius: 3, color: voiceMode ? 'var(--gold-bright)' : 'var(--gold-mid)', cursor: 'pointer', display: 'flex', padding: 4 }}>
                 {voiceMode ? <Volume2 size={13} /> : <VolumeX size={13} />}
               </button>
             )}
-            <button onClick={() => setOpen(false)} aria-label="Close" style={{ background: 'none', border: '1px solid var(--gold-dark)', borderRadius: 3, color: 'var(--gold-mid)', cursor: 'pointer', display: 'flex', padding: 4 }}><X size={13} /></button>
+            <button onClick={() => setOpen(false)} aria-label="Close" data-agent-id="profile.studio-close" style={{ background: 'none', border: '1px solid var(--gold-dark)', borderRadius: 3, color: 'var(--gold-mid)', cursor: 'pointer', display: 'flex', padding: 4 }}><X size={13} /></button>
           </div>
 
           <div ref={scrollRef} className="sku-parchment" style={{ flex: 1, overflowY: 'auto', padding: '10px 11px', display: 'flex', flexDirection: 'column', gap: 8 }}>
@@ -255,8 +258,8 @@ export function OnboardingGuide({ steps, name, onShowMe, onAskStep, onSkipStep, 
                 </span>
                 {staged.length > 1 && (
                   <div className="flex items-center gap-1">
-                    <button onClick={() => void applyAllProposals()} className="rounded-sm bg-emerald-500 px-2 py-0.5 text-[10px] font-semibold text-white hover:bg-emerald-600">Apply all</button>
-                    <button onClick={() => discardAllProposals()} className="rounded-sm border border-black/15 px-2 py-0.5 text-[10px] hover:bg-black/5" style={{ color: 'var(--forest-mid)' }}>Discard all</button>
+                    <button onClick={() => void applyAllProposals()} data-agent-id="profile.studio-apply-all" className="rounded-sm bg-emerald-500 px-2 py-0.5 text-[10px] font-semibold text-white hover:bg-emerald-600">Apply all</button>
+                    <button onClick={() => discardAllProposals()} data-agent-id="profile.studio-discard-all" className="rounded-sm border border-black/15 px-2 py-0.5 text-[10px] hover:bg-black/5" style={{ color: 'var(--forest-mid)' }}>Discard all</button>
                   </div>
                 )}
               </div>
@@ -272,16 +275,16 @@ export function OnboardingGuide({ steps, name, onShowMe, onAskStep, onSkipStep, 
           )}
 
           <form onSubmit={(e) => { e.preventDefault(); send(input); }} className="sku-green-header" style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '7px 9px' }}>
-            <textarea ref={inputRef} value={input} rows={1} onChange={(e) => setInput(e.target.value)} onKeyDown={(e) => { if (e.key === 'Enter' && !e.shiftKey && !e.nativeEvent.isComposing) { e.preventDefault(); send(input); } }} disabled={recording || transcribing} placeholder={recording ? 'Listening…' : transcribing ? 'Transcribing…' : `Ask ${name}…`} style={{ flex: 1, borderRadius: 14, border: '1px solid var(--gold-dark)', background: 'rgba(0,0,0,0.25)', color: 'var(--parchment)', padding: '5px 11px', fontSize: '0.72rem', lineHeight: 1.4, resize: 'none', outline: 'none', ...serifStyle }} />
+            <textarea ref={inputRef} data-agent-id="profile.studio-input" value={input} rows={1} onChange={(e) => setInput(e.target.value)} onKeyDown={(e) => { if (e.key === 'Enter' && !e.shiftKey && !e.nativeEvent.isComposing) { e.preventDefault(); send(input); } }} disabled={recording || transcribing} placeholder={recording ? 'Listening…' : transcribing ? 'Transcribing…' : `Ask ${name}…`} style={{ flex: 1, borderRadius: 14, border: '1px solid var(--gold-dark)', background: 'rgba(0,0,0,0.25)', color: 'var(--parchment)', padding: '5px 11px', fontSize: '0.72rem', lineHeight: 1.4, resize: 'none', outline: 'none', ...serifStyle }} />
             {voiceReady && !busy && (
               <button type="button" onClick={() => void toggleMic()} disabled={transcribing} aria-label={recording ? 'Stop recording' : `Speak to ${name}`} title={recording ? 'Stop & send' : 'Speak'} className={recording ? 'animate-pulse' : undefined} style={{ flexShrink: 0, width: 30, height: 30, borderRadius: '50%', border: `1px solid ${recording ? '#c0392b' : 'var(--gold-dark)'}`, background: recording ? 'rgba(192,57,43,0.22)' : 'rgba(0,0,0,0.25)', color: recording ? '#e74c3c' : 'var(--parchment)', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
                 {transcribing ? <Loader2 size={12} className="animate-spin" /> : recording ? <Square size={12} /> : <Mic size={12} />}
               </button>
             )}
             {busy ? (
-              <button type="button" onClick={() => stop()} aria-label="Stop" style={{ flexShrink: 0, width: 30, height: 30, borderRadius: '50%', background: 'rgba(255,255,255,0.12)', color: 'var(--parchment)', border: 'none', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center' }}><Square size={12} /></button>
+              <button type="button" onClick={() => stop()} aria-label="Stop" data-agent-id="profile.studio-stop" style={{ flexShrink: 0, width: 30, height: 30, borderRadius: '50%', background: 'rgba(255,255,255,0.12)', color: 'var(--parchment)', border: 'none', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center' }}><Square size={12} /></button>
             ) : (
-              <button type="submit" aria-label="Send" disabled={!input.trim()} style={{ flexShrink: 0, width: 30, height: 30, borderRadius: '50%', background: 'var(--gold-bright)', color: 'var(--forest-deep)', border: 'none', cursor: 'pointer', opacity: input.trim() ? 1 : 0.4, display: 'flex', alignItems: 'center', justifyContent: 'center' }}><Send size={12} /></button>
+              <button type="submit" aria-label="Send" data-agent-id="profile.studio-send" disabled={!input.trim()} style={{ flexShrink: 0, width: 30, height: 30, borderRadius: '50%', background: 'var(--gold-bright)', color: 'var(--forest-deep)', border: 'none', cursor: 'pointer', opacity: input.trim() ? 1 : 0.4, display: 'flex', alignItems: 'center', justifyContent: 'center' }}><Send size={12} /></button>
             )}
           </form>
         </motion.div>

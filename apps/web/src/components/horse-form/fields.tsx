@@ -9,11 +9,14 @@ export function Section({
   number,
   children,
   defaultOpen = true,
+  agentId,
 }: {
   title: string;
   number: string;
   children: React.ReactNode;
   defaultOpen?: boolean;
+  /** Operator anchor for the collapse toggle (reads aria-expanded). */
+  agentId?: string;
 }) {
   const [open, setOpen] = useState(defaultOpen);
   return (
@@ -23,6 +26,8 @@ export function Section({
         onClick={() => setOpen((v) => !v)}
         className="w-full flex items-center justify-between pb-2 border-b border-border/40 mb-4 group"
         aria-expanded={open}
+        data-agent-id={agentId}
+        data-agent-label={title}
       >
         <div className="flex items-center gap-2">
           <span className="inline-flex items-center justify-center w-5 h-5 rounded-full bg-primary/15 text-primary text-[9px] font-bold flex-shrink-0">
@@ -54,6 +59,7 @@ export function SelectField({
   options,
   placeholder,
   required,
+  agentId,
 }: {
   id: string;
   label: string;
@@ -62,6 +68,8 @@ export function SelectField({
   options: string[];
   placeholder?: string;
   required?: boolean;
+  /** Operator anchor for the <select>. */
+  agentId?: string;
 }) {
   return (
     <div className="space-y-1.5">
@@ -74,6 +82,7 @@ export function SelectField({
         onChange={(e) => onChange(e.target.value)}
         className="w-full px-3 py-2 text-sm border border-input rounded-sm bg-background focus:outline-none focus:ring-1 focus:ring-ring"
         aria-label={label}
+        data-agent-id={agentId}
       >
         <option value="">{placeholder ?? `Select…`}</option>
         {options.map((o) => (

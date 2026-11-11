@@ -35,6 +35,7 @@ import { LandingMembership } from './landing/LandingMembership';
 import { LandingSponsors } from './landing/LandingSponsors';
 import { LandingFooter } from './landing/LandingFooter';
 import { useRegister } from '@/lib/register';
+import { useHomeOperatorActions } from '@/pages/operator-site/useSiteReadActions';
 
 /* ── Component ────────────────────────────────────────── */
 
@@ -124,6 +125,8 @@ export default function Landing() {
   const currentUser = useAuthStore((s) => s.currentUser);
 
   const [subscribeEmail, setSubscribeEmail] = useState('');
+  // The Stable Hand: site.readHome reads the same stores this page renders.
+  useHomeOperatorActions();
 
   const published = useMemo(
     () => (articles ?? []).filter(isLive),

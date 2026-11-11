@@ -46,6 +46,7 @@ export function AttachmentPreviewPane() {
             rel="noreferrer"
             className="flex h-6 w-6 items-center justify-center rounded text-studio-ink-2 hover:bg-studio-raise-2 hover:text-studio-ink"
             title="Open in a new tab (full size)"
+            data-agent-id="mag.preview-open-tab"
             aria-label="Open in a new tab"
           >
             <ExternalLink size={13} />
@@ -53,6 +54,7 @@ export function AttachmentPreviewPane() {
         )}
         <button
           onClick={() => close(null)}
+          data-agent-id="mag.preview-close"
           className="flex h-6 w-6 items-center justify-center rounded text-studio-ink-2 hover:bg-studio-raise-2 hover:text-studio-ink"
           title="Close preview (back to editing)"
           aria-label="Close preview"
@@ -68,6 +70,7 @@ export function AttachmentPreviewPane() {
             <button
               key={m}
               onClick={() => setMode(m)}
+              data-agent-id={`mag.preview-mode-${m}`}
               className={`rounded px-2 py-1 text-ui-sm font-bold uppercase tracking-wide transition ${
                 mode === m ? 'bg-studio-raise-2 text-studio-ink' : 'text-studio-ink-3 hover:bg-studio-raise hover:text-studio-ink-2'
               }`}

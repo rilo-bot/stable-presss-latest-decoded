@@ -110,6 +110,7 @@ export function ReviewStep() {
                 mode === 'story' ? patchStory({ title: e.target.value }) : patchBlog({ title: e.target.value })
               }
               aria-label="Title"
+              data-agent-id="instant.title"
               className="w-full rounded-sm border border-input bg-background px-3 py-2.5 text-[15px] font-semibold outline-none focus-visible:ring-2 focus-visible:ring-ring"
             />
 
@@ -121,6 +122,7 @@ export function ReviewStep() {
                   onChange={(e) => patchBlog({ subtitle: e.target.value })}
                   placeholder="One sentence under the title"
                   aria-label="Standfirst"
+                  data-agent-id="instant.subtitle"
                   className="w-full rounded-sm border border-input bg-background px-3 py-2 text-[13.5px] outline-none focus-visible:ring-2 focus-visible:ring-ring"
                 />
               </div>
@@ -145,6 +147,7 @@ export function ReviewStep() {
                 onChange={(e) => patchStory({ body: e.target.value })}
                 rows={16}
                 aria-label="Story body"
+                data-agent-id="instant.body"
                 className="w-full resize-y rounded-sm border border-input bg-background px-3 py-2.5 text-[13.5px] leading-relaxed outline-none focus-visible:ring-2 focus-visible:ring-ring"
               />
               <p className="mt-1.5 text-[11.5px] text-muted-foreground">
@@ -199,6 +202,7 @@ export function ReviewStep() {
                   value={story.category}
                   onChange={(e) => patchStory({ category: e.target.value })}
                   aria-label="Category"
+                  data-agent-id="instant.category"
                   className="w-full rounded-sm border border-input bg-background px-3 py-2 text-[13px] outline-none focus-visible:ring-2 focus-visible:ring-ring"
                 >
                   <option value="">No category</option>
@@ -227,6 +231,7 @@ export function ReviewStep() {
                   onChange={(e) => patchBlog({ excerpt: e.target.value })}
                   rows={4}
                   aria-label="Excerpt"
+                  data-agent-id="instant.excerpt"
                   className="w-full resize-y rounded-sm border border-input bg-background px-3 py-2 text-[13px] leading-relaxed outline-none focus-visible:ring-2 focus-visible:ring-ring"
                 />
                 <p className="mt-1.5 text-[11.5px] text-muted-foreground">Shown on cards and search results.</p>
@@ -249,6 +254,7 @@ export function ReviewStep() {
                 onChange={(e) => setTags(e.target.value)}
                 placeholder="flemington, trackwork"
                 aria-label="Tags"
+                data-agent-id="instant.tags"
                 className="w-full rounded-sm border border-input bg-background px-3 py-2 text-[13px] outline-none focus-visible:ring-2 focus-visible:ring-ring"
               />
               <p className="mt-1.5 text-[11.5px] text-muted-foreground">Comma-separated, up to six.</p>
@@ -284,6 +290,7 @@ export function ReviewStep() {
               type="button"
               onClick={() => void save()}
               disabled={saving}
+              data-agent-id="instant.save"
               className="flex w-full items-center justify-center gap-2 rounded-sm bg-primary px-4 py-2.5 text-[13.5px] font-semibold text-primary-foreground transition-opacity hover:opacity-90 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:opacity-50"
             >
               {saving ? <Loader2 size={15} className="animate-spin" /> : <Check size={15} />}
@@ -293,6 +300,7 @@ export function ReviewStep() {
               type="button"
               onClick={() => void generate()}
               disabled={saving}
+              data-agent-id="instant.regenerate"
               className="flex w-full items-center justify-center gap-2 rounded-sm border border-border bg-background px-4 py-2.5 text-[13.5px] font-medium text-foreground transition-colors hover:bg-muted/60 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:opacity-50"
             >
               <RotateCcw size={14} /> Regenerate
@@ -301,6 +309,7 @@ export function ReviewStep() {
               type="button"
               onClick={backToCapture}
               disabled={saving}
+              data-agent-id="instant.back"
               className="flex w-full items-center justify-center gap-1.5 py-1.5 text-[12.5px] text-muted-foreground transition-colors hover:text-foreground disabled:opacity-50"
             >
               <ArrowLeft size={13} /> Back to capture

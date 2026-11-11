@@ -36,6 +36,7 @@ import { SelectableField } from './article-detail/SelectableField';
 import { useArticleStudioUi } from '@/stores/articleStudioUiStore';
 import { ArticleStudioPanel } from '@/agent/article/ArticleStudioPanel';
 import { useRegister } from '@/lib/register';
+import { useArticleOperatorActions } from '@/pages/operator-site/useSiteReadActions';
 
 export default function ArticleDetail() {
   // All hooks run unconditionally, before any early return (Rules of Hooks):
@@ -167,6 +168,9 @@ export default function ArticleDetail() {
       )
       .slice(0, 3);
   }, [articles, article, id]);
+
+  // The Stable Hand: site.readArticle reads the same story this page renders.
+  useArticleOperatorActions(article, { linkedHorses, related: relatedArticles });
 
   if (!id) return <Navigate to="/" replace />;
 

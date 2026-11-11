@@ -33,16 +33,18 @@ const SURFACE = 'hsl(var(--card))';
 // ── Containers ──────────────────────────────────────────────────────────────
 
 export function Panel({
-  title, subtitle, aside, children, className,
+  title, subtitle, aside, children, className, agentId,
 }: {
   title?: string;
   subtitle?: ReactNode;
   aside?: ReactNode;
   children: ReactNode;
   className?: string;
+  /** Operator anchor (data-agent-id) for the whole panel. */
+  agentId?: string;
 }) {
   return (
-    <section className={cn('rounded-sm border border-border/60 bg-card p-5 md:p-6', className)}>
+    <section data-agent-id={agentId} className={cn('rounded-sm border border-border/60 bg-card p-5 md:p-6', className)}>
       {(title || aside) && (
         <div className="mb-5 flex flex-wrap items-start gap-x-4 gap-y-2">
           <div className="min-w-0 flex-1">
@@ -97,15 +99,17 @@ export function Empty({ children }: { children: ReactNode }) {
  * large standalone number look loose.
  */
 export function StatTile({
-  label, value, detail, display = false,
+  label, value, detail, display = false, agentId,
 }: {
   label: string;
   value: ReactNode;
   detail?: ReactNode;
   display?: boolean;
+  /** Operator anchor (data-agent-id) for the tile. */
+  agentId?: string;
 }) {
   return (
-    <div className="rounded-sm border border-border/60 bg-card p-5">
+    <div data-agent-id={agentId} data-agent-label={agentId ? label : undefined} className="rounded-sm border border-border/60 bg-card p-5">
       <p className="text-[12px] text-muted-foreground">{label}</p>
       <p
         className={cn(
@@ -279,13 +283,15 @@ export interface SegmentOption<T extends string> {
  * of tabbing through every one.
  */
 export function SegmentedControl<T extends string>({
-  options, value, onChange, label, className,
+  options, value, onChange, label, className, agentIdPrefix,
 }: {
   options: SegmentOption<T>[];
   value: T;
   onChange: (v: T) => void;
   label: string;
   className?: string;
+  /** Operator anchors: each option gets data-agent-id="<prefix>-<value>". */
+  agentIdPrefix?: string;
 }) {
   const move = (delta: number) => {
     const i = options.findIndex((o) => o.value === value);
@@ -309,6 +315,8 @@ export function SegmentedControl<T extends string>({
             aria-checked={selected}
             tabIndex={selected ? 0 : -1}
             title={o.title}
+            data-agent-id={agentIdPrefix ? `${agentIdPrefix}-${o.value}` : undefined}
+            data-agent-label={agentIdPrefix ? `${label}: ${o.title ?? (typeof o.label === 'string' ? o.label : o.value)}` : undefined}
             onClick={() => onChange(o.value)}
             onKeyDown={(e) => {
               const d = e.key === 'ArrowRight' || e.key === 'ArrowDown' ? 1
@@ -334,7 +342,7 @@ export function SegmentedControl<T extends string>({
 
 /** A many-of-many chip row. Same look as the segmented control, different job. */
 export function ChipToggles<T extends string>({
-  options, values, onToggle, label, allLabel = 'All', onClear,
+  options, values, onToggle, label, allLabel = 'All', onClear, agentIdPrefix,
 }: {
   options: { value: T; label: string }[];
   values: T[];
@@ -342,6 +350,8 @@ export function ChipToggles<T extends string>({
   label: string;
   allLabel?: string;
   onClear: () => void;
+  /** Operator anchors: "<prefix>-all" and "<prefix>-<value>". */
+  agentIdPrefix?: string;
 }) {
   const none = values.length === 0;
   const chip = (on: boolean) => cn(
@@ -353,7 +363,14 @@ export function ChipToggles<T extends string>({
 
   return (
     <div role="group" aria-label={label} className="flex flex-wrap gap-1.5">
-      <button type="button" onClick={onClear} aria-pressed={none} className={chip(none)}>
+      <button
+        type="button"
+        onClick={onClear}
+        aria-pressed={none}
+        className={chip(none)}
+        data-agent-id={agentIdPrefix ? `${agentIdPrefix}-all` : undefined}
+        data-agent-label={agentIdPrefix ? `${label}: ${allLabel}` : undefined}
+      >
         {allLabel}
       </button>
       {options.map((o) => (
@@ -362,6 +379,8 @@ export function ChipToggles<T extends string>({
           type="button"
           onClick={() => onToggle(o.value)}
           aria-pressed={values.includes(o.value)}
+          data-agent-id={agentIdPrefix ? `${agentIdPrefix}-${o.value}` : undefined}
+          data-agent-label={agentIdPrefix ? `${label}: ${o.label}` : undefined}
           className={chip(values.includes(o.value))}
         >
           {o.label}

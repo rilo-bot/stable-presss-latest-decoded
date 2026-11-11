@@ -5,9 +5,12 @@
  */
 import { useParams, Navigate } from 'react-router-dom';
 import { PartyProfile } from '@/components/profile/PartyProfile';
+import { usePartyProfileOperatorActions } from '@/pages/operator-site/useDirectoryOperatorActions';
 
 export default function PartyDetail() {
   const { id } = useParams<{ id: string }>();
+  // The Stable Hand: site.readParty reads this profile.
+  usePartyProfileOperatorActions(id ?? '');
   if (!id) return <Navigate to="/parties" replace />;
   return <PartyProfile partyId={id} mode="view" />;
 }

@@ -16,6 +16,7 @@ export function PartyPicker({
   allParties,
   required,
   hint,
+  agentId,
 }: {
   label: string;
   roleFilter: PartyRole | PartyRole[];
@@ -24,6 +25,8 @@ export function PartyPicker({
   allParties: RegisterPerson[];
   required?: boolean;
   hint?: string;
+  /** Operator anchor for the dropdown trigger; options are `<agentId>.option-<personId>`. */
+  agentId?: string;
 }) {
   const roles = Array.isArray(roleFilter) ? roleFilter : [roleFilter];
   const filtered = useMemo(
@@ -88,6 +91,8 @@ export function PartyPicker({
           className="w-full flex items-center justify-between px-3 py-2 text-sm border border-input rounded-sm bg-background hover:bg-muted/40 focus:outline-none focus:ring-1 focus:ring-ring transition-colors text-left"
           aria-haspopup="listbox"
           aria-expanded={open}
+          data-agent-id={agentId}
+          data-agent-label={label}
         >
           <span className="text-muted-foreground text-xs">
             {filtered.length === 0
@@ -114,6 +119,8 @@ export function PartyPicker({
                   )}
                   role="option"
                   aria-selected={isSelected}
+                  data-agent-id={agentId ? `${agentId}.option-${p.id}` : undefined}
+                  data-agent-label={agentId ? p.name : undefined}
                 >
                   <div className={cn(
                     'w-4 h-4 rounded-[3px] border flex items-center justify-center flex-shrink-0 transition-colors',

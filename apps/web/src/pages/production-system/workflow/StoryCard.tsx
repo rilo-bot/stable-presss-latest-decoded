@@ -91,7 +91,10 @@ export function StoryCard({
   const hasMenu = others.length > 0 || editable;
 
   return (
-    <article className="group rounded-sm border border-border/60 bg-card p-3.5 shadow-sm transition-shadow hover:shadow-md focus-within:shadow-md">
+    <article
+      data-agent-id={`story.card-${article.id}`}
+      data-agent-label={`Story card: ${article.title || 'Untitled story'} (${article.status})`}
+      className="group rounded-sm border border-border/60 bg-card p-3.5 shadow-sm transition-shadow hover:shadow-md focus-within:shadow-md">
       {/* Tag row. Real data only — the category the desk filed it under, plus a
           rejection flag when an editor has sent it back. */}
       <div className="flex items-start gap-2">
@@ -106,6 +109,7 @@ export function StoryCard({
           <div ref={menuRef} className="relative flex-shrink-0">
             <button
               onClick={() => setMenuOpen((v) => !v)}
+              data-agent-id={`story.card-${article.id}.menu`}
               aria-label={`More actions for ${article.title || 'this story'}`}
               aria-expanded={menuOpen}
               aria-haspopup="menu"
@@ -127,6 +131,7 @@ export function StoryCard({
                   <button
                     key={`${move.to}-${move.label}`}
                     role="menuitem"
+                    data-agent-id={`story.card-${article.id}.move-${move.to}`}
                     onClick={() => { setMenuOpen(false); onMove(article, move); }}
                     className={cn(
                       'flex w-full items-center gap-2 px-3 py-2 text-left text-[13px] font-medium transition-colors hover:bg-muted/70',
@@ -141,6 +146,7 @@ export function StoryCard({
                   <>
                     <button
                       role="menuitem"
+                      data-agent-id={`story.card-${article.id}.edit`}
                       onClick={() => { setMenuOpen(false); onEdit(article); }}
                       className="flex w-full items-center gap-2 border-t border-border/60 px-3 py-2 text-left text-[13px] font-medium text-foreground transition-colors hover:bg-muted/70"
                     >
@@ -149,6 +155,7 @@ export function StoryCard({
                     </button>
                     <button
                       role="menuitem"
+                      data-agent-id={`story.card-${article.id}.delete`}
                       onClick={() => { setMenuOpen(false); onDelete(article); }}
                       className="flex w-full items-center gap-2 border-t border-border/60 px-3 py-2 text-left text-[13px] font-medium text-destructive transition-colors hover:bg-destructive/10"
                     >
@@ -210,6 +217,8 @@ export function StoryCard({
       {forward && canForward && (
         <button
           onClick={() => onMove(article, forward)}
+          data-agent-id={`story.card-${article.id}.move-${forward.to}`}
+          data-agent-label={`${forward.label}: ${article.title || 'Untitled story'}`}
           className="mt-3 w-full rounded-sm bg-primary/10 py-1.5 text-[12.5px] font-semibold text-primary transition-colors hover:bg-primary hover:text-primary-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
         >
           {forward.label}

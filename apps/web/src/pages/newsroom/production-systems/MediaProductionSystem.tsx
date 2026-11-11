@@ -72,6 +72,7 @@ export function MediaProductionSystem({
           size="sm"
           className="bg-primary text-primary-foreground hover:bg-primary/90 gap-1.5 text-sm"
           onClick={() => onOpenMediaForm()}
+          data-agent-id="reg.add-media"
         >
           <Plus size={13} />
           Add Media Record
@@ -120,6 +121,7 @@ export function MediaProductionSystem({
               onChange={(e) => setMediaSearch(e.target.value)}
               className="w-full pl-8 pr-3 py-2 text-sm border border-input rounded-sm bg-card focus:outline-none focus:ring-1 focus:ring-ring"
               aria-label="Search media records"
+              data-agent-id="reg.media-search"
             />
           </div>
           <select
@@ -127,6 +129,7 @@ export function MediaProductionSystem({
             onChange={(e) => setMediaHorseFilter(e.target.value)}
             className="px-3 py-2 text-sm border border-input rounded-sm bg-card focus:outline-none focus:ring-1 focus:ring-ring text-foreground"
             aria-label="Filter by horse"
+            data-agent-id="reg.media-horse-filter"
           >
             <option value="">All Horses</option>
             {safeHorses.map((h) => (
@@ -188,6 +191,8 @@ export function MediaProductionSystem({
                   return (
                     <tr
                       key={item.id}
+                      data-agent-id={`reg.media-row-${item.id}`}
+                      data-agent-label={item.title}
                       className={cn(
                         'border-b border-border/30 hover:bg-muted/10 transition-colors',
                         idx % 2 === 0 ? 'bg-card' : 'bg-background'

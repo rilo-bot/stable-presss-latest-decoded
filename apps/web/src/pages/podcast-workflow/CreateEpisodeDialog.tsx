@@ -91,6 +91,7 @@ export function CreateEpisodeDialog({
             <Label htmlFor="ep-title">Episode Title</Label>
             <Input
               id="ep-title"
+              data-agent-id="podcast.create-title"
               placeholder="e.g. Behind the Gates at Randwick"
               value={form.title}
               onChange={(e) => setForm((f) => ({ ...f, title: e.target.value }))}
@@ -103,6 +104,7 @@ export function CreateEpisodeDialog({
               <Label htmlFor="ep-host">Host</Label>
               <Input
                 id="ep-host"
+                data-agent-id="podcast.create-host"
                 placeholder="Host name"
                 value={form.host}
                 onChange={(e) => setForm((f) => ({ ...f, host: e.target.value }))}
@@ -113,6 +115,7 @@ export function CreateEpisodeDialog({
               <Label htmlFor="ep-season">Season</Label>
               <Input
                 id="ep-season"
+                data-agent-id="podcast.create-season"
                 type="number"
                 min={1}
                 value={form.season}
@@ -127,6 +130,7 @@ export function CreateEpisodeDialog({
               <Label htmlFor="ep-num">Episode Number</Label>
               <Input
                 id="ep-num"
+                data-agent-id="podcast.create-number"
                 type="number"
                 min={1}
                 value={form.episodeNumber}
@@ -138,6 +142,7 @@ export function CreateEpisodeDialog({
               <Label htmlFor="ep-duration">Duration (minutes)</Label>
               <Input
                 id="ep-duration"
+                data-agent-id="podcast.create-duration"
                 type="number"
                 min={0}
                 value={Math.floor(form.durationSeconds / 60) || ''}
@@ -154,6 +159,7 @@ export function CreateEpisodeDialog({
             <Label htmlFor="ep-desc">Description</Label>
             <Textarea
               id="ep-desc"
+              data-agent-id="podcast.create-description"
               placeholder="What is this episode about?"
               value={form.description}
               onChange={(e) => setForm((f) => ({ ...f, description: e.target.value }))}
@@ -166,6 +172,7 @@ export function CreateEpisodeDialog({
               <Label>Episode Audio</Label>
               <div className="mt-1.5">
                 <AudioUploader
+                  agentId="podcast.create-audio"
                   value={form.audioUrl}
                   onChange={(url, seconds) =>
                     setForm((f) => ({
@@ -182,6 +189,7 @@ export function CreateEpisodeDialog({
               <Label>Cover Image (optional)</Label>
               <div className="mt-1.5">
                 <CoverUploader
+                  agentId="podcast.create-cover"
                   value={form.coverUrl}
                   onChange={(url) => setForm((f) => ({ ...f, coverUrl: url }))}
                 />
@@ -192,9 +200,9 @@ export function CreateEpisodeDialog({
 
         <DialogFooter className="gap-2">
           <DialogClose asChild>
-            <Button variant="outline">Cancel</Button>
+            <Button variant="outline" data-agent-id="podcast.create-cancel">Cancel</Button>
           </DialogClose>
-          <Button onClick={handleSubmit} disabled={saving} className="bg-primary text-primary-foreground">
+          <Button onClick={handleSubmit} disabled={saving} className="bg-primary text-primary-foreground" data-agent-id="podcast.create-submit">
             {saving ? 'Creating…' : 'Create Episode Draft'}
           </Button>
         </DialogFooter>

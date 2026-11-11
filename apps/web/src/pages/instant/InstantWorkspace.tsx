@@ -16,6 +16,7 @@ import { Link, useNavigate } from 'react-router-dom';
 import { CheckCircle2, Lock, Zap } from 'lucide-react';
 
 import { useCan } from '@/lib/permissions';
+import { useInstantOperatorActions } from '@/pages/production-system/operator-content/useInstantOperatorActions';
 
 import { CaptureStep } from './CaptureStep';
 import { ReviewStep } from './ReviewStep';
@@ -56,6 +57,7 @@ function SavedPanel() {
         <button
           type="button"
           onClick={reset}
+          data-agent-id="instant.capture-another"
           className="flex items-center gap-1.5 rounded-sm bg-primary px-3.5 py-2 text-[13px] font-semibold text-primary-foreground transition-opacity hover:opacity-90"
         >
           <Zap size={14} /> Capture another
@@ -75,6 +77,10 @@ export function InstantWorkspace() {
     ...(canStory ? (['story'] as const) : []),
     ...(canBlog ? (['blog'] as const) : []),
   ];
+
+  // The Stable Hand Operator: instant.read / capture / editDraft / file — each
+  // drives the capture and review steps below (photos arrive via its upload tool).
+  useInstantOperatorActions(allowedModes);
 
   // Keep the selected mode inside what this user may save. A role change while
   // the screen is open would otherwise leave Story selected for someone who can

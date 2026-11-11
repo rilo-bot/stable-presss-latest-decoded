@@ -63,6 +63,7 @@ export function CopyDocumentPage() {
         actionLabel={busy ? 'Starting…' : 'Copy onto this page'}
         emptyNote="No PDF attached to this magazine yet. Attach one in the chat, or add it when creating the magazine, and you can reproduce any of its pages here exactly."
         onRead={(docId, pageNo) => void run(docId, pageNo)}
+        agentPrefix="mag.copy-pdf"
       />
       <p className="text-ui-sm text-studio-ink-4">
         An exact reproduction — the PDF page's own words, pictures and colours, as editable elements.

@@ -154,6 +154,7 @@ export function EpisodeDetailPanel({
         <div className="flex gap-2">
           <Button
             className="flex-1 bg-primary text-primary-foreground"
+            data-agent-id="podcast.approve-publish"
             onClick={() => {
               advanceStatus(liveEpisode.id, 'published');
               toast.success('Episode approved and published.');
@@ -165,6 +166,7 @@ export function EpisodeDetailPanel({
           </Button>
           <Button
             variant="outline"
+            data-agent-id="podcast.return-revisions"
             onClick={() => {
               advanceStatus(liveEpisode.id, 'scheduled');
               toast.success('Episode returned for revisions.');
@@ -180,6 +182,7 @@ export function EpisodeDetailPanel({
       return (
         <Button
           className="w-full bg-primary text-primary-foreground"
+          data-agent-id="podcast.submit-review"
           onClick={() => {
             advanceStatus(liveEpisode.id, 'in_review');
             toast.success('Episode submitted for approval review.');
@@ -198,6 +201,7 @@ export function EpisodeDetailPanel({
             <Label htmlFor="sched-date" className="text-xs">Publish Date</Label>
             <Input
               id="sched-date"
+              data-agent-id="podcast.schedule-date"
               type="date"
               value={scheduleDate}
               onChange={(e) => setScheduleDate(e.target.value)}
@@ -207,6 +211,7 @@ export function EpisodeDetailPanel({
           <Button
             className="bg-primary text-primary-foreground"
             onClick={handleSchedule}
+            data-agent-id="podcast.schedule"
           >
             <Calendar size={14} className="mr-1.5" />
             Schedule
@@ -220,6 +225,7 @@ export function EpisodeDetailPanel({
         <Button
           className="w-full bg-primary text-primary-foreground"
           onClick={handleMarkCopyDone}
+          data-agent-id="podcast.mark-copy-done"
         >
           <Star size={14} className="mr-1.5" />
           Mark Copy as Done
@@ -242,6 +248,7 @@ export function EpisodeDetailPanel({
             Upload the episode audio, then continue to guests.
           </p>
           <AudioUploader
+            agentId="podcast.audio"
             value={liveEpisode.audioUrl ?? ''}
             onChange={(url, seconds) =>
               updateEpisode(liveEpisode.id, {
@@ -253,6 +260,7 @@ export function EpisodeDetailPanel({
           <Button
             className="w-full bg-primary text-primary-foreground"
             disabled={!liveEpisode.audioUrl}
+            data-agent-id="podcast.confirm-audio"
             onClick={() => {
               advanceStatus(liveEpisode.id, 'audio_uploaded');
               toast.success('Audio ready. Next: add guests.');
@@ -287,6 +295,8 @@ export function EpisodeDetailPanel({
         exit={{ x: '100%' }}
         transition={{ type: 'spring', damping: 30, stiffness: 260 }}
         className="w-full max-w-2xl bg-background border-l border-border flex flex-col h-full overflow-hidden"
+        data-agent-id="podcast.drawer"
+        data-agent-label={liveEpisode.title}
       >
         {/* Header */}
         <div className="bg-primary text-primary-foreground px-6 py-5 flex-shrink-0">
@@ -301,6 +311,7 @@ export function EpisodeDetailPanel({
             </div>
             <button
               aria-label="Close panel"
+              data-agent-id="podcast.drawer-close"
               onClick={onClose}
               className="mt-0.5 p-1 rounded-sm hover:bg-primary-foreground/10 transition-colors"
             >
@@ -309,7 +320,7 @@ export function EpisodeDetailPanel({
           </div>
 
           {/* Workflow progress */}
-          <div className="mt-4 flex items-center gap-1 overflow-x-auto pb-1">
+          <div className="mt-4 flex items-center gap-1 overflow-x-auto pb-1" data-agent-id="podcast.drawer-stages">
             {WORKFLOW_STAGES.map((stage, i) => {
               const currentIdx = WORKFLOW_STAGES.findIndex((s) => s.status === liveEpisode.status);
               const stageIdx = i;
@@ -346,6 +357,7 @@ export function EpisodeDetailPanel({
               <button
                 key={t.id}
                 onClick={() => setTab(t.id)}
+                data-agent-id={`podcast.tab-${t.id}`}
                 className={cn(
                   'px-3 py-3 text-xs font-medium border-b-2 transition-colors',
                   tab === t.id

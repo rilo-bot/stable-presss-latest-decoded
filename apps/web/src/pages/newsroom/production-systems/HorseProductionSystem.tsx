@@ -1,4 +1,4 @@
-import { useMemo, useState } from 'react';
+import { Fragment, useMemo, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { Plus, Search, Eye, Link, ChevronDown, X, Trash2 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
@@ -104,6 +104,7 @@ export function HorseProductionSystem({
           size="sm"
           className="bg-primary text-primary-foreground hover:bg-primary/90 gap-1.5 text-sm"
           onClick={() => setChooser(true)}
+          data-agent-id="reg.add-horse"
         >
           <Plus size={13} />
           Add Thoroughbred
@@ -120,6 +121,7 @@ export function HorseProductionSystem({
             onChange={(e) => setHorseSearch(e.target.value)}
             className="w-full pl-8 pr-3 py-2 text-sm border border-input rounded-sm bg-card focus:outline-none focus:ring-1 focus:ring-ring"
             aria-label="Search horses"
+            data-agent-id="reg.horse-search"
           />
         </div>
       )}
@@ -172,9 +174,10 @@ export function HorseProductionSystem({
                 {filteredHorses.map((horse, idx) => {
                   const isExpanded = expandedHorseId === horse.id;
                   return (
-                    <>
+                    <Fragment key={horse.id}>
                       <tr
-                        key={horse.id}
+                        data-agent-id={`reg.horse-row-${horse.id}`}
+                        data-agent-label={horse.name || "Unnamed"}
                         className={cn(
                           'border-b border-border/30 hover:bg-muted/10 transition-colors',
                           isExpanded ? 'bg-primary/5 border-primary/20' : idx % 2 === 0 ? 'bg-card' : 'bg-background'
@@ -238,6 +241,7 @@ export function HorseProductionSystem({
                           <div className="flex items-center gap-3">
                             <button
                               onClick={() => onOpenHorseForm(horse)}
+                              data-agent-id={`reg.horse-edit-${horse.id}`}
                               className="text-[12px] uppercase tracking-[0.08em] font-semibold text-primary hover:text-primary/80 transition-colors"
                               aria-label={`Edit ${horse.name}`}
                             >
@@ -310,7 +314,7 @@ export function HorseProductionSystem({
                           </td>
                         </tr>
                       )}
-                    </>
+                    </Fragment>
                   );
                 })}
               </tbody>

@@ -1,8 +1,11 @@
 import { MediaProductionSystem } from '../../newsroom/production-systems/MediaProductionSystem';
 import { usePS } from '../context';
+import { useMediaRegisterActions } from '../operator-team/useRegisterOperatorActions';
 
 export default function MediaRecordsScreen() {
   const { ps } = usePS();
+  // Stablehand Operator actions for this register (search / add).
+  useMediaRegisterActions(ps);
   return (
     <>
       <MediaProductionSystem

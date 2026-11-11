@@ -110,18 +110,34 @@ router.use(attachAccount);
  * an edition regardless of role. (Open High in
  * docs/RBAC-STAFF-CAMPAIGN-ENGINE-REVIEW.md.)
  *
- * Method → verb, which is the honest mapping for a router whose writes are all
- * edits of an issue: only POST /issues actually CREATES one, and the per-issue
- * ownership check (`roleOnMagazine`) still runs underneath — this decides whether
- * the role may touch magazines at all, not which magazines.
+ * Route → verb. Most writes here are EDITS of an existing issue; the exceptions are
+ * spelled out below, and the per-issue ownership check (`roleOnMagazine`) still
+ * runs underneath — this decides whether the role may touch magazines at all, not
+ * which magazines.
+ *
+ *   create — every route that brings a NEW magazine into existence. This used to
+ *            match only `POST /issues`, a route that does not exist: the real ones
+ *            are /blank, /prepare, /generate, /upload and /:id/reuse, so all five
+ *            were checked as `edit` and a role without `magazine.create` could
+ *            create magazines freely.
+ *   delete — deleting the MAGAZINE. Deleting an element, a page, a chat thread or
+ *            a collaborator is an edit of the magazine, and used to need
+ *            `magazine.delete` purely because it travels as an HTTP DELETE — so a
+ *            view+edit role could not remove an element from its own page.
  */
+const CREATE_ROUTE = /^\/issues(?:\/(?:blank|prepare|generate|upload)|\/[^/]+\/reuse)?\/?$/;
+const DELETE_ISSUE_ROUTE = /^\/issues\/[^/]+\/?$/;
 router.use((req, res, next) => {
   if (!isAdmin(req.account)) {
     res.status(403).json({ error: 'Staff access required.' });
     return;
   }
-  const isCreate = req.method === 'POST' && /^\/issues\/?$/.test(req.url.split('?')[0]!);
-  const verb = req.method === 'GET' ? 'view' : req.method === 'DELETE' ? 'delete' : isCreate ? 'create' : 'edit';
+  const path = req.url.split('?')[0]!;
+  const verb =
+    req.method === 'GET' ? 'view'
+    : req.method === 'POST' && CREATE_ROUTE.test(path) ? 'create'
+    : req.method === 'DELETE' && DELETE_ISSUE_ROUTE.test(path) ? 'delete'
+    : 'edit';
   if (!can(req.account, 'magazine', verb)) {
     res.status(403).json({ error: `You do not have permission to ${verb} magazines.` });
     return;

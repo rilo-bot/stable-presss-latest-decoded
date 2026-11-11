@@ -21,6 +21,7 @@ import { useBlogStore } from '@/stores/blogStore';
 import { newBlockId, paragraph } from '@/blog/factories';
 import { Field, TextArea, TextInput } from './controls';
 import type { Blog, BlogMedia } from '@/types/blog';
+import { useBlogCreateFormAction } from '@/pages/production-system/operator/useBlogOperatorActions';
 
 /**
  * The cover, uploaded to storage but not yet attached to a post.
@@ -56,6 +57,9 @@ export default function BlogCreateForm() {
   const [saving, setSaving] = useState(false);
   const [dragOver, setDragOver] = useState(false);
   const fileRef = useRef<HTMLInputElement>(null);
+
+  // Stablehand Operator: blog.create, typed into this form.
+  useBlogCreateFormAction();
 
   /** Upload to storage now; it travels with the create call below. */
   const pickCover = async (files: FileList | null) => {
@@ -144,6 +148,7 @@ export default function BlogCreateForm() {
         <Field label="Title" hint="Required. The URL is made from this.">
           <TextInput
             ariaLabel="Title"
+            agentId="blog.new-title-input"
             value={title}
             placeholder="A Morning at the Yearling Sales"
             onChange={setTitle}
@@ -151,7 +156,7 @@ export default function BlogCreateForm() {
         </Field>
 
         <Field label="Standfirst" hint="Optional — one line under the headline.">
-          <TextInput ariaLabel="Standfirst" value={subtitle} placeholder="Three weeks on the road" onChange={setSubtitle} />
+          <TextInput ariaLabel="Standfirst" agentId="blog.new-standfirst-input" value={subtitle} placeholder="Three weeks on the road" onChange={setSubtitle} />
         </Field>
 
         <Field label="Cover image" hint="Optional. Appears at the top of the post and on its card.">
@@ -214,19 +219,19 @@ export default function BlogCreateForm() {
         </Field>
 
         <Field label="Byline">
-          <TextInput ariaLabel="Byline" value={author} placeholder="Who wrote it" onChange={setAuthor} />
+          <TextInput ariaLabel="Byline" agentId="blog.new-byline-input" value={author} placeholder="Who wrote it" onChange={setAuthor} />
         </Field>
 
         <Field label="Category" hint="Optional.">
-          <TextInput ariaLabel="Category" value={category} placeholder="Bloodstock, Racing, Opinion…" onChange={setCategory} />
+          <TextInput ariaLabel="Category" agentId="blog.new-category-input" value={category} placeholder="Bloodstock, Racing, Opinion…" onChange={setCategory} />
         </Field>
 
         <Field label="Summary" hint="Optional — taken from your first paragraph if left blank.">
-          <TextArea ariaLabel="Summary" value={excerpt} onChange={setExcerpt} rows={2} />
+          <TextArea ariaLabel="Summary" agentId="blog.new-summary-input" value={excerpt} onChange={setExcerpt} rows={2} />
         </Field>
 
         <div className="mt-6 flex items-center gap-2">
-          <Button type="submit" disabled={saving || uploading} className="gap-1.5">
+          <Button type="submit" disabled={saving || uploading} className="gap-1.5" data-agent-id="blog.create-submit">
             {saving && <Loader2 size={14} className="animate-spin" />}
             Create and start writing
           </Button>

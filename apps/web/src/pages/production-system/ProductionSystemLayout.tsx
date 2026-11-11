@@ -42,6 +42,8 @@ import {
 } from './components/ProductionSystemNav';
 import { ProductionSystemTopBar } from './components/ProductionSystemTopBar';
 import { useProductionSystemState } from './useProductionSystemState';
+import { useStoryOperatorActions } from './operator/useStoryOperatorActions';
+import { useBlogStudioAction } from './operator/useBlogOperatorActions';
 
 /**
  * Screens whose primary action is "File a Story". The registers (horses,
@@ -122,6 +124,12 @@ export default function ProductionSystemLayout() {
   const gatedModuleId = SIDE_NAV.find((i) => i.slug === slug)?.id;
   const blocked =
     !!accessModules && !!gatedModuleId && !accessModules.includes(gatedModuleId);
+
+  // Stablehand Operator packs. Registered here because the controls they drive
+  // (File a Story menu, article form, both studio drawers, the board handlers)
+  // live in this layout; enabled only on the screens that show those controls.
+  useStoryOperatorActions(state, !blocked && STORY_SCREENS.has(slug));
+  useBlogStudioAction(!blocked && slug === 'blogs');
 
   const counts = {
     pendingReview,
@@ -206,10 +214,10 @@ export default function ProductionSystemLayout() {
             </DialogDescription>
           </DialogHeader>
           <DialogFooter>
-            <Button variant="outline" onClick={() => setDeleteTarget(null)} disabled={deleting}>
+            <Button variant="outline" onClick={() => setDeleteTarget(null)} disabled={deleting} data-agent-id="story.delete-cancel">
               Cancel
             </Button>
-            <Button variant="destructive" onClick={confirmDelete} disabled={deleting}>
+            <Button variant="destructive" onClick={confirmDelete} disabled={deleting} data-agent-id="story.delete-confirm">
               {deleting ? 'Deleting…' : 'Delete'}
             </Button>
           </DialogFooter>

@@ -11,6 +11,7 @@ import { EmptyState } from '@/components/EmptyState';
 import { useRoleStore, type Role, type RoleDraft, type ScreenMeta, type Verb } from '@/stores/roleStore';
 import { ROLE_ICON_NAMES, roleIcon } from '@/lib/roleDisplay';
 import { toast } from 'sonner';
+import { useRolesOperatorActions } from '@/pages/production-system/operator-team/useRolesOperatorActions';
 
 // ---------------------------------------------------------------------------
 // Roles & Permissions — ONE GRID.
@@ -252,6 +253,7 @@ function Grid({
                             disabled={readOnly}
                             onChange={() => (lockedView ? toggleRow(screen) : toggleOne(screen, v))}
                             aria-label={`${VERB_LABEL[v]} — ${screen.label}`}
+                            data-agent-id={`roles.perm-${id}`}
                             title={
                               lockedView
                                 ? 'Needed by the other permissions on this row. Clearing it clears the row.'
@@ -274,6 +276,8 @@ function Grid({
                               type="button"
                               disabled={readOnly}
                               onClick={() => setScope(screen.id, s)}
+                              data-agent-id={`roles.scope-${screen.id}-${s === 'own' ? 'own' : 'everyone'}`}
+                              aria-pressed={(draft.scopes[screen.id] ?? 'own') === s}
                               className={
                                 'px-1.5 py-0.5 text-[10px] font-semibold transition-colors disabled:opacity-50 ' +
                                 ((draft.scopes[screen.id] ?? 'own') === s
@@ -384,6 +388,11 @@ export function RolesPermissionsView({ canManageRoles }: RolesPermissionsViewPro
     }
   };
 
+  // The Stable Hand Operator: roles.list / catalog / open / create /
+  // editPermissions / setScope / rename / delete — each drives the chips, name
+  // fields, grid checkboxes, Own/Everyone toggles and Save above.
+  useRolesOperatorActions({ canManageRoles, roles, screens, selected, draft, creating, saving });
+
   if (loading && !loaded) {
     return (
       <div className="flex items-center justify-center py-16 text-muted-foreground">
@@ -409,6 +418,8 @@ export function RolesPermissionsView({ canManageRoles }: RolesPermissionsViewPro
               key={role.name}
               type="button"
               onClick={() => startEdit(role)}
+              data-agent-id={`roles.role-${role.name}`}
+              data-agent-label={role.label}
               className={
                 'flex items-center gap-1.5 rounded-sm border px-2.5 py-1.5 text-[12px] font-semibold transition-colors ' +
                 (active ? 'border-primary bg-primary/10 text-foreground' : 'border-border text-muted-foreground hover:bg-muted')
@@ -427,7 +438,7 @@ export function RolesPermissionsView({ canManageRoles }: RolesPermissionsViewPro
           );
         })}
         {canManageRoles && (
-          <Button size="sm" variant="outline" onClick={startCreate} className="gap-1.5">
+          <Button size="sm" variant="outline" onClick={startCreate} className="gap-1.5" data-agent-id="roles.new">
             <Plus size={13} /> New role
           </Button>
         )}
@@ -461,17 +472,17 @@ export function RolesPermissionsView({ canManageRoles }: RolesPermissionsViewPro
               <div className="flex items-center gap-1.5">
                 {editing ? (
                   <>
-                    <Button size="sm" variant="ghost" onClick={cancel} className="gap-1">
+                    <Button size="sm" variant="ghost" onClick={cancel} className="gap-1" data-agent-id="roles.cancel">
                       <X size={13} /> Cancel
                     </Button>
-                    <Button size="sm" onClick={() => void save()} disabled={saving} className="gap-1">
+                    <Button size="sm" onClick={() => void save()} disabled={saving} className="gap-1" data-agent-id="roles.save">
                       {saving ? <Loader2 size={13} className="animate-spin" /> : <Save size={13} />} Save
                     </Button>
                   </>
                 ) : (
                   current && (
                     <>
-                      <Button size="sm" variant="outline" onClick={() => startEdit(current)} className="gap-1">
+                      <Button size="sm" variant="outline" onClick={() => startEdit(current)} className="gap-1" data-agent-id="roles.edit">
                         <Pencil size={13} /> Edit
                       </Button>
                       {!current.isSystem && (
@@ -479,6 +490,7 @@ export function RolesPermissionsView({ canManageRoles }: RolesPermissionsViewPro
                           size="sm"
                           variant="ghost"
                           onClick={() => setConfirmDelete(current)}
+                          data-agent-id="roles.delete"
                           className="gap-1 text-destructive hover:text-destructive"
                         >
                           <Trash2 size={13} /> Delete
@@ -503,6 +515,7 @@ export function RolesPermissionsView({ canManageRoles }: RolesPermissionsViewPro
                   value={draft!.label}
                   onChange={(e) => setDraft({ ...draft!, label: e.target.value })}
                   placeholder="Sub-editor"
+                  data-agent-id="roles.label"
                 />
               </div>
               <div className="space-y-1">
@@ -515,6 +528,7 @@ export function RolesPermissionsView({ canManageRoles }: RolesPermissionsViewPro
                   value={draft!.description ?? ''}
                   onChange={(e) => setDraft({ ...draft!, description: e.target.value })}
                   placeholder="Checks copy and schedules it"
+                  data-agent-id="roles.description"
                 />
               </div>
               <div className="space-y-1 sm:col-span-2">
@@ -578,6 +592,7 @@ export function RolesPermissionsView({ canManageRoles }: RolesPermissionsViewPro
             <Button
               variant="destructive"
               onClick={() => confirmDelete && void remove(confirmDelete)}
+              data-agent-id="roles.delete-confirm"
               className="gap-1"
             >
               <Trash2 size={13} /> Delete it

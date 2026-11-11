@@ -14,7 +14,7 @@ const AUDIO_MAX = 250 * MB;
 
 type Mode = 'url' | 'upload';
 
-function ModeToggle({ mode, setMode }: { mode: Mode; setMode: (m: Mode) => void }) {
+function ModeToggle({ mode, setMode, agentId }: { mode: Mode; setMode: (m: Mode) => void; agentId?: string }) {
   return (
     <div className="flex items-center gap-1 p-0.5 rounded-sm bg-muted/40 border border-border/40 w-fit">
       {(['url', 'upload'] as const).map((m) => (
@@ -22,6 +22,7 @@ function ModeToggle({ mode, setMode }: { mode: Mode; setMode: (m: Mode) => void 
           key={m}
           type="button"
           onClick={() => setMode(m)}
+          data-agent-id={agentId ? `${agentId}-mode-${m}` : undefined}
           className={cn(
             'flex items-center gap-1.5 px-3 py-1.5 rounded-[3px] text-[11px] font-semibold transition-colors',
             mode === m
@@ -42,9 +43,14 @@ function ModeToggle({ mode, setMode }: { mode: Mode; setMode: (m: Mode) => void 
 export function CoverUploader({
   value,
   onChange,
+  agentId,
 }: {
   value: string;
   onChange: (url: string) => void;
+  /** The Stable Hand Operator anchor prefix: `<id>` is the drop zone (it holds
+   *  the file input, so the `upload` tool can target it), plus `<id>-url` and
+   *  `<id>-mode-url` / `<id>-mode-upload`. */
+  agentId?: string;
 }) {
   const [mode, setMode] = useState<Mode>('upload');
   const [dragging, setDragging] = useState(false);
@@ -74,13 +80,14 @@ export function CoverUploader({
 
   return (
     <div className="space-y-2">
-      <ModeToggle mode={mode} setMode={setMode} />
+      <ModeToggle mode={mode} setMode={setMode} agentId={agentId} />
 
       {mode === 'url' ? (
         <Input
           type="url"
           value={value?.startsWith('data:') ? '' : (value ?? '')}
           onChange={(e) => onChange(e.target.value)}
+          data-agent-id={agentId ? `${agentId}-url` : undefined}
           placeholder="https://…/cover.jpg"
         />
       ) : (
@@ -97,6 +104,8 @@ export function CoverUploader({
           }}
           onDragLeave={() => setDragging(false)}
           onClick={() => fileRef.current?.click()}
+          data-agent-id={agentId}
+          data-agent-label="Upload cover image"
           className={cn(
             'flex flex-col items-center justify-center gap-1.5 rounded-sm border-2 border-dashed cursor-pointer transition-colors py-5 px-4',
             dragging
@@ -160,7 +169,10 @@ export function CoverUploader({
 export function AudioUploader({
   value,
   onChange,
+  agentId,
 }: {
+  /** Operator anchor prefix — see CoverUploader. */
+  agentId?: string;
   value: string;
   /**
    * Fired once with the stored URL and (for uploaded files) the length detected
@@ -218,13 +230,14 @@ export function AudioUploader({
 
   return (
     <div className="space-y-2">
-      <ModeToggle mode={mode} setMode={setMode} />
+      <ModeToggle mode={mode} setMode={setMode} agentId={agentId} />
 
       {mode === 'url' ? (
         <Input
           type="url"
           value={value?.startsWith('data:') ? '' : (value ?? '')}
           onChange={(e) => onChange(e.target.value)}
+          data-agent-id={agentId ? `${agentId}-url` : undefined}
           placeholder="https://…/episode.mp3"
         />
       ) : (
@@ -241,6 +254,8 @@ export function AudioUploader({
           }}
           onDragLeave={() => setDragging(false)}
           onClick={() => !uploading && fileRef.current?.click()}
+          data-agent-id={agentId}
+          data-agent-label="Upload episode audio"
           className={cn(
             'flex flex-col items-center justify-center gap-1.5 rounded-sm border-2 border-dashed transition-colors py-5 px-4',
             uploading ? 'cursor-default' : 'cursor-pointer',

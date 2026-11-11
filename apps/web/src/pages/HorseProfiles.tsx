@@ -13,6 +13,7 @@ import { Input } from '@/components/ui/input';
 import { Search, Plus, Heart, ChevronRight } from 'lucide-react';
 import { motion } from 'framer-motion';
 import { useRegister } from '@/lib/register';
+import { useHorseRegisterOperatorActions } from '@/pages/operator-site/useHorseSiteActions';
 
 export default function HorseProfiles() {
   // === auto fetch-on-mount (backend planner) ===
@@ -66,6 +67,10 @@ export default function HorseProfiles() {
     });
   }, [safeHorses, query, partyEdges]);
 
+  // The Stable Hand: site.searchHorses types into the search box below and reads
+  // this same filtered list; horse.follow / horse.unfollow update My Stable.
+  useHorseRegisterOperatorActions({ query, filtered, total: safeHorses.length });
+
   return (
     <div className="max-w-7xl mx-auto px-4 md:px-8 py-10">
       {/* Page header */}
@@ -99,6 +104,7 @@ export default function HorseProfiles() {
               placeholder="Search by name, trainer, or jockey…"
               className="pl-8 text-sm"
               aria-label="Search horse profiles"
+              data-agent-id="site.horse-search"
             />
           </div>
           {!loading && safeHorses.length > 0 && (
@@ -117,7 +123,7 @@ export default function HorseProfiles() {
 
       {/* My Stable — followed horses (gamification) */}
       {!loading && myStable.length > 0 && (
-        <div className="mb-8 rounded-sm border border-primary/20 bg-primary/5 p-4">
+        <div className="mb-8 rounded-sm border border-primary/20 bg-primary/5 p-4" data-agent-id="site.my-stable" data-agent-label="My Stable">
           <div className="flex items-center gap-2 mb-3">
             <Heart size={13} className="text-primary" fill="hsl(var(--primary))" />
             <span className="text-[10px] uppercase tracking-[0.16em] font-bold text-primary">
@@ -217,6 +223,8 @@ export default function HorseProfiles() {
             {filtered.map((horse, i) => (
               <motion.div
                 key={horse.id}
+                data-agent-id={`site.horse-${horse.id}`}
+                data-agent-label={horse.name}
                 initial={{ opacity: 0, y: 6 }}
                 animate={{ opacity: 1, y: 0 }}
                 transition={{

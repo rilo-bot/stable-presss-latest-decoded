@@ -17,6 +17,7 @@ import {
 import { Button } from '@/components/ui/button';
 import { CATEGORIES, SECTIONS } from './news-index/constants';
 import { ArticleGrid } from './news-index/ArticleGrid';
+import { useNewsOperatorActions } from '@/pages/operator-site/useSiteReadActions';
 
 // Re-exported for consumers that import CATEGORIES from this module.
 export { CATEGORIES } from './news-index/constants';
@@ -87,6 +88,9 @@ export default function NewsIndex() {
     }
     return base;
   }, [liveArticles, activeCategory, activeSection, search]);
+
+  // The Stable Hand: site.readNews / site.searchNews read this same list.
+  useNewsOperatorActions({ filtered: filteredArticles, search, section: activeSection, category: activeCategory });
 
   const currentCategoryDef = activeCategory
     ? CATEGORIES.find((c) => c.key === activeCategory)
@@ -188,6 +192,7 @@ export default function NewsIndex() {
                 onChange={(e) => setSearch(e.target.value)}
                 className="w-full pl-8 pr-3 py-2 text-xs border border-primary-foreground/20 rounded-sm bg-primary-foreground/10 text-primary-foreground placeholder:text-primary-foreground/40 focus:outline-none focus:ring-1 focus:ring-primary-foreground/30"
                 aria-label="Search articles"
+                data-agent-id="site.news-search"
               />
             </div>
           </div>

@@ -22,6 +22,7 @@ import { isAdmin, canManageParty } from '@/rbac/can';
 import type { PartyRole } from '@/types/party';
 import { PARTY_ROLE_LABELS } from '@/types/party';
 import type { RegisterPerson } from '@/lib/register';
+import { useDirectoryOperatorActions, roleChipId } from '@/pages/operator-site/useDirectoryOperatorActions';
 
 /* ── Role colour map ─────────────────────────────── */
 const ROLE_COLORS: Record<PartyRole, string> = {
@@ -34,7 +35,7 @@ const ROLE_COLORS: Record<PartyRole, string> = {
   personnel: 'bg-muted text-muted-foreground border-border',
 };
 
-/* ── RegisterPerson card ─────────────────────────────────── */
+/* ── Person card ─────────────────────────────────── */
 function PartyCard({ party, onEdit, onDelete, onOpen, canManage }: { party: RegisterPerson; onEdit: () => void; onDelete: () => void; onOpen: () => void; canManage: boolean }) {
   const currentYear = new Date().getFullYear();
   const yearsActive = party.startedYear ? currentYear - party.startedYear : null;
@@ -167,7 +168,7 @@ function DeleteConfirm({ party, open, onOpenChange, onConfirm }: {
             <Button variant="outline" type="button">Cancel</Button>
           </DialogClose>
           <Button variant="destructive" type="button" onClick={onConfirm}>
-            Remove RegisterPerson
+            Remove Person
           </Button>
         </DialogFooter>
       </DialogContent>
@@ -235,6 +236,10 @@ export default function Parties() {
     });
   }, [safeParties, query, roleFilter]);
 
+  // The Stable Hand: site.searchDirectory drives the search box + role chips
+  // below and reads this same filtered list.
+  useDirectoryOperatorActions({ query, role: roleFilter, filtered, total: safeParties.length });
+
   const openEdit = (party: RegisterPerson) => {
     setEditParty(party);
     setFormOpen(true);
@@ -290,7 +295,7 @@ export default function Parties() {
             {staff && (
               <Button onClick={handleAddClick} size="sm" className="gap-1.5">
                 <Plus size={14} />
-                Add RegisterPerson
+                Add Person
               </Button>
             )}
           </div>
@@ -308,6 +313,7 @@ export default function Parties() {
               placeholder="Search by name…"
               className="pl-8 text-sm"
               aria-label="Search parties"
+              data-agent-id="site.directory-search"
             />
           </div>
 
@@ -318,6 +324,8 @@ export default function Parties() {
           {FILTER_ROLES.map(({ value, label }) => (
             <button
               key={value}
+              data-agent-id={roleChipId(value)}
+              aria-pressed={roleFilter === value}
               onClick={() => setRoleFilter(value)}
               className={cn(
                 'text-[9px] uppercase tracking-[0.1em] font-bold px-2.5 py-1 rounded-full border transition-all',
@@ -354,7 +362,7 @@ export default function Parties() {
           {staff && (
             <Button onClick={handleAddClick} className="gap-2">
               <Plus size={15} />
-              Add Your First RegisterPerson
+              Add Your First Person
             </Button>
           )}
         </div>
@@ -392,6 +400,8 @@ export default function Parties() {
             {filtered.map((party, i) => (
               <motion.div
                 key={party.id}
+                data-agent-id={`site.party-${party.id}`}
+                data-agent-label={party.name}
                 initial={{ opacity: 0, y: 6 }}
                 animate={{ opacity: 1, y: 0 }}
                 transition={{ delay: i * 0.03, duration: 0.18, ease: 'easeOut' }}

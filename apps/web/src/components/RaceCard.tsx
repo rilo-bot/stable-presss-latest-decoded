@@ -112,6 +112,8 @@ export function RaceCard({ race, userTip, onTipped }: RaceCardProps) {
       animate={{ opacity: 1, y: 0 }}
       transition={{ duration: 0.18, ease: 'easeOut' }}
       className="border border-border bg-card rounded-sm overflow-hidden"
+      data-agent-id={`site.race-${race.id}`}
+      data-agent-label={race.name}
     >
       {/* Race header */}
       <div className="px-5 pt-5 pb-4">
@@ -200,6 +202,8 @@ export function RaceCard({ race, userTip, onTipped }: RaceCardProps) {
       {/* Entrants toggle */}
       <button
         onClick={() => setExpanded((v) => !v)}
+        data-agent-id={`site.race-${race.id}-field`}
+        data-agent-label={`${race.name}: show field`}
         className="w-full flex items-center justify-between px-5 py-3 text-sm text-muted-foreground hover:text-foreground transition-colors"
         aria-expanded={expanded}
       >
@@ -219,6 +223,9 @@ export function RaceCard({ race, userTip, onTipped }: RaceCardProps) {
               return (
                 <motion.button
                   key={entrant.horseId}
+                  data-agent-id={`site.race-${race.id}-runner-${entrant.horseId}`}
+                  data-agent-label={entrant.horseName}
+                  aria-pressed={isSelected}
                   onClick={() => {
                     if (race.status === 'open' && !userTip) {
                       setSelectedEntrant(isSelected ? null : entrant);
@@ -305,6 +312,7 @@ export function RaceCard({ race, userTip, onTipped }: RaceCardProps) {
                     className="pl-8 text-sm"
                     placeholder="Coins to wager"
                     aria-label="Wager amount in coins"
+                    data-agent-id={`site.race-${race.id}-wager`}
                   />
                 </div>
                 <div className="text-xs text-muted-foreground whitespace-nowrap">
@@ -333,6 +341,7 @@ export function RaceCard({ race, userTip, onTipped }: RaceCardProps) {
                 size="sm"
                 onClick={handlePlaceTip}
                 disabled={isSubmitting}
+                data-agent-id={`site.race-${race.id}-place`}
                 className="mt-3 w-full bg-primary text-primary-foreground hover:bg-primary/90"
               >
                 {isSubmitting ? 'Placing…' : 'Place Tip'}

@@ -15,6 +15,7 @@ import { AnimatePresence, motion, useReducedMotion, useAnimationControls } from 
 import { Sparkles, SkipForward, X } from 'lucide-react';
 import { serifStyle, displayStyle, goldStyle } from '@/components/profile/kit';
 import { useProfileAgentUi } from '@/stores/profileAgentUiStore';
+import { ONB_CARD, tagCard, useOnboardingOperatorActions } from '@/pages/operator-site/useOnboardingOperatorActions';
 
 export interface OnboardingFocusProps {
   /** Show the overlay. False → render nothing (e.g. chat open, or onboarding done). */
@@ -33,7 +34,7 @@ export interface OnboardingFocusProps {
   originId?: string;
   skippable?: boolean;
   onSkip?: () => void;
-  /** Opens the Stablehand chat primed for this step. */
+  /** Opens The Stable Hand chat primed for this step. */
   onAsk?: () => void;
   /** Closes the whole guided journey (anything entered is already saved). */
   onClose?: () => void;
@@ -72,6 +73,17 @@ function FocusCard({ stepKey, originId, reduce, children }: {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [stepKey, originId, reduce]);
 
+  // The Stable Hand: keep the step's fields anchored (onboarding.field-<label>,
+  // onboarding.input-<label> …) as the shared widgets inside swap button ↔ input.
+  useEffect(() => {
+    const card = cardRef.current;
+    if (!card) return;
+    tagCard(card);
+    const mo = new MutationObserver(() => tagCard(card));
+    mo.observe(card, { childList: true, subtree: true });
+    return () => mo.disconnect();
+  }, [stepKey]);
+
   const exit = reduce
     ? { opacity: 0, transition: { duration: 0 } }
     : originRef.current
@@ -86,6 +98,8 @@ function FocusCard({ stepKey, originId, reduce, children }: {
         animate={controls}
         exit={exit}
         className="sku-gold-card"
+        data-agent-id={ONB_CARD}
+        data-agent-label="Onboarding step"
         style={{ position: 'relative', width: 'min(560px, 92vw)', maxHeight: 'min(82vh, 720px)', overflowY: 'auto', pointerEvents: 'auto', ...serifStyle }}
       >
         {children}
@@ -96,6 +110,9 @@ function FocusCard({ stepKey, originId, reduce, children }: {
 
 export function OnboardingFocus({ open, stepKey, stepIndex, total, title, tips, content, boxKey, originId, skippable, onSkip, onAsk, onClose }: OnboardingFocusProps) {
   const reduce = useReducedMotion();
+
+  // The Stable Hand: onboarding.read / completeStep / next / close on this card.
+  useOnboardingOperatorActions({ open, stepKey, stepIndex, total, title, tips, skippable: !!(skippable && onSkip), canClose: !!onClose });
 
   // Keep the assistant's focus (and the purple ring on the in-place box) in sync
   // with the step the guide is on — tracked by boxKey (not `open`, which toggles
@@ -132,7 +149,7 @@ export function OnboardingFocus({ open, stepKey, stepIndex, total, title, tips, 
               <span style={{ ...displayStyle, ...goldStyle, fontSize: '0.92rem', fontWeight: 700, flex: 1, minWidth: 0 }}>{title}</span>
               <span style={{ fontSize: '0.56rem', fontWeight: 700, letterSpacing: '0.08em', color: 'var(--gold-mid)', textTransform: 'uppercase', whiteSpace: 'nowrap' }}>Step {stepIndex + 1} of {total}</span>
               {onClose && (
-                <button type="button" onClick={onClose} title="Close the guide — you can finish the rest anytime" aria-label="Close guided journey" style={{ flexShrink: 0, display: 'flex', alignItems: 'center', justifyContent: 'center', background: 'none', border: '1px solid var(--gold-dark)', borderRadius: 3, color: 'var(--gold-mid)', cursor: 'pointer', padding: 4, lineHeight: 0 }}>
+                <button type="button" onClick={onClose} data-agent-id="onboarding.close" title="Close the guide — you can finish the rest anytime" aria-label="Close guided journey" style={{ flexShrink: 0, display: 'flex', alignItems: 'center', justifyContent: 'center', background: 'none', border: '1px solid var(--gold-dark)', borderRadius: 3, color: 'var(--gold-mid)', cursor: 'pointer', padding: 4, lineHeight: 0 }}>
                   <X size={14} />
                 </button>
               )}
@@ -150,12 +167,12 @@ export function OnboardingFocus({ open, stepKey, stepIndex, total, title, tips, 
               <div>{content}</div>
               <div style={{ display: 'flex', alignItems: 'center', gap: 8, paddingTop: 2, flexWrap: 'wrap' }}>
                 {onAsk && (
-                  <button type="button" onClick={onAsk} style={{ display: 'inline-flex', alignItems: 'center', gap: 5, padding: '6px 12px', fontSize: '0.58rem', fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.06em', borderRadius: 3, border: '1px solid var(--gold-mid)', background: 'rgba(180,140,30,0.12)', color: 'var(--forest-deep)', cursor: 'pointer', ...serifStyle }}>
-                    <Sparkles size={12} style={{ color: 'var(--gold-dark)' }} /> Ask Stablehand
+                  <button type="button" onClick={onAsk} data-agent-id="onboarding.ask" style={{ display: 'inline-flex', alignItems: 'center', gap: 5, padding: '6px 12px', fontSize: '0.58rem', fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.06em', borderRadius: 3, border: '1px solid var(--gold-mid)', background: 'rgba(180,140,30,0.12)', color: 'var(--forest-deep)', cursor: 'pointer', ...serifStyle }}>
+                    <Sparkles size={12} style={{ color: 'var(--gold-dark)' }} /> Ask The Stable Hand
                   </button>
                 )}
                 {skippable && onSkip && (
-                  <button type="button" onClick={onSkip} title="Skip this step — you can add it later" style={{ marginLeft: 'auto', display: 'inline-flex', alignItems: 'center', gap: 5, padding: '6px 12px', fontSize: '0.58rem', fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.06em', borderRadius: 3, border: '1px solid var(--gold-dark)', background: 'none', color: 'var(--parchment-label)', cursor: 'pointer', ...serifStyle }}>
+                  <button type="button" onClick={onSkip} data-agent-id="onboarding.skip" title="Skip this step — you can add it later" style={{ marginLeft: 'auto', display: 'inline-flex', alignItems: 'center', gap: 5, padding: '6px 12px', fontSize: '0.58rem', fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.06em', borderRadius: 3, border: '1px solid var(--gold-dark)', background: 'none', color: 'var(--parchment-label)', cursor: 'pointer', ...serifStyle }}>
                     <SkipForward size={12} /> Skip
                   </button>
                 )}

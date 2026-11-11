@@ -281,7 +281,7 @@ export function MediaDataForm({ horseId, initial, onSave, onCancel, compact = fa
   );
 
   return (
-    <form onSubmit={handleSubmit} style={{ display: 'flex', flexDirection: 'column', gap: 0, ...serifStyle }}>
+    <form onSubmit={handleSubmit} data-agent-id="reg.media-form" style={{ display: 'flex', flexDirection: 'column', gap: 0, ...serifStyle }}>
       {/* ── Header ── */}
       {!compact && (
         <div style={{
@@ -308,7 +308,7 @@ export function MediaDataForm({ horseId, initial, onSave, onCancel, compact = fa
 
       <div style={{ background: 'var(--parchment)', backgroundImage: 'repeating-linear-gradient(0deg, transparent, transparent 22px, rgba(0,0,0,0.018) 22px, rgba(0,0,0,0.018) 23px)', padding: '18px 18px 20px', display: 'flex', flexDirection: 'column', gap: 14 }}>
 
-        {draftRestored && <DraftRestoredHint onDiscard={discardDraft} />}
+        {draftRestored && <DraftRestoredHint onDiscard={discardDraft} agentId="reg.media-discard-draft" />}
 
         {/* ── 1. Horse ── */}
         <div>
@@ -328,6 +328,7 @@ export function MediaDataForm({ horseId, initial, onSave, onCancel, compact = fa
                 style={{ ...inputStyle, display: 'flex', alignItems: 'center', justifyContent: 'space-between', cursor: 'pointer', gap: 6 }}
                 aria-expanded={horseDropOpen}
                 aria-label="Select horse"
+                data-agent-id="reg.media-horse"
               >
                 <span style={{ flex: 1, textAlign: 'left', color: selectedHorse ? 'var(--forest-deep)' : 'var(--parchment-shadow)', fontStyle: selectedHorse ? 'normal' : 'italic' }}>
                   {selectedHorse?.name ?? 'Select a horse…'}
@@ -342,6 +343,7 @@ export function MediaDataForm({ horseId, initial, onSave, onCancel, compact = fa
                       value={horseSearch}
                       onChange={(e) => setHorseSearch(e.target.value)}
                       placeholder="Search horses…"
+                      data-agent-id="reg.media-horse-search"
                       style={{ flex: 1, border: 'none', background: 'transparent', outline: 'none', fontSize: '0.72rem', color: 'var(--forest-deep)', fontFamily: "'IM Fell English', Georgia, serif" }}
                       autoFocus
                     />
@@ -354,6 +356,8 @@ export function MediaDataForm({ horseId, initial, onSave, onCancel, compact = fa
                       key={h.id}
                       type="button"
                       onClick={() => { setSelectedHorseId(h.id); setHorseDropOpen(false); setHorseSearch(''); }}
+                      data-agent-id={`reg.media-horse.option-${h.id}`}
+                      data-agent-label={h.name}
                       style={{ width: '100%', display: 'flex', alignItems: 'center', gap: 8, padding: '8px 12px', background: h.id === selectedHorseId ? 'var(--parchment-dark)' : 'transparent', border: 'none', cursor: 'pointer', textAlign: 'left' }}
                     >
                       {h.id === selectedHorseId && <Check size={11} style={{ color: 'var(--forest-deep)', flexShrink: 0 }} />}
@@ -378,6 +382,7 @@ export function MediaDataForm({ horseId, initial, onSave, onCancel, compact = fa
             rows={2}
             style={{ ...inputStyle, resize: 'vertical', minHeight: 60, paddingBottom: 34 }}
             required
+            data-agent-id="reg.media-subject"
             aiLabel="Subject"
             aiKey="subject"
             entityKind="media item"
@@ -411,6 +416,7 @@ export function MediaDataForm({ horseId, initial, onSave, onCancel, compact = fa
                   ...serifStyle,
                 }}
                 aria-pressed={t === mediaType}
+                data-agent-id={`reg.media-type-${t.toLowerCase().replace(/ /g, '-')}`}
               >
                 <span>{MEDIA_TYPE_ICONS[t]}</span>
                 <span>{t}</span>
@@ -481,6 +487,7 @@ export function MediaDataForm({ horseId, initial, onSave, onCancel, compact = fa
           <button
             type="button"
             onClick={onCancel}
+            data-agent-id="reg.media-cancel"
             style={{ background: 'none', border: '1px solid var(--gold-dark)', borderRadius: 3, color: 'var(--gold-mid)', fontSize: '0.62rem', letterSpacing: '0.12em', textTransform: 'uppercase', fontWeight: 700, padding: '6px 14px', cursor: 'pointer', ...serifStyle, transition: 'border-color 0.15s, color 0.15s' }}
           >
             Cancel
@@ -489,6 +496,7 @@ export function MediaDataForm({ horseId, initial, onSave, onCancel, compact = fa
         <button
           type="submit"
           disabled={saving}
+          data-agent-id="reg.media-save"
           style={{
             background: saving ? 'var(--gold-dark)' : 'linear-gradient(135deg, var(--gold-bright) 0%, var(--gold-mid) 100%)',
             border: 'none',

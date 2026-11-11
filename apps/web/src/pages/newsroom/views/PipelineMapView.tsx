@@ -23,7 +23,7 @@ export function PipelineMapView({ buckets }: PipelineMapViewProps) {
   const count = (status: ArticleStatus) => buckets?.[status]?.length ?? 0;
 
   return (
-    <div className="space-y-6">
+    <div className="space-y-6" data-agent-id="pipeline.map" data-agent-label="Editorial pipeline">
       <div className="flex items-center gap-3 mb-2">
         <h3 className="font-[family-name:var(--font-display)] text-base font-bold text-foreground">Editorial Pipeline</h3>
         <div className="flex-1 h-px bg-border/50" />
@@ -34,7 +34,7 @@ export function PipelineMapView({ buckets }: PipelineMapViewProps) {
         {WORKFLOW_STAGES.map((stage, idx) => {
           const moves = movesFrom(stage.status);
           return (
-            <div key={stage.status} className="relative">
+            <div key={stage.status} className="relative" data-agent-id={`pipeline.stage-${stage.status}`} data-agent-label={`${stage.label} stage`}>
               <div
                 className="flex items-stretch gap-0 rounded-sm border border-border/60 overflow-hidden"
                 style={{ boxShadow: `inset 3px 0 0 ${stage.accent}` }}
@@ -83,7 +83,12 @@ export function PipelineMapView({ buckets }: PipelineMapViewProps) {
                 </div>
 
                 <div className="flex items-center px-3 border-l border-border/40 bg-muted/20">
-                  <span className="text-[13px] font-bold tabular-nums" style={{ color: stage.accent }}>
+                  <span
+                    className="text-[13px] font-bold tabular-nums"
+                    style={{ color: stage.accent }}
+                    data-agent-id={`pipeline.count-${stage.status}`}
+                    data-agent-label={`${stage.label} count`}
+                  >
                     {count(stage.status)}
                   </span>
                 </div>

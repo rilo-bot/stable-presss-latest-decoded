@@ -1,8 +1,11 @@
 import { HorseRecordsProductionSystem } from '../../newsroom/production-systems/HorseRecordsProductionSystem';
 import { usePS } from '../context';
+import { useHorseRecordsActions } from '../operator-team/useRegisterOperatorActions';
 
 export default function HorseRecordsScreen() {
   const { ps } = usePS();
+  // Stablehand Operator actions for this register (search / add).
+  useHorseRecordsActions(ps);
   return (
     <HorseRecordsProductionSystem
       horses={ps.horses ?? []}

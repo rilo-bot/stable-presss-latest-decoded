@@ -45,6 +45,7 @@ export function RolePicker({
                 type="button"
                 aria-pressed={active}
                 onClick={() => toggleRole(role)}
+                data-agent-id={`reg.person-role-${role.replace(/ /g, "-")}`}
                 className={cn(
                   'inline-flex items-center gap-1.5 rounded-full px-3 py-1.5 text-xs font-medium transition-all border',
                   active

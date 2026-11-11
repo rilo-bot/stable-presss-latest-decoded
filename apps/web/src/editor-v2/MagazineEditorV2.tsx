@@ -10,7 +10,7 @@
 import { useEffect, useRef, useState } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import { toast } from 'sonner';
-import { ArrowLeft, Undo2, Redo2, Plus, Minus, Trash2, ChevronDown, ChevronsRight, Sparkles, RotateCcw, ImageIcon, Globe, ExternalLink, Send, Users, EyeOff, ClipboardList, Lock, RefreshCw, MoreHorizontal, PanelRightOpen } from 'lucide-react';
+import { ArrowLeft, Undo2, Redo2, Plus, Minus, Trash2, ChevronDown, ChevronsRight, Sparkles, RotateCcw, ImageIcon, Globe, ExternalLink, Send, Users, EyeOff, ClipboardList, Lock, RefreshCw, MoreHorizontal, PanelRightOpen, X } from 'lucide-react';
 import { useEditorStore } from './store';
 import { useStudioChrome } from '@/stores/studioChromeStore';
 import { useCan } from '@/lib/permissions';
@@ -28,9 +28,37 @@ import { BuildProgress, BuildBanner, ShimmerText } from './BuildProgress';
 import { SourceTrouble, readingSummary, useSourceReading } from './SourceReadingPanel';
 import { awaitingOwner, submittablePages, publishBlockedReason, readOnlyReason } from './review';
 import type { ElementType, MagazineElement } from './model';
+import { useMagazineEditorActions } from './operator/useMagazineEditorActions';
+import { useMagazineDangerActions } from './operator/useMagazineDangerActions';
 
 // Shared by the resize drag AND the saved-width restore below.
 const PANE_MIN = 240, PANE_MAX = 560;
+
+/**
+ * PHONE LAYOUT (< 768px — Tailwind's `md`, so this agrees exactly with the
+ * `max-md:` classes used below). Tablet and desktop are untouched.
+ *
+ * Three side-by-side columns cannot share a 390px screen: the assistant alone took
+ * all of it and the page was never visible. On a phone the studio therefore opens
+ * on the PAGE, fitted to the width; the assistant and the page/element panel open
+ * as bottom sheets over it, and the pages rail as an overlay. The toolbar keeps
+ * Back, the title, Publish and AI; undo/redo, zoom and the review board fold into
+ * the More menu (same anchors, so the Operator still finds them — its actions
+ * open More first when an anchor is not on screen).
+ */
+const WIDE_QUERY = '(min-width: 768px)';
+const isPhoneNow = () => typeof window !== 'undefined' && !window.matchMedia(WIDE_QUERY).matches;
+function useIsPhone(): boolean {
+  const [phone, setPhone] = useState(isPhoneNow);
+  useEffect(() => {
+    const mq = window.matchMedia(WIDE_QUERY);
+    const on = () => setPhone(!mq.matches);
+    on();
+    mq.addEventListener('change', on);
+    return () => mq.removeEventListener('change', on);
+  }, []);
+  return phone;
+}
 
 function newElement(kind: ElementType, page: { width: number; height: number }, topZ: number): Partial<MagazineElement> {
   const w = kind === 'qr' ? 200 : kind === 'icon' ? 120 : kind === 'shape' ? 320 : 440;
@@ -139,7 +167,9 @@ export default function MagazineEditorV2() {
     canEdit: () => mayEdit,
     needsRepublish: () => republishNeeded,
   };
-  const [asstOpen, setAsstOpen] = useState(true);
+  const isPhone = useIsPhone();
+  // Open by default everywhere except a phone, where it would cover the page.
+  const [asstOpen, setAsstOpen] = useState(() => !isPhoneNow());
   const [pagesAiOpen, setPagesAiOpen] = useState(false);
   const [aiCount, setAiCount] = useState(2);
   const [aiTopic, setAiTopic] = useState('');
@@ -174,6 +204,9 @@ export default function MagazineEditorV2() {
   // and 403'd on click, which is the silent no-op the rest of this toolbar avoids.
   // Answered from the resolved access payload, never guessed.
   const mayPublish = useCan('magazine.publish');
+  // DELETE /issues/:id is gated on `magazine.delete`, so an owner whose role lacks it
+  // is not offered a Delete that would only 403.
+  const mayDelete = useCan('magazine.delete');
   const isPublished = !!s.issue?.publishedIssueId && s.issue?.status === 'published';
   // Published, then edited: the bulletin readers see is now behind the draft. There is
   // no version to reason about — the fix is one click of Republish.
@@ -183,9 +216,38 @@ export default function MagazineEditorV2() {
   // Selecting an element opens the inspector: every style control lives in there, and
   // with the panel collapsed by default a first-time user would click a headline and
   // find nothing anywhere on screen that changes its font.
+  //
+  // OWNER ONLY. Everyone else who reaches the studio — a collaborator the magazine
+  // was shared with, or a staff member whose role grants the Magazine Builder — makes
+  // their changes through the assistant on the left, which can do everything the
+  // inspector can. So for them the panel is not merely collapsed, it does not exist:
+  // clicking an element selects it (the assistant reads the selection) and nothing
+  // slides in from the right.
+  //
+  // Not on a phone: there the panel is a bottom sheet over the page, and popping it
+  // up on every tap would cover the very element you just tapped to move it. The
+  // collapsed tab says "1 selected" and opens it.
   useEffect(() => {
-    if (s.selectedId && !rightDismissed) setRightOpen(true);
-  }, [s.selectedId, rightDismissed]);
+    if (isOwner && s.selectedId && !rightDismissed && !isPhone) setRightOpen(true);
+  }, [isOwner, s.selectedId, rightDismissed, isPhone]);
+
+  // Phone: fit the page to the canvas width — on open, and when the screen width
+  // changes (rotation). Only on a WIDTH change, so a manual zoom from the More menu
+  // survives the address bar sliding in and out (a height-only resize).
+  const canvasRef = useRef<HTMLDivElement | null>(null);
+  useEffect(() => {
+    if (!isPhone) return;
+    let lastW = 0;
+    const fit = () => {
+      const w = canvasRef.current?.clientWidth ?? 0;
+      if (!w || w === lastW) return;
+      lastW = w;
+      useEditorStore.getState().setZoomWidth(w - 24);
+    };
+    fit();
+    window.addEventListener('resize', fit);
+    return () => window.removeEventListener('resize', fit);
+  }, [isPhone, s.loading]);
 
   // Hide the global Stablehand launcher while the v2 editor is open — it has
   // its own docked assistant (AiPanel). Same pattern as the v1 MagazineEditor.
@@ -320,6 +382,11 @@ export default function MagazineEditorV2() {
   const sources = useSourceReading(building && s.issue?.id ? s.issue.id : '');
   const reading = readingSummary(sources);
 
+  // Stablehand Operator: the named actions the studio offers (see ./operator).
+  // A hook, so it lives above the early returns like everything else here.
+  useMagazineEditorActions({ isOwner, canEdit: mayEdit, mayPublish });
+  useMagazineDangerActions({ isOwner, mayDelete });
+
   if (s.loading) {
     // No issue document yet, so there are no counts: explicit title, the
     // 'finishing' lines, and the INDETERMINATE track. A determinate bar here
@@ -345,6 +412,9 @@ export default function MagazineEditorV2() {
   // ── Review state, all derived from data the store already holds (S5 is pure UI) ──
   const awaiting = s.canManage() ? awaitingOwner(s.issue, s.pages) : [];
   const mineToSubmit = !s.canManage() && canEdit ? submittablePages(s.issue, s.pages) : [];
+  // The plain "Review" button: there is a board (someone else is on the magazine)
+  // but nothing on it is waiting for you right now.
+  const showPlainReview = (s.canManage() ? (s.issue?.collaborators?.length ?? 0) > 0 : canEdit) && awaiting.length === 0 && mineToSubmit.length === 0;
   // Why Publish would be refused — computed client-side from the same rule the
   // server enforces, so the button can be disabled WITH A REASON instead of handing
   // the owner a 409 after they commit to the action.
@@ -359,6 +429,32 @@ export default function MagazineEditorV2() {
   const publishBlocked = blockedFull && blockedSelected ? blockedFull : '';
   const currentSummary = s.pages.find((p) => p.id === s.currentPageId);
   const lockedReason = readOnlyReason(s.issue, currentSummary);
+
+  // The right-hand pane: a column on tablet/desktop, a bottom sheet on a phone.
+  // Same header (with the same hide anchor) and the same content in both.
+  const inspectorShown = (isOwner && rightOpen) || !!s.previewDoc;
+  const inspectorPane = (
+    <>
+      <div className="flex flex-shrink-0 items-center gap-1 border-b border-studio-hair px-2 py-1.5">
+        <span className="text-ui-sm font-bold uppercase tracking-[0.12em] text-studio-ink-3">
+          {s.previewDoc ? 'Preview' : 'Page & element'}
+        </span>
+        <button
+          onClick={() => { s.setPreviewDoc(null); setRightOpen(false); setRightDismissed(true); }}
+          data-agent-id="mag.inspector-hide"
+          className="ml-auto rounded-sm p-1 text-studio-ink-3 hover:bg-studio-raise-2 hover:text-studio-ink"
+          title="Hide this panel"
+          aria-label="Hide the page and element panel"
+        >
+          {isPhone ? <X size={18} /> : <ChevronsRight size={14} />}
+        </button>
+      </div>
+      <div className="min-h-0 flex-1 overflow-y-auto">
+        {s.previewDoc ? <AttachmentPreviewPane /> : <Inspector onAdd={add} />}
+      </div>
+    </>
+  );
+  const phoneSheet = 'absolute inset-x-0 bottom-0 flex flex-col overflow-hidden rounded-t-xl border-t border-studio-edge shadow-[0_-12px_32px_rgba(0,0,0,0.45)]';
 
   return (
     <div className="fixed inset-0 z-[60] flex flex-col bg-studio-bg">
@@ -380,13 +476,15 @@ export default function MagazineEditorV2() {
         <div className="flex min-w-0 flex-1 items-center gap-2">
           <button
             onClick={() => navigate('/production-system/magazine-v2')}
+            data-agent-id="mag.back"
             className="flex h-8 flex-shrink-0 items-center gap-1.5 rounded-sm px-2 text-ui-sm text-studio-ink-2 hover:bg-studio-raise-2 hover:text-studio-ink"
             aria-label="Back to library"
             title="Back to library"
           >
-            <ArrowLeft size={16} /> Back
+            <ArrowLeft size={16} /> <span className="max-md:hidden">Back</span>
           </button>
           <input
+            data-agent-id="mag.title-input"
             className="min-w-0 max-w-[30ch] flex-shrink truncate rounded-sm bg-transparent px-1 py-0.5 text-ui-lg font-bold text-studio-ink outline-none hover:bg-studio-raise focus:bg-studio-raise disabled:opacity-100"
             defaultValue={s.issue?.title ?? ''}
             // Uncontrolled input: `defaultValue` only takes on mount, so fold the
@@ -403,7 +501,7 @@ export default function MagazineEditorV2() {
               different facts, so both are shown rather than collapsed into one. */}
           {isPublished && (
             <span className="flex flex-shrink-0 items-center gap-1 rounded-full border border-emerald-400/30 bg-emerald-400/10 px-2 py-0.5 text-ui-sm text-emerald-200">
-              <Globe size={10} /> Live
+              <Globe size={10} /> <span className="max-md:hidden">Live</span>
             </span>
           )}
           {needsRepublish && (
@@ -411,46 +509,49 @@ export default function MagazineEditorV2() {
               className="flex flex-shrink-0 items-center gap-1 rounded-full border border-amber-400/40 bg-amber-400/15 px-2 py-0.5 text-ui-sm font-semibold text-amber-200"
               title="You've changed this magazine since it was published. Readers still see the previous version until you republish."
             >
-              <RefreshCw size={10} /> Needs republish
+              <RefreshCw size={10} /> <span className="max-md:hidden">Needs republish</span>
             </span>
           )}
           {s.issue && !s.canManage() && (
             canEdit ? (
-              <span className="flex-shrink-0 rounded-full border border-studio-gold/30 bg-studio-gold/10 px-2 py-0.5 text-ui-sm text-studio-gold">
+              <span className="flex-shrink-0 rounded-full border border-studio-gold/30 bg-studio-gold/10 px-2 py-0.5 text-ui-sm text-studio-gold max-md:hidden">
                 Shared with you
               </span>
             ) : (
               <span className="flex-shrink-0 rounded-full border border-studio-edge bg-studio-raise px-2 py-0.5 text-ui-sm text-studio-ink-2">
-                View only{s.issue.ownerName ? ` · by ${s.issue.ownerName}` : ''}
+                View only{s.issue.ownerName ? <span className="max-md:hidden">{` · by ${s.issue.ownerName}`}</span> : ''}
               </span>
             )
           )}
         </div>
 
         {/* ZONE 2 — undo/redo and zoom: the two things used dozens of times an
-            hour, so they sit in the middle where the cursor already is. */}
-        <div className="flex flex-shrink-0 items-center gap-1.5">
+            hour, so they sit in the middle where the cursor already is.
+            On a phone they live in the More menu instead (see the phone block in it). */}
+        {!isPhone && <div className="flex flex-shrink-0 items-center gap-1.5">
           <div className="flex items-center rounded-sm border border-studio-edge bg-studio-raise">
             {/* The tooltip NAMES what's next on the stack ("Undo the assistant's
                 changes"), because one entry can now be a whole AI turn — a dozen
                 writes — and "Undo" alone doesn't say how much is coming back. */}
-            <button onClick={() => void s.undo()} disabled={!s.undoStack.length} className="flex items-center gap-1 px-2 py-1.5 text-ui-sm text-studio-ink-2 hover:bg-studio-raise-2 disabled:opacity-30 disabled:hover:bg-transparent" title={`Undo${s.undoStack.length ? ` ${s.undoStack[s.undoStack.length - 1]!.label}` : ''} (Ctrl+Z)`}><Undo2 size={14} /> Undo</button>
-            <button onClick={() => void s.redo()} disabled={!s.redoStack.length} className="flex items-center gap-1 px-2 py-1.5 text-ui-sm text-studio-ink-2 hover:bg-studio-raise-2 disabled:opacity-30 disabled:hover:bg-transparent" title={`Redo${s.redoStack.length ? ` ${s.redoStack[s.redoStack.length - 1]!.label}` : ''} (Ctrl+Shift+Z)`}><Redo2 size={14} /> Redo</button>
+            <button data-agent-id="mag.undo" onClick={() => void s.undo()} disabled={!s.undoStack.length} className="flex items-center gap-1 px-2 py-1.5 text-ui-sm text-studio-ink-2 hover:bg-studio-raise-2 disabled:opacity-30 disabled:hover:bg-transparent" title={`Undo${s.undoStack.length ? ` ${s.undoStack[s.undoStack.length - 1]!.label}` : ''} (Ctrl+Z)`}><Undo2 size={14} /> Undo</button>
+            <button data-agent-id="mag.redo" onClick={() => void s.redo()} disabled={!s.redoStack.length} className="flex items-center gap-1 px-2 py-1.5 text-ui-sm text-studio-ink-2 hover:bg-studio-raise-2 disabled:opacity-30 disabled:hover:bg-transparent" title={`Redo${s.redoStack.length ? ` ${s.redoStack[s.redoStack.length - 1]!.label}` : ''} (Ctrl+Shift+Z)`}><Redo2 size={14} /> Redo</button>
           </div>
           <div className="flex items-center rounded-sm border border-studio-edge bg-studio-raise">
-            <button onClick={() => s.setZoomWidth(s.zoomWidth - 80)} className="px-2 py-1.5 text-studio-ink-2 hover:bg-studio-raise-2" title="Zoom out"><Minus size={14} /></button>
-            <span className="w-12 text-center text-ui-sm tabular-nums text-studio-ink-2">{zoomPct}%</span>
-            <button onClick={() => s.setZoomWidth(s.zoomWidth + 80)} className="px-2 py-1.5 text-studio-ink-2 hover:bg-studio-raise-2" title="Zoom in"><Plus size={14} /></button>
+            <button onClick={() => s.setZoomWidth(s.zoomWidth - 80)} data-agent-id="mag.zoom-out" aria-label="Zoom out" className="px-2 py-1.5 text-studio-ink-2 hover:bg-studio-raise-2" title="Zoom out"><Minus size={14} /></button>
+            <span data-agent-id="mag.zoom-level" data-agent-label={`Zoom ${zoomPct}%`} className="w-12 text-center text-ui-sm tabular-nums text-studio-ink-2">{zoomPct}%</span>
+            <button onClick={() => s.setZoomWidth(s.zoomWidth + 80)} data-agent-id="mag.zoom-in" aria-label="Zoom in" className="px-2 py-1.5 text-studio-ink-2 hover:bg-studio-raise-2" title="Zoom in"><Plus size={14} /></button>
           </div>
-        </div>
+        </div>}
 
         {/* ZONE 3 — outcomes: what needs your attention, and going live. */}
-        <div className="flex flex-1 items-center justify-end gap-1.5">
+        <div className="flex flex-1 items-center justify-end gap-1.5 max-md:flex-none">
           {/* Shown only when there is genuinely something to act on, so it never
-              becomes a button people learn to ignore. */}
-          {awaiting.length > 0 && (
+              becomes a button people learn to ignore. (Phone: in the More menu.) */}
+          {!isPhone && awaiting.length > 0 && (
             <button
               onClick={() => setBoardOpen(true)}
+              data-agent-id="mag.review-board"
+              data-agent-label="Open the review board (pages to review)"
               className="flex items-center gap-1 rounded-sm border border-studio-gold/40 bg-studio-gold/15 px-2 py-1.5 text-ui-sm font-semibold text-studio-gold hover:bg-studio-gold/25"
               title="Pages submitted for your approval"
             >
@@ -460,14 +561,16 @@ export default function MagazineEditorV2() {
           {mineToSubmit.length > 0 && (
             <button
               onClick={() => setBoardOpen(true)}
+              data-agent-id="mag.review-board"
+              data-agent-label="Open the review board (submit pages)"
               className="flex items-center gap-1 rounded-sm bg-studio-gold px-2.5 py-1.5 text-ui-sm font-semibold text-studio-bg hover:opacity-90"
               title="Send your finished pages to the owner for review"
             >
               <Send size={13} /> Submit
             </button>
           )}
-          {(s.canManage() ? (s.issue?.collaborators?.length ?? 0) > 0 : canEdit) && awaiting.length === 0 && mineToSubmit.length === 0 && (
-            <button onClick={() => setBoardOpen(true)} className={ghost} title="Review board">
+          {!isPhone && showPlainReview && (
+            <button onClick={() => setBoardOpen(true)} data-agent-id="mag.review-board" data-agent-label="Open the review board" className={ghost} title="Review board">
               <ClipboardList size={13} /> Review
             </button>
           )}
@@ -477,6 +580,8 @@ export default function MagazineEditorV2() {
             <div className="relative" data-menu-root>
               <button
                 onClick={() => setPublishMenuOpen((o) => !o)}
+                data-agent-id="mag.publish-button"
+                data-agent-label={isPublished ? 'Republish' : 'Publish'}
                 disabled={s.publishing || s.generating || !!publishBlocked}
                 className="flex items-center gap-1.5 rounded-sm bg-emerald-500 px-3 py-1.5 text-ui-sm font-semibold text-white hover:bg-emerald-600 disabled:opacity-50"
                 // Disabled WITH A REASON, never a silent no-op: the server refuses an
@@ -491,6 +596,8 @@ export default function MagazineEditorV2() {
                 <div className="absolute right-0 top-full z-50 mt-1 w-64 overflow-hidden rounded-md border border-studio-edge bg-studio-panel shadow-xl">
                   <button
                     onClick={() => void publishFull()}
+                    data-agent-id="mag.publish-full"
+                    data-agent-label="Publish full edition"
                     disabled={!!blockedFull}
                     title={blockedFull || undefined}
                     className="block w-full px-3 py-2.5 text-left text-ui-sm text-studio-ink hover:bg-studio-raise-2 disabled:cursor-not-allowed disabled:opacity-45 disabled:hover:bg-transparent"
@@ -502,6 +609,8 @@ export default function MagazineEditorV2() {
                   </button>
                   <button
                     onClick={() => { setPublishMenuOpen(false); setPublishDialogOpen(true); }}
+                    data-agent-id="mag.publish-selected"
+                    data-agent-label="Publish selected pages…"
                     disabled={!!blockedSelected}
                     title={blockedSelected || undefined}
                     className="block w-full border-t border-studio-hair px-3 py-2.5 text-left text-ui-sm text-studio-ink hover:bg-studio-raise-2 disabled:cursor-not-allowed disabled:opacity-45 disabled:hover:bg-transparent"
@@ -514,6 +623,8 @@ export default function MagazineEditorV2() {
                   {isPublished && (
                     <button
                       onClick={() => { setPublishMenuOpen(false); void s.unpublish(); }}
+                      data-agent-id="mag.unpublish"
+                      data-agent-label="Unpublish"
                       disabled={!mayPublish}
                       title={noPublishRight || undefined}
                       className="block w-full border-t border-studio-hair px-3 py-2.5 text-left text-ui-sm text-red-300 hover:bg-studio-raise-2 disabled:opacity-40 disabled:hover:bg-transparent"
@@ -530,11 +641,12 @@ export default function MagazineEditorV2() {
             </div>
           )}
 
-          {hasLiveEdition && s.issue?.publishedIssueId && (
+          {!isPhone && hasLiveEdition && s.issue?.publishedIssueId && (
             <a
               href={`/bulletins/${s.issue.publishedIssueId}`}
               target="_blank"
               rel="noreferrer"
+              data-agent-id="mag.view-live"
               className="flex items-center gap-1 rounded-sm border border-emerald-400/30 bg-emerald-500/10 px-2 py-1.5 text-ui-sm text-emerald-200/90 hover:bg-emerald-500/20"
               title={needsRepublish ? 'What readers currently see — your unpublished changes are not in it yet' : 'View on Bulletins'}
             >
@@ -543,34 +655,85 @@ export default function MagazineEditorV2() {
           )}
 
           {/* Overflow — rare, and the one destructive action, deliberately one
-              click further away than anything you do every day. */}
-          {s.canManage() && (
+              click further away than anything you do every day.
+              On a phone it is offered to EVERYONE, because it also carries the
+              toolbar controls that do not fit there (undo/redo, zoom, review, view). */}
+          {(s.canManage() || isPhone) && (
             <div className="relative" data-menu-root>
               <button
                 onClick={() => setMoreOpen((o) => !o)}
+                data-agent-id="mag.more-button"
                 aria-label="More magazine actions"
                 aria-expanded={moreOpen}
                 className="flex h-8 flex-shrink-0 items-center gap-1 rounded-sm border border-studio-edge px-2 text-ui-sm text-studio-ink-2 hover:bg-studio-raise-2 hover:text-studio-ink"
                 title="More actions"
               >
-                <MoreHorizontal size={15} /> More
+                <MoreHorizontal size={15} /> <span className="max-md:hidden">More</span>
+                {/* Phone: the "N to review" button is in this menu, so flag it here. */}
+                {isPhone && awaiting.length > 0 && <span aria-hidden className="h-2 w-2 rounded-full bg-studio-gold" />}
               </button>
               {moreOpen && (
                 <div className="absolute right-0 top-full z-50 mt-1 w-56 overflow-hidden rounded-md border border-studio-edge bg-studio-panel py-1 shadow-xl">
-                  <button onClick={() => { setMoreOpen(false); setCoverOpen(true); }} className={menuItem}>
+                  {/* PHONE ONLY — the toolbar's middle zone and review/view buttons,
+                      same anchors. Undo/redo and zoom leave the menu OPEN, because
+                      they are pressed several times in a row. */}
+                  {isPhone && (
+                    <>
+                      <div className="flex items-center">
+                        <button data-agent-id="mag.undo" onClick={() => void s.undo()} disabled={!s.undoStack.length} className={menuItem + ' flex-1 disabled:opacity-30 disabled:hover:bg-transparent'} title={`Undo${s.undoStack.length ? ` ${s.undoStack[s.undoStack.length - 1]!.label}` : ''}`}>
+                          <Undo2 size={13} /> Undo
+                        </button>
+                        <button data-agent-id="mag.redo" onClick={() => void s.redo()} disabled={!s.redoStack.length} className={menuItem + ' flex-1 disabled:opacity-30 disabled:hover:bg-transparent'} title={`Redo${s.redoStack.length ? ` ${s.redoStack[s.redoStack.length - 1]!.label}` : ''}`}>
+                          <Redo2 size={13} /> Redo
+                        </button>
+                      </div>
+                      <div className="flex items-center gap-1 px-3 py-1 text-ui-sm text-studio-ink-2">
+                        <span className="flex-1">Zoom</span>
+                        <button onClick={() => s.setZoomWidth(s.zoomWidth - 80)} data-agent-id="mag.zoom-out" aria-label="Zoom out" className="rounded-sm border border-studio-edge p-1.5 hover:bg-studio-raise-2" title="Zoom out"><Minus size={14} /></button>
+                        <span data-agent-id="mag.zoom-level" data-agent-label={`Zoom ${zoomPct}%`} className="w-12 text-center tabular-nums">{zoomPct}%</span>
+                        <button onClick={() => s.setZoomWidth(s.zoomWidth + 80)} data-agent-id="mag.zoom-in" aria-label="Zoom in" className="rounded-sm border border-studio-edge p-1.5 hover:bg-studio-raise-2" title="Zoom in"><Plus size={14} /></button>
+                      </div>
+                      {(awaiting.length > 0 || showPlainReview) && (
+                        <button
+                          onClick={() => { setMoreOpen(false); setBoardOpen(true); }}
+                          data-agent-id="mag.review-board"
+                          data-agent-label={awaiting.length > 0 ? 'Open the review board (pages to review)' : 'Open the review board'}
+                          className={menuItem + (awaiting.length > 0 ? ' font-semibold text-studio-gold' : '')}
+                        >
+                          <ClipboardList size={13} /> {awaiting.length > 0 ? `Review board · ${awaiting.length} to review` : 'Review board'}
+                        </button>
+                      )}
+                      {hasLiveEdition && s.issue?.publishedIssueId && (
+                        <a
+                          href={`/bulletins/${s.issue.publishedIssueId}`}
+                          target="_blank"
+                          rel="noreferrer"
+                          onClick={() => setMoreOpen(false)}
+                          data-agent-id="mag.view-live"
+                          className={menuItem}
+                        >
+                          <ExternalLink size={13} /> View on Bulletins
+                        </a>
+                      )}
+                      {s.canManage() && <div className="my-1 border-t border-studio-hair" />}
+                    </>
+                  )}
+                  {s.canManage() && <>
+                  <button onClick={() => { setMoreOpen(false); setCoverOpen(true); }} data-agent-id="mag.cover-button" data-agent-label="Cover image…" className={menuItem}>
                     <ImageIcon size={13} /> Cover image…
                   </button>
-                  <button onClick={() => { setMoreOpen(false); setShareOpen(true); }} className={menuItem}>
+                  <button onClick={() => { setMoreOpen(false); setShareOpen(true); }} data-agent-id="mag.share-button" className={menuItem}>
                     <Users size={13} /> Share with staff…
                   </button>
                   <button
                     onClick={() => { setMoreOpen(false); if (window.confirm('Reset this magazine to a single blank page? This cannot be undone.')) void s.reset(); }}
+                    data-agent-id="mag.start-over"
                     className={menuItem}
                   >
                     <RotateCcw size={13} /> Start over…
                   </button>
-                  <div className="my-1 border-t border-studio-hair" />
-                  <button
+                  {mayDelete && <div className="my-1 border-t border-studio-hair" />}
+                  {mayDelete && <button
                     onClick={async () => {
                       setMoreOpen(false);
                       // Says nothing about Bulletins: if the magazine is live the server
@@ -580,10 +743,12 @@ export default function MagazineEditorV2() {
                       if (await s.remove()) navigate('/production-system/magazine-v2');
                     }}
                     disabled={s.publishing}
+                    data-agent-id="mag.delete-magazine"
                     className="flex w-full items-center gap-2 px-3 py-2 text-left text-ui-sm text-red-300 hover:bg-red-500/10 disabled:opacity-40"
                   >
                     <Trash2 size={13} /> Delete magazine…
-                  </button>
+                  </button>}
+                  </>}
                 </div>
               )}
             </div>
@@ -592,7 +757,14 @@ export default function MagazineEditorV2() {
           {/* AI assistant toggle (editors only) */}
           {canEdit && (
             <button
-              onClick={() => setAsstOpen((o) => !o)}
+              onClick={() => {
+                // Phone: one bottom sheet at a time — the assistant replaces the
+                // page panel rather than stacking on top of it.
+                if (isPhone && !asstOpen) setRightOpen(false);
+                setAsstOpen((o) => !o);
+              }}
+              data-agent-id="mag.ai-toggle"
+              data-agent-label="Magazine AI Studio panel"
               aria-pressed={asstOpen}
               className={'flex items-center gap-1 rounded-sm border px-2 py-1.5 text-ui-sm ' + (asstOpen ? 'border-studio-gold bg-studio-gold text-studio-bg' : 'border-studio-edge text-studio-ink-2 hover:bg-studio-raise-2')}
               title="Design Helper"
@@ -634,17 +806,22 @@ export default function MagazineEditorV2() {
             // The popover it opens lives in the page rail's footer, so a collapsed
             // rail would have swallowed this click entirely.
             onClick={() => { setRailOpen(true); setPagesAiOpen(true); s.clearJustGenerated(); }}
+            data-agent-id="mag.add-more-pages"
+            data-agent-label="Add more pages (AI)"
             className="rounded-sm bg-[var(--gold-bright)] px-2 py-0.5 text-ui-sm font-semibold text-studio-bg hover:opacity-90"
           >
             Add more pages
           </button>
-          <button onClick={() => s.clearJustGenerated()} className="ml-auto text-studio-ink-3 hover:text-studio-ink-2">Maybe later</button>
+          <button onClick={() => s.clearJustGenerated()} data-agent-id="mag.add-more-pages-dismiss" className="ml-auto text-studio-ink-3 hover:text-studio-ink-2">Maybe later</button>
         </div>
       )}
 
-      {/* Body: assistant · canvas · inspector (resizable side panes) */}
-      <div className="flex min-h-0 flex-1" onPointerMove={onBodyMove} onPointerUp={endDivider}>
-        {asstOpen && canEdit && (
+      {/* Body: assistant · canvas · inspector (resizable side panes). On a phone the
+          two panes are bottom sheets instead (rendered after this row) and the
+          rail is an overlay — see the PHONE LAYOUT note at the top. `relative` is
+          the anchor for the rail overlay; it changes nothing on wider screens. */}
+      <div className="relative flex min-h-0 flex-1" onPointerMove={onBodyMove} onPointerUp={endDivider}>
+        {asstOpen && canEdit && !isPhone && (
           <>
             <div style={{ width: panes.leftW }} className="flex-shrink-0 overflow-hidden border-r border-studio-hair">
               <AiPanel />
@@ -659,6 +836,7 @@ export default function MagazineEditorV2() {
           onToggle={() => setRailOpen((v) => !v)}
           aiOpen={pagesAiOpen}
           setAiOpen={setPagesAiOpen}
+          overlay={isPhone}
         />
 
         {/* Canvas column */}
@@ -673,7 +851,7 @@ export default function MagazineEditorV2() {
               <Lock size={12} className="flex-shrink-0" />
               <span>{lockedReason}</span>
               {!s.canManage() && (
-                <button onClick={() => setBoardOpen(true)} className="ml-auto underline hover:no-underline">
+                <button onClick={() => setBoardOpen(true)} data-agent-id="mag.locked-see-board" data-agent-label="See the review board" className="ml-auto underline hover:no-underline">
                   See the board
                 </button>
               )}
@@ -681,7 +859,7 @@ export default function MagazineEditorV2() {
           )}
 
           {/* Canvas */}
-          <div className="min-h-0 flex-1 overflow-auto bg-studio-bg">
+          <div ref={canvasRef} className="min-h-0 flex-1 overflow-auto bg-studio-bg">
             {s.hasPage ? (
               <EditorCanvas />
             ) : building ? (
@@ -702,36 +880,27 @@ export default function MagazineEditorV2() {
           </div>
         </div>
 
-        {/* Inspector — collapsible, mirroring the left pane's AI toggle.
-            An attachment preview force-opens it: the user just asked to look at
-            something, so putting it behind a collapsed rail would swallow the click. */}
-        {rightOpen || s.previewDoc ? (
+        {/* Inspector — collapsible, mirroring the left pane's AI toggle, and shown to
+            the magazine's OWNER only (see the selection effect above). An attachment
+            preview force-opens the pane for anyone: it comes from the assistant's own
+            chat, so the user just asked to look at something and putting it behind a
+            collapsed rail would swallow the click.
+            Phone: the collapsed tab stays in the row and the panel opens as a bottom
+            sheet (below), so the canvas keeps its width either way. */}
+        {inspectorShown && !isPhone ? (
           <>
             <div className={divider} onPointerDown={startDivider('right')} title="Drag to resize" />
             <div style={{ width: panes.rightW }} className="flex flex-shrink-0 flex-col border-l border-studio-hair bg-studio-panel">
-              <div className="flex flex-shrink-0 items-center gap-1 border-b border-studio-hair px-2 py-1.5">
-                <span className="text-ui-sm font-bold uppercase tracking-[0.12em] text-studio-ink-3">
-                  {s.previewDoc ? 'Preview' : 'Page & element'}
-                </span>
-                <button
-                  onClick={() => { s.setPreviewDoc(null); setRightOpen(false); setRightDismissed(true); }}
-                  className="ml-auto rounded-sm p-1 text-studio-ink-3 hover:bg-studio-raise-2 hover:text-studio-ink"
-                  title="Hide this panel"
-                  aria-label="Hide the page and element panel"
-                >
-                  <ChevronsRight size={14} />
-                </button>
-              </div>
-              <div className="min-h-0 flex-1 overflow-y-auto">
-                {s.previewDoc ? <AttachmentPreviewPane /> : <Inspector onAdd={add} />}
-              </div>
+              {inspectorPane}
             </div>
           </>
-        ) : (
+        ) : !isOwner ? null : (
           /* Collapsed: a rail, not nothing — it has to be obvious the panel exists
              and where it went, or the collapse becomes a feature people trip over. */
           <button
-            onClick={() => { setRightOpen(true); setRightDismissed(false); }}
+            // Phone: one bottom sheet at a time (see the AI toggle).
+            onClick={() => { setRightOpen(true); setRightDismissed(false); if (isPhone) setAsstOpen(false); }}
+            data-agent-id="mag.inspector-show"
             className="flex w-9 flex-shrink-0 flex-col items-center gap-2 border-l border-studio-hair bg-studio-panel py-2 text-studio-ink-3 hover:bg-studio-raise hover:text-studio-ink"
             title="Show the page and element panel"
             aria-label="Show the page and element panel"
@@ -741,6 +910,21 @@ export default function MagazineEditorV2() {
           </button>
         )}
       </div>
+
+      {/* PHONE bottom sheets — over the page, not beside it, and with no backdrop:
+          the part of the page above a sheet stays visible and editable. Each has a
+          close button in its header. The page panel sits above the assistant
+          because an attachment preview opened FROM the chat has to cover it. */}
+      {isPhone && asstOpen && canEdit && (
+        <div className={phoneSheet + ' z-40 h-[72%]'} role="dialog" aria-label="Magazine AI Studio">
+          <AiPanel onClose={() => setAsstOpen(false)} />
+        </div>
+      )}
+      {isPhone && inspectorShown && (
+        <div className={phoneSheet + ' z-[45] h-[62%] bg-studio-panel'} role="dialog" aria-label={s.previewDoc ? 'Preview' : 'Page and element panel'}>
+          {inspectorPane}
+        </div>
+      )}
 
       {/* Dialogs */}
       <CoverPicker open={coverOpen} onClose={() => setCoverOpen(false)} />

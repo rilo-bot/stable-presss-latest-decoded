@@ -43,9 +43,10 @@ export function PartiesProductionSystem({
           size="sm"
           className="bg-primary text-primary-foreground hover:bg-primary/90 gap-1.5 text-sm"
           onClick={() => onOpenPartyForm()}
+          data-agent-id="reg.add-person"
         >
           <Plus size={13} />
-          Add RegisterPerson
+          Add Person
         </Button>
       </div>
 
@@ -59,6 +60,7 @@ export function PartiesProductionSystem({
             onChange={(e) => setPartySearch(e.target.value)}
             className="w-full pl-8 pr-3 py-2 text-sm border border-input rounded-sm bg-card focus:outline-none focus:ring-1 focus:ring-ring"
             aria-label="Search parties"
+            data-agent-id="reg.person-search"
           />
         </div>
       )}
@@ -68,7 +70,7 @@ export function PartiesProductionSystem({
           icon={Users}
           heading="No parties registered yet."
           description="Add owners, trainers, jockeys and other racing connections to build your industry directory. Parties can be linked to thoroughbred profiles and editorial coverage."
-          ctaLabel="Add Your First RegisterPerson"
+          ctaLabel="Add Your First Person"
           onCta={() => onOpenPartyForm()}
           size="lg"
         />
@@ -87,7 +89,7 @@ export function PartiesProductionSystem({
         <div className="border border-border/60 rounded-sm overflow-hidden bg-card">
           <div className="px-4 py-2.5 border-b border-border/40 bg-muted/30 flex items-center justify-between">
             <p className="text-[12px] uppercase tracking-[0.12em] font-bold text-muted-foreground">
-              RegisterPerson Records
+              People Records
             </p>
             <span className="text-[12px] text-muted-foreground tabular-nums">
               {filteredParties.length} {filteredParties.length === 1 ? 'party' : 'parties'}
@@ -97,7 +99,7 @@ export function PartiesProductionSystem({
             <table className="w-full text-sm min-w-[700px]">
               <thead>
                 <tr className="border-b border-border/40 bg-muted/20">
-                  {['RegisterPerson', 'Type', 'Roles', 'Location', 'Since', 'Actions'].map((h) => (
+                  {['Person', 'Type', 'Roles', 'Location', 'Since', 'Actions'].map((h) => (
                     <th
                       key={h}
                       className="text-left px-4 py-2.5 text-[12px] uppercase tracking-[0.1em] text-muted-foreground font-semibold"
@@ -113,6 +115,8 @@ export function PartiesProductionSystem({
                   return (
                     <tr
                       key={party.id}
+                      data-agent-id={`reg.person-row-${party.id}`}
+                      data-agent-label={party.name}
                       className={cn(
                         'border-b border-border/30 hover:bg-muted/10 transition-colors',
                         idx % 2 === 0 ? 'bg-card' : 'bg-background'
@@ -201,6 +205,7 @@ export function PartiesProductionSystem({
                         <div className="flex items-center gap-3">
                           <button
                             onClick={() => onOpenPartyForm(party)}
+                            data-agent-id={`reg.person-edit-${party.id}`}
                             className="text-[12px] uppercase tracking-[0.08em] font-semibold text-primary hover:text-primary/80 transition-colors"
                             aria-label={`Edit ${party.name}`}
                           >

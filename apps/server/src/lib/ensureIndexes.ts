@@ -186,6 +186,15 @@ const INDEX_SPECS: IndexSpec[] = [
   // Recount a comment reports, and "have I already reported these?".
   { collection: 'commentReports', keys: { commentId: 1, deletedAt: 1 } },
   { collection: 'commentReports', keys: { userId: 1, deletedAt: 1 } },
+  // Stablehand Operator run log (lib/agent/operator/runs.ts): every step
+  // upserts by (runId, userId), and every request sums the caller's spend for
+  // the daily budget by userId — both run per model step, so both need an index.
+  { collection: 'agentRuns', keys: { runId: 1, userId: 1, deletedAt: 1 } },
+  { collection: 'agentRuns', keys: { userId: 1, deletedAt: 1 } },
+  // Stablehand Activity (lib/agent/operator/activity.ts): newest-first runs in
+  // a date window — your own (Mine) and everyone's (Everyone, analytics.view).
+  { collection: 'agentRuns', keys: { userId: 1, deletedAt: 1, updatedAt: -1 } },
+  { collection: 'agentRuns', keys: { deletedAt: 1, updatedAt: -1 } },
 ]
 
 /** The name MongoDB derives for an index when none is given. */

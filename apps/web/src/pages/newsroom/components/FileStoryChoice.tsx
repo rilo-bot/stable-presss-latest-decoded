@@ -66,6 +66,8 @@ export function FileStoryChoice({ open, onClose, onAI, onManual }: FileStoryChoi
               type="button"
               autoFocus
               onClick={onAI}
+              data-agent-id="story.file-with-ai"
+              data-agent-label="Story Studio AI"
               className="group flex flex-col items-start gap-2 text-left p-4 rounded-sm border border-border/60 bg-background hover:border-primary/50 hover:bg-primary/[0.03] transition-colors focus-visible:ring-2 focus-visible:ring-ring"
             >
               <span
@@ -91,6 +93,8 @@ export function FileStoryChoice({ open, onClose, onAI, onManual }: FileStoryChoi
             <button
               type="button"
               onClick={onManual}
+              data-agent-id="story.file-manual"
+              data-agent-label="Write it yourself"
               className="group flex flex-col items-start gap-2 text-left p-4 rounded-sm border border-border/60 bg-background hover:border-primary/50 hover:bg-primary/[0.03] transition-colors focus-visible:ring-2 focus-visible:ring-ring"
             >
               <span className="min-h-[17px]" />

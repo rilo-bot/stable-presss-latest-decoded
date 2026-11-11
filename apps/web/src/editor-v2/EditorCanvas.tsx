@@ -611,9 +611,14 @@ export function EditorCanvas() {
         const preview = thumbs[sum.id];
         return (
           <div key={sum.id} data-page={sum.id} className="shrink-0" style={{ width: zoomWidth }}>
-            {/* Per-page header: number · publish checkbox · Fill / Adjust (every page) */}
-            <div className="mb-1.5 flex items-center gap-2 text-ui-sm text-studio-ink-3">
-              <span>Page {sum.index + 1}</span>
+            {/* Per-page header: number · publish checkbox · Fill / Adjust (every page).
+                Anchored per page for the Stablehand Operator (mag.page-<n>-fill etc.,
+                n 1-based like the rail) — see operator/useMagazineEditorActions.ts. */}
+            {/* Phone (max-md): a fitted page is ~300px wide, too narrow for this row
+                on one line — let the Fill/Adjust group wrap instead of "Page 1"
+                breaking across two lines. Wider screens are unaffected. */}
+            <div className="mb-1.5 flex items-center gap-2 text-ui-sm text-studio-ink-3 max-md:flex-wrap max-md:gap-y-1">
+              <span className="max-md:whitespace-nowrap">Page {sum.index + 1}</span>
               {canManage && (
                 /* The box was 12×12 — half the 24px floor. The label has always been
                    the real target (it wraps the input), so it now carries the padding
@@ -623,6 +628,8 @@ export function EditorCanvas() {
                     type="checkbox"
                     checked={sum.selectedForPublish}
                     onChange={(e) => void setPageSelected(sum.id, e.target.checked)}
+                    data-agent-id={`mag.page-${sum.index + 1}-publish-toggle`}
+                    data-agent-label={`Include page ${sum.index + 1} when publishing selected pages`}
                     className="h-4 w-4 accent-emerald-500"
                   />
                   publish
@@ -632,7 +639,10 @@ export function EditorCanvas() {
                 <button
                   className="flex items-center gap-1 rounded-sm border border-studio-edge px-2 py-1 text-studio-ink-2 hover:bg-studio-raise-2 hover:text-studio-ink disabled:opacity-30"
                   disabled={formatBusy}
+                  aria-busy={formatBusy && active}
                   onClick={() => void runFormat('fill', sum.id)}
+                  data-agent-id={`mag.page-${sum.index + 1}-fill`}
+                  data-agent-label={`Fill page ${sum.index + 1} (AI)`}
                   title="Fill empty boxes & tighten crowded text on this page (AI)"
                 >
                   <Wand2 size={11} /> {formatBusy && active ? <ShimmerText>Filling…</ShimmerText> : 'Fill'}
@@ -640,7 +650,10 @@ export function EditorCanvas() {
                 <button
                   className="flex items-center gap-1 rounded-sm border border-studio-edge px-2 py-1 text-studio-ink-2 hover:bg-studio-raise-2 hover:text-studio-ink disabled:opacity-30"
                   disabled={formatBusy}
+                  aria-busy={formatBusy && active}
                   onClick={() => void runFormat('adjust', sum.id)}
+                  data-agent-id={`mag.page-${sum.index + 1}-adjust`}
+                  data-agent-label={`Adjust page ${sum.index + 1} (AI)`}
                   title="Tighten crowded text on this page (AI)"
                 >
                   <WandSparkles size={11} /> Adjust

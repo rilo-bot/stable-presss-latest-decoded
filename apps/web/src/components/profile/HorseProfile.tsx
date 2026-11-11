@@ -618,7 +618,7 @@ export function HorseProfile({ horseId, mode, onBack }: HorseProfileProps) {
       overlay={editableHorse
         ? (showGuide
           ? <>
-              <OnboardingGuide steps={guideSteps} name="Stablehand" showStepBubble={false} onShowMe={scrollToAnchor} onAskStep={(s) => askAiForStep(onbSteps.find((o) => o.key === s.key) ?? onbSteps[0])} onSkipStep={(s) => skipStep(s.key)} />
+              <OnboardingGuide steps={guideSteps} name="The Stable Hand" showStepBubble={false} onShowMe={scrollToAnchor} onAskStep={(s) => askAiForStep(onbSteps.find((o) => o.key === s.key) ?? onbSteps[0])} onSkipStep={(s) => skipStep(s.key)} />
               <OnboardingFocus
                 open={showGuide && !chatOpen}
                 stepKey={activeKey ?? 'none'}

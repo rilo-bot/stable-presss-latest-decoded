@@ -65,6 +65,8 @@ export function NewPostChoice({ open, onClose, onAI, onManual }: NewPostChoicePr
               type="button"
               autoFocus
               onClick={onAI}
+              data-agent-id="blog.new-with-ai"
+              data-agent-label="Blog Studio AI"
               className="group flex flex-col items-start gap-2 rounded-sm border border-border/60 bg-background p-4 text-left transition-colors hover:border-primary/50 hover:bg-primary/[0.03] focus-visible:ring-2 focus-visible:ring-ring"
             >
               <span
@@ -90,6 +92,8 @@ export function NewPostChoice({ open, onClose, onAI, onManual }: NewPostChoicePr
             <button
               type="button"
               onClick={onManual}
+              data-agent-id="blog.new-manual"
+              data-agent-label="Write it yourself"
               className="group flex flex-col items-start gap-2 rounded-sm border border-border/60 bg-background p-4 text-left transition-colors hover:border-primary/50 hover:bg-primary/[0.03] focus-visible:ring-2 focus-visible:ring-ring"
             >
               <span className="min-h-[17px]" />

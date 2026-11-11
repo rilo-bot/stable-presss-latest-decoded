@@ -4,7 +4,9 @@ import { useBreakingNewsStore } from '@/stores/breakingNewsStore';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
-import { Megaphone, Handshake, Plus, X, Loader2, Eye, EyeOff } from 'lucide-react';
+import { Megaphone, Handshake, Plus, X, Loader2, Eye, EyeOff, Pencil, Check } from 'lucide-react';
+import type { Sponsor } from '@/types/sponsor';
+import { useSiteContentOperatorActions } from '@/pages/production-system/operator-content/useSiteContentOperatorActions';
 
 export default function SiteContent() {
   const sponsors = useSponsorStore((s) => s.sponsors);
@@ -12,6 +14,7 @@ export default function SiteContent() {
   const fetchSponsors = useSponsorStore((s) => s.fetchSponsors);
   const addSponsor = useSponsorStore((s) => s.addSponsor);
   const removeSponsor = useSponsorStore((s) => s.removeSponsor);
+  const updateSponsor = useSponsorStore((s) => s.updateSponsor);
 
   const news = useBreakingNewsStore((s) => s.items);
   const newsLoading = useBreakingNewsStore((s) => s.loading);
@@ -51,6 +54,29 @@ export default function SiteContent() {
     }
   };
 
+  // ── Sponsor inline edit ──
+  const [editingId, setEditingId] = useState<string | null>(null);
+  const [edit, setEdit] = useState({ name: '', category: '', tagline: '', websiteUrl: '' });
+  const [eBusy, setEBusy] = useState(false);
+
+  const startEdit = (s: Sponsor) => {
+    setEditingId(s.id);
+    setEdit({ name: s.name, category: s.category ?? '', tagline: s.tagline ?? '', websiteUrl: s.websiteUrl ?? '' });
+  };
+
+  const onSaveSponsor = async () => {
+    if (!editingId || !edit.name.trim()) return;
+    setEBusy(true);
+    await updateSponsor(editingId, {
+      name: edit.name.trim(),
+      category: edit.category.trim(),
+      tagline: edit.tagline.trim(),
+      websiteUrl: edit.websiteUrl.trim() || undefined,
+    });
+    setEBusy(false);
+    setEditingId(null);
+  };
+
   // ── Breaking-news form ──
   const [nText, setNText] = useState('');
   const [nBusy, setNBusy] = useState(false);
@@ -62,6 +88,11 @@ export default function SiteContent() {
     setNBusy(false);
     if (id) setNText('');
   };
+
+  // The Stable Hand Operator: site.readContent / addSponsor / editSponsor /
+  // removeSponsor / addHeadline / showHeadline / removeHeadline / clearTicker —
+  // each drives the forms and row buttons below.
+  useSiteContentOperatorActions({ editingId });
 
   return (
     <div className="max-w-3xl mx-auto px-4 md:px-8 py-10 space-y-12">
@@ -93,10 +124,11 @@ export default function SiteContent() {
               value={nText}
               onChange={(e) => setNText(e.target.value)}
               placeholder="RACE 7 FLEMINGTON — …"
+              data-agent-id="site.headline-input"
               className="flex-1"
               onKeyDown={(e) => e.key === 'Enter' && onAddNews()}
             />
-            <Button onClick={onAddNews} disabled={nBusy || !nText.trim()} className="gap-1.5">
+            <Button onClick={onAddNews} disabled={nBusy || !nText.trim()} className="gap-1.5" data-agent-id="site.headline-add">
               {nBusy ? <Loader2 size={14} className="animate-spin" /> : <Plus size={14} />}
               Add
             </Button>
@@ -115,12 +147,16 @@ export default function SiteContent() {
               <li
                 key={item.id}
                 className="flex items-center gap-3 p-3 border border-border/60 rounded-sm bg-card text-sm"
+                data-agent-id={`site.headline-${item.id}`}
+                data-agent-label={item.text}
               >
                 <span className={item.active ? 'flex-1 text-foreground' : 'flex-1 text-muted-foreground/50 line-through'}>
                   {item.text}
                 </span>
                 <button
                   onClick={() => void updateItem(item.id, { active: !item.active })}
+                  data-agent-id={`site.headline-toggle-${item.id}`}
+                  aria-pressed={item.active}
                   className="text-muted-foreground hover:text-foreground transition-colors"
                   aria-label={item.active ? 'Hide from ticker' : 'Show in ticker'}
                   title={item.active ? 'Active — click to hide' : 'Hidden — click to show'}
@@ -129,6 +165,7 @@ export default function SiteContent() {
                 </button>
                 <button
                   onClick={() => void removeItem(item.id)}
+                  data-agent-id={`site.headline-remove-${item.id}`}
                   className="text-muted-foreground hover:text-destructive transition-colors"
                   aria-label="Delete"
                 >
@@ -155,12 +192,12 @@ export default function SiteContent() {
             Add a sponsor
           </Label>
           <div className="grid sm:grid-cols-2 gap-2">
-            <Input value={sName} onChange={(e) => setSName(e.target.value)} placeholder="Name *" />
-            <Input value={sCategory} onChange={(e) => setSCategory(e.target.value)} placeholder="Category (e.g. Principal Partner)" />
-            <Input value={sTagline} onChange={(e) => setSTagline(e.target.value)} placeholder="Tagline" className="sm:col-span-2" />
-            <Input value={sUrl} onChange={(e) => setSUrl(e.target.value)} placeholder="Website URL (optional)" className="sm:col-span-2" />
+            <Input value={sName} onChange={(e) => setSName(e.target.value)} placeholder="Name *" data-agent-id="site.sponsor-name" />
+            <Input value={sCategory} onChange={(e) => setSCategory(e.target.value)} placeholder="Category (e.g. Principal Partner)" data-agent-id="site.sponsor-category" />
+            <Input value={sTagline} onChange={(e) => setSTagline(e.target.value)} placeholder="Tagline" className="sm:col-span-2" data-agent-id="site.sponsor-tagline" />
+            <Input value={sUrl} onChange={(e) => setSUrl(e.target.value)} placeholder="Website URL (optional)" className="sm:col-span-2" data-agent-id="site.sponsor-url" />
           </div>
-          <Button onClick={onAddSponsor} disabled={sBusy || !sName.trim()} className="gap-1.5">
+          <Button onClick={onAddSponsor} disabled={sBusy || !sName.trim()} className="gap-1.5" data-agent-id="site.sponsor-add">
             {sBusy ? <Loader2 size={14} className="animate-spin" /> : <Plus size={14} />}
             Add sponsor
           </Button>
@@ -178,7 +215,61 @@ export default function SiteContent() {
               <li
                 key={s.id}
                 className="flex items-start gap-3 p-3 border border-border/60 rounded-sm bg-card"
+                data-agent-id={`site.sponsor-${s.id}`}
+                data-agent-label={s.name}
               >
+                {editingId === s.id ? (
+                  <div className="flex-1 min-w-0 space-y-2">
+                    <div className="grid sm:grid-cols-2 gap-2">
+                      <Input
+                        value={edit.name}
+                        onChange={(e) => setEdit((f) => ({ ...f, name: e.target.value }))}
+                        placeholder="Name *"
+                        aria-label="Sponsor name"
+                        data-agent-id="site.sponsor-edit-name"
+                      />
+                      <Input
+                        value={edit.category}
+                        onChange={(e) => setEdit((f) => ({ ...f, category: e.target.value }))}
+                        placeholder="Category"
+                        aria-label="Sponsor category"
+                        data-agent-id="site.sponsor-edit-category"
+                      />
+                      <Input
+                        value={edit.tagline}
+                        onChange={(e) => setEdit((f) => ({ ...f, tagline: e.target.value }))}
+                        placeholder="Tagline"
+                        aria-label="Sponsor tagline"
+                        className="sm:col-span-2"
+                        data-agent-id="site.sponsor-edit-tagline"
+                      />
+                      <Input
+                        value={edit.websiteUrl}
+                        onChange={(e) => setEdit((f) => ({ ...f, websiteUrl: e.target.value }))}
+                        placeholder="Website URL (optional)"
+                        aria-label="Sponsor website URL"
+                        className="sm:col-span-2"
+                        data-agent-id="site.sponsor-edit-url"
+                      />
+                    </div>
+                    <div className="flex gap-2">
+                      <Button
+                        size="sm"
+                        onClick={() => void onSaveSponsor()}
+                        disabled={eBusy || !edit.name.trim()}
+                        className="gap-1.5"
+                        data-agent-id="site.sponsor-save"
+                      >
+                        {eBusy ? <Loader2 size={13} className="animate-spin" /> : <Check size={13} />}
+                        Save
+                      </Button>
+                      <Button size="sm" variant="ghost" onClick={() => setEditingId(null)} data-agent-id="site.sponsor-cancel">
+                        Cancel
+                      </Button>
+                    </div>
+                  </div>
+                ) : (
+                <>
                 <div className="flex-1 min-w-0">
                   <span className="block text-sm font-medium text-foreground truncate">{s.name}</span>
                   {s.category && (
@@ -199,12 +290,23 @@ export default function SiteContent() {
                   )}
                 </div>
                 <button
+                  onClick={() => startEdit(s)}
+                  className="text-muted-foreground hover:text-foreground transition-colors mt-0.5"
+                  aria-label="Edit sponsor"
+                  data-agent-id={`site.sponsor-edit-${s.id}`}
+                >
+                  <Pencil size={14} />
+                </button>
+                <button
                   onClick={() => void removeSponsor(s.id)}
                   className="text-muted-foreground hover:text-destructive transition-colors mt-0.5"
                   aria-label="Delete sponsor"
+                  data-agent-id={`site.sponsor-remove-${s.id}`}
                 >
                   <X size={15} />
                 </button>
+                </>
+                )}
               </li>
             ))}
           </ul>

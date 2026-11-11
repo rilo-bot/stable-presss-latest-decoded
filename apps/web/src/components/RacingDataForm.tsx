@@ -43,13 +43,17 @@ function FieldLabel({ children, required }: { children: React.ReactNode; require
 }
 
 function FieldInput({
-  value, onChange, placeholder, type = 'text', hasError,
+  value, onChange, placeholder, type = 'text', hasError, agentId, label,
 }: {
   value: string; onChange: (v: string) => void; placeholder?: string; type?: string; hasError?: boolean;
+  /** Stablehand Operator anchor (data-agent-id) + its accessible name. */
+  agentId?: string; label?: string;
 }) {
   return (
     <input
       type={type}
+      data-agent-id={agentId}
+      aria-label={label}
       value={value}
       onChange={(e) => onChange(e.target.value)}
       placeholder={placeholder}
@@ -66,13 +70,17 @@ function FieldInput({
 }
 
 function FieldSelect({
-  value, onChange, children, hasError,
+  value, onChange, children, hasError, agentId, label,
 }: {
   value: string; onChange: (v: string) => void; children: React.ReactNode; hasError?: boolean;
+  /** Stablehand Operator anchor (data-agent-id) + its accessible name. */
+  agentId?: string; label?: string;
 }) {
   return (
     <div style={{ position: 'relative' }}>
       <select
+        data-agent-id={agentId}
+        aria-label={label}
         value={value}
         onChange={(e) => onChange(e.target.value)}
         style={{
@@ -109,6 +117,19 @@ function SectionDivider({ label }: { label: string }) {
       <div style={{ flex: 1, height: 1, background: 'var(--parchment-dark)' }} />
     </div>
   );
+}
+
+/** Dedupe party edges to one per person, keeping `keepId`'s edge for its person. */
+function onePerPerson<T extends { id: string; personId?: string }>(rows: T[], keepId: string): T[] {
+  const keepPerson = rows.find((r) => r.id === keepId)?.personId;
+  const seen = new Set<string>();
+  return rows.filter((r) => {
+    const k = r.personId || r.id;
+    if (keepPerson && k === keepPerson) return r.id === keepId;
+    if (seen.has(k)) return false;
+    seen.add(k);
+    return true;
+  });
 }
 
 function Row2({ children }: { children: React.ReactNode }) {
@@ -170,8 +191,6 @@ export function RacingDataForm({ horseId, initial, compact = false, onSave, onCa
   useEffect(() => { fetchParties(); }, [fetchParties]);
   useEffect(() => { fetchHorses(); }, [fetchHorses]);
 
-  const jockeys = useMemo(() => allParties.filter((p) => p.role === 'jockey'), [allParties]);
-  const trainers = useMemo(() => allParties.filter((p) => p.role === 'trainer'), [allParties]);
 
   const isEdit = !!initial;
 
@@ -201,6 +220,12 @@ export function RacingDataForm({ horseId, initial, compact = false, onSave, onCa
   const [weightCarried, setWeightCarried] = useState(initial?.weight_carried ?? draft?.weightCarried ?? '');
   const [jockeyId, setJockeyId] = useState(initial?.jockey_id ?? draft?.jockeyId ?? '');
   const [trainerId, setTrainerId] = useState(initial?.trainer_id ?? draft?.trainerId ?? '');
+
+  // One option per PERSON. `parties` holds one edge per role × horse, so a
+  // jockey riding three horses used to be listed three times. The edge already
+  // chosen (an edit, or a restored draft) is always the one kept for its person.
+  const jockeys = useMemo(() => onePerPerson(allParties.filter((p) => p.role === 'jockey'), jockeyId), [allParties, jockeyId]);
+  const trainers = useMemo(() => onePerPerson(allParties.filter((p) => p.role === 'trainer'), trainerId), [allParties, trainerId]);
 
   const [errors, setErrors] = useState<FormErrors>({});
   const [saving, setSaving] = useState(false);
@@ -271,7 +296,10 @@ export function RacingDataForm({ horseId, initial, compact = false, onSave, onCa
         await updateEntry(initial.id, payload);
         toast.success('Racing record updated');
       } else {
-        await addEntry(payload);
+        // addEntry reports its own error toast and returns '' on failure —
+        // keep the form open (with the user's input) rather than claiming success.
+        const newId = await addEntry(payload);
+        if (!newId) return;
         toast.success('Racing record saved');
       }
       clearDraft();
@@ -309,7 +337,7 @@ export function RacingDataForm({ horseId, initial, compact = false, onSave, onCa
   const formBody = (
     <div style={{ padding: compact ? '12px 14px 14px' : '18px 20px 20px', overflowY: 'auto', maxHeight: compact ? 'calc(100vh - 280px)' : '70vh', background: 'var(--parchment)', backgroundImage: 'repeating-linear-gradient(0deg, transparent, transparent 20px, rgba(0,0,0,0.018) 20px, rgba(0,0,0,0.018) 21px)' }}>
 
-      {draftRestored && <DraftRestoredHint onDiscard={discardDraft} />}
+      {draftRestored && <DraftRestoredHint onDiscard={discardDraft} agentId="reg.racing-discard-draft" />}
 
       {/* ── SECTION: Core Fields ── */}
       <SectionDivider label="Race Identity" />
@@ -322,7 +350,7 @@ export function RacingDataForm({ horseId, initial, compact = false, onSave, onCa
             {allHorses.find((h) => h.id === selectedHorseId)?.name ?? selectedHorseId}
           </div>
         ) : (
-          <FieldSelect value={selectedHorseId} onChange={setSelectedHorseId} hasError={!!errors.horse_id}>
+          <FieldSelect value={selectedHorseId} onChange={setSelectedHorseId} hasError={!!errors.horse_id} agentId="reg.racing-horse" label="Horse">
             <option value="">— Select horse —</option>
             {allHorses.map((h) => (
               <option key={h.id} value={h.id}>{h.isUnnamed ? 'Un-Named' : h.name}</option>
@@ -334,19 +362,19 @@ export function RacingDataForm({ horseId, initial, compact = false, onSave, onCa
 
       <div style={{ marginBottom: 10 }}>
         <FieldLabel required>Subject</FieldLabel>
-        <FieldInput value={subject} onChange={setSubject} placeholder="Brief description of this race entry or record" hasError={!!errors.subject} />
+        <FieldInput value={subject} onChange={setSubject} placeholder="Brief description of this race entry or record" hasError={!!errors.subject} agentId="reg.racing-subject" label="Subject" />
         <FieldError msg={errors.subject} />
       </div>
 
       <Row2>
         <div>
           <FieldLabel required>Race Name</FieldLabel>
-          <FieldInput value={raceName} onChange={setRaceName} placeholder="Cox Plate, Melbourne Cup…" hasError={!!errors.race_name} />
+          <FieldInput value={raceName} onChange={setRaceName} placeholder="Cox Plate, Melbourne Cup…" hasError={!!errors.race_name} agentId="reg.racing-race-name" label="Race name" />
           <FieldError msg={errors.race_name} />
         </div>
         <div>
           <FieldLabel required>Status</FieldLabel>
-          <FieldSelect value={status} onChange={(v) => setStatus(v as RaceStatus)} hasError={!!errors.status}>
+          <FieldSelect value={status} onChange={(v) => setStatus(v as RaceStatus)} hasError={!!errors.status} agentId="reg.racing-status" label="Status">
             {RACE_STATUSES.map((s) => (
               <option key={s} value={s}>{s}</option>
             ))}
@@ -359,12 +387,12 @@ export function RacingDataForm({ horseId, initial, compact = false, onSave, onCa
         <Row2>
           <div>
             <FieldLabel required>Race Date</FieldLabel>
-            <FieldInput type="date" value={raceDate} onChange={setRaceDate} hasError={!!errors.race_date} />
+            <FieldInput type="date" value={raceDate} onChange={setRaceDate} hasError={!!errors.race_date} agentId="reg.racing-date" label="Race date" />
             <FieldError msg={errors.race_date} />
           </div>
           <div>
             <FieldLabel required>Venue</FieldLabel>
-            <FieldInput value={venue} onChange={setVenue} placeholder="Flemington, Royal Randwick…" hasError={!!errors.venue} />
+            <FieldInput value={venue} onChange={setVenue} placeholder="Flemington, Royal Randwick…" hasError={!!errors.venue} agentId="reg.racing-venue" label="Venue" />
             <FieldError msg={errors.venue} />
           </div>
         </Row2>
@@ -376,21 +404,21 @@ export function RacingDataForm({ horseId, initial, compact = false, onSave, onCa
       <Row3>
         <div>
           <FieldLabel>Country</FieldLabel>
-          <FieldInput value={country} onChange={setCountry} placeholder="Australia" />
+          <FieldInput value={country} onChange={setCountry} placeholder="Australia" agentId="reg.racing-country" label="Country" />
         </div>
         <div>
           <FieldLabel>Class / Grade</FieldLabel>
-          <FieldInput value={classGrade} onChange={setClassGrade} placeholder="Gr.1, Listed, BM88…" />
+          <FieldInput value={classGrade} onChange={setClassGrade} placeholder="Gr.1, Listed, BM88…" agentId="reg.racing-class" label="Class / grade" />
         </div>
         <div>
           <FieldLabel>Distance</FieldLabel>
-          <FieldInput value={distance} onChange={setDistance} placeholder="2000m" />
+          <FieldInput value={distance} onChange={setDistance} placeholder="2000m" agentId="reg.racing-distance" label="Distance" />
         </div>
       </Row3>
 
       <div style={{ marginTop: 10 }}>
         <FieldLabel>Track Condition</FieldLabel>
-        <FieldInput value={trackCondition} onChange={setTrackCondition} placeholder="Good (3), Soft (5), Heavy (8)…" />
+        <FieldInput value={trackCondition} onChange={setTrackCondition} placeholder="Good (3), Soft (5), Heavy (8)…" agentId="reg.racing-track" label="Track condition" />
       </div>
 
       {/* ── SECTION: Race Result ── */}
@@ -399,15 +427,15 @@ export function RacingDataForm({ horseId, initial, compact = false, onSave, onCa
       <Row3>
         <div>
           <FieldLabel>Finish Position</FieldLabel>
-          <FieldInput type="number" value={finishPosition} onChange={setFinishPosition} placeholder="1" />
+          <FieldInput type="number" value={finishPosition} onChange={setFinishPosition} placeholder="1" agentId="reg.racing-finish" label="Finish position" />
         </div>
         <div>
           <FieldLabel>Margin</FieldLabel>
-          <FieldInput value={margin} onChange={setMargin} placeholder="Nose, 1.2L, 3/4L…" />
+          <FieldInput value={margin} onChange={setMargin} placeholder="Nose, 1.2L, 3/4L…" agentId="reg.racing-margin" label="Margin" />
         </div>
         <div>
           <FieldLabel>Time</FieldLabel>
-          <FieldInput value={time} onChange={setTime} placeholder="2:00.1" />
+          <FieldInput value={time} onChange={setTime} placeholder="2:00.1" agentId="reg.racing-time" label="Time" />
         </div>
       </Row3>
 
@@ -415,18 +443,18 @@ export function RacingDataForm({ horseId, initial, compact = false, onSave, onCa
         <Row2>
           <div>
             <FieldLabel>Prize Money (AUD)</FieldLabel>
-            <FieldInput type="number" value={prizeMoney} onChange={setPrizeMoney} placeholder="450000" />
+            <FieldInput type="number" value={prizeMoney} onChange={setPrizeMoney} placeholder="450000" agentId="reg.racing-prize" label="Prize money (AUD)" />
           </div>
           <div>
             <FieldLabel>Barrier</FieldLabel>
-            <FieldInput type="number" value={barrier} onChange={setBarrier} placeholder="4" />
+            <FieldInput type="number" value={barrier} onChange={setBarrier} placeholder="4" agentId="reg.racing-barrier" label="Barrier" />
           </div>
         </Row2>
       </div>
 
       <div style={{ marginTop: 10 }}>
         <FieldLabel>Weight Carried</FieldLabel>
-        <FieldInput value={weightCarried} onChange={setWeightCarried} placeholder="57kg, 56.5kg…" />
+        <FieldInput value={weightCarried} onChange={setWeightCarried} placeholder="57kg, 56.5kg…" agentId="reg.racing-weight" label="Weight carried" />
       </div>
 
       {/* ── SECTION: Connections ── */}
@@ -435,7 +463,7 @@ export function RacingDataForm({ horseId, initial, compact = false, onSave, onCa
       <Row2>
         <div>
           <FieldLabel>Jockey</FieldLabel>
-          <FieldSelect value={jockeyId} onChange={setJockeyId}>
+          <FieldSelect value={jockeyId} onChange={setJockeyId} agentId="reg.racing-jockey" label="Jockey">
             <option value="">— Select jockey —</option>
             {jockeys.map((p) => (
               <option key={p.id} value={p.id}>{p.name}</option>
@@ -445,7 +473,7 @@ export function RacingDataForm({ horseId, initial, compact = false, onSave, onCa
         </div>
         <div>
           <FieldLabel>Trainer</FieldLabel>
-          <FieldSelect value={trainerId} onChange={setTrainerId}>
+          <FieldSelect value={trainerId} onChange={setTrainerId} agentId="reg.racing-trainer" label="Trainer">
             <option value="">— Select trainer —</option>
             {trainers.map((p) => (
               <option key={p.id} value={p.id}>{p.name}</option>
@@ -469,6 +497,7 @@ export function RacingDataForm({ horseId, initial, compact = false, onSave, onCa
     <div style={{ padding: compact ? '10px 14px' : '12px 20px', background: 'linear-gradient(180deg, var(--forest-mid) 0%, var(--forest-deep) 100%)', borderTop: '2px solid var(--gold-dark)', display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 10 }}>
       <button
         onClick={onCancel}
+        data-agent-id="reg.racing-cancel"
         style={{ padding: '6px 16px', background: 'transparent', border: '1px solid var(--gold-dark)', borderRadius: 3, cursor: 'pointer', fontSize: '0.6rem', fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.12em', color: 'var(--gold-mid)', ...serifStyle, transition: 'border-color 0.15s, color 0.15s' }}
         onMouseEnter={(e) => { (e.currentTarget as HTMLElement).style.borderColor = 'var(--gold-bright)'; (e.currentTarget as HTMLElement).style.color = 'var(--gold-bright)'; }}
         onMouseLeave={(e) => { (e.currentTarget as HTMLElement).style.borderColor = 'var(--gold-dark)'; (e.currentTarget as HTMLElement).style.color = 'var(--gold-mid)'; }}
@@ -478,6 +507,7 @@ export function RacingDataForm({ horseId, initial, compact = false, onSave, onCa
       <button
         onClick={handleSubmit}
         disabled={saving}
+        data-agent-id="reg.racing-save"
         style={{ display: 'flex', alignItems: 'center', gap: 6, padding: '7px 20px', background: saving ? 'var(--gold-dark)' : 'linear-gradient(135deg, var(--gold-bright) 0%, var(--gold-mid) 100%)', border: 'none', borderRadius: 3, cursor: saving ? 'not-allowed' : 'pointer', fontSize: '0.6rem', fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.12em', color: 'var(--forest-deep)', boxShadow: '0 2px 6px rgba(0,0,0,0.35)', ...serifStyle, transition: 'background 0.15s' }}
       >
         <Flag size={11} strokeWidth={2.5} />
@@ -488,7 +518,7 @@ export function RacingDataForm({ horseId, initial, compact = false, onSave, onCa
 
   if (compact) {
     return (
-      <div style={{ ...serifStyle, display: 'flex', flexDirection: 'column', background: 'var(--parchment)', border: '2px solid var(--gold-mid)', borderRadius: 4, overflow: 'hidden', boxShadow: '0 0 0 1px var(--gold-dark), 0 4px 16px rgba(0,0,0,0.45)' }}>
+      <div data-agent-id="reg.racing-form" style={{ ...serifStyle, display: 'flex', flexDirection: 'column', background: 'var(--parchment)', border: '2px solid var(--gold-mid)', borderRadius: 4, overflow: 'hidden', boxShadow: '0 0 0 1px var(--gold-dark), 0 4px 16px rgba(0,0,0,0.45)' }}>
         {formHeader}
         {formBody}
         {formFooter}
@@ -499,7 +529,7 @@ export function RacingDataForm({ horseId, initial, compact = false, onSave, onCa
   /* Full-screen dialog mode */
   return (
     <div style={{ position: 'fixed', inset: 0, background: 'rgba(10,24,15,0.88)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 1000, padding: '20px' }}>
-      <div style={{ width: '100%', maxWidth: 720, maxHeight: '92vh', display: 'flex', flexDirection: 'column', border: '2px solid var(--gold-mid)', borderRadius: 4, overflow: 'hidden', boxShadow: '0 0 0 1px var(--gold-dark), 0 20px 60px rgba(0,0,0,0.9)', ...serifStyle }}>
+      <div data-agent-id="reg.racing-form" style={{ width: '100%', maxWidth: 720, maxHeight: '92vh', display: 'flex', flexDirection: 'column', border: '2px solid var(--gold-mid)', borderRadius: 4, overflow: 'hidden', boxShadow: '0 0 0 1px var(--gold-dark), 0 20px 60px rgba(0,0,0,0.9)', ...serifStyle }}>
         {formHeader}
         {formBody}
         {formFooter}

@@ -25,6 +25,7 @@ import { toast } from 'sonner';
 
 import { MarkdownMessage } from '@/components/MarkdownMessage';
 import { useBlogStudioUi } from '@/stores/blogStudioUiStore';
+import { EMPTY_CHAT_MIRROR } from '@/stores/storyStudioUiStore';
 import { useStudioChrome } from '@/stores/studioChromeStore';
 import { uploadImage } from '@/lib/upload';
 import { useCanUpload } from '@/lib/permissions';
@@ -72,7 +73,11 @@ function ConfirmCard() {
       : 'Overwrite what readers see?';
 
   return (
+    // Anchored so the Operator can SEE the card is waiting — deliberately not its
+    // buttons: these answers belong to the human.
     <div
+      data-agent-id="blog.studio-confirm-card"
+      data-agent-label={`${heading} — waiting for you`}
       className={
         'border-t px-3 py-2.5 ' +
         (isCover ? 'border-white/10 bg-white/[0.04]' : 'border-amber-500/30 bg-amber-500/[0.07]')
@@ -189,6 +194,19 @@ export function BlogStudioPanel() {
     scrollRef.current?.scrollTo({ top: scrollRef.current.scrollHeight, behavior: 'smooth' });
   }, [messages, status]);
 
+  // Mirror the chat into the store (read-only) so the Operator's blog.askStudio
+  // action can tell when a turn has finished.
+  useEffect(() => {
+    const lastAssistant = [...messages].reverse().find((m) => m.role === 'assistant');
+    useBlogStudioUi.getState().setChatMirror({
+      busy,
+      messageCount: messages.length,
+      lastReply: lastAssistant ? messageText(lastAssistant) : '',
+      error: error ? error.message || 'Something went wrong' : null,
+    });
+  }, [messages, busy, error]);
+  useEffect(() => () => useBlogStudioUi.getState().setChatMirror(EMPTY_CHAT_MIRROR), []);
+
   // Draft filed → open it for the user and reset the studio for next time.
   useEffect(() => {
     if (!createdDraftId) return;
@@ -260,7 +278,7 @@ export function BlogStudioPanel() {
   const starters = mode === 'post' ? POST_STARTERS : DESK_STARTERS;
 
   return (
-    <div className="fixed right-0 top-0 z-[80] flex h-screen w-[380px] max-w-[94vw] flex-col bg-[#0d1626] text-white shadow-[-8px_0_30px_rgba(0,0,0,0.5)]">
+    <div data-agent-id="blog.studio-panel" data-agent-label="Blog Studio AI drawer" aria-label="Blog Studio AI" className="fixed right-0 top-0 z-[80] flex h-screen w-[380px] max-w-[94vw] flex-col bg-[#0d1626] text-white shadow-[-8px_0_30px_rgba(0,0,0,0.5)]">
       {/* Header */}
       <div
         className="flex items-center gap-2 border-b border-white/10 px-3 py-2.5"
@@ -276,7 +294,7 @@ export function BlogStudioPanel() {
           </div>
         </div>
         <div className="ml-auto flex items-center gap-1">
-          <button onClick={newChat} aria-label="New chat" title="Start a new chat" className="flex h-7 w-7 items-center justify-center rounded-sm border border-white/15 hover:bg-white/10" style={{ color: 'var(--gold-mid)' }}>
+          <button onClick={newChat} aria-label="New chat" title="Start a new chat" data-agent-id="blog.studio-new-chat" className="flex h-7 w-7 items-center justify-center rounded-sm border border-white/15 hover:bg-white/10" style={{ color: 'var(--gold-mid)' }}>
             <SquarePen size={14} />
           </button>
           {voiceReady && (
@@ -284,7 +302,7 @@ export function BlogStudioPanel() {
               {voiceMode ? <Volume2 size={14} /> : <VolumeX size={14} />}
             </button>
           )}
-          <button onClick={close} aria-label="Close" className="flex h-7 w-7 items-center justify-center rounded-sm border border-white/15 text-white/70 hover:bg-white/10">
+          <button onClick={close} aria-label="Close" data-agent-id="blog.studio-close" data-agent-label="Close Blog Studio" className="flex h-7 w-7 items-center justify-center rounded-sm border border-white/15 text-white/70 hover:bg-white/10">
             <X size={14} />
           </button>
         </div>
@@ -441,6 +459,8 @@ export function BlogStudioPanel() {
               }
             }}
             disabled={recording || transcribing}
+            data-agent-id="blog.studio-input"
+            data-agent-label="Blog Studio message"
             placeholder={recording ? 'Listening…' : transcribing ? 'Transcribing…' : 'Type or speak your answer…'}
             className="flex-1 resize-none rounded-2xl border border-white/15 bg-white/5 px-3 py-1.5 text-[12px] leading-snug text-white outline-none placeholder:text-white/30 focus:border-white/30 disabled:opacity-60"
           />
@@ -450,11 +470,11 @@ export function BlogStudioPanel() {
             </button>
           )}
           {busy ? (
-            <button type="button" onClick={() => stop()} aria-label="Stop" className="flex h-8 w-8 items-center justify-center rounded-full bg-white/10 text-white/70">
+            <button type="button" onClick={() => stop()} aria-label="Stop" data-agent-id="blog.studio-stop" className="flex h-8 w-8 items-center justify-center rounded-full bg-white/10 text-white/70">
               <Square size={13} />
             </button>
           ) : (
-            <button type="submit" aria-label="Send" disabled={!input.trim() && !attach.hasAttachments} className="flex h-8 w-8 items-center justify-center rounded-full text-[#0b1220] disabled:opacity-40" style={{ background: 'var(--gold-bright)' }}>
+            <button type="submit" aria-label="Send" data-agent-id="blog.studio-send" data-agent-label="Send to Blog Studio" disabled={!input.trim() && !attach.hasAttachments} className="flex h-8 w-8 items-center justify-center rounded-full text-[#0b1220] disabled:opacity-40" style={{ background: 'var(--gold-bright)' }}>
               <Send size={13} />
             </button>
           )}

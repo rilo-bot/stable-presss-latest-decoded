@@ -66,6 +66,7 @@ function AddRow({ onAdd, disabled }: { onAdd: (kind: ElementType) => void; disab
           key={t.kind}
           onClick={() => onAdd(t.kind)}
           disabled={disabled}
+          data-agent-id={`mag.insert-${t.kind}`}
           title={`Add ${t.label.toLowerCase()} to this page`}
           aria-label={`Add ${t.label.toLowerCase()}`}
           className="flex min-w-[52px] flex-col items-center justify-center gap-0.5 rounded-sm border border-studio-edge px-1.5 py-1.5 text-studio-ink-2 hover:bg-studio-raise-2 hover:text-studio-ink disabled:opacity-30 disabled:hover:bg-transparent"
@@ -119,6 +120,8 @@ function PagePanel() {
             checked={sum.selectedForPublish}
             disabled={!canManage}
             onChange={(e) => void setPageSelected(sum.id, e.target.checked)}
+            data-agent-id="mag.inspector-publish-toggle"
+            data-agent-label={`Include page ${sum.index + 1} when publishing selected pages`}
             className="mt-0.5 accent-studio-gold"
           />
           <span>
@@ -185,6 +188,8 @@ export function Inspector({ onAdd }: { onAdd?: (kind: ElementType) => void }) {
   const tabBtn = (id: 'element' | 'assets', label: string, icon: ReactNode) => (
     <button
       onClick={() => setTab(id)}
+      data-agent-id={`mag.inspector-tab-${id}`}
+      aria-pressed={tab === id}
       className={
         'flex flex-1 items-center justify-center gap-1.5 border-b-2 py-2.5 text-ui-sm font-semibold transition-colors ' +
         (tab === id ? 'border-studio-gold text-studio-ink' : 'border-transparent text-studio-ink-3 hover:text-studio-ink-2')
@@ -272,6 +277,8 @@ function ElementPanel({ el }: { el: MagazineElement }) {
                 defaultValue={el.text.content}
                 rows={3}
                 onBlur={(e) => set({ text: { ...el.text!, content: e.target.value } })}
+                data-agent-id="mag.el-content"
+                data-agent-label="Selected text's content"
                 className="w-full resize-none rounded-sm border border-studio-edge bg-studio-raise px-2 py-1.5 text-ui-sm text-studio-ink outline-none focus:border-studio-edge-strong"
               />
             </Section>
@@ -366,6 +373,7 @@ function ElementPanel({ el }: { el: MagazineElement }) {
               <button
                 onClick={() => fileRef.current?.click()}
                 disabled={uploading}
+                data-agent-id="mag.el-image-upload"
                 className="flex w-full items-center justify-center gap-2 rounded-sm border border-studio-edge bg-studio-raise px-3 py-2 text-ui-sm font-semibold text-studio-ink hover:bg-studio-raise-2 disabled:opacity-50"
               >
                 <Upload size={13} />
@@ -381,6 +389,8 @@ function ElementPanel({ el }: { el: MagazineElement }) {
                 defaultValue={el.image.url}
                 placeholder="https://…  (or use the Design Helper to add a photo)"
                 onBlur={(e) => set({ image: { ...el.image!, url: e.target.value } })}
+                data-agent-id="mag.el-image-url"
+                data-agent-label="Selected image's URL"
                 className="w-full rounded-sm border border-studio-edge bg-studio-raise px-2 py-1.5 text-ui-sm text-studio-ink outline-none focus:border-studio-edge-strong"
               />
             </Section>
@@ -411,6 +421,8 @@ function ElementPanel({ el }: { el: MagazineElement }) {
                 defaultValue={el.qr.url}
                 placeholder="https://…"
                 onBlur={(e) => set({ qr: { ...el.qr!, url: e.target.value } })}
+                data-agent-id="mag.el-qr-url"
+                data-agent-label="QR code link"
                 className="w-full rounded-sm border border-studio-edge bg-studio-raise px-2 py-1.5 text-ui-sm text-studio-ink outline-none focus:border-studio-edge-strong"
               />
             </Section>
@@ -465,10 +477,10 @@ function ElementPanel({ el }: { el: MagazineElement }) {
 
         <Section title="Arrange">
           <div className="grid grid-cols-2 gap-2">
-            <button onClick={bringToFront} className="flex items-center justify-center gap-1.5 rounded-sm border border-studio-edge bg-studio-raise px-2 py-1.5 text-ui-sm text-studio-ink-2 hover:bg-studio-raise-2">
+            <button onClick={bringToFront} data-agent-id="mag.el-to-front" className="flex items-center justify-center gap-1.5 rounded-sm border border-studio-edge bg-studio-raise px-2 py-1.5 text-ui-sm text-studio-ink-2 hover:bg-studio-raise-2">
               <BringToFront size={13} /> To front
             </button>
-            <button onClick={sendToBack} className="flex items-center justify-center gap-1.5 rounded-sm border border-studio-edge bg-studio-raise px-2 py-1.5 text-ui-sm text-studio-ink-2 hover:bg-studio-raise-2">
+            <button onClick={sendToBack} data-agent-id="mag.el-to-back" className="flex items-center justify-center gap-1.5 rounded-sm border border-studio-edge bg-studio-raise px-2 py-1.5 text-ui-sm text-studio-ink-2 hover:bg-studio-raise-2">
               <SendToBack size={13} /> To back
             </button>
           </div>
@@ -477,12 +489,14 @@ function ElementPanel({ el }: { el: MagazineElement }) {
         <div className="flex flex-col gap-2 px-3.5 py-3">
           <button
             onClick={() => void duplicateElement(el.id)}
+            data-agent-id="mag.el-duplicate"
             className="flex w-full items-center justify-center gap-2 rounded-sm border border-studio-edge bg-studio-raise px-3 py-2 text-ui-sm font-semibold text-studio-ink-2 hover:bg-studio-raise-2"
           >
             <Copy size={13} /> Duplicate element
           </button>
           <button
             onClick={() => void deleteElement(el.id)}
+            data-agent-id="mag.el-delete"
             className="flex w-full items-center justify-center gap-2 rounded-sm border border-rose-400/30 bg-rose-500/10 px-3 py-2 text-ui-sm font-semibold text-rose-300 hover:bg-rose-500/20"
           >
             <Trash2 size={13} /> Delete element
@@ -584,6 +598,8 @@ function AssetsTab() {
   const modeBtn = (id: 'library' | 'find' | 'make', label: string, icon: ReactNode) => (
     <button
       onClick={() => setMode(id)}
+      data-agent-id={`mag.assets-mode-${id}`}
+      aria-pressed={mode === id}
       className={
         'flex flex-1 items-center justify-center gap-1 rounded-sm px-2 py-1.5 text-ui-sm font-semibold transition-colors ' +
         (mode === id ? 'bg-studio-raise-2 text-studio-ink' : 'text-studio-ink-3 hover:text-studio-ink-2')
@@ -667,6 +683,7 @@ function MediaLibrary({
             {canFind && (
               <button
                 onClick={onFind}
+                data-agent-id="mag.assets-find"
                 className="flex items-center justify-center gap-1.5 rounded-sm border border-studio-edge bg-studio-raise px-3 py-2 text-ui-sm font-semibold text-studio-ink-2 hover:bg-studio-raise-2"
               >
                 <Search size={13} /> Find a photo
@@ -675,6 +692,7 @@ function MediaLibrary({
             {canMake && (
               <button
                 onClick={onMake}
+                data-agent-id="mag.assets-make"
                 className="flex items-center justify-center gap-1.5 rounded-sm border border-studio-edge bg-studio-raise px-3 py-2 text-ui-sm font-semibold text-studio-ink-2 hover:bg-studio-raise-2"
               >
                 <Sparkles size={13} /> Generate one with AI
@@ -695,6 +713,8 @@ function MediaLibrary({
           <button
             key={a.id}
             onClick={() => onPlace(a)}
+            data-agent-id={`mag.asset-${a.id}`}
+            data-agent-label={`${forSelectedImage ? 'Use' : 'Place'} photo “${a.alt || a.kind}”`}
             className="relative aspect-[4/3] overflow-hidden rounded border border-studio-hair hover:border-studio-gold"
             title={a.alt || a.kind}
           >
@@ -759,11 +779,13 @@ function StockFinder({
           onKeyDown={(e) => { if (e.key === 'Enter') void run(); }}
           placeholder="chestnut horse jumping"
           aria-label="Search stock photos"
+          data-agent-id="mag.stock-query"
           className="min-w-0 flex-1 rounded-sm border border-studio-edge bg-studio-raise px-2 py-1.5 text-ui-sm text-studio-ink placeholder:text-studio-ink-4 focus:border-studio-gold focus:outline-none"
         />
         <button
           onClick={() => void run()}
           disabled={searching || !q.trim()}
+          data-agent-id="mag.stock-search"
           className="flex items-center gap-1 rounded-sm border border-studio-edge bg-studio-raise px-2.5 py-1.5 text-ui-sm font-semibold text-studio-ink-2 hover:bg-studio-raise-2 disabled:opacity-40"
         >
           <Search size={13} /> {searching ? 'Searching…' : 'Search'}
@@ -790,6 +812,8 @@ function StockFinder({
               key={p.id}
               onClick={() => void choose(p)}
               disabled={adding !== null}
+              data-agent-id={`mag.stock-result-${p.id}`}
+              data-agent-label={`Add stock photo “${p.alt || p.id}”`}
               title={p.alt}
               className="relative aspect-[4/3] overflow-hidden rounded border border-studio-hair hover:border-studio-gold disabled:opacity-50"
             >
@@ -856,6 +880,7 @@ function ImageGenerator({
         rows={4}
         placeholder="A quiet stable aisle at dawn, light through the doorway, hay dust in the air"
         aria-label="Describe the image to generate"
+        data-agent-id="mag.imagegen-prompt"
         className="w-full resize-none rounded-sm border border-studio-edge bg-studio-raise px-2 py-1.5 text-ui-sm leading-relaxed text-studio-ink placeholder:text-studio-ink-4 focus:border-studio-gold focus:outline-none"
       />
       <div className="mt-2">
@@ -873,6 +898,8 @@ function ImageGenerator({
       <button
         onClick={() => void run()}
         disabled={busy || !prompt.trim()}
+        aria-busy={busy}
+        data-agent-id="mag.imagegen-submit"
         className="mt-2 flex w-full items-center justify-center gap-1.5 rounded-sm border border-studio-edge bg-studio-raise px-3 py-2 text-ui-sm font-semibold text-studio-ink-2 hover:bg-studio-raise-2 disabled:opacity-40"
       >
         <Sparkles size={13} />

@@ -36,3 +36,6 @@ export const PEOPLE = 'people'
 export const PARTIES = 'parties'
 export const INVITES = 'pendingStaffGrants'
 export const OTPS = 'otps'
+/** Stablehand Operator run log + per-day spend (lib/agent/operator/runs.ts). One
+ *  doc per (runId, userId); a run spans several requests, so it is upserted. */
+export const AGENT_RUNS = 'agentRuns'

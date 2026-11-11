@@ -1,22 +1,34 @@
 // ---------------------------------------------------------------------------
-// "The Stablehand" — a global AI concierge available on every page.
+// "The Stable Hand" — the global AI assistant available on every page.
 //
-// A floating button opens a chat panel. The conversation streams from the real
-// backend (/api/agent/chat) which runs the model server-side via OpenRouter and
-// scopes every data read to the signed-in user's role. This component only:
-//   - injects the session Bearer token (so the agent acts at the user's scope),
-//   - attaches the current page as context (so "this horse" / "this page" work),
-//   - renders the streaming conversation,
-//   - can be opened (and seeded with a question) by inline "Ask" buttons
-//     anywhere in the app, via the shared agentUiStore.
+// It has TWO modes, chosen by who is signed in:
+//
+//   Operator   (staff / invited team members — currentUser.isAdmin)
+//              The Stable Hand ACTS in the app and shows it: a docked side
+//              panel with a step timeline, confirm cards and Stop / Resume,
+//              talking to /api/agent/operator. Lives in agent/operator/panel/
+//              (OperatorPanel). Keyed by user id so one account never inherits
+//              another's thread or run.
+//
+//   Concierge  (guests and members — everyone else)
+//              The original guide: a floating chat that streams from
+//              /api/agent/chat, which runs the model server-side and scopes
+//              every read to the user's role. This component only:
+//                - injects the session Bearer token,
+//                - attaches the current page as context ("this horse" works),
+//                - renders the streaming conversation,
+//                - runs the one client tool (navigateTo),
+//                - can be opened / seeded by inline "Ask" buttons via the shared
+//                  agentUiStore.
+//              Its behaviour is unchanged by the Operator work.
 // ---------------------------------------------------------------------------
 
 import { useMemo, useRef, useState, useEffect } from 'react';
 import { useLocation, useNavigate } from 'react-router-dom';
 import { useChat } from '@ai-sdk/react';
 import { DefaultChatTransport, lastAssistantMessageIsCompleteWithToolCalls, type UIMessage } from 'ai';
-import { AnimatePresence, motion, useReducedMotion } from 'framer-motion';
-import { X, Send, Sparkles, Square, Maximize2, Minimize2, Mic, Volume2, VolumeX, Loader2, Paperclip } from 'lucide-react';
+import { AnimatePresence, motion } from 'framer-motion';
+import { X, Send, Square, Maximize2, Minimize2, Mic, Volume2, VolumeX, Loader2, Paperclip } from 'lucide-react';
 
 import { apiUrl } from '@/lib/api';
 import { can } from '@/lib/permissions';
@@ -31,66 +43,16 @@ import { useAutoGrowTextarea } from '@/lib/useAutoGrowTextarea';
 import { useChatAttachments } from '@/agent/attachments/useChatAttachments';
 import { attachmentsToFileParts, CHAT_ATTACH_ACCEPT } from '@/agent/attachments/attachments';
 import { AttachmentBar, MessageAttachments } from '@/agent/attachments/AttachmentViews';
+import { describePage } from '@/agent/operator/panel/pageContext';
+import { StablehandLauncher } from '@/agent/operator/panel/Launcher';
+import { OperatorPanel } from '@/agent/operator/panel/OperatorPanel';
 
-// ── Page-context derivation ────────────────────────────────────────────────
-// Turns the current path into a small hint the assistant can use. The agent
-// resolves names/details itself via its tools using the entity id.
-interface PageContext {
-  path: string;
-  title: string;
-  entity?: { type: string; id: string };
-}
-
-function describePage(pathname: string): PageContext {
-  const seg = pathname.split('/').filter(Boolean);
-  const titleFor: Record<string, string> = {
-    '': 'Home',
-    news: 'The News',
-    bulletins: 'Print Bulletins',
-    horses: 'Horse Register',
-    articles: 'Article',
-    tipping: 'Tipping Ring',
-    podcast: 'The Stable Press Podcast',
-    parties: 'Industry Directory',
-    dashboard: 'Your Dashboard',
-    orgs: 'Organisation',
-    studio: 'Profile Studio',
-    newsroom: 'Newsroom',
-    'site-content': 'Site Content',
-  };
-  const entityType: Record<string, string> = {
-    horses: 'horse',
-    articles: 'article',
-    parties: 'party',
-    bulletins: 'bulletin',
-    orgs: 'organisation',
-    studio: 'party',
-  };
-  const root = seg[0] ?? '';
-  // Production System (the staff CMS) — one route per sidebar screen, plus the
-  // full-screen magazine editors underneath it.
-  if (root === 'production-system') {
-    const screenTitles: Record<string, string> = {
-      overview: 'Overview', workflow: 'Workflow Board', pipeline: 'Pipeline Map',
-      'all-stories': 'All Stories', 'horse-records': 'Horse Records', 'my-assets': 'My Media Assets',
-      compensation: 'My Compensation', horses: 'Horses Register', people: 'People Register',
-      'media-records': 'Media Records', 'racing-records': 'Racing Records', team: 'Team Members',
-      roles: 'Roles & Permissions', analytics: 'Analytics', settings: 'Settings',
-      'magazine-v2': 'Magazine Builder',
-    };
-    const sub = seg[1] ?? '';
-    const ctx: PageContext = {
-      path: pathname,
-      title: sub && screenTitles[sub] ? `Production System — ${screenTitles[sub]}` : 'Production System',
-    };
-    if (sub === 'magazine-v2' && seg[2]) ctx.entity = { type: 'magazine', id: seg[2] };
-    return ctx;
-  }
-  const ctx: PageContext = { path: pathname, title: titleFor[root] ?? 'Stable Press' };
-  if (seg.length >= 2 && entityType[root]) {
-    ctx.entity = { type: entityType[root], id: seg[1] };
-  }
-  return ctx;
+/** Mode switch — see the header. */
+export function AgentWidget() {
+  const isAdmin = useAuthStore((s) => s.currentUser?.isAdmin === true);
+  const userId = useAuthStore((s) => s.currentUser?.id);
+  if (isAdmin && userId) return <OperatorPanel key={userId} userId={userId} />;
+  return <ConciergeWidget />;
 }
 
 // Suggested openers tailored to where the reader is.
@@ -168,7 +130,7 @@ function navPathFor(to: string, id?: string, screen?: string): string | null {
   }
 }
 
-export function AgentWidget() {
+function ConciergeWidget() {
   const open = useAgentUi((s) => s.open);
   const setOpen = useAgentUi((s) => s.setOpen);
   const toggle = useAgentUi((s) => s.toggle);
@@ -178,7 +140,6 @@ export function AgentWidget() {
 
   const [expanded, setExpanded] = useState(false);
   const [input, setInput] = useState('');
-  const reduce = useReducedMotion();
   const location = useLocation();
   const scrollRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLTextAreaElement>(null);
@@ -301,64 +262,8 @@ export function AgentWidget() {
 
   return (
     <>
-      {/* Floating launcher — the Stablehand mascot (gold horse), gamified */}
-      <motion.button
-        aria-label={open ? 'Close the Stablehand' : 'Ask the Stablehand'}
-        onClick={toggle}
-        whileHover={{ scale: 1.08 }}
-        whileTap={{ scale: 0.9 }}
-        // `print:hidden` like NavBar and the bulletin viewer's own header: this is
-        // screen chrome, and the server PRINTS real routes to make the published
-        // PDF. Without it the launcher was composited into the bottom-right of
-        // every downloaded issue — a gold horse and a sparkle badge stamped onto
-        // the last page of a magazine a reader paid attention to.
-        className="fixed bottom-5 right-5 z-50 flex h-14 w-14 items-center justify-center rounded-full print:hidden"
-        style={{
-          background: FOREST,
-          border: '1px solid var(--gold-mid)',
-          boxShadow: '0 6px 18px rgba(0,0,0,0.45), 0 0 0 4px rgba(212,168,67,0.16)',
-        }}
-      >
-        {/* Pulsing gold "attention" ring — a gentle nudge while idle/closed */}
-        {!open && !reduce && (
-          <motion.span
-            aria-hidden
-            className="absolute inset-0 rounded-full"
-            style={{ border: '2px solid var(--gold-bright)' }}
-            initial={{ opacity: 0.55, scale: 1 }}
-            animate={{ opacity: 0, scale: 1.55 }}
-            transition={{ duration: 1.9, repeat: Infinity, ease: 'easeOut' }}
-          />
-        )}
-
-        {open ? (
-          <X className="h-6 w-6" style={{ color: 'var(--gold-bright)' }} />
-        ) : (
-          <>
-            {/* Idle gallop: a soft bob + lean, like the horse is cantering in place */}
-            <motion.img
-              src="/images/favicon-gold.png"
-              alt=""
-              className="h-9 w-9 object-contain"
-              style={{ filter: 'drop-shadow(0 1px 2px rgba(0,0,0,0.4))' }}
-              animate={reduce ? undefined : { y: [0, -2.5, 0], rotate: [0, -2.5, 0] }}
-              transition={{ repeat: Infinity, duration: 2.2, ease: 'easeInOut' }}
-            />
-            {/* Sparkle badge */}
-            <motion.span
-              className="absolute -right-0.5 -top-0.5 flex h-4 w-4 items-center justify-center rounded-full"
-              style={{
-                background: 'linear-gradient(135deg, var(--gold-bright), var(--gold-mid))',
-                border: '1.5px solid var(--forest-deep)',
-              }}
-              animate={reduce ? undefined : { scale: [1, 1.18, 1] }}
-              transition={{ repeat: Infinity, duration: 2.2, ease: 'easeInOut' }}
-            >
-              <Sparkles className="h-2 w-2" style={{ color: 'var(--forest-deep)' }} />
-            </motion.span>
-          </>
-        )}
-      </motion.button>
+      {/* Floating launcher — The Stable Hand mascot (gold horse), gamified */}
+      <StablehandLauncher open={open} onClick={toggle} />
 
       <AnimatePresence>
         {open && (
@@ -392,7 +297,7 @@ export function AgentWidget() {
                   className="font-[family-name:var(--font-display)] text-sm font-bold"
                   style={{ color: 'var(--parchment)' }}
                 >
-                  The Stablehand
+                  The Stable Hand
                 </div>
                 <div className="text-[11px]" style={{ color: 'var(--gold-mid)' }}>
                   Your Stable Press guide
@@ -554,7 +459,7 @@ export function AgentWidget() {
                   type="button"
                   onClick={() => void toggleMic()}
                   disabled={transcribing}
-                  aria-label={recording ? 'Stop recording' : 'Speak to the Stablehand'}
+                  aria-label={recording ? 'Stop recording' : 'Speak to The Stable Hand'}
                   title={recording ? 'Stop & send' : 'Speak'}
                   className={
                     'flex h-9 w-9 items-center justify-center rounded-full border transition-colors disabled:opacity-50 ' +

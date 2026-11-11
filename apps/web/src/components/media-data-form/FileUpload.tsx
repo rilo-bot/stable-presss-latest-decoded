@@ -68,6 +68,7 @@ export function FileUpload({
               ...serifStyle,
             }}
             aria-pressed={opt === urlOrFile}
+            data-agent-id={`reg.media-mode-${opt}`}
           >
             {opt === 'url' ? <LinkIcon size={11} /> : <Upload size={11} />}
             {opt === 'url' ? 'External URL' : 'File Upload'}
@@ -82,6 +83,8 @@ export function FileUpload({
             value={url}
             onChange={(e) => setUrl(e.target.value)}
             placeholder="https://example.com/article or /articles/art-001"
+            data-agent-id="reg.media-url"
+            aria-label="Media URL"
             style={inputStyle}
             type="url"
           />
@@ -93,7 +96,7 @@ export function FileUpload({
 
       {/* ── File Upload panel ── */}
       {urlOrFile === 'file' && (
-        <div>
+        <div data-agent-id="reg.media-file" data-agent-label="Upload file">
           {/* Hidden native file input */}
           <input
             ref={fileInputRef}

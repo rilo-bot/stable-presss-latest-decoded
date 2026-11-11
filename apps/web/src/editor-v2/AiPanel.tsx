@@ -92,7 +92,9 @@ function thumbOf(p: AgentProposal): string | undefined {
   return url && /^https?:\/\/|^\/api\//.test(url) ? url : undefined;
 }
 
-export function AiPanel() {
+/** `onClose` is passed only where the panel is a phone bottom sheet: it adds a
+ *  close button to the header. The docked desktop pane closes from the toolbar. */
+export function AiPanel({ onClose }: { onClose?: () => void } = {}) {
   const chat = useEditorStore((s) => s.chat);
   const chatBusy = useEditorStore((s) => s.chatBusy);
   const chatHasMore = useEditorStore((s) => s.chatHasMore);
@@ -489,11 +491,26 @@ export function AiPanel() {
           <button
             onClick={() => voice.setVoiceMode((v) => !v)}
             aria-pressed={voice.voiceMode}
+            data-agent-id="mag.ai-voice"
+            data-agent-label={voice.voiceMode ? 'Stop reading replies aloud' : 'Read replies aloud'}
             title={voice.voiceMode ? 'Reading replies aloud — click to mute' : 'Read replies aloud'}
             className={'ml-auto flex h-7 w-7 items-center justify-center rounded-full ' + (voice.voiceMode ? 'text-studio-bg' : 'text-studio-ink-2 hover:bg-studio-raise-2')}
             style={voice.voiceMode ? { background: 'var(--gold-bright)' } : undefined}
           >
             {voice.voiceMode ? <Volume2 size={14} /> : <VolumeX size={14} />}
+          </button>
+        )}
+        {onClose && (
+          <button
+            type="button"
+            onClick={onClose}
+            data-agent-id="mag.ai-close"
+            data-agent-label="Close the Magazine AI Studio"
+            title="Close"
+            aria-label="Close the Magazine AI Studio"
+            className={(voice.voiceReady ? '' : 'ml-auto ') + 'flex h-8 w-8 items-center justify-center rounded-full text-studio-ink-2 hover:bg-studio-raise-2 hover:text-studio-ink'}
+          >
+            <X size={18} />
           </button>
         )}
       </div>
@@ -504,6 +521,7 @@ export function AiPanel() {
           <button
             key={tk}
             type="button"
+            data-agent-id={`mag.ai-tab-${tk}`}
             onClick={() => setTab(tk)}
             className={'flex-1 px-3 py-2 transition-colors ' + (tab === tk ? 'text-studio-ink' : 'text-studio-ink-3 hover:text-studio-ink-2')}
             style={tab === tk ? { boxShadow: 'inset 0 -2px 0 var(--gold-bright)' } : undefined}
@@ -519,6 +537,7 @@ export function AiPanel() {
         <div className="flex items-center gap-1.5 border-b border-studio-hair px-2 py-1.5">
           <button
             onClick={() => setThreadsOpen(true)}
+            data-agent-id="mag.ai-threads"
             className="flex min-w-0 flex-1 items-center gap-1.5 rounded-sm px-1.5 py-1 text-left hover:bg-studio-raise"
             title="All chats"
           >
@@ -528,6 +547,7 @@ export function AiPanel() {
           </button>
           <button
             onClick={() => newThread()}
+            data-agent-id="mag.ai-new-chat"
             className="flex-shrink-0 rounded-sm p-1.5 text-studio-ink-3 hover:bg-studio-raise-2 hover:text-studio-ink"
             title="Start a new chat"
             aria-label="Start a new chat"
@@ -553,6 +573,7 @@ export function AiPanel() {
             type="button"
             onClick={() => uploadsFileRef.current?.click()}
             disabled={uploadsAdding}
+            data-agent-id="mag.ai-uploads-add"
             className="flex w-full items-center justify-center gap-1.5 rounded-md border border-dashed border-studio-edge py-2 text-ui-sm font-semibold text-studio-ink-2 hover:border-[var(--gold-bright)]/60 hover:text-studio-ink disabled:opacity-50"
           >
             {uploadsAdding ? <ShimmerText>Adding…</ShimmerText> : <><Paperclip size={13} /> Add a document or photo</>}
@@ -568,18 +589,18 @@ export function AiPanel() {
           {uploads.map((u) => (
             <div key={u.id} className="flex items-center gap-2 rounded-md border border-studio-hair bg-studio-raise px-2.5 py-2 text-ui-sm">
               <FileText size={14} className="flex-shrink-0 text-studio-ink-3" />
-              <button type="button" onClick={() => void previewUpload(u)} title="Preview" className="min-w-0 flex-1 truncate text-left text-studio-ink hover:text-studio-ink">
+              <button type="button" onClick={() => void previewUpload(u)} title="Preview" data-agent-id={`mag.ai-upload-${u.id}`} data-agent-label={`Preview upload “${u.originalName}”`} className="min-w-0 flex-1 truncate text-left text-studio-ink hover:text-studio-ink">
                 {u.originalName}
               </button>
               {u.hasText && (
-                <button type="button" onClick={() => void fillFromUpload(u)} disabled={chatBusy} className="flex-shrink-0 rounded-sm border border-studio-edge px-1.5 py-0.5 text-ui-sm text-studio-ink-2 hover:bg-studio-raise-2 disabled:opacity-40" title="Use this document to fill the page you're currently on">
+                <button type="button" onClick={() => void fillFromUpload(u)} disabled={chatBusy} data-agent-id={`mag.ai-upload-${u.id}-fill`} data-agent-label={`Fill this page from “${u.originalName}”`} className="flex-shrink-0 rounded-sm border border-studio-edge px-1.5 py-0.5 text-ui-sm text-studio-ink-2 hover:bg-studio-raise-2 disabled:opacity-40" title="Use this document to fill the page you're currently on">
                   Fill this page
                 </button>
               )}
             </div>
           ))}
           {uploadImages.map((m) => (
-            <button key={m.id} type="button" onClick={() => previewImage(m)} title="Preview" className="flex w-full items-center gap-2 rounded-md border border-studio-hair bg-studio-raise px-2.5 py-2 text-left text-ui-sm hover:bg-studio-raise">
+            <button key={m.id} type="button" onClick={() => previewImage(m)} title="Preview" data-agent-id={`mag.ai-upload-image-${m.id}`} data-agent-label={`Preview uploaded image “${m.alt || 'Image'}”`} className="flex w-full items-center gap-2 rounded-md border border-studio-hair bg-studio-raise px-2.5 py-2 text-left text-ui-sm hover:bg-studio-raise">
               <img src={m.url} alt="" className="h-7 w-10 flex-shrink-0 rounded-sm object-cover" />
               <span className="min-w-0 flex-1 truncate text-studio-ink">{m.alt || 'Image'}</span>
             </button>
@@ -597,6 +618,7 @@ export function AiPanel() {
             <button
               onClick={() => void loadOlderChat()}
               disabled={chatLoadingOlder}
+              data-agent-id="mag.ai-load-older"
               className="rounded-sm border border-studio-edge px-2 py-0.5 text-ui-sm text-studio-ink-3 hover:bg-studio-raise-2 disabled:opacity-40"
             >
               {chatLoadingOlder ? 'Loading…' : 'Load earlier messages'}
@@ -672,10 +694,10 @@ export function AiPanel() {
               Ready to review
             </span>
             <div className="flex items-center gap-1.5">
-              <button onClick={() => void applyAll()} className="flex items-center gap-1 rounded-sm bg-emerald-500 px-2.5 py-1 text-ui-sm font-semibold text-studio-ink hover:bg-emerald-600" title="Apply these changes to the page">
+              <button onClick={() => void applyAll()} data-agent-id="mag.ai-apply" className="flex items-center gap-1 rounded-sm bg-emerald-500 px-2.5 py-1 text-ui-sm font-semibold text-studio-ink hover:bg-emerald-600" title="Apply these changes to the page">
                 <Check size={12} /> Use these changes
               </button>
-              <button onClick={() => discard()} className="flex items-center gap-1 rounded-sm border border-studio-edge px-2.5 py-1 text-ui-sm text-studio-ink-2 hover:bg-studio-raise-2" title="Dismiss these suggestions — nothing has been changed yet">
+              <button onClick={() => discard()} data-agent-id="mag.ai-discard" className="flex items-center gap-1 rounded-sm border border-studio-edge px-2.5 py-1 text-ui-sm text-studio-ink-2 hover:bg-studio-raise-2" title="Dismiss these suggestions — nothing has been changed yet">
                 <X size={12} /> Don’t use these
               </button>
             </div>
@@ -707,6 +729,8 @@ export function AiPanel() {
               type="button"
               onClick={() => void openPreview(att)}
               disabled={ingesting}
+              data-agent-id={`mag.ai-attachment-${att.id}`}
+              data-agent-label={`Preview attachment “${att.file.name}”`}
               title="Open preview in the side panel"
               className="flex min-w-0 flex-1 items-center gap-1.5 text-left hover:text-emerald-100 disabled:opacity-70"
             >
@@ -722,7 +746,7 @@ export function AiPanel() {
               <span className="truncate">{ingesting ? <ShimmerText>{`Reading ${att.file.name}…`}</ShimmerText> : att.file.name}</span>
               {!ingesting && <span className="ml-1 flex-shrink-0 text-emerald-200/60">Preview →</span>}
             </button>
-            <button type="button" onClick={() => removeAtt(att.id)} disabled={ingesting} aria-label="Remove attachment" className="flex-shrink-0 text-emerald-200/60 hover:text-emerald-100 disabled:opacity-50"><X size={11} /></button>
+            <button type="button" onClick={() => removeAtt(att.id)} disabled={ingesting} aria-label="Remove attachment" data-agent-id={`mag.ai-attachment-${att.id}-remove`} data-agent-label={`Remove attachment “${att.file.name}”`} className="flex-shrink-0 text-emerald-200/60 hover:text-emerald-100 disabled:opacity-50"><X size={11} /></button>
           </div>
         ))}
         <input ref={fileRef} type="file" accept={ATTACH_ACCEPT} multiple className="hidden" onChange={(e) => addFiles(e.target.files)} />
@@ -758,6 +782,7 @@ export function AiPanel() {
           <button
             type="button"
             onClick={() => fileRef.current?.click()}
+            data-agent-id="mag.ai-attach"
             disabled={ingesting || chatBusy}
             aria-label="Attach documents or images"
             title="Attach documents/images — docs fill the page, images can be placed on it. You can also paste an image (Ctrl/Cmd+V)."
@@ -767,6 +792,8 @@ export function AiPanel() {
           </button>
           <textarea
             ref={taRef}
+            data-agent-id="mag.ai-input"
+            data-agent-label="Magazine AI Studio message"
             value={input}
             rows={1}
             onChange={(e) => setInput(e.target.value)}
@@ -805,6 +832,7 @@ export function AiPanel() {
               type="button"
               onClick={() => void voice.toggleMic()}
               disabled={voice.transcribing}
+              data-agent-id="mag.ai-mic"
               aria-label={voice.recording ? 'Stop recording' : 'Speak to the Design Helper'}
               title={voice.recording ? 'Stop & send' : 'Speak'}
               className={
@@ -817,6 +845,8 @@ export function AiPanel() {
           )}
           <button
             type="submit"
+            data-agent-id="mag.ai-send"
+            data-agent-label="Send to the Magazine AI Studio"
             aria-label="Send"
             title="Send"
             disabled={(!input.trim() && atts.length === 0) || chatBusy || ingesting}

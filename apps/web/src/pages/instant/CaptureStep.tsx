@@ -78,6 +78,7 @@ export function CaptureStep({ allowedModes }: CaptureStepProps) {
                   type="button"
                   onClick={() => setMode(m)}
                   aria-pressed={mode === m}
+                  data-agent-id={`instant.mode-${m}`}
                   className={cn(
                     'rounded-sm px-3.5 py-1.5 text-[13px] font-medium transition-colors',
                     'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring',
@@ -99,6 +100,7 @@ export function CaptureStep({ allowedModes }: CaptureStepProps) {
           </label>
           <input
             id="instant-topic"
+            data-agent-id="instant.topic"
             value={topic}
             onChange={(e) => setTopic(e.target.value.slice(0, MAX_TOPIC_CHARS))}
             placeholder="e.g. Two-year-old filly gallops at Flemington — trainer pleased"
@@ -118,9 +120,24 @@ export function CaptureStep({ allowedModes }: CaptureStepProps) {
             </span>
           </div>
 
+          {/* Each hidden input sits right beside the button it stands behind:
+              the camera input BEFORE "Take photo", the library input AFTER
+              "Add photos". The Stable Hand Operator's `upload` tool pairs an
+              input with its visible button by that adjacency. */}
           <div className="flex flex-wrap gap-2">
+            {/* `capture` is what opens the camera rather than the library. */}
+            <input
+              ref={cameraRef}
+              type="file"
+              accept="image/*"
+              capture="environment"
+              className="hidden"
+              data-agent-id="instant.camera-input"
+              onChange={(e) => { pick(e.target.files); e.target.value = ''; }}
+            />
             <button
               type="button"
+              data-agent-id="instant.take-photo"
               onClick={() => cameraRef.current?.click()}
               disabled={working || roomLeft <= 0}
               className="flex items-center gap-2 rounded-sm border border-border bg-background px-3 py-2 text-[13px] font-medium text-foreground transition-colors hover:bg-muted/60 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:opacity-50"
@@ -129,31 +146,23 @@ export function CaptureStep({ allowedModes }: CaptureStepProps) {
             </button>
             <button
               type="button"
+              data-agent-id="instant.add-photos"
               onClick={() => libraryRef.current?.click()}
               disabled={working || roomLeft <= 0}
               className="flex items-center gap-2 rounded-sm border border-border bg-background px-3 py-2 text-[13px] font-medium text-foreground transition-colors hover:bg-muted/60 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:opacity-50"
             >
               <ImagePlus size={14} className="text-muted-foreground" /> Add photos
             </button>
+            <input
+              ref={libraryRef}
+              type="file"
+              accept="image/*"
+              multiple
+              className="hidden"
+              data-agent-id="instant.photo-input"
+              onChange={(e) => { pick(e.target.files); e.target.value = ''; }}
+            />
           </div>
-
-          {/* `capture` is what opens the camera rather than the library. */}
-          <input
-            ref={cameraRef}
-            type="file"
-            accept="image/*"
-            capture="environment"
-            className="hidden"
-            onChange={(e) => { pick(e.target.files); e.target.value = ''; }}
-          />
-          <input
-            ref={libraryRef}
-            type="file"
-            accept="image/*"
-            multiple
-            className="hidden"
-            onChange={(e) => { pick(e.target.files); e.target.value = ''; }}
-          />
 
           <PhotoTray photos={photos} coverPhotoId={coverPhotoId} onRemove={removePhoto} />
         </div>
@@ -177,6 +186,7 @@ export function CaptureStep({ allowedModes }: CaptureStepProps) {
             type="button"
             onClick={() => void generate()}
             disabled={!ready || working}
+            data-agent-id="instant.generate"
             className="flex w-full items-center justify-center gap-2 rounded-sm bg-primary px-4 py-2.5 text-[13.5px] font-semibold text-primary-foreground transition-opacity hover:opacity-90 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:opacity-50"
           >
             {working ? <Loader2 size={15} className="animate-spin" /> : <Zap size={15} />}

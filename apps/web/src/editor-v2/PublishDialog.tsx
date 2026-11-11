@@ -50,6 +50,9 @@ export function PublishDialog({ onClose, onPublished }: { onClose: () => void; o
       <div
         className="flex max-h-[85vh] w-full max-w-md flex-col overflow-hidden rounded-md border border-studio-hair bg-studio-panel text-studio-ink shadow-2xl"
         onMouseDown={(e) => e.stopPropagation()}
+        role="dialog"
+        aria-label="Publish selected pages"
+        data-agent-id="mag.publish-dialog"
       >
         {/* Header */}
         <div className="flex items-center gap-2 border-b border-studio-hair px-4 py-3">
@@ -58,7 +61,7 @@ export function PublishDialog({ onClose, onPublished }: { onClose: () => void; o
             <p className="text-ui font-bold">Publish selected pages</p>
             <p className="truncate text-ui-sm text-studio-ink-3">Choose which pages go public in Bulletins</p>
           </div>
-          <button onClick={onClose} className="ml-auto rounded-sm p-1 text-studio-ink-3 hover:bg-studio-raise-2 hover:text-studio-ink" aria-label="Close">
+          <button onClick={onClose} data-agent-id="mag.publish-close" className="ml-auto rounded-sm p-1 text-studio-ink-3 hover:bg-studio-raise-2 hover:text-studio-ink" aria-label="Close">
             <X size={16} />
           </button>
         </div>
@@ -71,6 +74,7 @@ export function PublishDialog({ onClose, onPublished }: { onClose: () => void; o
           <button
             type="button"
             onClick={() => setAll(!allSelected)}
+            data-agent-id="mag.publish-select-all"
             className="ml-auto flex items-center gap-1 rounded-sm border border-studio-edge px-2 py-1 text-ui-sm text-studio-ink-2 hover:bg-studio-raise-2"
           >
             {allSelected ? <Square size={12} /> : <CheckSquare size={12} />}
@@ -104,6 +108,8 @@ export function PublishDialog({ onClose, onPublished }: { onClose: () => void; o
               >
                 <input
                   type="checkbox"
+                  data-agent-id={`mag.publish-page-${p.index + 1}`}
+                  data-agent-label={`Publish page ${p.index + 1}`}
                   checked={p.selectedForPublish}
                   onChange={(e) => void setPageSelected(p.id, e.target.checked)}
                   className="accent-emerald-500"
@@ -124,12 +130,14 @@ export function PublishDialog({ onClose, onPublished }: { onClose: () => void; o
 
         {/* Footer */}
         <div className="flex items-center gap-2 border-t border-studio-hair px-4 py-3">
-          <button type="button" onClick={onClose} className="rounded-sm border border-studio-edge px-3 py-2 text-ui-sm text-studio-ink-2 hover:bg-studio-raise-2">
+          <button type="button" onClick={onClose} data-agent-id="mag.publish-cancel" className="rounded-sm border border-studio-edge px-3 py-2 text-ui-sm text-studio-ink-2 hover:bg-studio-raise-2">
             Cancel
           </button>
           <button
             type="button"
             onClick={() => void doPublish()}
+            data-agent-id="mag.publish-confirm"
+            aria-busy={publishing}
             disabled={publishing || selectedCount === 0 || !!blocked}
             title={blocked || undefined}
             className="ml-auto flex items-center justify-center gap-1.5 rounded-sm bg-emerald-500 px-3 py-2 text-ui-sm font-semibold text-studio-ink hover:bg-emerald-600 disabled:opacity-50"

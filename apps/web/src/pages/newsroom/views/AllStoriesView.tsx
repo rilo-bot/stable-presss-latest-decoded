@@ -58,6 +58,7 @@ export function AllStoriesView({
             onChange={(e) => setSearchQuery(e.target.value)}
             className="w-full pl-8 pr-3 py-2 text-sm border border-input rounded-sm bg-card focus:outline-none focus:ring-1 focus:ring-ring"
             aria-label="Search stories"
+            data-agent-id="story.search-input"
           />
         </div>
         <Button size="sm" variant="outline" className="gap-1.5 text-sm" aria-label="Filter stories">
@@ -97,6 +98,7 @@ export function AllStoriesView({
                         onClick={() => navigate(`/articles/${article.id}`)}
                         className="text-left w-full focus-visible:outline-none"
                         aria-label={`Open story: ${article.title}`}
+                        data-agent-id={`story.row-${article.id}.open`}
                       >
                         <span className="font-medium text-sm text-foreground line-clamp-1 block hover:opacity-75 transition-opacity">{article.title}</span>
                       </button>
@@ -117,6 +119,7 @@ export function AllStoriesView({
                       {editable ? (
                         <button
                           onClick={() => onEdit(article)}
+                          data-agent-id={`story.row-${article.id}.edit`}
                           className="text-[12px] uppercase tracking-[0.08em] font-semibold text-primary hover:text-primary/80 transition-colors"
                         >
                           Edit

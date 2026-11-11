@@ -24,7 +24,7 @@
     // `import.meta.url` and works fine there; only a CommonJS `module` setting
     // rejects it. Modelling how they actually execute is the point.
     "module": "ESNext",
-    "moduleResolution": "Node"
+    "moduleResolution": "Bundler"
   },
   "include": ["src", "scripts"]
 }

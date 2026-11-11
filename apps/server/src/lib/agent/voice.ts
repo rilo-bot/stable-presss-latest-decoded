@@ -33,13 +33,28 @@ const extFor = (mimetype: string): string =>
           ? 'mp3'
           : 'webm'
 
-/** Transcribe a recorded audio clip to text. */
-export async function transcribeAudio(audio: Buffer, mimetype: string): Promise<string> {
-  const type = mimetype || 'audio/webm'
+// Stable Press works in ENGLISH only. The `language` field is only a hint to
+// the gpt-4o transcribe models — a short "hello hello" still came back in Urdu
+// script, and the assistant then answered in Urdu. So: steer with a prompt too,
+// and if the text still isn't Latin script, re-run on whisper-1, which honours
+// language=en strictly.
+const ENGLISH_PROMPT =
+  'The speaker is talking to a horse-racing publication app in English. Transcribe in English, using the Latin alphabet only.'
+
+/** True when the text is mostly non-Latin letters (Arabic, Devanagari, CJK…). */
+function looksNonLatin(text: string): boolean {
+  const letters = text.match(/\p{L}/gu) ?? []
+  if (letters.length === 0) return false
+  const latin = letters.filter((ch) => /\p{Script=Latin}/u.test(ch)).length
+  return latin / letters.length < 0.6
+}
+
+async function transcribeWith(model: string, audio: Buffer, type: string): Promise<string> {
   const form = new FormData()
   form.append('file', new Blob([new Uint8Array(audio)], { type }), `clip.${extFor(type)}`)
-  form.append('model', STT_MODEL)
+  form.append('model', model)
   if (STT_LANGUAGE) form.append('language', STT_LANGUAGE)
+  if (STT_LANGUAGE === 'en') form.append('prompt', ENGLISH_PROMPT)
   const r = await fetch(`${OPENAI}/audio/transcriptions`, {
     method: 'POST',
     headers: { Authorization: `Bearer ${API_KEY}` },
@@ -48,6 +63,21 @@ export async function transcribeAudio(audio: Buffer, mimetype: string): Promise<
   if (!r.ok) throw new Error(`transcription ${r.status}: ${await r.text()}`)
   const data = (await r.json()) as { text?: string }
   return (data.text ?? '').trim()
+}
+
+/** Transcribe a recorded audio clip to English text. */
+export async function transcribeAudio(audio: Buffer, mimetype: string): Promise<string> {
+  const type = mimetype || 'audio/webm'
+  const text = await transcribeWith(STT_MODEL, audio, type)
+  if (STT_LANGUAGE !== 'en' || !looksNonLatin(text)) return text
+  try {
+    const retry = await transcribeWith('whisper-1', audio, type)
+    if (retry && !looksNonLatin(retry)) return retry
+  } catch (err) {
+    console.warn('[voice] English re-transcription failed:', err)
+  }
+  // Still not English — hand back nothing rather than a foreign-script prompt.
+  return ''
 }
 
 /** Synthesise speech for a short reply. Returns MP3 bytes. */

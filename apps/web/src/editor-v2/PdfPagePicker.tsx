@@ -86,11 +86,16 @@ export function PdfPagePicker({
   actionLabel = 'Read that page’s layout',
   emptyNote = 'No PDF attached to this magazine yet.',
   onRead,
+  agentPrefix,
 }: {
   disabled?: boolean;
   actionLabel?: string;
   emptyNote?: string;
   onRead: (docId: string, pageNo: number) => void;
+  /** Stablehand Operator anchor prefix (e.g. 'mag.layout-pdf'): the controls get
+   *  `<prefix>-doc`, `<prefix>-page`, `<prefix>-go`. Two pickers share a panel, so
+   *  each caller names its own. */
+  agentPrefix?: string;
 }) {
   const docs = usePdfChoices();
   const [docId, setDocId] = useState('');
@@ -115,6 +120,8 @@ export function PdfPagePicker({
           value={docId}
           onChange={(e) => { setDocId(e.target.value); setPageNo(1); }}
           disabled={disabled}
+          data-agent-id={agentPrefix ? `${agentPrefix}-doc` : undefined}
+          data-agent-label={agentPrefix ? 'Which PDF' : undefined}
           className="min-w-0 flex-1 rounded-sm border border-studio-edge bg-studio-raise px-1.5 py-1 text-ui-sm text-studio-ink"
         >
           {docs.map((d) => (
@@ -134,12 +141,15 @@ export function PdfPagePicker({
           value={pageNo}
           onChange={(e) => setPageNo(Math.max(1, Math.floor(Number(e.target.value) || 1)))}
           disabled={disabled}
+          data-agent-id={agentPrefix ? `${agentPrefix}-page` : undefined}
+          data-agent-label={agentPrefix ? 'PDF page number' : undefined}
           className="w-16 rounded-sm border border-studio-edge bg-studio-raise px-1.5 py-1 text-ui-sm tabular-nums text-studio-ink"
         />
         {chosen && chosen.pages > 0 && <span className="text-studio-ink-4">of {chosen.pages}</span>}
         <button
           onClick={() => chosen && onRead(chosen.docId, pageNo)}
           disabled={disabled || !chosen}
+          data-agent-id={agentPrefix ? `${agentPrefix}-go` : undefined}
           className="ml-auto rounded-sm border border-studio-edge px-2 py-1 text-ui-sm font-semibold text-studio-ink hover:bg-studio-raise-2 disabled:opacity-50"
         >
           {actionLabel}

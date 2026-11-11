@@ -48,7 +48,7 @@ export function OverviewTab({
           <p className="text-[10px] uppercase tracking-[0.08em] text-muted-foreground mb-2">
             Cover Image
           </p>
-          <CoverUploader value={liveEpisode.coverUrl ?? ''} onChange={onCoverChange} />
+          <CoverUploader agentId="podcast.cover" value={liveEpisode.coverUrl ?? ''} onChange={onCoverChange} />
         </div>
       ) : liveEpisode.coverUrl ? (
         <img
@@ -83,9 +83,10 @@ export function OverviewTab({
             <Textarea
               value={descEdit}
               onChange={(e) => setDescEdit(e.target.value)}
+              data-agent-id="podcast.description"
               className="h-32 resize-none text-sm"
             />
-            <Button variant="outline" size="sm" onClick={handleSaveDesc}>
+            <Button variant="outline" size="sm" onClick={handleSaveDesc} data-agent-id="podcast.save-description">
               Save Description
             </Button>
           </div>
@@ -124,6 +125,7 @@ export function OverviewTab({
       {canDelete && (
         <button
           onClick={handleDelete}
+          data-agent-id="podcast.delete-episode"
           className="flex items-center gap-2 text-xs text-destructive hover:text-destructive/80 transition-colors"
         >
           <Trash size={12} />
@@ -193,6 +195,7 @@ export function GuestsTab({
               {can('podcast.edit') && isOwn && (
                 <button
                   aria-label={`Remove ${guest.name}`}
+                  data-agent-id={`podcast.guest-remove-${guest.id}`}
                   onClick={() => {
                     removeGuest(liveEpisode.id, guest.id);
                     toast.success(`${guest.name} removed.`);
@@ -217,6 +220,7 @@ export function GuestsTab({
               <Label htmlFor="g-name" className="text-xs">Name</Label>
               <Input
                 id="g-name"
+                data-agent-id="podcast.guest-name"
                 value={guestForm.name}
                 onChange={(e) => setGuestForm((f) => ({ ...f, name: e.target.value }))}
                 placeholder="Full name"
@@ -227,6 +231,7 @@ export function GuestsTab({
               <Label htmlFor="g-title" className="text-xs">Title / Role</Label>
               <Input
                 id="g-title"
+                data-agent-id="podcast.guest-title"
                 value={guestForm.title}
                 onChange={(e) => setGuestForm((f) => ({ ...f, title: e.target.value }))}
                 placeholder="e.g. Head Trainer"
@@ -238,13 +243,14 @@ export function GuestsTab({
             <Label htmlFor="g-bio" className="text-xs">Bio (optional)</Label>
             <Textarea
               id="g-bio"
+              data-agent-id="podcast.guest-bio"
               value={guestForm.bio}
               onChange={(e) => setGuestForm((f) => ({ ...f, bio: e.target.value }))}
               placeholder="Short biography"
               className="mt-1 h-16 resize-none text-sm"
             />
           </div>
-          <Button size="sm" className="bg-primary text-primary-foreground" onClick={handleAddGuest}>
+          <Button size="sm" className="bg-primary text-primary-foreground" onClick={handleAddGuest} data-agent-id="podcast.add-guest">
             <Plus size={13} className="mr-1.5" />
             Add Guest
           </Button>
@@ -254,6 +260,7 @@ export function GuestsTab({
               variant="outline"
               size="sm"
               className="w-full"
+              data-agent-id="podcast.confirm-guests"
               onClick={() => {
                 advanceStatus(liveEpisode.id, 'guests_added');
                 toast.success('Guest list confirmed. Ready for description.');
@@ -304,6 +311,8 @@ export function DistributionTab({
             <button
               key={ch.id}
               disabled={!canToggle}
+              data-agent-id={`podcast.channel-${ch.id}`}
+              aria-pressed={active}
               onClick={() => canToggle && handleToggleChannel(ch.id)}
               className={cn(
                 'w-full flex items-center justify-between px-4 py-3 rounded-sm border text-left transition-all',
@@ -382,9 +391,10 @@ export function ReviewTab({
             value={reviewNote}
             onChange={(e) => setReviewNote(e.target.value)}
             placeholder="Provide feedback for the producer…"
+            data-agent-id="podcast.review-note"
             className="h-36 resize-none"
           />
-          <Button variant="outline" size="sm" onClick={handleSaveNote}>
+          <Button variant="outline" size="sm" onClick={handleSaveNote} data-agent-id="podcast.save-review-note">
             Save Review Notes
           </Button>
         </div>

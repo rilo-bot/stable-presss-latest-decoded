@@ -11,6 +11,7 @@ import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { toast } from 'sonner';
 import { SectionHeading } from '@/components/SectionHeading';
+import { useOrgOperatorActions } from '@/pages/operator-site/useOrgOperatorActions';
 import {
   Building2, Users, UserPlus, Trash2, Check, X, ShieldCheck, Loader2, PlusCircle, Star, MapPin, ChevronLeft,
 } from 'lucide-react';
@@ -53,6 +54,9 @@ export default function OrgDashboard() {
     () => horses.filter((h) => (detail?.horseIds ?? []).includes(h.id)),
     [horses, detail],
   );
+
+  // The Stable Hand: org.read / org.addMember / org.removeMember, gated like the UI.
+  useOrgOperatorActions({ orgId: id, detail, myRole, canManage, isOwner, myUserId: currentUser?.id, horses: scopedHorses });
 
   const onAddMember = async () => {
     if (!memberEmail.trim()) return;
@@ -165,6 +169,8 @@ export default function OrgDashboard() {
             {detail.members.map((m) => (
               <li
                 key={m.userId}
+                data-agent-id={`member.org-member-${m.userId}`}
+                data-agent-label={`${m.name} (${m.email})`}
                 className="flex items-center gap-3 p-3 border border-border/60 rounded-sm bg-card"
               >
                 <div className="flex-1 min-w-0">
@@ -180,6 +186,8 @@ export default function OrgDashboard() {
                     disabled={busy === m.userId}
                     className="text-muted-foreground hover:text-destructive transition-colors"
                     aria-label="Remove member"
+                    data-agent-id={`member.org-member-remove-${m.userId}`}
+                    data-agent-label={`Remove ${m.name}`}
                   >
                     <Trash2 size={14} />
                   </button>
@@ -198,18 +206,21 @@ export default function OrgDashboard() {
                 onChange={(e) => setMemberEmail(e.target.value)}
                 placeholder="person@example.com"
                 type="email"
+                data-agent-id="member.org-member-email"
               />
               <div className="flex items-center gap-2">
                 <select
                   value={memberRole}
                   onChange={(e) => setMemberRole(e.target.value as OrgRole)}
+                  data-agent-id="member.org-member-role"
+                  aria-label="Member role"
                   className="flex-1 h-9 rounded-md border border-input bg-background px-2 text-sm"
                 >
                   <option value="member">Member</option>
                   {isOwner && <option value="manager">Manager</option>}
                   {isOwner && <option value="owner">Owner</option>}
                 </select>
-                <Button size="sm" onClick={onAddMember} disabled={busy === 'member' || !memberEmail.trim()} className="gap-1.5">
+                <Button size="sm" onClick={onAddMember} disabled={busy === 'member' || !memberEmail.trim()} className="gap-1.5" data-agent-id="member.org-member-add">
                   {busy === 'member' ? <Loader2 size={14} className="animate-spin" /> : <UserPlus size={14} />}
                   Add
                 </Button>

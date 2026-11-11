@@ -306,6 +306,9 @@ export interface Filters {
 }
 
 export const DATE_RANGES = [
+  // "This week" is a question staff ask (and ask The Stable Hand) — answer it
+  // from a real window rather than the nearest month.
+  { id: '7', label: 'Last 7 days', days: 7 },
   { id: '30', label: 'Last 30 days', days: 30 },
   { id: '90', label: 'Last 90 days', days: 90 },
   { id: 'all', label: 'All time', days: 3650 },

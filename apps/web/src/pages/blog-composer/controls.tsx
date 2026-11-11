@@ -186,12 +186,15 @@ export function TextInput({
   ariaLabel,
   type = 'text',
   onCommit,
+  agentId,
 }: {
   value: string;
   onChange: (v: string) => void;
   placeholder?: string;
   ariaLabel: string;
   type?: string;
+  /** Operator anchor (data-agent-id), e.g. 'blog.new-title-input'. */
+  agentId?: string;
   /**
    * Fired on Enter, comma, and blur. For inputs that ADD something (a tag)
    * rather than edit it — committing on blur as well means a typed value is
@@ -204,6 +207,7 @@ export function TextInput({
       type={type}
       value={value}
       aria-label={ariaLabel}
+      data-agent-id={agentId}
       placeholder={placeholder}
       onChange={(e) => onChange(e.target.value)}
       onBlur={onCommit}
@@ -228,18 +232,22 @@ export function TextArea({
   placeholder,
   ariaLabel,
   rows = 3,
+  agentId,
 }: {
   value: string;
   onChange: (v: string) => void;
   placeholder?: string;
   ariaLabel: string;
   rows?: number;
+  /** Operator anchor (data-agent-id). */
+  agentId?: string;
 }) {
   return (
     <textarea
       value={value}
       rows={rows}
       aria-label={ariaLabel}
+      data-agent-id={agentId}
       placeholder={placeholder}
       onChange={(e) => onChange(e.target.value)}
       className={cn(inputCls, 'resize-y')}

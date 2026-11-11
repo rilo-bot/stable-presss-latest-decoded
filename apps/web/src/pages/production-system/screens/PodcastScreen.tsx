@@ -37,6 +37,7 @@ import { EpisodeCard } from '@/pages/podcast-workflow/components';
 import { CreateEpisodeDialog } from '@/pages/podcast-workflow/CreateEpisodeDialog';
 import { DeleteEpisodeDialog } from '@/pages/podcast-workflow/DeleteEpisodeDialog';
 import { EpisodeDetailPanel } from '@/pages/podcast-workflow/EpisodeDetailPanel';
+import { usePodcastOperatorActions } from '../operator-content/usePodcastOperatorActions';
 
 export default function PodcastScreen() {
   const fetchPodcastEpisodes = usePodcastStore((s) => s.fetchPodcastEpisodes);
@@ -90,6 +91,11 @@ export default function PodcastScreen() {
     if (selectedEpisode?.id === deleteTarget.id) setSelectedEpisode(null);
   };
 
+  // The Stable Hand Operator: podcast.list / create / advance / sendBack /
+  // publish / unpublish / addGuest / setChannels — each drives the cards, the
+  // New episode dialog and the drawer below.
+  usePodcastOperatorActions({ canView: hasPodcastAccess, selectedId: selectedEpisode?.id ?? null });
+
   if (!hasPodcastAccess) {
     return (
       <div className="px-1 py-1">
@@ -117,7 +123,7 @@ export default function PodcastScreen() {
           </p>
         </div>
         {canCreate && (
-          <Button size="sm" className="gap-1.5" onClick={() => setCreateOpen(true)}>
+          <Button size="sm" className="gap-1.5" onClick={() => setCreateOpen(true)} data-agent-id="podcast.new">
             <Plus size={14} />
             New episode
           </Button>
@@ -130,6 +136,7 @@ export default function PodcastScreen() {
         <div className="flex min-w-max items-center gap-1">
           <button
             onClick={() => setFilterStatus('all')}
+            data-agent-id="podcast.filter-all"
             className={cn(
               'flex items-center gap-2 rounded-sm border px-3 py-2 text-xs font-medium transition-colors',
               filterStatus === 'all'
@@ -146,6 +153,7 @@ export default function PodcastScreen() {
               {i > 0 && <ChevronRight size={10} className="flex-shrink-0 text-muted-foreground/40" />}
               <button
                 onClick={() => setFilterStatus(stage.status)}
+                data-agent-id={`podcast.filter-${stage.status}`}
                 title={stage.description}
                 className={cn(
                   'flex items-center gap-1.5 rounded-sm border px-3 py-2 text-xs font-medium transition-colors',

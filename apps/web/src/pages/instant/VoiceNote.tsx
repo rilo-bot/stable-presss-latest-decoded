@@ -2,7 +2,7 @@
  * Voice note capture.
  *
  * Records from the mic and sends the clip to the server for transcription — the
- * same pipeline the Stablehand's push-to-talk uses (`agent/voice/voiceClient`),
+ * same pipeline The Stable Hand's push-to-talk uses (`agent/voice/voiceClient`),
  * so the OpenAI key stays server-side and there is one recorder in the codebase,
  * not two.
  *
@@ -130,6 +130,7 @@ export function VoiceNote({ transcript, onTranscript, disabled }: VoiceNoteProps
           </div>
           <textarea
             id="instant-transcript"
+            data-agent-id="instant.voice-note"
             value={transcript}
             onChange={(e) => onTranscript(e.target.value)}
             rows={4}

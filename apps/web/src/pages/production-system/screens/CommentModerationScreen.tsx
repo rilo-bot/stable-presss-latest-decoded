@@ -38,6 +38,8 @@ import { cn } from '@/lib/utils';
 import { relativeTime } from '@/stores/commentStore';
 import { EMOJI_SCALE, SIDE_LABEL, STEP_FILL, sideOf, type EmojiKey } from '@/types/reactions';
 
+import { commentAnchor, useCommentsOperatorActions } from '../operator-community/useCommentsOperatorActions';
+
 type Filter = 'reported' | 'hidden' | 'all';
 
 interface QueueRow {
@@ -80,6 +82,8 @@ export default function CommentModerationScreen() {
   /** The row a write is in flight for, so one row spins rather than the page. */
   const [busyId, setBusyId] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
+  /** Finished queue loads — lets The Stable Hand wait for the list it asked for. */
+  const [loads, setLoads] = useState(0);
 
   const reload = useCallback(async (next: Filter) => {
     setState('loading');
@@ -91,6 +95,8 @@ export default function CommentModerationScreen() {
       setState('ready');
     } catch {
       setState('error');
+    } finally {
+      setLoads((n) => n + 1);
     }
   }, []);
 
@@ -129,6 +135,19 @@ export default function CommentModerationScreen() {
     }
   };
 
+  // The Stable Hand: list / remove / restore / delete, by driving the controls below.
+  useCommentsOperatorActions({
+    filter,
+    items: queue.items,
+    reportedCount: queue.reportedCount,
+    hiddenCount: queue.hiddenCount,
+    truncated: queue.truncated,
+    state,
+    loads,
+    busyId,
+    error,
+  });
+
   return (
     <div className="space-y-6 pb-4">
       {/* ── Header ── */}
@@ -163,6 +182,8 @@ export default function CommentModerationScreen() {
               role="tab"
               type="button"
               aria-selected={active}
+              data-agent-id={commentAnchor.filter(f.id)}
+              data-agent-label={`${f.label} comments`}
               onClick={() => setFilter(f.id)}
               className={cn(
                 '-mb-px flex items-center gap-2 border-b-2 px-3 py-2 text-[12.5px] font-semibold transition-colors',
@@ -189,7 +210,7 @@ export default function CommentModerationScreen() {
       </div>
 
       {error && (
-        <p role="alert" className="rounded-sm border border-destructive/40 bg-destructive/5 px-4 py-2.5 text-[12.5px] text-destructive">
+        <p role="alert" data-agent-id="community.error" className="rounded-sm border border-destructive/40 bg-destructive/5 px-4 py-2.5 text-[12.5px] text-destructive">
           {error}
         </p>
       )}
@@ -227,7 +248,7 @@ export default function CommentModerationScreen() {
           </p>
         </div>
       ) : (
-        <ul className="space-y-3">
+        <ul className="space-y-3" data-agent-id="community.queue" data-agent-label="Comment queue">
           {queue.items.map((row) => (
             <QueueCard
               key={row.id}
@@ -281,6 +302,8 @@ function QueueCard({
 
   return (
     <li
+      data-agent-id={commentAnchor.card(row.id)}
+      data-agent-label={`Comment by ${row.authorName}`}
       className={cn(
         'rounded-sm border bg-card p-4 transition-opacity',
         busy && 'opacity-50',
@@ -367,6 +390,7 @@ function QueueCard({
           </p>
           <input
             id={`reason-${row.id}`}
+            data-agent-id={commentAnchor.reason(row.id)}
             value={reason}
             autoFocus
             maxLength={300}
@@ -378,6 +402,7 @@ function QueueCard({
             <button
               type="button"
               disabled={!reason.trim() || busy}
+              data-agent-id={commentAnchor.removeConfirm(row.id)}
               onClick={() => {
                 onHide(reason.trim());
                 setMode('idle');
@@ -389,6 +414,7 @@ function QueueCard({
             </button>
             <button
               type="button"
+              data-agent-id={commentAnchor.removeCancel(row.id)}
               onClick={() => {
                 setMode('idle');
                 setReason('');
@@ -409,6 +435,7 @@ function QueueCard({
             <button
               type="button"
               disabled={busy}
+              data-agent-id={commentAnchor.deleteConfirm(row.id)}
               onClick={() => {
                 setMode('idle');
                 onDelete();
@@ -419,6 +446,7 @@ function QueueCard({
             </button>
             <button
               type="button"
+              data-agent-id={commentAnchor.deleteCancel(row.id)}
               onClick={() => setMode('idle')}
               className="px-2 py-1.5 text-[12px] font-semibold text-muted-foreground hover:text-foreground"
             >
@@ -432,6 +460,7 @@ function QueueCard({
             <button
               type="button"
               disabled={busy}
+              data-agent-id={commentAnchor.restore(row.id)}
               onClick={onRestore}
               className="inline-flex items-center gap-1.5 rounded-sm border border-border/60 px-3 py-1.5 text-[12px] font-semibold text-foreground hover:bg-muted/40 disabled:opacity-50"
             >
@@ -441,6 +470,7 @@ function QueueCard({
             <button
               type="button"
               disabled={busy}
+              data-agent-id={commentAnchor.remove(row.id)}
               onClick={() => setMode('hiding')}
               className="inline-flex items-center gap-1.5 rounded-sm border border-border/60 px-3 py-1.5 text-[12px] font-semibold text-foreground hover:bg-muted/40 disabled:opacity-50"
             >
@@ -450,6 +480,7 @@ function QueueCard({
           <button
             type="button"
             disabled={busy}
+            data-agent-id={commentAnchor.del(row.id)}
             onClick={() => setMode('deleting')}
             className="inline-flex items-center gap-1.5 rounded-sm px-2.5 py-1.5 text-[12px] font-semibold text-destructive hover:bg-destructive/10 disabled:opacity-50"
           >

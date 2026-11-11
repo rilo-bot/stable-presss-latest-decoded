@@ -6,9 +6,12 @@
  */
 import { useParams, Navigate } from 'react-router-dom';
 import { HorseProfile } from '@/components/profile/HorseProfile';
+import { useHorseDossierOperatorActions } from '@/pages/operator-site/useHorseSiteActions';
 
 export default function HorseDetail() {
   const { id } = useParams<{ id: string }>();
+  // The Stable Hand: horse.read / horse.follow / horse.unfollow on this dossier.
+  useHorseDossierOperatorActions(id ?? '');
   if (!id) return <Navigate to="/horses" replace />;
   return <HorseProfile horseId={id} mode="view" />;
 }

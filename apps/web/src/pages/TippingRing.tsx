@@ -10,6 +10,7 @@ import { EmptyState } from '@/components/EmptyState';
 import { RaceSkeletonCard, LeaderboardSkeletonRow } from '@/components/SkeletonCard';
 import { Coins, BarChart2, TrendingUp, Trophy, Clock } from 'lucide-react';
 import { cn } from '@/lib/utils';
+import { useTippingOperatorActions } from '@/pages/operator-site/useTippingOperatorActions';
 
 function CoinBadge({ balance }: { balance: number }) {
   return (
@@ -120,6 +121,9 @@ export default function TippingRing() {
   );
 
   const handleTipped = () => {};
+
+  // The Stable Hand: tipping.read / tipping.leaderboard / tipping.placeTip.
+  useTippingOperatorActions();
 
   const totalRaces = (races ?? []).length;
 
@@ -365,7 +369,7 @@ export default function TippingRing() {
 
           {/* Leaderboard — right 1/3 */}
           <aside className="space-y-6">
-            <div className="sticky top-24">
+            <div className="sticky top-24" data-agent-id="site.leaderboard" data-agent-label="Leaderboard">
               <div className="flex items-center gap-2 mb-4">
                 <BarChart2 size={16} className="text-primary" />
                 <h2 className="font-[family-name:var(--font-display)] text-xl font-bold text-foreground">

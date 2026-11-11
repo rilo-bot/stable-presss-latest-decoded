@@ -1,6 +1,6 @@
 /**
  * AddHorseChoice — a small on-brand modal offering the two ways to add a horse:
- *   - Guided studio (photo-first, the Stablehand walks you through it), and
+ *   - Guided studio (photo-first, The Stable Hand walks you through it), and
  *   - Quick form (type all the details in one form and save).
  * Presentational: the caller wires what each choice does (onGuided / onQuick).
  */
@@ -50,15 +50,15 @@ export function AddHorseChoice({ open, onClose, onGuided, onQuick }: {
           <p style={{ margin: '0 0 12px', fontSize: '0.66rem', color: 'var(--forest-mid)', ...serif }}>How would you like to add it?</p>
           <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(190px, 1fr))', gap: 12 }}>
             {/* Guided */}
-            <button type="button" onClick={onGuided} className="onb-choice-card" style={cardStyle}>
+            <button type="button" onClick={onGuided} className="onb-choice-card" style={cardStyle} data-agent-id="reg.add-horse-guided">
               <div style={badgeRow}><span style={recTag}>Recommended</span></div>
               <div style={iconCircle}><Sparkles size={20} style={{ color: 'var(--gold-dark)' }} /></div>
               <div style={cardTitle}>Guided studio</div>
-              <p style={cardDesc}>Photo-first — the Stablehand walks you through each step with tips, AI &amp; voice.</p>
+              <p style={cardDesc}>Photo-first — The Stable Hand walks you through each step with tips, AI &amp; voice.</p>
               <span style={cta}>Start guided <ArrowRight size={12} /></span>
             </button>
             {/* Quick */}
-            <button type="button" onClick={onQuick} className="onb-choice-card" style={cardStyle}>
+            <button type="button" onClick={onQuick} className="onb-choice-card" style={cardStyle} data-agent-id="reg.add-horse-quick">
               <div style={badgeRow} />
               <div style={iconCircle}><Zap size={20} style={{ color: 'var(--gold-dark)' }} /></div>
               <div style={cardTitle}>Quick form</div>

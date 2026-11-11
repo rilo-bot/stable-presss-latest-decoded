@@ -221,6 +221,19 @@ export function HorseForm({ open, onClose, editHorse, defaultOwnerId, defaultCon
         // Re-read the register first: POST /api/horses links the creator itself
         // when a member registers a horse, and reconciling against a stale list
         // would add that same edge a second time.
+        //
+        // addHorse already fired its own fetchParties(true) without awaiting it,
+        // and fetchParties returns at once while a load is in flight — so a bare
+        // `await fetchParties(true)` here did NOT wait: we reconciled against the
+        // stale list, then that earlier GET landed and overwrote the store,
+        // dropping the edges just added (the first owner vanished until reload).
+        // Let the in-flight load finish, THEN take a fresh read.
+        await new Promise<void>((resolve) => {
+          if (!usePartyStore.getState().loading) return resolve();
+          const unsub = usePartyStore.subscribe((s) => {
+            if (!s.loading) { unsub(); resolve(); }
+          });
+        });
         await fetchParties(true);
         await saveConnections(created.id, usePartyStore.getState().parties);
         clearDraft();
@@ -269,6 +282,7 @@ export function HorseForm({ open, onClose, editHorse, defaultOwnerId, defaultCon
       role="dialog"
       aria-modal="true"
       aria-label={editHorse ? 'Edit horse profile' : 'Add horse profile'}
+      data-agent-id="reg.horse-form"
     >
       {/* Backdrop */}
       <div
@@ -319,6 +333,7 @@ export function HorseForm({ open, onClose, editHorse, defaultOwnerId, defaultCon
                 <button
                   type="button"
                   onClick={discardDraft}
+                  data-agent-id="reg.horse-discard-draft"
                   className="flex items-center gap-1 px-2 py-0.5 rounded-sm border border-border/60 text-[10px] uppercase tracking-[0.08em] font-semibold text-muted-foreground hover:text-foreground transition-colors"
                 >
                   <X size={9} /> Discard
@@ -402,6 +417,7 @@ export function HorseForm({ open, onClose, editHorse, defaultOwnerId, defaultCon
               </Button>
               <Button
                 type="submit"
+                data-agent-id="reg.horse-save"
                 size="sm"
                 disabled={saving}
                 className={cn(

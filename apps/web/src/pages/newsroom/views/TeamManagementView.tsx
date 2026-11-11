@@ -15,6 +15,8 @@ import { useStaffStore } from '@/stores/staffStore';
 import { useRoleStore } from '@/stores/roleStore';
 import { useAuthStore } from '@/stores/authStore';
 import { roleColor, roleIcon } from '@/lib/roleDisplay';
+import { RoleSelect } from '@/components/RoleSelect';
+import { useTeamOperatorActions } from '@/pages/production-system/operator-team/useTeamOperatorActions';
 import { toast } from 'sonner';
 
 /** "in 12 days" / "expired" — invites carry a hard deadline, so say so. */
@@ -86,7 +88,7 @@ function MemberRow({
   isSelf: boolean;
   /**
    * `team.view` without `team.manage`: the roster is readable, nothing is
-   * actionable. The role pill becomes a label rather than a disabled <select>,
+   * actionable. The role pill becomes a label rather than a disabled picker,
    * because a greyed-out control reads as "temporarily unavailable" when the
    * truth is "not yours to change".
    */
@@ -97,14 +99,14 @@ function MemberRow({
 }) {
   // One role, already resolved by the server with its label/colour/icon — no
   // lookup against the roles list, so a role the console hasn't loaded yet still
-  // renders correctly. `current` is the name the <select> matches on.
+  // renders correctly. `current` is the name the RoleSelect matches on.
   const role = user.role ?? undefined;
   const current = role?.name;
   const color = roleColor(role);
   const name = user.name || user.email;
 
   return (
-    <li className="px-4 py-3 flex items-start gap-3">
+    <li className="px-4 py-3 flex items-start gap-3" data-agent-id={`team.member-${user.userId}`} data-agent-label={name}>
       <Avatar label={name} />
       <div className="flex-1 min-w-0 space-y-2">
         <div className="min-w-0">
@@ -115,43 +117,34 @@ function MemberRow({
         <div className="flex items-center gap-x-3 gap-y-1.5 flex-wrap">
           {/* The pill IS the picker — one control, so there is no way to end up
               wondering whether "add" and "remove" combined into something. */}
-          <span
-            className="relative inline-flex items-center gap-1.5 text-[12px] font-semibold pl-2 pr-1 py-0.5 rounded-full border"
-            style={
-              current
-                ? { borderColor: `${color}55`, background: `${color}14`, color }
-                : undefined
-            }
-          >
-            {current ? roleIcon(role?.icon, 11) : null}
-            {readOnly ? (
-              <span className="pr-1" style={{ color: current ? color : undefined }}>
-                {role?.label ?? (current ?? 'No role — no access')}
-              </span>
-            ) : (
-              <select
-                value={current ?? ''}
-                disabled={busy}
-                onChange={(e) => onAssign(user.userId, e.target.value)}
-                className="bg-transparent border-0 text-[12px] font-semibold pr-0.5 cursor-pointer focus:outline-none disabled:cursor-wait"
-                style={{ color: current ? color : undefined }}
-                aria-label={`Role for ${name}`}
-              >
-                {!current && <option value="">No role — no access</option>}
-                {roles.map((r) => (
-                  <option key={r.name} value={r.name} className="text-foreground bg-background">
-                    {r.label}
-                  </option>
-                ))}
-              </select>
-            )}
-          </span>
+          {readOnly ? (
+            <span
+              className="inline-flex items-center gap-1.5 text-[12px] font-semibold px-2 py-0.5 rounded-full border"
+              style={current ? { borderColor: `${color}55`, background: `${color}14`, color } : undefined}
+            >
+              {current ? roleIcon(role?.icon, 11) : null}
+              {role?.label ?? (current ?? 'No role — no access')}
+            </span>
+          ) : (
+            <RoleSelect
+              variant="pill"
+              value={current ?? ''}
+              roles={roles}
+              fallback={role}
+              busy={busy}
+              placeholder="No role — no access"
+              onChange={(slug) => onAssign(user.userId, slug)}
+              ariaLabel={`Role for ${name}`}
+              agentId={`team.role-select-${user.userId}`}
+            />
+          )}
 
           {!readOnly && (
             <>
               <button
                 onClick={() => onResend(user)}
                 disabled={busy || !current}
+                data-agent-id={`team.resend-${user.userId}`}
                 className="text-[12px] font-semibold text-primary hover:underline flex items-center gap-1 disabled:opacity-40 disabled:no-underline"
               >
                 <Send size={11} /> Resend email
@@ -160,6 +153,7 @@ function MemberRow({
                 <button
                   onClick={() => onRemove(user)}
                   disabled={busy}
+                  data-agent-id={`team.remove-${user.userId}`}
                   className="text-[12px] font-semibold text-muted-foreground hover:text-destructive transition-colors flex items-center gap-1 disabled:opacity-40"
                 >
                   <X size={11} /> Remove
@@ -186,7 +180,7 @@ function InvitedRow({
   onCancel: (id: string) => void;
 }) {
   return (
-    <li className="px-4 py-3 flex items-start gap-3 bg-muted/15">
+    <li className="px-4 py-3 flex items-start gap-3 bg-muted/15" data-agent-id={`team.pending-${invite.id}`} data-agent-label={invite.email}>
       <Avatar label={invite.email} muted />
       <div className="flex-1 min-w-0 space-y-2">
         <div className="min-w-0">
@@ -222,12 +216,14 @@ function InvitedRow({
           <button
             onClick={() => onResend(invite.id)}
             disabled={busy}
+            data-agent-id={`team.pending-resend-${invite.id}`}
             className="text-[12px] font-semibold text-primary hover:underline flex items-center gap-1 disabled:opacity-50"
           >
             <Send size={11} /> {busy ? 'Sending…' : 'Resend'}
           </button>
           <button
             onClick={() => onCancel(invite.id)}
+            data-agent-id={`team.pending-cancel-${invite.id}`}
             className="text-[12px] font-semibold text-muted-foreground hover:text-destructive transition-colors"
           >
             Cancel
@@ -359,6 +355,12 @@ export function TeamManagementView({
     else toast.error(r.error ?? 'Could not change the role.');
   };
 
+  // Stablehand Operator: team.list / invite / changeRole / remove / … — each
+  // drives the controls above (see operator-team/useTeamOperatorActions.ts).
+  useTeamOperatorActions({
+    canViewTeam, canManageTeam, teamStaff, teamPending, teamBusy, teamEmail, roles, myId,
+  });
+
   if (!canViewTeam) {
     return (
       <EmptyState
@@ -402,24 +404,23 @@ export function TeamManagementView({
             placeholder="person@example.com"
             className="flex-1 px-3 py-2 text-sm border border-input rounded-sm bg-background focus:outline-none focus:ring-1 focus:ring-ring"
             aria-label="Team member email"
+            data-agent-id="team.invite-email"
           />
           {/* Every role in the database — including any a superadmin created. */}
-          <select
+          <RoleSelect
+            variant="field"
             value={teamRole}
-            onChange={(e) => setTeamRole(e.target.value)}
-            className="px-2 py-2 text-sm border border-input rounded-sm bg-background"
-            aria-label="Role"
-          >
-            {roles.length === 0 && <option value="">No roles defined</option>}
-            {roles.map((r) => (
-              <option key={r.name} value={r.name}>{r.label}</option>
-            ))}
-          </select>
+            roles={roles}
+            onChange={setTeamRole}
+            ariaLabel="Role for the person you are inviting"
+            agentId="team.invite-role"
+          />
           <Button
             size="sm"
             className="bg-primary text-primary-foreground hover:bg-primary/90 gap-1.5 text-sm"
             onClick={onGrantStaff}
             disabled={teamBusy || !teamEmail.trim() || !teamRole}
+            data-agent-id="team.invite-submit"
           >
             <Plus size={13} /> {teamBusy ? 'Inviting…' : 'Invite'}
           </Button>
@@ -519,6 +520,7 @@ export function TeamManagementView({
               className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
               onClick={onConfirmRemove}
               disabled={removing}
+              data-agent-id="team.remove-confirm"
             >
               {removing ? 'Removing…' : 'Remove from team'}
             </Button>

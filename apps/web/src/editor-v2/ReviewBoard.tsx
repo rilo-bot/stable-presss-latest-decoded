@@ -106,6 +106,11 @@ export function ReviewBoard({ onClose }: { onClose: () => void }) {
       <div
         className="flex max-h-[88vh] w-full max-w-5xl flex-col overflow-hidden rounded-md border border-studio-hair bg-studio-panel text-studio-ink shadow-2xl"
         onMouseDown={(e) => e.stopPropagation()}
+        role="dialog"
+        aria-label="Review board"
+        aria-busy={reviewBusy}
+        data-agent-id="mag.review-dialog"
+        data-agent-label="Review board"
       >
         {/* Header */}
         <div className="flex items-center gap-2 border-b border-studio-hair px-4 py-3">
@@ -118,7 +123,7 @@ export function ReviewBoard({ onClose }: { onClose: () => void }) {
                 : 'Send your pages to the owner when they’re ready'}
             </p>
           </div>
-          <button onClick={onClose} className="ml-auto rounded-sm p-1 text-studio-ink-3 hover:bg-studio-raise-2 hover:text-studio-ink" aria-label="Close">
+          <button onClick={onClose} data-agent-id="mag.review-close" className="ml-auto rounded-sm p-1 text-studio-ink-3 hover:bg-studio-raise-2 hover:text-studio-ink" aria-label="Close">
             <X size={16} />
           </button>
         </div>
@@ -164,6 +169,7 @@ export function ReviewBoard({ onClose }: { onClose: () => void }) {
                               type="checkbox"
                               checked={picked.has(p.id)}
                               onChange={() => toggle(p.id)}
+                              data-agent-id={`mag.review-page-${p.index + 1}-select`}
                               className="accent-amber-400"
                               aria-label={`Select page ${p.index + 1}`}
                             />
@@ -172,6 +178,8 @@ export function ReviewBoard({ onClose }: { onClose: () => void }) {
                           )}
                           <button
                             onClick={() => { void goToPage(p.id); onClose(); }}
+                            data-agent-id={`mag.review-page-${p.index + 1}-open`}
+                            data-agent-label={`Open page ${p.index + 1} (${COLUMN_LABEL[col]})`}
                             className="font-semibold text-studio-ink hover:underline"
                             title="Open this page"
                           >
@@ -235,6 +243,8 @@ export function ReviewBoard({ onClose }: { onClose: () => void }) {
                 value={note}
                 onChange={(e) => { setNote(e.target.value); if (e.target.value.trim()) setNoteError(false); }}
                 rows={2}
+                data-agent-id="mag.review-note"
+                data-agent-label="Review note"
                 placeholder={isOwner ? 'Note (required when sending pages back)' : 'Anything the owner should know? (optional)'}
                 className={
                   'w-full resize-none rounded-sm border bg-studio-raise px-2 py-1.5 text-ui-sm text-studio-ink placeholder:text-studio-ink-4 focus:outline-none ' +
@@ -249,6 +259,9 @@ export function ReviewBoard({ onClose }: { onClose: () => void }) {
                   <button
                     onClick={() => void run('approve')}
                     disabled={reviewBusy || pickedIds.length === 0}
+                    aria-busy={reviewBusy}
+                    data-agent-id="mag.review-approve"
+                    data-agent-label="Approve the ticked pages"
                     className="flex items-center justify-center gap-1.5 rounded-sm bg-emerald-500 px-3 py-1.5 text-ui-sm font-semibold text-studio-ink hover:bg-emerald-600 disabled:opacity-40"
                   >
                     <Check size={12} />
@@ -257,6 +270,9 @@ export function ReviewBoard({ onClose }: { onClose: () => void }) {
                   <button
                     onClick={() => void run('changes')}
                     disabled={reviewBusy || pickedIds.length === 0}
+                    aria-busy={reviewBusy}
+                    data-agent-id="mag.review-send-back"
+                    data-agent-label="Send the ticked pages back with the note"
                     className="flex items-center justify-center gap-1.5 rounded-sm border border-amber-400/40 bg-amber-400/10 px-3 py-1.5 text-ui-sm font-semibold text-amber-200 hover:bg-amber-400/20 disabled:opacity-40"
                   >
                     <Undo2 size={12} /> Send back
@@ -266,6 +282,9 @@ export function ReviewBoard({ onClose }: { onClose: () => void }) {
                 <button
                   onClick={() => void run('submit')}
                   disabled={reviewBusy || pickedIds.length === 0}
+                  aria-busy={reviewBusy}
+                  data-agent-id="mag.review-submit"
+                  data-agent-label="Submit the ticked pages for review"
                   className="flex items-center justify-center gap-1.5 rounded-sm bg-studio-gold px-3 py-1.5 text-ui-sm font-semibold text-studio-ink hover:bg-studio-gold disabled:opacity-40"
                 >
                   <Send size={12} />

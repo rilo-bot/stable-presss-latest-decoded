@@ -40,6 +40,7 @@ import type { StageMeta } from '@/lib/workflow';
 import type { Article } from '@/types/article';
 
 import { StatusBadge } from '../../newsroom/components/StatusBadge';
+import { overviewAnchor } from '../operator-community/useOverviewOperatorActions';
 
 /* ── 1. Masthead ─────────────────────────────────────────────────────────── */
 
@@ -65,15 +66,17 @@ function greeting(hour: number): string {
 
 /** Small pill-shaped control that reads correctly ON the green band. */
 function BandButton({
-  onClick, children, title, disabled,
+  onClick, children, title, disabled, agentId,
 }: {
   onClick: () => void;
   children: ReactNode;
   title?: string;
   disabled?: boolean;
+  agentId?: string;
 }) {
   return (
     <button
+      data-agent-id={agentId}
       onClick={onClick}
       title={title}
       disabled={disabled}
@@ -111,7 +114,7 @@ export function OverviewMasthead({
   const visibleLedger = ledger.filter((l) => l.value > 0);
 
   return (
-    <section className="overflow-hidden rounded-sm bg-primary text-primary-foreground">
+    <section data-agent-id="overview.masthead" className="overflow-hidden rounded-sm bg-primary text-primary-foreground">
       {/* ── Brief ── */}
       <div className="border-b border-primary-foreground/15 p-5 md:p-6">
         <div className="mb-3 flex flex-wrap items-start justify-between gap-3">
@@ -129,10 +132,10 @@ export function OverviewMasthead({
             )}
           </p>
           <div className="flex flex-shrink-0 items-center gap-2">
-            <BandButton onClick={onAskAgent} title="Ask the Stablehand about your desk">
-              <Wand2 size={12} /> Ask the Stablehand
+            <BandButton agentId="overview.ask" onClick={onAskAgent} title="Ask The Stable Hand about your desk">
+              <Wand2 size={12} /> Ask The Stable Hand
             </BandButton>
-            <BandButton onClick={onRefreshBrief} disabled={briefLoading} title="Regenerate the brief">
+            <BandButton agentId="overview.refresh-brief" onClick={onRefreshBrief} disabled={briefLoading} title="Regenerate the brief">
               <RefreshCw size={12} className={briefLoading ? 'animate-spin' : ''} />
               <span className="hidden sm:inline">Refresh</span>
             </BandButton>
@@ -147,7 +150,7 @@ export function OverviewMasthead({
             standfirst. Gold is doing what gold is for. */}
         <span aria-hidden="true" className="mt-3 mb-3 block h-px w-10 bg-[hsl(var(--brand-accent))]" />
 
-        <p className="flex items-start gap-2 text-sm leading-relaxed text-primary-foreground/85 md:max-w-3xl">
+        <p data-agent-id="overview.brief" data-agent-label="Brief" className="flex items-start gap-2 text-sm leading-relaxed text-primary-foreground/85 md:max-w-3xl">
           <Sparkles size={14} className="mt-0.5 flex-shrink-0 text-[hsl(var(--brand-accent))]" />
           <span>
             {briefLoading && !brief
@@ -169,7 +172,7 @@ export function OverviewMasthead({
              the first cell in every wrapped row. ── */}
       <div className="grid grid-cols-2 gap-px bg-primary-foreground/15 sm:grid-cols-4">
         {figures.map((f) => (
-          <div key={f.label} className="bg-primary px-5 py-4">
+          <div key={f.label} data-agent-id={overviewAnchor.figure(f.label)} data-agent-label={f.label} className="bg-primary px-5 py-4">
             <span
               className={cn(
                 'block font-display text-3xl font-bold leading-none tabular-nums',
@@ -205,12 +208,13 @@ export function OverviewMasthead({
               <Link
                 key={l.label}
                 to={l.to}
+                data-agent-id={overviewAnchor.ledger(l.label)}
                 className="text-[12.5px] transition-colors hover:text-[hsl(var(--brand-accent))] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary-foreground/60"
               >
                 {body}
               </Link>
             ) : (
-              <span key={l.label} className="text-[12.5px]">{body}</span>
+              <span key={l.label} data-agent-id={overviewAnchor.ledger(l.label)} className="text-[12.5px]">{body}</span>
             );
           })}
         </div>
@@ -222,15 +226,16 @@ export function OverviewMasthead({
 /* ── Shared card chrome ──────────────────────────────────────────────────── */
 
 function Panel({
-  title, badge, aside, children,
+  title, badge, aside, children, agentId,
 }: {
   title: string;
   badge?: number;
   aside?: ReactNode;
   children: ReactNode;
+  agentId?: string;
 }) {
   return (
-    <section className="overflow-hidden rounded-sm border border-border bg-card">
+    <section data-agent-id={agentId} data-agent-label={agentId ? title : undefined} className="overflow-hidden rounded-sm border border-border bg-card">
       <header className="flex items-center gap-2 border-b border-border/70 px-4 py-3">
         <h3 className="font-display text-[15px] font-bold text-foreground">{title}</h3>
         {badge !== undefined && badge > 0 && (
@@ -246,10 +251,11 @@ function Panel({
 }
 
 /** A quiet secondary link, for the "→ open the full screen" affordance. */
-function PanelLink({ to, children }: { to: string; children: ReactNode }) {
+function PanelLink({ to, children, agentId }: { to: string; children: ReactNode; agentId?: string }) {
   return (
     <Link
       to={to}
+      data-agent-id={agentId}
       className="flex items-center gap-1 text-[12px] font-medium text-primary hover:underline"
     >
       {children}
@@ -277,7 +283,7 @@ export function AttentionPanel({
   onRetry: () => void;
 }) {
   return (
-    <Panel title="Needs your attention" badge={error || loading ? undefined : rows.length}>
+    <Panel agentId="overview.attention" title="Needs your attention" badge={error || loading ? undefined : rows.length}>
       {loading ? (
         <p className="flex items-center gap-2 px-4 py-8 text-sm text-muted-foreground">
           <RefreshCw size={14} className="animate-spin" /> Checking what’s waiting on you…
@@ -310,6 +316,8 @@ export function AttentionPanel({
             <li key={row.id}>
               <Link
                 to={row.to}
+                data-agent-id={overviewAnchor.attention(row.id)}
+                data-agent-label={row.label}
                 className="group flex items-center gap-3 px-4 py-3 transition-colors hover:bg-muted/60 focus-visible:outline-none focus-visible:bg-muted/60"
               >
                 <span className="flex h-7 min-w-7 items-center justify-center rounded-sm bg-brand-accent/15 px-1.5 text-sm font-bold tabular-nums text-brand-accent-ink">
@@ -344,8 +352,9 @@ export function PipelinePanel({
 
   return (
     <Panel
+      agentId="overview.pipeline"
       title="Story pipeline"
-      aside={boardPath ? <PanelLink to={boardPath}>Open the board</PanelLink> : undefined}
+      aside={boardPath ? <PanelLink agentId="overview.open-board" to={boardPath}>Open the board</PanelLink> : undefined}
     >
       {/* Proportional bar. Where each stage's colour comes from is the same table
           the board columns and the status badges use, so a colour means the same
@@ -399,13 +408,15 @@ export function PipelinePanel({
           return boardPath ? (
             <button
               key={s.status}
+              data-agent-id={overviewAnchor.stage(s.status)}
+              data-agent-label={`${s.label} stage`}
               onClick={() => onOpenStage(s)}
               className="bg-card px-4 py-3.5 text-left transition-colors hover:bg-muted/60 focus-visible:outline-none focus-visible:bg-muted/60"
             >
               {content}
             </button>
           ) : (
-            <div key={s.status} className="bg-card px-4 py-3.5">{content}</div>
+            <div key={s.status} data-agent-id={overviewAnchor.stage(s.status)} className="bg-card px-4 py-3.5">{content}</div>
           );
         })}
       </div>
@@ -427,7 +438,7 @@ export interface StartTile {
 export function StartRow({ tiles }: { tiles: StartTile[] }) {
   if (tiles.length === 0) return null;
   return (
-    <div>
+    <div data-agent-id="overview.start">
       <div className="mb-3 flex items-center gap-3">
         <h3 className="font-display text-[15px] font-bold text-foreground">Start something</h3>
         <span aria-hidden="true" className="h-px flex-1 bg-border/60" />
@@ -437,6 +448,8 @@ export function StartRow({ tiles }: { tiles: StartTile[] }) {
           <Link
             key={t.key}
             to={t.to}
+            data-agent-id={overviewAnchor.start(t.key)}
+            data-agent-label={t.title}
             className={cn(
               'group flex items-start gap-3 rounded-sm border border-border bg-card p-4 transition-colors',
               'hover:border-primary/40 hover:bg-muted/50',
@@ -483,8 +496,9 @@ export function RecentStoriesPanel({
 }) {
   return (
     <Panel
+      agentId="overview.recent"
       title={title}
-      aside={allStoriesPath ? <PanelLink to={allStoriesPath}>All stories</PanelLink> : undefined}
+      aside={allStoriesPath ? <PanelLink agentId="overview.all-stories" to={allStoriesPath}>All stories</PanelLink> : undefined}
     >
       <div className="overflow-x-auto">
         <table className="w-full min-w-[440px] text-sm">

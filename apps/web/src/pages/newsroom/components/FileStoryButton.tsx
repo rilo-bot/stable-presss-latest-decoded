@@ -21,6 +21,8 @@ export function FileStoryButton({ onOpenStudio, onNewInColumn }: FileStoryButton
         size="sm"
         className="bg-primary text-primary-foreground hover:bg-primary/90 gap-1.5 text-sm"
         onClick={() => setChoiceOpen(true)}
+        data-agent-id="story.file-button"
+        data-agent-label="File a Story"
       >
         <Plus size={13} />
         <span className="hidden sm:inline">File a Story</span>

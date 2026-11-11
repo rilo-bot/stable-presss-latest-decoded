@@ -52,6 +52,7 @@ import { usePartyStore } from '@/stores/partyStore';
 import { useArticleStore } from '@/stores/articleStore';
 import { useReactionStore } from '@/stores/reactionStore';
 import { allBlocks, isBlogLive, mediaById, partHasContent, type BlogMedia, type BlogPart } from '@/types/blog';
+import { useBlogPostOperatorActions } from '@/pages/operator-site/useSiteReadActions';
 
 function formatDate(iso: string | null | undefined): string | null {
   if (!iso) return null;
@@ -232,6 +233,9 @@ export default function BlogPost() {
     // indexed on the strength of one of them opening it.
     noindex: current?.seo?.noindex === true || current?.status === 'draft',
   });
+
+  // The Stable Hand: site.readBlogPost reads the post this page renders.
+  useBlogPostOperatorActions(current);
 
   // A retired slug — the server told us where the post lives now. Replace so the
   // dead URL doesn't sit in the history stack.

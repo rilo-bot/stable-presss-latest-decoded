@@ -3,6 +3,7 @@ import { Link } from 'react-router-dom';
 import { useIssueStore } from '@/stores/issueStore';
 import { BookOpen, ChevronRight } from 'lucide-react';
 import { Button } from '@/components/ui/button';
+import { useBulletinListOperatorActions } from '@/pages/operator-site/useBulletinOperatorActions';
 
 /**
  * /bulletins — the newsstand.
@@ -35,6 +36,9 @@ export default function Bulletins() {
   useEffect(() => {
     fetchIssues();
   }, [fetchIssues]);
+
+  // The Stable Hand: bulletins.list / bulletins.open on this newsstand.
+  useBulletinListOperatorActions();
 
   return (
     <div className="min-h-screen bg-background">
@@ -209,6 +213,8 @@ export default function Bulletins() {
                 <Link
                   key={issue.id}
                   to={`/bulletins/${issue.id}`}
+                  data-agent-id={`site.bulletin-${issue.id}`}
+                  data-agent-label={issue.title}
                   className="group block rounded-sm overflow-hidden border border-border/60 bg-card hover:border-primary/40 transition-colors"
                 >
                   <div className="aspect-[3/4] overflow-hidden bg-muted relative">

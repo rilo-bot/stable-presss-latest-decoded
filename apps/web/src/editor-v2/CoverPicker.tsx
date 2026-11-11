@@ -77,6 +77,8 @@ export function CoverPicker({ open, onClose }: { open: boolean; onClose: () => v
     <button
       key={t}
       onClick={() => setTab(t)}
+      data-agent-id={`mag.cover-tab-${t}`}
+      aria-pressed={tab === t}
       className={'px-3 py-1.5 text-ui rounded-sm ' + (tab === t ? 'bg-studio-raise-2 text-studio-ink' : 'text-studio-ink-3 hover:bg-studio-raise')}
     >{label}</button>;
 
@@ -85,6 +87,11 @@ export function CoverPicker({ open, onClose }: { open: boolean; onClose: () => v
       <div
         className="flex max-h-[80vh] w-[560px] max-w-full flex-col overflow-hidden rounded-lg border border-studio-edge bg-studio-panel shadow-2xl"
         onClick={(e) => e.stopPropagation()}
+        role="dialog"
+        aria-label="Cover image"
+        aria-busy={busy}
+        data-agent-id="mag.cover-dialog"
+        data-agent-label="Cover image dialog"
       >
         {/* Header */}
         <div className="flex items-center gap-3 border-b border-studio-hair px-4 py-3">
@@ -102,10 +109,11 @@ export function CoverPicker({ open, onClose }: { open: boolean; onClose: () => v
               <button
                 disabled={busy}
                 onClick={() => run(async () => { await s.setCover({ coverImage: '' }); })}
+                data-agent-id="mag.cover-reset"
                 className="rounded-sm border border-studio-edge px-2 py-1 text-ui-sm text-studio-ink-2 hover:bg-studio-raise-2 disabled:opacity-40"
               >Reset to automatic</button>
             )}
-            <button onClick={onClose} className="rounded-sm p-1 text-studio-ink-3 hover:bg-studio-raise-2 hover:text-studio-ink" aria-label="Close"><X size={16} /></button>
+            <button onClick={onClose} data-agent-id="mag.cover-close" className="rounded-sm p-1 text-studio-ink-3 hover:bg-studio-raise-2 hover:text-studio-ink" aria-label="Close"><X size={16} /></button>
           </div>
         </div>
 
@@ -128,6 +136,8 @@ export function CoverPicker({ open, onClose }: { open: boolean; onClose: () => v
                     key={p.id}
                     disabled={busy}
                     onClick={() => run(async () => { if (await s.setCover({ coverPageId: p.id })) onClose(); })}
+                    data-agent-id={`mag.cover-page-${i + 1}`}
+                    data-agent-label={`Use page ${i + 1} as the cover`}
                     className={'flex aspect-[3/4] flex-col items-center justify-center rounded-sm border text-ui disabled:opacity-40 ' +
                       (p.id === s.currentPageId ? 'border-[var(--gold-bright)]/70 bg-studio-raise-2 text-studio-ink' : 'border-studio-edge bg-studio-raise text-studio-ink-2 hover:bg-studio-raise-2')}
                     title={`Use page ${i + 1}`}
@@ -149,6 +159,8 @@ export function CoverPicker({ open, onClose }: { open: boolean; onClose: () => v
                         key={a.id}
                         disabled={busy}
                         onClick={() => run(async () => { if (await s.setCover({ coverImage: a.url })) onClose(); })}
+                        data-agent-id={`mag.cover-asset-${a.id}`}
+                        data-agent-label={`Use “${a.alt || a.kind}” as the cover`}
                         className="relative aspect-[4/3] overflow-hidden rounded border border-studio-hair hover:border-[var(--gold-bright)] disabled:opacity-40"
                         title={a.alt || a.kind}
                       >
@@ -165,6 +177,7 @@ export function CoverPicker({ open, onClose }: { open: boolean; onClose: () => v
                 <button
                   disabled={busy}
                   onClick={() => fileRef.current?.click()}
+                  data-agent-id="mag.cover-upload"
                   className="flex w-full items-center justify-center gap-2 rounded-md border border-dashed border-studio-edge py-6 text-ui text-studio-ink-2 hover:bg-studio-raise disabled:opacity-40"
                 >
                   <Upload size={15} /> Upload an image from your device
@@ -186,12 +199,16 @@ export function CoverPicker({ open, onClose }: { open: boolean; onClose: () => v
                     onChange={(e) => setUrlValue(e.target.value)}
                     onKeyDown={(e) => { if (e.key === 'Enter') void onUseUrl(); }}
                     placeholder="Paste an image URL"
+                    data-agent-id="mag.cover-url"
+                    data-agent-label="Cover image URL"
                     className="w-full rounded border border-studio-edge bg-studio-bg py-1.5 pl-7 pr-2 text-ui text-studio-ink placeholder:text-studio-ink-4"
                   />
                 </div>
                 <button
                   disabled={busy || !urlValue.trim()}
                   onClick={() => void onUseUrl()}
+                  data-agent-id="mag.cover-url-set"
+                  data-agent-label="Set cover from URL"
                   className="rounded-sm bg-[var(--gold-bright)] px-3 py-1.5 text-ui font-semibold text-studio-bg disabled:opacity-40"
                 >Set</button>
               </div>

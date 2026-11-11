@@ -36,12 +36,15 @@ function PagePicker({
   onToggle,
   onAll,
   onNone,
+  agentPrefix,
 }: {
   pages: PageSummary[];
   picked: Set<string>;
   onToggle: (id: string) => void;
   onAll: () => void;
   onNone: () => void;
+  /** Operator anchor prefix — 'mag.share' (new share) or 'mag.share-edit'. */
+  agentPrefix: string;
 }) {
   return (
     <div className="mb-2">
@@ -49,10 +52,10 @@ function PagePicker({
         <span>
           {picked.size} of {pages.length} selected
         </span>
-        <button type="button" onClick={onAll} className="ml-auto rounded-sm px-1 py-0.5 hover:bg-studio-raise-2 hover:text-studio-ink-2">
+        <button type="button" onClick={onAll} data-agent-id={`${agentPrefix}-pages-all`} className="ml-auto rounded-sm px-1 py-0.5 hover:bg-studio-raise-2 hover:text-studio-ink-2">
           Select all
         </button>
-        <button type="button" onClick={onNone} className="rounded-sm px-1 py-0.5 hover:bg-studio-raise-2 hover:text-studio-ink-2">
+        <button type="button" onClick={onNone} data-agent-id={`${agentPrefix}-pages-clear`} className="rounded-sm px-1 py-0.5 hover:bg-studio-raise-2 hover:text-studio-ink-2">
           Clear
         </button>
       </div>
@@ -68,6 +71,8 @@ function PagePicker({
               key={p.id}
               type="button"
               onClick={() => onToggle(p.id)}
+              data-agent-id={`${agentPrefix}-page-${p.index + 1}`}
+              data-agent-label={`Page ${p.index + 1}`}
               aria-pressed={on}
               className={
                 'relative rounded-sm border px-2 py-1 text-ui-sm tabular-nums ' +
@@ -237,6 +242,9 @@ export function ShareDialog({ onClose }: { onClose: () => void }) {
       <div
         className="flex max-h-[85vh] w-full max-w-md flex-col overflow-hidden rounded-md border border-studio-hair bg-studio-panel text-studio-ink shadow-2xl"
         onMouseDown={(e) => e.stopPropagation()}
+        role="dialog"
+        aria-label="Share this magazine"
+        data-agent-id="mag.share-dialog"
       >
         {/* Header */}
         <div className="flex items-center gap-2 border-b border-studio-hair px-4 py-3">
@@ -245,7 +253,7 @@ export function ShareDialog({ onClose }: { onClose: () => void }) {
             <p className="text-ui font-bold">Share this magazine</p>
             <p className="truncate text-ui-sm text-studio-ink-3">Choose who, and which pages they may edit</p>
           </div>
-          <button onClick={onClose} className="ml-auto rounded-sm p-1 text-studio-ink-3 hover:bg-studio-raise-2 hover:text-studio-ink" aria-label="Close">
+          <button onClick={onClose} data-agent-id="mag.share-close" className="ml-auto rounded-sm p-1 text-studio-ink-3 hover:bg-studio-raise-2 hover:text-studio-ink" aria-label="Close">
             <X size={16} />
           </button>
         </div>
@@ -260,7 +268,11 @@ export function ShareDialog({ onClose }: { onClose: () => void }) {
                 const stranded = isEditing ? strandedBy(c.userId, editMode === 'all' ? 'all' : editPicked) : [];
                 return (
                   <div key={c.userId} className="rounded-sm">
-                    <div className="flex items-center gap-2 rounded-sm px-2 py-1.5 text-ui-sm hover:bg-studio-raise">
+                    <div
+                      className="flex items-center gap-2 rounded-sm px-2 py-1.5 text-ui-sm hover:bg-studio-raise"
+                      data-agent-id={`mag.share-collab-${c.userId}`}
+                      data-agent-label={`${c.displayName || c.email} · can edit ${scopeLabel(c)}`}
+                    >
                       {/* One icon, because there is one kind of collaborator. The
                           shield-vs-pencil "Editor / Contributor" split was removed:
                           it gated nothing anywhere, so it promised powers that did
@@ -272,12 +284,15 @@ export function ShareDialog({ onClose }: { onClose: () => void }) {
                       </span>
                       <button
                         onClick={() => (isEditing ? setEditing(null) : startEdit(c))}
+                        data-agent-id={`mag.share-edit-${c.userId}`}
+                        data-agent-label={`${isEditing ? 'Cancel changing' : 'Change'} ${c.displayName || c.email}'s pages`}
                         className="flex-shrink-0 rounded-sm px-1.5 py-0.5 text-ui-sm text-studio-ink-3 hover:bg-studio-raise-2 hover:text-studio-ink"
                       >
                         {isEditing ? 'Cancel' : 'Change pages'}
                       </button>
                       <button
                         onClick={() => void remove(c.userId, c.displayName || c.email)}
+                        data-agent-id={`mag.share-remove-${c.userId}`}
                         aria-label={`Remove ${c.displayName || c.email}`}
                         className="flex-shrink-0 rounded p-1 text-studio-ink-3 hover:bg-studio-raise-2 hover:text-red-300"
                       >
@@ -289,16 +304,17 @@ export function ShareDialog({ onClose }: { onClose: () => void }) {
                       <div className="mb-1 ml-5 border-l border-studio-hair pl-3 pt-1">
                         <div className="mb-2 flex items-center gap-3 text-ui-sm text-studio-ink-2">
                           <label className="flex cursor-pointer items-center gap-1.5">
-                            <input type="radio" checked={editMode === 'all'} onChange={() => setEditMode('all')} className="accent-studio-gold" /> All pages
+                            <input type="radio" data-agent-id="mag.share-edit-scope-all" data-agent-label="All pages" checked={editMode === 'all'} onChange={() => setEditMode('all')} className="accent-studio-gold" /> All pages
                           </label>
                           <label className="flex cursor-pointer items-center gap-1.5">
-                            <input type="radio" checked={editMode === 'pick'} onChange={() => setEditMode('pick')} className="accent-studio-gold" /> Specific pages
+                            <input type="radio" data-agent-id="mag.share-edit-scope-pick" data-agent-label="Specific pages" checked={editMode === 'pick'} onChange={() => setEditMode('pick')} className="accent-studio-gold" /> Specific pages
                           </label>
                         </div>
                         {editMode === 'pick' && (
                           <PagePicker
                             pages={pages}
                             picked={editPicked}
+                            agentPrefix="mag.share-edit"
                             onToggle={toggleIn(setEditPicked)}
                             onAll={() => setEditPicked(new Set(pages.map((p) => p.id)))}
                             onNone={() => setEditPicked(new Set())}
@@ -315,6 +331,8 @@ export function ShareDialog({ onClose }: { onClose: () => void }) {
                         )}
                         <button
                           onClick={() => void saveScope(c)}
+                          data-agent-id="mag.share-edit-save"
+                          aria-busy={busy}
                           disabled={busy}
                           className="flex items-center gap-1.5 rounded-sm bg-studio-gold px-2.5 py-1 text-ui-sm font-semibold text-studio-ink hover:bg-studio-gold disabled:opacity-50"
                         >
@@ -339,6 +357,7 @@ export function ShareDialog({ onClose }: { onClose: () => void }) {
               <p className="text-red-300">Couldn&apos;t load the staff list{loadError ? ` — ${loadError}` : '.'}</p>
               <button
                 onClick={() => setReloadKey((k) => k + 1)}
+                data-agent-id="mag.share-retry"
                 className="mt-1.5 rounded-sm border border-studio-edge px-2 py-1 text-ui-sm text-studio-ink-2 hover:bg-studio-raise-2"
               >
                 Try again
@@ -353,6 +372,8 @@ export function ShareDialog({ onClose }: { onClose: () => void }) {
           ) : (
             <>
               <select
+                data-agent-id="mag.share-person"
+                data-agent-label="Staff member to share with"
                 value={selectedEmail}
                 onChange={(e) => setSelectedEmail(e.target.value)}
                 className="mb-2 w-full rounded-sm border border-studio-edge bg-studio-raise px-2 py-2 text-ui-sm text-studio-ink outline-none focus:border-studio-edge-strong"
@@ -368,16 +389,17 @@ export function ShareDialog({ onClose }: { onClose: () => void }) {
               {/* Page scope */}
               <div className="mb-2 flex items-center gap-3 text-ui-sm text-studio-ink-2">
                 <label className="flex cursor-pointer items-center gap-1.5">
-                  <input type="radio" checked={pageMode === 'all'} onChange={() => setPageMode('all')} className="accent-studio-gold" /> All pages
+                  <input type="radio" data-agent-id="mag.share-scope-all" data-agent-label="All pages" checked={pageMode === 'all'} onChange={() => setPageMode('all')} className="accent-studio-gold" /> All pages
                 </label>
                 <label className="flex cursor-pointer items-center gap-1.5">
-                  <input type="radio" checked={pageMode === 'pick'} onChange={() => setPageMode('pick')} className="accent-studio-gold" /> Specific pages
+                  <input type="radio" data-agent-id="mag.share-scope-pick" data-agent-label="Specific pages" checked={pageMode === 'pick'} onChange={() => setPageMode('pick')} className="accent-studio-gold" /> Specific pages
                 </label>
               </div>
               {pageMode === 'pick' && (
                 <PagePicker
                   pages={pages}
                   picked={picked}
+                  agentPrefix="mag.share"
                   onToggle={toggleIn(setPicked)}
                   onAll={() => setPicked(new Set(pages.map((p) => p.id)))}
                   onNone={() => setPicked(new Set())}
@@ -385,6 +407,9 @@ export function ShareDialog({ onClose }: { onClose: () => void }) {
               )}
               <button
                 onClick={() => void share()}
+                data-agent-id="mag.share-submit"
+                data-agent-label="Share & email link"
+                aria-busy={busy}
                 disabled={busy || !selectedEmail}
                 className="flex w-full items-center justify-center gap-1.5 rounded-sm bg-studio-gold px-3 py-2 text-ui-sm font-semibold text-studio-ink hover:bg-studio-gold disabled:opacity-50"
               >

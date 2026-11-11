@@ -44,6 +44,37 @@ export function getMagazineModel(): LanguageModel {
   return provider(MAGAZINE_MODEL)
 }
 
+// The OPERATOR's brain (POST /api/agent/operator) — the Stablehand that acts in
+// the app for staff. Its own pair, separate from AGENT_MODEL, because it runs
+// long tool loops where instruction-following matters more than for chat; the
+// heavy model is only reached for attachments or long multi-part briefs.
+// Slugs verified on openrouter.ai/anthropic on 2026-11-11 — re-verify before
+// changing a default (an unverified slug broke prod generation once already).
+export const OPERATOR_MODEL = (process.env.OPERATOR_MODEL ?? '').trim() || 'anthropic/claude-sonnet-5.5'
+export const OPERATOR_HEAVY_MODEL = (process.env.OPERATOR_HEAVY_MODEL ?? '').trim() || 'anthropic/claude-opus-5.5'
+
+// Top-level `cache_control` is the provider's documented switch for Anthropic
+// AUTOMATIC prompt caching (OpenRouterChatSettings.cache_control in
+// @openrouter/ai-sdk-provider ≥2.9): it caches the growing conversation, which an
+// operator loop re-sends on every step. The explicit breakpoint on the static
+// system prompt (lib/agent/operator/prompt.ts) is separate and always on.
+// OPERATOR_AUTO_CACHE=0 is the kill switch if a routed provider ever rejects it.
+const OPERATOR_AUTO_CACHE = (process.env.OPERATOR_AUTO_CACHE ?? '').trim() !== '0'
+const operatorModels = new Map<string, LanguageModel>()
+
+/** The operator's model: Sonnet by default, Opus when `heavy`. Call only when
+ *  isAgentConfigured() is true. */
+export function getOperatorModel(heavy = false): LanguageModel {
+  if (!provider) provider = createOpenRouter({ apiKey: API_KEY })
+  const slug = heavy ? OPERATOR_HEAVY_MODEL : OPERATOR_MODEL
+  let model = operatorModels.get(slug)
+  if (!model) {
+    model = provider(slug, OPERATOR_AUTO_CACHE ? { cache_control: { type: 'ephemeral' } } : {})
+    operatorModels.set(slug, model)
+  }
+  return model
+}
+
 /**
  * Model variant for reading PDFs (document ingest OCR). It enables OpenRouter's
  * `file-parser` plugin with the `mistral-ocr` engine so IMAGE-BASED / scanned PDFs

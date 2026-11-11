@@ -1,8 +1,11 @@
 import { RacingProductionSystem } from '../../newsroom/production-systems/RacingProductionSystem';
 import { usePS } from '../context';
+import { useRacingRegisterActions } from '../operator-team/useRegisterOperatorActions';
 
 export default function RacingRecordsScreen() {
   const { ps } = usePS();
+  // Stablehand Operator actions for this register (search / add).
+  useRacingRegisterActions(ps);
   return (
     <>
       <RacingProductionSystem

@@ -61,6 +61,7 @@ export function RacingProductionSystem({
           size="sm"
           className="bg-primary text-primary-foreground hover:bg-primary/90 gap-1.5 text-sm"
           onClick={() => onOpenRacingForm()}
+          data-agent-id="reg.add-racing"
         >
           <Plus size={13} />
           Add Racing Record
@@ -79,6 +80,7 @@ export function RacingProductionSystem({
               onChange={(e) => setRacingSearch(e.target.value)}
               className="w-full pl-8 pr-3 py-2 text-sm border border-input rounded-sm bg-card focus:outline-none focus:ring-1 focus:ring-ring"
               aria-label="Search racing records"
+              data-agent-id="reg.racing-search"
             />
           </div>
           <select
@@ -86,6 +88,7 @@ export function RacingProductionSystem({
             onChange={(e) => setRacingHorseFilter(e.target.value)}
             className="px-3 py-2 text-sm border border-input rounded-sm bg-card focus:outline-none focus:ring-1 focus:ring-ring text-foreground"
             aria-label="Filter by horse"
+            data-agent-id="reg.racing-horse-filter"
           >
             <option value="">All Horses</option>
             {safeHorses.map((h) => (
@@ -146,6 +149,8 @@ export function RacingProductionSystem({
                   return (
                     <tr
                       key={entry.id}
+                      data-agent-id={`reg.racing-row-${entry.id}`}
+                      data-agent-label={entry.race_name}
                       className={cn(
                         'border-b border-border/30 hover:bg-muted/10 transition-colors',
                         idx % 2 === 0 ? 'bg-card' : 'bg-background'

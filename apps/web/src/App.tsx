@@ -1,15 +1,17 @@
 import '@/styles/theme.css';
 import '@/styles/brand.css';
 
-import { useEffect, useRef } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { Navigate, Routes, Route, useLocation } from 'react-router-dom';
 import { Toaster } from 'sonner';
 
 import { NavBar } from '@/components/NavBar';
 import { AgentWidget } from '@/components/AgentWidget';
+import { OperatorPresence } from '@/agent/operator/presence/OperatorPresence';
 import { PublicSection } from '@/components/PublicSection';
 import { RequireAuth, RequireAdmin, RequirePermission } from '@/rbac/guards';
 import { useAuthStore } from '@/stores/authStore';
+import { useAgentUi } from '@/stores/agentUiStore';
 import { useSiteSettingsStore } from '@/stores/siteSettingsStore';
 import { useHorseStore } from '@/stores/horseStore';
 import { usePartyStore } from '@/stores/partyStore';
@@ -63,6 +65,7 @@ import AnalyticsScreen from '@/pages/production-system/screens/AnalyticsScreen';
 import EmojiAnalyticsScreen from '@/pages/production-system/screens/EmojiAnalyticsScreen';
 import CommentModerationScreen from '@/pages/production-system/screens/CommentModerationScreen';
 import SettingsScreen from '@/pages/production-system/screens/SettingsScreen';
+import StablehandActivityScreen from '@/pages/production-system/screens/StablehandActivityScreen';
 
 /* Inject Google Fonts for vintage skeuomorphic horse dashboard */
 function useVintageFonts() {
@@ -353,6 +356,9 @@ export default function App() {
                 describes doesn't exist yet; the screen says so on its face. */}
             <Route path="emoji-analytics" element={<EmojiAnalyticsScreen />} />
             <Route path="settings" element={<SettingsScreen />} />
+            {/* The Stable Hand Operator's run log — every staff member sees their own
+                runs; "Everyone" is gated server-side on analytics.view. */}
+            <Route path="stablehand-activity" element={<StablehandActivityScreen />} />
             {/* Magazine Builder — behind the MAGAZINE_V2 server flag. */}
             <Route path="magazine-v2" element={<MagazineV2Home />} />
             {/* An unrecognised sub-path would otherwise render the shell around
@@ -437,10 +443,32 @@ export default function App() {
         />
       </Routes>
 
-      {/* AI concierge — available on every page */}
+      {/* AI concierge — available on every page. For staff it is the Operator,
+          and OperatorPresence draws what it is doing (gold frame, pill, cursor). */}
       <AgentWidget />
+      <OperatorPresence />
 
-      <Toaster richColors position="top-right" />
+      <OperatorAwareToaster />
     </>
   );
+}
+
+/**
+ * Toasts sit top-right — exactly where The Stable Hand Operator panel docks on
+ * desktop, so a success toast used to cover the panel header and the gold
+ * pill's Stop. While the panel is open for a staff user on a wide screen, shift
+ * toasts left of it (the panel is 400px, 560px widened — clear both).
+ */
+function OperatorAwareToaster() {
+  const panelOpen = useAgentUi((s) => s.open);
+  const isStaff = useAuthStore((s) => s.currentUser?.isAdmin === true);
+  const [wide, setWide] = useState(() => typeof window !== 'undefined' && window.matchMedia('(min-width: 1024px)').matches);
+  useEffect(() => {
+    const mq = window.matchMedia('(min-width: 1024px)');
+    const on = () => setWide(mq.matches);
+    mq.addEventListener('change', on);
+    return () => mq.removeEventListener('change', on);
+  }, []);
+  const clearPanel = panelOpen && isStaff && wide;
+  return <Toaster richColors position="top-right" offset={clearPanel ? { top: 24, right: 584 } : undefined} />;
 }

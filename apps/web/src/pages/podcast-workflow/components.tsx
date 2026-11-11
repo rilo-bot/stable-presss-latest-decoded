@@ -74,6 +74,8 @@ export function EpisodeCard({
       exit={{ opacity: 0, scale: 0.96 }}
       className="bg-card border border-border rounded-sm hover:border-primary/40 transition-colors cursor-pointer group"
       onClick={() => onOpen(episode)}
+      data-agent-id={`podcast.episode-${episode.id}`}
+      data-agent-label={episode.title}
     >
       {episode.coverUrl && (
         <div className="relative h-24 overflow-hidden rounded-t-sm">
@@ -136,6 +138,7 @@ export function EpisodeCard({
               <button
                 type="button"
                 aria-label={`Delete ${episode.title || 'this episode'}`}
+                data-agent-id={`podcast.episode-delete-${episode.id}`}
                 title="Delete episode"
                 // The whole card opens the drawer, so this has to stop the click
                 // from reaching it — otherwise deleting also opens what you just

@@ -59,6 +59,7 @@ import agentArticleRouter from './agentArticle/index.js'
 import agentVoiceRouter from './agentVoice/index.js'
 import agentComposeRouter from './agentCompose/index.js'
 import agentInstantRouter from './agentInstant/index.js'
+import agentOperatorRouter from './agentOperator/index.js'
 
 const router = Router()
 
@@ -114,6 +115,9 @@ router.use('/agent/compose', jsonAgent, agentComposeRouter)
 // the older agent routes, which attach the account optionally): it is the most
 // expensive model surface here and there is still no token metering.
 router.use('/agent/instant', jsonAgent, agentInstantRouter)
+// Stablehand OPERATOR — acts in the app for staff (client-executed UI tools +
+// self-API reads). Staff-gated, rate-limited and spend-capped INSIDE the router.
+router.use('/agent/operator', jsonAgent, agentOperatorRouter)
 router.use('/agent', jsonAgent, agentRouter)
 
 // ═══ Phase 2 — the default parser for every remaining mount ════════════════

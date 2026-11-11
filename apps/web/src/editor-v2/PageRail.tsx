@@ -138,6 +138,7 @@ function Tile({
   return (
     <div
       ref={ref}
+      data-agent-id={`mag.page-${n}`}
       // Not a <button>: the tile carries its own duplicate/delete buttons, and a
       // button inside a button is invalid and unreachable by keyboard.
       role="button"
@@ -177,6 +178,7 @@ function Tile({
         <div className="flex flex-shrink-0 flex-col items-center gap-1 pt-0.5">
           <button
             onClick={(e) => { e.stopPropagation(); onMove(-1); }}
+            data-agent-id={`mag.page-${n}-up`}
             disabled={n <= 1}
             className="flex h-6 w-6 items-center justify-center rounded-sm text-studio-ink-3 hover:bg-studio-raise-2 hover:text-studio-ink disabled:opacity-20 disabled:hover:bg-transparent"
             title={`Move page ${n} up`}
@@ -187,6 +189,7 @@ function Tile({
           <span className={'text-center text-ui-sm tabular-nums ' + (active ? 'text-studio-ink' : 'text-studio-ink-3')}>{n}</span>
           <button
             onClick={(e) => { e.stopPropagation(); onMove(1); }}
+            data-agent-id={`mag.page-${n}-down`}
             disabled={n >= total}
             className="flex h-6 w-6 items-center justify-center rounded-sm text-studio-ink-3 hover:bg-studio-raise-2 hover:text-studio-ink disabled:opacity-20 disabled:hover:bg-transparent"
             title={`Move page ${n} down`}
@@ -257,6 +260,7 @@ function Tile({
                 between them costs nothing, and both now clear 24px. */}
             <button
               onClick={(e) => { e.stopPropagation(); void useEditorStore.getState().duplicatePage(page.id); }}
+              data-agent-id={`mag.page-${n}-duplicate`}
               className="absolute left-0.5 top-0.5 rounded-sm bg-studio-bg/90 p-1.5 text-studio-ink-2 hover:bg-studio-bg hover:text-studio-ink"
               title={`Duplicate page ${n}`}
               aria-label={`Duplicate page ${n}`}
@@ -281,6 +285,7 @@ function Tile({
                 }
               }}
               disabled={total <= 1}
+              data-agent-id={`mag.page-${n}-delete`}
               className="absolute right-0.5 top-0.5 rounded-sm bg-studio-bg/90 p-1.5 text-red-300/90 hover:bg-studio-bg hover:text-red-300 disabled:opacity-30"
               title={total <= 1 ? 'A magazine needs at least one page' : `Delete page ${n}`}
               aria-label={`Delete page ${n}`}
@@ -299,11 +304,16 @@ export function PageRail({
   onToggle,
   aiOpen,
   setAiOpen,
+  overlay = false,
 }: {
   open: boolean;
   onToggle: () => void;
   aiOpen: boolean;
   setAiOpen: (v: boolean) => void;
+  /** Phone: the open rail floats OVER the canvas instead of taking 136px of its
+   *  width (the collapsed tab keeps its place underneath, so the page does not
+   *  shift). The parent row must be `relative`. */
+  overlay?: boolean;
 }) {
   // Per-field subscriptions, not the whole store: the rail must not re-render while
   // an element is being dragged on the canvas (that changes `page`, which the rail
@@ -337,6 +347,7 @@ export function PageRail({
     return (
       <button
         onClick={onToggle}
+        data-agent-id="mag.pages-show"
         className="flex w-9 flex-shrink-0 flex-col items-center gap-2 border-r border-studio-hair bg-studio-panel py-2 text-studio-ink-3 hover:bg-studio-raise hover:text-studio-ink"
         title="Show the pages"
         aria-label="Show the pages"
@@ -365,7 +376,9 @@ export function PageRail({
   };
 
   return (
-    <aside aria-label="Pages" className="flex w-[136px] flex-shrink-0 flex-col border-r border-studio-hair bg-studio-panel">
+    <>
+    {overlay && <div aria-hidden className="w-9 flex-shrink-0 border-r border-studio-hair bg-studio-panel" />}
+    <aside aria-label="Pages" data-agent-id="mag.pages-rail" data-agent-label="Page rail" className={'flex w-[136px] flex-shrink-0 flex-col border-r border-studio-hair bg-studio-panel' + (overlay ? ' absolute inset-y-0 left-0 z-30 shadow-[12px_0_32px_rgba(0,0,0,0.45)]' : '')}>
       <div className="flex flex-shrink-0 items-center gap-1 border-b border-studio-hair px-2 py-1.5">
         <span className="text-ui-sm font-bold uppercase tracking-[0.12em] text-studio-ink-3">Pages</span>
         <span className="ml-auto text-ui-sm tabular-nums text-studio-ink-4">
@@ -373,6 +386,7 @@ export function PageRail({
         </span>
         <button
           onClick={onToggle}
+          data-agent-id="mag.pages-hide"
           className="rounded-sm p-0.5 text-studio-ink-3 hover:bg-studio-raise-2 hover:text-studio-ink"
           title="Hide the pages"
           aria-label="Hide the pages"
@@ -426,6 +440,8 @@ export function PageRail({
         <div data-menu-root className="relative flex flex-shrink-0 gap-1 border-t border-studio-hair px-1.5 py-1.5">
           <button
             onClick={() => void useEditorStore.getState().addPage()}
+            data-agent-id="mag.add-page"
+            data-agent-label="Add a blank page"
             disabled={busy}
             className="flex flex-1 items-center justify-center gap-1 rounded-sm border border-studio-edge bg-studio-raise py-1 text-ui-sm text-studio-ink-2 hover:bg-studio-raise-2 disabled:opacity-30"
             title={busy ? 'Wait for the current build to finish' : 'Add a blank page'}
@@ -434,6 +450,8 @@ export function PageRail({
           </button>
           <button
             onClick={() => setAiOpen(!aiOpen)}
+            data-agent-id="mag.add-ai-pages"
+            data-agent-label="Add pages with AI"
             disabled={busy}
             className={
               'flex flex-1 items-center justify-center gap-1 rounded-sm py-1 text-ui-sm font-semibold ' +
@@ -450,6 +468,8 @@ export function PageRail({
               <div className="mb-1.5 flex items-center gap-1.5 text-ui-sm text-studio-ink-2">
                 <span>Add</span>
                 <select
+                  data-agent-id="mag.ai-pages-count"
+                  data-agent-label="How many AI pages"
                   className="rounded border border-studio-edge bg-studio-bg px-1 py-0.5 text-studio-ink"
                   style={{ colorScheme: 'dark' }}
                   value={aiCount}
@@ -462,14 +482,18 @@ export function PageRail({
                 <span>on-theme page{aiCount === 1 ? '' : 's'}</span>
               </div>
               <input
+                data-agent-id="mag.ai-pages-topic"
+                data-agent-label="AI pages topic"
                 className="mb-2 w-full rounded border border-studio-edge bg-studio-bg px-1.5 py-1 text-ui-sm text-studio-ink placeholder:text-studio-ink-4"
                 placeholder="Topic (optional)"
                 value={aiTopic}
                 onChange={(e) => setAiTopic(e.target.value)}
               />
               <div className="flex justify-end gap-1">
-                <button className="rounded-sm px-2 py-1 text-ui-sm text-studio-ink-2 hover:bg-studio-raise-2" onClick={() => setAiOpen(false)}>Cancel</button>
+                <button data-agent-id="mag.ai-pages-cancel" className="rounded-sm px-2 py-1 text-ui-sm text-studio-ink-2 hover:bg-studio-raise-2" onClick={() => setAiOpen(false)}>Cancel</button>
                 <button
+                  data-agent-id="mag.ai-pages-generate"
+                  data-agent-label="Generate AI pages"
                   className="inline-flex items-center gap-1 rounded-sm bg-emerald-500 px-2 py-1 text-ui-sm font-semibold text-studio-ink hover:bg-emerald-600"
                   onClick={() => { void useEditorStore.getState().generatePages(aiCount, aiTopic.trim()); setAiOpen(false); setAiTopic(''); }}
                 >
@@ -481,5 +505,6 @@ export function PageRail({
         </div>
       )}
     </aside>
+    </>
   );
 }

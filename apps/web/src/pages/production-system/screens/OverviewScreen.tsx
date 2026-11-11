@@ -30,6 +30,7 @@ import {
   AttentionPanel, OverviewMasthead, PipelinePanel, RecentStoriesPanel, StartRow,
 } from '../overview/sections';
 import type { AttentionRow, LedgerEntry, StartTile } from '../overview/sections';
+import { useOverviewOperatorActions } from '../operator-community/useOverviewOperatorActions';
 
 export default function OverviewScreen() {
   const s = usePS();
@@ -131,6 +132,28 @@ export default function OverviewScreen() {
       : null,
   ] as Array<StartTile | null>).filter((t): t is StartTile => t !== null);
 
+  const recentTitle = s.isContributor ? 'My recent stories' : 'Recent activity';
+  const recent = displayTotal === 0 ? [] : s.filteredArticles.slice(0, 8);
+
+  // The Stable Hand reads exactly what this role sees here, and clicks the cards.
+  useOverviewOperatorActions({
+    name: s.currentUser?.name ?? 'there',
+    roleLabel: s.roleLabel,
+    isContributor: s.isContributor,
+    brief,
+    briefLoading,
+    figures,
+    ledger,
+    attention: attentionRows,
+    attentionLoading: loading && !summary,
+    attentionError: error,
+    stages: displayTotal > 0 ? stages : [],
+    stageCounts,
+    startTiles,
+    recent,
+    recentTitle,
+  });
+
   return (
     <div className="space-y-6">
       <OverviewMasthead
@@ -181,8 +204,8 @@ export default function OverviewScreen() {
         />
       ) : (
         <RecentStoriesPanel
-          title={s.isContributor ? 'My recent stories' : 'Recent activity'}
-          articles={s.filteredArticles.slice(0, 8)}
+          title={recentTitle}
+          articles={recent}
           allStoriesPath={resolveWhere('all-stories')}
           canEdit={(a) => canEditArticle(a.author, s.currentUser?.name)}
           onEdit={s.handleEdit}

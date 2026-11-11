@@ -49,6 +49,7 @@ export function BasicSection({ form, setField }: { form: FormData; setField: Set
         </div>
         <Input
           id="horse-name"
+          data-agent-id="reg.horse-name"
           value={form.name}
           onChange={(e) => setField('name', e.target.value)}
           placeholder="e.g. Sovereign Streak"
@@ -66,6 +67,7 @@ export function BasicSection({ form, setField }: { form: FormData; setField: Set
       <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
         <SelectField
           id="horse-sex"
+          agentId="reg.horse-sex"
           label="Sex / Orientation"
           value={form.sex ?? ''}
           onChange={(v) => setField('sex', v)}
@@ -77,6 +79,7 @@ export function BasicSection({ form, setField }: { form: FormData; setField: Set
           <Label htmlFor="horse-dob" className="text-xs font-semibold">Date of Birth</Label>
           <Input
             id="horse-dob"
+            data-agent-id="reg.horse-dob"
             type="date"
             value={form.dob ?? ''}
             onChange={(e) => setField('dob', e.target.value)}
@@ -86,6 +89,7 @@ export function BasicSection({ form, setField }: { form: FormData; setField: Set
 
         <SelectField
           id="horse-colour"
+          agentId="reg.horse-colour"
           label="Colour"
           value={form.colour ?? ''}
           onChange={(v) => setField('colour', v)}
@@ -95,6 +99,7 @@ export function BasicSection({ form, setField }: { form: FormData; setField: Set
 
         <SelectField
           id="horse-country"
+          agentId="reg.horse-country"
           label="Country of Birth"
           value={form.country ?? ''}
           onChange={(v) => setField('country', v)}
@@ -160,7 +165,7 @@ export function BasicSection({ form, setField }: { form: FormData; setField: Set
     ════════════════════════════ */
 export function PedigreeSection({ form, setField }: { form: FormData; setField: SetField }) {
   return (
-    <Section title="Pedigree — Bloodline" number="2" defaultOpen={false}>
+    <Section title="Pedigree — Bloodline" number="2" defaultOpen={false} agentId="reg.horse-section-pedigree">
       <p className="text-[10px] text-muted-foreground -mt-2 italic">
         Fill in the family tree. Grandsire / Granddam fields can be auto-populated from the Sire and Dam entries.
       </p>
@@ -173,6 +178,7 @@ export function PedigreeSection({ form, setField }: { form: FormData; setField: 
             <Label htmlFor="horse-sire" className="text-xs font-semibold">Sire Name</Label>
             <Input
               id="horse-sire"
+              data-agent-id="reg.horse-sire"
               value={form.sire ?? ''}
               onChange={(e) => setField('sire', e.target.value)}
               placeholder="e.g. Not I Am"
@@ -214,6 +220,7 @@ export function PedigreeSection({ form, setField }: { form: FormData; setField: 
             <Label htmlFor="horse-dam" className="text-xs font-semibold">Dam Name</Label>
             <Input
               id="horse-dam"
+              data-agent-id="reg.horse-dam"
               value={form.dam ?? ''}
               onChange={(e) => setField('dam', e.target.value)}
               placeholder="e.g. Gold Strike"
@@ -372,7 +379,7 @@ export function ConnectionsSection({
   syndMgrParties: RegisterPerson[];
 }) {
   return (
-    <Section title="Connections &amp; Personnel" number="3" defaultOpen={false}>
+    <Section title="Connections &amp; Personnel" number="3" defaultOpen={false} agentId="reg.horse-section-connections">
       {/* Hint banner */}
       <div className="flex items-start gap-2.5 p-3 rounded-sm bg-primary/5 border border-primary/15 -mt-2 mb-2">
         <div className="w-5 h-5 rounded-full bg-primary/15 flex items-center justify-center flex-shrink-0 mt-0.5">
@@ -395,6 +402,7 @@ export function ConnectionsSection({
           <PartyPicker
             label="Owner(s)"
             roleFilter="owner"
+            agentId="reg.horse-conn-owner"
             selectedIds={connections.owner}
             onChange={(ids) => setConnection('owner', ids)}
             allParties={allParties}
@@ -405,6 +413,7 @@ export function ConnectionsSection({
           <PartyPicker
             label="Syndicate Manager(s)"
             roleFilter="syndicate manager"
+            agentId="reg.horse-conn-syndicate-manager"
             selectedIds={connections['syndicate manager']}
             onChange={(ids) => setConnection('syndicate manager', ids)}
             allParties={allParties}
@@ -419,6 +428,7 @@ export function ConnectionsSection({
           <PartyPicker
             label="Trainer(s)"
             roleFilter="trainer"
+            agentId="reg.horse-conn-trainer"
             selectedIds={connections.trainer}
             onChange={(ids) => setConnection('trainer', ids)}
             allParties={allParties}
@@ -434,6 +444,7 @@ export function ConnectionsSection({
           <PartyPicker
             label="Jockey(s) / Rider(s)"
             roleFilter="jockey"
+            agentId="reg.horse-conn-jockey"
             selectedIds={connections.jockey}
             onChange={(ids) => setConnection('jockey', ids)}
             allParties={allParties}
@@ -448,6 +459,7 @@ export function ConnectionsSection({
           <PartyPicker
             label="Breeder(s)"
             roleFilter="breeder"
+            agentId="reg.horse-conn-breeder"
             selectedIds={connections.breeder}
             onChange={(ids) => setConnection('breeder', ids)}
             allParties={allParties}
@@ -462,6 +474,7 @@ export function ConnectionsSection({
           <PartyPicker
             label="Bloodstock Agent(s)"
             roleFilter="bloodstock agent"
+            agentId="reg.horse-conn-bloodstock-agent"
             selectedIds={connections['bloodstock agent']}
             onChange={(ids) => setConnection('bloodstock agent', ids)}
             allParties={allParties}
@@ -471,6 +484,7 @@ export function ConnectionsSection({
           <PartyPicker
             label="Personnel"
             roleFilter="personnel"
+            agentId="reg.horse-conn-personnel"
             selectedIds={connections.personnel}
             onChange={(ids) => setConnection('personnel', ids)}
             allParties={allParties}

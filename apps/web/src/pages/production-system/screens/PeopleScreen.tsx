@@ -1,8 +1,11 @@
 import { PartiesProductionSystem } from '../../newsroom/production-systems/PartiesProductionSystem';
 import { usePS } from '../context';
+import { usePeopleRegisterActions } from '../operator-team/useRegisterOperatorActions';
 
 export default function PeopleScreen() {
   const { ps } = usePS();
+  // Stablehand Operator actions for this register (search / add).
+  usePeopleRegisterActions(ps);
   return (
     <>
       <PartiesProductionSystem

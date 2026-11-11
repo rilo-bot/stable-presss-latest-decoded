@@ -27,6 +27,7 @@ import { ReactionBar } from '@/components/ReactionBar';
 import { CommentsSection } from '@/components/comments/CommentsSection';
 import { ArrowLeft, BookOpen, Download, Loader2 } from 'lucide-react';
 import { toast } from 'sonner';
+import { bulletinPageId, useBulletinReaderOperatorActions } from '@/pages/operator-site/useBulletinOperatorActions';
 
 /**
  * Fallback page dims when an issue somehow carries none — the canonical generated
@@ -71,11 +72,12 @@ function pageInches(page: IssuePageData | undefined): { w: string; h: string } {
 //
 // In PRINT it needs both, from THIS page — see the @media print block below for
 // why a shared constant was wrong.
-function ReadonlyPage({ page, maxWidth }: { page: IssuePageData; maxWidth: number }) {
+function ReadonlyPage({ page, maxWidth, agentId }: { page: IssuePageData; maxWidth: number; agentId?: string }) {
   const inches = pageInches(page);
   return (
     <div
       className="bulletin-print-page shadow-[0_10px_40px_rgba(0,0,0,0.18)] ring-1 ring-black/10"
+      data-agent-id={agentId}
       // `--page-w/h` are consumed only inside @media print; on screen the explicit
       // width governs and the canvas resolves its own height from the page aspect.
       style={{ width: maxWidth, ['--page-w' as string]: inches.w, ['--page-h' as string]: inches.h }}
@@ -93,6 +95,8 @@ export default function BulletinViewer() {
   const issue = useIssueStore((s) => (id ? s.byId[id] : undefined));
   const fetchIssue = useIssueStore((s) => s.fetchIssue);
   const [status, setStatus] = useState<'loading' | 'ready' | 'notfound'>(issue ? 'ready' : 'loading');
+  // The Stable Hand: bulletins.read / goToPage / downloadPdf on this reader.
+  useBulletinReaderOperatorActions(id);
 
   useEffect(() => {
     if (!id) {
@@ -340,7 +344,7 @@ export default function BulletinViewer() {
       {/* Header */}
       <div className="sticky top-0 z-10 border-b border-black/10 bg-[#0a2342] text-white print:hidden">
         <div className="mx-auto flex max-w-5xl items-center gap-4 px-4 py-3">
-          <button onClick={() => navigate('/bulletins')} className="flex items-center gap-1.5 text-xs font-semibold text-white/70 hover:text-white">
+          <button onClick={() => navigate('/bulletins')} data-agent-id="site.bulletin-back" className="flex items-center gap-1.5 text-xs font-semibold text-white/70 hover:text-white">
             <ArrowLeft size={14} /> All bulletins
           </button>
           <div className="min-w-0">
@@ -353,6 +357,7 @@ export default function BulletinViewer() {
           <button
             onClick={handleDownload}
             disabled={exporting}
+            data-agent-id="site.bulletin-download"
             className="ml-auto flex flex-shrink-0 items-center gap-1.5 rounded-sm border border-white/20 px-3 py-1.5 text-xs font-semibold text-white/80 hover:bg-white/10 disabled:cursor-not-allowed disabled:opacity-60"
             title="Download this edition as a PDF"
           >
@@ -364,8 +369,8 @@ export default function BulletinViewer() {
 
       {/* Pages — one renderer, shared with the editor and the PDF export. */}
       <div ref={containerRef} className="bulletin-print-container mx-auto flex max-w-[820px] flex-col items-center gap-6 px-3 py-8">
-        {issue.pages.map((p) => (
-          <ReadonlyPage key={p.index} page={p} maxWidth={maxWidth} />
+        {issue.pages.map((p, n) => (
+          <ReadonlyPage key={p.index} page={p} maxWidth={maxWidth} agentId={bulletinPageId(n + 1)} />
         ))}
       </div>
 

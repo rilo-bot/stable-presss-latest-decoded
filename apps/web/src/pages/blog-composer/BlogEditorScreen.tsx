@@ -48,6 +48,7 @@ import { InlineText } from './InlineText';
 import { ToolsRail } from './ToolsRail';
 import { ImagePicker } from './ImagePicker';
 import { FieldAi, inputCls } from './controls';
+import { useBlogEditorActions } from '@/pages/production-system/operator/useBlogOperatorActions';
 
 function SaveChip() {
   const { saveState, saveError } = useComposerStore();
@@ -149,6 +150,9 @@ export default function BlogEditorScreen() {
   const [coverPickerOpen, setCoverPickerOpen] = useState(false);
   /** Bumped to ask the canvas to open its image picker at the end of the body. */
   const [imageRequest, setImageRequest] = useState(0);
+
+  // Stablehand Operator: blog.publish / unpublish / setTitle / save on this post.
+  useBlogEditorActions();
 
   // Records the cross-link blocks and their pickers need.
   const horses = useHorseStore((s) => s.horses);
@@ -327,6 +331,8 @@ export default function BlogEditorScreen() {
             size="sm"
             variant="ghost"
             className="h-8 gap-1.5 text-xs"
+            data-agent-id="blog.studio-open"
+            data-agent-label="Studio AI for this post"
             onClick={() => {
               void (async () => {
                 if (useComposerStore.getState().saveState === 'dirty') await saveNow();
@@ -344,7 +350,7 @@ export default function BlogEditorScreen() {
             Studio AI
           </Button>
           <Button size="sm" variant="ghost" className="h-8 gap-1.5 text-xs" asChild>
-            <Link to={`/blog/${blog.slug}`} target="_blank" rel="noreferrer">
+            <Link to={`/blog/${blog.slug}`} target="_blank" rel="noreferrer" data-agent-id="blog.view-link">
               <Eye size={13} />
               View
             </Link>
@@ -355,11 +361,19 @@ export default function BlogEditorScreen() {
             className="h-8 text-xs"
             disabled={saveState === 'saving'}
             onClick={() => void saveNow()}
+            data-agent-id="blog.save-button"
           >
             {saveState === 'saving' ? 'Saving…' : 'Save'}
           </Button>
           {canPublish && (
-            <Button size="sm" className="h-8 text-xs" variant={isPublished ? 'outline' : 'default'} onClick={() => void publish()}>
+            <Button
+              size="sm"
+              className="h-8 text-xs"
+              variant={isPublished ? 'outline' : 'default'}
+              onClick={() => void publish()}
+              data-agent-id="blog.publish-button"
+              data-agent-label={isPublished ? 'Unpublish' : 'Publish'}
+            >
               {isPublished ? 'Unpublish' : 'Publish'}
             </Button>
           )}
@@ -386,6 +400,8 @@ export default function BlogEditorScreen() {
                 spellcheck and undo for free. */}
             <input
               id="blog-title"
+              data-agent-id="blog.title-input"
+              data-agent-label="Post title"
               value={blog.title}
               placeholder="A headline for your post"
               // On the input, not a wrapper — see the note in controls.tsx: with it
@@ -405,7 +421,11 @@ export default function BlogEditorScreen() {
             <p className="mb-1.5 text-[10px] font-bold uppercase tracking-[0.12em] text-muted-foreground">
               Body
             </p>
-            <div className="rounded-sm border border-border/60 bg-background">
+            <div
+              className="rounded-sm border border-border/60 bg-background"
+              data-agent-id="blog.body"
+              data-agent-label="Post body"
+            >
               {/* Sticky so the toolbar is still reachable a thousand words down.
                   `top-14` clears the newsroom's own pinned bar (56px) — at top-0
                   the toolbar stuck to the viewport edge and sat completely
@@ -442,7 +462,11 @@ export default function BlogEditorScreen() {
                     <div className="group/sf relative mb-6">
                       {/* The focus handler wraps ONLY the text, so the ✨ beside it
                           cannot shift the layout by selecting on its own focus. */}
-                      <div onFocusCapture={() => selectField('subtitle')}>
+                      <div
+                        onFocusCapture={() => selectField('subtitle')}
+                        data-agent-id="blog.standfirst-input"
+                        data-agent-label="Standfirst"
+                      >
                         <InlineText
                           plain
                           value={blog.subtitle ?? ''}

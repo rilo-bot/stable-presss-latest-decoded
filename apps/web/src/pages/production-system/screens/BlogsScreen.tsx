@@ -28,6 +28,7 @@ import { useBlogStore, type BlogListFilters } from '@/stores/blogStore';
 import { useBlogStudioUi } from '@/stores/blogStudioUiStore';
 import type { BlogSummary } from '@/types/blog';
 import { NewPostChoice } from './NewPostChoice';
+import { useBlogListActions } from '../operator/useBlogOperatorActions';
 
 type Tab = 'all' | 'draft' | 'published';
 type Layout = 'list' | 'cards';
@@ -122,6 +123,8 @@ function RowActions({
           type="button"
           disabled={busy}
           onClick={onTogglePublish}
+          data-agent-id={`blog.row-${post.id}.${live ? 'unpublish' : 'publish'}`}
+          data-agent-label={`${live ? 'Unpublish' : 'Publish'}: ${post.title || 'Untitled post'}`}
           className="rounded-sm px-2 py-1 text-[11px] font-medium text-primary hover:bg-muted disabled:opacity-50"
         >
           {live ? 'Unpublish' : 'Publish'}
@@ -129,6 +132,8 @@ function RowActions({
       )}
       <Link
         to={`/production-system/blogs/${post.id}`}
+        data-agent-id={`blog.row-${post.id}.edit`}
+        data-agent-label={`Edit: ${post.title || 'Untitled post'}`}
         className="rounded-sm px-2 py-1 text-[11px] font-medium text-muted-foreground hover:bg-muted hover:text-foreground"
       >
         Edit
@@ -138,6 +143,7 @@ function RowActions({
           type="button"
           disabled={busy}
           aria-label={`Delete ${post.title || 'Untitled post'}`}
+          data-agent-id={`blog.row-${post.id}.delete`}
           onClick={onDelete}
           className="rounded-sm px-2 py-1 text-[11px] font-medium text-destructive hover:bg-destructive/10 disabled:opacity-50"
         >
@@ -238,6 +244,9 @@ export default function BlogsScreen() {
   const [busyId, setBusyId] = useState<string | null>(null);
   const [choiceOpen, setChoiceOpen] = useState(false);
 
+  // Stablehand Operator: blog.list / open / create / publish / unpublish / delete.
+  useBlogListActions();
+
   const chooseLayout = (next: Layout) => {
     setLayout(next);
     try {
@@ -301,13 +310,15 @@ export default function BlogsScreen() {
           variant="outline"
           className="gap-1.5"
           onClick={() => useBlogStudioUi.getState().openDesk()}
+          data-agent-id="blog.studio-open"
+          data-agent-label="Blog Studio AI"
         >
           <Sparkles size={14} />
           <span className="hidden sm:inline">Blog Studio AI</span>
           <span className="sm:hidden">AI</span>
         </Button>
         {canCreate && (
-          <Button size="sm" className="gap-1.5" onClick={() => setChoiceOpen(true)}>
+          <Button size="sm" className="gap-1.5" onClick={() => setChoiceOpen(true)} data-agent-id="blog.new-button">
             <Plus size={14} />
             New post
           </Button>
@@ -327,6 +338,7 @@ export default function BlogsScreen() {
             <button
               key={t}
               role="tab"
+              data-agent-id={`blog.tab-${t}`}
               aria-selected={tab === t}
               onClick={() => setTab(t)}
               className={cn(
@@ -355,6 +367,7 @@ export default function BlogsScreen() {
             onChange={(e) => setSearch(e.target.value)}
             placeholder="Search titles…"
             aria-label="Search posts"
+            data-agent-id="blog.search-input"
             className="w-full rounded-sm border border-border/60 bg-background py-1.5 pl-8 pr-2 text-xs focus:border-primary/40 focus:outline-none"
           />
         </form>

@@ -6,7 +6,14 @@ const serifStyle: React.CSSProperties = { fontFamily: "'IM Fell English', 'Palat
  * Small inline notice shown at the top of a parchment-themed form when a saved
  * draft has been restored, with a button to discard it and start fresh.
  */
-export function DraftRestoredHint({ onDiscard }: { onDiscard: () => void }) {
+export function DraftRestoredHint({
+  onDiscard,
+  agentId,
+}: {
+  onDiscard: () => void;
+  /** Optional Stablehand Operator anchor (data-agent-id) for the Discard button. */
+  agentId?: string;
+}) {
   return (
     <div
       style={{
@@ -23,6 +30,7 @@ export function DraftRestoredHint({ onDiscard }: { onDiscard: () => void }) {
       <button
         type="button"
         onClick={onDiscard}
+        data-agent-id={agentId}
         style={{
           display: 'flex', alignItems: 'center', gap: 3, padding: '3px 7px', borderRadius: 2,
           background: 'transparent', border: '1px solid var(--parchment-dark)', cursor: 'pointer',

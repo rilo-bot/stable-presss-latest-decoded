@@ -2,7 +2,7 @@ import type { ReactNode } from 'react';
 import {
   FileText, LayoutDashboard, Shield, Users, BarChart2, Settings, ArrowRight,
   BookOpen, Mic, Star, DollarSign, Image, File, Receipt, Layers, Newspaper,
-  Flag, PenLine, Zap, SmilePlus, MessageSquare,
+  Flag, PenLine, Zap, SmilePlus, MessageSquare, Bot,
 } from 'lucide-react';
 import type { ArticleStatus } from '@/types/article';
 import type { PartyRole } from '@/types/party';
@@ -170,6 +170,10 @@ export const SIDE_NAV: SideNavItem[] = [
   { id: 'roles', label: 'Roles & Permissions', icon: <Shield size={15} />, section: 'Management', slug: 'roles', requiresPermission: 'roles.view' },
   { id: 'analytics', label: 'Analytics', icon: <BarChart2 size={15} />, section: 'Management', slug: 'analytics', requiresPermission: 'analytics.view' },
   { id: 'settings', label: 'Settings', icon: <Settings size={15} />, section: 'Management', slug: 'settings', requiresPermission: 'settings.view' },
+  /* No permission, like the Personal rows: every staff member can run the
+     The Stable Hand and this opens on their OWN runs. "Everyone" is gated by the
+     server on analytics.view (routes/agentOperator). */
+  { id: 'stablehand-activity', label: 'Stable Hand Activity', icon: <Bot size={15} />, section: 'Management', slug: 'stablehand-activity' },
 
   // ── Personal ──────────────────────────────────────────────────────────────
   { id: 'my-assets', label: 'My Media Assets', icon: <Image size={15} />, section: 'Personal', slug: 'my-assets' },

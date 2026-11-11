@@ -365,6 +365,8 @@ export function ArticleForm({
               <button
                 type="button"
                 onClick={discardDraft}
+                data-agent-id="story.form-discard-draft"
+                data-agent-label="Discard restored draft"
                 className="flex items-center gap-1 px-2 py-0.5 rounded-sm border border-border/60 text-[10px] uppercase tracking-[0.08em] font-semibold text-muted-foreground hover:text-foreground transition-colors"
               >
                 <X size={9} /> Discard
@@ -381,6 +383,8 @@ export function ArticleForm({
             </Label>
             <Input
               id="article-title"
+              data-agent-id="story.title-input"
+              data-agent-label="Headline"
               value={title}
               onChange={(e) => setTitle(e.target.value)}
               placeholder="The headline that stops readers in their tracks"
@@ -402,6 +406,8 @@ export function ArticleForm({
             </p>
             <AiTextarea
               id="article-summary"
+              data-agent-id="story.summary-input"
+              data-agent-label="Story copy"
               value={summary}
               onChange={(e) => setSummary(e.target.value)}
               placeholder="Write the story. The opening paragraph is the one that earns the read."
@@ -454,6 +460,7 @@ export function ArticleForm({
               </Label>
               <Input
                 id="article-author"
+                data-agent-id="story.author-input"
                 value={author}
                 onChange={(e) => !authorLocked && setAuthor(e.target.value)}
                 readOnly={authorLocked}
@@ -535,6 +542,9 @@ export function ArticleForm({
                         <button
                           key={cat.value}
                           type="button"
+                          data-agent-id={`story.category-${cat.value}`}
+                          data-agent-label={`${cat.section} · ${cat.label}`}
+                          aria-pressed={category === cat.value}
                           onClick={() => setCategory(cat.value === category ? '' : cat.value)}
                           className={cn(
                             'flex items-center gap-1 text-[10px] uppercase tracking-[0.08em] font-semibold px-2.5 py-1.5 rounded-sm border transition-all',
@@ -564,6 +574,7 @@ export function ArticleForm({
             {category && (
               <button
                 type="button"
+                data-agent-id="story.category-clear"
                 onClick={() => setCategory('')}
                 className="text-[10px] text-muted-foreground hover:text-foreground transition-colors uppercase tracking-[0.1em] font-semibold flex items-center gap-1"
               >
@@ -766,7 +777,7 @@ export function ArticleForm({
         {/* Sticky footer */}
         <DialogFooter className="flex-shrink-0 px-6 py-4 border-t border-border/60 flex items-center gap-3 justify-end">
           <DialogClose asChild>
-            <Button variant="outline" size="sm" onClick={onClose} disabled={saving}>
+            <Button variant="outline" size="sm" onClick={onClose} disabled={saving} data-agent-id="story.form-cancel">
               Cancel
             </Button>
           </DialogClose>
@@ -774,6 +785,7 @@ export function ArticleForm({
             size="sm"
             onClick={handleSubmit}
             disabled={saving}
+            data-agent-id="story.form-submit"
             className="bg-primary text-primary-foreground hover:bg-primary/90 min-w-[110px]"
           >
             {saving

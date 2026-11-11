@@ -6,6 +6,7 @@ import { isAdmin } from '@/rbac/can';
 import { PodcastPlayer } from '@/components/PodcastPlayer';
 import {Mic, LoaderCircle} from 'lucide-react';
 import { Link } from 'react-router-dom';
+import { usePodcastOperatorActions } from '@/pages/operator-site/useSiteReadActions';
 
 export default function PodcastHub() {
   // === auto fetch-on-mount (backend planner) ===
@@ -35,6 +36,8 @@ export default function PodcastHub() {
   );
 
   const latestEpisode = publishedEpisodes[0] ?? null;
+  // The Stable Hand: site.readPodcast lists these same episodes.
+  usePodcastOperatorActions(publishedEpisodes);
 
   const totalDurationSeconds = useMemo(
     () => publishedEpisodes.reduce((sum, ep) => sum + (ep.durationSeconds ?? 0), 0),

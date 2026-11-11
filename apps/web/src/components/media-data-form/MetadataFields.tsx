@@ -77,6 +77,7 @@ export function MetadataFields({
           value={title}
           onChange={(e) => setTitle(e.target.value)}
           placeholder="Full title of the article, photo, or press release…"
+          data-agent-id="reg.media-title"
           style={inputStyle}
           required
         />
@@ -89,6 +90,7 @@ export function MetadataFields({
           value={sourcePublication}
           onChange={(e) => setSourcePublication(e.target.value)}
           placeholder="e.g. The Racing Post, Stable Press, Racing NSW Photography…"
+          data-agent-id="reg.media-source"
           style={inputStyle}
         />
       </div>
@@ -100,6 +102,8 @@ export function MetadataFields({
           type="date"
           value={publishedDate}
           onChange={(e) => setPublishedDate(e.target.value)}
+          data-agent-id="reg.media-date"
+          aria-label="Published date"
           style={inputStyle}
         />
       </div>
@@ -141,6 +145,7 @@ export function MetadataFields({
             style={{ ...inputStyle, display: 'flex', alignItems: 'center', gap: 6, cursor: 'pointer' }}
             aria-expanded={partyDropOpen}
             aria-label="Add featured party"
+            data-agent-id="reg.media-featured"
           >
             <Plus size={12} style={{ color: 'var(--parchment-shadow)', flexShrink: 0 }} />
             <span style={{ color: 'var(--parchment-shadow)', fontStyle: 'italic', fontSize: '0.72rem' }}>Add featured party…</span>
@@ -153,6 +158,7 @@ export function MetadataFields({
                   value={partySearch}
                   onChange={(e) => setPartySearch(e.target.value)}
                   placeholder="Search parties…"
+                  data-agent-id="reg.media-featured-search"
                   style={{ flex: 1, border: 'none', background: 'transparent', outline: 'none', fontSize: '0.72rem', color: 'var(--forest-deep)', fontFamily: "'IM Fell English', Georgia, serif" }}
                   autoFocus
                 />
@@ -168,6 +174,9 @@ export function MetadataFields({
                     key={p.id}
                     type="button"
                     onClick={() => toggleParty(p.id)}
+                    data-agent-id={`reg.media-featured.option-${p.id}`}
+                    data-agent-label={p.name}
+                    aria-selected={selected}
                     style={{ width: '100%', display: 'flex', alignItems: 'center', gap: 8, padding: '8px 12px', background: selected ? 'rgba(0,0,0,0.04)' : 'transparent', border: 'none', cursor: 'pointer', textAlign: 'left' }}
                   >
                     <div style={{ width: 14, height: 14, borderRadius: 2, border: `1px solid ${selected ? 'var(--gold-bright)' : 'var(--parchment-dark)'}`, background: selected ? 'var(--forest-mid)' : 'transparent', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
@@ -206,6 +215,7 @@ export function MetadataFields({
             style={{ ...inputStyle, display: 'flex', alignItems: 'center', gap: 6, cursor: 'pointer' }}
             aria-expanded={articleDropOpen}
             aria-label="Link to article"
+            data-agent-id="reg.media-article"
           >
             <Plus size={12} style={{ color: 'var(--parchment-shadow)', flexShrink: 0 }} />
             <span style={{ color: 'var(--parchment-shadow)', fontStyle: 'italic', fontSize: '0.72rem' }}>
@@ -220,6 +230,7 @@ export function MetadataFields({
                   value={articleSearch}
                   onChange={(e) => setArticleSearch(e.target.value)}
                   placeholder="Search articles…"
+                  data-agent-id="reg.media-article-search"
                   style={{ flex: 1, border: 'none', background: 'transparent', outline: 'none', fontSize: '0.72rem', color: 'var(--forest-deep)', fontFamily: "'IM Fell English', Georgia, serif" }}
                   autoFocus
                 />
@@ -243,6 +254,8 @@ export function MetadataFields({
                     key={a.id}
                     type="button"
                     onClick={() => { setLinkedArticleId(a.id); setArticleDropOpen(false); setArticleSearch(''); }}
+                    data-agent-id={`reg.media-article.option-${a.id}`}
+                    data-agent-label={a.title}
                     style={{ width: '100%', display: 'flex', alignItems: 'center', gap: 8, padding: '8px 12px', background: selected ? 'rgba(0,0,0,0.04)' : 'transparent', border: 'none', cursor: 'pointer', textAlign: 'left' }}
                   >
                     {selected && <Check size={11} style={{ color: 'var(--forest-deep)', flexShrink: 0 }} />}

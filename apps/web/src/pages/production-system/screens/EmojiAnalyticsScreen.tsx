@@ -49,6 +49,7 @@ import {
   Bar, ChipToggles, DivergingBar, Empty, Panel, Section,
   SegmentedControl, StatTile, ThreeWayBar, splitParts,
 } from '../emoji-analytics/parts';
+import { reactionsKey, useReactionsOperatorActions } from '../operator-community/useReactionsOperatorActions';
 
 /**
  * A piece needs this many reactions before it can be ranked. Fixed rather than
@@ -78,7 +79,7 @@ export default function EmojiAnalyticsScreen() {
   const [audience, setAudience] = useState<'readers' | 'everyone'>('readers');
   const includeStaff = audience === 'everyone';
 
-  const { report, state } = useReactionsReport(filters, includeStaff);
+  const { report, state, loadedKey } = useReactionsReport(filters, includeStaff);
   const d = useMemo(() => deriveDashboard(report), [report]);
 
   const maxEmojiPct = Math.max(1, ...d.emojiRows.map((r) => r.pct));
@@ -97,6 +98,14 @@ export default function EmojiAnalyticsScreen() {
       .sort((a, b) => (b.split.counts[i] ?? 0) - (a.split.counts[i] ?? 0))
       .slice(0, 10);
   }, [d.items, rank]);
+
+  // The Stable Hand reads these figures and sets the controls above them.
+  useReactionsOperatorActions({
+    rangeId, from: filters.from, to: filters.to, types, audience, rank, state,
+    loadedKey,
+    currentKey: reactionsKey(filters.from, filters.to, types.join(','), includeStaff),
+    report, dashboard: d, leaders, minReactions: MIN_REACTIONS,
+  });
 
   return (
     <div className="space-y-6 pb-4">
@@ -125,6 +134,7 @@ export default function EmojiAnalyticsScreen() {
           options={DATE_RANGES.map((r) => ({ value: r.id, label: r.label }))}
           value={rangeId}
           onChange={setRangeId}
+          agentIdPrefix="analytics.range"
         />
         <span aria-hidden="true" className="hidden h-4 w-px bg-border sm:block" />
         <ChipToggles
@@ -134,6 +144,7 @@ export default function EmojiAnalyticsScreen() {
           values={types}
           onToggle={(v) => setTypes((cur) => (cur.includes(v) ? cur.filter((t) => t !== v) : [...cur, v]))}
           onClear={() => setTypes([])}
+          agentIdPrefix="analytics.type"
         />
         <span aria-hidden="true" className="hidden h-4 w-px bg-border sm:block" />
         <SegmentedControl
@@ -144,6 +155,7 @@ export default function EmojiAnalyticsScreen() {
           ]}
           value={audience}
           onChange={setAudience}
+          agentIdPrefix="analytics.audience"
         />
       </div>
 
@@ -194,20 +206,20 @@ export default function EmojiAnalyticsScreen() {
             {/* At zero these say nothing rather than something false: avgStep(0)
                 is 😐, and "averages undecided across every reaction" would be a
                 claim about reactions that do not exist. */}
-            <StatTile label="Total score" value={scoreText(d.overall.score)}
+            <StatTile agentId="analytics.total-score" label="Total score" value={scoreText(d.overall.score)}
               detail={d.reactions === 0
                 ? 'Nothing counted in this range yet'
                 : <>Averages <span aria-hidden="true">{avgStep(d.overall.avgScore).emoji}</span>{' '}“{avgStep(d.overall.avgScore).label.toLowerCase()}” across every reaction</>} />
-            <StatTile label="Reader mood" value={d.moodVerdict} display
+            <StatTile agentId="analytics.reader-mood" label="Reader mood" value={d.moodVerdict} display
               detail={d.reactions === 0
                 ? 'No one has answered yet'
                 : `${d.overall.forPct}% for · ${d.overall.againstPct}% against`} />
-            <StatTile label="Total reactions" value={compact(d.reactions)}
+            <StatTile agentId="analytics.total-reactions" label="Total reactions" value={compact(d.reactions)}
               detail={`From ${compact(d.reactors)} readers, on ${d.coverage.reacted} of ${d.coverage.published} published items`} />
           </div>
 
           {/* ── 1 · The whole scale ── */}
-          <Panel title="How readers feel overall">
+          <Panel title="How readers feel overall" agentId="analytics.emoji-breakdown">
             <ThreeWayBar parts={splitParts(d.overall, SIDE_FILL)} />
 
             {/* Where the scoring model explains itself: count × weight, per
@@ -255,6 +267,7 @@ export default function EmojiAnalyticsScreen() {
 
           {/* ── 2 · Leaderboard ── */}
           <Panel
+            agentId="analytics.leaderboard"
             title={rank === 'score' ? 'Highest scoring' : `Most ${stepFor(rank).label.toLowerCase()}`}
             subtitle={
               rank === 'score'
@@ -274,6 +287,7 @@ export default function EmojiAnalyticsScreen() {
                 ]}
                 value={rank}
                 onChange={setRank}
+                agentIdPrefix="analytics.rank"
               />
             }
           >
@@ -298,7 +312,7 @@ export default function EmojiAnalyticsScreen() {
           <Section title="Reactions by content type">
             <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
               {d.byType.map((t) => (
-                <div key={t.id} className="rounded-sm border border-border/60 bg-card p-5">
+                <div key={t.id} data-agent-id={`analytics.by-type-${t.id}`} data-agent-label={`${t.label} reactions`} className="rounded-sm border border-border/60 bg-card p-5">
                   <div className="mb-3 flex items-start gap-2">
                     <div className="min-w-0 flex-1">
                       <h3 className="truncate font-[family-name:var(--font-display)] text-[14px] font-bold text-foreground">
@@ -375,9 +389,11 @@ type LoadState = 'loading' | 'ready' | 'error';
 function useReactionsReport(
   filters: Filters,
   includeStaff: boolean,
-): { report: ReactionsReport; state: LoadState } {
+): { report: ReactionsReport; state: LoadState; loadedKey: string } {
   const [report, setReport] = useState<ReactionsReport>(EMPTY_REPORT);
   const [state, setState] = useState<LoadState>('loading');
+  /** Which filters `report` answers — so The Stable Hand never reads a stale one. */
+  const [loadedKey, setLoadedKey] = useState('');
 
   const { from, to, types } = filters;
   const typeKey = types.join(',');
@@ -397,6 +413,7 @@ function useReactionsReport(
       .then((data) => {
         if (!active) return;
         setReport({ ...EMPTY_REPORT, ...data });
+        setLoadedKey(reactionsKey(from, to, typeKey, includeStaff));
         setState('ready');
       })
       .catch(() => {
@@ -408,7 +425,7 @@ function useReactionsReport(
     };
   }, [from, to, typeKey, includeStaff]);
 
-  return { report, state };
+  return { report, state, loadedKey };
 }
 
 function LeaderRow({
