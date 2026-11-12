@@ -806,20 +806,71 @@ export function useMagazineEditorActions(perms: EditorPerms): void {
         await ui.type('mag.ai-input', prompt, { clear: true });
         assertEnabled('mag.ai-send', 'The studio cannot take a message right now.');
         await ui.click('mag.ai-send', 'Send');
-        const sentAt = Date.now();
-        ui.step('Waiting for the studio to reply');
-        await waitUntil(
-          () => {
-            const st = get();
-            if (!st.chatBusy && st.chat.length >= before + 2) return true;
-            if (!st.chatBusy && st.chat.length === before && Date.now() - sentAt > 4000) {
-              throw new Error('The message was not sent — the studio composer did not accept it.');
-            }
-            return false;
-          },
-          { signal: ui.signal, timeoutMs: 300_000, intervalMs: 400, what: "the studio's reply" },
-        );
+        await waitForStudioTurn(ui, before, Date.now());
+        return finishStudioTurn(ui, apply);
+      },
+    },
+    canEdit,
+  );
 
+  /** What the studio composer is doing right now, read off its Send button
+   *  (AiPanel sets data-studio-phase). 'ingesting' = uploading/reading an
+   *  attachment before the message goes out — local state the store can't see. */
+  function studioPhase(): 'ingesting' | 'replying' | 'idle' | 'unknown' {
+    const btn = document.querySelector('[data-agent-id="mag.ai-send"]');
+    const p = btn?.getAttribute('data-studio-phase');
+    return p === 'ingesting' || p === 'replying' || p === 'idle' ? p : 'unknown';
+  }
+
+  /**
+   * Wait until the studio has REALLY finished the turn: the attachment is read,
+   * the message is in the thread and the reply is done. Uploading/reading counts
+   * as progress, never as "not sent" — a big image can take a while (reported:
+   * the Stable Hand gave up after 4s while the studio was still reading the
+   * user's photo, then told the user the studio was "still working").
+   * "Not sent" is only concluded after 20s with the studio idle, nothing posted,
+   * and the prompt still sitting in the box.
+   */
+  async function waitForStudioTurn(ui: UiDriver, chatLenBefore: number, sentAt: number) {
+    let shown: string | null = null;
+    const note = (label: string) => {
+      if (shown !== label) {
+        shown = label;
+        ui.step(label);
+      }
+    };
+    // The studio is briefly idle between "reading the attachment" and
+    // "replying" — only a SETTLED idle (1.5s) counts as the turn being over.
+    let idleSince = 0;
+    await waitUntil(
+      () => {
+        const st = get();
+        const phase = studioPhase();
+        if (phase === 'ingesting') {
+          idleSince = 0;
+          note('The studio is reading the attachment');
+          return false;
+        }
+        if (st.chatBusy || phase === 'replying') {
+          idleSince = 0;
+          note('Waiting for the studio to reply');
+          return false;
+        }
+        if (!idleSince) idleSince = Date.now();
+        if (st.chat.length >= chatLenBefore + 2) return Date.now() - idleSince >= 1500;
+        if (st.chat.length === chatLenBefore && Date.now() - sentAt > 20_000) {
+          const box = document.querySelector<HTMLTextAreaElement | HTMLInputElement>('[data-agent-id="mag.ai-input"] textarea, [data-agent-id="mag.ai-input"]');
+          const stillTyped = !!box && 'value' in box && box.value.trim().length > 0;
+          if (stillTyped) throw new Error('The message was not sent — the studio composer did not accept it.');
+        }
+        return false;
+      },
+      { signal: ui.signal, timeoutMs: 600_000, intervalMs: 500, what: "the studio's reply" },
+    );
+  }
+
+  /** Read the finished turn; optionally press "Use these changes" and verify. */
+  async function finishStudioTurn(ui: UiDriver, apply: boolean | undefined) {
         const after = get();
         const reply = [...after.chat].reverse().find((m) => m.role === 'assistant')?.content ?? '';
         const onPage = after.proposalsPageId ? after.pages.findIndex((p) => p.id === after.proposalsPageId) + 1 : null;
@@ -839,8 +890,32 @@ export function useMagazineEditorActions(perms: EditorPerms): void {
           appliedChanges: applied ? staged : undefined,
           stagedOnPage: onPage,
           applied,
+          note: applied
+            ? 'Applied — the changes are on the page now (undo with Ctrl+Z). Check the page with readScreen before reporting.'
+            : staged.length > 0
+              ? 'Changes are STAGED, not on the page yet. If the user asked for this change, call magazine.applyStudioChanges now.'
+              : 'The studio staged no changes — read its reply; it may need more detail.',
           pageCount: get().pages.length,
         };
+  }
+
+  // Recovery / follow-up: the studio is mid-turn (reading an attachment or
+  // replying) or has finished with staged changes. Never leave the user with
+  // "it's still working" — wait here, then finish the job.
+  useAgentAction(
+    {
+      name: 'magazine.waitForStudio',
+      description:
+        'Wait (up to 10 minutes) for the Magazine AI Studio to finish what it is doing — reading an attachment, then replying — and return its reply and staged changes. With apply:true, then press "Use these changes" and confirm they are on the page. Use whenever the studio is still working on something you asked for.',
+      args: z.object({ apply: z.boolean().optional() }),
+      run: async ({ apply }, ui) => {
+        await ready(ui);
+        await ensureStudioComposer(ui);
+        const st = get();
+        const busy = studioPhase() === 'ingesting' || studioPhase() === 'replying' || st.chatBusy;
+        // Already idle: there is no turn to wait for — just report / apply.
+        if (busy) await waitForStudioTurn(ui, Math.max(0, st.chat.length - 2), Date.now());
+        return finishStudioTurn(ui, apply);
       },
     },
     canEdit,

@@ -850,6 +850,10 @@ export function AiPanel({ onClose }: { onClose?: () => void } = {}) {
             aria-label="Send"
             title="Send"
             disabled={(!input.trim() && atts.length === 0) || chatBusy || ingesting}
+            // The Operator reads this to tell "still uploading/reading the
+            // attachment" (ingesting — local state, invisible in the store) from
+            // "never sent". Without it a slow image read looked like a dropped send.
+            data-studio-phase={ingesting ? 'ingesting' : chatBusy ? 'replying' : 'idle'}
             className="flex h-10 w-10 flex-shrink-0 items-center justify-center rounded-full text-studio-bg disabled:opacity-40"
             style={{ background: 'var(--gold-bright)' }}
           >

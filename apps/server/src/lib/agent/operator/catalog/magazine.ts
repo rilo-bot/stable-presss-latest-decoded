@@ -135,8 +135,14 @@ export const SURFACES: CatalogSurface[] = [
       {
         name: 'magazine.askStudio',
         description:
-          'Owner or collaborator. Type a request into the Magazine AI Studio chat (optionally opening a page first) and send it like a person, then wait for its reply. The studio only STAGES changes: pass apply:true to press "Use these changes" when the user asked for the change to be made (e.g. "make the headline bigger"); otherwise report the staged changes. Returns the reply text and the changes.',
+          'Owner or collaborator. Type a request into the Magazine AI Studio chat (optionally opening a page first) and send it like a person; it then waits the WHOLE turn — attachment upload/reading (can take a minute), then the reply (up to 10 min). The studio only STAGES changes: when the user asked for the change to be made (e.g. "use this image as the background", "make the headline bigger") pass apply:true so it presses "Use these changes" and the change is really on the page. Attach a user image first with upload on mag.ai-attach.',
         args: '{ prompt: string; page?: number; apply?: boolean }',
+      },
+      {
+        name: 'magazine.waitForStudio',
+        description:
+          'The studio is still working (reading an attachment or replying) or has finished with changes waiting: wait for it (up to 10 min), then with apply:true press "Use these changes". Use this instead of telling the user "the studio is still working".',
+        args: '{ apply?: boolean }',
       },
       {
         name: 'magazine.applyStudioChanges',

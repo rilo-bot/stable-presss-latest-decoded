@@ -97,6 +97,16 @@ function client(): S3Client {
   _client = new S3Client({
     region: REGION,
     credentials: { accessKeyId: ACCESS_KEY_ID, secretAccessKey: SECRET_ACCESS_KEY },
+    // AWS SDK ≥ 3.729 defaults to "WHEN_SUPPORTED", which bakes
+    // x-amz-checksum-crc32=AAAAAA== (the CRC32 of an EMPTY body) into every
+    // presigned PUT URL. A browser then uploads the real file against that
+    // checksum and S3 rejects it — every direct browser upload (magazine images,
+    // sources, media, PDF imports, lib/upload.ts) broke while server-side puts
+    // kept working. WHEN_REQUIRED restores the pre-3.729 behaviour: checksums
+    // only where S3 actually demands them. Verified offline: the presigned URL
+    // no longer carries any x-amz-checksum / x-amz-sdk-checksum-algorithm param.
+    requestChecksumCalculation: 'WHEN_REQUIRED',
+    responseChecksumValidation: 'WHEN_REQUIRED',
     ...(ENDPOINT ? { endpoint: ENDPOINT, forcePathStyle: FORCE_PATH_STYLE } : {}),
   })
   return _client
