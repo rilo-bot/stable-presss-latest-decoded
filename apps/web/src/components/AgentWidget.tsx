@@ -87,10 +87,14 @@ function contextStarters(pathname: string): string[] {
 
 // ── Helpers ────────────────────────────────────────────────────────────────
 function messageText(m: UIMessage): string {
+  // One reply is often several steps (text → tool → text). Joined with nothing
+  // between them, "…options:" ran straight into "Here are…" and could break the
+  // Markdown of the next step — a paragraph break keeps each step's text whole.
   return (m.parts ?? [])
     .filter((p): p is { type: 'text'; text: string } => p.type === 'text')
-    .map((p) => p.text)
-    .join('');
+    .map((p) => p.text.trim())
+    .filter(Boolean)
+    .join('\n\n');
 }
 
 const FOREST = 'linear-gradient(180deg, var(--forest-light) 0%, var(--forest-deep) 100%)';

@@ -15,13 +15,13 @@
 //     from some clients and every client ignores flex/grid; Outlook on Windows
 //     renders with Word, which understands tables, bgcolor and borders, and
 //     little else.
-//   - ONE IMAGE, and nothing depends on it: the gold horse-and-jockey mark over
-//     the masthead (user request 2026-11-12). Some clients (Outlook desktop) block
-//     remote images until the reader opts in, so the mark is decorative only —
-//     empty alt, fixed size, on the forest band — and the masthead itself stays
-//     type, which always loads. It is served from the live site by absolute URL
-//     (BRAND_MARK_URL): an email is opened long after it is sent, so the image must
-//     come from the host that is always up, never localhost or a preview deploy.
+//   - ONE IMAGE, and nothing depends on it: a horse-in-a-paddock photograph
+//     behind the whole masthead (user request 2026-11-12). It is a BACKGROUND
+//     (CSS for most clients, a VML frame for Outlook on Windows) under live type,
+//     so a client that blocks remote images still shows the forest band with the
+//     name on it. It is served from the live site by absolute URL
+//     (MASTHEAD_IMAGE_URL): an email is opened long after it is sent, so the image
+//     must come from the host that is always up, never localhost or a preview deploy.
 //   - THE BUTTON IS "BULLETPROOF": a padded <a> inside a coloured cell, plus a
 //     VML roundrect for Outlook, which ignores padding on links.
 //   - Web fonts are a bonus, never a dependency: Playfair Display loads in Apple
@@ -55,9 +55,11 @@ const INK_SOFT = '#4a5a50' // supporting text
 const INK_FAINT = '#7d7a6e' // footnotes
 const RULE = '#e4d9c0' // ledger hairlines
 
-/** The gold horse-and-jockey mark (apps/web/public/images/favicon-gold.png:
- *  256×256, transparent), served by the live site. See the header note. */
-const BRAND_MARK_URL = 'https://stablepress.nz/images/favicon-gold.png'
+/** The masthead photograph — a thoroughbred grazing a green paddock at golden
+ *  hour, darkened to forest at its foot so the name reads on it
+ *  (apps/web/public/images/email-header.jpg, 1120×476 for 2× screens). Served by
+ *  the live site; see the header note. */
+const MASTHEAD_IMAGE_URL = 'https://stablepress.nz/images/email-header.jpg'
 
 const SERIF = "'Playfair Display', Georgia, 'Times New Roman', serif"
 const BODY = "Georgia, 'Times New Roman', serif"
@@ -240,7 +242,8 @@ function layout(o: LayoutOpts): string {
     .sp-card{width:100% !important;}
     .sp-outer{padding:16px 10px !important;}
     .sp-pad{padding:30px 22px 26px !important;}
-    .sp-mast{padding:26px 18px 22px !important;}
+    .sp-mast-bg,.sp-mast{height:200px !important;}
+    .sp-mast{padding:0 18px 18px !important;}
     .sp-h1{font-size:25px !important;line-height:1.25 !important;}
     .sp-name{font-size:19px !important;letter-spacing:5px !important;}
     .sp-code{font-size:30px !important;letter-spacing:8px !important;padding-left:8px !important;}
@@ -260,20 +263,31 @@ function layout(o: LayoutOpts): string {
           <td style="background-color:${PAPER};border:1px solid ${FRAME};padding:7px;">
             <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="border:1px solid ${FRAME_IN};">
 
-              <!-- Masthead -->
+              <!-- Masthead: the photo fills the whole band (CSS background for most clients,
+                   a VML frame for Outlook on Windows), the name sits on its darkened foot.
+                   No image → the forest green underneath, and the type still reads. -->
               <tr>
-                <td class="sp-mast" align="center" bgcolor="${FOREST}" style="background-color:${FOREST};padding:18px 24px 24px;">
-                  <!-- The mark's PNG carries transparent space above and below the horse,
-                       so the band's top padding is smaller than the type-only version. -->
-                  <img src="${BRAND_MARK_URL}" width="84" height="84" alt="" border="0" style="display:block;margin:0 auto;width:84px;height:84px;max-width:84px;border:0;outline:none;text-decoration:none;-ms-interpolation-mode:bicubic;">
-                  <div class="sp-name sp-serif" style="margin-top:2px;font-family:${SERIF};font-size:24px;font-weight:700;line-height:1.2;letter-spacing:7px;text-transform:uppercase;color:${PARCHMENT};">Stable&nbsp;Press</div>
-                  <table role="presentation" align="center" cellpadding="0" cellspacing="0" border="0" style="margin:12px auto 0;">
+                <td class="sp-mast-bg" align="center" valign="bottom" height="238" background="${MASTHEAD_IMAGE_URL}" bgcolor="${FOREST}" style="background-color:${FOREST};background-image:url('${MASTHEAD_IMAGE_URL}');background-size:cover;background-position:30% 50%;background-repeat:no-repeat;height:238px;padding:0;vertical-align:bottom;">
+                  <!--[if gte mso 9]>
+                  <v:rect xmlns:v="urn:schemas-microsoft-com:vml" fill="true" stroke="false" style="width:544px;height:238px;">
+                    <v:fill type="frame" src="${MASTHEAD_IMAGE_URL}" color="${FOREST}" />
+                    <v:textbox inset="0,0,0,0">
+                  <![endif]-->
+                  <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0">
                     <tr>
-                      <td width="34" style="border-top:1px solid ${GOLD};font-size:0;line-height:0;">&nbsp;</td>
-                      <td style="padding:0 10px;font-family:${SANS};font-size:10px;font-weight:bold;letter-spacing:3px;text-transform:uppercase;color:${GOLD};white-space:nowrap;">The Newsroom</td>
-                      <td width="34" style="border-top:1px solid ${GOLD};font-size:0;line-height:0;">&nbsp;</td>
+                      <td class="sp-mast" align="center" valign="bottom" height="238" style="height:238px;padding:0 24px 22px;vertical-align:bottom;">
+                        <div class="sp-name sp-serif" style="font-family:${SERIF};font-size:24px;font-weight:700;line-height:1.2;letter-spacing:7px;text-transform:uppercase;color:${PARCHMENT};text-shadow:0 1px 3px rgba(0,0,0,0.55);">Stable&nbsp;Press</div>
+                        <table role="presentation" align="center" cellpadding="0" cellspacing="0" border="0" style="margin:12px auto 0;">
+                          <tr>
+                            <td width="34" style="border-top:1px solid ${GOLD};font-size:0;line-height:0;">&nbsp;</td>
+                            <td style="padding:0 10px;font-family:${SANS};font-size:10px;font-weight:bold;letter-spacing:3px;text-transform:uppercase;color:${GOLD};white-space:nowrap;text-shadow:0 1px 2px rgba(0,0,0,0.5);">The Newsroom</td>
+                            <td width="34" style="border-top:1px solid ${GOLD};font-size:0;line-height:0;">&nbsp;</td>
+                          </tr>
+                        </table>
+                      </td>
                     </tr>
                   </table>
+                  <!--[if gte mso 9]></v:textbox></v:rect><![endif]-->
                 </td>
               </tr>
               <!-- Double rule under the masthead: gold, a sliver of green, gold. -->

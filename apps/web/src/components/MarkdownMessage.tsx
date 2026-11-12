@@ -8,7 +8,7 @@ import ReactMarkdown from 'react-markdown';
 import type { Components, Options } from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import { Link, useInRouterContext } from 'react-router-dom';
-import { humanizeIds } from '@/lib/humanizeIds';
+import { cleanAssistantText } from '@/lib/chatText';
 
 // remark-gfm's autolink step builds a regex with lookbehind `(?<=…)` on every
 // parse. Safari / iOS before 16.4 cannot compile lookbehind, so there it threw
@@ -35,10 +35,20 @@ const mdComponents: Components = {
   h2: ({ children }) => <h3 className="mb-1 mt-2 text-sm font-bold first:mt-0">{children}</h3>,
   h3: ({ children }) => <h4 className="mb-1 mt-2 text-[13px] font-bold first:mt-0">{children}</h4>,
   hr: () => <hr className="my-2 border-border" />,
-  code: ({ children }) => <code className="rounded bg-background px-1 py-0.5 text-[0.85em]">{children}</code>,
-  pre: ({ children }) => (
-    <pre className="mb-2 overflow-x-auto rounded bg-background p-2 text-[0.85em] last:mb-0">{children}</pre>
+  // Readers of these chats are racing fans, not programmers: nothing should look
+  // like code. Inline `code` reads as emphasis; a block (fenced or indented by a
+  // model) reads as an ordinary paragraph that keeps its line breaks.
+  code: ({ children }) => <span className="font-medium">{children}</span>,
+  pre: ({ children }) => <div className="mb-2 whitespace-pre-wrap leading-relaxed last:mb-0">{children}</div>,
+  // Tables (models like them for comparisons) scroll sideways in the narrow chat
+  // instead of squashing, with light rules so the columns read.
+  table: ({ children }) => (
+    <div className="mb-2 max-w-full overflow-x-auto last:mb-0">
+      <table className="w-full border-collapse text-[12.5px]">{children}</table>
+    </div>
   ),
+  th: ({ children }) => <th className="border-b border-border px-2 py-1 text-left font-semibold">{children}</th>,
+  td: ({ children }) => <td className="border-b border-border/60 px-2 py-1 align-top">{children}</td>,
   blockquote: ({ children }) => (
     <blockquote className="border-l-2 border-border pl-2 italic text-muted-foreground">{children}</blockquote>
   ),
@@ -68,9 +78,9 @@ function ChatLink({ href, children }: { href?: string; children?: ReactNode }) {
 export function MarkdownMessage({ text }: { text: string }) {
   return (
     <div className="text-sm [&>*:first-child]:mt-0 [&>*:last-child]:mb-0">
-      {/* Raw database ids never reach the reader: paths become labelled links, loose ids go. */}
+      {/* Machine text (tool calls, JSON) and raw ids never reach the reader — lib/chatText.ts. */}
       <ReactMarkdown remarkPlugins={REMARK_PLUGINS} components={mdComponents}>
-        {humanizeIds(text)}
+        {cleanAssistantText(text)}
       </ReactMarkdown>
     </div>
   );
