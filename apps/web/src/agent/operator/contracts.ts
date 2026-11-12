@@ -91,9 +91,12 @@ export function humanizeActionName(name: string): string {
   return words.charAt(0).toUpperCase() + words.slice(1);
 }
 
+/** `error` is shown to the user under the step (names, never ids); `detail`
+ *  goes to the model only (e.g. ambiguous-match candidates with their ids —
+ *  see runtime/humanRef.actionError). */
 export type ActionOutcome =
   | { ok: true; result?: unknown }
-  | { ok: false; error: string; declined?: boolean };
+  | { ok: false; error: string; declined?: boolean; detail?: unknown };
 
 /** What readScreen() returns — compact text the model can reason over. */
 export interface ScreenSnapshot {
@@ -178,8 +181,15 @@ export interface OperatorActionDef<A = any> {
   args: ZodType<A>;
   /** If this returns a string, the runtime shows it as a confirm card and only
    *  runs on the user's OK. REQUIRED for publish / unpublish / delete /
-   *  share / unshare / send email or notification / invite / role changes. */
-  confirm?: (args: A) => string | null;
+   *  share / unshare / send email or notification / invite / role changes.
+   *
+   *  The card is read by a PERSON: name people / stories / posts / comments by
+   *  their name or title, never by an id (runtime/humanRef + runtime/people
+   *  resolve them). It may return a Promise when it has to look a name up (e.g.
+   *  a userId for someone the screen has not loaded): the runtime waits ~4s,
+   *  then shows a generic, id-free question instead. Never skipped for a slow
+   *  lookup. */
+  confirm?: (args: A) => string | null | Promise<string | null>;
   /** Do it. Return JSON-safe data the model can verify (e.g. the new state). */
   run: (args: A, ui: UiDriver) => Promise<unknown>;
 }

@@ -59,7 +59,9 @@ const PRICE = { input: 2, output: 10, cacheRead: 0.1, cacheWrite: 2.5 }
 /** The browser-run tools. Mirrors OPERATOR_CLIENT_TOOLS in apps/web contracts.ts. */
 const CLIENT_TOOLS = ['navigate', 'readScreen', 'runAction', 'click', 'type', 'select', 'waitFor', 'scrollTo', 'upload'] as const
 /** Server tools whose real execute is pure and in-memory — safe to keep. */
-const KEEP_REAL_EXECUTE = new Set(['searchKnowledge', 'featureGuide'])
+const KEEP_REAL_EXECUTE = new Set(['searchKnowledge', 'featureGuide', 'offer_choices'])
+/** Answer pills: no side effects, and it ends the turn (as the route's stopWhen does). */
+const OFFER_CHOICES = 'offer_choices'
 
 // ── personas (fake AccountUsers; no DB) ──────────────────────────────────────
 function personaAccount(p: Persona): AccountUser {
@@ -320,10 +322,14 @@ export function grade(task: OperatorTask, calls: CallRecord[], reply: string): s
     if (n > m.max) fails.push(`limit: ${m.why ?? m.action ?? m.tool} — ${n} calls > ${m.max}`)
   }
   if (task.onlyTools) {
-    const bad = calls.filter((c) => !task.onlyTools!.includes(c.tool))
+    // Offering answer pills is never "acting" — allowed even when no tools are.
+    const bad = calls.filter((c) => c.tool !== OFFER_CHOICES && !task.onlyTools!.includes(c.tool))
     if (bad.length) fails.push(`unexpected tools: ${[...new Set(bad.map((c) => c.tool))].join(', ')}`)
   }
-  if (task.mustAsk && !/\?/.test(reply)) fails.push('did not ask a clarifying question')
+  // A question can also be asked as answer pills (offer_choices) after the text.
+  if (task.mustAsk && !/\?/.test(reply) && !calls.some((c) => c.tool === OFFER_CHOICES)) {
+    fails.push('did not ask a clarifying question')
+  }
   if (task.noSuccessClaim && SUCCESS_CLAIM.test(reply)) fails.push(`claimed success: "${reply.match(SUCCESS_CLAIM)?.[0]}"`)
   // Global: never claim success unless some action/click actually returned ok:true.
   const actedOk = calls.some((c) => (c.tool === 'runAction' || c.tool === 'click' || c.tool === 'type') && okOf(c.output))
@@ -620,7 +626,7 @@ async function main() {
   }
 
   // ── live run ──
-  const { generateText, stepCountIs } = await import('ai')
+  const { generateText, stepCountIs, hasToolCall } = await import('ai')
   const { getOperatorModel } = await import('../../src/lib/agent/provider.js')
   const model = getOperatorModel(false)
 
@@ -643,7 +649,8 @@ async function main() {
         system: buildOperatorSystem(personaAccount(t.persona ?? 'admin'), { path: t.start, title: world.current.title }),
         messages,
         tools,
-        stopWhen: stepCountIs(t.maxSteps ?? MAX_STEPS),
+        // Mirrors the route: offer_choices ends the turn (the user would answer next).
+        stopWhen: [stepCountIs(t.maxSteps ?? MAX_STEPS), hasToolCall(OFFER_CHOICES)],
         maxRetries: 1,
       })
       reply = res.text

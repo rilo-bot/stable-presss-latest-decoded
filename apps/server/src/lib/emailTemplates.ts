@@ -15,9 +15,13 @@
 //     from some clients and every client ignores flex/grid; Outlook on Windows
 //     renders with Word, which understands tables, bgcolor and borders, and
 //     little else.
-//   - NO IMAGES. Most clients block remote images until the reader opts in, so
-//     an image logo arrives as a broken box on the first open — the one that
-//     matters. The masthead is type, and type always loads.
+//   - ONE IMAGE, and nothing depends on it: the gold horse-and-jockey mark over
+//     the masthead (user request 2026-11-12). Some clients (Outlook desktop) block
+//     remote images until the reader opts in, so the mark is decorative only —
+//     empty alt, fixed size, on the forest band — and the masthead itself stays
+//     type, which always loads. It is served from the live site by absolute URL
+//     (BRAND_MARK_URL): an email is opened long after it is sent, so the image must
+//     come from the host that is always up, never localhost or a preview deploy.
 //   - THE BUTTON IS "BULLETPROOF": a padded <a> inside a coloured cell, plus a
 //     VML roundrect for Outlook, which ignores padding on links.
 //   - Web fonts are a bonus, never a dependency: Playfair Display loads in Apple
@@ -50,6 +54,10 @@ const INK = '#1f2b24' // body text
 const INK_SOFT = '#4a5a50' // supporting text
 const INK_FAINT = '#7d7a6e' // footnotes
 const RULE = '#e4d9c0' // ledger hairlines
+
+/** The gold horse-and-jockey mark (apps/web/public/images/favicon-gold.png:
+ *  256×256, transparent), served by the live site. See the header note. */
+const BRAND_MARK_URL = 'https://stablepress.nz/images/favicon-gold.png'
 
 const SERIF = "'Playfair Display', Georgia, 'Times New Roman', serif"
 const BODY = "Georgia, 'Times New Roman', serif"
@@ -254,9 +262,11 @@ function layout(o: LayoutOpts): string {
 
               <!-- Masthead -->
               <tr>
-                <td class="sp-mast" align="center" bgcolor="${FOREST}" style="background-color:${FOREST};padding:30px 24px 24px;">
-                  <div style="font-family:${SERIF};font-size:13px;line-height:1;color:${GOLD};letter-spacing:8px;">&#10022;&nbsp;&#10022;&nbsp;&#10022;</div>
-                  <div class="sp-name sp-serif" style="margin-top:12px;font-family:${SERIF};font-size:24px;font-weight:700;line-height:1.2;letter-spacing:7px;text-transform:uppercase;color:${PARCHMENT};">Stable&nbsp;Press</div>
+                <td class="sp-mast" align="center" bgcolor="${FOREST}" style="background-color:${FOREST};padding:18px 24px 24px;">
+                  <!-- The mark's PNG carries transparent space above and below the horse,
+                       so the band's top padding is smaller than the type-only version. -->
+                  <img src="${BRAND_MARK_URL}" width="84" height="84" alt="" border="0" style="display:block;margin:0 auto;width:84px;height:84px;max-width:84px;border:0;outline:none;text-decoration:none;-ms-interpolation-mode:bicubic;">
+                  <div class="sp-name sp-serif" style="margin-top:2px;font-family:${SERIF};font-size:24px;font-weight:700;line-height:1.2;letter-spacing:7px;text-transform:uppercase;color:${PARCHMENT};">Stable&nbsp;Press</div>
                   <table role="presentation" align="center" cellpadding="0" cellspacing="0" border="0" style="margin:12px auto 0;">
                     <tr>
                       <td width="34" style="border-top:1px solid ${GOLD};font-size:0;line-height:0;">&nbsp;</td>

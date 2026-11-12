@@ -39,6 +39,7 @@ import { useOperatorChat } from './useOperatorChat';
 import { AssistantMessage } from './StepTimeline';
 import { JobChips, JobUpdateChip } from './JobChips';
 import { isJobUpdateMessage } from './jobUpdates';
+import { choiceCardState, messageChoices } from '@/agent/choices/choices';
 import { ConfirmCard, PausedBanner } from './ConfirmCard';
 import { StablehandLauncher } from './Launcher';
 
@@ -298,6 +299,9 @@ export function OperatorPanel({ userId }: { userId: string }) {
                   );
                 }
                 if (m.role !== 'assistant') return null;
+                // Answer pills: live until the person replies ([job-update]
+                // notices don't count) or a newer card replaces them.
+                const card = messageChoices(m) ? choiceCardState(messages, i, isJobUpdateMessage) : null;
                 return (
                   <AssistantMessage
                     key={m.id}
@@ -305,6 +309,11 @@ export function OperatorPanel({ userId }: { userId: string }) {
                     live={working && i === lastIdx}
                     running={running}
                     subSteps={subSteps}
+                    choices={
+                      card
+                        ? { active: card.active, answer: card.answer, disabled: working || attach.busy, onSubmit: send }
+                        : undefined
+                    }
                   />
                 );
               })}

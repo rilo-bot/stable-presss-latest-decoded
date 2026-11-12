@@ -35,6 +35,7 @@ import { setActiveJobRunId, useOperatorJobs } from '@/agent/operator/runtime/job
 import { describePage } from './pageContext';
 import { clearSession, loadSession, newRunId, sanitizeMessages, saveSession } from './persistence';
 import { jobUpdateText } from './jobUpdates';
+import { lastStepOfferedChoices } from '@/agent/choices/choices';
 
 export interface OperatorChatError {
   message: string;
@@ -159,7 +160,11 @@ export function useOperatorChat(userId: string) {
     id: `operator:${userId}`,
     messages: initial.messages,
     transport,
-    sendAutomaticallyWhen: (o) => !stoppedRef.current && lastAssistantMessageIsCompleteWithToolCalls(o),
+    // A turn that ended on answer pills (offer_choices) waits for the person:
+    // that server tool always has its result, so without the guard the chat
+    // would auto-continue and the model would talk over its own question.
+    sendAutomaticallyWhen: (o) =>
+      !stoppedRef.current && !lastStepOfferedChoices(o.messages) && lastAssistantMessageIsCompleteWithToolCalls(o),
     onToolCall: ({ toolCall }) => {
       // Server tools (searchStaff, getMagazine, …) resolve server-side and
       // stream their own output; only the page-side tools run here.

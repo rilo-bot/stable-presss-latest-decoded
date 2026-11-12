@@ -8,13 +8,20 @@
 // share landed", "who is 'Ahmed' in the staff directory".
 //
 // The staff directory is fetched through the SAME GET the Share dialog makes
-// (api.staffDirectory → /api/staff/directory) and kept in a module cache, because
-// an action's confirm(args) is synchronous and must be able to name the person
-// ("Share page 2 with Ahmed Khan?") without a request of its own.
+// (/api/staff/directory) and cached in agent/operator/runtime/people.ts, shared
+// with every pack. A confirm card must name the person ("Share page 2 with
+// Ahmed Khan?"), never their userId — for someone who is not loaded yet the
+// confirm is async and looks them up (personLabelAsync).
 // ---------------------------------------------------------------------------
 
 import { agentSel, type UiDriver } from '@/agent/operator/contracts';
-import * as api from '../api';
+import { actionError, personDisplayWithEmail, quoteRef } from '@/agent/operator/runtime/humanRef';
+import {
+  cachedStaffDirectory,
+  loadStaffDirectory,
+  personLabel as resolvePersonLabel,
+  personLabelNow,
+} from '@/agent/operator/runtime/people';
 import type { StaffEntry, V2Collaborator, PageSummary } from '../api';
 
 /** The anchored element, if it is in the DOM right now (no waiting). */
@@ -219,18 +226,15 @@ export function collaboratorsOut(cs: V2Collaborator[] | undefined, pages: PageSu
 }
 
 // ── Staff directory (same GET as the Share dialog) ──────────────────────────
-
-let directoryCache: StaffEntry[] | null = null;
+// One cache for every Operator pack (agent/operator/runtime/people.ts), so a
+// name looked up for one confirm card is there for the next.
 
 export async function loadDirectory(force = false): Promise<StaffEntry[]> {
-  if (directoryCache && !force) return directoryCache;
-  const list = await api.staffDirectory();
-  directoryCache = Array.isArray(list) ? list : [];
-  return directoryCache;
+  return loadStaffDirectory(force);
 }
 
 export function cachedDirectory(): StaffEntry[] | null {
-  return directoryCache;
+  return cachedStaffDirectory();
 }
 
 /** Candidates for a free-text person reference: userId, email, or (part of) a name. */
@@ -242,27 +246,31 @@ export function matchPeople(list: StaffEntry[], person: string): StaffEntry[] {
   return list.filter((e) => (e.name || '').toLowerCase().includes(q) || e.email.toLowerCase().includes(q));
 }
 
-/** Exactly one staff member for `person`, or an error the model can act on. */
+/** Exactly one staff member for `person`, or an error the model can act on.
+ *  The message names people only (the user reads it under the step); the
+ *  candidates' userIds ride in the error's model-only `detail`. */
 export function resolvePerson(list: StaffEntry[], person: string): StaffEntry {
   const hits = matchPeople(list, person);
   if (hits.length === 1) return hits[0]!;
-  if (hits.length === 0) throw new Error(`No staff member matches “${person}”. Call magazine.listStaff to see who can be invited.`);
-  throw new Error(
-    `“${person}” matches ${hits.length} people: ${hits
-      .slice(0, 8)
-      .map((h) => `${h.name || h.email} <${h.email}> (userId ${h.userId})`)
-      .join('; ')}. Ask which one, then pass their userId.`,
+  if (hits.length === 0) throw new Error(`No staff member matches ${quoteRef(person)}. Call magazine.listStaff to see who can be invited.`);
+  const shown = hits.slice(0, 8);
+  throw actionError(
+    `${quoteRef(person, 'That reference')} matches ${hits.length} people: ${shown.map((h) => personDisplayWithEmail(h)).join('; ')}. Ask which one, then pass their userId (see detail).`,
+    { candidates: shown.map((h) => ({ userId: h.userId, name: h.name || null, email: h.email })) },
   );
 }
 
-/** Best-effort display name for confirm cards (synchronous — cache only). */
+/** The collaborators as people records (displayName is their name). */
+const asPeople = (cs: V2Collaborator[] | undefined) => (cs ?? []).map((c) => ({ userId: c.userId, name: c.displayName, email: c.email }));
+
+/** Display name for a confirm card from what is loaded already (sync).
+ *  Name → email → "this staff member"; never the raw userId. */
 export function personLabel(person: string, collaborators: V2Collaborator[] | undefined): string {
-  const c = (collaborators ?? []).find((x) => x.userId === person || x.email.toLowerCase() === person.trim().toLowerCase());
-  if (c) return c.displayName || c.email;
-  const list = directoryCache;
-  if (list) {
-    const hits = matchPeople(list, person);
-    if (hits.length === 1) return hits[0]!.name || hits[0]!.email;
-  }
-  return person;
+  return personLabelNow(person, asPeople(collaborators));
+}
+
+/** Display name for a confirm card, fetching the staff directory when the
+ *  person is not loaded yet (someone who is not a collaborator). Never throws. */
+export function personLabelAsync(person: string, collaborators: V2Collaborator[] | undefined): Promise<string> {
+  return resolvePersonLabel(person, asPeople(collaborators));
 }

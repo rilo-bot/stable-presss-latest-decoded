@@ -11,6 +11,7 @@
 
 import { useRef } from 'react';
 import { agentSel } from '@/agent/operator/contracts';
+import { quoteRef } from '@/agent/operator/runtime/humanRef';
 
 /** Keep the latest value in a ref — run() is async and must not read a stale
  *  render's props after an await. */
@@ -86,15 +87,15 @@ export function resolveOne<T>(
   const exact = items.filter((it) => keys(it).some((k) => normKey(k) === q));
   if (exact.length === 1) return { hit: exact[0] };
   if (exact.length > 1) {
-    return { error: `"${query}" matches more than one ${what}: ${exact.slice(0, 8).map(describe).join('; ')}. Be more specific.` };
+    return { error: `${quoteRef(query, 'That id')} matches more than one ${what}: ${exact.slice(0, 8).map(describe).join('; ')}. Be more specific.` };
   }
   const partial = items.filter((it) => keys(it).some((k) => normKey(k).includes(q)));
   if (partial.length === 1) return { hit: partial[0] };
   if (partial.length > 1) {
-    return { error: `"${query}" matches more than one ${what}: ${partial.slice(0, 8).map(describe).join('; ')}. Be more specific.` };
+    return { error: `${quoteRef(query, 'That id')} matches more than one ${what}: ${partial.slice(0, 8).map(describe).join('; ')}. Be more specific.` };
   }
   const sample = items.slice(0, 12).map(describe).join('; ');
-  return { error: `No ${what} matches "${query}".${sample ? ` Available: ${sample}.` : ''}` };
+  return { error: `No ${what} matches ${quoteRef(query)}.${sample ? ` Available: ${sample}.` : ''}` };
 }
 
 /**

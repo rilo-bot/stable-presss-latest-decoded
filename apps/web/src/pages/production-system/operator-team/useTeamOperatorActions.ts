@@ -19,6 +19,8 @@ import type { UiDriver } from '@/agent/operator/contracts';
 import type { StaffUser, PendingGrant } from '@/stores/staffStore';
 import { useStaffStore } from '@/stores/staffStore';
 import { useRoleStore, type Role } from '@/stores/roleStore';
+import { findPerson, personDisplay, personDisplayWithEmail } from '@/agent/operator/runtime/humanRef';
+import { knownPeople } from '@/agent/operator/runtime/people';
 import { anchor, firstError, resolveOne, useLive, waitUntil, watchToasts } from './opUtils';
 
 interface TeamOperatorInput {
@@ -47,7 +49,7 @@ function resolveMember(query: string, staff: StaffUser[]) {
     staff,
     (u) => [u.userId, u.email, u.name],
     'team member',
-    (u) => `${u.name || u.email} <${u.email}>`,
+    (u) => personDisplayWithEmail(u),
   );
 }
 
@@ -148,9 +150,12 @@ export function useTeamOperatorActions(input: TeamOperatorInput): void {
         const r = resolveRole(a.role, s.roles);
         if (!r.hit) return null;
         const existing = s.teamStaff.find((u) => u.email.toLowerCase() === a.email.toLowerCase());
-        return existing
-          ? `Give ${existing.name || existing.email} the ${r.hit.label} role (replacing ${existing.role?.label ?? 'no role'}) and email them?`
-          : `Invite ${a.email} to the team as ${r.hit.label}? They will be emailed a join link.`;
+        if (existing) {
+          return `Give ${personDisplay(existing)} the ${r.hit.label} role (replacing ${existing.role?.label ?? 'no role'}) and email them?`;
+        }
+        // Someone the app already knows by name (staff directory) is named too.
+        const known = findPerson(a.email, knownPeople());
+        return `Invite ${personDisplayWithEmail(known ?? { email: a.email })} to the team as ${r.hit.label}? They will be emailed a join link.`;
       },
       run: async (a, ui) => {
         const s = live.current;
@@ -216,7 +221,7 @@ export function useTeamOperatorActions(input: TeamOperatorInput): void {
         if (!m.hit || !r.hit) return null;
         // Already holds it: run() returns { unchanged } — no card for a no-op.
         if (m.hit.role?.name === r.hit.name) return null;
-        return `Change ${m.hit.name || m.hit.email}'s role from ${m.hit.role?.label ?? 'no role'} to ${r.hit.label}?`;
+        return `Change ${personDisplay(m.hit)}'s role from ${m.hit.role?.label ?? 'no role'} to ${r.hit.label}?`;
       },
       run: async (a, ui) => {
         const s = live.current;
@@ -231,7 +236,7 @@ export function useTeamOperatorActions(input: TeamOperatorInput): void {
           return { ok: true, unchanged: true, member: memberJson(user, s.myId) };
         }
 
-        ui.step(`Changing ${user.name || user.email} to ${role.label}`);
+        ui.step(`Changing ${personDisplay(user)} to ${role.label}`);
         const toasts = watchToasts();
         await pickRole(ui, `team.role-select-${user.userId}`, role.name, role.label);
         const done = await waitUntil(
@@ -263,7 +268,7 @@ export function useTeamOperatorActions(input: TeamOperatorInput): void {
         if (!s.canManageTeam) return null;
         const m = resolveMember(a.member, s.teamStaff);
         if (!m.hit || m.hit.userId === s.myId) return null;
-        return `Remove ${m.hit.name || m.hit.email} from the team? They lose every newsroom permission immediately.`;
+        return `Remove ${personDisplay(m.hit)} from the team? They lose every newsroom permission immediately.`;
       },
       run: async (a, ui) => {
         const s = live.current;
@@ -273,7 +278,7 @@ export function useTeamOperatorActions(input: TeamOperatorInput): void {
         if (m.hit.userId === s.myId) throw new Error('You cannot remove yourself from the team.');
         const user = m.hit;
 
-        ui.step(`Removing ${user.name || user.email}`);
+        ui.step(`Removing ${personDisplay(user)}`);
         const toasts = watchToasts();
         await ui.click(`team.remove-${user.userId}`, 'Remove');
         await ui.waitFor('team.remove-confirm', 4000);
@@ -342,7 +347,7 @@ export function useTeamOperatorActions(input: TeamOperatorInput): void {
         const p = resolvePending(a.who, s.teamPending);
         if (p.hit) return `Email a fresh invitation link to ${p.hit.email}? The previous link stops working.`;
         const m = resolveMember(a.who, s.teamStaff);
-        return m.hit ? `Email ${m.hit.name || m.hit.email} their access details again?` : null;
+        return m.hit ? `Email ${personDisplay(m.hit)} their access details again?` : null;
       },
       run: async (a, ui) => {
         const s = live.current;

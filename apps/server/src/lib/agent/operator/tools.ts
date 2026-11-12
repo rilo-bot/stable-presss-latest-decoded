@@ -12,6 +12,8 @@
 //   2. Operator DATA tools — call the app's OWN REST routes as the user (loopback
 //      + the caller's Bearer token), so each answer is exactly what that route
 //      would give them in the browser. No second permission model to drift.
+//      Plus offer_choices (lib/agent/offerChoices.ts, shared with the concierge):
+//      clickable answer pills; the route's stopWhen ends the turn on it.
 //   3. CLIENT tools — declared WITHOUT `execute`, so the model's call streams to
 //      the browser, which runs it (apps/web/src/agent/operator/runtime) and sends
 //      the result back. Input schemas mirror apps/web/src/agent/operator/contracts.ts
@@ -24,6 +26,7 @@ import type { AccountUser } from '../../identity.js'
 import { buildTools } from '../tools.js'
 import { FEATURE_GUIDES } from '../guides.js'
 import { mergedCatalog } from './prompt.js'
+import { OFFER_CHOICES_TOOL, offerChoicesTool } from '../offerChoices.js'
 
 /** Concierge tools the operator must NOT get — it acts through the UI instead. */
 const EXCLUDED_READ_TOOLS = new Set(['navigateTo', 'registerHorse', 'createArticleDraft', 'updateMyParty'])
@@ -261,6 +264,9 @@ export function buildOperatorTools(account: AccountUser, authHeader?: string): T
       inputSchema: z.object({ query: z.string().describe('A few keywords.') }),
       execute: async ({ query }) => searchKnowledgeBase(query),
     }),
+
+    // Answer pills for a question to the user — ends the turn (see the route).
+    [OFFER_CHOICES_TOOL]: offerChoicesTool,
 
     // 3. Client tools (run in the browser; no execute) ─────────────────────────
     navigate: tool({

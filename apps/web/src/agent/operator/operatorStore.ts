@@ -10,6 +10,10 @@
 // ---------------------------------------------------------------------------
 
 import { create } from 'zustand';
+// Safety net: no confirm card or step line ever shows a raw id. The packs name
+// people / records at the source (runtime/people, runtime/humanRef); this
+// catches anything that slips through.
+import { scrubIds } from './runtime/humanRef';
 
 export type RunStatus = 'idle' | 'working' | 'paused';
 
@@ -139,13 +143,13 @@ export const useOperator = create<OperatorState>((set, get) => ({
       steps: [
         // a new step completes the previous running one
         ...s.steps.map((st) => (st.status === 'running' ? { ...st, status: 'done' as const } : st)),
-        { id, label, status, at: Date.now() },
+        { id, label: scrubIds(label), status, at: Date.now() },
       ].slice(-200),
     }));
     return id;
   },
   finishStep: (id, status, detail) =>
-    set((s) => ({ steps: s.steps.map((st) => (st.id === id ? { ...st, status, detail } : st)) })),
+    set((s) => ({ steps: s.steps.map((st) => (st.id === id ? { ...st, status, detail: detail === undefined ? undefined : scrubIds(detail) } : st)) })),
   setProgress: (progress) => set({ progress }),
   setCursor: (c) => set((s) => ({ cursor: { ...s.cursor, ...c } })),
   setPanelYield: (panelYield) => {
@@ -171,7 +175,7 @@ export const useOperator = create<OperatorState>((set, get) => ({
     // and the parked ghost cursor (often left on a button near the panel) must
     // not sit over its Confirm / Stop buttons.
     set((s) => ({
-      pendingConfirm: { id, summary },
+      pendingConfirm: { id, summary: scrubIds(summary) },
       panelYield: false,
       cursor: { ...s.cursor, visible: false, label: undefined },
     }));

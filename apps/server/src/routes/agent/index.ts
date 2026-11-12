@@ -8,12 +8,13 @@
 // ---------------------------------------------------------------------------
 
 import { Router } from 'express'
-import { streamText, convertToModelMessages, stepCountIs, type UIMessage } from 'ai'
+import { streamText, convertToModelMessages, stepCountIs, hasToolCall, type UIMessage } from 'ai'
 import { attachAccountOptional } from '../../lib/auth.js'
 import { getAgentModel, isAgentConfigured } from '../../lib/agent/provider.js'
 import { repairToolResults } from '../../lib/agent/repairMessages.js'
 import { buildSystemPrompt, type PageContext } from '../../lib/agent/prompt.js'
 import { buildTools } from '../../lib/agent/tools.js'
+import { OFFER_CHOICES_TOOL, offerChoicesTool } from '../../lib/agent/offerChoices.js'
 import { rateLimit } from '../../lib/rateLimit.js'
 import { aiSurface } from '../../lib/agent/aiUsageRoute.js'
 
@@ -59,9 +60,12 @@ router.post('/chat', attachAccountOptional, rateLimit('agent-chat', 20, 60_000),
       messages: await convertToModelMessages(repaired.messages),
       // Forward the caller's Bearer token so ACTION tools proxy to our own gated
       // endpoints AS this user — the route enforces RBAC, not the agent.
-      tools: buildTools(req.account, req.headers.authorization),
+      // + offer_choices: clickable answer pills (lib/agent/offerChoices.ts). Kept
+      // out of buildTools, which the Blog Studio and the operator also reuse.
+      tools: { ...buildTools(req.account, req.headers.authorization), [OFFER_CHOICES_TOOL]: offerChoicesTool },
       // Let the model read a few tools then answer (tool → result → answer loops).
-      stopWhen: stepCountIs(6),
+      // offer_choices ends the turn: the user's pick arrives as their next message.
+      stopWhen: [stepCountIs(6), hasToolCall(OFFER_CHOICES_TOOL)],
     })
 
     result.pipeUIMessageStreamToResponse(res, {

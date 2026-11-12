@@ -3,9 +3,12 @@
 // Studio Assistant. react-markdown builds React elements (no dangerouslySet…),
 // so it is XSS-safe by construction.
 
+import type { ReactNode } from 'react';
 import ReactMarkdown from 'react-markdown';
 import type { Components, Options } from 'react-markdown';
 import remarkGfm from 'remark-gfm';
+import { Link, useInRouterContext } from 'react-router-dom';
+import { humanizeIds } from '@/lib/humanizeIds';
 
 // remark-gfm's autolink step builds a regex with lookbehind `(?<=…)` on every
 // parse. Safari / iOS before 16.4 cannot compile lookbehind, so there it threw
@@ -27,11 +30,7 @@ const mdComponents: Components = {
   ul: ({ children }) => <ul className="mb-2 list-disc space-y-0.5 pl-4 last:mb-0">{children}</ul>,
   ol: ({ children }) => <ol className="mb-2 list-decimal space-y-0.5 pl-4 last:mb-0">{children}</ol>,
   li: ({ children }) => <li className="leading-relaxed">{children}</li>,
-  a: ({ href, children }) => (
-    <a href={href} target="_blank" rel="noreferrer" className="underline" style={{ color: 'hsl(var(--primary))' }}>
-      {children}
-    </a>
-  ),
+  a: ({ href, children }) => <ChatLink href={href}>{children}</ChatLink>,
   h1: ({ children }) => <h3 className="mb-1 mt-2 text-sm font-bold first:mt-0">{children}</h3>,
   h2: ({ children }) => <h3 className="mb-1 mt-2 text-sm font-bold first:mt-0">{children}</h3>,
   h3: ({ children }) => <h4 className="mb-1 mt-2 text-[13px] font-bold first:mt-0">{children}</h4>,
@@ -45,11 +44,33 @@ const mdComponents: Components = {
   ),
 };
 
+const LINK_STYLE = { color: 'hsl(var(--primary))' };
+
+/** In-app paths ("/bulletins/…") navigate inside the app — no new tab, no reload,
+ *  so an open assistant keeps its conversation. Anything else opens in a new tab. */
+function ChatLink({ href, children }: { href?: string; children?: ReactNode }) {
+  const inRouter = useInRouterContext();
+  const internal = !!href && href.startsWith('/') && !href.startsWith('//');
+  if (internal && inRouter) {
+    return (
+      <Link to={href} className="underline" style={LINK_STYLE}>
+        {children}
+      </Link>
+    );
+  }
+  return (
+    <a href={href} target={internal ? undefined : '_blank'} rel="noreferrer" className="underline" style={LINK_STYLE}>
+      {children}
+    </a>
+  );
+}
+
 export function MarkdownMessage({ text }: { text: string }) {
   return (
     <div className="text-sm [&>*:first-child]:mt-0 [&>*:last-child]:mb-0">
+      {/* Raw database ids never reach the reader: paths become labelled links, loose ids go. */}
       <ReactMarkdown remarkPlugins={REMARK_PLUGINS} components={mdComponents}>
-        {text}
+        {humanizeIds(text)}
       </ReactMarkdown>
     </div>
   );

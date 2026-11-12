@@ -9,6 +9,7 @@
 
 import { useRef } from 'react';
 import { agentSel } from '@/agent/operator/contracts';
+import { quoteRef } from '@/agent/operator/runtime/humanRef';
 import type { UiDriver } from '@/agent/operator/contracts';
 
 /** Latest value in a ref — run() is async and must not read a stale render. */
@@ -83,10 +84,10 @@ export function resolveOne<T>(
   const pool = exact.length > 1 ? exact : items.filter((it) => keys(it).some((k) => normKey(k).includes(q)));
   if (pool.length === 1) return pool[0];
   if (pool.length > 1) {
-    throw new Error(`"${query}" matches more than one ${what}: ${pool.slice(0, 8).map(describe).join('; ')}. Be more specific.`);
+    throw new Error(`${quoteRef(query, 'That id')} matches more than one ${what}: ${pool.slice(0, 8).map(describe).join('; ')}. Be more specific.`);
   }
   const sample = items.slice(0, 12).map(describe).join('; ');
-  throw new Error(`No ${what} matches "${query}".${sample ? ` Available: ${sample}.` : ''}`);
+  throw new Error(`No ${what} matches ${quoteRef(query)}.${sample ? ` Available: ${sample}.` : ''}`);
 }
 
 /** Toasts that appear after this call (the app reports outcomes as toasts). */

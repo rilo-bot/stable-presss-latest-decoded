@@ -43,6 +43,8 @@ import { useAutoGrowTextarea } from '@/lib/useAutoGrowTextarea';
 import { useChatAttachments } from '@/agent/attachments/useChatAttachments';
 import { attachmentsToFileParts, CHAT_ATTACH_ACCEPT } from '@/agent/attachments/attachments';
 import { AttachmentBar, MessageAttachments } from '@/agent/attachments/AttachmentViews';
+import { ChoiceCard } from '@/agent/choices/ChoiceCard';
+import { choiceCardState, lastStepOfferedChoices, messageChoices } from '@/agent/choices/choices';
 import { describePage } from '@/agent/operator/panel/pageContext';
 import { StablehandLauncher } from '@/agent/operator/panel/Launcher';
 import { OperatorPanel } from '@/agent/operator/panel/OperatorPanel';
@@ -53,6 +55,15 @@ export function AgentWidget() {
   const userId = useAuthStore((s) => s.currentUser?.id);
   if (isAdmin && userId) return <OperatorPanel key={userId} userId={userId} />;
   return <ConciergeWidget />;
+}
+
+/** sessionStorage flag: the chat already greeted this visitor in this browser session. */
+const AUTO_OPEN_KEY = 'sp-stablehand-greeted';
+
+/** The public site — everything outside the staff areas and the sign-in/invite flows. */
+function isPublicSitePath(pathname: string): boolean {
+  const root = pathname.split('/').filter(Boolean)[0] ?? '';
+  return !['production-system', 'newsroom', 'login', 'signup', 'invite'].includes(root);
 }
 
 // Suggested openers tailored to where the reader is.
@@ -179,7 +190,8 @@ function ConciergeWidget() {
 
   const { messages, sendMessage, status, error, stop, addToolResult } = useChat({
     transport,
-    sendAutomaticallyWhen: lastAssistantMessageIsCompleteWithToolCalls,
+    // Not after answer pills (offer_choices): that turn waits for the reader.
+    sendAutomaticallyWhen: (o) => !lastStepOfferedChoices(o.messages) && lastAssistantMessageIsCompleteWithToolCalls(o),
     onToolCall: async ({ toolCall }) => {
       // navigateTo is the only client-executed tool; server tools resolve server-side.
       if (toolCall.toolName !== 'navigateTo') return;
@@ -255,6 +267,30 @@ function ConciergeWidget() {
     if (open) scrollRef.current?.scrollTo({ top: scrollRef.current.scrollHeight, behavior: 'smooth' });
   }, [messages, open, status]);
 
+  // Greet visitors when they land on the public site (user request 2026-11-12):
+  // the chat opens by itself, once per browser session — close it and it stays
+  // closed until the next visit. On phones the panel would cover most of the page,
+  // so they get a small "What can I do for you?" bubble on the launcher instead.
+  const [nudge, setNudge] = useState(false);
+  useEffect(() => {
+    if (suppressGlobal || !isPublicSitePath(location.pathname)) return;
+    let seen = false;
+    try {
+      seen = sessionStorage.getItem(AUTO_OPEN_KEY) === '1';
+      sessionStorage.setItem(AUTO_OPEN_KEY, '1');
+    } catch {
+      /* storage blocked (private mode) — still greet, just not remembered */
+    }
+    if (seen || useAgentUi.getState().open) return;
+    if (window.matchMedia('(min-width: 768px)').matches) setOpen(true);
+    else setNudge(true);
+    // Landing only: navigating around the site must not re-open a closed chat.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+  useEffect(() => {
+    if (open) setNudge(false);
+  }, [open]);
+
   const starters = contextStarters(location.pathname);
 
   // The editor mounts its own assistant; don't show two launchers.
@@ -264,6 +300,29 @@ function ConciergeWidget() {
     <>
       {/* Floating launcher — The Stable Hand mascot (gold horse), gamified */}
       <StablehandLauncher open={open} onClick={toggle} />
+
+      {/* Phone greeting bubble (see the auto-open effect): tap to chat, × to dismiss. */}
+      <AnimatePresence>
+        {nudge && !open && (
+          <motion.div
+            initial={{ opacity: 0, y: 8 }}
+            animate={{ opacity: 1, y: 0 }}
+            exit={{ opacity: 0, y: 8 }}
+            className="fixed bottom-[5.25rem] right-5 z-50 flex max-w-[min(80vw,260px)] items-center gap-1 rounded-2xl rounded-br-sm border border-border bg-card py-1 pl-3.5 pr-1 shadow-xl print:hidden"
+          >
+            <button onClick={() => setOpen(true)} className="py-1.5 text-left text-sm font-medium text-foreground">
+              Hi! What can I do for you?
+            </button>
+            <button
+              onClick={() => setNudge(false)}
+              aria-label="Dismiss"
+              className="flex h-7 w-7 flex-shrink-0 items-center justify-center rounded-full text-muted-foreground hover:bg-muted"
+            >
+              <X className="h-3.5 w-3.5" />
+            </button>
+          </motion.div>
+        )}
+      </AnimatePresence>
 
       <AnimatePresence>
         {open && (
@@ -338,10 +397,15 @@ function ConciergeWidget() {
             <div ref={scrollRef} className="flex-1 space-y-3 overflow-y-auto px-4 py-4">
               {messages.length === 0 && (
                 <div className="space-y-3">
-                  <p className="text-sm text-muted-foreground">
-                    Hello! I’m here to help you find your way around Stable Press — horses, parties,
-                    bulletins, tipping, your own stable, and more. What would you like to do?
-                  </p>
+                  {/* The greeting, set as The Stable Hand's first message (static — no model call). */}
+                  <div className="flex justify-start">
+                    <div className="max-w-[85%] rounded-2xl rounded-bl-sm bg-muted px-3 py-2 text-sm text-foreground">
+                      <p className="font-medium">Hi, I’m The Stable Hand. What can I do for you?</p>
+                      <p className="mt-1 text-muted-foreground">
+                        I can find horses, people and bulletins, explain tipping, and help with your own stable.
+                      </p>
+                    </div>
+                  </div>
                   <div className="flex flex-wrap gap-2">
                     {starters.map((s) => (
                       <button
@@ -357,22 +421,43 @@ function ConciergeWidget() {
                 </div>
               )}
 
-              {messages.map((m) => {
+              {messages.map((m, i) => {
                 const text = messageText(m);
                 const mine = m.role === 'user';
-                if (!text && !mine) return null; // tool-only step, nothing to show yet
-                return (
-                  <div key={m.id} className={mine ? 'flex justify-end' : 'flex justify-start'}>
-                    <div
-                      className={
-                        mine
-                          ? 'max-w-[85%] whitespace-pre-wrap rounded-2xl rounded-br-sm bg-primary px-3 py-2 text-sm text-primary-foreground'
-                          : 'max-w-[85%] rounded-2xl rounded-bl-sm bg-muted px-3 py-2 text-sm text-foreground'
-                      }
-                    >
-                      {mine && <MessageAttachments message={m} tone="light" />}
-                      {mine ? text : <MarkdownMessage text={text} />}
+                // Answer pills the assistant offered (offer_choices) — see agent/choices.
+                const questions = mine ? null : messageChoices(m);
+                if (!text && !mine && !questions) return null; // tool-only step, nothing to show yet
+                const bubble = (
+                  <div
+                    className={
+                      mine
+                        ? 'max-w-[85%] whitespace-pre-wrap rounded-2xl rounded-br-sm bg-primary px-3 py-2 text-sm text-primary-foreground'
+                        : 'max-w-[85%] rounded-2xl rounded-bl-sm bg-muted px-3 py-2 text-sm text-foreground'
+                    }
+                  >
+                    {mine && <MessageAttachments message={m} tone="light" />}
+                    {mine ? text : <MarkdownMessage text={text} />}
+                  </div>
+                );
+                if (!questions) {
+                  return (
+                    <div key={m.id} className={mine ? 'flex justify-end' : 'flex justify-start'}>
+                      {bubble}
                     </div>
+                  );
+                }
+                const card = choiceCardState(messages, i);
+                return (
+                  <div key={m.id} className="flex flex-col items-start gap-2">
+                    {text && bubble}
+                    <ChoiceCard
+                      questions={questions}
+                      active={card.active}
+                      answer={card.answer}
+                      disabled={busy || attach.busy}
+                      onSubmit={send}
+                      tone="concierge"
+                    />
                   </div>
                 );
               })}

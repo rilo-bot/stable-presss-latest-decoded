@@ -25,7 +25,8 @@ import { useOperator } from '../operatorStore';
 import { getAction, listActions } from './registry';
 import { createUiDriver } from './uiDriver';
 import { readScreen, pageTitle } from './snapshot';
-import { findAgentEl, formControlOf, isAbortError, labelForId, labelOf } from './dom';
+import { chosenContext, findAgentEl, formControlOf, isAbortError, labelForId, labelOf, optionTextFor } from './dom';
+import { errorDetail, nameFromAgentId, settleQuestion } from './humanRef';
 import {
   beginToolScope,
   controlKeys,
@@ -226,20 +227,26 @@ type GenericTool = 'click' | 'type' | 'select';
 function sensitiveQuestion(tool: GenericTool, agentId: string, extra?: boolean | string): string | null {
   const el = findAgentEl(agentId);
   if (!el) return null; // the driver will report not-found
-  const name = labelOf(el) || agentId;
+  // Never the raw agent id: it can carry a record id ("team.remove-6650f…").
+  const name = labelOf(el) || nameFromAgentId(agentId);
   if (tool === 'click') {
     const picker = OPTION_ROLES.has(el.getAttribute('role') ?? '') ? pickerOf(el) : null;
     // A marker on an opener (the role pill's trigger) guards its CHOICES, not the opening.
     const declared = isOpener(el) ? null : declaredQuestion(el) ?? declaredQuestion(picker?.owner ?? null);
-    if (declared !== null) return declared || `Click “${name}”${whereOf(el)}?`;
-    if (isSensitiveControl(el)) return `Click “${name}”${whereOf(el)}?`;
+    // "Share" alone doesn't say with whom — name what is chosen in its dialog / form.
+    const chosen = chosenContext(el);
+    const ask = `Click “${name}”${whereOf(el)}${chosen ? ` (${chosen})` : ''}?`;
+    if (declared !== null) return declared || ask;
+    if (isSensitiveControl(el)) return ask;
     if (picker && isSensitivePicker(picker.label)) return `Choose “${name}” — ${picker.label}${whereOf(el)}?`;
     return null;
   }
   if (tool === 'select') {
     const declared = declaredQuestion(el);
-    if (declared !== null) return declared || `Choose “${String(extra)}” in “${name}”${whereOf(el)}?`;
-    return isSensitivePicker(name) ? `Choose “${String(extra)}” for “${name}”${whereOf(el)}?` : null;
+    // The option's visible text — the model may pass its value (a userId).
+    const choice = optionTextFor(agentId, String(extra));
+    if (declared !== null) return declared || `Choose “${choice}” in “${name}”${whereOf(el)}?`;
+    return isSensitivePicker(name) ? `Choose “${choice}” for “${name}”${whereOf(el)}?` : null;
   }
   if (!extra) return null;
   const declared = declaredQuestion(el);
@@ -461,7 +468,10 @@ async function runAction(input: unknown): Promise<ActionOutcome> {
   let stepId: string | null = null;
   let release: ((graceMs?: number) => void) | null = null;
   try {
-    const question = def.confirm?.(args);
+    // confirm() may look a name up (async — e.g. a userId the screen has not
+    // loaded). Slow or failed lookups still ask, with an id-free generic line.
+    const question = await settleQuestion(def.confirm?.(args), 4000, `Go ahead with “${humanizeActionName(def.name)}”?`);
+    if (useOperator.getState().abortSignal().aborted) return STOPPED;
     if (question) {
       const ok = await ui().confirm(question);
       if (useOperator.getState().abortSignal().aborted) return STOPPED;
@@ -479,7 +489,9 @@ async function runAction(input: unknown): Promise<ActionOutcome> {
     const stopped = isAbortError(e) || useOperator.getState().abortSignal().aborted;
     const error = stopped ? STOPPED.error : errMsg(e);
     if (stepId) failSteps(stepId, error);
-    return { ok: false, error };
+    // `error` is the line the user sees; `detail` (ids, candidates) is for the model.
+    const detail = stopped ? undefined : errorDetail(e);
+    return detail === undefined ? { ok: false, error } : { ok: false, error, detail: jsonSafe(detail) };
   } finally {
     release?.(1500);
   }
@@ -593,7 +605,7 @@ async function runTool(name: string, input: unknown, scope: ToolScope): Promise<
         const gate = await confirmIfSensitive('select', p.agentId, p.value);
         if (gate && 'ok' in gate) return gate;
         try {
-          return await asStep(`Chose “${p.value}” in “${labelForId(p.agentId)}”`, async () => {
+          return await asStep(`Chose “${optionTextFor(p.agentId, p.value)}” in “${labelForId(p.agentId)}”`, async () => {
             await ui().select(p.agentId, p.value);
             ui().flash(p.agentId);
             return { ok: true as const };

@@ -17,7 +17,7 @@
 // ---------------------------------------------------------------------------
 
 import { Router } from 'express'
-import { streamText, convertToModelMessages, stepCountIs, type UIMessage } from 'ai'
+import { streamText, convertToModelMessages, stepCountIs, hasToolCall, type UIMessage } from 'ai'
 import { attachAccount } from '../../lib/auth.js'
 import { isAdmin } from '../../lib/rbac.js'
 import { rateLimit } from '../../lib/rateLimit.js'
@@ -30,6 +30,7 @@ import {
 import { repairToolResults } from '../../lib/agent/repairMessages.js'
 import { buildOperatorSystem, type OperatorPageContext } from '../../lib/agent/operator/prompt.js'
 import { buildOperatorTools } from '../../lib/agent/operator/tools.js'
+import { OFFER_CHOICES_TOOL } from '../../lib/agent/offerChoices.js'
 import { dailyBudgetUsd, normaliseRunId, recordStep, spentTodayUsd } from '../../lib/agent/operator/runs.js'
 import type { Request, Response, NextFunction } from 'express'
 import { accountCan, type AccountUser } from '../../lib/effectiveAccess.js'
@@ -202,7 +203,9 @@ async function operatorTurn(req: Request, res: Response): Promise<void> {
         // Forward the caller's Bearer token: data tools call our own routes AS
         // this user, so the route — not the agent — enforces RBAC.
         tools: buildOperatorTools(account, req.headers.authorization),
-        stopWhen: stepCountIs(30),
+        // offer_choices ends the turn: the answer pills are on screen and the
+        // user's pick arrives as their next message — no extra model call.
+        stopWhen: [stepCountIs(30), hasToolCall(OFFER_CHOICES_TOOL)],
         abortSignal: abort.signal,
         // Fire-and-forget: the log must never slow or break the stream.
         onStepFinish: (step) => {

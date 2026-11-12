@@ -23,6 +23,7 @@ import { useOperator } from '../operatorStore';
 import { presence } from '../presence/presenceApi';
 import { getRouterNavigate } from './navigation';
 import { grantPreApproval } from './nativeDialogs';
+import { nameFromAgentId, quoteRef } from './humanRef';
 import {
   OPERATOR_UI_SEL,
   abortError,
@@ -394,7 +395,7 @@ export function createUiDriver(): UiDriver {
 
   const click = async (agentId: string, label?: string): Promise<void> => {
     const el = await point(agentId, label);
-    if (isDisabled(el)) throw new Error(`“${labelOf(el) || agentId}” is disabled right now.`);
+    if (isDisabled(el)) throw new Error(`“${labelOf(el) || nameFromAgentId(agentId)}” is disabled right now.`);
     await visual(() => presence.clickPulse());
     await guard();
     dispatchClick(el);
@@ -424,13 +425,13 @@ export function createUiDriver(): UiDriver {
       const clear = !!opts?.clear;
       const control = formControlOf(anchor);
       if (control instanceof HTMLSelectElement) {
-        throw new Error(`“${labelOf(anchor) || agentId}” is a dropdown — use select, not type.`);
+        throw new Error(`“${labelOf(anchor) || nameFromAgentId(agentId)}” is a dropdown — use select, not type.`);
       }
       if (control) {
         await typeIntoControl(control, text, clear);
       } else {
         const host = editableOf(anchor);
-        if (!host) throw new Error(`“${labelOf(anchor) || agentId}” is not a text field.`);
+        if (!host) throw new Error(`“${labelOf(anchor) || nameFromAgentId(agentId)}” is not a text field.`);
         await typeIntoEditable(host, text, clear);
       }
       if (opts?.submit) {
@@ -452,14 +453,14 @@ export function createUiDriver(): UiDriver {
       const control = formControlOf(anchor);
 
       if (control instanceof HTMLSelectElement) {
-        if (control.disabled) throw new Error(`“${labelOf(anchor) || agentId}” is disabled right now.`);
+        if (control.disabled) throw new Error(`“${labelOf(anchor) || nameFromAgentId(agentId)}” is disabled right now.`);
         const want = norm(value);
         const opts = Array.from(control.options);
         const opt =
           opts.find((o) => norm(o.value) === want) ?? opts.find((o) => norm(o.textContent) === want);
         if (!opt) {
           throw new Error(
-            `No option “${value}” in “${labelOf(anchor) || agentId}”. Options: ${listNames(
+            `No option ${quoteRef(value, 'with that value')} in “${labelOf(anchor) || nameFromAgentId(agentId)}”. Options: ${listNames(
               opts.map((o) => collapse(o.textContent) || o.value),
             )}.`,
           );
@@ -488,8 +489,8 @@ export function createUiDriver(): UiDriver {
           dispatchKey(active, 'Escape');
           return new Error(
             names.length
-              ? `No option “${value}” in “${labelOf(anchor) || agentId}”. Options: ${listNames(names)}.`
-              : `Clicking “${labelOf(anchor) || agentId}” did not open a list of options.`,
+              ? `No option ${quoteRef(value, 'with that value')} in “${labelOf(anchor) || nameFromAgentId(agentId)}”. Options: ${listNames(names)}.`
+              : `Clicking “${labelOf(anchor) || nameFromAgentId(agentId)}” did not open a list of options.`,
           );
         },
       );

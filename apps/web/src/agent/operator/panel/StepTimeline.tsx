@@ -12,26 +12,48 @@
 
 import { useState } from 'react';
 import { isToolUIPart, getToolName, type UIMessage, type DynamicToolUIPart, type ToolUIPart } from 'ai';
-import { Check, ChevronRight, Loader2, Minus, Ban, X } from 'lucide-react';
+import { Check, ChevronRight, Loader2, Minus, Ban, RotateCcw, X } from 'lucide-react';
 
 import { MarkdownMessage } from '@/components/MarkdownMessage';
+import { ChoiceCard } from '@/agent/choices/ChoiceCard';
+import { choicesOfPart, isChoicesPart, type ChoiceQuestion } from '@/agent/choices/choices';
 import { useOperator, type OperatorStep } from '@/agent/operator/operatorStore';
 import { stepLabel, truncate } from './toolLabels';
 import type { SubStepMap } from './useOperatorChat';
 
 type AnyToolPart = ToolUIPart | DynamicToolUIPart;
 const ELEMENT_TOOLS = new Set(['click', 'type', 'select', 'waitFor', 'scrollTo']);
-type RowState = 'running' | 'done' | 'error' | 'declined' | 'stopped';
+type RowState = 'running' | 'done' | 'error' | 'retry' | 'declined' | 'stopped';
+
+/**
+ * Errors The Stable Hand makes and then corrects itself: arguments the action
+ * refused (e.g. 7 pages when the builder takes 1, 2, 3, 4 or 6), or a button not
+ * on screen yet. Nothing in the app changed and it immediately tries again, so
+ * these show as a calm "retrying" row — a red X made users think the work failed.
+ */
+const SELF_CORRECTING = /data-agent-id|ref:|readScreen|Invalid arguments|not available on this screen|Visible anchors|No element/i;
+
+function rawErrorOf(p: AnyToolPart): string | undefined {
+  if (p.state === 'output-error') return p.errorText;
+  if (p.state === 'output-available') {
+    const o = p.output as { ok?: unknown; error?: unknown } | null | undefined;
+    if (o && typeof o === 'object' && o.ok === false && typeof o.error === 'string') return o.error;
+  }
+  return undefined;
+}
 
 function rowState(p: AnyToolPart, live: boolean): RowState {
   switch (p.state) {
     case 'output-available': {
       const o = p.output as { ok?: unknown; declined?: unknown } | null | undefined;
-      if (o && typeof o === 'object' && o.ok === false) return o.declined ? 'declined' : 'error';
+      if (o && typeof o === 'object' && o.ok === false) {
+        if (o.declined) return 'declined';
+        return SELF_CORRECTING.test(rawErrorOf(p) ?? '') ? 'retry' : 'error';
+      }
       return 'done';
     }
     case 'output-error':
-      return 'error';
+      return SELF_CORRECTING.test(p.errorText ?? '') ? 'retry' : 'error';
     case 'output-denied':
       return 'declined';
     default:
@@ -62,9 +84,8 @@ function userFacingError(raw: string | undefined): string {
   // The app's own window.confirm(), held back by the runtime until the user OKs a card.
   if (/declined automatically/i.test(e)) return 'The app asked to confirm — nothing changed until you say OK.';
   if (/declined/i.test(e)) return 'You said no — nothing was changed.';
-  if (/data-agent-id|ref:|readScreen|Invalid arguments|not available on this screen|Visible anchors|No element/i.test(e)) {
-    return 'Couldn’t find that on screen — trying another way.';
-  }
+  if (/Invalid arguments/i.test(e)) return 'Adjusting the details and trying again.';
+  if (SELF_CORRECTING.test(e)) return 'Not on screen yet — trying another way.';
   if (/\b(403|forbidden|not permitted|permission)\b/i.test(e)) return 'Your role doesn’t allow this.';
   if (/\b(401|sign in)\b/i.test(e)) return 'Please sign in again.';
   // A short, human server message is fine to show; anything long is noise.
@@ -86,6 +107,12 @@ function StateIcon({ state }: { state: RowState }) {
       return (
         <span className={box + ' bg-destructive/15 text-destructive'}>
           <X className="h-2.5 w-2.5" strokeWidth={3} />
+        </span>
+      );
+    case 'retry':
+      return (
+        <span className={box} style={{ background: 'rgba(212,168,67,0.18)', color: 'var(--gold-dark)' }}>
+          <RotateCcw className="h-2.5 w-2.5" strokeWidth={3} />
         </span>
       );
     case 'declined':
@@ -172,7 +199,11 @@ function StepRow({
           <span className={'block leading-snug ' + (state === 'running' ? 'font-medium text-foreground' : 'text-foreground/85')}>
             {label}
           </span>
-          {err && <span className="block truncate text-[11px] text-destructive">{truncate(err, 140)}</span>}
+          {err && (
+            <span className={'block truncate text-[11px] ' + (state === 'retry' ? 'text-muted-foreground' : 'text-destructive')}>
+              {truncate(err, 140)}
+            </span>
+          )}
           {state === 'stopped' && <span className="block text-[11px] text-muted-foreground">Stopped</span>}
         </span>
         {canExpand && (
@@ -243,7 +274,10 @@ export function StepTimeline({
 }
 
 // ── Whole assistant message: text bubbles interleaved with step lists ────────
-type Segment = { kind: 'text'; text: string; key: string } | { kind: 'tools'; parts: AnyToolPart[]; key: string };
+type Segment =
+  | { kind: 'text'; text: string; key: string }
+  | { kind: 'tools'; parts: AnyToolPart[]; key: string }
+  | { kind: 'choices'; questions: ChoiceQuestion[]; key: string };
 
 function segmentsOf(m: UIMessage): Segment[] {
   const out: Segment[] = [];
@@ -253,6 +287,11 @@ function segmentsOf(m: UIMessage): Segment[] {
       if (!p.text) return;
       if (last?.kind === 'text') last.text += p.text;
       else out.push({ kind: 'text', text: p.text, key: `t${i}` });
+    } else if (isChoicesPart(p)) {
+      // offer_choices is not a step the user watches — it is the answer pills
+      // (shown once its input has fully streamed in).
+      const questions = choicesOfPart(p);
+      if (questions) out.push({ kind: 'choices', questions, key: `c${i}` });
     } else if (isToolUIPart(p)) {
       if (last?.kind === 'tools') last.parts.push(p);
       else out.push({ kind: 'tools', parts: [p], key: `s${i}` });
@@ -262,16 +301,27 @@ function segmentsOf(m: UIMessage): Segment[] {
   return out;
 }
 
+/** The answer pills' wiring for one message (see agent/choices). */
+export interface MessageChoices {
+  active: boolean;
+  answer?: string;
+  disabled: boolean;
+  onSubmit: (text: string) => void;
+}
+
 export function AssistantMessage({
   message,
   live,
   running,
   subSteps,
+  choices,
 }: {
   message: UIMessage;
   live: boolean;
   running: { id: string; since: number } | null;
   subSteps: SubStepMap;
+  /** Absent → any answer pills render read-only. */
+  choices?: MessageChoices;
 }) {
   const segments = segmentsOf(message);
   if (!segments.length) return null;
@@ -282,6 +332,16 @@ export function AssistantMessage({
           <div key={s.key} className="max-w-[92%] rounded-2xl rounded-bl-sm bg-muted px-3 py-2 text-sm text-foreground">
             <MarkdownMessage text={s.text} />
           </div>
+        ) : s.kind === 'choices' ? (
+          <ChoiceCard
+            key={s.key}
+            questions={s.questions}
+            active={choices?.active ?? false}
+            answer={choices?.answer}
+            disabled={choices?.disabled ?? true}
+            onSubmit={(text) => choices?.onSubmit(text)}
+            tone="operator"
+          />
         ) : (
           <StepTimeline key={s.key} parts={s.parts} live={live} running={running} subSteps={subSteps} />
         ),

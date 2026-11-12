@@ -90,7 +90,7 @@ export const SURFACES: CatalogSurface[] = [
       {
         name: 'magazine.addAiPages',
         description:
-          'Owner only. Have the AI design and append on-theme pages (count must be 1, 2, 3, 4 or 6), optionally on a topic. Starts the build and returns AT ONCE with { jobId, started:true } — a [job-update] message arrives when the pages are done; do not wait or poll.',
+          'Owner only. Have the AI design and append on-theme pages (count 1 to 12, optionally on a topic; the builder adds 1, 2, 3, 4 or 6 per build, so a larger or odd count starts the biggest batch that fits and the result gives the number remaining: add those with a second call after the [job-update]). Starts the build and returns AT ONCE with { jobId, started:true } — a [job-update] message arrives when the pages are done; do not wait or poll.',
         args: '{ count: 1 | 2 | 3 | 4 | 6; topic?: string }',
         confirms: true,
       },
@@ -225,7 +225,7 @@ export const SURFACES: CatalogSurface[] = [
       {
         name: 'magazine.addMorePages',
         description:
-          'Owner only. Press "Add more pages" (the gold banner after a first build, else the rail\'s AI button) to open the add-AI-pages popover; with count (1, 2, 3, 4 or 6) and optional topic it also starts the build like magazine.addAiPages and returns AT ONCE with { jobId, started:true } — a [job-update] message arrives when the pages are done.',
+          'Owner only. Press "Add more pages" (the gold banner after a first build, else the rail\'s AI button) to open the add-AI-pages popover; with count (1 to 12, batched the same way) and optional topic it also starts the build like magazine.addAiPages and returns AT ONCE with { jobId, started:true } — a [job-update] message arrives when the pages are done.',
         args: '{ count?: 1 | 2 | 3 | 4 | 6; topic?: string }',
         confirms: true,
       },

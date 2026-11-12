@@ -8,6 +8,7 @@
 // ---------------------------------------------------------------------------
 
 import { AGENT_ID_ATTR, AGENT_LABEL_ATTR, OPERATOR_UI_ATTR, agentSel } from '../contracts';
+import { looksLikeId, nameFromAgentId } from './humanRef';
 
 export const OPERATOR_UI_SEL = `[${OPERATOR_UI_ATTR}]`;
 
@@ -343,10 +344,51 @@ export function labelOf(el: Element): string {
   return truncate(collapse(raw), 60);
 }
 
-/** Label for an agent id, falling back to the id itself (for step text). */
+/** Label for an agent id (for step text). With no label on screen it falls
+ *  back to a humanised id with any record id taken out — "team.remove-6650f…"
+ *  reads "Remove", never the raw id. */
 export function labelForId(agentId: string): string {
   const el = findAgentEl(agentId);
-  return (el && labelOf(el)) || agentId;
+  return (el && labelOf(el)) || nameFromAgentId(agentId);
+}
+
+/**
+ * What a person sees for a value chosen in a <select>: the option's TEXT. The
+ * model often passes the option's value, which can be a userId / horse id
+ * ("Chose “6650f…”" → "Chose “Ahmed Khan”"). Never returns an id.
+ */
+export function optionTextFor(agentId: string, value: string): string {
+  const el = findAgentEl(agentId);
+  const control = el ? formControlOf(el) : null;
+  if (control instanceof HTMLSelectElement) {
+    const want = collapse(value).toLowerCase();
+    const opt =
+      Array.from(control.options).find((o) => collapse(o.value).toLowerCase() === want) ??
+      Array.from(control.options).find((o) => collapse(o.textContent).toLowerCase() === want);
+    const text = opt ? collapse(opt.textContent) : '';
+    if (text) return truncate(text, 60);
+  }
+  return looksLikeId(value) ? 'the chosen option' : truncate(collapse(value), 60);
+}
+
+/**
+ * The choices already made in the dialog / form a control sits in, by their
+ * visible text: "Person to share with: Ahmed Khan". So a generic confirm card
+ * for an un-instrumented "Share" button says WHO it shares with. '' if none.
+ */
+export function chosenContext(el: Element): string {
+  const scope = el.closest('[role="dialog"], [role="alertdialog"], dialog, form');
+  if (!scope) return '';
+  const bits: string[] = [];
+  for (const sel of Array.from(scope.querySelectorAll('select'))) {
+    if (!sel.value || sel.disabled || !isVisible(sel)) continue;
+    const text = collapse(sel.selectedOptions[0]?.textContent);
+    if (!text || looksLikeId(text)) continue;
+    const label = labelOf(sel);
+    bits.push(label ? `${label}: ${truncate(text, 50)}` : truncate(text, 50));
+    if (bits.length >= 2) break;
+  }
+  return bits.join('; ');
 }
 
 export function isDisabled(el: Element): boolean {

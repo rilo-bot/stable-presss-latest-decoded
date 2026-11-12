@@ -39,6 +39,7 @@ import { columnOf, COLUMN_ORDER, type ReviewColumn } from '../review';
 import { useOperatorJobs } from '@/agent/operator/runtime/jobs';
 import { JOB_STARTED_NOTE, startMagazineBuildJob } from './magazineJobs';
 import type { V2Collaborator } from '../api';
+import { personDisplay } from '@/agent/operator/runtime/humanRef';
 import {
   anchor,
   assertEnabled,
@@ -50,7 +51,7 @@ import {
   pageListLabel,
   pageNo,
   pageNoOf,
-  personLabel,
+  personLabelAsync,
   resolvePerson,
   revealToolbarItem,
   scopeNumbers,
@@ -133,6 +134,9 @@ function findCollaborator(person: string, cs: V2Collaborator[] | undefined): V2C
   );
 }
 
+/** A collaborator as a confirm card / step names them: name → email. */
+const collabName = (c: V2Collaborator) => personDisplay({ name: c.displayName, email: c.email });
+
 /** Does this collaborator already have exactly these pages (null = all pages)? */
 function hasScope(c: V2Collaborator, wantIds: string[] | null): boolean {
   if (!wantIds) return c.pageIds === 'all';
@@ -160,6 +164,44 @@ async function settle(ui: UiDriver, agentId: string, done: () => boolean, what: 
 /** The page rail's AI popover is open: choose count/topic and press Generate.
  *  Confirms the server accepted the request, then hands the build to a
  *  background job and returns at once (see ./magazineJobs.ts). */
+/** The page builder's count picker offers 1, 2, 3, 4 or 6 pages per build. */
+const BUILD_BATCHES = [6, 4, 3, 2, 1] as const;
+
+/** The biggest batch the builder takes that fits in `count`; the rest is added
+ *  after this build finishes. (A plan of 7 pages used to fail its first call —
+ *  the action only accepted 1, 2, 3, 4 or 6 — and showed the user a red error.) */
+function firstBuildBatch(count: number): number {
+  return BUILD_BATCHES.find((n) => n <= count) ?? 1;
+}
+
+const aiPagesCount = z.number().int().min(1).max(12);
+
+function aiPagesConfirm(count: number, topic: string | undefined): string {
+  const batch = firstBuildBatch(count);
+  const rest = count - batch;
+  return (
+    `Add ${batch} new AI-designed page${batch === 1 ? '' : 's'}${topic ? ` about “${topic.slice(0, 120)}”` : ''} to this magazine?` +
+    (rest > 0 ? ` The builder adds up to 6 at a time, so the other ${rest} will follow once these are done.` : '')
+  );
+}
+
+/** Start a build of `count` pages: the first batch now, and tell the model how many remain. */
+async function startAiPagesBuild(ui: UiDriver, count: number, topic: string | undefined) {
+  const batch = firstBuildBatch(count);
+  const remaining = count - batch;
+  const started = await submitAiPagesForm(ui, batch, topic);
+  return remaining > 0
+    ? {
+        ...started,
+        requested: count,
+        remaining,
+        note:
+          `${started.note} The builder adds 1, 2, 3, 4 or 6 pages at a time, so ${batch} of the ${count} requested were started. ` +
+          `When the [job-update] for this build arrives, call this action again with count ${remaining} and the same topic.`,
+      }
+    : started;
+}
+
 async function submitAiPagesForm(ui: UiDriver, count: number, topic: string | undefined) {
   await ui.select('mag.ai-pages-count', String(count));
   if (topic?.trim()) await ui.type('mag.ai-pages-topic', topic.trim(), { clear: true });
@@ -528,17 +570,16 @@ export function useMagazineEditorActions(perms: EditorPerms): void {
     {
       name: 'magazine.addAiPages',
       description:
-        'Have the AI design and add on-theme pages (count 1, 2, 3, 4 or 6; optional topic). Starts the build and returns at once with a jobId — a [job-update] message arrives when the pages are done (no need to wait).',
+        'Have the AI design and add on-theme pages (count 1–12; optional topic). The builder adds 1, 2, 3, 4 or 6 per build, so a larger or odd count starts the biggest batch that fits and the result says how many remain. Starts the build and returns at once with a jobId — a [job-update] message arrives when the pages are done (no need to wait).',
       args: z.object({
-        count: z.union([z.literal(1), z.literal(2), z.literal(3), z.literal(4), z.literal(6)]),
+        count: aiPagesCount,
         topic: z.string().max(300).optional(),
       }),
       // Generating pages writes new content into the magazine and spends AI
       // budget — the user approves it first (reported: pages were added from a
       // PDF instruction without asking).
       // No card while a build runs — run() refuses that before touching anything.
-      confirm: ({ count, topic }) =>
-        isBuilding() ? null : `Add ${count} new AI-designed page${count === 1 ? '' : 's'}${topic ? ` about “${topic.slice(0, 120)}”` : ''} to this magazine?`,
+      confirm: ({ count, topic }) => (isBuilding() ? null : aiPagesConfirm(count, topic)),
       run: async ({ count, topic }, ui) => {
         await ready(ui);
         if (isBuilding()) throw new Error('A build is already running — a [job-update] message will arrive when it finishes; add more pages after that.');
@@ -548,7 +589,7 @@ export function useMagazineEditorActions(perms: EditorPerms): void {
           await ui.click('mag.add-ai-pages', 'Add pages with AI');
           await ui.waitFor('mag.ai-pages-generate', 4000);
         }
-        return submitAiPagesForm(ui, count, topic);
+        return startAiPagesBuild(ui, count, topic);
       },
     },
     isOwner,
@@ -558,16 +599,13 @@ export function useMagazineEditorActions(perms: EditorPerms): void {
     {
       name: 'magazine.addMorePages',
       description:
-        'Press "Add more pages" (the gold banner after a first build; falls back to the page rail\'s AI button) to open the add-AI-pages popover. With count (1, 2, 3, 4 or 6) and optional topic it also starts the build and returns at once with a jobId — a [job-update] message arrives when the pages are done.',
+        'Press "Add more pages" (the gold banner after a first build; falls back to the page rail\'s AI button) to open the add-AI-pages popover. With count (1–12; the builder adds 1, 2, 3, 4 or 6 per build, so a larger or odd count starts the biggest batch that fits and the result says how many remain) and optional topic it also starts the build and returns at once with a jobId — a [job-update] message arrives when the pages are done.',
       args: z.object({
-        count: z.union([z.literal(1), z.literal(2), z.literal(3), z.literal(4), z.literal(6)]).optional(),
+        count: aiPagesCount.optional(),
         topic: z.string().max(300).optional(),
       }),
       // Only a build (count given) creates content; just opening the popover is safe.
-      confirm: ({ count, topic }) =>
-        count && !isBuilding()
-          ? `Add ${count} new AI-designed page${count === 1 ? '' : 's'}${topic ? ` about “${topic.slice(0, 120)}”` : ''} to this magazine?`
-          : null,
+      confirm: ({ count, topic }) => (count && !isBuilding() ? aiPagesConfirm(count, topic) : null),
       run: async ({ count, topic }, ui) => {
         await ready(ui);
         if (isBuilding()) throw new Error('A build is already running — a [job-update] message will arrive when it finishes; add more pages after that.');
@@ -585,10 +623,10 @@ export function useMagazineEditorActions(perms: EditorPerms): void {
           return {
             opened: true,
             started: false,
-            note: 'The "Add pages with AI" popover is open. Call magazine.addMorePages (or magazine.addAiPages) with count 1, 2, 3, 4 or 6 to start the build.',
+            note: 'The "Add pages with AI" popover is open. Call magazine.addMorePages (or magazine.addAiPages) with count 1 to 12 to start the build.',
           };
         }
-        return submitAiPagesForm(ui, count, topic);
+        return startAiPagesBuild(ui, count, topic);
       },
     },
     isOwner,
@@ -708,7 +746,7 @@ export function useMagazineEditorActions(perms: EditorPerms): void {
       description:
         "Share pages with a staff member (person = userId, email or name) through the Share dialog. New people are emailed a link; for someone who already has access this changes which pages they can edit.",
       args: z.object({ person: z.string().min(1), pages: pagesArg }),
-      confirm: ({ person, pages }) => {
+      confirm: async ({ person, pages }) => {
         const s = get();
         // No card for page numbers that don't exist (run() refuses them before
         // touching anything) or for someone who already has exactly these pages
@@ -721,12 +759,14 @@ export function useMagazineEditorActions(perms: EditorPerms): void {
         }
         const existing = findCollaborator(person, s.issue?.collaborators);
         if (existing && hasScope(existing, wantIds)) return null;
-        const who = personLabel(person, s.issue?.collaborators);
         const what = pages === 'all' ? 'all pages' : pageListLabel(pages);
-        const title = s.issue?.title ?? 'this magazine';
-        return existing
-          ? `Change ${who}'s access on “${title}” to ${what}?`
-          : `Share ${what} of “${title}” with ${who}? They'll be emailed a link.`;
+        const title = s.issue?.title || 'this magazine';
+        if (existing) return `Change ${collabName(existing)}'s access on “${title}” to ${what}?`;
+        // Not a collaborator yet — the model usually passes the userId it got
+        // from findStaff, so look the NAME up (staff directory) rather than
+        // printing the id. Reported: "Share pages 1–2 … with 6650f1a2…?".
+        const who = await personLabelAsync(person, s.issue?.collaborators);
+        return `Share ${what} of “${title}” with ${who}? They'll be emailed a link.`;
       },
       run: async ({ person, pages }, ui) => {
         const s = await ready(ui);
@@ -745,11 +785,11 @@ export function useMagazineEditorActions(perms: EditorPerms): void {
               pages: scopeNumbers(existing, s.pages),
             };
           }
-          who = { userId: existing.userId, email: existing.email, name: existing.displayName || existing.email };
+          who = { userId: existing.userId, email: existing.email, name: collabName(existing) };
         } else {
           const p = resolvePerson(await loadDirectory(), person);
-          if (p.userId === issue.ownerId) throw new Error(`${p.name || p.email} owns this magazine already.`);
-          who = { userId: p.userId, email: p.email, name: p.name || p.email };
+          if (p.userId === issue.ownerId) throw new Error(`${personDisplay(p)} owns this magazine already.`);
+          who = { userId: p.userId, email: p.email, name: personDisplay(p) };
         }
 
         await openShareDialog(ui);
@@ -813,14 +853,15 @@ export function useMagazineEditorActions(perms: EditorPerms): void {
         // Not a collaborator → run() refuses before touching anything; no card.
         const c = findCollaborator(person, s.issue?.collaborators);
         if (!c) return null;
-        return `Remove ${c.displayName || c.email}'s access to “${s.issue?.title ?? 'this magazine'}”?`;
+        return `Remove ${collabName(c)}'s access to “${s.issue?.title || 'this magazine'}”?`;
       },
       run: async ({ person }, ui) => {
         const s = await ready(ui);
         const c = findCollaborator(person, s.issue?.collaborators);
-        if (!c) throw new Error(`“${person}” is not a collaborator on this magazine.`);
+        // Named (staff directory), never the raw userId the model passed.
+        if (!c) throw new Error(`${await personLabelAsync(person, s.issue?.collaborators)} is not a collaborator on this magazine.`);
         await openShareDialog(ui);
-        await ui.click(`mag.share-remove-${c.userId}`, `Remove ${c.displayName || c.email}`);
+        await ui.click(`mag.share-remove-${c.userId}`, `Remove ${collabName(c)}`);
         await waitUntil(() => !get().issue?.collaborators?.some((x) => x.userId === c.userId), {
           signal: ui.signal,
           timeoutMs: 20_000,
@@ -829,7 +870,7 @@ export function useMagazineEditorActions(perms: EditorPerms): void {
         await sleep(500, ui.signal);
         await closeShareDialog(ui);
         const after = get();
-        return { removed: { userId: c.userId, name: c.displayName || c.email }, collaborators: collaboratorsOut(after.issue?.collaborators, after.pages) };
+        return { removed: { userId: c.userId, name: collabName(c) }, collaborators: collaboratorsOut(after.issue?.collaborators, after.pages) };
       },
     },
     isOwner,
