@@ -426,30 +426,34 @@ export async function verifyPresignedPutUrl(target: string, contentType: string)
   if (now > signedAt.getTime() + expires * 1000) return null // expired
   if (signedAt.getTime() > now + 5 * 60_000) return null // from the future
 
-  // Path → key. Virtual-hosted style: "/<key>"; path style: "/<bucket>/<key>".
-  let path = u.pathname.replace(/^\/+/, '')
-  if ((FORCE_PATH_STYLE || ENDPOINT) && path.startsWith(`${BUCKET}/`)) path = path.slice(BUCKET.length + 1)
-  let key: string
-  try {
-    key = decodeURIComponent(path)
-  } catch {
-    return null
+  // Path → key. The SDK picks the URL style itself: virtual-hosted "/<key>" for
+  // DNS-safe bucket names, path style "/<bucket>/<key>" for custom endpoints,
+  // forcePathStyle AND bucket names that aren't valid hostnames. Don't guess which:
+  // try both readings — only the one that reproduces host + path + signature wins.
+  const raw = u.pathname.replace(/^\/+/, '')
+  const candidates = [raw]
+  if (raw.startsWith(`${BUCKET}/`)) candidates.push(raw.slice(BUCKET.length + 1))
+  for (const encoded of candidates) {
+    let key: string
+    try {
+      key = decodeURIComponent(encoded)
+    } catch {
+      continue
+    }
+    if (!key || !isPublicKey(key)) continue
+    const expected = new URL(
+      await getSignedUrl(
+        client(),
+        new PutObjectCommand({ Bucket: BUCKET, Key: key, ContentType: contentType || undefined }),
+        { expiresIn: expires, signingDate: signedAt },
+      ),
+    )
+    if (expected.host !== u.host || expected.pathname !== u.pathname) continue
+    const a = Buffer.from(sig)
+    const b = Buffer.from(expected.searchParams.get('X-Amz-Signature') ?? '')
+    if (a.length === b.length && crypto.timingSafeEqual(a, b)) return { key }
   }
-  if (!key || !isPublicKey(key)) return null
-
-  const expected = new URL(
-    await getSignedUrl(
-      client(),
-      new PutObjectCommand({ Bucket: BUCKET, Key: key, ContentType: contentType || undefined }),
-      { expiresIn: expires, signingDate: signedAt },
-    ),
-  )
-  const want = expected.searchParams.get('X-Amz-Signature') ?? ''
-  if (expected.host !== u.host || expected.pathname !== u.pathname) return null
-  const a = Buffer.from(sig)
-  const b = Buffer.from(want)
-  if (a.length !== b.length || !crypto.timingSafeEqual(a, b)) return null
-  return { key }
+  return null
 }
 
 export const storage = {

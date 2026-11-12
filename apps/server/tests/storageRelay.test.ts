@@ -65,3 +65,29 @@ test('rejects keys outside the public prefix', async () => {
   url.pathname = '/private/secret.jpg'
   assert.equal(await storage.verifyPresignedPutUrl(url.toString(), 'image/jpeg'), null)
 })
+
+// Path-style URLs ("/<bucket>/<key>") — the SDK uses them for bucket names that
+// aren't valid hostnames and for custom endpoints. The compiled-build smoke test
+// caught the first version rejecting these. Run in a child process so this
+// file's module-level env (a DNS-safe bucket) stays untouched.
+test('accepts path-style presigned URLs (non-DNS bucket name)', async () => {
+  const { execFileSync } = await import('node:child_process')
+  const script = `
+    const { storage } = require('./src/lib/storage.ts');
+    (async () => {
+      const u = await storage.presignPutUrl({ key: 'public/uploads/u1/p.jpg', contentType: 'image/jpeg' });
+      const ok = await storage.verifyPresignedPutUrl(u, 'image/jpeg');
+      const bad = new URL(u); bad.pathname = bad.pathname.replace('p.jpg', 'q.jpg');
+      const no = await storage.verifyPresignedPutUrl(bad.toString(), 'image/jpeg');
+      process.stdout.write(JSON.stringify({ pathStyle: new URL(u).pathname.startsWith('/Not_DNS_Bucket/'), ok, no }));
+    })();`
+  const out = execFileSync(process.execPath, ['--import', 'tsx', '-e', script], {
+    cwd: process.cwd(),
+    env: { ...process.env, S3_BUCKET: 'Not_DNS_Bucket', S3_REGION: 'ap-southeast-2', AWS_ACCESS_KEY_ID: 'AKIATEST', AWS_SECRET_ACCESS_KEY: 'x', S3_ENDPOINT: '' },
+    encoding: 'utf8',
+  })
+  const r = JSON.parse(out.trim().split('\n').pop()!)
+  assert.equal(r.pathStyle, true)
+  assert.deepEqual(r.ok, { key: 'public/uploads/u1/p.jpg' })
+  assert.equal(r.no, null)
+})
