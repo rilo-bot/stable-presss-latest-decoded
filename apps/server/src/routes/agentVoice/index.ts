@@ -12,6 +12,7 @@
 import express, { Router } from 'express'
 import { attachAccountOptional } from '../../lib/auth.js'
 import { rateLimit } from '../../lib/rateLimit.js'
+import { aiSurface } from '../../lib/agent/aiUsageRoute.js'
 import { isVoiceConfigured, transcribeAudio, synthesizeSpeech } from '../../lib/agent/voice.js'
 
 const router = Router()
@@ -38,6 +39,8 @@ router.post(
   express.raw({ type: () => true, limit: '25mb' }),
   attachAccountOptional,
   transcribeLimit,
+  // AI Activity: Voice (a panel may hint its own surface with ?surface=). After raw().
+  aiSurface('voice', { feature: 'speech-to-text', acceptHint: true }),
   async (req, res) => {
     if (!isVoiceConfigured()) {
       res.status(503).json({ error: 'Voice is resting — OPENAI_API_KEY is not configured on the server.' })
@@ -58,7 +61,7 @@ router.post(
   },
 )
 
-router.post('/speak', attachAccountOptional, speakLimit, async (req, res) => {
+router.post('/speak', attachAccountOptional, speakLimit, aiSurface('voice', { feature: 'read-aloud', acceptHint: true }), async (req, res) => {
   if (!isVoiceConfigured()) {
     res.status(503).json({ error: 'Voice is resting — OPENAI_API_KEY is not configured on the server.' })
     return

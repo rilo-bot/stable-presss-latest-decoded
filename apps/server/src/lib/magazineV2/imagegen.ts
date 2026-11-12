@@ -15,6 +15,12 @@
 // also keeps the cost proportional — an image-model call happens only for the
 // slots stock could not answer.
 //
+// Since 2026-11-12 the Photo Director (photoDirector.ts) LOOKS at the stock
+// candidates first; when it rejects them all, this module is asked for the frame
+// instead — at the slot's own aspect ratio (nearestAspectRatio) and in the issue's
+// photographic style (`style`), so a generated picture matches its box and its
+// neighbours.
+//
 // This rung existed before and was removed on 2026-08-30 ("photographs are
 // FOUND, never generated") because it sat AHEAD of Pexels and was gated on
 // OPENROUTER_API_KEY, so every generated page went bespoke-image whether or not
@@ -33,6 +39,7 @@ import crypto from 'crypto';
 import { db } from '../db.js';
 import { storage } from '../storage.js';
 import { COL } from './collections.js';
+import { recordAiUsage } from '../agent/aiUsage.js';
 // The same extension map a hand-uploaded image is held to — a picture the model
 // made is not exempt from the library's rules.
 import { imageExtFor } from './config.js';
@@ -51,7 +58,8 @@ const OPENROUTER_API_KEY = (process.env.OPENROUTER_API_KEY ?? '').trim();
 // the exact slug from openrouter.ai/models, and note it must support image
 // OUTPUT (most chat models do not; a text-only model returns no image and this
 // module degrades to null).
-const DEFAULT_IMAGE_MODEL = 'google/gemini-2.5-flash-image';
+// Gemini Nano Banana 2.1 — confirmed with the user 2026-11-12 (verified on openrouter.ai).
+const DEFAULT_IMAGE_MODEL = 'google/gemini-nano-banana-2.1';
 const IMAGE_MODEL = (process.env.MAGAZINE_V2_IMAGE_MODEL ?? '').trim() || DEFAULT_IMAGE_MODEL;
 
 /** True when we can both generate (OpenRouter key) AND persist (S3) an image. */
@@ -66,9 +74,10 @@ export function isImageGenConfigured(): boolean {
  * lettering cannot be edited, translated or resized), and no identifiable real
  * people (the same rule the copywriter works under).
  */
-function buildPrompt(brief: string, orientation: StockOrientation): string {
-  const aspect =
-    orientation === 'portrait'
+function buildPrompt(brief: string, orientation: StockOrientation, opts: ImageShapeAndStyle = {}): string {
+  const aspect = opts.aspectRatio
+    ? `Frame: ${opts.aspectRatio} aspect ratio.`
+    : orientation === 'portrait'
       ? 'Vertical portrait orientation.'
       : orientation === 'landscape'
         ? 'Horizontal landscape orientation.'
@@ -76,9 +85,22 @@ function buildPrompt(brief: string, orientation: StockOrientation): string {
   return [
     `Editorial magazine photograph: ${brief.trim()}`,
     aspect,
+    // The issue's ONE photographic style (the Creative Director's concept), so a
+    // generated picture sits next to the found ones as if one photographer shot both.
+    opts.style?.trim() ? `Photographic style: ${opts.style.trim().slice(0, 400)}.` : '',
     'No text, letters, words, watermarks, or logos in the image.',
     'No identifiable real individuals. Photorealistic editorial photography.',
-  ].join(' ');
+  ]
+    .filter(Boolean)
+    .join(' ');
+}
+
+/** Optional per-call shaping: an exact supported aspect ratio (wins over the
+ *  orientation's default) and the issue's photographic style. */
+export interface ImageShapeAndStyle {
+  /** One of IMAGE_ASPECT_RATIOS (imageBytes.ts), e.g. '4:5'. */
+  aspectRatio?: string;
+  style?: string;
 }
 
 /**
@@ -115,9 +137,11 @@ async function generateImage(
   brief: string,
   orientation: StockOrientation,
   withAspect = true,
+  shape: ImageShapeAndStyle = {},
 ): Promise<GeneratedImage | null> {
   if (!OPENROUTER_API_KEY) return null;
-  const prompt = buildPrompt(brief, orientation);
+  const prompt = buildPrompt(brief, orientation, shape);
+  const started = Date.now();
   const res = await fetch('https://openrouter.ai/api/v1/chat/completions', {
     method: 'POST',
     headers: {
@@ -128,7 +152,7 @@ async function generateImage(
       model: IMAGE_MODEL,
       modalities: ['image', 'text'],
       messages: [{ role: 'user', content: prompt }],
-      ...(withAspect ? { image_config: { aspect_ratio: aspectRatioFor(orientation) } } : {}),
+      ...(withAspect ? { image_config: { aspect_ratio: shape.aspectRatio || aspectRatioFor(orientation) } } : {}),
     }),
     // Generous but bounded: image models are slow, and an unbounded wait here
     // would hold a generation worker (or an HTTP request) open indefinitely.
@@ -141,19 +165,45 @@ async function generateImage(
     // square image is a far better outcome than no image.
     if (withAspect && res.status === 400) {
       console.warn(`[magazineV2] image model ${IMAGE_MODEL} rejected image_config; retrying without it`);
-      return generateImage(brief, orientation, false);
+      return generateImage(brief, orientation, false, shape);
     }
     console.warn(`[magazineV2] image model ${IMAGE_MODEL} returned ${res.status}`);
+    meterImage(started, false, undefined, `HTTP ${res.status}`);
     return null;
   }
   const data = (await res.json()) as {
     choices?: Array<{ message?: { images?: Array<{ image_url?: { url?: string } }> } }>;
+    usage?: { prompt_tokens?: number; completion_tokens?: number; cost?: number };
   };
+  meterImage(started, true, data.usage);
   const dataUrl = data.choices?.[0]?.message?.images?.[0]?.image_url?.url;
   if (!dataUrl) return null;
   const decoded = decodeDataUrl(dataUrl);
   if (!decoded) return null;
   return { ...decoded, alt: brief.trim().slice(0, 300) };
+}
+
+/** One AI Activity record per image call. OpenRouter reports the billed cost. */
+function meterImage(
+  started: number,
+  ok: boolean,
+  usage?: { prompt_tokens?: number; completion_tokens?: number; cost?: number },
+  error?: string,
+): void {
+  recordAiUsage({
+    model: IMAGE_MODEL,
+    kind: 'image',
+    surface: 'magazine-builder',
+    feature: 'image-generation',
+    inputTokens: usage?.prompt_tokens ?? 0,
+    outputTokens: usage?.completion_tokens ?? 0,
+    cachedInputTokens: 0,
+    reasoningTokens: 0,
+    costUsd: typeof usage?.cost === 'number' ? usage.cost : undefined,
+    durationMs: Date.now() - started,
+    ok,
+    ...(error ? { error } : {}),
+  });
 }
 
 /**
@@ -166,12 +216,15 @@ async function generateImage(
  * Generate button), matching how an uploaded image is recorded.
  */
 export async function generateAndStoreImage(
-  opts: { prompt: string; orientation: StockOrientation },
+  opts: { prompt: string; orientation: StockOrientation } & ImageShapeAndStyle,
   ctx: { magazineId: string; pageIndex?: number | null },
 ): Promise<{ url: string; assetId: string; alt: string } | null> {
   if (!isImageGenConfigured()) return null;
   try {
-    const generated = await generateImage(opts.prompt, opts.orientation);
+    const generated = await generateImage(opts.prompt, opts.orientation, true, {
+      aspectRatio: opts.aspectRatio,
+      style: opts.style,
+    });
     if (!generated) return null;
     // From the SNIFFED type (see decodeDataUrl), so the key's extension and the
     // stored content-type can never disagree.

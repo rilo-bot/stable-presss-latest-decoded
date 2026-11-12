@@ -65,7 +65,7 @@ import AnalyticsScreen from '@/pages/production-system/screens/AnalyticsScreen';
 import EmojiAnalyticsScreen from '@/pages/production-system/screens/EmojiAnalyticsScreen';
 import CommentModerationScreen from '@/pages/production-system/screens/CommentModerationScreen';
 import SettingsScreen from '@/pages/production-system/screens/SettingsScreen';
-import StablehandActivityScreen from '@/pages/production-system/screens/StablehandActivityScreen';
+import AiActivityScreen from '@/pages/production-system/screens/AiActivityScreen';
 
 /* Inject Google Fonts for vintage skeuomorphic horse dashboard */
 function useVintageFonts() {
@@ -356,9 +356,15 @@ export default function App() {
                 describes doesn't exist yet; the screen says so on its face. */}
             <Route path="emoji-analytics" element={<EmojiAnalyticsScreen />} />
             <Route path="settings" element={<SettingsScreen />} />
-            {/* The Stable Hand Operator's run log — every staff member sees their own
-                runs; "Everyone" is gated server-side on analytics.view. */}
-            <Route path="stablehand-activity" element={<StablehandActivityScreen />} />
+            {/* AI Activity — usage and cost of every AI surface (The Stable Hand,
+                Magazine Builder, Story AI…); /:surface is one surface's view.
+                Everyone sees their own; "Everyone" is gated server-side on
+                analytics.view. */}
+            <Route path="ai-activity" element={<AiActivityScreen />} />
+            <Route path="ai-activity/:surface" element={<AiActivityScreen />} />
+            {/* Stable Hand Activity became AI Activity's Stable Hand view; the old
+                path is in bookmarks and in the operator's past runs. */}
+            <Route path="stablehand-activity" element={<Navigate to="/production-system/ai-activity/stable-hand" replace />} />
             {/* Magazine Builder — behind the MAGAZINE_V2 server flag. */}
             <Route path="magazine-v2" element={<MagazineV2Home />} />
             {/* An unrecognised sub-path would otherwise render the shell around

@@ -24,7 +24,7 @@
 // Pure + server-safe: no DOM, no LLM, no I/O.
 // ---------------------------------------------------------------------------
 
-import type { LayoutSpec, LayoutNode, LeafNode, ContainerNode, StackNode, LayoutChild } from './layoutSpec.js';
+import { isRuleLeaf, type LayoutSpec, type LayoutNode, type LeafNode, type ContainerNode, type StackNode, type LayoutChild } from './layoutSpec.js';
 import type { ResolvedContent } from './composeFromSolved.js';
 
 /** What the caller wants kept that would otherwise be pruned. Threaded as an object
@@ -60,6 +60,8 @@ function leafHasContent(leaf: LeafNode, content: ResolvedContent, opts: PruneOpt
     case 'spacer':
       return false; // emptiness is not content — see carriesContent
     default:
+      // An ornament glyph ("“", "01") is authored on the leaf and needs no copy.
+      if (leaf.glyph && leaf.glyph.trim()) return true;
       return !!(c?.text && c.text.trim()); // text roles
   }
 }
@@ -73,7 +75,9 @@ function leafHasContent(leaf: LeafNode, content: ResolvedContent, opts: PruneOpt
  * exactly the defect pruneSpec exists to remove — so it has to be dropped.
  */
 function carriesContent(node: LayoutNode): boolean {
-  if (node.kind === 'leaf') return node.role !== 'spacer';
+  // A rule decorates content; on its own (or beside nothing but spacers) it is a line
+  // across an empty region, which is exactly the dead space this pass removes.
+  if (node.kind === 'leaf') return node.role !== 'spacer' && !isRuleLeaf(node);
   const kids = node.kind === 'stack' ? node.layers : node.children.map((c) => c.node);
   return kids.some(carriesContent);
 }
@@ -85,12 +89,80 @@ function containsProse(node: LayoutNode): boolean {
   return kids.some(containsProse);
 }
 
+// ── Orphaned section heads ──────────────────────────────────────────────────
+//
+// A repeated section — "date / VENUE / body", three times down a page — whose BODY came
+// back empty used to lose only the body: its date line and venue heading stayed, sat on
+// top of nothing, and read as a story the page forgot to print (a real issue shipped
+// "Trentham" exactly so). The copywriter is now required to fill every body column
+// (generate.ts draftGaps); this is the deterministic half: when a body is pruned and the
+// SAME heading pattern elsewhere in the container still has its body, the stranded
+// heading goes too. A heading with no sibling section to compare against — a page's own
+// masthead over an empty body — is never touched: that is the page, not an orphan.
+
+const HEAD_ROLES = new Set<string>(['kicker', 'subhead', 'headline', 'label', 'caption', 'figure', 'byline']);
+
+function realLeaves(node: LayoutNode): LeafNode[] {
+  if (node.kind === 'leaf') return node.role === 'spacer' ? [] : [node];
+  const kids = node.kind === 'stack' ? node.layers : node.children.map((c) => c.node);
+  return kids.flatMap(realLeaves);
+}
+const holdsBody = (node: LayoutNode) => realLeaves(node).some((l) => l.role === 'body');
+const isHeadLeaf = (node: LayoutNode): node is LeafNode => node.kind === 'leaf' && HEAD_ROLES.has(node.role);
+const headSignature = (node: LayoutNode) => realLeaves(node).filter((l) => l.role !== 'body').map((l) => l.role).join(',');
+
+/** Indices into `kids` of section heads stranded by a pruned body (see above). */
+function orphanedHeads(original: LayoutChild[], kept: (LayoutChild | null)[], kids: LayoutChild[]): Set<number> {
+  const out = new Set<number>();
+  const kidIndex = new Map<LayoutChild, number>();
+  kids.forEach((k, i) => kidIndex.set(k, i));
+
+  // Flat sections: a run of head leaves, closed by a body leaf (kept or pruned).
+  const sections: { heads: number[]; bodyKept: boolean }[] = [];
+  let run: number[] = [];
+  let afterPhoto = false;
+  original.forEach((child, i) => {
+    const k = kept[i];
+    const isBody = child.node.kind === 'leaf' && child.node.role === 'body';
+    if (isBody) {
+      sections.push({ heads: run, bodyKept: !!k });
+      run = [];
+    } else if (k && isHeadLeaf(k.node) && !(afterPhoto && k.node.role === 'caption')) {
+      run.push(kidIndex.get(k)!);
+    } else if (k) {
+      run = []; // a photo, its own caption, or a container breaks the run
+    }
+    if (k) afterPhoto = k.node.kind === 'leaf' && k.node.role === 'image';
+  });
+  const sig = (heads: number[]) => heads.map((i) => (kids[i]!.node as LeafNode).role).join(',');
+  const complete = new Set(sections.filter((s) => s.bodyKept && s.heads.length > 0).map((s) => sig(s.heads)));
+  for (const s of sections) {
+    if (!s.bodyKept && s.heads.length > 0 && complete.has(sig(s.heads))) s.heads.forEach((i) => out.add(i));
+  }
+
+  // Nested sections: a child container that HAD a body and is now nothing but heads,
+  // beside a sibling of the same shape that kept its body.
+  original.forEach((child, i) => {
+    const k = kept[i];
+    if (!k || child.node.kind === 'leaf' || !holdsBody(child.node) || holdsBody(k.node)) return;
+    const leaves = realLeaves(k.node);
+    if (leaves.length === 0 || !leaves.every((l) => HEAD_ROLES.has(l.role))) return;
+    const mine = headSignature(k.node);
+    const twin = kids.some((o) => o !== k && holdsBody(o.node) && headSignature(o.node) === mine);
+    if (twin) out.add(kidIndex.get(k)!);
+  });
+  return out;
+}
+
 function pruneContainer(node: ContainerNode, content: ResolvedContent, opts: PruneOpts): ContainerNode | null {
-  const kids: LayoutChild[] = [];
+  const kept: (LayoutChild | null)[] = [];
   for (const child of node.children) {
     const pn = pruneNode(child.node, content, opts, true);
-    if (pn) kids.push({ ...child, node: pn });
+    kept.push(pn ? { ...child, node: pn } : null);
   }
+  let kids = kept.filter((k): k is LayoutChild => k !== null);
+  const orphans = orphanedHeads(node.children, kept, kids);
+  if (orphans.size > 0) kids = kids.filter((_, i) => !orphans.has(i));
   if (kids.length === 0) return null;
   // Spacers alone are not a container: they would hold open a share of the page and draw
   // nothing, which is the very thing this pass exists to delete.
@@ -112,10 +184,15 @@ function pruneContainer(node: ContainerNode, content: ResolvedContent, opts: Pru
   const justifyStart = !node.justify || node.justify === 'start';
   const anyFr = kids.some((c) => (c.sizing ?? 'fr') === 'fr');
   if (justifyStart && !anyFr && !opts.keepWhitespace) {
-    let idx = kids.length - 1;
+    // Never a rule or a spacer: a rule is its thickness whatever its sizing says, so
+    // promoting one would leave the strip trailing exactly as before.
+    const promotable = (k: LayoutChild) => !isRuleLeaf(k.node) && !(k.node.kind === 'leaf' && k.node.role === 'spacer');
+    let idx = -1;
     for (let i = kids.length - 1; i >= 0; i--) {
-      if (containsProse(kids[i]!.node)) { idx = i; break; }
+      if (promotable(kids[i]!) && containsProse(kids[i]!.node)) { idx = i; break; }
     }
+    if (idx < 0) for (let i = kids.length - 1; i >= 0; i--) if (promotable(kids[i]!)) { idx = i; break; }
+    if (idx < 0) idx = kids.length - 1;
     kids[idx] = { ...kids[idx]!, sizing: 'fr', weight: kids[idx]!.weight ?? 1 };
   }
   return { ...node, children: kids };
@@ -137,18 +214,25 @@ function pruneStack(node: StackNode, content: ResolvedContent, opts: PruneOpts):
   // Pass 2 — decide shape layers from their position in the stack.
   node.layers.forEach((layer, i) => {
     if (!(layer.kind === 'leaf' && layer.role === 'shape')) return;
+    const contentAbove = resolved.some((p, j) => p !== null && j > i);
     if (i === 0) {
       // PANEL (drawn first, behind): keep only if a layer above still has content.
-      if (resolved.some((p, j) => p !== null && j > i)) resolved[i] = layer;
-    } else {
+      if (contentAbove) resolved[i] = layer;
+    } else if (survivingImage.some((v, j) => v && j < i)) {
       // SCRIM (drawn over): keep only if a surviving IMAGE sits below it.
-      if (survivingImage.some((v, j) => v && j < i)) resolved[i] = layer;
+      resolved[i] = layer;
+    } else if (layer.place && contentAbove) {
+      // A PLACED block (a colour tab behind a headline, a band across a panel) is a
+      // panel of its own rectangle: it lives while something is drawn on top of it.
+      resolved[i] = layer;
     }
   });
 
   const layers = resolved.filter((p): p is LayoutNode => p !== null);
   if (layers.length === 0) return null;
-  return { kind: 'stack', layers };
+  // Nothing but backing left (a panel whose words all came back empty) is not a stack.
+  if (!layers.some(carriesContent)) return null;
+  return { ...node, layers };
 }
 
 /** `inFlow` = this node is a row/col CHILD rather than a stack layer or the root. Only a
@@ -157,7 +241,9 @@ function pruneStack(node: StackNode, content: ResolvedContent, opts: PruneOpts):
 function pruneNode(node: LayoutNode, content: ResolvedContent, opts: PruneOpts, inFlow: boolean): LayoutNode | null {
   if (node.kind === 'leaf') {
     if (node.role === 'spacer') return inFlow ? node : null;
-    if (node.role === 'shape') return null; // a bare shape in flow is dead space
+    // A RULE in flow is a device (a line between sections, beside a pull quote); its
+    // container decides whether it survives (carriesContent ignores rules).
+    if (node.role === 'shape') return inFlow && isRuleLeaf(node) ? node : null; // a bare block in flow is dead space
     return leafHasContent(node, content, opts) ? node : null;
   }
   if (node.kind === 'stack') return pruneStack(node, content, opts);

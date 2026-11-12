@@ -150,7 +150,7 @@ function StepRow({
   const distinct = steps.filter((s) => norm(s.label) !== rowKey);
   const breakdown = distinct.length > 1 || (distinct.length === 1 && steps.length > 1) ? distinct : [];
   // Users see plain-English steps only — never the raw tool input / result JSON
-  // (the full technical record lives in the run log: Stablehand Activity). A row
+  // (the full technical record lives in the run log: AI Activity › The Stable Hand). A row
   // only expands when it has a real breakdown to show.
   const canExpand = breakdown.length > 0;
 

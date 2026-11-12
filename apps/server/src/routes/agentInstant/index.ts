@@ -21,6 +21,7 @@ import { attachAccount } from '../../lib/auth.js'
 import { isAdmin } from '../../lib/rbac.js'
 import { rateLimit } from '../../lib/rateLimit.js'
 import { isAgentConfigured } from '../../lib/agent/provider.js'
+import { aiSurface } from '../../lib/agent/aiUsageRoute.js'
 import {
   MAX_PHOTOS,
   describePhoto,
@@ -69,7 +70,9 @@ function guardConfigured(res: { status: (n: number) => { json: (b: unknown) => v
  * batched call so a single unreadable photo costs that photo and not the draft,
  * and so each request body stays bounded.
  */
-router.post('/vision', raw({ type: () => true, limit: '16mb' }), async (req, res) => {
+// AI Activity: metered as Instant Capture. Route-level, AFTER raw(), so the
+// attribution survives the body parser (see lib/agent/aiUsageRoute.ts).
+router.post('/vision', raw({ type: () => true, limit: '16mb' }), aiSurface('instant', { feature: 'photo-notes' }), async (req, res) => {
   if (!guardConfigured(res)) return
 
   const contentType = String(req.headers['content-type'] ?? '').split(';')[0]!.trim().toLowerCase()
@@ -117,7 +120,11 @@ router.post('/vision', raw({ type: () => true, limit: '16mb' }), async (req, res
  * The draft is NOT persisted. It goes back to the browser for the review step,
  * and only the reviewed version is saved — through the gated create endpoints.
  */
-router.post('/draft', async (req, res) => {
+const draftUsage = aiSurface('instant', {
+  context: (req) => ({ feature: (req.body as { mode?: unknown } | undefined)?.mode === 'blog' ? 'blog-draft' : 'story-draft' }),
+})
+
+router.post('/draft', draftUsage, async (req, res) => {
   if (!guardConfigured(res)) return
 
   const body = (req.body ?? {}) as Record<string, unknown>

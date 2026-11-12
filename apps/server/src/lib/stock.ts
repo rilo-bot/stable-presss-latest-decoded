@@ -19,6 +19,18 @@
 //
 // Env-gated: with no PEXELS_API_KEY (or no S3) `isStockConfigured()` is false and
 // callers must SAY SO rather than silently substituting something else.
+//
+// THE RATE LIMIT (2026-11-12). Pexels' free tier is 200 requests an hour, and the
+// magazine builder composes ~6 pages at once with several photo slots each. So:
+//   • searches are CACHED per (query, orientation) for an hour, in-process, and
+//     identical searches already in flight share one request;
+//   • storing a chosen photo downloads the full-size URL the search ALREADY returned
+//     — no second API lookup per stored photo;
+//   • a 429 (or a 2xx saying no requests remain) puts Pexels in a COOLDOWN until the
+//     reset time the X-Ratelimit-* / Retry-After headers give, else a back-off. While
+//     cooling down nothing is sent: searches answer from the cache or return [], so
+//     callers fall through to their next rung (the magazine generates the frame)
+//     instead of failing or hammering the API. Logged once per cooldown.
 // ---------------------------------------------------------------------------
 
 import crypto from 'crypto';
@@ -47,6 +59,15 @@ export interface StockCandidate {
   alt: string;
   /** A small preview, for a picker. Provider-hosted; never stored. */
   thumbUrl: string;
+  /**
+   * The full-size download URL, from the same search/lookup response. Lets
+   * `storeStockPhoto` download the chosen photo without asking the API again.
+   * Only ever filled server-side from a provider response (and only a provider
+   * CDN URL is trusted when storing — see `trustedFullUrl`).
+   */
+  fullUrl?: string;
+  /** The photo's own page on the provider — its source link, kept for credit. */
+  pageUrl?: string;
   attribution: StockAttribution;
   width?: number;
   height?: number;
@@ -54,6 +75,8 @@ export interface StockCandidate {
 
 interface PexelsPhoto {
   id?: number;
+  /** The photo's page on pexels.com. */
+  url?: string;
   alt?: string;
   width?: number;
   height?: number;
@@ -66,32 +89,142 @@ function toCandidate(photo: PexelsPhoto, fallbackAlt: string): StockCandidate | 
   const id = photo.id;
   const thumb = photo.src?.medium || photo.src?.small || photo.src?.large;
   if (typeof id !== 'number' || !thumb) return null;
+  const full = photo.src?.large2x || photo.src?.large || photo.src?.original;
   return {
     id: String(id),
     alt: (photo.alt || fallbackAlt).slice(0, 300),
     thumbUrl: thumb,
+    ...(full ? { fullUrl: full } : {}),
+    ...(photo.url ? { pageUrl: photo.url } : {}),
     attribution: { author: photo.photographer ?? '', url: photo.photographer_url ?? '' },
     ...(photo.width ? { width: photo.width } : {}),
     ...(photo.height ? { height: photo.height } : {}),
   };
 }
 
-/** GET against the Pexels API with the shared retry-once-on-429 rule. */
-async function pexels(path: string, attempt = 0): Promise<unknown | null> {
+// ── rate limit: cooldown ─────────────────────────────────────────────────────
+
+/** Back-off when a 429 carries no reset time: 5 min, doubling per consecutive 429. */
+const COOLDOWN_DEFAULT_MS = 5 * 60_000;
+/** Never sit out longer than this before probing again (one request per hour at
+ *  most while the quota stays exhausted — e.g. the monthly limit). */
+const COOLDOWN_MAX_MS = 60 * 60_000;
+const COOLDOWN_MIN_MS = 5_000;
+
+let cooldownUntil = 0;
+let consecutive429 = 0;
+
+/** Epoch ms when Pexels may be asked again; 0 when it is not cooling down. */
+export function stockCooldownUntil(): number {
+  return cooldownUntil > Date.now() ? cooldownUntil : 0;
+}
+
+/**
+ * When the provider says its window resets, as epoch ms, from the response headers:
+ * `X-Ratelimit-Reset` (Pexels: a UNIX timestamp; a small number is read as seconds
+ * from now) or `Retry-After` (seconds, or an HTTP date). null when neither is usable.
+ */
+function resetAtFrom(res: Response, now: number): number | null {
+  const reset = Number(res.headers.get('x-ratelimit-reset'));
+  if (Number.isFinite(reset) && reset > 0) {
+    if (reset > 1e12) return reset; // already epoch ms
+    if (reset > 1e9) return reset * 1000; // epoch seconds (what Pexels sends)
+    return now + reset * 1000; // seconds from now
+  }
+  const retry = res.headers.get('retry-after');
+  if (retry) {
+    const secs = Number(retry);
+    if (Number.isFinite(secs) && secs >= 0) return now + secs * 1000;
+    const at = Date.parse(retry);
+    if (Number.isFinite(at)) return at;
+  }
+  return null;
+}
+
+function startCooldown(until: number, why: string): void {
+  const now = Date.now();
+  const capped = Math.min(now + COOLDOWN_MAX_MS, Math.max(now + COOLDOWN_MIN_MS, until));
+  const fresh = cooldownUntil <= now; // log once per cooldown, not once per caller
+  if (capped > cooldownUntil) cooldownUntil = capped;
+  if (fresh) {
+    const mins = Math.max(1, Math.round((cooldownUntil - now) / 60_000));
+    console.warn(
+      `[stock] Pexels ${why} — pausing stock requests for ~${mins} min (until ${new Date(cooldownUntil).toISOString()}); ` +
+        'searches answer from cache or come back empty, so callers fall through (magazine slots are generated instead).',
+    );
+  }
+}
+
+/** Read the rate-limit headers on every response; arm a cooldown when needed. */
+function noteRateLimit(res: Response): void {
+  const now = Date.now();
+  if (res.status === 429) {
+    // Requests already in flight when the first 429 armed the cooldown are the same
+    // burst, not a new refusal — they must not escalate the back-off.
+    if (cooldownUntil <= now) consecutive429 += 1;
+    const backoff = now + COOLDOWN_DEFAULT_MS * 2 ** Math.min(4, consecutive429 - 1);
+    startCooldown(resetAtFrom(res, now) ?? backoff, 'rate limit hit (429)');
+    return;
+  }
+  if (!res.ok) return;
+  consecutive429 = 0;
+  // A success that says nothing remains: stop BEFORE the next request is refused.
+  const remaining = res.headers.get('x-ratelimit-remaining');
+  if (remaining !== null && remaining.trim() !== '' && Number(remaining) <= 0) {
+    const at = resetAtFrom(res, now);
+    if (at && at > now) startCooldown(at, 'request quota used up (X-Ratelimit-Remaining: 0)');
+  }
+}
+
+/**
+ * GET against the Pexels API. null on a missing key, a cooldown, a 429 (which
+ * starts one) or any other non-2xx. No retry on 429: the limit is per hour, so an
+ * immediate retry can only spend another request on the same refusal.
+ */
+async function pexels(path: string): Promise<unknown | null> {
   if (!PEXELS_API_KEY) return null;
+  if (cooldownUntil > Date.now()) return null;
   const res = await fetch(`https://api.pexels.com/v1/${path}`, {
     headers: { Authorization: PEXELS_API_KEY },
     signal: AbortSignal.timeout(12_000),
   });
-  // One retry on rate-limit, then give up. Bounded so sustained 429s — exactly
-  // what happens at scale — cannot recurse forever and hang the caller.
-  if (res.status === 429) {
-    if (attempt >= 1) return null;
-    await new Promise((r) => setTimeout(r, 1500));
-    return pexels(path, attempt + 1);
-  }
+  noteRateLimit(res);
   if (!res.ok) return null;
   return res.json();
+}
+
+// ── search cache ─────────────────────────────────────────────────────────────
+
+/** Results per search request. Always the module's maximum: the quota counts
+ *  REQUESTS, not results, so one request serves every caller's `count`. */
+const SEARCH_PER_PAGE = 12;
+const SEARCH_TTL_MS = 60 * 60_000;
+const SEARCH_CACHE_MAX = 500;
+
+const searchCache = new Map<string, { at: number; photos: StockCandidate[] }>();
+const searchesInFlight = new Map<string, Promise<StockCandidate[] | null>>();
+
+/** Drop the search cache, in-flight table and any cooldown (tests; an operator reset). */
+export function resetStockSearchState(): void {
+  searchCache.clear();
+  searchesInFlight.clear();
+  cooldownUntil = 0;
+  consecutive429 = 0;
+}
+
+/** One real search request. null when nothing was learned (error, cooldown, 429) —
+ *  never cached; [] (no matches) IS an answer, and is. */
+async function runSearch(q: string, orientation: StockOrientation | undefined): Promise<StockCandidate[] | null> {
+  try {
+    const params = new URLSearchParams({ query: q, per_page: String(SEARCH_PER_PAGE) });
+    if (orientation) params.set('orientation', orientation);
+    const data = (await pexels(`search?${params.toString()}`)) as { photos?: PexelsPhoto[] } | null;
+    if (!data) return null;
+    return (data.photos ?? []).map((p) => toCandidate(p, q)).filter((c): c is StockCandidate => !!c);
+  } catch (err) {
+    console.warn('[stock] search failed:', err instanceof Error ? err.message : err);
+    return null;
+  }
 }
 
 /**
@@ -105,23 +238,44 @@ async function pexels(path: string, attempt = 0): Promise<unknown | null> {
  * Never throws: returns [] on a missing key, a provider error or no matches. The
  * caller must distinguish "not configured" (ask `isStockConfigured()`) from
  * "nothing found", because they need different things said to the user.
+ *
+ * Cached per (query, orientation) for an hour; identical searches in flight share
+ * one request; during a rate-limit cooldown a cached answer is still served and an
+ * uncached search returns [] without a request (see the header).
  */
 export async function searchStockPhotos(
   query: string,
   opts: { orientation?: StockOrientation; count?: number } = {},
 ): Promise<StockCandidate[]> {
-  const q = query.trim().slice(0, 200);
+  const q = query.trim().replace(/\s+/g, ' ').slice(0, 200);
   if (!PEXELS_API_KEY || !q) return [];
-  const count = Math.min(12, Math.max(1, opts.count ?? 6));
-  try {
-    const params = new URLSearchParams({ query: q, per_page: String(count) });
-    if (opts.orientation) params.set('orientation', opts.orientation);
-    const data = (await pexels(`search?${params.toString()}`)) as { photos?: PexelsPhoto[] } | null;
-    return (data?.photos ?? []).map((p) => toCandidate(p, q)).filter((c): c is StockCandidate => !!c);
-  } catch (err) {
-    console.warn('[stock] search failed:', err instanceof Error ? err.message : err);
-    return [];
+  const count = Math.min(SEARCH_PER_PAGE, Math.max(1, opts.count ?? 6));
+  const key = `${q.toLowerCase()}|${opts.orientation ?? ''}`;
+
+  const hit = searchCache.get(key);
+  if (hit) {
+    searchCache.delete(key);
+    if (Date.now() - hit.at < SEARCH_TTL_MS) {
+      searchCache.set(key, hit); // most recently used last
+      return hit.photos.slice(0, count);
+    }
   }
+
+  let pending = searchesInFlight.get(key);
+  if (!pending) {
+    pending = runSearch(q, opts.orientation).then((photos) => {
+      if (photos) {
+        searchCache.set(key, { at: Date.now(), photos });
+        while (searchCache.size > SEARCH_CACHE_MAX) searchCache.delete(searchCache.keys().next().value as string);
+      }
+      return photos;
+    });
+    const settled = pending.finally(() => searchesInFlight.delete(key));
+    searchesInFlight.set(key, settled);
+    pending = settled;
+  }
+  const photos = await pending;
+  return photos ? photos.slice(0, count) : [];
 }
 
 /**
@@ -151,8 +305,28 @@ export interface StoredPhoto {
   bytes: number;
   alt: string;
   attribution: StockAttribution;
+  /** Which provider the photo came from, and its id there — recorded on the
+   *  caller's row so "is this photo already used?" can be answered exactly later. */
+  provider: 'pexels';
+  providerId: string;
+  /** The photo's page on the provider (source link), when known. */
+  sourceUrl?: string;
   width?: number;
   height?: number;
+}
+
+/** The provider CDN a full-size URL must be on to be downloaded as-is. */
+const TRUSTED_IMAGE_HOSTS = new Set(['images.pexels.com']);
+
+/** The candidate's own full-size URL, if it is an https URL on the provider's CDN. */
+function trustedFullUrl(candidate: StockCandidate): string | null {
+  if (!candidate.fullUrl) return null;
+  try {
+    const u = new URL(candidate.fullUrl);
+    return u.protocol === 'https:' && TRUSTED_IMAGE_HOSTS.has(u.hostname) ? u.toString() : null;
+  } catch {
+    return null;
+  }
 }
 
 /**
@@ -162,6 +336,11 @@ export interface StoredPhoto {
  * module needs to know nothing about who is asking. Returns null rather than
  * throwing, for the same reason the magazine path did: a missing photo must never
  * be the thing that fails an author's save.
+ *
+ * NO SECOND API LOOKUP: a candidate from `searchStockPhotos`/`getStockPhoto` already
+ * carries its full-size URL, so the bytes are downloaded from the provider's CDN
+ * directly (CDN downloads do not count against the API quota). Only a candidate
+ * without a trusted `fullUrl` is re-resolved by its id, as before.
  */
 export async function storeStockPhoto(
   candidate: StockCandidate,
@@ -169,9 +348,14 @@ export async function storeStockPhoto(
 ): Promise<StoredPhoto | null> {
   if (!isStockConfigured()) return null;
   try {
-    // Re-resolve to get the full-size source; the candidate only carries a thumb.
-    const data = (await pexels(`photos/${candidate.id}`)) as PexelsPhoto | null;
-    const src = data?.src?.large2x || data?.src?.large || data?.src?.original;
+    let src = trustedFullUrl(candidate);
+    let sourceUrl = candidate.pageUrl;
+    if (!src) {
+      if (!/^\d{1,12}$/.test(candidate.id)) return null;
+      const data = (await pexels(`photos/${candidate.id}`)) as PexelsPhoto | null;
+      src = data?.src?.large2x || data?.src?.large || data?.src?.original || null;
+      sourceUrl = sourceUrl || data?.url;
+    }
     if (!src) return null;
 
     const imgRes = await fetch(src, { signal: AbortSignal.timeout(20_000) });
@@ -195,6 +379,9 @@ export async function storeStockPhoto(
       bytes: bytes.length,
       alt: candidate.alt,
       attribution: candidate.attribution,
+      provider: 'pexels',
+      providerId: candidate.id,
+      ...(sourceUrl ? { sourceUrl } : {}),
       ...(candidate.width ? { width: candidate.width } : {}),
       ...(candidate.height ? { height: candidate.height } : {}),
     };

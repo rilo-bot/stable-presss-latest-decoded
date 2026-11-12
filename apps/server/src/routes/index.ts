@@ -60,6 +60,7 @@ import agentVoiceRouter from './agentVoice/index.js'
 import agentComposeRouter from './agentCompose/index.js'
 import agentInstantRouter from './agentInstant/index.js'
 import agentOperatorRouter from './agentOperator/index.js'
+import aiActivityRouter from './aiActivity/index.js'
 
 const router = Router()
 
@@ -199,6 +200,9 @@ router.use('/comments', commentsRouter)
 // the router, which is what makes that permission server-enforced rather than a
 // sidebar rule the browser observes.
 router.use('/analytics', analyticsRouter)
+// AI Activity — read-only usage of every AI surface (the `aiUsage` meter). Staff
+// see their own; everyone's is gated on `analytics.view` inside the router.
+router.use('/ai-activity', aiActivityRouter)
 
 // ── Infrastructure ──
 router.use('/uploads', uploadsRouter)           // presigned S3 PUT URLs (auth inside)

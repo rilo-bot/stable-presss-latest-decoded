@@ -104,7 +104,8 @@ export async function draftReferenceFill(opts: {
 
   try {
     const { text } = await generateText({
-      model: getMagazineModel(),
+      model: getMagazineModel('refill'),
+      maxOutputTokens: 16000, // Claude 5.5 always thinks; thinking counts against this cap
       system,
       prompt: user,
       temperature: 0.7,

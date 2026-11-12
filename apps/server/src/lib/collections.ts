@@ -39,3 +39,6 @@ export const OTPS = 'otps'
 /** Stablehand Operator run log + per-day spend (lib/agent/operator/runs.ts). One
  *  doc per (runId, userId); a run spans several requests, so it is upserted. */
 export const AGENT_RUNS = 'agentRuns'
+/** One document per AI model call, every surface (lib/agent/aiUsage.ts). Read by the
+ *  Campaign Engine AI Activity page. */
+export const AI_USAGE = 'aiUsage'

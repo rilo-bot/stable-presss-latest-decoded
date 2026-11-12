@@ -316,12 +316,14 @@ export const SCREEN_CATALOGUE: ScreenMeta[] = [
  * Screens every staff member gets, with no row in the grid: Overview is the
  * general tab, and the two Personal screens only ever show your own things.
  *
- * Stable Hand Activity is the same case: every staff member can run the
- * The Stable Hand, and the screen opens on YOUR runs. Seeing everyone's is a
- * separate question the server answers with `analytics.view`
- * (routes/agentOperator), so the screen itself needs no grid row.
+ * AI Activity is the same case: every staff member uses the AI surfaces (The
+ * Stable Hand, the studios, the Magazine Builder…), and the screen opens on YOUR
+ * usage. Seeing everyone's is a separate question the server answers with
+ * `analytics.view` (routes/aiActivity, routes/agentOperator), so the screen
+ * itself needs no grid row. It replaced Stable Hand Activity, which is now its
+ * Stable Hand view.
  */
-export const ALWAYS_ON_MODULES = ['overview', 'my-assets', 'compensation', 'stablehand-activity'] as const
+export const ALWAYS_ON_MODULES = ['overview', 'my-assets', 'compensation', 'ai-activity'] as const
 
 export const SCREEN_BY_ID = new Map(SCREEN_CATALOGUE.map((s) => [s.id, s]))
 
@@ -511,7 +513,7 @@ export interface ModuleMeta {
 export const MODULE_CATALOGUE: ModuleMeta[] = [
   { id: 'overview', label: 'Overview', section: 'Workspace' },
   ...SCREEN_CATALOGUE.map((s) => ({ id: s.id, label: s.label, section: s.section })),
-  { id: 'stablehand-activity', label: 'Stable Hand Activity', section: 'Management' },
+  { id: 'ai-activity', label: 'AI Activity', section: 'Management' },
   { id: 'my-assets', label: 'My Media Assets', section: 'Personal' },
   { id: 'compensation', label: 'My Compensation', section: 'Personal' },
 ]

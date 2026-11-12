@@ -928,8 +928,9 @@ export const useEditorStore = create<EditorState>((set, get) => ({
     const forPageId = s.currentPageId;
     set({ formatBusy: true });
     try {
-      const { edits, note } = await api.formatPage(s.issueId, forPageId, mode);
-      if (edits.length === 0) {
+      const { edits, note, layout } = await api.formatPage(s.issueId, forPageId, mode);
+      const layoutOps = layout ? layout.moves.length + layout.removes.length + layout.scrims.length + (layout.texts?.length ?? 0) : 0;
+      if (edits.length === 0 && layoutOps === 0) {
         toast.message(note || 'Nothing to change on this page.');
         return;
       }
@@ -949,13 +950,55 @@ export const useEditorStore = create<EditorState>((set, get) => ({
           if (await get().commit(e.elementId, { text: { ...before.text, content: e.content } }, before)) wrote++;
           else refused++;
         }
+        // The re-balance, AFTER the copy it was measured against has landed. Each move is
+        // an ordinary geometry patch, so the server refits the type to the new box exactly
+        // as it does when a box is dragged.
+        if (layout) {
+          // A drop cap's pieces re-split for their new measure: copy and pinned sizes first
+          // (the sizes are explicit, so the write does not refit them), so the move that
+          // follows refits against the copy the box will really hold.
+          for (const t of layout.texts ?? []) {
+            if (get().currentPageId !== forPageId) { refused++; continue; }
+            const before = get().page?.elements.find((x) => x.id === t.elementId);
+            if (!before || before.type !== 'text' || !before.text) { refused++; continue; }
+            const { elementId: _id, ...patch } = t;
+            if (await get().commit(t.elementId, { text: { ...before.text, ...patch } }, before)) wrote++;
+            else refused++;
+          }
+          for (const m of layout.moves) {
+            if (get().currentPageId !== forPageId) { refused++; continue; }
+            const before = get().page?.elements.find((x) => x.id === m.elementId);
+            if (!before) { refused++; continue; }
+            const geo = { x: m.x, y: m.y, w: m.w, h: m.h, ...(typeof m.rotation === 'number' ? { rotation: m.rotation } : {}) };
+            if (await get().commit(m.elementId, geo, before)) wrote++;
+            else refused++;
+          }
+          for (const sc of layout.scrims) {
+            if (get().currentPageId !== forPageId) { refused++; continue; }
+            const before = get().page?.elements.find((x) => x.id === sc.elementId);
+            if (!before || before.type !== 'shape' || !before.shape) { refused++; continue; }
+            if (await get().commit(sc.elementId, { shape: { ...before.shape, opacity: sc.opacity } }, before)) wrote++;
+            else refused++;
+          }
+          for (const id of layout.removes) {
+            if (get().currentPageId !== forPageId) { refused++; continue; }
+            if (!get().page?.elements.some((x) => x.id === id)) { refused++; continue; }
+            if (await get().deleteElement(id)) wrote++;
+            else refused++;
+          }
+        }
       });
       // Report what was STORED. `edits.length` is what the model proposed, and using
       // it here claimed a dozen rewritten blocks over a pass where the page had
       // refused every one of them.
       if (wrote === 0) toast.error(`Couldn't apply that text pass — the page didn't accept ${refused === 1 ? 'the change' : 'any of the changes'}.`);
-      else if (refused > 0) toast.warning(`${mode === 'fill' ? 'Filled' : 'Adjusted'} ${wrote} text block${wrote === 1 ? '' : 's'} — ${refused} ${refused === 1 ? 'was' : 'were'} refused. Undo with Ctrl+Z.`);
-      else toast.success(note || `${mode === 'fill' ? 'Filled' : 'Adjusted'} ${wrote} text block${wrote === 1 ? '' : 's'}. Undo with Ctrl+Z.`);
+      else if (refused > 0) toast.warning(`${mode === 'fill' ? 'Filled' : 'Adjusted'} ${wrote} block${wrote === 1 ? '' : 's'} — ${refused} ${refused === 1 ? 'was' : 'were'} refused. Undo with Ctrl+Z.`);
+      else {
+        // The layout summary rides along even when the model wrote its own note — it is
+        // the line that says a photo was removed or that the page is still short of copy.
+        const said = [note, layout?.summary].filter((x, i, all) => !!x && all.indexOf(x) === i).join(' ');
+        toast.success(said || `${mode === 'fill' ? 'Filled' : 'Adjusted'} ${wrote} block${wrote === 1 ? '' : 's'}. Undo with Ctrl+Z.`);
+      }
     } catch (e) {
       toast.error(e instanceof Error ? e.message : 'Text pass failed');
     } finally {

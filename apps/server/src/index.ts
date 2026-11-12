@@ -4,6 +4,7 @@ import cors from 'cors'
 import { db } from './lib/db.js'
 import { storage } from './lib/storage.js'
 import { seedRoles } from './lib/seedRoles.js'
+import { installAiUsageStore } from './lib/agent/aiUsageStore.js'
 // Every route mount — and every body-parser limit and RBAC gate that goes with
 // it — lives in routes/index.ts. This file is app setup only.
 import apiRouter from './routes/index.js'
@@ -88,6 +89,9 @@ app.use((err: Error, _req: express.Request, res: express.Response, _next: expres
   }
   res.status(500).json({ error: 'Internal server error' })
 })
+
+// Meter every AI model call (all surfaces) for the Campaign Engine AI Activity page.
+installAiUsageStore()
 
 app.listen(PORT, () => {
   console.log(`[server] API server running on http://localhost:${PORT}`)

@@ -39,7 +39,7 @@ export interface UsageTotals {
 
 export function usageTotals(usage: LanguageModelUsage | undefined): UsageTotals {
   const input = usage?.inputTokens ?? 0
-  const cached = usage?.inputTokenDetails?.cacheReadTokens ?? usage?.cachedInputTokens ?? 0
+  const cached = usage?.inputTokenDetails?.cacheReadTokens ?? 0
   return { inputTokens: input, outputTokens: usage?.outputTokens ?? 0, cachedInputTokens: Math.min(cached, input) }
 }
 
@@ -49,10 +49,14 @@ export function estimateCostUsd(model: string, t: UsageTotals): number {
   return (fresh * p.input + t.cachedInputTokens * p.cached + t.outputTokens * p.output) / 1_000_000
 }
 
-/** Per-user spend cap per UTC day, in USD. */
-export function dailyBudgetUsd(): number {
+/**
+ * Optional per-user spend cap per UTC day, in USD. OFF unless
+ * OPERATOR_DAILY_BUDGET_USD is set to a positive number (user decision
+ * 2026-11-12: no AI budgets; spend is watched on the AI Activity page instead).
+ */
+export function dailyBudgetUsd(): number | null {
   const n = Number(process.env.OPERATOR_DAILY_BUDGET_USD)
-  return Number.isFinite(n) && n > 0 ? n : 5
+  return Number.isFinite(n) && n > 0 ? n : null
 }
 
 const today = () => new Date().toISOString().slice(0, 10)

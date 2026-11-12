@@ -21,6 +21,8 @@ import { generateMagazineIssue, generateMorePages } from '../../server/src/lib/m
 import { readSourceDoc, chainIfReady, type ReadSourceDocPayload } from '../../server/src/lib/magazineV2/readSourceDoc.js';
 import { enqueueJob } from '../../server/src/lib/magazineV2/jobs.js';
 import { renderIssuePdfJob } from './jobs/renderIssuePdf.js';
+import { installAiUsageStore } from '../../server/src/lib/agent/aiUsageStore.js';
+import { meteredJob } from './jobUsage.js';
 
 const handlers: JobHandlers = {
   // Digitize a freshly-uploaded PDF into pages + editable elements.
@@ -94,6 +96,15 @@ const handlers: JobHandlers = {
     /* no-op */
   },
 };
+
+// Meter every model call this worker makes (generation jobs) for AI Activity,
+// attributed to the Magazine Builder + the magazine + its requester, with the job
+// id as the session (see ./jobUsage.ts). renderIssuePdf and noop make no AI calls.
+installAiUsageStore();
+for (const type of ['processIssue', 'processPage', 'copyDocumentPage', 'generateIssue', 'generatePages', 'readSourceDoc']) {
+  const handler = handlers[type];
+  if (handler) handlers[type] = meteredJob(type, handler);
+}
 
 startQueueLoop(handlers).catch((err) => {
   console.error('[worker] fatal — queue loop crashed:', err instanceof Error ? (err.stack ?? err.message) : err);

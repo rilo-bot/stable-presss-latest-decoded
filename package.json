@@ -13,6 +13,9 @@
     "start": "node apps/server/dist/index.js",
     "start:worker": "npm run start -w apps/worker"
   },
+  "engines": {
+    "node": ">=22.12.0"
+  },
   "devDependencies": {
     "concurrently": "^9.0.0"
   }

@@ -38,14 +38,18 @@ import { resolveAccount } from '../../lib/effectiveAccess.js';
 import { normalizeElements, normalizeElementPatch } from '../../lib/magazineV2/writePipeline.js';
 import { MAX_ELEMENTS_PER_PAGE, type MagazineElement } from '../../lib/magazineV2/model.js';
 import { isAgentConfigured } from '../../lib/agent/provider.js';
+import { magazineAiUsage } from '../../lib/agent/aiUsageRoute.js';
 import { storage } from '../../lib/storage.js';
 import { enqueueJob, healStuckIssue } from '../../lib/magazineV2/jobs.js';
 import { pagesAlreadyIn } from '../../lib/magazineV2/pageDigest.js';
-import { renumberFolios } from '../../lib/magazineV2/renumberFolios.js';
+import { renumberFolios, syncContentsNumbers } from '../../lib/magazineV2/renumberFolios.js';
 import { FURNITURE_IDS, type RefurnishContext } from '../../lib/magazineV2/pageFurniture.js';
+import { isDropCapPiece } from '../../lib/magazineV2/dropCap.js';
 import type { GenFonts, GenPalette } from '../../lib/magazineV2/templates.js';
 import { runPageAgent } from '../../lib/magazineV2/agent.js';
 import { formatPageText, charGuideFor } from '../../lib/magazineV2/format.js';
+import { pageCopyEdits, type CopyContext } from '../../lib/magazineV2/copyHygiene.js';
+import { adjustPageLayout, type RelayoutResult } from '../../lib/magazineV2/relayoutPage.js';
 import { readLayoutImage } from '../../lib/magazineV2/readLayout.js';
 import { aspectMismatch, normalizeLayoutReading, type LayoutReading } from '../../lib/magazineV2/layoutReading.js';
 // The document door onto the same LayoutReading the image door produces — see the
@@ -149,6 +153,10 @@ router.use((req, res, next) => {
 // to stop a looping client. Expensive AI/upload endpoints get their own STRICTER
 // limits when those phases land (import/generation/agent).
 router.use(rateLimit('mag2-write', 300, 60_000));
+// AI Activity: every model call made while serving a request here (studio chat,
+// Fill/Adjust, read-layout, reference fill, image generation…) is metered as the
+// Magazine Builder, against the caller and the magazine in the path.
+router.use(magazineAiUsage);
 
 // ── Per-issue serialization for structural ops ───────────────────────────────
 // Structural reindexing is several writes; serialising per issue (single API
@@ -242,9 +250,12 @@ function pageDims(p: Doc): { width: number; height: number } {
  * Every structural op (insert blank, duplicate, delete, reorder) lands here, which
  * is why the folio repair lives here too: a generated page's printed page number
  * is an element, so moving the page would otherwise leave it printing its old
- * number. See lib/magazineV2/renumberFolios.ts.
+ * number. See lib/magazineV2/renumberFolios.ts. The contents page's entry numbers
+ * ("04 — Bloodlines") are repaired right after, from the same order; `previousIds`
+ * (the order before this op) lets an entry keep its page when two pages share a
+ * headline. That repair never throws, so it can never fail the op.
  */
-async function writeOrder(orderedIds: string[]): Promise<void> {
+async function writeOrder(orderedIds: string[], previousIds?: string[]): Promise<void> {
   const OFFSET = 1_000_000;
   for (let i = 0; i < orderedIds.length; i++) {
     await db.collection(COL.pages).updateOne(orderedIds[i]!, { index: OFFSET + i });
@@ -253,6 +264,7 @@ async function writeOrder(orderedIds: string[]): Promise<void> {
     await db.collection(COL.pages).updateOne(orderedIds[i]!, { index: i });
   }
   await renumberFolios(orderedIds);
+  await syncContentsNumbers(orderedIds, previousIds ? { previousIds } : {});
 }
 
 function slugify(title: string): string {
@@ -1461,6 +1473,10 @@ router.post('/issues/:id/media/stock', rateLimit('mag2-write', 300, 60_000), asy
     kind: 'photo',
     source: 'stock',
     attribution: stored.attribution,
+    // The exact stock photo, so generation's used-photo ledger never places it twice.
+    ...(stored.provider ? { stockProvider: stored.provider } : {}),
+    ...(stored.providerId ? { stockId: stored.providerId } : {}),
+    ...(stored.sourceUrl ? { sourceUrl: stored.sourceUrl } : {}),
     createdAt: now,
     updatedAt: now,
   });
@@ -2641,7 +2657,7 @@ router.post('/issues/:id/pages', async (req, res) => {
     const ids = current.map((p) => p._id);
     const pos = Number.isInteger(at) && at >= 0 && at <= ids.length ? at : ids.length;
     ids.splice(pos, 0, newId);
-    await writeOrder(ids);
+    await writeOrder(ids, current.map((p) => p._id));
     await db.collection(COL.magazines).updateOne(doc._id, { updatedAt: new Date().toISOString() });
     return { status: 201, pages: (await pagesFor(doc._id)).map((p) => pageSummary(p, doc)) };
   });
@@ -2669,7 +2685,9 @@ router.post('/issues/:id/pages/:pageId/duplicate', async (req, res) => {
     // is safe; regenerating them would freeze the duplicate's page number forever.
     const freshEls = normalizeElements(
       (Array.isArray(src.elements) ? src.elements : []).map((e: MagazineElement) =>
-        FURNITURE_IDS.includes(e.id) ? { ...e } : { ...e, id: undefined },
+        // Drop-cap pieces keep their ids too: the dropcap- prefix is what tells the
+        // Editor-in-Chief and refits that the three boxes are one paragraph.
+        FURNITURE_IDS.includes(e.id) || isDropCapPiece(e.id) ? { ...e } : { ...e, id: undefined },
       ),
       pageDims(src),
     );
@@ -2688,7 +2706,7 @@ router.post('/issues/:id/pages/:pageId/duplicate', async (req, res) => {
     });
     const ids = pages.map((p) => p._id);
     ids.splice(srcIdx + 1, 0, newId);
-    await writeOrder(ids);
+    await writeOrder(ids, pages.map((p) => p._id));
     await db.collection(COL.magazines).updateOne(doc._id, { updatedAt: now });
     return { status: 201, pages: (await pagesFor(doc._id)).map((p) => pageSummary(p, doc)) };
   });
@@ -2757,7 +2775,7 @@ router.delete('/issues/:id/pages/:pageId', async (req, res) => {
     }
 
     await db.collection(COL.pages).deleteOne(victim._id);
-    await writeOrder(pages.filter((p) => p._id !== victim._id).map((p) => p._id));
+    await writeOrder(pages.filter((p) => p._id !== victim._id).map((p) => p._id), pages.map((p) => p._id));
     // Prune the deleted page from every collaborator's assignment. Without this the
     // id lingers in collaborators[].pageIds forever: harmless for access (a stale id
     // never matches a page) but it makes the share dialog and the review board report
@@ -2826,7 +2844,7 @@ router.patch('/issues/:id/pages/reorder', async (req, res) => {
     const ids = pages.map((p) => p._id);
     const [moved] = ids.splice(from, 1);
     ids.splice(to, 0, moved!);
-    await writeOrder(ids);
+    await writeOrder(ids, pages.map((p) => p._id));
     await db.collection(COL.magazines).updateOne(doc._id, { updatedAt: new Date().toISOString() });
     return { status: 200, pages: (await pagesFor(doc._id)).map((p) => pageSummary(p, doc)) };
   });
@@ -3686,6 +3704,43 @@ router.post('/issues/:id/pages/:pageId/apply-layout', rateLimit('mag2-agent', 20
   });
 });
 
+/**
+ * What copy hygiene needs to know about a page. A page document never recorded its kind,
+ * so the issue's stored plan supplies it — but plan indices go stale once pages are
+ * added or reordered, and the one kind that matters here (a CONTENTS page, where page
+ * numbers are the content) is also recognisable from the page itself. The section label
+ * is read off the page's own running head first for the same reason.
+ */
+function copyContextFor(issue: Doc, page: Doc, els: MagazineElement[]): Omit<CopyContext, 'headline'> {
+  const plan = Array.isArray((issue as unknown as { genPlanPages?: unknown }).genPlanPages)
+    ? (issue as unknown as { genPlanPages: { kind?: string; sectionTitle?: string }[] }).genPlanPages
+    : [];
+  const planned = plan[Number(page.index)];
+  const plain = (e: MagazineElement) => (e.text?.content ?? '').replace(/<[^>]+>/g, ' ').trim();
+  const looksContents = els.some((e) => e.type === 'text' && e.text && e.text.role !== 'body' && /\bcontents\b|\bin this issue\b/i.test(plain(e)));
+  const head = els.find((e) => e.id === 'furniture-head-label');
+  const total = Math.max(Number(issue.pagesTotal) || 0, plan.length);
+  return {
+    ...(looksContents || planned?.kind === 'contents' ? { pageKind: 'contents' } : planned?.kind ? { pageKind: planned.kind } : {}),
+    ...(total > 0 ? { totalPages: total } : {}),
+    ...((head && plain(head)) || planned?.sectionTitle ? { sectionTitle: (head && plain(head)) || planned!.sectionTitle } : {}),
+  };
+}
+
+/** One sentence for the toast: what the re-balance did, and what it could not fix. */
+function layoutSummary(r: RelayoutResult): string {
+  const parts: string[] = [];
+  if (r.moves.length > 0) parts.push(`re-balanced ${r.moves.length} box${r.moves.length === 1 ? '' : 'es'}`);
+  const photos = r.droppedPhotos.length;
+  if (photos > 0) parts.push(`removed ${photos} photo${photos === 1 ? '' : 's'} too thin to read as a picture`);
+  parts.push(...r.notes);
+  if (r.scrims.length > 0) parts.push('lightened the wash over the photo');
+  let out = parts.length ? `Layout: ${parts.join(', ')}.` : '';
+  const bands = r.after.deadBands.reduce((n, b) => n + (b.y1 - b.y0), 0);
+  if (bands > 0) out += ` This page is still short of content (${bands}px of empty bands) — Fill it, or add a photo.`;
+  return out.trim();
+}
+
 router.post('/issues/:id/pages/:pageId/format', rateLimit('mag2-agent', 20, 60_000), async (req, res) => {
   if (!isAgentConfigured()) {
     res.status(503).json({ error: 'AI is not configured on this server.' });
@@ -3702,13 +3757,36 @@ router.post('/issues/:id/pages/:pageId/format', rateLimit('mag2-agent', 20, 60_0
   const candidates = els
     .filter((e) => e.type === 'text' && !!e.text && (mode === 'fill' ? isEmpty(e) || isCrowded(e) : isCrowded(e)))
     .map((e) => ({ id: e.id, role: e.text!.role, content: e.text!.content, maxChars: charGuideFor(e.text!.role) }));
-  if (candidates.length === 0) {
-    res.json({ edits: [], note: mode === 'fill' ? 'No empty or crowded text to fill.' : 'No crowded text to adjust.' });
-    return;
-  }
   try {
-    const out = await formatPageText({ mode, title: String(issue.title ?? ''), candidates });
-    res.json(out);
+    // The model only ever sees the crowded / empty boxes; with none, there is no call.
+    const out = candidates.length > 0
+      ? await formatPageText({ mode, title: String(issue.title ?? ''), candidates })
+      : { edits: [] as { elementId: string; content: string }[], note: '' };
+    // DETERMINISTIC, and run on every pass whether or not the model was asked anything:
+    //  1. copy hygiene over the WHOLE page — strips printed plumbing ("PAGE 2 —", a page
+    //     number repeated down a list, a line that re-states the headline) from the
+    //     model's rewrites AND from copy already on the page (copyHygiene.ts);
+    //  2. a re-balance of the page's geometry against that final copy — text boxes hug
+    //     their type, the space they wasted goes to the photographs or is anchored by the
+    //     layout's intent, sliver photos are re-flowed or dropped (relayoutPage.ts).
+    // Both are PROPOSALS: like the text edits, the client applies them through the
+    // rev-guarded element writes as one undoable step. Nothing here writes the page.
+    const edits = pageCopyEdits(els, out.edits, copyContextFor(issue, page, els));
+    const byId = new Map(edits.map((e) => [e.elementId, e.content]));
+    const edited = els.map((e) => (byId.has(e.id) && e.text ? { ...e, text: { ...e.text, content: byId.get(e.id)! } } : e));
+    // `reason` says why a page that needed it was NOT re-balanced (it is left exactly as
+    // it is): hand-placed boxes, a drop cap taken apart, or a re-balance that would have
+    // changed the design. Drop-cap pages come back with `texts` (the re-split copy).
+    const adjusted = adjustPageLayout(edited, pageDims(page));
+    const relaid = adjusted.result;
+    const layout = relaid && (relaid.moves.length > 0 || relaid.removes.length > 0 || relaid.scrims.length > 0 || relaid.texts.length > 0)
+      ? { moves: relaid.moves, removes: relaid.removes, scrims: relaid.scrims, texts: relaid.texts, summary: layoutSummary(relaid) }
+      : null;
+    if (edits.length === 0 && !layout) {
+      res.json({ edits: [], note: adjusted.reason || (mode === 'fill' ? 'No empty or crowded text to fill.' : 'No crowded text to adjust.') });
+      return;
+    }
+    res.json({ edits, note: out.note || layout?.summary || adjusted.reason || '', ...(layout ? { layout } : {}) });
   } catch (err) {
     console.error('[magazineV2] format error:', err instanceof Error ? err.message : err);
     res.status(500).json({ error: 'The text pass hit a snag. Please try again.' });

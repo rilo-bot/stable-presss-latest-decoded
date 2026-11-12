@@ -356,10 +356,22 @@ export const patchElement = (id: string, pageId: string, elementId: string, rev:
 export const deleteElement = (id: string, pageId: string, elementId: string, rev: number) =>
   authFetch(`${BASE}/issues/${id}/pages/${pageId}/elements/${elementId}`, { method: 'DELETE', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ rev }) }).then(parse<{ ok: boolean; rev: number }>);
 
-// Per-page Fill/Adjust — returns text edits the client auto-applies (undoable).
+// Per-page Fill/Adjust — returns text edits the client auto-applies (undoable), plus an
+// optional deterministic re-balance of the page's geometry (`layout`): boxes to move,
+// sliver photos to remove, over-dark scrims to lighten, and — on a page with a drop cap —
+// the cap's pieces re-split for their new measure (`texts`: copy + pinned sizes, applied
+// BEFORE the moves). All applied the same way.
+export interface FormatLayout {
+  /** `rotation` only when a tilted box must be straightened (it now sits at the trim). */
+  moves: { elementId: string; x: number; y: number; w: number; h: number; rotation?: number }[];
+  removes: string[];
+  scrims: { elementId: string; opacity: number }[];
+  texts?: { elementId: string; content?: string; fontSize?: number; maxFontSize?: number; minFontSize?: number; lineHeight?: number }[];
+  summary: string;
+}
 export const formatPage = (id: string, pageId: string, mode: 'fill' | 'adjust') =>
   authFetch(`${BASE}/issues/${id}/pages/${pageId}/format`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ mode }) }).then(
-    parse<{ edits: { elementId: string; content: string }[]; note: string }>,
+    parse<{ edits: { elementId: string; content: string }[]; note: string; layout?: FormatLayout }>,
   );
 
 // ── AI editing agent (staged proposals; applied via the element CRUD above) ──

@@ -18,7 +18,7 @@
 
 import { generateObject } from 'ai';
 import { z } from 'zod';
-import { getAgentModel, isAgentConfigured } from '../../../server/src/lib/agent/provider.js';
+import { getMagazineModel, isAgentConfigured } from '../../../server/src/lib/agent/provider.js';
 import { TEXT_ROLES, type TextRole } from '../../../server/src/lib/magazineV2/model.js';
 import type { RoughTextBlock } from './pdf.js';
 
@@ -121,7 +121,8 @@ export async function classifyPage(opts: {
 
   try {
     const { object } = await generateObject({
-      model: getAgentModel(),
+      model: getMagazineModel('import'),
+      maxOutputTokens: 16000, // Claude 5.5 always thinks; thinking counts against this cap
       schema: ClassifySchema,
       messages: [
         {

@@ -654,7 +654,7 @@ export function EditorCanvas() {
                   onClick={() => void runFormat('adjust', sum.id)}
                   data-agent-id={`mag.page-${sum.index + 1}-adjust`}
                   data-agent-label={`Adjust page ${sum.index + 1} (AI)`}
-                  title="Tighten crowded text on this page (AI)"
+                  title="Tighten crowded text, clean up stray numbering, and re-balance an AI-built layout (oversized boxes, empty bands, sliver photos) on this page"
                 >
                   <WandSparkles size={11} /> Adjust
                 </button>

@@ -195,6 +195,12 @@ const INDEX_SPECS: IndexSpec[] = [
   // a date window — your own (Mine) and everyone's (Everyone, analytics.view).
   { collection: 'agentRuns', keys: { userId: 1, deletedAt: 1, updatedAt: -1 } },
   { collection: 'agentRuns', keys: { deletedAt: 1, updatedAt: -1 } },
+  // AI Activity (routes/aiActivity): per-surface totals and newest-first calls in a
+  // date window, for one user (Mine) or everyone (analytics.view).
+  { collection: 'aiUsage', keys: { surface: 1, deletedAt: 1, createdAt: -1 } },
+  { collection: 'aiUsage', keys: { userId: 1, surface: 1, deletedAt: 1, createdAt: -1 } },
+  { collection: 'aiUsage', keys: { deletedAt: 1, createdAt: -1 } },
+  { collection: 'aiUsage', keys: { sessionId: 1, deletedAt: 1 } },
 ]
 
 /** The name MongoDB derives for an index when none is given. */

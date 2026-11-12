@@ -1,5 +1,8 @@
 /**
- * Stable Hand Activity — /production-system/stablehand-activity
+ * Stable Hand Activity — AI Activity's Stable Hand view
+ * (/production-system/ai-activity/stable-hand; the old /stablehand-activity path
+ * redirects there). AiActivityScreen renders it `embedded`, with the page's own
+ * window and Mine/Everyone controls; standalone it keeps its own header + controls.
  *
  * The Stable Hand Operator's own run log, read back: what it was asked, how many
  * model steps it took, the tokens and the (estimated) cost, and the screen it
@@ -20,8 +23,9 @@ import { AlertTriangle, Bot, Loader2, X } from 'lucide-react';
 
 import { authFetchRetry } from '@/lib/api';
 import { cn } from '@/lib/utils';
-import { SIDE_NAV, navPath } from '../../newsroom/constants';
 import { Empty, Panel, SegmentedControl, StatTile } from '../emoji-analytics/parts';
+import { DailyChart, Fact, TableSkeleton } from '../ai-activity/charts';
+import { TIME, cacheLine, screenName, shortModel, tokens, usd, when } from '../ai-activity/format';
 
 // ── Wire types (mirror lib/agent/operator/activity.ts) ──────────────────────
 
@@ -73,7 +77,8 @@ interface UsageReport {
   to: string;
   days: UsageDay[];
   totals: Totals & { costUsd: number; runs: number };
-  today: { date: string; spentUsd: number; budgetUsd: number };
+  /** budgetUsd is null when no daily cap is configured (the default). */
+  today: { date: string; spentUsd: number; budgetUsd: number | null };
 }
 
 interface RunsPage {
@@ -88,47 +93,7 @@ const WINDOWS = [
   { value: '30', label: '30 days' },
   { value: '90', label: '90 days' },
 ] as const;
-type WindowId = (typeof WINDOWS)[number]['value'];
-
-// ── Formatting ──────────────────────────────────────────────────────────────
-
-function usd(n: number): string {
-  if (n === 0) return '$0.00';
-  if (n < 0.01) return '<$0.01';
-  return `$${n.toFixed(2)}`;
-}
-
-function tokens(n: number): string {
-  if (n < 1000) return String(Math.round(n));
-  if (n < 1_000_000) return `${(n / 1000).toFixed(n < 10_000 ? 1 : 0)}k`;
-  return `${(n / 1_000_000).toFixed(1)}M`;
-}
-
-const TIME = new Intl.DateTimeFormat(undefined, { hour: '2-digit', minute: '2-digit' });
-const DAY = new Intl.DateTimeFormat(undefined, { month: 'short', day: 'numeric' });
-const DAY_UTC = new Intl.DateTimeFormat(undefined, { month: 'short', day: 'numeric', timeZone: 'UTC' });
-
-function when(iso: string): string {
-  const d = new Date(iso);
-  if (Number.isNaN(d.getTime())) return '—';
-  const now = new Date();
-  const startOfToday = new Date(now.getFullYear(), now.getMonth(), now.getDate()).getTime();
-  if (d.getTime() >= startOfToday) return `Today ${TIME.format(d)}`;
-  if (d.getTime() >= startOfToday - 86_400_000) return `Yesterday ${TIME.format(d)}`;
-  return `${DAY.format(d)}, ${TIME.format(d)}`;
-}
-
-/** `anthropic/claude-sonnet-5.5` → `claude-sonnet-5.5`. */
-const shortModel = (m: string) => m.split('/').pop() || m;
-
-/** A production-system path reads as its sidebar label; anything else as the path. */
-function screenName(path: string): string {
-  if (!path) return '—';
-  const clean = path.split(/[?#]/)[0];
-  const item = SIDE_NAV.find((i) => clean === navPath(i) || clean.startsWith(`${navPath(i)}/`));
-  if (item) return clean === navPath(item) ? item.label : `${item.label} ›`;
-  return clean;
-}
+export type WindowId = (typeof WINDOWS)[number]['value'];
 
 // ── Data hooks ──────────────────────────────────────────────────────────────
 
@@ -211,9 +176,20 @@ function useRuns(scope: Scope, days: string) {
 
 // ── Screen ──────────────────────────────────────────────────────────────────
 
-export default function StablehandActivityScreen() {
-  const [scope, setScope] = useState<Scope>('mine');
-  const [windowId, setWindowId] = useState<WindowId>('30');
+export default function StablehandActivityScreen({
+  embedded = false,
+  scope: scopeProp,
+  windowId: windowProp,
+}: {
+  /** Inside AI Activity: no header or controls of its own — the page drives them. */
+  embedded?: boolean;
+  scope?: Scope;
+  windowId?: WindowId;
+} = {}) {
+  const [ownScope, setScope] = useState<Scope>('mine');
+  const [ownWindow, setWindowId] = useState<WindowId>('30');
+  const scope = scopeProp ?? ownScope;
+  const windowId = windowProp ?? ownWindow;
   const [open, setOpen] = useState<RunSummary | null>(null);
 
   const usage = useUsage(scope, windowId);
@@ -222,7 +198,9 @@ export default function StablehandActivityScreen() {
   const everyone = scope === 'all';
 
   return (
-    <div className="space-y-6 pb-4">
+    <div className={embedded ? 'space-y-6' : 'space-y-6 pb-4'}>
+      {!embedded && (
+      <>
       {/* ── Header ── */}
       <div className="flex flex-wrap items-start gap-x-4 gap-y-3">
         <div className="min-w-0 flex-1">
@@ -259,6 +237,8 @@ export default function StablehandActivityScreen() {
           </>
         )}
       </div>
+      </>
+      )}
 
       {/* ── Budget + headline figures ── */}
       {usage.state === 'error' ? (
@@ -292,7 +272,15 @@ export default function StablehandActivityScreen() {
           title="Daily spend"
           subtitle={`Estimated cost per UTC day${everyone ? ', all staff' : ''}. Hover a bar for runs and tokens.`}
         >
-          {usage.data ? <DailyChart days={usage.data.days} /> : <div className="h-[180px]" />}
+          {usage.data ? (
+            <DailyChart
+              subject="The Stable Hand"
+              unit="run"
+              days={usage.data.days.map((d) => ({ ...d, count: d.runs }))}
+            />
+          ) : (
+            <div className="h-[180px]" />
+          )}
         </Panel>
       )}
 
@@ -340,16 +328,23 @@ export default function StablehandActivityScreen() {
   );
 }
 
-function cacheLine(t: Totals): string {
-  if (t.inputTokens === 0) return 'No input yet';
-  const pct = Math.round((t.cachedInputTokens / t.inputTokens) * 100);
-  return `${pct}% of input served from cache`;
-}
-
 // ── Budget ──────────────────────────────────────────────────────────────────
 
 function BudgetCard({ today }: { today?: UsageReport['today'] }) {
   const spent = today?.spentUsd ?? 0;
+  // No daily cap is configured by default — then this is just today's spend.
+  if (today && today.budgetUsd === null) {
+    return (
+      <div className="rounded-sm border border-border/60 bg-card p-5 sm:col-span-2 lg:col-span-1">
+        <div className="flex items-baseline justify-between gap-3">
+          <p className="text-[12px] text-muted-foreground">Your spend today</p>
+          <p className="text-[11px] text-muted-foreground">UTC day</p>
+        </div>
+        <p className="mt-2 text-[32px] font-bold leading-[1.1] text-foreground">{usd(spent)}</p>
+        <p className="mt-2 text-[11.5px] text-muted-foreground">No daily limit.</p>
+      </div>
+    );
+  }
   const budget = today?.budgetUsd ?? 0;
   const ratio = budget > 0 ? spent / budget : 0;
   const pct = Math.min(100, Math.round(ratio * 100));
@@ -393,126 +388,6 @@ function BudgetCard({ today }: { today?: UsageReport['today'] }) {
       </p>
     </div>
   );
-}
-
-// ── Chart ───────────────────────────────────────────────────────────────────
-
-const CHART_H = 160;
-const AXIS_W = 44;
-
-/** Plain-SVG bars, one per UTC day. Forest marks, recessive grid, hover tooltip. */
-function DailyChart({ days }: { days: UsageDay[] }) {
-  const [hover, setHover] = useState<number | null>(null);
-  const max = Math.max(...days.map((d) => d.costUsd), 0);
-  const top = niceCeil(max);
-  const ticks = top > 0 ? [0, top / 2, top] : [0];
-  const n = days.length || 1;
-  const spent = days.some((d) => d.costUsd > 0);
-
-  // Drawn in real pixels at the measured width, so text and bar ends never
-  // stretch (a preserveAspectRatio="none" viewBox would squash both).
-  const wrapRef = useRef<HTMLDivElement>(null);
-  const [W, setW] = useState(720);
-  useEffect(() => {
-    const el = wrapRef.current;
-    if (!el) return;
-    const measure = () => setW(Math.max(240, Math.round(el.clientWidth)));
-    measure();
-    const ro = new ResizeObserver(measure);
-    ro.observe(el);
-    return () => ro.disconnect();
-  }, []);
-
-  const plotW = W - AXIS_W;
-  const slot = plotW / n;
-  // A 2px surface gap between neighbours; thin marks on wide screens.
-  const barW = Math.max(2, Math.min(18, slot - 2));
-  const maxLabels = Math.max(2, Math.floor(plotW / 56));
-  const labelEvery = Math.max(1, Math.ceil(n / maxLabels));
-
-  const hovered = hover != null ? days[hover] : null;
-
-  return (
-    <div className="relative" ref={wrapRef}>
-      <svg
-        width={W}
-        height={CHART_H + 30}
-        viewBox={`0 0 ${W} ${CHART_H + 30}`}
-        className="block"
-        role="img"
-        aria-label={`Daily The Stable Hand spend over ${n} days, peak ${usd(max)}`}
-        onMouseLeave={() => setHover(null)}
-      >
-        <g transform="translate(0,8)">
-        {ticks.map((t) => {
-          const y = CHART_H - (top > 0 ? (t / top) * CHART_H : 0);
-          return (
-            <g key={t}>
-              <line x1={AXIS_W} x2={W} y1={y + 0.5} y2={y + 0.5} stroke="hsl(var(--border))" strokeWidth={1} strokeDasharray={t === 0 ? undefined : '2 4'} />
-              <text x={AXIS_W - 6} y={y + 3} textAnchor="end" fontSize={10} fill="hsl(var(--muted-foreground))">
-                {t === 0 ? '$0' : usd(t)}
-              </text>
-            </g>
-          );
-        })}
-        {days.map((d, i) => {
-          const h = top > 0 ? (d.costUsd / top) * CHART_H : 0;
-          const x = AXIS_W + i * slot + (slot - barW) / 2;
-          return (
-            <g key={d.date}>
-              {/* Hit target: the whole slot, taller than the mark. */}
-              <rect x={AXIS_W + i * slot} y={0} width={slot} height={CHART_H} fill="transparent" onMouseEnter={() => setHover(i)} />
-              {h > 0 && (
-                <rect
-                  x={x}
-                  y={CHART_H - Math.max(h, 1.5)}
-                  width={barW}
-                  height={Math.max(h, 1.5)}
-                  rx={Math.min(3, barW / 2)}
-                  fill={hover === i ? 'hsl(var(--brand-accent))' : 'hsl(var(--primary))'}
-                  pointerEvents="none"
-                />
-              )}
-              {i % labelEvery === 0 && (
-                <text x={AXIS_W + i * slot + slot / 2} y={CHART_H + 15} textAnchor="middle" fontSize={10} fill="hsl(var(--muted-foreground))">
-                  {DAY_UTC.format(new Date(`${d.date}T00:00:00Z`))}
-                </text>
-              )}
-            </g>
-          );
-        })}
-        </g>
-      </svg>
-      {!spent && (
-        <p className="pointer-events-none absolute inset-x-0 top-16 text-center text-[12px] text-muted-foreground">
-          No spend in this window.
-        </p>
-      )}
-      {hovered && hover != null && (
-        <div
-          className="pointer-events-none absolute top-2 z-10 w-max rounded-sm border border-border bg-card px-3 py-2 text-[11.5px] shadow-md"
-          style={{
-            left: AXIS_W + (hover + 0.5) * slot,
-            transform: hover > n / 2 ? 'translateX(calc(-100% - 8px))' : 'translateX(8px)',
-          }}
-        >
-          <p className="font-semibold text-foreground">{DAY_UTC.format(new Date(`${hovered.date}T00:00:00Z`))}</p>
-          <p className="text-foreground">{usd(hovered.costUsd)} · {hovered.runs} run{hovered.runs === 1 ? '' : 's'}</p>
-          <p className="text-muted-foreground">
-            {tokens(hovered.inputTokens)} in · {tokens(hovered.outputTokens)} out · {tokens(hovered.cachedInputTokens)} cached
-          </p>
-        </div>
-      )}
-    </div>
-  );
-}
-
-/** A round axis top: 1, 2 or 5 × a power of ten. */
-function niceCeil(v: number): number {
-  if (v <= 0) return 0;
-  const p = 10 ** Math.floor(Math.log10(v));
-  for (const m of [1, 2, 5, 10]) if (v <= m * p) return m * p;
-  return 10 * p;
 }
 
 // ── Table ───────────────────────────────────────────────────────────────────
@@ -570,16 +445,6 @@ function RunsTable({
           ))}
         </tbody>
       </table>
-    </div>
-  );
-}
-
-function TableSkeleton() {
-  return (
-    <div className="space-y-2 py-2" aria-hidden="true">
-      {Array.from({ length: 6 }, (_, i) => (
-        <div key={i} className="h-9 animate-pulse rounded-sm bg-muted" />
-      ))}
     </div>
   );
 }
@@ -710,14 +575,5 @@ function RunDrawer({ summary, onClose }: { summary: RunSummary; onClose: () => v
       </aside>
     </div>,
     document.body,
-  );
-}
-
-function Fact({ label, value }: { label: string; value: string }) {
-  return (
-    <div className="min-w-0">
-      <dt className="text-muted-foreground">{label}</dt>
-      <dd className="truncate font-semibold tabular-nums text-foreground">{value}</dd>
-    </div>
   );
 }

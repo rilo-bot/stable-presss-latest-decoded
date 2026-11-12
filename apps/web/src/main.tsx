@@ -7,6 +7,11 @@ import { BrowserRouter } from 'react-router-dom'
 import './index.css'
 
 import App from './App'
+import { installAssetFallback } from './lib/assetUrl'
+
+// Images from our S3 bucket that the bucket refuses to serve directly (no public
+// read policy) are retried through the API's file proxy — see lib/assetUrl.ts.
+installAssetFallback()
 
 createRoot(document.getElementById('root')!).render(
   <React.StrictMode>

@@ -20,7 +20,7 @@
 // ---------------------------------------------------------------------------
 
 import { generateText } from 'ai';
-import { getAgentModel, isAgentConfigured } from '../agent/provider.js';
+import { getMagazineModel, isAgentConfigured } from '../agent/provider.js';
 import { parseJsonObject } from './parseJson.js';
 import { normalizeLayoutReading, MAX_REGIONS, MAX_REGION_TEXT, type LayoutReading } from './layoutReading.js';
 import { LEAF_ROLES, SPACE_TOKENS, COLOR_REFS } from './layoutSpec.js';
@@ -130,7 +130,8 @@ export async function readLayoutImage(imageUrl: string, hint?: string): Promise<
 
   try {
     const { text } = await generateText({
-      model: getAgentModel(),
+      model: getMagazineModel('reader'),
+      maxOutputTokens: 16000, // Claude 5.5 always thinks; thinking counts against this cap
       system: SYSTEM,
       messages: [
         {

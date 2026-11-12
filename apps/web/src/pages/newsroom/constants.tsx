@@ -170,10 +170,11 @@ export const SIDE_NAV: SideNavItem[] = [
   { id: 'roles', label: 'Roles & Permissions', icon: <Shield size={15} />, section: 'Management', slug: 'roles', requiresPermission: 'roles.view' },
   { id: 'analytics', label: 'Analytics', icon: <BarChart2 size={15} />, section: 'Management', slug: 'analytics', requiresPermission: 'analytics.view' },
   { id: 'settings', label: 'Settings', icon: <Settings size={15} />, section: 'Management', slug: 'settings', requiresPermission: 'settings.view' },
-  /* No permission, like the Personal rows: every staff member can run the
-     The Stable Hand and this opens on their OWN runs. "Everyone" is gated by the
-     server on analytics.view (routes/agentOperator). */
-  { id: 'stablehand-activity', label: 'Stable Hand Activity', icon: <Bot size={15} />, section: 'Management', slug: 'stablehand-activity' },
+  /* No permission, like the Personal rows: every staff member uses the AI
+     surfaces and this opens on their OWN usage. "Everyone" is gated by the server
+     on analytics.view (routes/aiActivity). Replaced Stable Hand Activity, which
+     is now its Stable Hand view (/ai-activity/stable-hand). */
+  { id: 'ai-activity', label: 'AI Activity', icon: <Bot size={15} />, section: 'Management', slug: 'ai-activity' },
 
   // ── Personal ──────────────────────────────────────────────────────────────
   { id: 'my-assets', label: 'My Media Assets', icon: <Image size={15} />, section: 'Personal', slug: 'my-assets' },

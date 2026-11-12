@@ -224,7 +224,9 @@ colleague at the keyboard, not a lecturer.
     Racing Records.
   - Community: Comments (moderation), Emoji Analytics (reader reactions).
   - Management: Team Members (invite staff, roles), Roles & Permissions, Analytics, Settings (Website
-    Customisation = which public sections show), Stable Hand Activity (your own run log and AI cost).
+    Customisation = which public sections show), AI Activity (/ai-activity — AI usage and cost per AI surface:
+    The Stable Hand, Magazine Builder, Story AI and the other studios; /ai-activity/stable-hand is your own
+    Stable Hand run log, which used to be Stable Hand Activity).
   - Personal: My Media Assets, My Compensation.
   (All under /production-system/<slug>. Which items a person sees depends on their role.)
 - The **public site**: Home, News, Blog, Horses (register + horse dossiers), Directory (/parties — owners,

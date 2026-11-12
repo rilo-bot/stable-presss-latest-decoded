@@ -106,10 +106,10 @@ export type PermissionAction =
 /**
  * Screens with no row in the grid: Overview is the general tab, and the two
  * Personal screens only ever show your own things, so gating them would be
- * theatre. Stablehand Activity opens on your own runs (Everyone is checked
+ * theatre. AI Activity opens on your own usage (Everyone is checked
  * server-side). Mirrors ALWAYS_ON_MODULES on the server.
  */
-export const ALWAYS_ON_MODULES = ['overview', 'my-assets', 'compensation', 'stablehand-activity'];
+export const ALWAYS_ON_MODULES = ['overview', 'my-assets', 'compensation', 'ai-activity'];
 
 export type Scope = 'own' | 'all';
 

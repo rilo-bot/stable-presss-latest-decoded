@@ -19,9 +19,12 @@ import { accountCan, scopeFor } from '../../lib/effectiveAccess.js'
 import { getCapabilities } from '../../lib/agent/capabilities.js'
 import { getAgentModel, isAgentConfigured } from '../../lib/agent/provider.js'
 import type { AccountUser } from '../../lib/identity.js'
+import { aiSurface } from '../../lib/agent/aiUsageRoute.js'
 
 const router = Router()
 router.use(attachAccount)
+// AI Activity: the daily brief (the only model call here) is metered as Newsroom.
+router.use(aiSurface('newsroom', { feature: 'daily-brief' }))
 
 /**
  * "Live" is one status now. It used to be three, because newsletter/bulletin

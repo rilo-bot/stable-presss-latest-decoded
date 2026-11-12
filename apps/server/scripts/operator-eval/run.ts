@@ -649,7 +649,7 @@ async function main() {
       reply = res.text
       steps = res.steps.length
       const u = res.totalUsage
-      const read = u.inputTokenDetails?.cacheReadTokens ?? u.cachedInputTokens ?? 0
+      const read = u.inputTokenDetails?.cacheReadTokens ?? 0
       const write = u.inputTokenDetails?.cacheWriteTokens ?? 0
       usage.cacheRead = read
       usage.cacheWrite = write

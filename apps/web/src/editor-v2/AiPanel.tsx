@@ -110,6 +110,8 @@ export function AiPanel({ onClose }: { onClose?: () => void } = {}) {
   const setPreviewDoc = useEditorStore((s) => s.setPreviewDoc);
 
   const issueId = useEditorStore((s) => s.issueId);
+  // AI Activity: document reads from this panel are the Magazine Builder's, for this magazine.
+  const ingestOpts = { usage: { surface: 'magazine-builder', entityType: 'magazine', entityId: issueId ?? undefined } };
 
   const threads = useEditorStore((s) => s.threads);
   const activeThreadId = useEditorStore((s) => s.activeThreadId);
@@ -196,7 +198,7 @@ export function AiPanel({ onClose }: { onClose?: () => void } = {}) {
         } else {
           let sourceText = '';
           try {
-            sourceText = attachmentSourceText(await ingestFile(f));
+            sourceText = attachmentSourceText(await ingestFile(f, ingestOpts));
           } catch {
             /* still stored below even if the text couldn't be read client-side */
           }
@@ -330,7 +332,7 @@ export function AiPanel({ onClose }: { onClose?: () => void } = {}) {
     if (!text) {
       setIngesting(true);
       try {
-        text = (await ingestFile(att.file)).fullText;
+        text = (await ingestFile(att.file, ingestOpts)).fullText;
         setAtts((prev) => prev.map((a) => (a.id === att.id ? { ...a, text } : a)));
       } catch (e) {
         toast.error(e instanceof Error ? e.message : 'Could not read that document.');
@@ -407,7 +409,7 @@ export function AiPanel({ onClose }: { onClose?: () => void } = {}) {
           //    Optional for images — a failed read must not sink the turn.
           if (!a.text) {
             try {
-              a.text = attachmentSourceText(await ingestFile(a.file));
+              a.text = attachmentSourceText(await ingestFile(a.file, ingestOpts));
             } catch {
               /* the image is still placeable via its media url */
             }
@@ -417,7 +419,7 @@ export function AiPanel({ onClose }: { onClose?: () => void } = {}) {
           // Documents ARE the content — an unreadable one still stops the turn.
           if (!a.text) {
             try {
-              a.text = attachmentSourceText(await ingestFile(a.file));
+              a.text = attachmentSourceText(await ingestFile(a.file, ingestOpts));
             } catch (e) {
               setIngesting(false);
               mergeWorked();

@@ -26,6 +26,8 @@ import {
   IMAGE_FITS,
   LEAF_ROLES,
   MAX_TREE_DEPTH,
+  PLACE_ANCHORS,
+  RULE_SIDES,
 } from './layoutSpec.js';
 
 // NOTE: this schema carries NO value constraints (min/max/length/minItems/…) or
@@ -41,6 +43,17 @@ function enumOf<T extends readonly [string, ...string[]]>(arr: T) {
   return z.enum(arr);
 }
 
+/** A stack layer's anchor inside its stack (w/h in twelfths). */
+const placeSchema = z
+  .object({
+    x: enumOf(PLACE_ANCHORS).optional(),
+    y: enumOf(PLACE_ANCHORS).optional(),
+    w: z.number().optional(),
+    h: z.union([z.number(), z.literal('content')]).optional(),
+    inset: enumOf(SPACE_TOKENS).optional(),
+  })
+  .describe('anchor this stack layer inside the stack instead of filling it');
+
 const leafSchema = z
   .object({
     kind: z.literal('leaf'),
@@ -52,6 +65,13 @@ const leafSchema = z
     align: enumOf(TEXT_ALIGNS).optional(),
     fit: enumOf(IMAGE_FITS).optional().describe('image fit; cover fills the box with no dead space'),
     aspect: z.number().optional().describe('advisory image aspect ratio (w/h)'),
+    bleed: z.boolean().optional().describe('image/shape: run off every page edge it touches'),
+    rotate: z.number().optional().describe('collage tilt in degrees (−5…5): image/shape/figure/label/kicker/caption'),
+    dropCap: z.boolean().optional().describe('body: open with a drop cap'),
+    rule: enumOf(RULE_SIDES).optional().describe('text: an accent rule above/below/both/left'),
+    thickness: z.number().optional().describe('shape: a rule this many px thick along its container axis'),
+    glyph: z.string().optional().describe('figure/label/kicker: ornament text (≤3 chars) set on the leaf itself'),
+    place: placeSchema.optional(),
   })
   .describe('A single content box — a leaf of the layout tree.');
 
@@ -60,6 +80,8 @@ const containerCommon = {
   pad: enumOf(SPACE_TOKENS).optional().describe('inner padding'),
   align: enumOf(FLEX_ALIGNS).optional().describe('cross-axis alignment'),
   justify: enumOf(FLEX_ALIGNS).optional().describe('main-axis distribution'),
+  grid: z.number().optional().describe('a column grid (2–12): children sized by span'),
+  place: placeSchema.optional(),
 };
 
 /** Build one level of the tree whose containers/stacks hold `childNode`. */
@@ -67,11 +89,15 @@ function makeLevel(childNode: z.ZodTypeAny): z.ZodTypeAny {
   const child = z.object({
     weight: z.number().optional().describe('fr weight when sizing=fr (relative share of the axis)'),
     sizing: z.enum(['fr', 'content']).optional().describe("'content' sizes this track to its text; 'fr' shares the remaining space by weight"),
+    span: z.number().optional().describe('grid columns this child spans (in a grid container)'),
+    overlap: z.number().optional().describe('px this child is pulled back over the previous one (drawn on top)'),
     node: childNode,
   });
-  const row = z.object({ kind: z.literal('row'), ...containerCommon, children: z.array(child) }).describe('Lay children left-to-right (1–8).');
-  const col = z.object({ kind: z.literal('col'), ...containerCommon, children: z.array(child) }).describe('Stack children top-to-bottom (1–8).');
-  const stack = z.object({ kind: z.literal('stack'), layers: z.array(childNode) }).describe('Overlay layers on the same rectangle (e.g. text over a full-bleed photo + scrim).');
+  const row = z.object({ kind: z.literal('row'), ...containerCommon, children: z.array(child) }).describe('Lay children left-to-right (1–12).');
+  const col = z.object({ kind: z.literal('col'), ...containerCommon, children: z.array(child) }).describe('Stack children top-to-bottom (1–12).');
+  const stack = z
+    .object({ kind: z.literal('stack'), pad: enumOf(SPACE_TOKENS).optional(), place: placeSchema.optional(), layers: z.array(childNode) })
+    .describe('Overlay layers on the same rectangle (text over a full-bleed photo, a panel, placed captions).');
   return z.union([leafSchema, row, col, stack]);
 }
 

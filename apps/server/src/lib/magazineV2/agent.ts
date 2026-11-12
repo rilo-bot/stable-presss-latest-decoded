@@ -968,7 +968,8 @@ export async function runPageAgent(opts: {
   let text = '';
   try {
     const result = await generateText({
-      model: getMagazineModel(),
+      model: getMagazineModel('studio'),
+      maxOutputTokens: 16000, // per step; Claude 5.5 always thinks and thinking counts against it
       system: SYSTEM(
         dims,
         opts.page.elements,

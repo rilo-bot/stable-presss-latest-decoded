@@ -18,6 +18,9 @@ import { resolveIcon } from '@/lib/iconRegistry';
 import type { IssuePageData, MagazineElement } from './model';
 import { pctRect, pxCqw } from './geometry';
 import { QrBlock } from './QrBlock';
+// Falls back to the API file proxy when a direct S3 URL is refused (bucket
+// without public read) — see lib/assetUrl.ts.
+import { ResilientImg } from '@/components/ResilientImg';
 
 function elementBoxStyle(el: MagazineElement, page: IssuePageData): CSSProperties {
   return {
@@ -103,7 +106,7 @@ function IconElement({ el, page }: { el: MagazineElement; page: IssuePageData })
   if (el.icon.src) {
     return (
       <div style={wrap}>
-        <img src={el.icon.src} alt="" className="h-full w-full" style={{ objectFit: 'contain' }} />
+        <ResilientImg src={el.icon.src} alt="" className="h-full w-full" style={{ objectFit: 'contain' }} />
       </div>
     );
   }
@@ -119,7 +122,7 @@ function ImageElement({ el, page, lazy }: { el: MagazineElement; page: IssuePage
   if (!el.image?.url) return null;
   return (
     <div style={elementBoxStyle(el, page)}>
-      <img
+      <ResilientImg
         src={el.image.url}
         alt={el.image.alt}
         // Opt-in only. The page rail draws every page at 92px, and without this a
@@ -163,7 +166,7 @@ export function IssuePageCanvas({ page, hideElementId, lazyImages }: { page: Iss
       style={{ containerType: 'inline-size', paddingBottom: `${(pageH / pageW) * 100}%` }}
     >
       {page.background.type === 'image' && page.background.value ? (
-        <img src={page.background.value} alt="" className="absolute inset-0 h-full w-full object-cover" />
+        <ResilientImg src={page.background.value} alt="" className="absolute inset-0 h-full w-full object-cover" />
       ) : (
         <div className="absolute inset-0" style={{ background: page.background.value || '#ffffff' }} />
       )}

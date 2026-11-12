@@ -33,14 +33,15 @@
 // Pure + server-safe: arithmetic over measured font metrics. No DOM, no LLM, no I/O.
 // ---------------------------------------------------------------------------
 
-import { estimateTextHeight } from './layout.js';
 import { measureRunWidthPx } from './fontMetrics.js';
 import { roleStyle, TEXT_ROLES, ptToPx, pxToPt } from './roleScale.js';
-import { typeSizeFor } from './composeFromSolved.js';
+import { typeSizeFor, SCRIM_OPACITY, isScrimLeaf as composerIsScrim } from './composeFromSolved.js';
+import { leafText, leafTextHeight, WRAP_SAFETY } from './measureLeaf.js';
 import type { ResolvedContent } from './composeFromSolved.js';
 import type { SolvedLayout } from './solveLayout.js';
 import type { GenFonts } from './templates.js';
 import type { LeafRole } from './layoutSpec.js';
+import { imageShapeProblem, deadBands, capScrimOpacity, coverage, HIDING_OPACITY } from './layoutQuality.js';
 
 /** Roles that are read as PROSE, where line length matters to a reader. */
 const PROSE = new Set<string>(['body', 'entry', 'pullquote']);
@@ -134,7 +135,13 @@ const SQUARE_WASTE_AT = 0.35;
 const QR_LOUD_AT = 0.15;
 
 export interface FitFinding {
-  kind: 'overflow' | 'shrunk' | 'slack' | 'square' | 'loud' | 'measure' | 'decor' | 'orphan' | 'giant';
+  /**
+   * `sliver` — a photo the layout squeezed out of a photograph's shape (a 74×1634 strip,
+   * a 451×28 ribbon). `deadband` — a full-width stripe of the sheet nothing prints on
+   * (measured from the type's real lines, not its boxes). Both are counted: see
+   * seriousFlaws, and layoutQuality.ts for the rules.
+   */
+  kind: 'overflow' | 'shrunk' | 'slack' | 'square' | 'loud' | 'measure' | 'decor' | 'orphan' | 'giant' | 'sliver' | 'deadband';
   /** Which leaf, in the art-director's own words (its contentRef, else its role). */
   where: string;
   detail: string;
@@ -188,7 +195,7 @@ function drawnBox(leaf: SolvedLayout['leaves'][number], content: ResolvedContent
     const side = Math.max(1, Math.min(box.w, box.h));
     return { x: box.x + (box.w - side) / 2, y: box.y + (box.h - side) / 2, w: side, h: side };
   }
-  if (TEXT_ROLES.has(role)) return fill?.text?.trim() ? box : null;
+  if (TEXT_ROLES.has(role)) return leafText(leaf.node, content).trim() ? box : null;
   return null;
 }
 
@@ -236,6 +243,64 @@ function hasWordsNear(solved: SolvedLayout, leaf: SolvedLayout['leaves'][number]
   );
 }
 
+type Leaf = SolvedLayout['leaves'][number];
+
+/** A shape over a photo is a scrim (composeFromSolved draws it as a translucent wash) —
+ *  unless it is its own stack's panel, or a rule. The composer's rule, shared. */
+function isScrimLeaf(solved: SolvedLayout, leaf: Leaf): boolean {
+  return composerIsScrim(leaf, solved.leaves);
+}
+
+/**
+ * A photo BEHIND content — the bottom layer of a stack with words over it. Its shape is
+ * the shape of what it backs, so the sliver rule does not apply (the tree is gone by now;
+ * "a higher-z text leaf sits mostly inside it" is the same fact read off the boxes).
+ */
+function isBackingPhoto(solved: SolvedLayout, leaf: Leaf): boolean {
+  return solved.leaves.some((o) => o.z > leaf.z && TEXT_ROLES.has(o.node.role) && coverage(o.box, leaf.box) >= 0.5);
+}
+
+/**
+ * Every vertical extent of the sheet that PRINTS something, for the dead-band check.
+ *
+ * Text counts by its measured lines; a photo counts unless a wash dark enough to hide it
+ * covers it; a scrim is not ink of its own (it is the photo's tint); a spacer is the
+ * art-director's declared air and is judged separately (EMPTY_SERIOUS), so it is not
+ * charged twice; a panel or rule is ink. Mirrors drawnBox for the square devices.
+ */
+function inkSpans(solved: SolvedLayout, content: ResolvedContent, textInk: Map<Leaf, { y: number; h: number }>): { y: number; h: number }[] {
+  const spans: { y: number; h: number }[] = [];
+  const scrimOpacity = (l: Leaf) => capScrimOpacity(l.node.opacity ?? SCRIM_OPACITY, l.box, solved.page);
+  for (const leaf of solved.leaves) {
+    const role = leaf.node.role;
+    if (role === 'spacer') {
+      spans.push(leaf.box);
+      continue;
+    }
+    if (TEXT_ROLES.has(role)) {
+      const ink = textInk.get(leaf);
+      if (ink) spans.push(ink);
+      continue;
+    }
+    if (role === 'shape') {
+      if (!isScrimLeaf(solved, leaf)) spans.push(leaf.box);
+      continue;
+    }
+    if (role === 'image') {
+      const drawn = drawnBox(leaf, content);
+      if (!drawn) continue;
+      const hidden = solved.leaves.some(
+        (o) => o.z > leaf.z && o.node.role === 'shape' && coverage(leaf.box, o.box) >= 0.9 && scrimOpacity(o) >= HIDING_OPACITY,
+      );
+      if (!hidden) spans.push(drawn);
+      continue;
+    }
+    const drawn = drawnBox(leaf, content);
+    if (drawn) spans.push(drawn);
+  }
+  return spans;
+}
+
 /**
  * Measure what happened to every leaf on a solved page.
  *
@@ -249,6 +314,10 @@ export function fitReport(solved: SolvedLayout, content: ResolvedContent, fonts:
   const findings: FitFinding[] = [];
   const pageArea = Math.max(1, solved.page.width * solved.page.height);
   let emptyArea = 0;
+  // The vertical extent each TEXT leaf actually prints — its measured lines, not its box.
+  // A 787px box holding two lines of type inks ~200px; the rest is the dead band the
+  // per-box slack check only describes from inside the box.
+  const textInk = new Map<SolvedLayout['leaves'][number], { y: number; h: number }>();
 
   for (const leaf of solved.leaves) {
     const role = leaf.node.role as LeafRole;
@@ -258,6 +327,24 @@ export function fitReport(solved: SolvedLayout, content: ResolvedContent, fonts:
 
     if (role === 'spacer') {
       emptyArea += box.w * box.h;
+      continue;
+    }
+
+    // ── A photo must still be a photograph ───────────────────────────────────
+    if (role === 'image') {
+      const fill = content[leaf.node.contentRef ?? ''];
+      if ((fill?.image?.url || fill?.shapeFill) && !isBackingPhoto(solved, leaf)) {
+        const problem = imageShapeProblem(box, solved.page);
+        if (problem) {
+          findings.push({
+            kind: 'sliver',
+            where: ref,
+            detail:
+              `${problem.detail}. A photo cell this shape is cut, not cropped. Give the image a real share of ` +
+              `its row/col (keep it between 1:2 and 5:2), put the text beside it rather than around it, or drop the photo.`,
+          });
+        }
+      }
       continue;
     }
 
@@ -303,25 +390,21 @@ export function fitReport(solved: SolvedLayout, content: ResolvedContent, fonts:
 
     if (!TEXT_ROLES.has(role)) continue; // image/shape — the fit is the crop's business
 
-    const text = content[leaf.node.contentRef ?? '']?.text ?? '';
+    const text = leafText(leaf.node, content);
     if (!text.trim()) continue;
 
     const s = roleStyle(role);
     const size = typeSizeFor(leaf.node, role, s);
     const fontFamily = (leaf.node.fontRef ?? s.fontRef) === 'display' ? fonts.display : fonts.body;
     const fontWeight = leaf.node.weightHint ?? s.fontWeight;
-    const lineHeight = leaf.node.lineHeight ?? s.lineHeight;
-    const letterSpacing = leaf.node.tracking;
-    const textTransform = leaf.node.caps ? 'uppercase' : undefined;
-    const measured = (fontSize: number) =>
-      estimateTextHeight({
-        text, fontSize, boxWidthPx: box.w, lineHeight, fontFamily, fontWeight,
-        ...(letterSpacing !== undefined ? { letterSpacing } : {}),
-        ...(textTransform ? { textTransform } : {}),
-      });
+    // A drop-cap paragraph is measured as the composer builds it (three lines beside the
+    // cap, then the rest), at the same wrap safety it is split with.
+    const measured = (fontSize: number) => leafTextHeight(leaf.node, text, fontSize, box.w, fonts, leaf.node.dropCap ? WRAP_SAFETY : 1);
 
     // At the size the design ASKED for, does the copy fit?
     const wantedH = measured(size.max);
+    // Fitting shrinks copy that does not fit until it does, so it then fills its box.
+    textInk.set(leaf, { y: box.y, h: wantedH > box.h ? box.h : wantedH });
     if (wantedH > box.h * 1.02) {
       // What size does fit? (The composer will shrink to roughly this.)
       let fits = size.min;
@@ -425,6 +508,20 @@ export function fitReport(solved: SolvedLayout, content: ResolvedContent, fonts:
     }
   }
 
+  // ── Dead bands: full-width stripes that print nothing ───────────────────────
+  for (const band of deadBands(inkSpans(solved, content, textInk), solved.page.height)) {
+    const h = band.y1 - band.y0;
+    findings.push({
+      kind: 'deadband',
+      where: 'the page',
+      detail:
+        `nothing prints across the full width from y=${band.y0} to y=${band.y1} — a ${h}px dead band ` +
+        `(${pct(h / solved.page.height)} of the page height). Usually a text track far taller than its copy: ` +
+        `size headings/title rows with sizing:"content" and give the room to a photograph or to the body, ` +
+        `or say the air is deliberate with a "spacer" leaf.`,
+    });
+  }
+
   const emptyShare = emptyArea / pageArea;
   const slackShare = findings.reduce((n, f) => n + (f.kind === 'slack' ? (f.share ?? 0) : 0), 0);
   // Measured over EVERY leaf, not just the ones that produced a finding — the
@@ -478,7 +575,9 @@ export function fitHint(fit: Fit, limit = 6): string {
     );
   }
   if (fit.findings.length === 0 && pageLines.length === 0) return '';
-  const rank: Record<FitFinding['kind'], number> = { loud: 0, decor: 1, square: 2, shrunk: 3, giant: 4, measure: 5, orphan: 6, slack: 7, overflow: 8 };
+  const rank: Record<FitFinding['kind'], number> = {
+    loud: 0, decor: 1, sliver: 2, deadband: 3, square: 4, shrunk: 5, giant: 6, measure: 7, orphan: 8, slack: 9, overflow: 10,
+  };
   const lines = [...fit.findings]
     // Worst KIND first, and within slack the biggest waste first — a box swallowing a
     // fifth of the page should not be buried under three loose captions.
@@ -544,7 +643,13 @@ export function seriousFlaws(fit: Fit): number {
     if (f.kind === 'slack') return (f.share ?? 0) >= SLACK_SERIOUS_SHARE;
     // `giant` stays advisory: the report cannot see the page kind, and a cover
     // masthead legitimately runs far past the role ceiling.
-    return f.kind === 'loud' || f.kind === 'square' || f.kind === 'shrunk' || f.kind === 'measure' || f.kind === 'decor' || f.kind === 'orphan';
+    // `sliver` and `deadband` are counted: a photo cut into a strip and a stripe of the
+    // sheet with nothing on it are wrong on any page kind — and until they were counted,
+    // a page carrying both measured CLEAN and shipped on its first attempt.
+    return (
+      f.kind === 'loud' || f.kind === 'square' || f.kind === 'shrunk' || f.kind === 'measure' || f.kind === 'decor' ||
+      f.kind === 'orphan' || f.kind === 'sliver' || f.kind === 'deadband'
+    );
   }).length;
   // The AGGREGATES, counted once each. Many small slack boxes are individually
   // advice and collectively THE complaint ("more space than elements") — a page

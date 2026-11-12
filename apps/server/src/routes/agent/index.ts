@@ -15,6 +15,7 @@ import { repairToolResults } from '../../lib/agent/repairMessages.js'
 import { buildSystemPrompt, type PageContext } from '../../lib/agent/prompt.js'
 import { buildTools } from '../../lib/agent/tools.js'
 import { rateLimit } from '../../lib/rateLimit.js'
+import { aiSurface } from '../../lib/agent/aiUsageRoute.js'
 
 const router = Router()
 
@@ -22,7 +23,8 @@ const router = Router()
 // is expensive. Cap it per caller (keyed by account, else IP) to stop a runaway
 // client or an abusive loop from hammering the model. attachAccountOptional runs
 // first so signed-in users are keyed by account, not a shared proxy IP.
-router.post('/chat', attachAccountOptional, rateLimit('agent-chat', 20, 60_000), async (req, res) => {
+// aiSurface: every model call below is metered as the site chat on AI Activity.
+router.post('/chat', attachAccountOptional, rateLimit('agent-chat', 20, 60_000), aiSurface('concierge'), async (req, res) => {
   if (!isAgentConfigured()) {
     res
       .status(503)

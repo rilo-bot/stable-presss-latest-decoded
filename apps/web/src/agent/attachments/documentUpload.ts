@@ -64,8 +64,13 @@ function ingestTimeout(ms: number): { signal: AbortSignal; timedOut: () => boole
 /** Send one file to the ingest endpoint and return the analysed attachment.
  *  `maxPages` caps how many pages of a SCANNED PDF are OCR'd up front — the
  *  generation preview only needs a few, so it passes a small number to avoid a
- *  multi-minute read. Omitted (assistant attach) → the server reads up to its cap. */
-export async function ingestFile(file: File, opts?: { maxPages?: number }): Promise<DocAttachment> {
+ *  multi-minute read. Omitted (assistant attach) → the server reads up to its cap.
+ *  `usage` labels the read on AI Activity (which AI it was for, and what about);
+ *  without it the read counts as Documents. It grants nothing. */
+export async function ingestFile(
+  file: File,
+  opts?: { maxPages?: number; usage?: { surface: string; entityType?: string; entityId?: string } },
+): Promise<DocAttachment> {
   let contentType = contentTypeFor(file);
   // Downscale images before sending (same 1568px sweet spot as chat attachments):
   // a full-resolution camera/export JPG can exceed what the vision provider
@@ -83,6 +88,11 @@ export async function ingestFile(file: File, opts?: { maxPages?: number }): Prom
   const token = useAuthStore.getState().token;
   const query = new URLSearchParams({ filename: file.name });
   if (opts?.maxPages) query.set('maxPages', String(opts.maxPages));
+  if (opts?.usage) {
+    query.set('surface', opts.usage.surface);
+    if (opts.usage.entityType) query.set('entityType', opts.usage.entityType);
+    if (opts.usage.entityId) query.set('entityId', opts.usage.entityId);
+  }
   let res: Response;
   const timeout = ingestTimeout(INGEST_TIMEOUT_MS);
   try {

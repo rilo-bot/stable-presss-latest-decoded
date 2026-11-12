@@ -67,7 +67,9 @@ const Z_RULE = 989;
 /** Stable element ids. They let the folio be found again (restampFolio) and let a
  *  later pass strip or restyle furniture without guessing from geometry. */
 export const FOLIO_ELEMENT_ID = 'furniture-folio';
-const HEAD_LABEL_ID = 'furniture-head-label';
+/** The running head's section label — exported for contentsSync, which reads a page's
+ *  section title back off it to match a contents entry titled by section. */
+export const HEAD_LABEL_ID = 'furniture-head-label';
 const HEAD_TITLE_ID = 'furniture-head-title';
 const HEAD_RULE_ID = 'furniture-head-rule';
 const FOLIO_RULE_ID = 'furniture-folio-rule';

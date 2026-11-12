@@ -84,6 +84,33 @@ export function sniffImageType(b: Buffer): string | null {
   return null;
 }
 
+/**
+ * The frame shapes the image model accepts through `image_config.aspect_ratio`
+ * (Gemini image models on OpenRouter). Ordered narrow → wide.
+ */
+export const IMAGE_ASPECT_RATIOS = ['9:16', '2:3', '3:4', '4:5', '1:1', '5:4', '4:3', '3:2', '16:9', '21:9'] as const;
+export type ImageAspectRatio = (typeof IMAGE_ASPECT_RATIOS)[number];
+
+/**
+ * The supported aspect ratio closest to a box, compared in LOG space so 2:1 and
+ * 1:2 are equally far from square. A generated picture is composed for this
+ * frame; `fit: cover` then trims only the small difference, not half the image.
+ */
+export function nearestAspectRatio(w: number, h: number): ImageAspectRatio {
+  const target = Math.log(Math.max(1, w) / Math.max(1, h));
+  let best: ImageAspectRatio = '1:1';
+  let bestGap = Infinity;
+  for (const ar of IMAGE_ASPECT_RATIOS) {
+    const [a, b] = ar.split(':').map(Number) as [number, number];
+    const gap = Math.abs(Math.log(a / b) - target);
+    if (gap < bestGap) {
+      best = ar;
+      bestGap = gap;
+    }
+  }
+  return best;
+}
+
 /** Box ratio → the orientation to ask for. The SAME rule the stock path uses to
  *  pick a Pexels orientation, so a slot gets the same shape whichever rung of
  *  the ladder ends up filling it. */

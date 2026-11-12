@@ -204,7 +204,8 @@ export interface UsageReport {
   days: UsageDay[]
   totals: UsageTotals & { costUsd: number; runs: number }
   /** The CALLER's own budget, whatever the scope — the cap is per user. */
-  today: { date: string; spentUsd: number; budgetUsd: number }
+  /** budgetUsd is null when no daily cap is configured (the default). */
+  today: { date: string; spentUsd: number; budgetUsd: number | null }
 }
 
 /**

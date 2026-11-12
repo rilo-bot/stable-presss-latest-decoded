@@ -20,6 +20,7 @@ import { isAdmin } from '../../lib/rbac.js'
 import { isAgentConfigured } from '../../lib/agent/provider.js'
 import { ingestDocument, ingestKind } from '../../lib/agent/documentIngest.js'
 import { rateLimit } from '../../lib/rateLimit.js'
+import { aiSurface } from '../../lib/agent/aiUsageRoute.js'
 
 const router = Router()
 
@@ -47,7 +48,11 @@ const rawDoc = raw({ type: () => true, limit: '50mb' })
 // hundreds of OCR pages a minute. Generous enough that no real editing session
 // notices, low enough that a runaway loop stops being a spend incident.
 const ingestLimit = rateLimit('agent-ingest', 30, 60 * 60_000)
-router.post('/ingest', ingestLimit, rawDoc, async (req, res) => {
+// AI Activity: 'documents' unless the caller hints the surface it reads for (the
+// Magazine Builder's AI panel sends ?surface=magazine-builder&entityType=magazine&entityId=).
+// After rawDoc, so the attribution survives the body parser.
+const ingestUsage = aiSurface('documents', { feature: 'document-read', acceptHint: true })
+router.post('/ingest', ingestLimit, rawDoc, ingestUsage, async (req, res) => {
   if (!isAgentConfigured()) {
     res.status(503).json({ error: 'The studio assistant is resting — OPENROUTER_API_KEY is not configured on the server.' })
     return

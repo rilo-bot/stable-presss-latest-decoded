@@ -24,6 +24,7 @@ import { generateText } from 'ai'
 import { attachAccount } from '../../lib/auth.js'
 import { rateLimit } from '../../lib/rateLimit.js'
 import { getAgentModel, isAgentConfigured } from '../../lib/agent/provider.js'
+import { aiSurface } from '../../lib/agent/aiUsageRoute.js'
 
 const router = Router()
 
@@ -31,6 +32,16 @@ router.use(attachAccount)
 // One model call per press, so this is 60 composed fields per 5 minutes per
 // account — far more than anyone fills in by hand, and closed to a loop.
 router.use(rateLimit('agent-compose', 60, 5 * 60_000))
+// AI Activity: every field composed here is metered as Compose, under the field's form.
+router.use(
+  aiSurface('compose', {
+    context: (req) => {
+      // 'article', 'horse', 'blog post', 'media item'… → the feature, slugged.
+      const kind = (req.body as ComposeBody | undefined)?.entityKind
+      return typeof kind === 'string' && /^[a-z][a-z0-9 -]{0,31}$/.test(kind) ? { feature: kind.replace(/ /g, '-') } : {}
+    },
+  }),
+)
 
 interface ComposeBody {
   field?: { key?: string; label?: string }

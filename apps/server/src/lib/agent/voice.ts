@@ -7,6 +7,9 @@
 // audio/text back. Swap models with VOICE_STT_MODEL / VOICE_TTS_MODEL / VOICE_TTS_VOICE.
 // ---------------------------------------------------------------------------
 
+import { currentAiUsage, recordAiUsage } from './aiUsage.js'
+import { speechCostUsd, transcriptionUsage, type TranscriptionUsage } from './voiceUsage.js'
+
 const API_KEY = (process.env.OPENAI_API_KEY ?? '').trim()
 const OPENAI = 'https://api.openai.com/v1'
 /** A stalled OpenAI call otherwise holds the request for undici's 5-minute
@@ -58,15 +61,53 @@ async function transcribeWith(model: string, audio: Buffer, type: string): Promi
   form.append('model', model)
   if (STT_LANGUAGE) form.append('language', STT_LANGUAGE)
   if (STT_LANGUAGE === 'en') form.append('prompt', ENGLISH_PROMPT)
-  const r = await fetch(`${OPENAI}/audio/transcriptions`, {
-    method: 'POST',
-    headers: { Authorization: `Bearer ${API_KEY}` },
-    body: form,
-    signal: AbortSignal.timeout(OPENAI_TIMEOUT_MS),
+  const started = Date.now()
+  try {
+    const r = await fetch(`${OPENAI}/audio/transcriptions`, {
+      method: 'POST',
+      headers: { Authorization: `Bearer ${API_KEY}` },
+      body: form,
+      signal: AbortSignal.timeout(OPENAI_TIMEOUT_MS),
+    })
+    if (!r.ok) throw new Error(`transcription ${r.status}: ${await r.text()}`)
+    const data = (await r.json()) as { text?: string; usage?: TranscriptionUsage }
+    meterVoice('transcription', model, started, true, transcriptionUsage(model, data.usage))
+    return (data.text ?? '').trim()
+  } catch (err) {
+    meterVoice('transcription', model, started, false, NO_USAGE, err)
+    throw err
+  }
+}
+
+const NO_USAGE = { inputTokens: 0, outputTokens: 0, costUsd: undefined }
+
+/**
+ * One AI Activity record per OpenAI voice call (they bypass the metered
+ * OpenRouter models). The surface is the caller's context — the voice route
+ * tags 'voice' — and falls back to 'voice' if called from anywhere else.
+ */
+function meterVoice(
+  kind: 'transcription' | 'speech',
+  model: string,
+  started: number,
+  ok: boolean,
+  usage: { inputTokens: number; outputTokens: number; costUsd: number | undefined },
+  err?: unknown,
+): void {
+  recordAiUsage({
+    surface: currentAiUsage().surface ?? 'voice',
+    model: `openai/${model}`,
+    kind,
+    inputTokens: usage.inputTokens,
+    outputTokens: usage.outputTokens,
+    cachedInputTokens: 0,
+    reasoningTokens: 0,
+    costUsd: usage.costUsd,
+    costSource: 'estimate',
+    durationMs: Date.now() - started,
+    ok,
+    ...(err ? { error: (err instanceof Error ? err.message : String(err)).slice(0, 300) } : {}),
   })
-  if (!r.ok) throw new Error(`transcription ${r.status}: ${await r.text()}`)
-  const data = (await r.json()) as { text?: string }
-  return (data.text ?? '').trim()
 }
 
 /** Transcribe a recorded audio clip to English text. */
@@ -86,13 +127,25 @@ export async function transcribeAudio(audio: Buffer, mimetype: string): Promise<
 
 /** Synthesise speech for a short reply. Returns MP3 bytes. */
 export async function synthesizeSpeech(text: string): Promise<{ audio: Buffer; mediaType: string }> {
-  const r = await fetch(`${OPENAI}/audio/speech`, {
-    method: 'POST',
-    headers: { Authorization: `Bearer ${API_KEY}`, 'content-type': 'application/json' },
-    body: JSON.stringify({ model: TTS_MODEL, input: text, voice: TTS_VOICE, response_format: 'mp3' }),
-    signal: AbortSignal.timeout(OPENAI_TIMEOUT_MS),
-  })
-  if (!r.ok) throw new Error(`speech ${r.status}: ${await r.text()}`)
-  const audio = Buffer.from(await r.arrayBuffer())
-  return { audio, mediaType: 'audio/mpeg' }
+  const started = Date.now()
+  try {
+    const r = await fetch(`${OPENAI}/audio/speech`, {
+      method: 'POST',
+      headers: { Authorization: `Bearer ${API_KEY}`, 'content-type': 'application/json' },
+      body: JSON.stringify({ model: TTS_MODEL, input: text, voice: TTS_VOICE, response_format: 'mp3' }),
+      signal: AbortSignal.timeout(OPENAI_TIMEOUT_MS),
+    })
+    if (!r.ok) throw new Error(`speech ${r.status}: ${await r.text()}`)
+    const audio = Buffer.from(await r.arrayBuffer())
+    // A speech response carries no usage: the input is the text (≈ 4 chars a token).
+    meterVoice('speech', TTS_MODEL, started, true, {
+      inputTokens: Math.ceil(text.length / 4),
+      outputTokens: 0,
+      costUsd: speechCostUsd(TTS_MODEL, text.length),
+    })
+    return { audio, mediaType: 'audio/mpeg' }
+  } catch (err) {
+    meterVoice('speech', TTS_MODEL, started, false, NO_USAGE, err)
+    throw err
+  }
 }

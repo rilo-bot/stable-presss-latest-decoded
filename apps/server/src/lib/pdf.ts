@@ -215,6 +215,18 @@ async function getBrowser(): Promise<Browser> {
   return browser
 }
 
+/**
+ * The shared headless Chromium, for other server-side renderers in the same
+ * process (the magazine generator's Visual Critic previews — see
+ * lib/magazineV2/renderPreview.ts). One browser per process, so a second
+ * renderer must borrow this one rather than launch its own. Callers open and
+ * close their OWN pages and must never close or reset the browser itself: a PDF
+ * render may be using it at the same moment.
+ */
+export async function getSharedBrowser(): Promise<Browser> {
+  return getBrowser()
+}
+
 /** The page's own pixel box, so one magazine page maps to exactly one sheet. */
 export interface SheetSize {
   width: number

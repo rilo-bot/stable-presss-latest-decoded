@@ -33,6 +33,7 @@ import { buildOperatorTools } from '../../lib/agent/operator/tools.js'
 import { dailyBudgetUsd, normaliseRunId, recordStep, spentTodayUsd } from '../../lib/agent/operator/runs.js'
 import type { Request, Response, NextFunction } from 'express'
 import { accountCan, type AccountUser } from '../../lib/effectiveAccess.js'
+import { withAiUsage } from '../../lib/agent/aiUsage.js'
 import {
   clampInt,
   getRun,
@@ -153,7 +154,9 @@ async function operatorTurn(req: Request, res: Response): Promise<void> {
   }
 
   const account = req.account!
-  if ((await spentTodayUsd(account.id)) >= dailyBudgetUsd()) {
+  // Only when a cap is configured (off by default) — and then without a DB read otherwise.
+  const cap = dailyBudgetUsd()
+  if (cap !== null && (await spentTodayUsd(account.id)) >= cap) {
     res.status(429).json({ error: "You've reached today's Stable Hand limit — it resets tomorrow." })
     return
   }
@@ -185,30 +188,37 @@ async function operatorTurn(req: Request, res: Response): Promise<void> {
     if (!res.writableFinished) abort.abort()
   })
 
-  try {
-    const result = streamText({
-      model: getOperatorModel(heavy),
-      system: buildOperatorSystem(account, pageContext),
-      messages: await convertToModelMessages(labelJobUpdates(repaired.messages)),
-      // Forward the caller's Bearer token: data tools call our own routes AS
-      // this user, so the route — not the agent — enforces RBAC.
-      tools: buildOperatorTools(account, req.headers.authorization),
-      stopWhen: stepCountIs(30),
-      abortSignal: abort.signal,
-      // Fire-and-forget: the log must never slow or break the stream.
-      onStepFinish: (step) => {
-        void recordStep(meta, step)
-      },
-      onError: ({ error }) => {
-        console.error('[agent-operator] model error:', error)
-      },
-    })
+  // AI Activity: every model call of this request belongs to this run (the run
+  // id is the session). The stream and its pipe start INSIDE the context, so the
+  // later steps it drives keep it too.
+  const usage = { surface: 'stable-hand' as const, userId: account.id, userName: account.name || undefined, sessionId: meta.runId }
 
-    result.pipeUIMessageStreamToResponse(res, {
-      onError: (error) => {
-        console.error('[agent-operator] stream error:', error)
-        return "Sorry — I hit a snag just then. Ask me to pick up where I left off and I'll check the screen first."
-      },
+  try {
+    await withAiUsage(usage, async () => {
+      const result = streamText({
+        model: getOperatorModel(heavy),
+        system: buildOperatorSystem(account, pageContext),
+        messages: await convertToModelMessages(labelJobUpdates(repaired.messages)),
+        // Forward the caller's Bearer token: data tools call our own routes AS
+        // this user, so the route — not the agent — enforces RBAC.
+        tools: buildOperatorTools(account, req.headers.authorization),
+        stopWhen: stepCountIs(30),
+        abortSignal: abort.signal,
+        // Fire-and-forget: the log must never slow or break the stream.
+        onStepFinish: (step) => {
+          void recordStep(meta, step)
+        },
+        onError: ({ error }) => {
+          console.error('[agent-operator] model error:', error)
+        },
+      })
+
+      result.pipeUIMessageStreamToResponse(res, {
+        onError: (error) => {
+          console.error('[agent-operator] stream error:', error)
+          return "Sorry — I hit a snag just then. Ask me to pick up where I left off and I'll check the screen first."
+        },
+      })
     })
   } catch (err) {
     console.error('[agent-operator] error:', err)
@@ -220,7 +230,8 @@ async function operatorTurn(req: Request, res: Response): Promise<void> {
 
 // ── Stable Hand Activity (read-only) ─────────────────────────────────────────
 //
-// The run log behind /production-system/stablehand-activity. Same staff gate as
+// The run log behind /production-system/ai-activity/stable-hand (AI Activity's
+// Stable Hand view; the old /stablehand-activity path redirects there). Same staff gate as
 // the operator itself: anyone who can run The Stable Hand can see their OWN runs.
 //
 // EVERYONE's runs need `analytics.view` ("production and audience numbers").

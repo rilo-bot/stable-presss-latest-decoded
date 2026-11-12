@@ -13,6 +13,7 @@ import { Router } from 'express'
 import { streamText, convertToModelMessages, stepCountIs, type UIMessage } from 'ai'
 import { attachAccount } from '../../lib/auth.js'
 import { rateLimit } from '../../lib/rateLimit.js'
+import { aiSurface, entityFrom } from '../../lib/agent/aiUsageRoute.js'
 import { getAgentModel, isAgentConfigured } from '../../lib/agent/provider.js'
 import { repairToolResults } from '../../lib/agent/repairMessages.js'
 import { buildBlogSystemPrompt, type BlogContext } from '../../lib/agent/blogPrompt.js'
@@ -24,7 +25,12 @@ const router = Router()
 // must already be signed in to reach — yet it ran on `attachAccountOptional`, so an
 // anonymous caller could spend the model key with no account to meter it against.
 // Matches what agentCompose and agentInstant already do.
-router.post('/chat', attachAccount, rateLimit('agent-blog', 30, 60_000), async (req, res) => {
+// AI Activity: metered as Blog AI, against the open post when there is one.
+const blogUsage = aiSurface('blog-ai', {
+  context: (req) => entityFrom('blog', (req.body as { blogContext?: BlogContext })?.blogContext?.postId),
+})
+
+router.post('/chat', attachAccount, rateLimit('agent-blog', 30, 60_000), blogUsage, async (req, res) => {
   if (!isAgentConfigured()) {
     res.status(503).json({ error: 'The Blog Studio assistant is resting — OPENROUTER_API_KEY is not configured on the server.' })
     return
