@@ -17,7 +17,7 @@ const studioActions: CatalogSurface['actions'] = [
     name: 'profile.askStudio',
     description:
       "Type a request into this profile's Stable Studio assistant and send it (e.g. \"fill in the pedigree\", \"suggest a pull-quote\"); waits for the reply and returns it with changedDirectly (fields it edited) and connectionsChanged. The studio EDITS THE PROFILE DIRECTLY — those changes are saved; profile.undo reverts the last one. Ask it for one clear change at a time and check the result.",
-    args: '{ prompt: string }',
+    args: '{ prompt: string /* 1-2000 chars */ }',
   },
   {
     name: 'profile.applyProposals',

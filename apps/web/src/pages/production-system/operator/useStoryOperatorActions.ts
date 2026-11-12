@@ -276,6 +276,14 @@ export function useStoryOperatorActions(s: ProductionSystemState, enabled: boole
             ? 'Story Studio is still working. Call stories.studioReply later or check the drawer.'
             : 'Story Studio replied but has not filed yet — it usually asks about photo, tier, category and horses. Answer with stories.studioReply({ message }); ask the user anything you cannot answer from context.',
       };
+    } catch (err) {
+      // Stop must also stop the studio turn THIS action started (as the profile
+      // pack does) — otherwise Story Studio keeps writing and may still file a
+      // draft after the user pressed Stop. Its own Stop button.
+      if (ui.signal.aborted || (err as Error)?.name === 'AbortError') {
+        anchorEl<HTMLButtonElement>('story.studio-stop')?.click();
+      }
+      throw err;
     } finally {
       unsub();
     }
@@ -330,8 +338,13 @@ export function useStoryOperatorActions(s: ProductionSystemState, enabled: boole
         }
         await ui.waitFor('story.title-input', 6_000);
         // A half-typed story from an earlier session is restored into the form —
-        // discard it so this draft is exactly what was asked for.
-        if (hasAnchor('story.form-discard-draft')) await ui.click('story.form-discard-draft', 'Discard old draft');
+        // that is the USER's unsaved work (useFormDraft), and this action has no
+        // confirm card: ask before discarding it, and on No leave it open.
+        if (hasAnchor('story.form-discard-draft')) {
+          const ok = await ui.confirm('The File a Story form has an unsaved draft from an earlier session. Discard that draft so I can write this story from scratch?');
+          if (!ok) throw new Error('Stopped: the user chose to keep their unsaved story draft. The form is left open with it.');
+          await ui.click('story.form-discard-draft', 'Discard old draft');
+        }
 
         ui.step('Typing the headline');
         await ui.type('story.title-input', a.title, { clear: true });
@@ -469,6 +482,8 @@ export function useStoryOperatorActions(s: ProductionSystemState, enabled: boole
   const confirmLiveEdit = (a: { storyId: string }) => {
     try {
       const st = resolveStory(a.storyId);
+      // Not editable by this user: run() refuses — no card first.
+      if (!canEditArticle(st.author, me())) return null;
       return st.status === 'published' ? `Edit the LIVE story “${st.title}”? Readers see the change as soon as it saves.` : null;
     } catch {
       return null;

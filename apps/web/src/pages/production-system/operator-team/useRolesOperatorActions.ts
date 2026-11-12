@@ -119,8 +119,53 @@ const roleDetail = (r: Role) => ({
 
 const scopeLine = (s: Array<[ScreenMeta, Scope]>) => s.map(([sc, v]) => `${sc.label}: ${scopeWord(v)}`).join(', ');
 
+/** Revoking a '.view' clears its whole row in the grid — the full set of ids a
+ *  revoke really removes (so the confirm card names what actually goes). */
+function expandRevoke(revoke: string[], screens: ScreenMeta[]): Set<string> {
+  const out = new Set(revoke);
+  for (const id of revoke) {
+    if (!id.endsWith('.view')) continue;
+    const screen = screens.find((x) => `${x.id}.view` === id);
+    for (const v of screen?.verbs ?? []) out.add(`${screen!.id}.${v}`);
+  }
+  return out;
+}
+
+/** Scope entries that differ from what the saved role already has. */
+const changedScopes = (role: Role, scopes: Array<[ScreenMeta, Scope]>) =>
+  scopes.filter(([x, v]) => ((role.scopes ?? {})[x.id] ?? 'own') !== v);
+
+/**
+ * True when the grid holds edits the user has not saved (a role being created,
+ * or an open draft that differs from its saved role). Clicking a role chip
+ * resets the draft, so a READ action (roles.open, no confirm card) must not
+ * click while this is true — it would silently throw the user's work away.
+ */
+function hasUnsavedEdits(s: RolesOperatorInput): boolean {
+  const d = s.draft;
+  if (!d) return false;
+  if (s.creating) return !!d.label.trim() || !!d.description?.trim() || d.permissions.length > 0;
+  const saved = s.roles.find((r) => r.name === s.selected);
+  if (!saved) return false;
+  const list = (x: string[]) => [...x].sort().join('|');
+  const scopes = (m: Record<string, string>) =>
+    JSON.stringify(Object.entries(m).filter(([, v]) => v !== 'own').sort());
+  return (
+    d.label !== saved.label ||
+    (d.description ?? '') !== (saved.description ?? '') ||
+    (d.icon ?? 'Shield') !== (saved.icon ?? 'Shield') ||
+    list(d.permissions ?? []) !== list(saved.permissions ?? []) ||
+    scopes(d.scopes ?? {}) !== scopes(saved.scopes ?? {})
+  );
+}
+
 export function useRolesOperatorActions(input: RolesOperatorInput): void {
   const live = useLive(input);
+
+  /** Every write opens a role (or New role), which resets the grid — say so on
+   *  the confirm card when the user has unsaved edits there. */
+  const noteDiscard = (q: string): string =>
+    hasUnsavedEdits(live.current) ? `${q} (Your unsaved edits on the Roles screen will be discarded.)` : q;
 
   /** Press Save and wait for the draft to close (success) or an error toast. */
   async function save(ui: UiDriver): Promise<void> {
@@ -190,6 +235,15 @@ export function useRolesOperatorActions(input: RolesOperatorInput): void {
     run: async (a, ui) => {
       const r = resolveRole(a.role, live.current.roles);
       if (!r.hit) throw new Error(r.error);
+      // Clicking a chip resets the open draft — never discard unsaved edits
+      // from a read. Answer from the store and leave the screen as it is.
+      if (hasUnsavedEdits(live.current)) {
+        return {
+          ...roleDetail(r.hit),
+          openedOnScreen: false,
+          note: 'Not opened in the grid: the user has unsaved role edits open, and opening another role would discard them.',
+        };
+      }
       await ui.click(`roles.role-${r.hit.name}`, r.hit.label);
       await waitUntil(() => live.current.selected === r.hit!.name, { timeoutMs: 2000, signal: ui.signal });
       return roleDetail(r.hit);
@@ -228,13 +282,15 @@ export function useRolesOperatorActions(input: RolesOperatorInput): void {
       if (!s.canManageRoles) return null;
       const p = plan(a);
       if ('error' in p) return null;
+      // A duplicate name is refused by run() — no card for an illegal move.
+      if (s.roles.some((r) => normKey(r.label) === normKey(a.label))) return null;
       const danger = p.perms.filter((x) => DANGEROUS.has(x));
-      return (
+      return noteDiscard(
         `Create the role "${a.label}" with ${p.perms.length} permission(s)` +
         (p.perms.length ? `: ${p.perms.join(', ')}` : '') +
         (p.scopes.length ? `; scope ${scopeLine(p.scopes)}` : '') +
         (danger.length ? `. Warning: ${danger.join(', ')} lets holders change who works here.` : '') +
-        '?'
+        '?',
       );
     },
     run: async (a, ui) => {
@@ -278,15 +334,21 @@ export function useRolesOperatorActions(input: RolesOperatorInput): void {
       if (!s.canManageRoles) return null;
       const r = resolveRole(a.role, s.roles);
       if (!r.hit || r.hit.isImmutable || checkPermissions([...a.grant, ...a.revoke], s.screens)) return null;
+      // Name what REALLY changes: grants not yet held, and every held id the
+      // revoke clears (a '.view' takes its whole row). Nothing → no card.
+      const held = new Set(r.hit.permissions);
+      const adds = a.grant.filter((p) => !held.has(p));
+      const removes = [...expandRevoke(a.revoke, s.screens)].filter((p) => held.has(p));
+      if (!adds.length && !removes.length) return null;
       const bits = [
-        a.grant.length && `grant ${a.grant.join(', ')}`,
-        a.revoke.length && `revoke ${a.revoke.join(', ')}`,
+        adds.length && `grant ${adds.join(', ')}`,
+        removes.length && `revoke ${removes.join(', ')}`,
       ].filter(Boolean);
-      const danger = a.grant.filter((p) => DANGEROUS.has(p));
-      return (
-        `Change the "${r.hit.label}" role (${r.hit.assigneeCount ?? 0} holder(s)): ${bits.join('; ') || 'no changes'}` +
+      const danger = adds.filter((p) => DANGEROUS.has(p));
+      return noteDiscard(
+        `Change the "${r.hit.label}" role (${r.hit.assigneeCount ?? 0} holder(s)): ${bits.join('; ')}` +
         (danger.length ? `. Warning: ${danger.join(', ')} lets holders change who works here.` : '') +
-        '?'
+        '?',
       );
     },
     run: async (a, ui) => {
@@ -298,20 +360,20 @@ export function useRolesOperatorActions(input: RolesOperatorInput): void {
       const bad = checkPermissions([...a.grant, ...a.revoke], s.screens);
       if (bad) throw new Error(bad);
       const role = r.hit;
+      // A .view that other verbs on its row depend on is LOCKED: clicking it
+      // toggles the whole row, which GRANTS the row when it is incomplete. So
+      // revoking a .view first clears that row's other verbs, then the view.
+      const revoke = expandRevoke(a.revoke, s.screens);
+      // Nothing to change (confirm showed no card): don't open + re-save it.
+      const held0 = new Set(role.permissions);
+      if (a.grant.every((p) => held0.has(p)) && ![...revoke].some((p) => held0.has(p))) {
+        return { ok: true, unchanged: true, role: roleDetail(role) };
+      }
 
       ui.step(`Editing the "${role.label}" role`);
       await openForEdit(ui, role);
 
       for (const id of a.grant) await setBox(ui, id, true);
-      // A .view that other verbs on its row depend on is LOCKED: clicking it
-      // toggles the whole row, which GRANTS the row when it is incomplete. So
-      // revoking a .view first clears that row's other verbs, then the view.
-      const revoke = new Set(a.revoke);
-      for (const id of a.revoke) {
-        if (!id.endsWith('.view')) continue;
-        const screen = s.screens.find((x) => `${x.id}.view` === id);
-        for (const v of screen?.verbs ?? []) revoke.add(`${screen!.id}.${v}`);
-      }
       const order = [...revoke].sort((x, y) => Number(x.endsWith('.view')) - Number(y.endsWith('.view')));
       for (const id of order) await setBox(ui, id, false);
 
@@ -344,10 +406,13 @@ export function useRolesOperatorActions(input: RolesOperatorInput): void {
       if (!r.hit || r.hit.isImmutable) return null;
       const sc = resolveScopes(a.scopes, s.screens, r.hit.permissions);
       if ('error' in sc) return null;
-      const widen = sc.scopes.filter(([, v]) => v === 'all').map(([x]) => x.label);
-      return (
-        `Change the "${r.hit.label}" role (${r.hit.assigneeCount ?? 0} holder(s)) — ${scopeLine(sc.scopes)}?` +
-        (widen.length ? ` Everyone lets holders edit/delete other people's ${widen.join(', ')} records.` : '')
+      // Only the scopes that actually change; all already set → no card.
+      const changed = changedScopes(r.hit, sc.scopes);
+      if (!changed.length) return null;
+      const widen = changed.filter(([, v]) => v === 'all').map(([x]) => x.label);
+      return noteDiscard(
+        `Change the "${r.hit.label}" role (${r.hit.assigneeCount ?? 0} holder(s)) — ${scopeLine(changed)}?` +
+        (widen.length ? ` Everyone lets holders edit/delete other people's ${widen.join(', ')} records.` : ''),
       );
     },
     run: async (a, ui) => {
@@ -359,6 +424,8 @@ export function useRolesOperatorActions(input: RolesOperatorInput): void {
       const sc = resolveScopes(a.scopes, s.screens, r.hit.permissions);
       if ('error' in sc) throw new Error(sc.error);
       const role = r.hit;
+      // Already as asked (confirm showed no card): don't open + re-save it.
+      if (!changedScopes(role, sc.scopes).length) return { ok: true, unchanged: true, role: roleDetail(role) };
       ui.step(`Setting scopes on "${role.label}"`);
       await openForEdit(ui, role);
       for (const [screen, scope] of sc.scopes) await setScopeToggle(ui, screen, scope);
@@ -389,10 +456,15 @@ export function useRolesOperatorActions(input: RolesOperatorInput): void {
       if (!r.hit || r.hit.isImmutable) return null;
       const bits = [
         a.label !== undefined && a.label !== r.hit.label && `rename it to "${a.label}"`,
-        a.description !== undefined && `set its description to "${a.description}"`,
+        a.description !== undefined &&
+          a.description !== (r.hit.description ?? '') &&
+          `set its description to "${a.description}"`,
       ].filter(Boolean);
       if (!bits.length) return null;
-      return `Change the "${r.hit.label}" role: ${bits.join(' and ')}? Holders see the new name everywhere.`;
+      // A name another role already has is refused by run() — no card.
+      const hit = r.hit;
+      if (a.label && s.roles.some((x) => x.name !== hit.name && normKey(x.label) === normKey(a.label))) return null;
+      return noteDiscard(`Change the "${hit.label}" role: ${bits.join(' and ')}? Holders see the new name everywhere.`);
     },
     run: async (a, ui) => {
       const s = live.current;
@@ -404,6 +476,10 @@ export function useRolesOperatorActions(input: RolesOperatorInput): void {
       if (a.label && s.roles.some((x) => x.name !== role.name && normKey(x.label) === normKey(a.label))) {
         throw new Error(`Another role is already called "${a.label}".`);
       }
+      // Same name and description (confirm showed no card): nothing to save.
+      const sameLabel = a.label === undefined || a.label === role.label;
+      const sameDesc = a.description === undefined || a.description === (role.description ?? '');
+      if (sameLabel && sameDesc) return { ok: true, unchanged: true, role: roleJson(role) };
       await openForEdit(ui, role);
       if (a.label !== undefined) await ui.type('roles.label', a.label, { clear: true });
       if (a.description !== undefined) await ui.type('roles.description', a.description, { clear: true });
@@ -426,7 +502,9 @@ export function useRolesOperatorActions(input: RolesOperatorInput): void {
       const r = resolveRole(a.role, s.roles);
       if (!r.hit || r.hit.isSystem || r.hit.isImmutable) return null;
       const n = r.hit.assigneeCount ?? 0;
-      return `Delete the "${r.hit.label}" role? ${n ? `${n} person(s) hold it and will lose that access.` : 'Nobody holds it.'} This cannot be undone.`;
+      return noteDiscard(
+        `Delete the "${r.hit.label}" role? ${n ? `${n} person(s) hold it and will lose that access.` : 'Nobody holds it.'} This cannot be undone.`,
+      );
     },
     run: async (a, ui) => {
       const s = live.current;

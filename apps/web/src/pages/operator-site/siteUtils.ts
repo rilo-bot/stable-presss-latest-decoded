@@ -115,9 +115,11 @@ export function clip(text: string | undefined | null, max = 600): string {
 /** HTML → plain text (for block bodies). */
 export function stripHtml(html: string | undefined | null): string {
   if (!html) return '';
-  const d = document.createElement('div');
-  d.innerHTML = html;
-  return (d.textContent ?? '').replace(/\s+/g, ' ').trim();
+  // DOMParser builds an INERT document. innerHTML on a live-document element
+  // fires handlers like <img onerror> even while detached, and this is raw,
+  // unsanitised blog HTML (the page itself renders it via sanitizeBlogHtml).
+  const doc = new DOMParser().parseFromString(html, 'text/html');
+  return (doc.body?.textContent ?? '').replace(/\s+/g, ' ').trim();
 }
 
 /** ISO-ish date → YYYY-MM-DD (or null). */

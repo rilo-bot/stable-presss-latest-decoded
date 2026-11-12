@@ -290,6 +290,10 @@ async function tick(id: string) {
   let r: JobPollResult;
   try {
     r = await poll();
+    // A poll that resolves to nothing (a changed server shape) would throw on
+    // `r.done` below, outside this try — the job never rescheduled and its
+    // chip showed "running" forever with no [job-update]. Count it as a failure.
+    if (!r || typeof r !== 'object') throw new Error('The job status could not be read.');
   } catch (e) {
     const code = statusOf(e);
     if (code === 401 || code === 403 || code === 404) {

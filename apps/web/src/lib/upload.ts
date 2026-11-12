@@ -16,6 +16,7 @@
  * `fallback` flag on the result tells callers which path was taken.
  */
 import { apiUrl, authFetch } from '@/lib/api';
+import { relayUpload } from '@/lib/storageRelay';
 
 /** Mirrors ALLOWED_KINDS in apps/server/src/routes/uploads.ts — an unlisted kind
  *  is silently filed under `misc/` rather than rejected, so the two must agree. */
@@ -241,8 +242,15 @@ export async function uploadLargeFile(
       xhr.status >= 200 && xhr.status < 300
         ? resolve()
         : reject(new Error(`Storage rejected the upload (HTTP ${xhr.status}).`));
-    xhr.onerror = () =>
-      reject(new Error('Upload to storage failed — the bucket may not allow uploads from this site.'));
+    // No HTTP answer = CORS / network: relay the bytes through our API instead
+    // (lib/storageRelay) — the server stores them on the presigned key.
+    xhr.onerror = () => {
+      relayUpload(signed.uploadUrl, file, contentType, (f) =>
+        onProgress?.({ loaded: Math.round(f * file.size), total: file.size, pct: Math.round(f * 100) }),
+      ).then(resolve, (e: unknown) =>
+        reject(new Error(`Upload to storage failed (${e instanceof Error ? e.message : 'error'}).`)),
+      );
+    };
     xhr.send(file);
   });
 

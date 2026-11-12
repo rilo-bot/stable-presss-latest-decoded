@@ -76,6 +76,11 @@ export function grantPreApproval(opts: { messages?: string[] } = {}): (graceMs?:
   };
 }
 
+/** Tools that cannot raise an app dialog themselves: a confirm while one of
+ *  them runs is the late tail of the step before (a second question after a
+ *  server refusal), so that step's grace still covers it. */
+const PASSIVE_TOOLS = new Set(['readScreen', 'waitFor', 'scrollTo']);
+
 function isApproved(message: string): boolean {
   const a = approval;
   if (!a) return false;
@@ -83,6 +88,11 @@ function isApproved(message: string): boolean {
     approval = null;
     return false;
   }
+  // One step's OK never answers a confirm raised by ANOTHER acting step. The
+  // grace above outlives its tool call, and the panel runs a turn's parallel
+  // calls back to back — so without this, runAction(confirmed) followed at
+  // once by click(unrelated 🗑) had the 🗑's window.confirm answered OK.
+  if (scope && a.scope && scope !== a.scope && !PASSIVE_TOOLS.has(scope.tool)) return false;
   return a.match === null || a.match.includes(norm(message));
 }
 

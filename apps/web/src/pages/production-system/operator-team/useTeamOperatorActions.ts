@@ -214,6 +214,8 @@ export function useTeamOperatorActions(input: TeamOperatorInput): void {
         const m = resolveMember(a.member, s.teamStaff);
         const r = resolveRole(a.role, s.roles);
         if (!m.hit || !r.hit) return null;
+        // Already holds it: run() returns { unchanged } — no card for a no-op.
+        if (m.hit.role?.name === r.hit.name) return null;
         return `Change ${m.hit.name || m.hit.email}'s role from ${m.hit.role?.label ?? 'no role'} to ${r.hit.label}?`;
       },
       run: async (a, ui) => {

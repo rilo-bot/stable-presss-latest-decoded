@@ -49,7 +49,9 @@ import { useMagazineHomeActions } from './operator/useMagazineHomeActions';
  */
 const ACCENT = 'hsl(var(--brand-accent))';
 const ACCENT_INK = 'hsl(var(--brand-accent-ink))';
-const ACCENT_WASH = 'color-mix(in oklab, hsl(var(--brand-accent)) 12%, transparent)';
+// Alpha-hsl, not color-mix(): color-mix is Safari 16.2+, and an inline style the
+// browser cannot parse is dropped outright (no wash at all on Safari/iOS 15.x).
+const ACCENT_WASH = 'hsl(var(--brand-accent) / 0.12)';
 
 /** Lifecycle status → a word for a person. Anything unmapped falls through as-is,
  *  so a new backend status shows up honestly rather than vanishing. */
@@ -934,7 +936,7 @@ export default function MagazineV2Home() {
           style={{
             borderColor: dragOver ? ACCENT : undefined,
             boxShadow: dragOver
-              ? '0 0 0 3px color-mix(in oklab, hsl(var(--brand-accent)) 26%, transparent)'
+              ? '0 0 0 3px hsl(var(--brand-accent) / 0.26)'
               : undefined,
           }}
           onDragOver={(e) => {

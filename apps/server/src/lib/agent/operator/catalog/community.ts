@@ -20,14 +20,14 @@ export const SURFACES: CatalogSurface[] = [
     id: 'community-comments',
     title: 'Comments (moderation)',
     route: `${PS}/comments`,
-    who: 'Staff with comments.view; remove/restore need comments.edit, delete needs comments.delete.',
+    who: 'Staff with comments.view; loading the queue and remove/restore need comments.edit, delete needs comments.delete.',
     purpose:
       'Reader comments on stories, blog posts and editions. Tabs: Reported (most-reported first, the default), Removed, Everything. Nothing is auto-hidden; there is no approve and no ban — a reported comment stays up until someone removes it.',
     actions: [
       {
         name: 'community.listComments',
         description:
-          'Read the queue (switches tab visibly when filter is given; hidden = Removed): counts plus each comment id, author, text, stance, report count, removed + reason, where posted.',
+          'Read the queue (switches tab visibly when filter is given; hidden = Removed): counts plus each comment id, author, text, stance, report count, removed + reason, where posted. Lists the first 60 rows (notListed = the rest).',
         args: "{ filter?: 'reported' | 'hidden' | 'all' }",
       },
       {

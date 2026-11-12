@@ -4,7 +4,7 @@
 // Registered by pages/SiteContent while it is mounted. Everything here is LIVE
 // on the public landing page the moment it saves: the breaking-news ticker
 // shows every active headline, and the sponsors strip shows every sponsor. So
-// every ticker change and every sponsor removal asks first.
+// every ticker change and every sponsor add / edit / removal asks first.
 //
 // Writes drive the page's own controls — the "Add a headline" box, each row's
 // eye (show / hide) and × (delete), the "Add a sponsor" form and each sponsor's
@@ -101,6 +101,8 @@ export function useSiteContentOperatorActions(input: { editingId: string | null 
     name: 'site.addSponsor',
     description: 'Add a sponsor through the Add a sponsor form.',
     args: addArgs,
+    // A new sponsor is on the public landing page the moment it saves.
+    confirm: (a) => `Add “${clip(a.name, 60)}” to the sponsors strip? It shows on the public landing page straight away.`,
     run: async (a, ui) => {
       await loaded(ui);
       const before = new Set(sponsors().map((s) => s.id));
@@ -123,6 +125,23 @@ export function useSiteContentOperatorActions(input: { editingId: string | null 
     name: 'site.editSponsor',
     description: "Edit a sponsor's name, category, tagline or website (pencil → fields → Save).",
     args: editArgs,
+    // The edit is live on the public landing page at once. No card when the
+    // sponsor does not resolve (run() throws) or nothing would change.
+    confirm: (a) => {
+      const r = resolveSponsor(a.sponsor);
+      if (!r.hit) return null;
+      const sp = r.hit;
+      const diff = (label: string, next: string | undefined, cur: string | undefined) =>
+        next !== undefined && next.trim() !== (cur ?? '').trim() ? `${label} → “${clip(next.trim(), 60)}”` : null;
+      const changes = [
+        diff('name', a.name, sp.name),
+        diff('category', a.category, sp.category),
+        diff('tagline', a.tagline, sp.tagline),
+        diff('website', a.websiteUrl, sp.websiteUrl),
+      ].filter((c): c is string => !!c);
+      if (!changes.length) return null;
+      return `Change the sponsor “${sp.name}” (${listWords(changes)})? The public landing page updates straight away.`;
+    },
     run: async (a, ui) => {
       await loaded(ui);
       const sp = mustSponsor(a.sponsor);

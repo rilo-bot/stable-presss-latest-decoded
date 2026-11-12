@@ -20,12 +20,19 @@ export function ConfirmCard() {
   const resolveConfirm = useOperator((s) => s.resolveConfirm);
   const reduce = useReducedMotion();
   const okRef = useRef<HTMLButtonElement>(null);
+  const cancelRef = useRef<HTMLButtonElement>(null);
 
-  // Bring it into view and onto the keyboard — it is blocking the run.
+  // Bring it into view and onto the keyboard — it is blocking the run. Focus
+  // goes to CANCEL, never Confirm: the card pops up while the user may be
+  // typing in the chat box, and a Space / Enter landing on a focused Confirm
+  // approved a publish or delete they never read. Nor is focus taken from a
+  // field they are typing in.
   useEffect(() => {
     if (!pending) return;
     okRef.current?.scrollIntoView({ block: 'nearest', behavior: reduce ? 'auto' : 'smooth' });
-    okRef.current?.focus({ preventScroll: true });
+    const a = document.activeElement;
+    const typing = a instanceof HTMLElement && (a.isContentEditable || a.matches('input, textarea, select'));
+    if (!typing) cancelRef.current?.focus({ preventScroll: true });
   }, [pending, reduce]);
 
   if (!pending) return null;
@@ -54,6 +61,7 @@ export function ConfirmCard() {
           Confirm
         </button>
         <button
+          ref={cancelRef}
           type="button"
           onClick={() => resolveConfirm(false)}
           className="flex-1 rounded-lg border border-border bg-card px-3 py-2 text-sm text-foreground transition-colors hover:bg-muted"

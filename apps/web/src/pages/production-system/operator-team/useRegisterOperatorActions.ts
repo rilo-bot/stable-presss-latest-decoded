@@ -121,6 +121,23 @@ async function typeField(ui: UiDriver, agentId: string, value: string) {
   }
 }
 
+/**
+ * A form that opens with "Unsaved draft restored from your last session" holds
+ * the USER's unfinished work (useFormDraft autosave). The add actions have no
+ * confirm card, so never discard it silently: ask first, and on No stop with
+ * the form (and the draft) left open for the user.
+ */
+async function discardRestoredDraft(ui: UiDriver, agentId: string, what: string) {
+  if (!anchor(agentId)) return;
+  const ok = await ui.confirm(
+    `The ${what} form has an unsaved draft from an earlier session. Discard that draft so I can fill the form from scratch?`,
+  );
+  if (!ok) {
+    throw new Error(`Stopped: the user chose to keep their unsaved ${what} draft. The form is left open with it.`);
+  }
+  await ui.click(agentId, 'Discard the old draft');
+}
+
 /** Type a search query into a register's search box and let the list filter. */
 async function typeSearch(ui: UiDriver, agentId: string, query: string, applied: () => boolean) {
   await ui.type(agentId, query, { clear: true });
@@ -211,7 +228,7 @@ export function useHorseRegisterActions(ps: PS): void {
       await ui.waitFor('reg.add-horse-quick', 4000);
       await ui.click('reg.add-horse-quick', 'Quick form');
       await ui.waitFor('reg.horse-form', 5000);
-      if (anchor('reg.horse-discard-draft')) await ui.click('reg.horse-discard-draft', 'Discard the old draft');
+      await discardRestoredDraft(ui, 'reg.horse-discard-draft', 'horse');
 
       await typeField(ui, 'reg.horse-name', a.name);
       if (sex) await ui.select('reg.horse-sex', sex);
@@ -314,7 +331,7 @@ export function usePeopleRegisterActions(ps: PS): void {
       ui.step(`Adding ${a.name} to the People register`);
       await ui.click('reg.add-person', 'Add to the register');
       await ui.waitFor('reg.person-form', 5000);
-      if (anchor('reg.person-discard-draft')) await ui.click('reg.person-discard-draft', 'Discard the old draft');
+      await discardRestoredDraft(ui, 'reg.person-discard-draft', 'person');
 
       await typeField(ui, 'reg.person-name', a.name);
       if (a.profession) await typeField(ui, 'reg.person-profession', a.profession);
@@ -504,7 +521,7 @@ export function useMediaRegisterActions(ps: PS): void {
       ui.step(`Adding a media record (${a.mediaType}) for ${horse.name}`);
       await ui.click('reg.add-media', 'Add Media Record');
       await ui.waitFor('reg.media-form', 5000);
-      if (anchor('reg.media-discard-draft')) await ui.click('reg.media-discard-draft', 'Discard the old draft');
+      await discardRestoredDraft(ui, 'reg.media-discard-draft', 'media record');
 
       // Horse — a searchable dropdown: open, type the name, pick it.
       await ui.click('reg.media-horse', 'Choose the horse');
@@ -649,7 +666,7 @@ export function useRacingRegisterActions(ps: PS): void {
       ui.step(`Adding the ${a.raceName} for ${horse.name}`);
       await ui.click('reg.add-racing', 'Add Racing Record');
       await ui.waitFor('reg.racing-form', 5000);
-      if (anchor('reg.racing-discard-draft')) await ui.click('reg.racing-discard-draft', 'Discard the old draft');
+      await discardRestoredDraft(ui, 'reg.racing-discard-draft', 'racing record');
 
       await ui.select('reg.racing-horse', horse.id);
       await typeField(ui, 'reg.racing-subject', subject);

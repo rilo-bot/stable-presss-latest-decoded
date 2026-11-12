@@ -48,6 +48,8 @@ import {
   loadDirectory,
   pageAt,
   pageListLabel,
+  pageNo,
+  pageNoOf,
   personLabel,
   resolvePerson,
   revealToolbarItem,
@@ -131,6 +133,15 @@ function findCollaborator(person: string, cs: V2Collaborator[] | undefined): V2C
   );
 }
 
+/** Does this collaborator already have exactly these pages (null = all pages)? */
+function hasScope(c: V2Collaborator, wantIds: string[] | null): boolean {
+  if (!wantIds) return c.pageIds === 'all';
+  if (c.pageIds === 'all') return false;
+  const have = c.pageIds.map(String);
+  const want = new Set(wantIds);
+  return have.length === want.size && [...want].every((id) => have.includes(id));
+}
+
 /** Wait for a dialog's busy button to settle: gone (success closed it), or no
  *  longer busy after a grace period (validation refusal / server error). */
 async function settle(ui: UiDriver, agentId: string, done: () => boolean, what: string) {
@@ -200,6 +211,30 @@ async function softWait(ui: UiDriver, pred: () => unknown, timeoutMs: number): P
 }
 
 const toastLines = (ts: SeenToast[]) => ts.map((t) => `${t.type}: ${t.text}`);
+
+/**
+ * The confirm question for staged studio changes that must not land on a bare
+ * "Use these changes", or null when none are staged: page deletions and a
+ * layout rebuild can't be undone, and generate-pages starts an AI page build
+ * (spends AI budget — the build magazine.addAiPages confirms). Before, only
+ * deletions asked: a staged layout rebuild then hit the app's own
+ * window.confirm with no OK behind it (auto-declined) while the action still
+ * reported "applied", and a staged page build ran unasked.
+ */
+function stagedRiskQuestion(): string | null {
+  const s = get();
+  const parts: string[] = [];
+  const removes = s.proposals.filter((p) => p.kind === 'remove-page').length;
+  if (removes > 0) parts.push(`deleting ${removes} page${removes === 1 ? '' : 's'} (cannot be undone)`);
+  const layout = s.proposals.find((p) => p.kind === 'apply-layout');
+  if (layout) {
+    const n = pageNoOf(s.pages, layout.pageId || s.proposalsPageId);
+    parts.push(`rebuilding ${n ? `page ${n}` : 'the page'} in a new layout — everything on it is replaced (cannot be undone)`);
+  }
+  const gen = s.proposals.find((p) => p.kind === 'generate-pages');
+  if (gen) parts.push(`having the AI design ${gen.count ? `${gen.count} new page${gen.count === 1 ? '' : 's'}` : 'new pages'}`);
+  return parts.length ? `Apply the studio's changes, including ${parts.join('; ')}?` : null;
+}
 
 /**
  * Open page n on the canvas through the rail (skipped when it is already the open
@@ -330,11 +365,11 @@ const zoomPercent = () => Math.round((get().zoomWidth / 1275) * 100);
 function boardSummary() {
   const s = get();
   const cols: Record<ReviewColumn, number[]> = { in_progress: [], needs_changes: [], submitted: [], approved: [] };
-  s.pages.forEach((p, i) => cols[columnOf(p)].push(i + 1));
+  s.pages.forEach((p) => cols[columnOf(p)].push(pageNo(p)));
   return {
     columns: Object.fromEntries(COLUMN_ORDER.map((c) => [c, cols[c]])),
-    staleApprovals: s.pages.flatMap((p, i) => (p.approvalStale ? [i + 1] : [])),
-    tickable: s.pages.flatMap((_p, i) => (anchor(`mag.review-page-${i + 1}-select`) ? [i + 1] : [])),
+    staleApprovals: s.pages.flatMap((p) => (p.approvalStale ? [pageNo(p)] : [])),
+    tickable: s.pages.flatMap((p) => (anchor(`mag.review-page-${pageNo(p)}-select`) ? [pageNo(p)] : [])),
   };
 }
 
@@ -393,12 +428,15 @@ export function useMagazineEditorActions(perms: EditorPerms): void {
         published: !!issue.publishedIssueId && issue.status === 'published',
         publishedIssueId: issue.publishedIssueId ?? null,
         needsRepublish: s.needsRepublish(),
-        currentPage: curIdx >= 0 ? curIdx + 1 : null,
+        currentPage: curIdx >= 0 ? pageNo(s.pages[curIdx]) : null,
         pageCount: s.pages.length,
-        pages: s.pages.map((p, i) => ({
-          page: i + 1,
+        pages: s.pages.map((p) => ({
+          page: pageNo(p),
           id: p.id,
-          elements: p.elementCount,
+          // The open page's live element list beats the summary count, which
+          // only refreshes on the next server round-trip (an applied studio
+          // change looked like "still 11 elements").
+          elements: s.page && s.page.id === p.id ? s.page.elements.length : p.elementCount,
           build: p.status,
           review: p.review ?? 'in_progress',
           approvalStale: !!p.approvalStale,
@@ -415,7 +453,7 @@ export function useMagazineEditorActions(perms: EditorPerms): void {
         studio: {
           replying: s.chatBusy,
           pendingChanges: s.proposals.map((p) => ({ kind: p.kind, summary: p.summary })),
-          pendingChangesOnPage: s.proposalsPageId ? s.pages.findIndex((p) => p.id === s.proposalsPageId) + 1 || null : null,
+          pendingChangesOnPage: pageNoOf(s.pages, s.proposalsPageId),
         },
       };
     },
@@ -450,7 +488,7 @@ export function useMagazineEditorActions(perms: EditorPerms): void {
   // ── Pages ────────────────────────────────────────────────────────────────
   useAgentAction({
     name: 'magazine.goToPage',
-    description: 'Open a page (1-based) on the canvas, via the page rail.',
+    description: 'Open a page (its number as printed on the canvas, "Page N") via the page rail.',
     args: z.object({ page: z.number().int().min(1) }),
     run: async ({ page }, ui) => {
       const s = await ready(ui);
@@ -478,7 +516,7 @@ export function useMagazineEditorActions(perms: EditorPerms): void {
         await ui.click('mag.add-page', 'Add a blank page');
         await waitUntil(() => get().pages.length > before, { signal: ui.signal, what: 'the new page' });
         const after = get();
-        const n = after.pages.findIndex((p) => p.id === after.currentPageId) + 1;
+        const n = pageNoOf(after.pages, after.currentPageId) ?? 0;
         if (n > 0) ui.flash(`mag.page-${n}`);
         return { newPage: n || after.pages.length, pageCount: after.pages.length };
       },
@@ -498,8 +536,9 @@ export function useMagazineEditorActions(perms: EditorPerms): void {
       // Generating pages writes new content into the magazine and spends AI
       // budget — the user approves it first (reported: pages were added from a
       // PDF instruction without asking).
+      // No card while a build runs — run() refuses that before touching anything.
       confirm: ({ count, topic }) =>
-        `Add ${count} new AI-designed page${count === 1 ? '' : 's'}${topic ? ` about “${topic.slice(0, 120)}”` : ''} to this magazine?`,
+        isBuilding() ? null : `Add ${count} new AI-designed page${count === 1 ? '' : 's'}${topic ? ` about “${topic.slice(0, 120)}”` : ''} to this magazine?`,
       run: async ({ count, topic }, ui) => {
         await ready(ui);
         if (isBuilding()) throw new Error('A build is already running — a [job-update] message will arrive when it finishes; add more pages after that.');
@@ -526,7 +565,7 @@ export function useMagazineEditorActions(perms: EditorPerms): void {
       }),
       // Only a build (count given) creates content; just opening the popover is safe.
       confirm: ({ count, topic }) =>
-        count
+        count && !isBuilding()
           ? `Add ${count} new AI-designed page${count === 1 ? '' : 's'}${topic ? ` about “${topic.slice(0, 120)}”` : ''} to this magazine?`
           : null,
       run: async ({ count, topic }, ui) => {
@@ -567,7 +606,7 @@ export function useMagazineEditorActions(perms: EditorPerms): void {
         await ensureRail(ui);
         await ui.click(`mag.page-${page}-duplicate`, `Duplicate page ${page}`);
         await waitUntil(() => get().pages.length > had.size, { signal: ui.signal, what: 'the copy' });
-        const copyAt = get().pages.findIndex((p) => !had.has(p.id)) + 1;
+        const copyAt = pageNoOf(get().pages, get().pages.find((p) => !had.has(p.id))?.id) ?? 0;
         if (copyAt > 0) ui.flash(`mag.page-${copyAt}`);
         return { duplicated: page, copyIsPage: copyAt || null, pageCount: get().pages.length };
       },
@@ -582,8 +621,11 @@ export function useMagazineEditorActions(perms: EditorPerms): void {
       args: z.object({ page: z.number().int().min(1) }),
       confirm: ({ page }) => {
         const s = get();
-        const p = s.pages[page - 1];
-        const submitted = p?.review === 'submitted' ? ' It was submitted for review — the submitter will be emailed.' : '';
+        // Real page number (not list position); no card for a page that isn't
+        // there or the last page — run() refuses both before touching anything.
+        const p = s.pages.find((x) => pageNo(x) === page);
+        if (!p || s.pages.length <= 1) return null;
+        const submitted = p.review === 'submitted' ? ' It was submitted for review — the submitter will be emailed.' : '';
         return `Delete page ${page} of “${s.issue?.title ?? 'this magazine'}”? This cannot be undone.${submitted}`;
       },
       run: async ({ page }, ui) => {
@@ -668,10 +710,21 @@ export function useMagazineEditorActions(perms: EditorPerms): void {
       args: z.object({ person: z.string().min(1), pages: pagesArg }),
       confirm: ({ person, pages }) => {
         const s = get();
+        // No card for page numbers that don't exist (run() refuses them before
+        // touching anything) or for someone who already has exactly these pages
+        // (run() returns unchanged).
+        let wantIds: string[] | null = null;
+        try {
+          wantIds = pages === 'all' ? null : pages.map((n) => pageAt(s.pages, n).id);
+        } catch {
+          return null;
+        }
+        const existing = findCollaborator(person, s.issue?.collaborators);
+        if (existing && hasScope(existing, wantIds)) return null;
         const who = personLabel(person, s.issue?.collaborators);
         const what = pages === 'all' ? 'all pages' : pageListLabel(pages);
         const title = s.issue?.title ?? 'this magazine';
-        return findCollaborator(person, s.issue?.collaborators)
+        return existing
           ? `Change ${who}'s access on “${title}” to ${what}?`
           : `Share ${what} of “${title}” with ${who}? They'll be emailed a link.`;
       },
@@ -684,6 +737,14 @@ export function useMagazineEditorActions(perms: EditorPerms): void {
         const existing = findCollaborator(person, issue.collaborators);
         let who: { userId: string; email: string; name: string };
         if (existing) {
+          // Already exactly this access — nothing to save (confirm() asked nothing).
+          if (hasScope(existing, wantIds)) {
+            return {
+              unchanged: true,
+              sharedWith: { userId: existing.userId, name: existing.displayName || existing.email, email: existing.email },
+              pages: scopeNumbers(existing, s.pages),
+            };
+          }
           who = { userId: existing.userId, email: existing.email, name: existing.displayName || existing.email };
         } else {
           const p = resolvePerson(await loadDirectory(), person);
@@ -694,9 +755,7 @@ export function useMagazineEditorActions(perms: EditorPerms): void {
         await openShareDialog(ui);
         const matches = () => {
           const c = get().issue?.collaborators?.find((x) => x.userId === who.userId);
-          if (!c) return false;
-          if (!wantIds) return c.pageIds === 'all';
-          return c.pageIds !== 'all' && c.pageIds.length === wantIds.length && wantIds.every((id) => (c.pageIds as string[]).map(String).includes(id));
+          return !!c && hasScope(c, wantIds);
         };
 
         const prefix = existing ? 'mag.share-edit' : 'mag.share';
@@ -751,7 +810,10 @@ export function useMagazineEditorActions(perms: EditorPerms): void {
       args: z.object({ person: z.string().min(1) }),
       confirm: ({ person }) => {
         const s = get();
-        return `Remove ${personLabel(person, s.issue?.collaborators)}'s access to “${s.issue?.title ?? 'this magazine'}”?`;
+        // Not a collaborator → run() refuses before touching anything; no card.
+        const c = findCollaborator(person, s.issue?.collaborators);
+        if (!c) return null;
+        return `Remove ${c.displayName || c.email}'s access to “${s.issue?.title ?? 'this magazine'}”?`;
       },
       run: async ({ person }, ui) => {
         const s = await ready(ui);
@@ -803,15 +865,46 @@ export function useMagazineEditorActions(perms: EditorPerms): void {
 
         const before = get().chat.length;
         ui.step('Asking the Magazine AI Studio');
-        await ui.type('mag.ai-input', prompt, { clear: true });
-        assertEnabled('mag.ai-send', 'The studio cannot take a message right now.');
-        await ui.click('mag.ai-send', 'Send');
-        await waitForStudioTurn(ui, before, Date.now());
-        return finishStudioTurn(ui, apply);
+        // Watch the studio's own toasts during the turn: when an attached image
+        // can't be stored (e.g. the bucket's CORS doesn't allow this site's
+        // address) the studio only DESCRIBES it to its AI, which can't place the
+        // real file — and stages a look-alike instead (a solid-black image came
+        // back as a black shape). That must stop the job, not be applied.
+        const toasts = watchToasts();
+        let seen: SeenToast[] = [];
+        try {
+          await ui.type('mag.ai-input', studioPrompt(prompt), { clear: true });
+          assertEnabled('mag.ai-send', 'The studio cannot take a message right now.');
+          await ui.click('mag.ai-send', 'Send');
+          await waitForStudioTurn(ui, before, Date.now());
+        } finally {
+          seen = toasts.stop();
+        }
+        const storageProblem = seen.find((t) => /couldn.t store|could not reach storage|can.t be placed/i.test(t.text));
+        return finishStudioTurn(ui, storageProblem ? false : apply, seen, storageProblem?.text);
       },
     },
     canEdit,
   );
+
+  /**
+   * The studio works on the OPEN page (its composer tags the turn "PAGE n") and
+   * reads any "page N" in the text as an absolute page of the magazine. A
+   * page-scoped collaborator can't open other pages, so "set it as page 1's
+   * background" got "I can't access page 1 from here". Any mention of the open
+   * page — by its real number or its rail position — becomes "this page".
+   */
+  function studioPrompt(prompt: string): string {
+    const s = get();
+    const idx = s.pages.findIndex((p) => p.id === s.currentPageId);
+    if (idx < 0) return prompt;
+    const same = new Set([pageNo(s.pages[idx]), idx + 1]);
+    return prompt
+      .replace(/\b(?:the\s+)?page\s*(?:no\.?\s*|number\s*|#\s*)?(\d+)(['’]s)?\b/gi, (m, num: string, poss?: string) =>
+        same.has(Number(num)) ? (poss ? "this page's" : 'this page') : m,
+      )
+      .replace(/\bthis page['’]s\b/g, "this page's");
+  }
 
   /** What the studio composer is doing right now, read off its Send button
    *  (AiPanel sets data-studio-phase). 'ingesting' = uploading/reading an
@@ -870,15 +963,18 @@ export function useMagazineEditorActions(perms: EditorPerms): void {
   }
 
   /** Read the finished turn; optionally press "Use these changes" and verify. */
-  async function finishStudioTurn(ui: UiDriver, apply: boolean | undefined) {
+  async function finishStudioTurn(ui: UiDriver, apply: boolean | undefined, toasts: SeenToast[] = [], storageProblem?: string) {
         const after = get();
         const reply = [...after.chat].reverse().find((m) => m.role === 'assistant')?.content ?? '';
-        const onPage = after.proposalsPageId ? after.pages.findIndex((p) => p.id === after.proposalsPageId) + 1 : null;
+        const onPage = pageNoOf(after.pages, after.proposalsPageId);
         const staged = after.proposals.map((p) => ({ kind: p.kind, summary: p.summary }));
         let applied = false;
         if (apply && staged.length > 0) {
-          const removes = after.proposals.filter((p) => p.kind === 'remove-page').length;
-          if (removes > 0 && !(await ui.confirm(`The studio's changes delete ${removes} page${removes === 1 ? '' : 's'}. Apply them?`))) {
+          // Same question as magazine.applyStudioChanges (deletions, a layout
+          // rebuild, an AI page build). An OK here also pre-approves the app's own
+          // window.confirm for the rebuild / a submitted page's deletion.
+          const risky = stagedRiskQuestion();
+          if (risky && !(await ui.confirm(risky))) {
             return { reply: reply.slice(0, 2000), stagedChanges: staged, stagedOnPage: onPage, applied: false, declined: true };
           }
           await applyStaged(ui);
@@ -890,7 +986,13 @@ export function useMagazineEditorActions(perms: EditorPerms): void {
           appliedChanges: applied ? staged : undefined,
           stagedOnPage: onPage,
           applied,
-          note: applied
+          appMessages: toasts.length ? toasts.map((t) => t.text) : undefined,
+          storageProblem: storageProblem
+            ? `${storageProblem} — the attached file never reached storage, so the studio could NOT place the real image; anything it staged is only a look-alike. Do NOT apply it. Tell the user the upload failed and why (usually the S3 bucket's CORS rule doesn't allow this site's address), and suggest discarding the staged changes.`
+            : undefined,
+          note: storageProblem
+            ? 'NOT applied: the image upload failed (see storageProblem).'
+            : applied
             ? 'Applied — the changes are on the page now (undo with Ctrl+Z). Check the page with readScreen before reporting.'
             : staged.length > 0
               ? 'Changes are STAGED, not on the page yet. If the user asked for this change, call magazine.applyStudioChanges now.'
@@ -926,7 +1028,7 @@ export function useMagazineEditorActions(perms: EditorPerms): void {
     const s = get();
     if (s.proposals.length === 0) throw new Error('The studio has no changes waiting.');
     if (s.proposalsPageId && s.proposalsPageId !== s.currentPageId) {
-      const n = s.pages.findIndex((p) => p.id === s.proposalsPageId) + 1;
+      const n = pageNoOf(s.pages, s.proposalsPageId) ?? 0;
       if (n <= 0) throw new Error('The page those changes were for no longer exists.');
       await ensureRail(ui);
       await ui.click(`mag.page-${n}`, `Page ${n}`);
@@ -934,20 +1036,26 @@ export function useMagazineEditorActions(perms: EditorPerms): void {
     }
     await ensureStudioComposer(ui);
     await ui.waitFor('mag.ai-apply', 4000);
+    const layout = s.proposals.some((p) => p.kind === 'apply-layout');
     ui.step('Applying the studio’s changes');
     await ui.click('mag.ai-apply', 'Use these changes');
     await waitUntil(() => get().proposals.length === 0, { signal: ui.signal, timeoutMs: 120_000, what: 'the changes to apply' });
+    // A staged layout rebuild clears the proposals BEFORE it runs; follow the
+    // rebuild itself so "applied" is not reported while it is still in flight.
+    if (layout) {
+      await softWait(ui, () => get().layoutBusy, 3000);
+      await waitUntil(() => !get().layoutBusy, { signal: ui.signal, timeoutMs: 180_000, what: 'the layout rebuild to finish' });
+    }
   }
 
   useAgentAction(
     {
       name: 'magazine.applyStudioChanges',
-      description: 'Press "Use these changes" on the changes the AI Studio has staged (undoable with Ctrl+Z, except page deletions).',
+      description:
+        'Press "Use these changes" on the changes the AI Studio has staged (undoable with Ctrl+Z, except page deletions and a layout rebuild — those, and an AI page build, ask the user first).',
       args: z.object({}),
-      confirm: () => {
-        const removes = get().proposals.filter((p) => p.kind === 'remove-page').length;
-        return removes > 0 ? `Apply the studio's changes, including deleting ${removes} page${removes === 1 ? '' : 's'}?` : null;
-      },
+      // Asks only for deletions / a layout rebuild / an AI page build (see stagedRiskQuestion).
+      confirm: () => stagedRiskQuestion(),
       run: async (_a, ui) => {
         await ready(ui);
         const staged = get().proposals.map((p) => ({ kind: p.kind, summary: p.summary }));
@@ -984,6 +1092,8 @@ export function useMagazineEditorActions(perms: EditorPerms): void {
       args: z.object({ pages: z.array(z.number().int().min(1)).min(1).optional() }),
       confirm: ({ pages }) => {
         const s = get();
+        // run() refuses these before touching anything — no pointless card.
+        if (isBuilding() || (pages && pages.some((n) => !s.pages.some((p) => pageNo(p) === n)))) return null;
         const verb = s.issue?.publishedIssueId && s.issue?.status === 'published' ? 'Republish' : 'Publish';
         const what = pages ? pageListLabel(pages) : `all ${s.pages.length} page${s.pages.length === 1 ? '' : 's'}`;
         return `${verb} ${what} of “${s.issue?.title ?? 'this magazine'}” to Bulletins? It will be public.`;
@@ -1008,14 +1118,15 @@ export function useMagazineEditorActions(perms: EditorPerms): void {
           await ui.waitFor('mag.publish-dialog', 4000);
           const want = new Set(pages);
           ui.step(`Ticking ${pageListLabel(pages)}`);
-          for (let n = 1; n <= get().pages.length; n++) {
+          // Boxes are anchored by REAL page number (PublishDialog: index + 1).
+          for (const n of get().pages.map(pageNo)) {
             const box = anchor(`mag.publish-page-${n}`) as HTMLInputElement | null;
             if (box && box.checked !== want.has(n)) {
               await ui.click(`mag.publish-page-${n}`, `Page ${n}`);
               await sleep(200, ui.signal); // each tick is its own server write
             }
           }
-          await waitUntil(() => get().pages.every((p, i) => p.selectedForPublish === want.has(i + 1)), {
+          await waitUntil(() => get().pages.every((p) => p.selectedForPublish === want.has(pageNo(p))), {
             signal: ui.signal,
             what: 'the page selection to save',
           });
@@ -1049,7 +1160,9 @@ export function useMagazineEditorActions(perms: EditorPerms): void {
       name: 'magazine.unpublish',
       description: 'Take the live edition off the Bulletins newsstand (the draft is kept).',
       args: z.object({}),
-      confirm: () => `Unpublish “${get().issue?.title ?? 'this magazine'}” from Bulletins? Readers will no longer see it.`,
+      // Not published → run() refuses before touching anything; no card.
+      confirm: () =>
+        get().issue?.publishedIssueId ? `Unpublish “${get().issue?.title ?? 'this magazine'}” from Bulletins? Readers will no longer see it.` : null,
       run: async (_a, ui) => {
         const s = await ready(ui);
         if (!s.issue?.publishedIssueId) throw new Error('This magazine is not published.');
@@ -1157,7 +1270,7 @@ export function useMagazineEditorActions(perms: EditorPerms): void {
       run: async ({ page, include }, ui) => {
         const s = await ready(ui);
         const target = pageAt(s.pages, page);
-        const selected = () => get().pages.filter((p) => p.selectedForPublish).map((p) => get().pages.indexOf(p) + 1);
+        const selected = () => get().pages.filter((p) => p.selectedForPublish).map((p) => pageNo(p));
         if (target.selectedForPublish === include) return { page, included: include, changed: false, selectedPages: selected() };
         const box = `mag.page-${page}-publish-toggle`;
         await ui.waitFor(box, 5000);
@@ -1319,8 +1432,13 @@ export function useMagazineEditorActions(perms: EditorPerms): void {
         pages: z.array(z.number().int().min(1)).min(1),
         note: z.string().max(2000).optional(),
       }),
-      confirm: ({ action, pages }) => {
+      confirm: ({ action, pages, note }) => {
         const s = get();
+        // Moves run() refuses before touching anything get no card: the wrong
+        // action for your role, sendBack without a note, a page that isn't there.
+        if ((action === 'submit') === live.current.isOwner) return null;
+        if (action === 'sendBack' && !note?.trim()) return null;
+        if (pages.some((n) => !s.pages.some((p) => pageNo(p) === n))) return null;
         const what = pageListLabel(pages);
         const title = s.issue?.title ?? 'this magazine';
         if (action === 'approve') return `Approve ${what} of “${title}”? Whoever worked on ${pages.length === 1 ? 'it' : 'them'} is emailed.`;
@@ -1351,7 +1469,10 @@ export function useMagazineEditorActions(perms: EditorPerms): void {
           );
         }
         ui.step(`Ticking ${pageListLabel(pages)}`);
-        for (let n = 1; n <= get().pages.length; n++) {
+        // Boxes are anchored by REAL page number (ReviewBoard: index + 1). Looping
+        // 1..pages.length missed a page-scoped collaborator's pages entirely (their
+        // list is e.g. just page 3), so 'submit' ticked nothing.
+        for (const n of get().pages.map(pageNo)) {
           const box = anchor(`mag.review-page-${n}-select`) as HTMLInputElement | null;
           if (box && box.checked !== want.has(n)) await ui.click(`mag.review-page-${n}-select`, `Page ${n}`);
         }

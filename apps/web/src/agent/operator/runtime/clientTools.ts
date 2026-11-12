@@ -17,7 +17,7 @@
 // ---------------------------------------------------------------------------
 
 import { z } from 'zod';
-import { OPERATOR_CLIENT_TOOLS, humanizeActionName, type ActionOutcome, type UiDriver } from '../contracts';
+import { AGENT_CONFIRM_ATTR, OPERATOR_CLIENT_TOOLS, humanizeActionName, type ActionOutcome, type UiDriver } from '../contracts';
 // Pure path → "Magazine Builder" naming (no imports of its own), shared with the
 // panel so the pill and the step list name a screen the same way.
 import { shortPageName } from '../panel/pageContext';
@@ -25,7 +25,7 @@ import { useOperator } from '../operatorStore';
 import { getAction, listActions } from './registry';
 import { createUiDriver } from './uiDriver';
 import { readScreen, pageTitle } from './snapshot';
-import { findAgentEl, isAbortError, labelForId, labelOf } from './dom';
+import { findAgentEl, formControlOf, isAbortError, labelForId, labelOf } from './dom';
 import {
   beginToolScope,
   controlKeys,
@@ -145,20 +145,65 @@ function failSteps(stepId: string, detail: string): void {
 }
 
 // ── Confirm before sensitive GENERIC clicks ─────────────────────────────────
-// Named actions declare their own confirm(). A raw click / type-and-submit on
-// an arbitrary control (an un-instrumented screen such as Settings) has no
-// such declaration, so the runtime judges the control itself: a button whose
-// label means publish / save / delete / send / invite / share … gets the same
-// confirm card. The model cannot skip it — the user's OK is enforced here, not
-// asked for in the prompt. Openers (menus, dialogs, '…' labels) and toggles
-// (checkboxes, radios, tabs, options) are not sensitive: the Save / Confirm
-// that follows them is.
+// Named actions declare their own confirm(). A raw click / type-and-submit /
+// select on an arbitrary control (an un-instrumented screen such as Settings)
+// has no such declaration, so the runtime judges the control itself: a button
+// whose label means publish / save / delete / send / invite / share … gets the
+// same confirm card, as does a pack's explicit AGENT_CONFIRM_ATTR marker, a
+// role picker (it saves on change) and Enter in a form-less, non-search field.
+// The model cannot skip it — the user's OK is enforced here, not asked for in
+// the prompt. Openers (menus, dialogs, '…' labels) and toggles (checkboxes,
+// radios, tabs, options) are not sensitive: the Save / Confirm that follows
+// them is.
+// restore / unhide / verify put content back in front of the public; grant /
+// assign / notify / announce / "Post comment" reach other people.
 const SENSITIVE_LABEL =
-  /\b(save|publish|unpublish|re-?publish|delete|remove|send|invite|share|submit|approve|reject|archive|reset|start over|revoke|deactivate|disable|enable|transfer|resend|email|go live|schedule|apply|confirm|overwrite|replace|clear all|discard)\b/i;
+  /\b(save|publish|unpublish|re-?publish|delete|remove|send|invite|share|submit|approve|reject|archive|reset|start over|revoke|deactivate|disable|enable|transfer|resend|email|go live|schedule|apply|confirm|overwrite|replace|clear all|discard|restore|unhide|verify|unverify|grant|assign|notify|announce|post (?:comment|reply|it|now))\b/i;
 const NON_SENSITIVE_ROLES = new Set(['checkbox', 'radio', 'tab', 'option', 'switch', 'menuitemcheckbox', 'menuitemradio', 'combobox']);
+/** Options of a listbox / menu — choosing one can itself be the write. */
+const OPTION_ROLES = new Set(['option', 'menuitemradio', 'menuitemcheckbox']);
+/** A picker whose CHOICE is the write: Team Members' role pill assigns the
+ *  role the moment an option is picked — no Save follows it. Both the generic
+ *  `select` and a raw `click` on its option bypassed every label check. */
+const SENSITIVE_PICKER = /\b(roles?|permissions?|access level)\b/i;
+/** …but a "Filter by role" list only narrows what is shown. */
+const isSensitivePicker = (label: string) => SENSITIVE_PICKER.test(label) && !/\b(filter|search|sort|show)\b/i.test(label);
+
+const isOpener = (el: HTMLElement) => !!el.getAttribute('aria-haspopup') || el.hasAttribute('aria-expanded');
+
+/** The question a pack declared with AGENT_CONFIRM_ATTR on (or around) this
+ *  control: '' = declared without wording, null = nothing declared. */
+function declaredQuestion(el: Element | null): string | null {
+  const host = el?.closest(`[${AGENT_CONFIRM_ATTR}]`);
+  return host ? (host.getAttribute(AGENT_CONFIRM_ATTR) ?? '').trim() : null;
+}
+
+/** For an option: the listbox / menu it sits in — its label, and the trigger
+ *  that opened it (aria-controls), since lists are usually portalled. */
+function pickerOf(el: HTMLElement): { label: string; owner: HTMLElement | null } | null {
+  const box = el.closest<HTMLElement>('[role="listbox"], [role="menu"]');
+  if (!box) return null;
+  const owner = box.id ? document.querySelector<HTMLElement>(`[aria-controls="${CSS.escape(box.id)}"]`) : null;
+  const byIds = (box.getAttribute('aria-labelledby') ?? '')
+    .split(/\s+/)
+    .filter(Boolean)
+    .map((id) => document.getElementById(id)?.textContent ?? '')
+    .join(' ');
+  const label = (box.getAttribute('aria-label') || byIds || (owner ? labelOf(owner) : '')).replace(/\s+/g, ' ').trim();
+  return { label, owner };
+}
+
+/** Search / filter boxes: Enter there only looks things up. */
+function isSearchField(el: HTMLElement): boolean {
+  const c = formControlOf(el) ?? el;
+  if (c instanceof HTMLInputElement && c.type === 'search') return true;
+  const role = c.getAttribute('role') ?? el.getAttribute('role');
+  if (role === 'searchbox' || role === 'combobox' || c.closest('[role="search"]')) return true;
+  return /\b(search|find|filter|look ?up)\b/i.test(`${labelOf(el)} ${c.getAttribute('placeholder') ?? ''} ${c.getAttribute('name') ?? ''}`);
+}
 
 function isSensitiveControl(el: HTMLElement): boolean {
-  if (el.getAttribute('aria-haspopup') || el.hasAttribute('aria-expanded')) return false;
+  if (isOpener(el)) return false;
   const role = el.getAttribute('role') ?? '';
   if (NON_SENSITIVE_ROLES.has(role)) return false;
   if (el instanceof HTMLInputElement && ['checkbox', 'radio', 'text', 'search', 'email', 'number', 'url', 'tel', 'date', 'time', 'datetime-local'].includes(el.type)) return false;
@@ -174,15 +219,40 @@ function whereOf(el: HTMLElement): string {
   return t ? ` in “${t}”` : ` on ${shortPageName(window.location.pathname)}`;
 }
 
-/** The confirm question for a generic tool call, or null when it is safe. */
-function sensitiveQuestion(tool: 'click' | 'type', agentId: string, submit?: boolean): string | null {
+type GenericTool = 'click' | 'type' | 'select';
+
+/** The confirm question for a generic tool call, or null when it is safe.
+ *  `extra` = type's submit flag, or select's chosen value. */
+function sensitiveQuestion(tool: GenericTool, agentId: string, extra?: boolean | string): string | null {
   const el = findAgentEl(agentId);
   if (!el) return null; // the driver will report not-found
-  if (tool === 'click') return isSensitiveControl(el) ? `Click “${labelOf(el)}”${whereOf(el)}?` : null;
-  if (!submit) return null;
+  const name = labelOf(el) || agentId;
+  if (tool === 'click') {
+    const picker = OPTION_ROLES.has(el.getAttribute('role') ?? '') ? pickerOf(el) : null;
+    // A marker on an opener (the role pill's trigger) guards its CHOICES, not the opening.
+    const declared = isOpener(el) ? null : declaredQuestion(el) ?? declaredQuestion(picker?.owner ?? null);
+    if (declared !== null) return declared || `Click “${name}”${whereOf(el)}?`;
+    if (isSensitiveControl(el)) return `Click “${name}”${whereOf(el)}?`;
+    if (picker && isSensitivePicker(picker.label)) return `Choose “${name}” — ${picker.label}${whereOf(el)}?`;
+    return null;
+  }
+  if (tool === 'select') {
+    const declared = declaredQuestion(el);
+    if (declared !== null) return declared || `Choose “${String(extra)}” in “${name}”${whereOf(el)}?`;
+    return isSensitivePicker(name) ? `Choose “${String(extra)}” for “${name}”${whereOf(el)}?` : null;
+  }
+  if (!extra) return null;
+  const declared = declaredQuestion(el);
+  if (declared !== null) return declared || `Press Enter in “${name}”${whereOf(el)}?`;
   const form = el.closest('form');
-  const btn = form?.querySelector<HTMLElement>('button[type="submit"], button:not([type]), input[type="submit"]');
-  return btn && isSensitiveControl(btn) ? `Submit “${labelOf(btn)}”${whereOf(el)}?` : null;
+  if (form) {
+    const btn = form.querySelector<HTMLElement>('button[type="submit"], button:not([type]), input[type="submit"]');
+    return btn && isSensitiveControl(btn) ? `Submit “${labelOf(btn)}”${whereOf(el)}?` : null;
+  }
+  // No form: Enter goes to the app's own key handler, which may just as well
+  // post or publish (the Site Content ticker input puts a headline LIVE on
+  // Enter) — so it is asked, unless the field is a search / filter box.
+  return isSearchField(el) ? null : `Press Enter in “${name}”${whereOf(el)}?`;
 }
 
 /** A release for a granted native-confirm pre-approval (see nativeDialogs). */
@@ -194,8 +264,8 @@ type Release = { release: (graceMs?: number) => void; graceMs: number };
  * for this same step is answered OK too (they just approved the step) — call
  * release() when the step is over. null = not sensitive, nothing asked.
  */
-async function confirmIfSensitive(tool: 'click' | 'type', agentId: string, submit?: boolean): Promise<Fail | Release | null> {
-  const q = sensitiveQuestion(tool, agentId, submit);
+async function confirmIfSensitive(tool: GenericTool, agentId: string, extra?: boolean | string): Promise<Fail | Release | null> {
+  const q = sensitiveQuestion(tool, agentId, extra);
   if (!q) return null;
   const ok = await ui().confirm(q);
   if (useOperator.getState().abortSignal().aborted) return STOPPED;
@@ -220,7 +290,9 @@ const DECLINED_NATIVE_ERROR =
 // outside the app's open menu, so a control INSIDE a menu ("More ▸ Start over…")
 // is gone by the time the user has said OK. The OK is held for the same control
 // for a minute — re-open the menu, click again, and it goes through with no
-// second card.
+// second card. Held ONLY in that case: an OK'd click that failed for another
+// reason (disabled, stopped) must not let a later same-label control — the
+// "Delete" of a different row — through without its own card.
 const HOLD_MS = 60_000;
 const held = new Map<string, { messages: string[] | null; until: number }>();
 
@@ -246,7 +318,9 @@ async function clickTool(agentId: string, scope: ToolScope): Promise<unknown> {
   const asked = declinedMessagesFor(el0, keys);
   const kept = heldFor(keys);
   let approval: Release | null = null;
-  let askedNow = false;
+  /** What a card shown by THIS call approved: the app's own messages, null =
+   *  the whole step, undefined = no card was shown. */
+  let okd: string[] | null | undefined;
 
   if (kept) {
     // The user already said OK to exactly this a moment ago (see `held`).
@@ -261,21 +335,18 @@ async function clickTool(agentId: string, scope: ToolScope): Promise<unknown> {
     // second app question can follow a server refusal ("it is live — delete
     // anyway?") and was part of what they saw.
     approval = { release: grantPreApproval({ messages: asked }), graceMs: 8000 };
-    hold(keys, asked);
-    askedNow = true;
+    okd = asked;
   } else {
     const gate = await confirmIfSensitive('click', agentId);
     if (gate && 'ok' in gate) return gate;
     approval = gate;
-    if (gate) {
-      hold(keys, null);
-      askedNow = true;
-    }
+    if (gate) okd = null;
   }
 
   try {
     // The card closed the menu / popover the control lived in.
-    if (askedNow && !findAgentEl(agentId)) {
+    if (okd !== undefined && !findAgentEl(agentId)) {
+      hold(keys, okd);
       return {
         ok: false,
         error:
@@ -517,11 +588,19 @@ async function runTool(name: string, input: unknown, scope: ToolScope): Promise<
       case 'select': {
         const p = parse(S.select, input, 'select');
         if (isFail(p)) return p;
-        return asStep(`Chose “${p.value}” in “${labelForId(p.agentId)}”`, async () => {
-          await ui().select(p.agentId, p.value);
-          ui().flash(p.agentId);
-          return { ok: true as const };
-        });
+        // A role picker saves on change (see SENSITIVE_PICKER) — same card as a
+        // sensitive click.
+        const gate = await confirmIfSensitive('select', p.agentId, p.value);
+        if (gate && 'ok' in gate) return gate;
+        try {
+          return await asStep(`Chose “${p.value}” in “${labelForId(p.agentId)}”`, async () => {
+            await ui().select(p.agentId, p.value);
+            ui().flash(p.agentId);
+            return { ok: true as const };
+          });
+        } finally {
+          gate?.release(gate.graceMs);
+        }
       }
 
       case 'waitFor': {

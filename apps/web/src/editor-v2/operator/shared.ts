@@ -166,21 +166,43 @@ export function pageListLabel(numbers: number[]): string {
   return `pages ${n.slice(0, -1).join(', ')} and ${n[n.length - 1]}`;
 }
 
-/** 1-based page number → the page, or a clear error naming the valid range. */
+/**
+ * A page's REAL number: index + 1 — what the canvas header prints ("Page 3"),
+ * what the server's getMagazine reports and what the Magazine AI Studio means by
+ * "page 3". The ONE numbering the Operator uses. It differs from the position in
+ * `pages` for a page-scoped collaborator, who only receives their own pages:
+ * their single page is "Page 3" at list position 1. Using the position made the
+ * Stable Hand call it "page 1" and ask the studio about a page the user can't open.
+ */
+export function pageNo(p: PageSummary): number {
+  return p.index + 1;
+}
+
+/** Real page number of a page id in this list (null when not visible here). */
+export function pageNoOf(pages: PageSummary[], id: string | null | undefined): number | null {
+  if (!id) return null;
+  const p = pages.find((x) => x.id === id);
+  return p ? pageNo(p) : null;
+}
+
+/** Real page number (as printed on the canvas) → the page, or a clear error
+ *  listing the pages this user can actually open. */
 export function pageAt(pages: PageSummary[], n: number): PageSummary {
-  const p = pages[n - 1];
+  const p = pages.find((x) => pageNo(x) === n);
   if (!p) {
+    if (pages.length === 0) throw new Error('This magazine has no pages yet.');
+    const open = pages.map(pageNo);
     throw new Error(
-      pages.length === 0 ? 'This magazine has no pages yet.' : `There is no page ${n} — this magazine has ${pages.length} page${pages.length === 1 ? '' : 's'}.`,
+      `There is no page ${n} you can open here. Pages available: ${open.join(', ')} (numbers as printed on the canvas, "Page N").`,
     );
   }
   return p;
 }
 
-/** A collaborator's scope as 1-based page numbers (or 'all'), for results. */
+/** A collaborator's scope as real page numbers (or 'all'), for results. */
 export function scopeNumbers(c: V2Collaborator, pages: PageSummary[]): number[] | 'all' {
   if (c.pageIds === 'all') return 'all';
-  const num = new Map(pages.map((p, i) => [p.id, i + 1]));
+  const num = new Map(pages.map((p) => [p.id, pageNo(p)]));
   return c.pageIds
     .map((id) => num.get(String(id)))
     .filter((n): n is number => !!n)

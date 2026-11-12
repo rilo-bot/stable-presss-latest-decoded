@@ -110,12 +110,14 @@ export function useMemberOperatorActions(state: MemberDashState): void {
       description: 'Claim your entry in the register under a racing role (asks to confirm; takes effect at once).',
       args: z.object({ role: z.string().min(1).max(40), entry: z.string().min(1).max(120) }),
       confirm: (a) => {
-        let role = a.role;
+        let role: string;
         try {
           role = PARTY_ROLE_LABELS[partyRole(a.role)];
         } catch {
-          /* run() reports it */
+          return null; // not a role: run() throws on its first line, before any click
         }
+        // NOTE: the entry is not pre-checked here — run() resolves it only after
+        // switching the role chip, so a "no match" here could be stale; keep the card.
         return `Claim “${a.entry}” as your ${role.toLowerCase()} entry? It takes effect straight away and links your account to that register entry and its horses.`;
       },
       run: async (a, ui) => {
@@ -171,7 +173,10 @@ export function useMemberOperatorActions(state: MemberDashState): void {
         await ui.waitFor('reg.add-horse-quick', 4000);
         await ui.click('reg.add-horse-quick', 'Quick form');
         await ui.waitFor('reg.horse-form', 5000);
-        if (anchor('reg.horse-discard-draft')) await ui.click('reg.horse-discard-draft', 'Discard the old draft');
+        // A half-filled Quick-form draft (localStorage) would leak its other fields
+        // into this horse, so it is discarded — and reported, so it is no surprise.
+        const discardedDraft = !!anchor('reg.horse-discard-draft');
+        if (discardedDraft) await ui.click('reg.horse-discard-draft', 'Discard the old draft');
         await typeField(ui, 'reg.horse-name', a.name);
         if (sex) await ui.select('reg.horse-sex', sex);
         if (a.dob) await typeField(ui, 'reg.horse-dob', a.dob);
@@ -196,6 +201,7 @@ export function useMemberOperatorActions(state: MemberDashState): void {
           mode: 'quick',
           horse: created ? { id: created.id, name: created.name, studioPath: `/studio/horse/${created.id}`, publicPath: `/horses/${created.id}` } : a.name,
           inMyStable: !!created && live.current.stableHorses.some((h) => h.id === created.id),
+          ...(discardedDraft ? { discardedDraft: true, note: 'An unsaved Quick-form draft was discarded to start this horse clean — tell the user.' } : {}),
         };
       },
     },

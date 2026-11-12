@@ -206,6 +206,56 @@ router.post(
 )
 
 /**
+ * POST /api/uploads/relay?target=<presigned PUT URL>
+ * Body: raw file bytes; Content-Type header = the type the URL was signed for.
+ *
+ * The browser's FALLBACK when its direct PUT to S3 fails at the network level —
+ * almost always the bucket's CORS rules missing the address the site was opened
+ * on (a Render URL, a preview host, a new domain). Before this, that failure
+ * silently degraded features (the magazine studio could only DESCRIBE a photo it
+ * couldn't store, and staged a look-alike). Now the bytes come to us and we put
+ * them on the same key server-side, where CORS doesn't exist.
+ *
+ * Authority = the presigned URL itself: storage.verifyPresignedPutUrl re-derives
+ * its signature and only honours a URL this server issued that is still valid,
+ * returning the key it was signed for. A valid presigned URL already allows a PUT
+ * to that key, so the relay grants nothing new. Signed-in + rate-limited too.
+ */
+router.post('/relay', attachAccount, uploadLimit, rawUpload, async (req, res) => {
+  if (!storage.isConfigured()) {
+    res.status(501).json({ error: 'Object storage is not configured on this server.', configured: false })
+    return
+  }
+  const contentType = String(req.headers['content-type'] ?? '').split(';')[0]!.trim()
+  if (!contentType) {
+    res.status(415).json({ error: 'Missing Content-Type.' })
+    return
+  }
+  const body = req.body as Buffer
+  if (!Buffer.isBuffer(body) || body.length === 0) {
+    res.status(400).json({ error: 'Empty upload body.' })
+    return
+  }
+  let verified: { key: string } | null = null
+  try {
+    verified = await storage.verifyPresignedPutUrl(String(req.query.target ?? ''), contentType)
+  } catch (err) {
+    console.error('[uploads] relay verify failed:', err instanceof Error ? err.message : err)
+  }
+  if (!verified) {
+    res.status(403).json({ error: 'This upload link is invalid or has expired — please try the upload again.' })
+    return
+  }
+  try {
+    await storage.uploadObject({ key: verified.key, contentType, body })
+    res.json({ ok: true, key: verified.key })
+  } catch (err) {
+    console.error('[uploads] relay upload failed:', err instanceof Error ? err.message : err)
+    res.status(500).json({ error: 'Could not store the file.' })
+  }
+})
+
+/**
  * POST /api/uploads/sign
  * Body: { fileName, contentType, kind?, size? }
  * Returns: { uploadUrl, publicUrl, key } — browser PUTs the file to uploadUrl

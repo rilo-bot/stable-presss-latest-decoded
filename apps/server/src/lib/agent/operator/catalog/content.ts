@@ -58,8 +58,9 @@ export const SURFACES: CatalogSurface[] = [
       { name: 'instant.read', description: 'Step, mode, topic, voice note, photos and the draft under review.', args: '{}' },
       {
         name: 'instant.capture',
-        description: 'Fill the capture and press Generate draft; returns the AI draft. voiceNote = facts the AI treats as certain.',
+        description: 'Fill the capture and press Generate draft; returns the AI draft. voiceNote = facts the AI treats as certain. generate:false only fills.',
         args: "{ topic?: string; voiceNote?: string; mode?: 'story' | 'blog'; generate?: boolean }",
+        confirms: true,
       },
       {
         name: 'instant.editDraft',
@@ -79,11 +80,12 @@ export const SURFACES: CatalogSurface[] = [
       "The public landing page's breaking-news ticker (every live headline shows) and sponsors strip. Changes are live at once. `headline` / `sponsor` = id or text / name.",
     actions: [
       { name: 'site.readContent', description: 'Ticker headlines (live or hidden) and sponsors.', args: '{}' },
-      { name: 'site.addSponsor', description: 'Add a sponsor via the form.', args: '{ name: string; category?: string; tagline?: string; websiteUrl?: string }' },
+      { name: 'site.addSponsor', description: 'Add a sponsor via the form.', args: '{ name: string; category?: string; tagline?: string; websiteUrl?: string }', confirms: true },
       {
         name: 'site.editSponsor',
         description: 'Edit a sponsor in place (pencil → Save).',
         args: '{ sponsor: string; name?: string; category?: string; tagline?: string; websiteUrl?: string }',
+        confirms: true,
       },
       { name: 'site.removeSponsor', description: 'Delete a sponsor.', args: '{ sponsor: string }', confirms: true },
       { name: 'site.addHeadline', description: 'Put a new headline on the live ticker; only:true hides the others.', args: '{ text: string; only?: boolean }', confirms: true },

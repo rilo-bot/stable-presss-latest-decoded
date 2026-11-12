@@ -798,7 +798,7 @@ export function AiPanel({ onClose }: { onClose?: () => void } = {}) {
             rows={1}
             onChange={(e) => setInput(e.target.value)}
             onKeyDown={(e) => {
-              if (e.key === 'Enter' && !e.shiftKey && !e.nativeEvent.isComposing) {
+              if (e.key === 'Enter' && !e.shiftKey && !e.nativeEvent.isComposing && e.nativeEvent.keyCode !== 229) {
                 e.preventDefault();
                 void send();
               }
@@ -818,7 +818,8 @@ export function AiPanel({ onClose }: { onClose?: () => void } = {}) {
               : atts.length > 0 ? 'e.g. “fill this page from the document and place the graphs”'
               : 'Ask the Design Helper…'
             }
-            className="studio-scroll max-h-40 min-h-[44px] min-w-0 flex-1 resize-none overflow-y-auto bg-transparent px-1 py-2.5 text-ui leading-snug text-studio-ink outline-none placeholder:text-studio-ink-4 disabled:opacity-60"
+            // 16px on touch devices: iOS Safari zooms into any field under 16px on focus.
+            className="studio-scroll max-h-40 min-h-[44px] min-w-0 flex-1 resize-none overflow-y-auto bg-transparent px-1 py-2.5 text-ui leading-snug text-studio-ink outline-none placeholder:text-studio-ink-4 disabled:opacity-60 [@media(pointer:coarse)]:text-[16px]"
           />
           {/* Mic — v1 icon logic: transcribing→spinner, recording→stop (■);
               hidden while a reply is generating OR a previous turn is still going

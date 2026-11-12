@@ -126,6 +126,8 @@ export function useSettingsOperatorActions(toggleFallback: (key: PublicNavKey, o
     description: 'Show / hide public website sections (ticks the checkboxes, then Save changes).',
     args: setArgs,
     confirm: (a) => {
+      // No settings.edit: run() refuses — no card for something that cannot happen.
+      if (!can('settings.edit')) return null;
       let to: PublicNavVisibility;
       const saved = useSiteSettingsStore.getState().publicNav;
       try {
@@ -133,6 +135,8 @@ export function useSettingsOperatorActions(toggleFallback: (key: PublicNavKey, o
       } catch {
         return null; // run() reports the bad section name
       }
+      // Everything hidden: run() refuses (one section must stay visible).
+      if (PUBLIC_NAV_KEYS.every((k) => to[k] === false)) return null;
       const { hide, show } = diff(saved, to);
       if (!hide.length && !show.length) return null;
       const parts = [

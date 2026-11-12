@@ -128,7 +128,7 @@ export default function SiteContent() {
               className="flex-1"
               onKeyDown={(e) => e.key === 'Enter' && onAddNews()}
             />
-            <Button onClick={onAddNews} disabled={nBusy || !nText.trim()} className="gap-1.5" data-agent-id="site.headline-add">
+            <Button onClick={onAddNews} disabled={nBusy || !nText.trim()} className="gap-1.5" data-agent-id="site.headline-add" data-agent-confirm="Put this headline on the live breaking-news ticker?">
               {nBusy ? <Loader2 size={14} className="animate-spin" /> : <Plus size={14} />}
               Add
             </Button>

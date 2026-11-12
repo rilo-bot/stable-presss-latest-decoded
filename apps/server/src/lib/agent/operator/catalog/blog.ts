@@ -25,7 +25,7 @@ const CREATE: CatalogAction = {
   name: 'blog.create',
   description:
     "THE way to write a new blog post. Creates a DRAFT through the New post form (title + optional standfirst, byline, category, summary = card summary), then the editor opens on it. You (The Stable Hand) write the text yourself: pass the whole body as markdown here (## headings, - lists, > quotes, blank-line paragraphs; open with a paragraph, not a heading — a leading heading is dropped, the title is already the headline) and it is written into the editor straight after creating — or call blog.writeBody once the editor is open. Returns { created, blogId, path, bodyWritten? }.",
-  args: '{ title: string; standfirst?: string; byline?: string; category?: string; summary?: string; markdown?: string }',
+  args: '{ title: string /* 1-300 chars */; standfirst?: string; byline?: string; category?: string; summary?: string; markdown?: string }',
 }
 
 export const SURFACES: CatalogSurface[] = [
@@ -85,6 +85,7 @@ export const SURFACES: CatalogSurface[] = [
       'blog.studio-panel',
       'blog.studio-input',
       'blog.studio-send',
+      'blog.studio-stop',
       'blog.studio-new-chat',
       'blog.studio-close',
       'blog.studio-confirm-card',
@@ -130,7 +131,7 @@ export const SURFACES: CatalogSurface[] = [
       {
         name: 'blog.setTitle',
         description: "Retype the open post's title (autosaves). Asks to confirm when the post is live.",
-        args: '{ title: string }',
+        args: '{ title: string /* 1-300 chars */ }',
         confirms: true,
       },
       {

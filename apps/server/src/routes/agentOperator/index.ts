@@ -119,91 +119,104 @@ router.post(
   },
   // Every client-tool result is its own request, so a long run legitimately makes
   // many calls; 30/min still stops a looping client cold.
-  rateLimit('agent-operator', 30, 60_000),
-  async (req, res) => {
-    if (!isAgentConfigured()) {
-      res
-        .status(503)
-        .json({ error: 'The Stable Hand is resting — OPENROUTER_API_KEY is not configured on the server.' })
-      return
-    }
-
-    const body = req.body as { messages?: UIMessage[]; pageContext?: unknown; runId?: unknown }
-    if (!Array.isArray(body?.messages)) {
-      res.status(400).json({ error: 'messages[] is required' })
-      return
-    }
-    if (body.messages.length > MAX_MESSAGES) {
-      res.status(413).json({ error: 'This conversation is too long — please start a new chat.' })
-      return
-    }
-
-    const account = req.account!
-    if ((await spentTodayUsd(account.id)) >= dailyBudgetUsd()) {
-      res.status(429).json({ error: "You've reached today's Stable Hand limit — it resets tomorrow." })
-      return
-    }
-
-    // A tool call with no result poisons every later turn — close any off before
-    // the SDK sees them. See lib/agent/repairMessages.ts.
-    const repaired = repairToolResults(body.messages)
-    if (repaired.repaired > 0) {
-      console.warn(
-        `[agent-operator] closed ${repaired.repaired} unanswered tool call(s) so the run could continue: ${repaired.tools.join(', ')}`,
-      )
-    }
-
-    const pageContext = pageContextOf(body.pageContext)
-    const lastUser = newestUserMessage(repaired.messages)
-    // A [job-update] continues the run the person started — keep that run's model.
-    const heavy = wantsHeavyModel(isJobUpdate(lastUser) ? newestHumanMessage(repaired.messages) : lastUser)
-    const meta = {
-      runId: normaliseRunId(body.runId),
-      userId: account.id,
-      model: heavy ? OPERATOR_HEAVY_MODEL : OPERATOR_MODEL,
-      prompt: textOf(lastUser),
-      path: typeof pageContext?.path === 'string' ? pageContext.path : undefined,
-    }
-
-    // Stop paying for a stream nobody is reading (Stop, closed tab, navigation).
-    const abort = new AbortController()
-    res.on('close', () => {
-      if (!res.writableFinished) abort.abort()
-    })
-
-    try {
-      const result = streamText({
-        model: getOperatorModel(heavy),
-        system: buildOperatorSystem(account, pageContext),
-        messages: await convertToModelMessages(labelJobUpdates(repaired.messages)),
-        // Forward the caller's Bearer token: data tools call our own routes AS
-        // this user, so the route — not the agent — enforces RBAC.
-        tools: buildOperatorTools(account, req.headers.authorization),
-        stopWhen: stepCountIs(30),
-        abortSignal: abort.signal,
-        // Fire-and-forget: the log must never slow or break the stream.
-        onStepFinish: (step) => {
-          void recordStep(meta, step)
-        },
-        onError: ({ error }) => {
-          console.error('[agent-operator] model error:', error)
-        },
-      })
-
-      result.pipeUIMessageStreamToResponse(res, {
-        onError: (error) => {
-          console.error('[agent-operator] stream error:', error)
-          return "Sorry — I hit a snag just then. Ask me to pick up where I left off and I'll check the screen first."
-        },
-      })
-    } catch (err) {
+  // 60/min: every tool round-trip is a request, so a long multi-step task at 30/min
+  // could hit the limit mid-run. The daily $ budget is the real spend cap.
+  rateLimit('agent-operator', 60, 60_000),
+  // Express 4 does not await the handler: anything that threw before the stream
+  // started (a malformed message the repair / conversion trips over) was an
+  // unhandled rejection that left the request hanging with no response — the
+  // panel sat on "Thinking…" until the browser gave up.
+  (req, res) => {
+    operatorTurn(req, res).catch((err: unknown) => {
       console.error('[agent-operator] error:', err)
-      if (!res.headersSent) {
-        res.status(500).json({ error: 'The Stable Hand hit a snag. Please try again.' })
-      }
-    }
+      if (!res.headersSent) res.status(500).json({ error: 'The Stable Hand hit a snag. Please try again.' })
+    })
   },
 )
+
+async function operatorTurn(req: Request, res: Response): Promise<void> {
+  if (!isAgentConfigured()) {
+    res
+      .status(503)
+      .json({ error: 'The Stable Hand is resting — OPENROUTER_API_KEY is not configured on the server.' })
+    return
+  }
+
+  const body = req.body as { messages?: UIMessage[]; pageContext?: unknown; runId?: unknown }
+  if (!Array.isArray(body?.messages)) {
+    res.status(400).json({ error: 'messages[] is required' })
+    return
+  }
+  if (body.messages.length > MAX_MESSAGES) {
+    res.status(413).json({ error: 'This conversation is too long — please start a new chat.' })
+    return
+  }
+
+  const account = req.account!
+  if ((await spentTodayUsd(account.id)) >= dailyBudgetUsd()) {
+    res.status(429).json({ error: "You've reached today's Stable Hand limit — it resets tomorrow." })
+    return
+  }
+
+  // A tool call with no result poisons every later turn — close any off before
+  // the SDK sees them. See lib/agent/repairMessages.ts.
+  const repaired = repairToolResults(body.messages)
+  if (repaired.repaired > 0) {
+    console.warn(
+      `[agent-operator] closed ${repaired.repaired} unanswered tool call(s) so the run could continue: ${repaired.tools.join(', ')}`,
+    )
+  }
+
+  const pageContext = pageContextOf(body.pageContext)
+  const lastUser = newestUserMessage(repaired.messages)
+  // A [job-update] continues the run the person started — keep that run's model.
+  const heavy = wantsHeavyModel(isJobUpdate(lastUser) ? newestHumanMessage(repaired.messages) : lastUser)
+  const meta = {
+    runId: normaliseRunId(body.runId),
+    userId: account.id,
+    model: heavy ? OPERATOR_HEAVY_MODEL : OPERATOR_MODEL,
+    prompt: textOf(lastUser),
+    path: typeof pageContext?.path === 'string' ? pageContext.path : undefined,
+  }
+
+  // Stop paying for a stream nobody is reading (Stop, closed tab, navigation).
+  const abort = new AbortController()
+  res.on('close', () => {
+    if (!res.writableFinished) abort.abort()
+  })
+
+  try {
+    const result = streamText({
+      model: getOperatorModel(heavy),
+      system: buildOperatorSystem(account, pageContext),
+      messages: await convertToModelMessages(labelJobUpdates(repaired.messages)),
+      // Forward the caller's Bearer token: data tools call our own routes AS
+      // this user, so the route — not the agent — enforces RBAC.
+      tools: buildOperatorTools(account, req.headers.authorization),
+      stopWhen: stepCountIs(30),
+      abortSignal: abort.signal,
+      // Fire-and-forget: the log must never slow or break the stream.
+      onStepFinish: (step) => {
+        void recordStep(meta, step)
+      },
+      onError: ({ error }) => {
+        console.error('[agent-operator] model error:', error)
+      },
+    })
+
+    result.pipeUIMessageStreamToResponse(res, {
+      onError: (error) => {
+        console.error('[agent-operator] stream error:', error)
+        return "Sorry — I hit a snag just then. Ask me to pick up where I left off and I'll check the screen first."
+      },
+    })
+  } catch (err) {
+    console.error('[agent-operator] error:', err)
+    if (!res.headersSent) {
+      res.status(500).json({ error: 'The Stable Hand hit a snag. Please try again.' })
+    }
+  }
+}
 
 // ── Stable Hand Activity (read-only) ─────────────────────────────────────────
 //

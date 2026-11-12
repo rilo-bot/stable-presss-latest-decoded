@@ -69,14 +69,26 @@ export function useOrgOperatorActions(state: OrgPageState): void {
       name: 'org.addMember',
       description: 'Add a member by email (they need a Stable Press account) with a role (asks to confirm).',
       args: z.object({ email: z.string().trim().email(), role: z.enum(ROLES).optional() }),
-      confirm: (a) => `Add ${a.email} to ${orgName()} as ${a.role ?? 'member'}? They get access to the organisation's entries and horses.`,
+      confirm: (a) => {
+        // Illegal / no-op → no card; run() throws the same reason before touching anything.
+        const role = a.role ?? 'member';
+        if (role !== 'member' && !live.current.isOwner) return null;
+        if (detailNow()?.members.some((m) => normKey(m.email) === normKey(a.email))) return null;
+        // POST /members with role 'owner' MOVES ownership (server demotes you to manager).
+        if (role === 'owner') {
+          return `Make ${a.email} the OWNER of ${orgName()}? This transfers ownership — you become a manager and can no longer remove members.`;
+        }
+        return `Add ${a.email} to ${orgName()} as ${role}? They get access to the organisation's entries and horses.`;
+      },
       run: async (a, ui) => {
         const role = a.role ?? 'member';
         if (role !== 'member' && !live.current.isOwner) throw new Error('Only an owner can add managers or owners.');
         const d = detailNow();
         if (d?.members.some((m) => normKey(m.email) === normKey(a.email))) throw new Error(`${a.email} is already a member.`);
         await ui.type('member.org-member-email', a.email, { clear: true });
-        if (role !== 'member') await ui.select('member.org-member-role', role);
+        // Always set the role: the select keeps whatever the user last picked, so
+        // skipping it for 'member' could add a manager — or transfer ownership.
+        await ui.select('member.org-member-role', role);
         const toasts = watchToasts();
         await ui.waitFor('member.org-member-add', 2000);
         await ui.click('member.org-member-add', 'Add');
@@ -101,17 +113,17 @@ export function useOrgOperatorActions(state: OrgPageState): void {
       description: 'Remove a member (by email or name) from the organisation (asks to confirm).',
       args: z.object({ member: z.string().trim().min(1).max(160) }),
       confirm: (a) => {
-        const d = live.current.detail;
-        let who = a.member;
+        // Same source + checks as run(), which follows synchronously: anything run()
+        // would refuse (not loaded / no unique match / yourself) gets no card.
+        const d = detailNow();
+        if (!d) return null;
         try {
-          if (d) {
-            const m = resolveOne(a.member, d.members, (x) => [x.userId, x.email, x.name], 'member', (x) => x.email);
-            who = `${m.name} (${m.email})`;
-          }
+          const m = resolveOne(a.member, d.members, (x) => [x.userId, x.email, x.name], 'member', (x) => x.email);
+          if (m.userId === live.current.myUserId) return null;
+          return `Remove ${m.name} (${m.email}) from ${orgName()}? They lose access to its entries and horses.`;
         } catch {
-          /* run() reports it */
+          return null; // run() reports the bad name
         }
-        return `Remove ${who} from ${orgName()}? They lose access to its entries and horses.`;
       },
       run: async (a, ui) => {
         const d = detailNow();

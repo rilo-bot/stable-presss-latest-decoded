@@ -11,7 +11,7 @@ import { useEffect, useRef, useState } from 'react';
 import type { UIMessage } from 'ai';
 import {
   isRecordingSupported, isVoiceEnabled, startRecording, transcribe,
-  startLiveCaption, SpeechStream, type Recorder, type LiveCaption,
+  startLiveCaption, SpeechStream, unlockAudio, type Recorder, type LiveCaption,
 } from '@/agent/voice/voiceClient';
 
 function messageText(m: UIMessage): string {
@@ -69,6 +69,7 @@ export function useVoiceChat({ messages, send, busy, active, autoSpeakOnMic = fa
   }, []);
 
   const toggleMic = async () => {
+    unlockAudio(); // still inside the tap — lets Safari/iOS play the spoken reply later
     if (recording) {
       // Stop → transcribe → send through the normal chat flow.
       const rec = recorderRef.current;
@@ -127,5 +128,12 @@ export function useVoiceChat({ messages, send, busy, active, autoSpeakOnMic = fa
   useEffect(() => { if (!voiceMode || !active) speechRef.current?.stop(); }, [voiceMode, active]);
   useEffect(() => () => { speechRef.current?.stop(); recorderRef.current?.cancel(); liveRef.current?.stop(); }, []);
 
-  return { voiceReady, voiceMode, setVoiceMode, recording, transcribing, caption, toggleMic };
+  // Every surface flips read-aloud from a click handler, so this is the tap that
+  // unlocks Safari/iOS reply playback (see unlockAudio in voiceClient).
+  const setVoiceModeUnlocked: React.Dispatch<React.SetStateAction<boolean>> = (v) => {
+    unlockAudio();
+    setVoiceMode(v);
+  };
+
+  return { voiceReady, voiceMode, setVoiceMode: setVoiceModeUnlocked, recording, transcribing, caption, toggleMic };
 }

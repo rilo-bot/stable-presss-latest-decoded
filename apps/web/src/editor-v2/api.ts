@@ -6,6 +6,7 @@
 // ---------------------------------------------------------------------------
 
 import { authFetch, authFetchRetry } from '@/lib/api';
+import { relayUpload } from '@/lib/storageRelay';
 import type { MagazineElement, MagazinePageV2, AgentProposal } from './model';
 
 const BASE = '/api/magazinesV2';
@@ -489,14 +490,18 @@ export function putToS3WithProgress(
       reject(new Error(`Upload failed (HTTP ${xhr.status}). Check the storage bucket's CORS policy.`));
     };
     // A CORS-blocked PUT lands here with no status, exactly as it rejects in fetch.
-    // Same explanation for the same reason — see putToS3 below.
-    xhr.onerror = () =>
-      reject(
-        new Error(
-          'Upload could not reach storage. ' +
-            `If this is a new host, check the bucket's CORS policy allows ${window.location.origin}.`,
+    // Don't fail: send the same bytes through our API (lib/storageRelay), which
+    // stores them on the presigned key server-side, where CORS doesn't apply.
+    xhr.onerror = () => {
+      relayUpload(uploadUrl, file, file.type || 'application/pdf', onProgress).then(resolve, (e: unknown) =>
+        reject(
+          new Error(
+            `Upload could not reach storage, and the server relay failed too (${e instanceof Error ? e.message : 'error'}). ` +
+              `Check the bucket's CORS policy allows ${window.location.origin}.`,
+          ),
         ),
       );
+    };
     xhr.onabort = () => reject(new Error('Upload cancelled.'));
     xhr.send(file);
   });
@@ -509,6 +514,15 @@ export async function putToS3(uploadUrl: string, file: File): Promise<void> {
   try {
     res = await fetch(uploadUrl, { method: 'PUT', headers: { 'Content-Type': file.type || 'application/pdf' }, body: file });
   } catch (e) {
+    // Before giving up, relay the same bytes through our API (lib/storageRelay):
+    // the server stores them on the presigned key, so a bucket CORS rule that
+    // misses this site's address no longer breaks uploads.
+    try {
+      await relayUpload(uploadUrl, file, file.type || 'application/pdf');
+      return;
+    } catch (relayErr) {
+      console.warn('[upload] direct PUT and server relay both failed', e, relayErr);
+    }
     // A CORS-BLOCKED PUT REJECTS HERE, IT DOES NOT RETURN A RESPONSE — so the `!res.ok`
     // branch below never sees it and the caller got a bare "Failed to fetch". This is
     // the browser talking straight to S3, so the API server logs nothing either: with

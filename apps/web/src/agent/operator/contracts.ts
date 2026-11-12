@@ -35,6 +35,14 @@ export const AGENT_LABEL_ATTR = 'data-agent-label';
 /** Mark ANY Operator chrome (panel, pill, cursor) with this attribute so
  *  readScreen() skips it and user clicks inside it are not a "takeover". */
 export const OPERATOR_UI_ATTR = 'data-operator-ui';
+/** Opt-in runtime confirm for a control whose click / Enter / pick IS an
+ *  outward write its label does not give away — an "Add" that puts a headline
+ *  on the live site, a picker that saves on change. Put it on the control (or
+ *  a wrapper; for a listbox, on the trigger that opens it). Value = the
+ *  question for the confirm card, or '' to let the runtime word it. Honoured
+ *  by the generic click / type-with-submit / select tools; named actions
+ *  declare their own confirm(). */
+export const AGENT_CONFIRM_ATTR = 'data-agent-confirm';
 
 /** CSS selector for an anchor id. */
 export const agentSel = (agentId: string) => `[${AGENT_ID_ATTR}="${CSS.escape(agentId)}"]`;

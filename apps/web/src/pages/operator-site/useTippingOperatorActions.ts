@@ -71,6 +71,20 @@ const tipArgs = z.object({
 });
 type TipArgs = z.infer<typeof tipArgs>;
 
+/** Every refusal placeTip has, BEFORE anything on screen is touched. Shared by
+ *  confirm() (→ null, no pointless card) and run() (→ throws the reason). */
+function checkTip(a: TipArgs) {
+  const { user, profile } = me();
+  if (!user) throw new Error('Sign in to place tips.');
+  const race = resolveRace(a.race);
+  if (race.status !== 'open') throw new Error(`${race.name} is ${race.status}, not open for tips.`);
+  const entrant = resolveRunner(race, a.horse);
+  const existing = myTip(race.id);
+  if (existing) throw new Error(`You already backed ${existing.horseName} in ${race.name} (${existing.wager} coins).`);
+  if (profile && profile.coinBalance < a.coins) throw new Error(`Not enough coins: balance ${profile.coinBalance}.`);
+  return { race, entrant, profile };
+}
+
 export function useTippingOperatorActions(): void {
   useAgentAction({
     name: 'tipping.read',
@@ -79,10 +93,18 @@ export function useTippingOperatorActions(): void {
     run: async () => {
       const s = useTippingStore.getState();
       const { user, profile } = me();
+      // Bounded: /api/races returns every race ever run. Open / upcoming in full;
+      // only the 10 latest settled ones, without their (long) fields.
+      const all = s.races ?? [];
+      const current = all.filter((r) => r.status === 'open' || r.status === 'upcoming');
+      const settled = all
+        .filter((r) => r.status === 'closed' || r.status === 'resolved')
+        .sort((x, y) => String(y.scheduledAt).localeCompare(String(x.scheduledAt)));
       return {
         signedIn: !!user,
         me: profile ? { balance: profile.coinBalance, tipsPlaced: profile.tipsPlaced, coinsWon: profile.totalWon, wagered: profile.totalWagered } : null,
-        races: (s.races ?? []).map(raceRow),
+        races: [...current.map(raceRow), ...settled.slice(0, 10).map((r) => ({ ...raceRow(r), field: undefined }))],
+        ...(settled.length > 10 ? { olderSettledRaces: settled.length - 10 } : {}),
         note: 'Coins are virtual — no real money.',
       };
     },
@@ -114,25 +136,17 @@ export function useTippingOperatorActions(): void {
     description: 'Back a runner in an open race with virtual coins (asks to confirm).',
     args: tipArgs,
     confirm: (a) => {
-      let label = `${a.horse} in ${a.race}`;
+      let t: ReturnType<typeof checkTip>;
       try {
-        const r = resolveRace(a.race);
-        label = `${resolveRunner(r, a.horse).horseName} in ${r.name}`;
+        t = checkTip(a);
       } catch {
-        /* run() reports the bad name */
+        return null; // run() re-checks synchronously and reports why — nothing is staked
       }
-      const bal = me().profile?.coinBalance;
-      return `Back ${label} with ${a.coins} coins?${bal != null ? ` This stakes ${a.coins} of your ${bal} virtual coins.` : ''} One tip per race — it can't be changed.`;
+      const bal = t.profile?.coinBalance;
+      return `Back ${t.entrant.horseName} in ${t.race.name} with ${a.coins} coins?${bal != null ? ` This stakes ${a.coins} of your ${bal} virtual coins.` : ''} One tip per race — it can't be changed.`;
     },
     run: async (a, ui) => {
-      const { user, profile } = me();
-      if (!user) throw new Error('Sign in to place tips.');
-      const race = resolveRace(a.race);
-      if (race.status !== 'open') throw new Error(`${race.name} is ${race.status}, not open for tips.`);
-      const entrant = resolveRunner(race, a.horse);
-      const existing = myTip(race.id);
-      if (existing) throw new Error(`You already backed ${existing.horseName} in ${race.name} (${existing.wager} coins).`);
-      if (profile && profile.coinBalance < a.coins) throw new Error(`Not enough coins: balance ${profile.coinBalance}.`);
+      const { race, entrant } = checkTip(a);
 
       const ids = raceIds(race.id);
       ui.step(`Backing ${entrant.horseName} in ${race.name}`);
@@ -140,7 +154,15 @@ export function useTippingOperatorActions(): void {
         await ui.click(ids.field, 'Show field');
         await waitUntil(() => !!anchor(ids.runner(entrant.horseId)), { timeoutMs: 2000, signal: ui.signal });
       }
-      await ui.click(ids.runner(entrant.horseId), entrant.horseName);
+      // The runner row TOGGLES selection: clicking an already-selected runner
+      // deselects it. Click only when needed, then make sure it is the one
+      // selected — Place Tip stakes on whatever runner the card has selected.
+      const runnerId = ids.runner(entrant.horseId);
+      if (anchor(runnerId)?.getAttribute('aria-pressed') !== 'true') {
+        await ui.click(runnerId, entrant.horseName);
+        await waitUntil(() => anchor(runnerId)?.getAttribute('aria-pressed') === 'true', { timeoutMs: 1500, signal: ui.signal });
+      }
+      if (anchor(runnerId)?.getAttribute('aria-pressed') !== 'true') throw new Error(`Could not select ${entrant.horseName} on the race card.`);
       await ui.waitFor(ids.wager, 3000);
       await typeField(ui, ids.wager, String(a.coins));
       await sleep(120, ui.signal);

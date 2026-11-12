@@ -33,7 +33,7 @@ export const SURFACES: CatalogSurface[] = [
       {
         name: 'settings.setSections',
         description:
-          "Show or hide public website sections: ticks / unticks the section checkboxes visibly, then presses Save changes. Either visible (the COMPLETE list that should be shown; everything else is hidden) or hide / show lists (others unchanged). Sections by key or label (news, blog, horses, directory, podcast, bulletins). Always asks the user to confirm (it changes the live site). Returns the saved state.",
+          "Show or hide public website sections: ticks / unticks the section checkboxes visibly, then presses Save changes. Either visible (the COMPLETE list that should be shown; everything else is hidden) or hide / show lists (others unchanged). Sections by key or label (news, blog, horses, directory, podcast, bulletins). Asks the user to confirm any real change (it changes the live site); a no-op returns unchanged, and hiding every section is refused. Returns the saved state.",
         args: '{ visible?: string[]; hide?: string[]; show?: string[] }',
         confirms: true,
       },

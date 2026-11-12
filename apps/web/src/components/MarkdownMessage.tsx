@@ -4,8 +4,21 @@
 // so it is XSS-safe by construction.
 
 import ReactMarkdown from 'react-markdown';
-import type { Components } from 'react-markdown';
+import type { Components, Options } from 'react-markdown';
 import remarkGfm from 'remark-gfm';
+
+// remark-gfm's autolink step builds a regex with lookbehind `(?<=…)` on every
+// parse. Safari / iOS before 16.4 cannot compile lookbehind, so there it threw
+// on EVERY render and no assistant reply could be shown at all. Detect it once
+// and skip GFM on those engines (tables / ~~strike~~ then read as plain text).
+const REMARK_PLUGINS: Options['remarkPlugins'] = (() => {
+  try {
+    new RegExp('(?<=a)b');
+    return [remarkGfm];
+  } catch {
+    return [];
+  }
+})();
 
 const mdComponents: Components = {
   p: ({ children }) => <p className="mb-2 leading-relaxed last:mb-0">{children}</p>,
@@ -35,7 +48,7 @@ const mdComponents: Components = {
 export function MarkdownMessage({ text }: { text: string }) {
   return (
     <div className="text-sm [&>*:first-child]:mt-0 [&>*:last-child]:mb-0">
-      <ReactMarkdown remarkPlugins={[remarkGfm]} components={mdComponents}>
+      <ReactMarkdown remarkPlugins={REMARK_PLUGINS} components={mdComponents}>
         {text}
       </ReactMarkdown>
     </div>

@@ -104,6 +104,10 @@ export function useOperatorChat(userId: string) {
   const [executing, setExecuting] = useState(0);
   const queueRef = useRef<Promise<void>>(Promise.resolve());
   const addToolOutputRef = useRef<((a: { tool: string; toolCallId: string; output: unknown }) => unknown) | null>(null);
+  /** Bumped by New chat. A tool still finishing for the OLD thread must not
+   *  report into the new one: v6's addToolOutput patches whatever message is
+   *  LAST, and on the emptied thread it threw (an unhandled rejection). */
+  const threadGenRef = useRef(0);
   const [subSteps, setSubSteps] = useState<SubStepMap>({});
   /** The client tool call executing right now (its row shows live sub-steps). */
   const [running, setRunning] = useState<{ id: string; since: number } | null>(null);
@@ -114,6 +118,7 @@ export function useOperatorChat(userId: string) {
   };
 
   const runClientTool = (toolName: string, toolCallId: string, input: unknown) => {
+    const gen = threadGenRef.current;
     bumpExecuting(1);
     queueRef.current = queueRef.current.then(async () => {
       let output: unknown;
@@ -141,7 +146,11 @@ export function useOperatorChat(userId: string) {
         setRunning(null);
       }
       // Not awaited (see header) — it queues behind the chat's own job.
-      void addToolOutputRef.current?.({ tool: toolName, toolCallId, output });
+      if (gen === threadGenRef.current) {
+        Promise.resolve(addToolOutputRef.current?.({ tool: toolName, toolCallId, output })).catch((e) => {
+          console.warn('[operator] could not report a tool result:', e);
+        });
+      }
       bumpExecuting(-1);
     });
   };
@@ -301,6 +310,7 @@ export function useOperatorChat(userId: string) {
   }, [jobs, idleForJobs, runId, userId]);
 
   const newChat = useCallback(() => {
+    threadGenRef.current += 1;
     stopAll();
     useOperator.getState().clearSteps();
     clearSession(userId);
@@ -327,6 +337,10 @@ export function useOperatorChat(userId: string) {
     }
     if (code === 403) errorText = 'The Stable Hand acts in the app for staff and invited team members.';
     else if (code === 429) errorText = serverMsg ?? 'The Stable Hand has reached today’s limit. Please try again tomorrow.';
+    // Too many messages (route cap) or too many bytes (every request re-sends
+    // the thread's inline attachments). Retrying can never succeed, and the
+    // generic "try again" line left the user retrying a dead thread.
+    else if (code === 413) errorText = 'This conversation has grown too large to send — start a New chat to carry on.';
     else if (raw.includes('resting')) errorText = 'The assistant isn’t switched on yet — an OpenRouter key needs to be set on the server.';
     else errorText = 'I had trouble just then. Please try again in a moment.';
   }

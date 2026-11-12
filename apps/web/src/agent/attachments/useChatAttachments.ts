@@ -8,6 +8,7 @@
 import { useCallback, useRef, useState } from 'react';
 import { toast } from 'sonner';
 import { fileToAttachment, isAttachable, MAX_ATTACHMENTS, type ChatAttachment } from './attachments';
+import { filesFromClipboard } from './clipboard';
 
 export interface ChatAttachmentsApi {
   /** Files staged in the composer, ready to send. */
@@ -72,7 +73,9 @@ export function useChatAttachments(): ChatAttachmentsApi {
 
   const onPaste = useCallback(
     (e: React.ClipboardEvent) => {
-      const files = Array.from(e.clipboardData?.files ?? []).filter(isAttachable);
+      // filesFromClipboard also reads `clipboardData.items` — Safari can leave
+      // `files` empty for a pasted screenshot, which silently dropped the paste.
+      const files = filesFromClipboard(e.clipboardData, { startIndex: countRef.current }).filter(isAttachable);
       if (files.length === 0) return; // plain text — let the textarea handle it
       e.preventDefault();
       void addFiles(files);

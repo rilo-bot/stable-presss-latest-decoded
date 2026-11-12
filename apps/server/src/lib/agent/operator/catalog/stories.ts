@@ -25,7 +25,7 @@ const STORY_ACTIONS: CatalogAction[] = [
     name: 'stories.list',
     description:
       'List the stories visible to you (id, title, stage, author, category, changesRequested, scheduledFor). Filter by stage and/or search text (title, author, category). Use it to find a storyId before acting on a story by name.',
-    args: `{ stage?: ${STAGE}; query?: string; limit?: number }`,
+    args: `{ stage?: ${STAGE}; query?: string; limit?: number /* 1-100, default 50 */ }`,
   },
   {
     name: 'stories.open',
@@ -36,7 +36,7 @@ const STORY_ACTIONS: CatalogAction[] = [
     name: 'stories.createDraft',
     description:
       "THE way to file / write a story. You (The Stable Hand) write the text yourself — headline and the full story copy — and this types it visibly into File a Story → Write it yourself, picks the category pill, fills the byline and presses Save Draft. body is the full copy (paragraphs separated by a blank line; plain text, no markdown); summary is an optional teaser that becomes the opening paragraph (the card/news-index teaser) unless body already starts with it. category is one of: Race Reports, Industry News, Morning Edition, Form Guide, Track Notes, Bloodstock, Trainer Profiles, Jockey Desk, Owner Stories (label or slug). author defaults to the signed-in user (contributors are always their own byline). Never invent facts — ask the user for what you do not know. Returns { created: true, storyId, title, story }.",
-    args: '{ title: string; summary?: string; body?: string; category?: string; author?: string }',
+    args: '{ title: string /* 1-300 chars */; summary?: string; body?: string; category?: string; author?: string }',
   },
   {
     name: 'stories.fileWithStudio',

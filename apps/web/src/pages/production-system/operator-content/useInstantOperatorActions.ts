@@ -14,6 +14,8 @@
 //     store setter the box itself calls, then types the rest into the box.
 //   • instant.file saves through instantStore.save → POST /api/articles or
 //     /api/blogs as a DRAFT (nothing is published), and asks first.
+//   • instant.capture with generate (the default) asks first too: drafting
+//     spends AI budget.
 //
 // Catalog: apps/server/src/lib/agent/operator/catalog/content.ts — keep in step.
 // ---------------------------------------------------------------------------
@@ -122,6 +124,19 @@ export function useInstantOperatorActions(allowedModes: InstantMode[]): void {
       name: 'instant.capture',
       description: 'Fill the capture (mode, topic, voice-note facts) and press Generate draft; waits for the AI draft.',
       args: captureArgs,
+      // Generating runs the AI drafting (and photo analysis) pipeline — it spends
+      // AI budget, so the user approves it. No card when nothing is generated or
+      // run() would refuse (mode not allowed / nothing to draft from).
+      confirm: (a) => {
+        if (!a.generate) return null;
+        if (a.mode && !allowedModes.includes(a.mode)) return null;
+        const s = S();
+        const topic = (a.topic ?? s.topic).trim();
+        const notes = (a.voiceNote ?? s.transcript).trim();
+        if (!topic && !notes && s.photos.length === 0) return null;
+        const mode = a.mode ?? s.mode;
+        return `Have the AI write a ${mode === 'blog' ? 'blog post' : 'story'} draft${topic ? ` about “${clip(topic)}”` : ''}? Nothing is saved until it is filed.`;
+      },
       run: async (a, ui) => {
         if (a.mode && !allowedModes.includes(a.mode)) {
           throw new Error(`Your role cannot save a ${a.mode === 'blog' ? 'blog post' : 'story'} here — allowed: ${allowedModes.join(', ')}.`);

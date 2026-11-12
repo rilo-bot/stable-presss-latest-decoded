@@ -47,6 +47,20 @@ function kindOf(contentType: string): DocAttachment['kind'] {
  *  allow generous headroom — the server bounds the real work per page. */
 const INGEST_TIMEOUT_MS = 300_000;
 
+/** `AbortSignal.timeout` is Safari 16+ — on Safari/iOS 15.x calling it throws, so
+ *  every ingest failed as "Couldn't reach the assistant". Fall back to a plain
+ *  controller + timer there; `timedOut()` keeps the friendly timeout message. */
+function ingestTimeout(ms: number): { signal: AbortSignal; timedOut: () => boolean } {
+  if (typeof AbortSignal.timeout === 'function') {
+    const signal = AbortSignal.timeout(ms);
+    return { signal, timedOut: () => signal.aborted };
+  }
+  const ctl = new AbortController();
+  let fired = false;
+  setTimeout(() => { fired = true; ctl.abort(); }, ms);
+  return { signal: ctl.signal, timedOut: () => fired };
+}
+
 /** Send one file to the ingest endpoint and return the analysed attachment.
  *  `maxPages` caps how many pages of a SCANNED PDF are OCR'd up front — the
  *  generation preview only needs a few, so it passes a small number to avoid a
@@ -70,6 +84,7 @@ export async function ingestFile(file: File, opts?: { maxPages?: number }): Prom
   const query = new URLSearchParams({ filename: file.name });
   if (opts?.maxPages) query.set('maxPages', String(opts.maxPages));
   let res: Response;
+  const timeout = ingestTimeout(INGEST_TIMEOUT_MS);
   try {
     res = await fetch(apiUrl(`/api/agent/editor/ingest?${query.toString()}`), {
       method: 'POST',
@@ -78,10 +93,10 @@ export async function ingestFile(file: File, opts?: { maxPages?: number }): Prom
         ...(token ? { Authorization: `Bearer ${token}` } : {}),
       },
       body,
-      signal: AbortSignal.timeout(INGEST_TIMEOUT_MS),
+      signal: timeout.signal,
     });
   } catch (e) {
-    if (e instanceof DOMException && e.name === 'TimeoutError') {
+    if (timeout.timedOut() || (e instanceof DOMException && e.name === 'TimeoutError')) {
       throw new Error('Reading that file took too long — try a smaller or text-based file.');
     }
     throw new Error("Couldn't reach the assistant to read that file. Please try again.");

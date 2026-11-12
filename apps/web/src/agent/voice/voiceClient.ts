@@ -147,8 +147,43 @@ export async function speak(text: string): Promise<void> {
   });
 }
 
-/** Synthesise ONE chunk into a ready-to-play audio element (null on failure). */
-async function synthesizeClip(text: string): Promise<HTMLAudioElement | null> {
+// ── Safari / iOS autoplay ────────────────────────────────────────────────────
+// Safari (iOS above all) lets an <audio> element play sound only once play()
+// has been called on THAT element during a user gesture. Spoken replies arrive
+// seconds after the tap (STT → model → TTS), so a fresh `new Audio()` per clip
+// was silently refused there and read-aloud never made a sound on an iPhone.
+// SpeechStream therefore plays every clip through ONE shared element, unlocked
+// by a tiny silent clip from the user's tap (useVoiceChat calls unlockAudio()
+// from the mic button and the read-aloud toggle). Chrome/Firefox are unaffected.
+const SILENT_WAV =
+  'data:audio/wav;base64,UklGRsQAAABXQVZFZm10IBAAAAABAAEAQB8AAIA+AAACABAAZGF0YaAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA';
+let sharedPlayer: HTMLAudioElement | null = null;
+let playerUnlocked = false;
+
+function replyPlayer(): HTMLAudioElement {
+  if (!sharedPlayer) sharedPlayer = new Audio();
+  return sharedPlayer;
+}
+
+/** Unlock reply playback for Safari. Call SYNCHRONOUSLY in a click/tap handler. */
+export function unlockAudio(): void {
+  if (playerUnlocked || typeof Audio === 'undefined') return;
+  const a = replyPlayer();
+  if (!a.paused) return; // already speaking a reply — nothing to unlock
+  try {
+    a.src = SILENT_WAV;
+    playerUnlocked = true;
+    void a.play().catch((e: unknown) => {
+      // Refused (not a gesture after all) → try again on the next tap.
+      if (e instanceof DOMException && e.name === 'NotAllowedError') playerUnlocked = false;
+    });
+  } catch {
+    /* no audio support — replies just stay silent */
+  }
+}
+
+/** Synthesise ONE chunk into a ready-to-play blob URL (null on failure). */
+async function synthesizeClip(text: string): Promise<string | null> {
   const clean = forSpeech(text);
   if (!clean) return null;
   try {
@@ -158,7 +193,7 @@ async function synthesizeClip(text: string): Promise<HTMLAudioElement | null> {
       body: JSON.stringify({ text: clean }),
     });
     if (!res.ok) return null;
-    return new Audio(URL.createObjectURL(await res.blob()));
+    return URL.createObjectURL(await res.blob());
   } catch {
     return null;
   }
@@ -172,11 +207,14 @@ async function synthesizeClip(text: string): Promise<HTMLAudioElement | null> {
  */
 export class SpeechStream {
   private consumed = 0;                                   // chars already chunked
-  private clips: Promise<HTMLAudioElement | null>[] = []; // synth jobs, in order
+  private clips: Promise<string | null>[] = [];           // synth jobs (blob URLs), in order
   private playIdx = 0;
   private looping = false;
   private stopped = false;
   private current: HTMLAudioElement | null = null;
+  /** Resolves the in-flight clip's wait — pause() fires no `ended`, so stop()
+   *  must release the loop itself or it hangs (and its clips are never freed). */
+  private settle: (() => void) | null = null;
 
   /** Feed the latest full assistant text (mid-stream). */
   update(fullText: string): void { this.ingest(fullText, false); }
@@ -216,15 +254,20 @@ export class SpeechStream {
     if (this.looping) return;
     this.looping = true;
     while (this.playIdx < this.clips.length && !this.stopped) {
-      const audio = await this.clips[this.playIdx++];
-      if (!audio || this.stopped) continue;
+      const url = await this.clips[this.playIdx++];
+      if (!url) continue;
+      if (this.stopped) { URL.revokeObjectURL(url); continue; }
+      const audio = replyPlayer(); // the shared, gesture-unlocked element (see unlockAudio)
+      audio.src = url;
       this.current = audio;
       await new Promise<void>((resolve) => {
+        this.settle = resolve;
         audio.onended = audio.onerror = () => resolve();
         void audio.play().catch(() => resolve());
       });
-      try { URL.revokeObjectURL(audio.src); } catch { /* noop */ }
-      this.current = null;
+      this.settle = null;
+      try { URL.revokeObjectURL(url); } catch { /* noop */ }
+      if (this.current === audio) this.current = null;
     }
     this.looping = false;
   }
@@ -233,5 +276,13 @@ export class SpeechStream {
   stop(): void {
     this.stopped = true;
     if (this.current) { this.current.pause(); this.current = null; }
+    // Release the loop's pending wait, and free every clip it will now never play
+    // (still-synthesising ones too, once they land) — each is an MP3 blob URL.
+    const release = this.settle;
+    this.settle = null;
+    release?.();
+    for (const clip of this.clips.slice(this.playIdx)) {
+      void clip.then((u) => { if (u) { try { URL.revokeObjectURL(u); } catch { /* noop */ } } });
+    }
   }
 }

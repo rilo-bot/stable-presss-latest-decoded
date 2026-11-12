@@ -26,7 +26,7 @@ import { z } from 'zod';
 import { useAgentAction } from '@/agent/operator/runtime/registry';
 import type { UiDriver } from '@/agent/operator/contracts';
 import { useEditorStore } from '../store';
-import { anchor, assertEnabled, clickIfPresent, errorToasts, pageAt, sleep, waitUntil, watchToasts, type SeenToast } from './shared';
+import { anchor, assertEnabled, clickIfPresent, errorToasts, pageAt, pageNo, pageNoOf, sleep, waitUntil, watchToasts, type SeenToast } from './shared';
 
 const get = () => useEditorStore.getState();
 const LIBRARY = '/production-system/magazine-v2';
@@ -74,8 +74,7 @@ async function openPageN(ui: UiDriver, n: number) {
 
 const currentPageNumber = () => {
   const s = get();
-  const i = s.pages.findIndex((p) => p.id === s.currentPageId);
-  return i >= 0 ? i + 1 : null;
+  return pageNoOf(s.pages, s.currentPageId);
 };
 
 /**
@@ -229,7 +228,7 @@ export function useMagazineDangerActions(perms: DangerPerms): void {
       run: async (a, ui) => {
         await ready(ui);
         const target = a.page ? await openPageN(ui, a.page) : pageAt(get().pages, currentPageNumber() ?? 1);
-        const n = get().pages.findIndex((p) => p.id === target.id) + 1;
+        const n = pageNo(target);
         ui.step('Opening Copy a page exactly');
         await ensurePagePanel(ui);
         let found = await appears(ui, 'mag.copy-pdf-go', 8000);
@@ -332,7 +331,7 @@ export function useMagazineDangerActions(perms: DangerPerms): void {
       run: async (a, ui) => {
         await ready(ui);
         const target = a.page ? await openPageN(ui, a.page) : pageAt(get().pages, currentPageNumber() ?? 1);
-        const n = get().pages.findIndex((p) => p.id === target.id) + 1;
+        const n = pageNo(target);
         ui.step('Opening Match a layout');
         await ensurePagePanel(ui);
         if (!(await appears(ui, 'mag.layout-upload', 6000))) {

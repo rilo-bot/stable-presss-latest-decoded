@@ -66,6 +66,7 @@ function DropLine({ show }: { show: boolean }) {
 function Tile({
   page,
   n,
+  num,
   total,
   active,
   canManage,
@@ -77,7 +78,12 @@ function Tile({
   onMove,
 }: {
   page: PageSummary;
+  /** Position in this rail (1-based) — bounds for move up/down only. */
   n: number;
+  /** The page's REAL number (index + 1), as the canvas prints it. A page-scoped
+   *  collaborator's only page can be "Page 3" while sitting at rail position 1 —
+   *  showing 1 here made the Stable Hand (and people) call it page 1. */
+  num: number;
   total: number;
   active: boolean;
   canManage: boolean;
@@ -138,14 +144,14 @@ function Tile({
   return (
     <div
       ref={ref}
-      data-agent-id={`mag.page-${n}`}
+      data-agent-id={`mag.page-${num}`}
       // Not a <button>: the tile carries its own duplicate/delete buttons, and a
       // button inside a button is invalid and unreachable by keyboard.
       role="button"
       tabIndex={0}
       aria-current={active ? 'page' : undefined}
-      aria-label={`Page ${n} of ${total}`}
-      title={tileTitle(page, n) + (hasPendingReview ? '\n\nThe Design Helper made changes here waiting for your review' : '') + (canManage ? '\n\nDrag to reorder · Alt+↑/↓ to move' : '')}
+      aria-label={`Page ${num}`}
+      title={tileTitle(page, num) + (hasPendingReview ? '\n\nThe Design Helper made changes here waiting for your review' : '') + (canManage ? '\n\nDrag to reorder · Alt+↑/↓ to move' : '')}
       draggable={canManage}
       onDragStart={onDragStart}
       onDragOver={onDragOver}
@@ -178,29 +184,29 @@ function Tile({
         <div className="flex flex-shrink-0 flex-col items-center gap-1 pt-0.5">
           <button
             onClick={(e) => { e.stopPropagation(); onMove(-1); }}
-            data-agent-id={`mag.page-${n}-up`}
+            data-agent-id={`mag.page-${num}-up`}
             disabled={n <= 1}
             className="flex h-6 w-6 items-center justify-center rounded-sm text-studio-ink-3 hover:bg-studio-raise-2 hover:text-studio-ink disabled:opacity-20 disabled:hover:bg-transparent"
-            title={`Move page ${n} up`}
-            aria-label={`Move page ${n} up`}
+            title={`Move page ${num} up`}
+            aria-label={`Move page ${num} up`}
           >
             <ChevronUp size={14} />
           </button>
-          <span className={'text-center text-ui-sm tabular-nums ' + (active ? 'text-studio-ink' : 'text-studio-ink-3')}>{n}</span>
+          <span className={'text-center text-ui-sm tabular-nums ' + (active ? 'text-studio-ink' : 'text-studio-ink-3')}>{num}</span>
           <button
             onClick={(e) => { e.stopPropagation(); onMove(1); }}
-            data-agent-id={`mag.page-${n}-down`}
+            data-agent-id={`mag.page-${num}-down`}
             disabled={n >= total}
             className="flex h-6 w-6 items-center justify-center rounded-sm text-studio-ink-3 hover:bg-studio-raise-2 hover:text-studio-ink disabled:opacity-20 disabled:hover:bg-transparent"
-            title={`Move page ${n} down`}
-            aria-label={`Move page ${n} down`}
+            title={`Move page ${num} down`}
+            aria-label={`Move page ${num} down`}
           >
             <ChevronDown size={14} />
           </button>
         </div>
       ) : (
         <span className={'min-w-3.5 flex-shrink-0 pt-1 text-right text-ui-sm tabular-nums ' + (active ? 'text-studio-ink' : 'text-studio-ink-3')}>
-          {n}
+          {num}
         </span>
       )}
 
@@ -222,7 +228,7 @@ function Tile({
                 {failed ? (
                   <AlertTriangle size={14} className="text-amber-500" />
                 ) : (
-                  <span className="text-ui-sm text-studio-bg/30">{pending ? '…' : n}</span>
+                  <span className="text-ui-sm text-studio-bg/30">{pending ? '…' : num}</span>
                 )}
               </div>
             </div>
@@ -260,10 +266,10 @@ function Tile({
                 between them costs nothing, and both now clear 24px. */}
             <button
               onClick={(e) => { e.stopPropagation(); void useEditorStore.getState().duplicatePage(page.id); }}
-              data-agent-id={`mag.page-${n}-duplicate`}
+              data-agent-id={`mag.page-${num}-duplicate`}
               className="absolute left-0.5 top-0.5 rounded-sm bg-studio-bg/90 p-1.5 text-studio-ink-2 hover:bg-studio-bg hover:text-studio-ink"
-              title={`Duplicate page ${n}`}
-              aria-label={`Duplicate page ${n}`}
+              title={`Duplicate page ${num}`}
+              aria-label={`Duplicate page ${num}`}
             >
               <Copy size={14} />
             </button>
@@ -280,15 +286,15 @@ function Tile({
                 // when the server refuses with page-submitted. That one is strictly more
                 // informative, and asking twice in a row for the same click would bury it
                 // behind a confirm that has nothing useful to say.
-                if (col === 'submitted' || window.confirm(`Delete page ${n}? This cannot be undone.`)) {
+                if (col === 'submitted' || window.confirm(`Delete page ${num}? This cannot be undone.`)) {
                   void useEditorStore.getState().deletePage(page.id);
                 }
               }}
               disabled={total <= 1}
-              data-agent-id={`mag.page-${n}-delete`}
+              data-agent-id={`mag.page-${num}-delete`}
               className="absolute right-0.5 top-0.5 rounded-sm bg-studio-bg/90 p-1.5 text-red-300/90 hover:bg-studio-bg hover:text-red-300 disabled:opacity-30"
-              title={total <= 1 ? 'A magazine needs at least one page' : `Delete page ${n}`}
-              aria-label={`Delete page ${n}`}
+              title={total <= 1 ? 'A magazine needs at least one page' : `Delete page ${num}`}
+              aria-label={`Delete page ${num}`}
             >
               <Trash2 size={14} />
             </button>
@@ -407,6 +413,7 @@ export function PageRail({
             <Tile
               page={p}
               n={i + 1}
+              num={p.index + 1}
               total={pages.length}
               active={p.id === currentPageId}
               canManage={canManage}

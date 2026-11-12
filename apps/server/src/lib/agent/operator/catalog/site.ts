@@ -155,9 +155,9 @@ export const SURFACES: CatalogSurface[] = [
     who: 'Anyone can view; tipping needs an account.',
     purpose: 'Virtual-coin tipping (no real money): one tip per open race; leaderboard by balance.',
     actions: [
-      { name: 'tipping.read', description: 'Races, runners + odds, your tips, your balance.', args: '{}' },
+      { name: 'tipping.read', description: 'Open/upcoming races + runners/odds, 10 latest settled, your tips, balance.', args: '{}' },
       { name: 'tipping.leaderboard', description: 'Top 20 tippers.', args: '{}' },
-      { name: 'tipping.placeTip', description: 'Back a runner (name or barrier no.) with coins; stakes coins.', args: '{ race: string; horse: string; coins: number }', confirms: true },
+      { name: 'tipping.placeTip', description: 'Back a runner (name or barrier no.) with coins; stakes coins.', args: '{ race: string; horse: string; coins: number /* int 1-9999 */ }', confirms: true },
     ],
   },
   {
@@ -181,7 +181,7 @@ export const SURFACES: CatalogSurface[] = [
     purpose: "An organisation's members (owner / manager / member), managed parties and horses.",
     actions: [
       { name: 'org.read', description: 'Your role, members, managed parties, horses.', args: '{}' },
-      { name: 'org.addMember', description: 'Add by email (needs an account); only owners grant manager/owner.', args: "{ email: string; role?: 'member'|'manager'|'owner' }", confirms: true },
+      { name: 'org.addMember', description: 'Add by email (needs an account); only owners grant manager/owner. role owner TRANSFERS ownership (you become manager).', args: "{ email: string; role?: 'member'|'manager'|'owner' }", confirms: true },
       { name: 'org.removeMember', description: 'Remove a member (email or name); never yourself.', args: '{ member: string }', confirms: true },
     ],
   },

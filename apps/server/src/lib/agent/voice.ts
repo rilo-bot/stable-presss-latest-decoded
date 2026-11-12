@@ -9,6 +9,9 @@
 
 const API_KEY = (process.env.OPENAI_API_KEY ?? '').trim()
 const OPENAI = 'https://api.openai.com/v1'
+/** A stalled OpenAI call otherwise holds the request for undici's 5-minute
+ *  default — the panel sat on "Transcribing…" with the mic disabled. */
+const OPENAI_TIMEOUT_MS = 60_000
 
 export const STT_MODEL = (process.env.VOICE_STT_MODEL ?? '').trim() || 'gpt-4o-mini-transcribe'
 export const TTS_MODEL = (process.env.VOICE_TTS_MODEL ?? '').trim() || 'gpt-4o-mini-tts'
@@ -59,6 +62,7 @@ async function transcribeWith(model: string, audio: Buffer, type: string): Promi
     method: 'POST',
     headers: { Authorization: `Bearer ${API_KEY}` },
     body: form,
+    signal: AbortSignal.timeout(OPENAI_TIMEOUT_MS),
   })
   if (!r.ok) throw new Error(`transcription ${r.status}: ${await r.text()}`)
   const data = (await r.json()) as { text?: string }
@@ -86,6 +90,7 @@ export async function synthesizeSpeech(text: string): Promise<{ audio: Buffer; m
     method: 'POST',
     headers: { Authorization: `Bearer ${API_KEY}`, 'content-type': 'application/json' },
     body: JSON.stringify({ model: TTS_MODEL, input: text, voice: TTS_VOICE, response_format: 'mp3' }),
+    signal: AbortSignal.timeout(OPENAI_TIMEOUT_MS),
   })
   if (!r.ok) throw new Error(`speech ${r.status}: ${await r.text()}`)
   const audio = Buffer.from(await r.arrayBuffer())

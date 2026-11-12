@@ -263,7 +263,9 @@ export function usePodcastOperatorActions(input: PodcastOperatorInput): void {
               if (!a.audioUrl) {
                 throw new Error(`${tag(ep)} has no audio yet. Pass audioUrl, or upload the user's file to podcast.audio, then call podcast.advance again.`);
               }
-              if (!has('podcast.audio')) throw new Error(noPower('Confirm Audio & Continue'));
+              // The uploader shows EITHER the drop zone (podcast.audio) or, once
+              // switched to Paste URL, the URL box — either one means it is offered.
+              if (!has('podcast.audio') && !has('podcast.audio-url')) throw new Error(noPower('Confirm Audio & Continue'));
               // The URL box saves on every keystroke (one PUT each), so the
               // finished URL is stored in one write — the same store call the
               // box makes — after pointing at it.

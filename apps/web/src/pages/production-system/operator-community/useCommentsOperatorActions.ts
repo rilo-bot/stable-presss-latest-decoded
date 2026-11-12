@@ -64,6 +64,10 @@ export interface CommentsOperatorInput {
 
 const FILTER_LABEL: Record<CommentFilter, string> = { reported: 'Reported', hidden: 'Removed', all: 'Everything' };
 const TYPE_LABEL: Record<string, string> = { story: 'Story', blog: 'Blog post', bulletin: 'Edition' };
+/** Rows one tool result carries. The server sends up to 200 rows, each with up
+ *  to a few hundred chars of text — tens of thousands of tokens per read. The
+ *  Reported tab is most-reported first, so the head of the list is what matters. */
+const LIST_CAP = 60;
 
 /** Anchor ids — the screen renders exactly these. */
 export const commentAnchor = {
@@ -91,7 +95,7 @@ function rowJson(r: ModerationRow) {
     author: r.authorName,
     staff: r.isStaff || undefined,
     stance: step ? `${step.emoji} ${step.label} (${SIDE_LABEL[sideOf(r.emoji)]})` : r.emoji,
-    body: excerpt(r.body, 600),
+    body: excerpt(r.body, 300),
     reports: r.reportCount,
     removed: r.hidden,
     removedReason: r.hiddenReason || undefined,
@@ -125,7 +129,9 @@ export function useCommentsOperatorActions(input: CommentsOperatorInput): void {
   const canEdit = can('comments.edit');
   const canDelete = can('comments.delete');
 
-  const snapshot = () => {
+  /** The queue as JSON. Writes pass withItems=false: they report the counts,
+   *  not the whole list again (call listComments to re-read it). */
+  const snapshot = (withItems = true) => {
     const s = live.current;
     return {
       filter: s.filter,
@@ -134,10 +140,22 @@ export function useCommentsOperatorActions(input: CommentsOperatorInput): void {
       removedCount: s.hiddenCount,
       shown: s.items.length,
       truncated: s.truncated || undefined,
-      loadError: s.state === 'error' ? 'The queue did not load.' : undefined,
-      items: s.items.map(rowJson),
+      // GET /api/comments/moderation needs comments.edit, not just comments.view.
+      loadError: s.state === 'error' ? 'The queue did not load (reading it needs comments.edit).' : undefined,
+      ...(withItems
+        ? {
+            items: s.items.slice(0, LIST_CAP).map(rowJson),
+            notListed: s.items.length > LIST_CAP ? s.items.length - LIST_CAP : undefined,
+          }
+        : {}),
     };
   };
+
+  /** The row as the screen lists it right now — only when no load is in flight,
+   *  so a confirm() that skips its card for a no-op reads the same list run()
+   *  will act on (never the cross-tab `seen` cache, which can be stale). */
+  const settledRow = (id: string) =>
+    live.current.state === 'ready' ? live.current.items.find((r) => r.id === id) : undefined;
 
   /** Wait for the queue load in flight (if any) to finish. */
   async function settle(ui: UiDriver, loadsBefore?: number) {
@@ -211,6 +229,8 @@ export function useCommentsOperatorActions(input: CommentsOperatorInput): void {
       description: 'Remove (hide) a comment with a reason: readers see "removed by an editor". Reversible.',
       args: removeArg,
       confirm: (a) => {
+        // Already removed (as listed now) → run() is a no-op: no card.
+        if (settledRow(a.id)?.hidden) return null;
         const row = known(a.id);
         return `Remove ${describe(row, a.id)}? Readers will see a note that an editor removed it. Reason (staff only): “${a.reason}”.`;
       },
@@ -230,7 +250,7 @@ export function useCommentsOperatorActions(input: CommentsOperatorInput): void {
         await finishWrite(ui, a.id, before);
         const after = live.current.items.find((r) => r.id === a.id);
         if (after && !after.hidden) throw new Error('The comment is still visible — the removal did not go through.');
-        return { ok: true, removed: { ...rowJson(row), removed: true, removedReason: a.reason }, queue: snapshot() };
+        return { ok: true, removed: { ...rowJson(row), removed: true, removedReason: a.reason }, queue: snapshot(false) };
       },
     },
     canEdit,
@@ -242,6 +262,9 @@ export function useCommentsOperatorActions(input: CommentsOperatorInput): void {
       description: 'Restore a removed comment (puts it back in the thread and clears the reason).',
       args: idArg,
       confirm: (a) => {
+        // Not removed (as listed now) → run() is a no-op: no card.
+        const listed = settledRow(a.id);
+        if (listed && !listed.hidden) return null;
         const row = known(a.id);
         return `Restore ${describe(row, a.id)}? It goes back on the public thread straight away.`;
       },
@@ -253,7 +276,7 @@ export function useCommentsOperatorActions(input: CommentsOperatorInput): void {
         await finishWrite(ui, a.id, before);
         const after = live.current.items.find((r) => r.id === a.id);
         if (after?.hidden) throw new Error('The comment is still removed — the restore did not go through.');
-        return { ok: true, restored: { ...rowJson(row), removed: false, removedReason: undefined }, queue: snapshot() };
+        return { ok: true, restored: { ...rowJson(row), removed: false, removedReason: undefined }, queue: snapshot(false) };
       },
     },
     canEdit,
@@ -278,7 +301,7 @@ export function useCommentsOperatorActions(input: CommentsOperatorInput): void {
         if (live.current.items.some((r) => r.id === a.id)) {
           throw new Error('The comment is still listed — the delete did not go through.');
         }
-        return { ok: true, deleted: rowJson(row), queue: snapshot() };
+        return { ok: true, deleted: rowJson(row), queue: snapshot(false) };
       },
     },
     canDelete,

@@ -444,14 +444,16 @@ function ConciergeWidget() {
                 onChange={(e) => setInput(e.target.value)}
                 onPaste={attach.onPaste}
                 onKeyDown={(e) => {
-                  if (e.key === 'Enter' && !e.shiftKey && !e.nativeEvent.isComposing) {
+                  if (e.key === 'Enter' && !e.shiftKey && !e.nativeEvent.isComposing && e.nativeEvent.keyCode !== 229) {
                     e.preventDefault();
                     send(input);
                   }
                 }}
                 placeholder={recording ? 'Listening…' : transcribing ? 'Transcribing…' : 'Ask me anything…'}
                 disabled={recording || transcribing}
-                className="flex-1 resize-none rounded-2xl border border-border bg-background px-3 py-2 text-sm leading-snug outline-none focus:ring-2 disabled:opacity-70"
+                // iOS Safari zooms the page into any field under 16px on focus
+                // (and stays zoomed) — touch devices get 16px.
+                className="flex-1 resize-none rounded-2xl border border-border bg-background px-3 py-2 text-sm leading-snug outline-none focus:ring-2 disabled:opacity-70 [@media(pointer:coarse)]:text-[16px]"
                 style={{ ['--tw-ring-color' as string]: GOLD }}
               />
               {voiceReady && !busy && (

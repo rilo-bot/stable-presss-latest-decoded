@@ -115,7 +115,9 @@ function PageTiles({ arrived, total }: { arrived: number; total: number }) {
             className={'h-7 w-5 rounded-[2px] border ' + (done ? 'tile-pop' : '')}
             style={
               done
-                ? { borderColor: GOLD, background: 'color-mix(in srgb, var(--gold-bright) 22%, transparent)' }
+                // --gold-bright (#d4a843) at 22% — rgba, not color-mix(), which
+                // Safari < 16.2 drops (the done tiles lost their fill).
+                ? { borderColor: GOLD, background: 'rgba(212, 168, 67, 0.22)' }
                 : { borderColor: 'rgba(255,255,255,0.12)', background: 'rgba(255,255,255,0.03)' }
             }
           />

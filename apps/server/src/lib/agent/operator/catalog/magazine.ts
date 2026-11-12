@@ -8,7 +8,8 @@ import type { CatalogSurface } from './types.js'
 //   magazine-home   → apps/web/src/editor-v2/operator/useMagazineHomeActions.ts
 //   magazine-editor → apps/web/src/editor-v2/operator/useMagazineEditorActions.ts
 //
-// Page numbers are 1-based everywhere, the way the page rail shows them.
+// Page numbers are the REAL page numbers (index + 1) everywhere — as the canvas header
+// prints them ("Page 3"); the rail shows the same number. See web operator/shared.ts pageNo().
 // An action the user's role can't do is simply not registered on screen, so
 // readScreen().actions is the live truth; the server still enforces RBAC.
 // ---------------------------------------------------------------------------
@@ -62,12 +63,12 @@ export const SURFACES: CatalogSurface[] = [
     route: '/production-system/magazine-v2/:id',
     who: "the magazine's owner (everything), collaborators it was shared with (their pages + the AI Studio), other staff view-only; publishing also needs Magazine publish",
     purpose:
-      'Edit one magazine: page rail (thumbnails, add/duplicate/delete/reorder), the canvas (every page stacked; above EACH page a header with a "publish" tick and two AI wand buttons, Fill and Adjust), the Magazine AI Studio chat on the left that stages edits to the open page, the inspector on the right (owner: add text/photo/shape/QR/icon, style the selected element, Assets), Share (who may edit which pages), the review board, and Publish to the public Bulletins newsstand. Call magazine.status first to learn page numbers, collaborators and your role. When the user says "fill" or "adjust" a page, use magazine.fillPage / magazine.adjustPage directly — those ARE the Fill/Adjust buttons above the page; do not route it through the AI Studio chat.',
+      'Edit one magazine: page rail (thumbnails, add/duplicate/delete/reorder), the canvas (every page stacked; above EACH page a header with a "publish" tick and two AI wand buttons, Fill and Adjust), the Magazine AI Studio chat on the left that stages edits to the open page, the inspector on the right (owner: add text/photo/shape/QR/icon, style the selected element, Assets), Share (who may edit which pages), the review board, and Publish to the public Bulletins newsstand. Call magazine.status first to learn page numbers, collaborators and your role. PAGE NUMBERS everywhere are the REAL numbers printed on the canvas ("Page 3") — a contributor shared only page 3 still calls it page 3, never 1. When writing to the AI Studio, say "this page" (it works on the open page), never a page number. When the user says "fill" or "adjust" a page, use magazine.fillPage / magazine.adjustPage directly — those ARE the Fill/Adjust buttons above the page; do not route it through the AI Studio chat.',
     actions: [
       {
         name: 'magazine.status',
         description:
-          'Title, id, your role and rights, every page (1-based number, id, elements, review state, selectedForPublish), collaborators with their pages, publish state, build progress, and AI Studio state (replying / staged changes).',
+          'Title, id, your role and rights, every page (real page number as printed on the canvas, id, elements, review state, selectedForPublish), collaborators with their pages, publish state, build progress, and AI Studio state (replying / staged changes).',
         args: '{}',
       },
       {
@@ -135,8 +136,8 @@ export const SURFACES: CatalogSurface[] = [
       {
         name: 'magazine.askStudio',
         description:
-          'Owner or collaborator. Type a request into the Magazine AI Studio chat (optionally opening a page first) and send it like a person; it then waits the WHOLE turn — attachment upload/reading (can take a minute), then the reply (up to 10 min). The studio only STAGES changes: when the user asked for the change to be made (e.g. "use this image as the background", "make the headline bigger") pass apply:true so it presses "Use these changes" and the change is really on the page. Attach a user image first with upload on mag.ai-attach.',
-        args: '{ prompt: string; page?: number; apply?: boolean }',
+          'Owner or collaborator. Type a request into the Magazine AI Studio chat (optionally opening a page first) and send it like a person; it then waits the WHOLE turn — attachment upload/reading (can take a minute), then the reply (up to 10 min). The studio only STAGES changes: when the user asked for the change to be made (e.g. "use this image as the background", "make the headline bigger") pass apply:true so it presses "Use these changes" and the change is really on the page. Attach a user image first with upload on mag.ai-attach. With apply:true, staged page deletions / a layout rebuild / an AI page build ask the user first.',
+        args: '{ prompt: string /* ≤4000 chars */; page?: number; apply?: boolean }',
       },
       {
         name: 'magazine.waitForStudio',
@@ -146,8 +147,10 @@ export const SURFACES: CatalogSurface[] = [
       },
       {
         name: 'magazine.applyStudioChanges',
-        description: 'Press "Use these changes" on the changes the AI Studio has staged (undoable with Ctrl+Z, except page deletions — those ask first).',
+        description:
+          "Press \"Use these changes\" on the changes the AI Studio has staged (undoable with Ctrl+Z, except page deletions and a layout rebuild). Asks the user first only when the staged changes delete pages, rebuild a page's layout, or start an AI page build.",
         args: '{}',
+        confirms: true,
       },
       {
         name: 'magazine.discardStudioChanges',
@@ -157,7 +160,7 @@ export const SURFACES: CatalogSurface[] = [
       {
         name: 'magazine.publish',
         description:
-          'Owner with Magazine publish. Publish or republish to the public Bulletins newsstand: omit pages for the full edition, or give 1-based pages to publish only those ("publish pages 1–4" → pages:[1,2,3,4]). Refused with the reason if pages still need approval or a build is running. Returns publishedIssueId + public route.',
+          'Owner with Magazine publish. Publish or republish to the public Bulletins newsstand: omit pages for the full edition, or give page numbers to publish only those ("publish pages 1–4" → pages:[1,2,3,4]). Refused with the reason if pages still need approval or a build is running. Returns publishedIssueId + public route.',
         args: '{ pages?: number[] }',
         confirms: true,
       },
@@ -203,7 +206,7 @@ export const SURFACES: CatalogSurface[] = [
       {
         name: 'magazine.setCover',
         description:
-          "Owner only. Set the newsstand cover via More ▸ Cover image…: page (use that page's picture), imageUrl (an image URL), or reset:true (automatic from page 1). Give exactly one.",
+          "Owner only. Set the newsstand cover via More ▸ Cover image…: page (use that page's picture), imageUrl (an image URL), or reset:true (automatic from page 1). Give exactly one. The cover is stored on the draft; the live newsstand card changes at the next publish.",
         args: '{ page?: number; imageUrl?: string; reset?: boolean }',
       },
       {
@@ -303,7 +306,7 @@ export const SURFACES: CatalogSurface[] = [
       'mag.publish-dialog',
       'mag.publish-page-<n>',
       'mag.publish-confirm',
-      // Canvas: the header above EVERY page (n = 1-based page number)
+      // Canvas: the header above EVERY page (n = the real page number, as printed on the canvas)
       'mag.page-<n>-fill',
       'mag.page-<n>-adjust',
       'mag.page-<n>-publish-toggle',

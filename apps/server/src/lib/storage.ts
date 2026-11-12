@@ -28,6 +28,7 @@ import {
 import type { ObjectCannedACL } from '@aws-sdk/client-s3'
 import { getSignedUrl } from '@aws-sdk/s3-request-presigner'
 import type { Readable } from 'node:stream'
+import crypto from 'node:crypto'
 
 const BUCKET = (process.env.S3_BUCKET ?? '').trim()
 const REGION = (process.env.S3_REGION ?? process.env.AWS_REGION ?? '').trim()
@@ -384,8 +385,76 @@ export async function deleteObjectByUrl(url: string): Promise<boolean> {
   return key ? deleteObject(key) : false
 }
 
+/** "20261112T093015Z" → Date (UTC), or null. */
+function parseAmzDate(s: string): Date | null {
+  const m = /^(\d{4})(\d{2})(\d{2})T(\d{2})(\d{2})(\d{2})Z$/.exec(s)
+  if (!m) return null
+  const d = new Date(Date.UTC(+m[1], +m[2] - 1, +m[3], +m[4], +m[5], +m[6]))
+  return Number.isNaN(d.getTime()) ? null : d
+}
+
+/**
+ * Verify that `target` is a presigned PUT URL THIS server issued, still valid,
+ * and return the object key it authorises.
+ *
+ * Powers the upload relay (routes/uploads POST /relay): when the browser cannot
+ * reach S3 directly — the bucket's CORS rules miss the site's address, a proxy
+ * or extension blocks it — the file is sent to our API with the presigned URL,
+ * and we store it server-side. Holding a valid presigned URL already grants a
+ * PUT to that key, so honouring it here grants nothing new.
+ *
+ * Verification is stateless: re-presign the same key at the URL's own signing
+ * instant and compare host, path and signature (constant-time). Nothing is
+ * trusted from the URL that the recomputation doesn't reproduce.
+ */
+export async function verifyPresignedPutUrl(target: string, contentType: string): Promise<{ key: string } | null> {
+  if (!CONFIGURED) return null
+  let u: URL
+  try {
+    u = new URL(target)
+  } catch {
+    return null
+  }
+  if (u.protocol !== 'https:' && !ENDPOINT) return null
+  const q = u.searchParams
+  const amzDate = q.get('X-Amz-Date') ?? ''
+  const expires = Number(q.get('X-Amz-Expires'))
+  const sig = q.get('X-Amz-Signature') ?? ''
+  const signedAt = parseAmzDate(amzDate)
+  if (!signedAt || !sig || !Number.isFinite(expires) || expires <= 0 || expires > 3600) return null
+  const now = Date.now()
+  if (now > signedAt.getTime() + expires * 1000) return null // expired
+  if (signedAt.getTime() > now + 5 * 60_000) return null // from the future
+
+  // Path → key. Virtual-hosted style: "/<key>"; path style: "/<bucket>/<key>".
+  let path = u.pathname.replace(/^\/+/, '')
+  if ((FORCE_PATH_STYLE || ENDPOINT) && path.startsWith(`${BUCKET}/`)) path = path.slice(BUCKET.length + 1)
+  let key: string
+  try {
+    key = decodeURIComponent(path)
+  } catch {
+    return null
+  }
+  if (!key || !isPublicKey(key)) return null
+
+  const expected = new URL(
+    await getSignedUrl(
+      client(),
+      new PutObjectCommand({ Bucket: BUCKET, Key: key, ContentType: contentType || undefined }),
+      { expiresIn: expires, signingDate: signedAt },
+    ),
+  )
+  const want = expected.searchParams.get('X-Amz-Signature') ?? ''
+  if (expected.host !== u.host || expected.pathname !== u.pathname) return null
+  const a = Buffer.from(sig)
+  const b = Buffer.from(want)
+  if (a.length !== b.length || !crypto.timingSafeEqual(a, b)) return null
+  return { key }
+}
+
 export const storage = {
   isConfigured,
+  verifyPresignedPutUrl,
   presignPutUrl,
   presignGetUrl,
   getObject,

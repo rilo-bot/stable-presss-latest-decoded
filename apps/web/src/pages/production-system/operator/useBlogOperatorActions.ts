@@ -234,6 +234,14 @@ export function useBlogStudioAction(enabled: boolean): void {
                 ? 'Blog Studio is still working. Check back with blog.askStudio or readScreen.'
                 : 'Reply with blog.askStudio({ prompt }) to continue the same conversation; ask the user anything you cannot answer from context.',
           };
+        } catch (err) {
+          // Stop must also stop the studio turn THIS action started (as the
+          // profile pack does) — otherwise Blog Studio keeps going and may still
+          // publish / edit after the user pressed Stop. Its own Stop button.
+          if (ui.signal.aborted || (err as Error)?.name === 'AbortError') {
+            anchorEl<HTMLButtonElement>('blog.studio-stop')?.click();
+          }
+          throw err;
         } finally {
           unsub();
         }
@@ -371,8 +379,12 @@ function publishDef(published: boolean, where: 'list' | 'editor') {
     confirm: (a: z.infer<typeof publishArgs>) => {
       // Already there — run() reports "unchanged"; nothing for the user to OK.
       // No blogId on the list — run() refuses and says why.
+      // No blogs.publish, or no post loaded in the editor — run() refuses too,
+      // so no card for something that cannot happen.
+      if (!can('blogs.publish')) return null;
       const open = useComposerStore.getState().blog;
       const inEditor = where === 'editor' && (!a.blogId || a.blogId === open?.id);
+      if (inEditor && !open) return null;
       if (!inEditor && !a.blogId) return null;
       const status = inEditor
         ? open?.status
@@ -495,7 +507,8 @@ export function useBlogListActions(): void {
     name: 'blog.delete',
     description: 'Delete a blog post permanently.',
     args: z.object({ blogId: z.string().min(1) }),
-    confirm: (a) => `Delete the blog post “${blogTitle(a.blogId)}”? This cannot be undone.`,
+    // No blogs.delete: run() refuses — no card for something that cannot happen.
+    confirm: (a) => (can('blogs.delete') ? `Delete the blog post “${blogTitle(a.blogId)}”? This cannot be undone.` : null),
     run: async (a, ui) => {
       if (!can('blogs.delete')) throw new Error('Your role cannot delete blog posts (needs blogs.delete).');
       const title = blogTitle(a.blogId);

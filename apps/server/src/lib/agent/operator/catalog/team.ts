@@ -91,7 +91,7 @@ export const SURFACES: CatalogSurface[] = [
       },
       {
         name: 'roles.open',
-        description: "Open a role in the grid and return its exact permissions and Own/Everyone scopes.",
+        description: "Open a role in the grid and return its exact permissions and Own/Everyone scopes. If the user has unsaved role edits open it returns the data without opening (openedOnScreen:false) so their edits are not discarded.",
         args: '{ role: string /* slug or label */ }',
       },
       {

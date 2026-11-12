@@ -130,6 +130,13 @@ export function OperatorPanel({ userId }: { userId: string }) {
     if (open) scrollRef.current?.scrollTo({ top: scrollRef.current.scrollHeight, behavior: reduce ? 'auto' : 'smooth' });
   }, [messages, open, chatBusy, stepLabel, pendingConfirm, opStatus, reduce]);
 
+  // The confirm card only renders inside the open panel. A run the user hid
+  // the panel on ("Hide — The Stable Hand keeps working") otherwise stalled
+  // on an invisible card with nothing on screen to answer it — bring it back.
+  useEffect(() => {
+    if (pendingConfirm && !useAgentUi.getState().open) setOpen(true);
+  }, [pendingConfirm, setOpen]);
+
   // Mobile: while a step acts on the page, drop the sheet to a strip so the
   // user can watch it — unless it's waiting on them.
   const sheetLow = !isDesktop && executing > 0 && !pendingConfirm && opStatus !== 'paused';
@@ -368,7 +375,7 @@ export function OperatorPanel({ userId }: { userId: string }) {
                   onChange={(e) => setInput(e.target.value)}
                   onPaste={attach.onPaste}
                   onKeyDown={(e) => {
-                    if (e.key === 'Enter' && !e.shiftKey && !e.nativeEvent.isComposing) {
+                    if (e.key === 'Enter' && !e.shiftKey && !e.nativeEvent.isComposing && e.nativeEvent.keyCode !== 229) {
                       e.preventDefault();
                       send(input);
                     }
@@ -377,7 +384,9 @@ export function OperatorPanel({ userId }: { userId: string }) {
                     recording ? 'Listening…' : transcribing ? 'Transcribing…' : working ? 'The Stable Hand is working…' : 'Tell me what to do…'
                   }
                   disabled={recording || transcribing}
-                  className="flex-1 resize-none rounded-2xl border border-border bg-background px-3 py-2 text-sm leading-snug outline-none focus:ring-2 disabled:opacity-70"
+                  // iOS Safari zooms the page into any field under 16px on focus
+                  // (and stays zoomed) — touch devices get 16px.
+                  className="flex-1 resize-none rounded-2xl border border-border bg-background px-3 py-2 text-sm leading-snug outline-none focus:ring-2 disabled:opacity-70 [@media(pointer:coarse)]:text-[16px]"
                   style={{ ['--tw-ring-color' as string]: GOLD }}
                 />
                 {voiceReady && !working && (
