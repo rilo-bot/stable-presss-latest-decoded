@@ -83,7 +83,13 @@ export async function uploadToInput(
   const resolved = resolveFileInput(el);
   if ('error' in resolved) throw new Error(resolved.error);
   const input = resolved;
-  if (input.disabled) throw new Error(`“${labelOf(el) || nameFromAgentId(agentId)}” is disabled right now.`);
+  if (input.disabled) {
+    // A control disabled ON PURPOSE says why in its title — the magazine studio's
+    // paperclip does, for a page this user cannot change ("Submitted for review — ask
+    // the owner to reopen it…"). Pass that on rather than a bare "disabled".
+    const why = (el as HTMLButtonElement).disabled ? el.getAttribute('title') : null;
+    throw new Error(why || `“${labelOf(el) || nameFromAgentId(agentId)}” is disabled right now.`);
+  }
 
   const file = await attachmentToFile(att);
   if (input.accept && !accepts(input.accept, file)) {

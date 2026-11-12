@@ -164,6 +164,11 @@ async function settle(ui: UiDriver, agentId: string, done: () => boolean, what: 
 /** The page rail's AI popover is open: choose count/topic and press Generate.
  *  Confirms the server accepted the request, then hands the build to a
  *  background job and returns at once (see ./magazineJobs.ts). */
+/** Live on Bulletins right now — see the note on magazine.unpublish. */
+function isLiveIssue(issue: { publishedIssueId?: string | null; status?: string } | null | undefined): boolean {
+  return !!issue?.publishedIssueId && issue.status === 'published';
+}
+
 /** The page builder's count picker offers 1, 2, 3, 4 or 6 pages per build. */
 const BUILD_BATCHES = [6, 4, 3, 2, 1] as const;
 
@@ -902,6 +907,11 @@ export function useMagazineEditorActions(perms: EditorPerms): void {
         }
         if (!get().currentPageId) throw new Error('No page is open yet — wait for the first page to build.');
         await ensureStudioComposer(ui);
+        // The studio says up front when this page cannot be changed by this user (a
+        // submitted/approved page, or a role without magazine.edit) and disables its
+        // composer. Report that reason rather than typing into a disabled box.
+        const blocked = anchor('mag.ai-send')?.getAttribute('data-studio-blocked');
+        if (blocked) throw new Error(blocked);
         await waitUntil(() => !get().chatBusy, { signal: ui.signal, timeoutMs: 300_000, what: 'the studio to finish its previous reply' });
 
         const before = get().chat.length;
@@ -1202,17 +1212,21 @@ export function useMagazineEditorActions(perms: EditorPerms): void {
       description: 'Take the live edition off the Bulletins newsstand (the draft is kept).',
       args: z.object({}),
       // Not published → run() refuses before touching anything; no card.
+      // LIVE is publishedIssueId AND status 'published': unpublish keeps the id (for a
+      // one-click re-publish) and sets status back to 'ready'. Testing the id alone
+      // offered to unpublish a pulled magazine and reported a SUCCESSFUL unpublish
+      // as "Unpublish failed".
       confirm: () =>
-        get().issue?.publishedIssueId ? `Unpublish “${get().issue?.title ?? 'this magazine'}” from Bulletins? Readers will no longer see it.` : null,
+        isLiveIssue(get().issue) ? `Unpublish “${get().issue?.title ?? 'this magazine'}” from Bulletins? Readers will no longer see it.` : null,
       run: async (_a, ui) => {
         const s = await ready(ui);
-        if (!s.issue?.publishedIssueId) throw new Error('This magazine is not published.');
+        if (!isLiveIssue(s.issue)) throw new Error('This magazine is not published.');
         await openMenu(ui, 'mag.publish-button', 'mag.unpublish', 'Publish');
         assertEnabled('mag.unpublish', 'Unpublish is not available right now.');
         await ui.click('mag.unpublish', 'Unpublish');
         await waitUntil(() => get().publishing, { signal: ui.signal, timeoutMs: 3000, what: 'unpublishing to start' }).catch(() => undefined);
         await waitUntil(() => !get().publishing, { signal: ui.signal, timeoutMs: 60_000, what: 'unpublishing to finish' });
-        if (get().issue?.publishedIssueId) throw new Error('Unpublish failed — see the message on screen.');
+        if (isLiveIssue(get().issue)) throw new Error('Unpublish failed — see the message on screen.');
         return { published: false, status: get().issue?.status };
       },
     },

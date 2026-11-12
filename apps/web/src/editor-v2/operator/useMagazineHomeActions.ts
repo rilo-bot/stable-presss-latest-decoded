@@ -61,7 +61,8 @@ export function useMagazineHomeActions(state: HomeState): void {
     status: it.status,
     pageCount: it.pageCount,
     myRole: it.myRole ?? 'view-only',
-    published: !!it.publishedIssueId,
+    // Live = has an edition AND still published (unpublish keeps the id, sets status 'ready').
+    published: !!it.publishedIssueId && it.status === 'published',
     owner: it.ownerName || undefined,
     route: editorRoute(it.id),
   });

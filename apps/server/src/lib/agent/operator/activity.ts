@@ -15,7 +15,13 @@
 import { db } from '../../db.js'
 import { AGENT_RUNS, USERS } from '../../collections.js'
 import { dailyBudgetUsd, spentTodayUsd, type UsageTotals } from './runs.js'
-import { datesBetween, windowStart } from './activityParams.js'
+import { activitySince, datesBetween, notBeforeActivitySince, windowStart } from './activityParams.js'
+
+/** Runs that began before the activity start are not shown (see activitySince). */
+function startedSinceMatch(): Record<string, unknown> {
+  const since = activitySince()
+  return since ? { startedAt: { $gte: since } } : {}
+}
 
 export { clampInt, isoTimestamp, isRunId } from './activityParams.js'
 
@@ -81,10 +87,10 @@ export interface ListRunsQuery {
  * for Everyone (lib/ensureIndexes.ts).
  */
 export async function listRuns(q: ListRunsQuery): Promise<{ runs: RunSummary[]; nextBefore: string | null }> {
-  const since = `${windowStart(q.days)}T00:00:00.000Z`
+  const since = notBeforeActivitySince(`${windowStart(q.days)}T00:00:00.000Z`)
   const updatedAt: Record<string, string> = { $gte: since }
   if (q.before) updatedAt.$lt = q.before
-  const match: Record<string, unknown> = { deletedAt: null, updatedAt }
+  const match: Record<string, unknown> = { deletedAt: null, updatedAt, ...startedSinceMatch() }
   if (q.userId) match.userId = q.userId
 
   const rows = await db.collection(AGENT_RUNS).aggregate([
@@ -222,7 +228,11 @@ export interface UsageReport {
 export async function usageReport(opts: { userId?: string; days: number; caller: string }): Promise<UsageReport> {
   const from = windowStart(opts.days)
   const to = new Date().toISOString().slice(0, 10)
-  const match: Record<string, unknown> = { deletedAt: null, updatedAt: { $gte: `${from}T00:00:00.000Z` } }
+  const match: Record<string, unknown> = {
+    deletedAt: null,
+    updatedAt: { $gte: notBeforeActivitySince(`${from}T00:00:00.000Z`) },
+    ...startedSinceMatch(),
+  }
   if (opts.userId) match.userId = opts.userId
 
   const [facets, spentUsd] = await Promise.all([
@@ -255,7 +265,8 @@ export async function usageReport(opts: { userId?: string; days: number; caller:
         },
       },
     ]),
-    spentTodayUsd(opts.caller),
+    // The display counts from the activity start; the budget check (route) counts the whole day.
+    spentTodayUsd(opts.caller, activitySince()),
   ])
 
   const f = (facets[0] ?? {}) as {

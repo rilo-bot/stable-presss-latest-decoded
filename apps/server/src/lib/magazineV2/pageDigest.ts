@@ -74,6 +74,11 @@ export function pagesAlreadyIn(pages: { elements?: unknown }[]): string[] {
  *  • A NUMBER THAT DOES NOT EXIST IS AN ERROR NOW, not a silent miss later, so the
  *    assistant can say so in the same breath rather than the user discovering it after
  *    approving a rebuild.
+ *  • A PAGE THE CALLER CANNOT SEE IS AN ERROR TOO (`readable`, the route-computed set of
+ *    page ids this user may open). A contributor shared only page 3 who says "do page 2
+ *    like this" used to get a rebuild staged for a page that is not theirs: the apply
+ *    then failed client-side with "That page is no longer in this magazine", which is
+ *    neither true nor helpful. Omitted = no restriction (the owner, and older callers).
  */
 export type PageOrdinal =
   | { ok: true; pageId?: string }
@@ -83,6 +88,7 @@ export function resolvePageOrdinal(
   pages: { _id: string; index: number }[],
   ordinal: number,
   currentIndex: number,
+  readable?: ReadonlySet<string>,
 ): PageOrdinal {
   const ordered = [...pages].sort((a, b) => a.index - b.index);
   const target = ordered[ordinal - 1];
@@ -90,5 +96,12 @@ export function resolvePageOrdinal(
     const n = ordered.length;
     return { ok: false, error: `This magazine has ${n} page${n === 1 ? '' : 's'}, so there is no page ${ordinal}.` };
   }
-  return { ok: true, pageId: target.index === currentIndex ? undefined : target._id };
+  if (target.index === currentIndex) return { ok: true, pageId: undefined };
+  if (readable && !readable.has(String(target._id))) {
+    return {
+      ok: false,
+      error: `Page ${ordinal} is not shared with this user, so it cannot be changed from here — only the pages shared with them (start with the one that is open).`,
+    };
+  }
+  return { ok: true, pageId: target._id };
 }

@@ -24,7 +24,7 @@ import {
   needsRepublish,
   pageEditedSincePublish,
 } from '../../src/lib/magazineV2/review.js';
-import { canViewPage, canEditPage, pageEditBlock, roleOnMagazine } from '../../src/lib/magazineV2/access.js';
+import { canViewPage, canEditPage, pageEditBlock, roleOnMagazine, collaboratorRoleWarning } from '../../src/lib/magazineV2/access.js';
 
 const OWNER = 'u_owner';
 const SAM = 'u_sam';
@@ -189,4 +189,31 @@ test("an 'all'-scoped collaborator is gated by review like anyone else", () => {
   });
   assert.equal(pageEditBlock(i, SAM, 'p7', page({ review: 'in_progress' })), null);
   assert.equal(pageEditBlock(i, SAM, 'p7', page({ review: 'submitted' })), 'page-submitted');
+});
+
+// ── sharing with someone whose ROLE cannot use it ────────────────────────────
+//
+// The share picks pages; the staff role decides whether the person may touch
+// magazines at all. A share to a role without magazine.edit used to succeed and then
+// fail on the contributor's screen the first time they added a photo.
+
+
+test('a role that can view and edit magazines gets no warning', () => {
+  assert.equal(collaboratorRoleWarning('Casey', { view: true, edit: true }), '');
+});
+
+test('view-only role: the owner is told the person can look but not change anything', () => {
+  const w = collaboratorRoleWarning('Casey', { view: true, edit: false });
+  assert.match(w, /^Casey's role can open magazines but not edit them/);
+  assert.match(w, /Magazine Builder › Edit/);
+});
+
+test('no magazine access at all: the owner is told the link will not work', () => {
+  const w = collaboratorRoleWarning('Casey', { view: false, edit: true });
+  assert.match(w, /can't open magazines/);
+  assert.match(w, /View and Edit/);
+});
+
+test('a blank name still reads as a sentence', () => {
+  assert.match(collaboratorRoleWarning('  ', { view: true, edit: false }), /^This person's role/);
 });

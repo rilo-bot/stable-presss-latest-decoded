@@ -142,6 +142,28 @@ export function pageEditBlock(
   return null;
 }
 
+/**
+ * What to tell the OWNER when the person they just shared pages with cannot use them.
+ *
+ * Sharing decides WHICH pages; the staff role decides WHETHER the person may touch
+ * magazines at all (the router's gate needs `magazine.view` to open one and
+ * `magazine.edit` for every write — uploading a photo, the Design Helper, moving a
+ * box). The two are granted in different places, so a share to someone whose role
+ * lacks them used to "succeed" and then fail on the contributor's screen the first
+ * time they added an image. The share still goes through — the role may be fixed
+ * later — but the owner is told now, in words that say where to fix it.
+ *
+ * '' when the role can do the job.
+ */
+export function collaboratorRoleWarning(name: string, can: { view: boolean; edit: boolean }): string {
+  if (can.view && can.edit) return '';
+  const who = name.trim() || 'This person';
+  if (!can.view) {
+    return `${who}'s role can't open magazines yet, so the link won't work for them. Give their role Magazine Builder › View and Edit under Roles.`;
+  }
+  return `${who}'s role can open magazines but not edit them, so they can look at the shared pages but not change them (no photos, no Design Helper). Give their role Magazine Builder › Edit under Roles.`;
+}
+
 export function canEditPage(
   doc: IssueDoc,
   userId: string,

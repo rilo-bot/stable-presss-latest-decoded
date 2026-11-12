@@ -57,16 +57,42 @@ test('isSessionId / isUserId: run ids, job ids and srv-uuids pass; operators and
 // ── pipelines ───────────────────────────────────────────────────────────────
 
 test('usageMatch: soft-delete filter + window always; user and surface only when given', () => {
-  assert.deepEqual(usageMatch({ from: '2026-11-01' }), {
-    deletedAt: null,
-    createdAt: { $gte: '2026-11-01T00:00:00.000Z' },
-  })
-  assert.deepEqual(usageMatch({ from: '2026-11-01', userId: 'u1', surface: 'story-ai' }), {
-    deletedAt: null,
-    createdAt: { $gte: '2026-11-01T00:00:00.000Z' },
-    userId: 'u1',
-    surface: 'story-ai',
-  })
+  const saved = process.env.AI_ACTIVITY_SINCE
+  process.env.AI_ACTIVITY_SINCE = 'none'
+  try {
+    assert.deepEqual(usageMatch({ from: '2026-11-01' }), {
+      deletedAt: null,
+      createdAt: { $gte: '2026-11-01T00:00:00.000Z' },
+    })
+    assert.deepEqual(usageMatch({ from: '2026-11-01', userId: 'u1', surface: 'story-ai' }), {
+      deletedAt: null,
+      createdAt: { $gte: '2026-11-01T00:00:00.000Z' },
+      userId: 'u1',
+      surface: 'story-ai',
+    })
+  } finally {
+    if (saved === undefined) delete process.env.AI_ACTIVITY_SINCE
+    else process.env.AI_ACTIVITY_SINCE = saved
+  }
+})
+
+test('usageMatch: never reaches before the activity start (AI_ACTIVITY_SINCE)', () => {
+  const saved = process.env.AI_ACTIVITY_SINCE
+  try {
+    process.env.AI_ACTIVITY_SINCE = '2026-11-12T15:30:00Z'
+    // A window that opens earlier is raised to the activity start…
+    assert.deepEqual(usageMatch({ from: '2026-11-01' }).createdAt, { $gte: '2026-11-12T15:30:00.000Z' })
+    // …and a window that opens later is left alone.
+    assert.deepEqual(usageMatch({ from: '2026-11-20' }).createdAt, { $gte: '2026-11-20T00:00:00.000Z' })
+    // Unset → the built-in default start applies; junk → also the default.
+    delete process.env.AI_ACTIVITY_SINCE
+    assert.deepEqual(usageMatch({ from: '2026-11-01' }).createdAt, { $gte: '2026-11-12T15:30:00.000Z' })
+    process.env.AI_ACTIVITY_SINCE = 'not a date'
+    assert.deepEqual(usageMatch({ from: '2026-11-01' }).createdAt, { $gte: '2026-11-12T15:30:00.000Z' })
+  } finally {
+    if (saved === undefined) delete process.env.AI_ACTIVITY_SINCE
+    else process.env.AI_ACTIVITY_SINCE = saved
+  }
 })
 
 test('pipelines open with the given $match', () => {

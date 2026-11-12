@@ -285,6 +285,16 @@ export default function BulletinViewer() {
 
   return (
     <div className="min-h-screen bg-white" data-bulletin-ready={printReady ? 'true' : undefined}>
+      {/* Only staff can open a pulled edition (readers get "not found"), so make it
+          unmistakable that this is a private preview, not what the public sees. */}
+      {issue.unpublishedAt && (
+        <div
+          role="status"
+          className="sticky top-0 z-30 border-b border-amber-300 bg-amber-50 px-4 py-2 text-center text-sm font-medium text-amber-900 print:hidden"
+        >
+          Unpublished — this edition is off Bulletins. Only staff can see this preview; readers get “not found”.
+        </div>
+      )}
       {/* Print rules: render each page at natural A4 size, one per sheet, with the
           screen chrome and scaling removed. These are what the "Download PDF" button
           uses — the server prints this exact route in headless Chromium — and they

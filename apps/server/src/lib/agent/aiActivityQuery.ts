@@ -12,7 +12,7 @@
 // ---------------------------------------------------------------------------
 
 import { AI_SURFACES, isAiSurface, type AiSurface } from './aiUsage.js'
-import { datesBetween } from './operator/activityParams.js'
+import { datesBetween, notBeforeActivitySince } from './operator/activityParams.js'
 
 export { clampInt, isoTimestamp, windowStart } from './operator/activityParams.js'
 
@@ -47,7 +47,10 @@ export interface UsageMatchQuery {
  * createdAt}, {userId, surface, deletedAt, createdAt}, {deletedAt, createdAt}.
  */
 export function usageMatch(q: UsageMatchQuery): Record<string, unknown> {
-  const match: Record<string, unknown> = { deletedAt: null, createdAt: { $gte: `${q.from}T00:00:00.000Z` } }
+  const match: Record<string, unknown> = {
+    deletedAt: null,
+    createdAt: { $gte: notBeforeActivitySince(`${q.from}T00:00:00.000Z`) },
+  }
   if (q.userId) match.userId = q.userId
   if (q.surface) match.surface = q.surface
   return match

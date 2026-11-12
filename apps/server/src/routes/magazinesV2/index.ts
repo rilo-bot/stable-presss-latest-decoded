@@ -25,7 +25,7 @@ import { MAGAZINE_V2_ENABLED, PAGE_W, PAGE_H, MAX_PAGES_PER_ISSUE, MAX_SOURCE_BY
 import { COL } from '../../lib/magazineV2/collections.js';
 import { rateLimit } from '../../lib/rateLimit.js';
 import { safePublicImageUrl } from '../../lib/magazineV2/url.js';
-import { roleOnMagazine, isOwner, canViewPage, pageEditBlock, editablePageIds, collaboratorsOf, assigneesOfPage, type V2Collaborator, type MagRole } from '../../lib/magazineV2/access.js';
+import { roleOnMagazine, isOwner, canViewPage, pageEditBlock, editablePageIds, collaboratorsOf, assigneesOfPage, collaboratorRoleWarning, type V2Collaborator, type MagRole } from '../../lib/magazineV2/access.js';
 import { reviewOf, reviewRoundOf, isApprovalStale, needsRepublish, pageEditedSincePublish, reviewIs, reviewTransitionError, type PageReview, type ReviewAction } from '../../lib/magazineV2/review.js';
 import { publishApprovalBlock } from '../../lib/magazineV2/publishGate.js';
 import { canReadThread, canWriteThread, threadSummary, legacyThreadSummary, titleFromMessage, cleanTitle, LEGACY_THREAD_ID } from '../../lib/magazineV2/threads.js';
@@ -2127,8 +2127,15 @@ router.post('/issues/:id/collaborators', async (req, res) => {
     emailError = r.error;
   }
 
+  // Shared, but can their ROLE use it? See collaboratorRoleWarning — the share stands
+  // either way; the owner just learns now rather than from the contributor later.
+  const warning = collaboratorRoleWarning(acct.name || acct.email, {
+    view: can(acct, 'magazine', 'view'),
+    edit: can(acct, 'magazine', 'edit'),
+  });
+
   const fresh = await loadIssue(doc._id);
-  res.status(201).json({ issue: withViewer(fresh ?? doc, uid), emailed, emailError });
+  res.status(201).json({ issue: withViewer(fresh ?? doc, uid), emailed, emailError, ...(warning ? { warning } : {}) });
 });
 
 // remove a collaborator — owner only

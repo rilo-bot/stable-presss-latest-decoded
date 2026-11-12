@@ -92,18 +92,9 @@ export interface SurfacesQuery {
 
 export async function surfacesReport(q: SurfacesQuery): Promise<SurfacesReport & { meteredSince: string | null }> {
   const from = windowStart(q.days)
-  const [facets, first] = await Promise.all([
-    db.collection(AI_USAGE).aggregate(surfacesPipeline(usageMatch({ userId: q.userId, from }))),
-    // When metering began, so the page can say why older days are empty.
-    // Index: { deletedAt, createdAt }.
-    db.collection(AI_USAGE).aggregate([
-      { $match: { deletedAt: null } },
-      { $sort: { createdAt: 1 } },
-      { $limit: 1 },
-      { $project: { _id: 0, createdAt: 1 } },
-    ]),
-  ])
-  return { ...shapeSurfaces(facets[0], from, today()), meteredSince: str(first[0]?.createdAt) || null }
+  const facets = await db.collection(AI_USAGE).aggregate(surfacesPipeline(usageMatch({ userId: q.userId, from })))
+  // meteredSince is no longer reported: the page shows usage without a "since" note.
+  return { ...shapeSurfaces(facets[0], from, today()), meteredSince: null }
 }
 
 // ── one surface ─────────────────────────────────────────────────────────────

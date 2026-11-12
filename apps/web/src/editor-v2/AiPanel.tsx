@@ -7,7 +7,7 @@
 // rev-guarded element CRUD (store.applyAllProposals).
 
 import { useEffect, useRef, useState } from 'react';
-import { Sparkles, Send, Square, Loader2, Check, X, Plus, Pencil, Trash2, Paperclip, FileText, FilePlus2, ArrowLeftRight, Image as ImageIcon, Mic, Volume2, VolumeX, MessagesSquare, MessageSquarePlus, ChevronDown, Eye, LayoutTemplate } from 'lucide-react';
+import { Sparkles, Send, Square, Loader2, Check, X, Plus, Pencil, Trash2, Paperclip, FileText, FilePlus2, ArrowLeftRight, Image as ImageIcon, Mic, Volume2, VolumeX, MessagesSquare, MessageSquarePlus, ChevronDown, Eye, LayoutTemplate, Lock } from 'lucide-react';
 import type { UIMessage } from 'ai';
 import { toast } from 'sonner';
 import { MarkdownMessage } from '@/components/MarkdownMessage';
@@ -15,7 +15,9 @@ import { ingestFile, attachmentSourceText, ATTACH_ACCEPT } from '@/agent/attachm
 import { filesFromClipboard, isPasteImage } from '@/agent/attachments/clipboard';
 import { compressImageToBlob } from '@/lib/upload';
 import { useVoiceChat } from '@/agent/voice/useVoiceChat';
+import { useAuthStore } from '@/stores/authStore';
 import { useEditorStore } from './store';
+import { readOnlyReason } from './review';
 import { ShimmerText, WorkingLine } from './BuildProgress';
 import { ThreadList } from './ThreadList';
 import { uploadMediaImage, uploadMediaDoc, listUploads, listMedia, getUploadText, type AttachedImage, type MagazineUpload, type MediaAsset } from './api';
@@ -43,6 +45,10 @@ interface PanelAttachment {
 const isPdfType = (contentType?: string) => (contentType ?? '').toLowerCase() === 'application/pdf';
 
 const MAX_PANEL_ATTACHMENTS = 5;
+
+/** Said when the staff ROLE cannot write to magazines at all (no `magazine.edit`). */
+const ROLE_CANNOT_EDIT =
+  "Your role can open magazines but not edit them, so the Design Helper can't change this page or add photos. Ask an administrator to add Magazine Builder › Edit to your role.";
 let attSeq = 0;
 const attId = () => `att_${Date.now().toString(36)}_${(++attSeq).toString(36)}`;
 
@@ -122,6 +128,32 @@ export function AiPanel({ onClose }: { onClose?: () => void } = {}) {
   const activeThread = threads.find((t) => t.id === activeThreadId);
   const readOnlyThread = !!activeThread?.readOnly;
 
+  // ── Can this person change the OPEN page right now? ──
+  // The server refuses a turn in these cases anyway, but only AFTER the attached
+  // photo has been uploaded and read by the vision model — so a contributor on a
+  // submitted page (or with a role that lacks magazine.edit) attached a picture,
+  // waited, and got an error. Said up front instead, with what to do about it:
+  //   • the ROLE lacks `magazine.edit` — the router's gate for every write (the media
+  //     upload, the assistant, the element writes). Fails OPEN when the access payload
+  //     is missing: the server is the real gate; this is only its honest preview.
+  //   • the page is submitted/approved and this user is not the owner — the same
+  //     sentence the lock banner over the canvas shows (readOnlyReason).
+  //   • no page is open at all — sendChat needs one and used to drop the turn silently.
+  const issue = useEditorStore((s) => s.issue);
+  const pages = useEditorStore((s) => s.pages);
+  const roleCanEdit = useAuthStore((s) => {
+    const held = s.currentUser?.access?.permissions;
+    return !held || held.includes('magazine.edit');
+  });
+  const pageLock = readOnlyReason(issue, pages.find((p) => p.id === currentPageId));
+  const blockedReason = !roleCanEdit
+    ? ROLE_CANNOT_EDIT
+    : pageLock
+      ? `${pageLock} Until then the Design Helper can't change this page.`
+      : !currentPageId && pages.length === 0
+        ? 'There is no page here yet — the Design Helper works on the page you have open.'
+        : '';
+
   const [input, setInput] = useState('');
   const [atts, setAtts] = useState<PanelAttachment[]>([]); // source docs/images to work from
   const [ingesting, setIngesting] = useState(false);
@@ -169,7 +201,7 @@ export function AiPanel({ onClose }: { onClose?: () => void } = {}) {
   };
   const previewImage = (m: MediaAsset) => setPreviewDoc({ name: m.alt || 'Image', isImage: true, imageUrl: m.url });
   const fillFromUpload = async (u: MagazineUpload) => {
-    if (!issueId || chatBusy) return;
+    if (!issueId || chatBusy || blockedReason) return;
     try {
       const full = await getUploadText(issueId, u.id);
       const text = (full.sourceText || '').trim();
@@ -188,7 +220,7 @@ export function AiPanel({ onClose }: { onClose?: () => void } = {}) {
   const uploadsFileRef = useRef<HTMLInputElement>(null);
   const [uploadsAdding, setUploadsAdding] = useState(false);
   const addUploadFiles = async (list: FileList | null) => {
-    if (!list || list.length === 0 || !issueId) return;
+    if (!list || list.length === 0 || !issueId || !roleCanEdit) return;
     setUploadsAdding(true);
     for (const f of Array.from(list)) {
       try {
@@ -298,7 +330,7 @@ export function AiPanel({ onClose }: { onClose?: () => void } = {}) {
     // is still replying (chatBusy) — a paste landing here would join the NEXT
     // turn regardless, but showing it as if it's part of what's currently
     // sending is exactly the confusion this composer needs to avoid.
-    if (tab !== 'chat' || readOnlyThread || ingesting || chatBusy) return;
+    if (tab !== 'chat' || readOnlyThread || ingesting || chatBusy || blockedReason) return;
     // Let the canvas's own inline text editor keep its paste (it inserts plain
     // text into a contentEditable). Only relevant if this panel ever hosts one.
     const target = e.target as HTMLElement | null;
@@ -360,7 +392,7 @@ export function AiPanel({ onClose }: { onClose?: () => void } = {}) {
     const t = input.trim();
     // Allow a file-only send (attachment with no prompt) — a default instruction
     // is supplied below so the turn still has something to act on.
-    if ((!t && atts.length === 0) || chatBusy || ingesting) return;
+    if ((!t && atts.length === 0) || chatBusy || ingesting || blockedReason) return;
     let src: string | undefined;
     let images: AttachedImage[] | undefined;
     let attachRefs: { name: string; isImage: boolean; url?: string }[] | undefined;
@@ -397,7 +429,9 @@ export function AiPanel({ onClose }: { onClose?: () => void } = {}) {
               // (the PUT goes straight to S3). The server's own refusals are already
               // written for a person — a 413 says what the limit is — so pass them
               // through rather than paraphrasing.
-              const why = e instanceof Error && e.message ? e.message : '';
+              // Trailing punctuation dropped: the server's sentences end in a full stop,
+              // and the template adds its own — "…edit magazines.. I'll describe it".
+              const why = e instanceof Error && e.message ? e.message.trim().replace(/[.\s]+$/, '') : '';
               toast.message(
                 `Couldn't store “${a.file.name}” for placement${why ? ` — ${why}` : ''}. I'll describe it to the assistant instead, but it can't be placed on the page.`,
               );
@@ -574,7 +608,10 @@ export function AiPanel({ onClose }: { onClose?: () => void } = {}) {
           <button
             type="button"
             onClick={() => uploadsFileRef.current?.click()}
-            disabled={uploadsAdding}
+            // The library is magazine-wide, so a LOCKED page doesn't stop it — only a
+            // role without magazine.edit does (the upload route is a write).
+            disabled={uploadsAdding || !roleCanEdit}
+            title={roleCanEdit ? undefined : ROLE_CANNOT_EDIT}
             data-agent-id="mag.ai-uploads-add"
             className="flex w-full items-center justify-center gap-1.5 rounded-md border border-dashed border-studio-edge py-2 text-ui-sm font-semibold text-studio-ink-2 hover:border-[var(--gold-bright)]/60 hover:text-studio-ink disabled:opacity-50"
           >
@@ -595,7 +632,7 @@ export function AiPanel({ onClose }: { onClose?: () => void } = {}) {
                 {u.originalName}
               </button>
               {u.hasText && (
-                <button type="button" onClick={() => void fillFromUpload(u)} disabled={chatBusy} data-agent-id={`mag.ai-upload-${u.id}-fill`} data-agent-label={`Fill this page from “${u.originalName}”`} className="flex-shrink-0 rounded-sm border border-studio-edge px-1.5 py-0.5 text-ui-sm text-studio-ink-2 hover:bg-studio-raise-2 disabled:opacity-40" title="Use this document to fill the page you're currently on">
+                <button type="button" onClick={() => void fillFromUpload(u)} disabled={chatBusy || !!blockedReason} data-agent-id={`mag.ai-upload-${u.id}-fill`} data-agent-label={`Fill this page from “${u.originalName}”`} className="flex-shrink-0 rounded-sm border border-studio-edge px-1.5 py-0.5 text-ui-sm text-studio-ink-2 hover:bg-studio-raise-2 disabled:opacity-40" title={blockedReason || "Use this document to fill the page you're currently on"}>
                   Fill this page
                 </button>
               )}
@@ -751,7 +788,23 @@ export function AiPanel({ onClose }: { onClose?: () => void } = {}) {
             <button type="button" onClick={() => removeAtt(att.id)} disabled={ingesting} aria-label="Remove attachment" data-agent-id={`mag.ai-attachment-${att.id}-remove`} data-agent-label={`Remove attachment “${att.file.name}”`} className="flex-shrink-0 text-emerald-200/60 hover:text-emerald-100 disabled:opacity-50"><X size={11} /></button>
           </div>
         ))}
-        <input ref={fileRef} type="file" accept={ATTACH_ACCEPT} multiple className="hidden" onChange={(e) => addFiles(e.target.files)} />
+        {/* Disabled with the composer: the Stable Hand's `upload` tool fills this
+            input directly (not through the paperclip), and a disabled input is what
+            makes it stop and report instead of staging a file nobody can send. */}
+        <input ref={fileRef} type="file" accept={ATTACH_ACCEPT} multiple className="hidden" disabled={!!blockedReason} onChange={(e) => addFiles(e.target.files)} />
+        {/* Why this page can't be changed from here — see blockedReason. Above the
+            composer (which stays, disabled) so the reason is where the user was about
+            to type, and so the Operator still finds the anchors it reads. */}
+        {!readOnlyThread && blockedReason && (
+          <div
+            data-agent-id="mag.ai-blocked"
+            role="status"
+            className="mb-1.5 flex items-start gap-2 rounded-sm border border-amber-400/25 bg-amber-400/10 px-3 py-2 text-ui-sm leading-relaxed text-amber-200"
+          >
+            <Lock size={12} className="mt-0.5 flex-shrink-0" />
+            <span>{blockedReason}</span>
+          </div>
+        )}
         {/* Speaking / transcribing status bar — matches v1: pulsing dot + live caption. */}
         {(voice.recording || voice.transcribing) && (
           <div className="mb-1.5 flex items-center gap-2 rounded-sm border border-studio-hair bg-studio-raise px-2.5 py-1.5 text-ui-sm text-studio-ink-2">
@@ -785,9 +838,9 @@ export function AiPanel({ onClose }: { onClose?: () => void } = {}) {
             type="button"
             onClick={() => fileRef.current?.click()}
             data-agent-id="mag.ai-attach"
-            disabled={ingesting || chatBusy}
+            disabled={ingesting || chatBusy || !!blockedReason}
             aria-label="Attach documents or images"
-            title="Attach documents/images — docs fill the page, images can be placed on it. You can also paste an image (Ctrl/Cmd+V)."
+            title={blockedReason || 'Attach documents/images — docs fill the page, images can be placed on it. You can also paste an image (Ctrl/Cmd+V).'}
             className="flex h-10 w-10 flex-shrink-0 items-center justify-center rounded-full text-studio-ink-2 hover:bg-studio-raise-2 hover:text-studio-ink disabled:opacity-40"
           >
             <Paperclip size={18} />
@@ -811,9 +864,10 @@ export function AiPanel({ onClose }: { onClose?: () => void } = {}) {
             // no sign anything was happening, and Enter would just silently do
             // nothing (send() itself was already guarded — this makes that guard
             // VISIBLE instead of feeling like a dead keypress).
-            disabled={voice.recording || voice.transcribing || ingesting || chatBusy}
+            disabled={voice.recording || voice.transcribing || ingesting || chatBusy || !!blockedReason}
             placeholder={
-              voice.recording ? 'Listening…'
+              blockedReason ? 'Editing is closed for this page'
+              : voice.recording ? 'Listening…'
               : voice.transcribing ? 'Transcribing…'
               : ingesting ? 'Sending…'
               : chatBusy ? 'The Design Helper is replying…'
@@ -830,7 +884,7 @@ export function AiPanel({ onClose }: { onClose?: () => void } = {}) {
               risked a second turn setting chatBusy first and the store's own
               chatBusy guard then silently dropping the attachment's message when
               THIS send() finally tried to post it. */}
-          {voice.voiceReady && !chatBusy && !ingesting && (
+          {voice.voiceReady && !chatBusy && !ingesting && !blockedReason && (
             <button
               type="button"
               onClick={() => void voice.toggleMic()}
@@ -851,12 +905,14 @@ export function AiPanel({ onClose }: { onClose?: () => void } = {}) {
             data-agent-id="mag.ai-send"
             data-agent-label="Send to the Magazine AI Studio"
             aria-label="Send"
-            title="Send"
-            disabled={(!input.trim() && atts.length === 0) || chatBusy || ingesting}
+            title={blockedReason || 'Send'}
+            disabled={(!input.trim() && atts.length === 0) || chatBusy || ingesting || !!blockedReason}
             // The Operator reads this to tell "still uploading/reading the
             // attachment" (ingesting — local state, invisible in the store) from
             // "never sent". Without it a slow image read looked like a dropped send.
             data-studio-phase={ingesting ? 'ingesting' : chatBusy ? 'replying' : 'idle'}
+            // …and this to say WHY it cannot send at all (see blockedReason).
+            data-studio-blocked={blockedReason || undefined}
             className="flex h-10 w-10 flex-shrink-0 items-center justify-center rounded-full text-studio-bg disabled:opacity-40"
             style={{ background: 'var(--gold-bright)' }}
           >

@@ -173,7 +173,7 @@ export function ShareDialog({ onClose }: { onClose: () => void }) {
     const pageIds: string[] | 'all' = pageMode === 'all' ? 'all' : Array.from(picked);
     setBusy(true);
     try {
-      const { emailed, emailError } = await api.addCollaborator(issueId, { email: selectedEmail, pageIds });
+      const { emailed, emailError, warning } = await api.addCollaborator(issueId, { email: selectedEmail, pageIds });
       // The share is committed; this only re-reads the list that renders it. When the
       // re-read fails the person DOES have access but their row won't appear — say so,
       // rather than leaving a dialog that looks like the share didn't take.
@@ -190,6 +190,9 @@ export function ShareDialog({ onClose }: { onClose: () => void }) {
       } else {
         toast.success(`${shared} now has ${what} and was emailed a link.`);
       }
+      // Their ROLE can't use what was just shared (no magazine view/edit) — they'd
+      // find out the first time they added a photo. The owner hears it now instead.
+      if (warning) toast.warning(warning, { duration: 12000 });
     } catch (e) {
       toast.error(e instanceof Error ? e.message : 'Could not share this magazine.');
     } finally {

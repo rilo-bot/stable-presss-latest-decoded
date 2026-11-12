@@ -166,3 +166,41 @@ test('a one-page magazine says "page", not "pages"', () => {
   assert.equal(r.ok, false);
   assert.match(r.ok === false ? r.error : '', /has 1 page,/);
 });
+
+// ── a page-scoped contributor names a page that is not theirs ───────────────
+//
+// `readable` is the route's own visibility set (the pages this caller may open).
+// A contributor shared only page 3 who says "do page 2 like this" must be told now,
+// not handed a staged rebuild that fails after they press Apply.
+
+test('a page the caller cannot see is refused, in words that say why', () => {
+  const mine = new Set(['pC']);
+  const r = resolvePageOrdinal(PAGES, 2, 2, mine);
+  assert.equal(r.ok, false);
+  assert.match(r.ok === false ? r.error : '', /not shared/);
+  assert.match(r.ok === false ? r.error : '', /Page 2/, 'names the page the user said, not an index');
+});
+
+test('the open page is always "this page", even for a scoped contributor', () => {
+  // Their own page — real number 3, the only one in their set — resolves to undefined,
+  // exactly as for the owner, so the proposal stays the ordinary kind.
+  const r = resolvePageOrdinal(PAGES, 3, 2, new Set(['pC']));
+  assert.equal(r.ok, true);
+  assert.equal(r.ok && r.pageId, undefined);
+});
+
+test('a shared page that is not open resolves to its id', () => {
+  const r = resolvePageOrdinal(PAGES, 1, 2, new Set(['pA', 'pC']));
+  assert.equal(r.ok && r.pageId, 'pA');
+});
+
+test('no readable set = no restriction (the owner, older callers)', () => {
+  const r = resolvePageOrdinal(PAGES, 2, 0);
+  assert.equal(r.ok && r.pageId, 'pB');
+});
+
+test('a number past the end is still "no such page", whatever the caller can see', () => {
+  const r = resolvePageOrdinal(PAGES, 9, 2, new Set(['pC']));
+  assert.equal(r.ok, false);
+  assert.match(r.ok === false ? r.error : '', /no page 9/);
+});

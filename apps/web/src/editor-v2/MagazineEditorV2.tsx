@@ -13,6 +13,7 @@ import { toast } from 'sonner';
 import { ArrowLeft, Undo2, Redo2, Plus, Minus, Trash2, ChevronDown, ChevronsRight, Sparkles, RotateCcw, ImageIcon, Globe, ExternalLink, Send, Users, EyeOff, ClipboardList, Lock, RefreshCw, MoreHorizontal, PanelRightOpen, X } from 'lucide-react';
 import { useEditorStore } from './store';
 import { useStudioChrome } from '@/stores/studioChromeStore';
+import { useAuthStore } from '@/stores/authStore';
 import { useCan } from '@/lib/permissions';
 import { useEditorFonts } from '@/lib/fonts/useEditorFonts';
 import { EditorCanvas } from './EditorCanvas';
@@ -207,6 +208,12 @@ export default function MagazineEditorV2() {
   // DELETE /issues/:id is gated on `magazine.delete`, so an owner whose role lacks it
   // is not offered a Delete that would only 403.
   const mayDelete = useCan('magazine.delete');
+  // Every write here is gated on `magazine.edit` server-side. Fails OPEN when the
+  // access payload is absent (the server is the gate; this only labels it).
+  const roleCanEdit = useAuthStore((st) => {
+    const held = st.currentUser?.access?.permissions;
+    return !held || held.includes('magazine.edit');
+  });
   const isPublished = !!s.issue?.publishedIssueId && s.issue?.status === 'published';
   // Published, then edited: the bulletin readers see is now behind the draft. There is
   // no version to reason about — the fix is one click of Republish.
@@ -514,8 +521,13 @@ export default function MagazineEditorV2() {
           )}
           {s.issue && !s.canManage() && (
             canEdit ? (
-              <span className="flex-shrink-0 rounded-full border border-studio-gold/30 bg-studio-gold/10 px-2 py-0.5 text-ui-sm text-studio-gold max-md:hidden">
-                Shared with you
+              <span
+                className="flex-shrink-0 rounded-full border border-studio-gold/30 bg-studio-gold/10 px-2 py-0.5 text-ui-sm text-studio-gold max-md:hidden"
+                // Shared, but the ROLE lacks magazine.edit: every write would 403, so say
+                // so here — the assistant panel says what to do about it.
+                title={roleCanEdit ? undefined : "Your role can open magazines but not edit them."}
+              >
+                Shared with you{roleCanEdit ? '' : ' · view only'}
               </span>
             ) : (
               <span className="flex-shrink-0 rounded-full border border-studio-edge bg-studio-raise px-2 py-0.5 text-ui-sm text-studio-ink-2">

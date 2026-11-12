@@ -68,11 +68,11 @@ export function normaliseRunId(raw: unknown): string {
 }
 
 /** What this user has spent on the operator today (UTC). Fails OPEN to 0. */
-export async function spentTodayUsd(userId: string): Promise<number> {
+export async function spentTodayUsd(userId: string, startedSince?: string | null): Promise<number> {
   const field = `costByDay.${today()}`
   try {
     const rows = await db.collection(AGENT_RUNS).aggregate([
-      { $match: { userId, deletedAt: null, [field]: { $gt: 0 } } },
+      { $match: { userId, deletedAt: null, [field]: { $gt: 0 }, ...(startedSince ? { startedAt: { $gte: startedSince } } : {}) } },
       { $group: { _id: null, total: { $sum: `$${field}` } } },
     ])
     return Number(rows[0]?.total) || 0

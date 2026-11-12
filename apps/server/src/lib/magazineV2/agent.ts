@@ -542,7 +542,8 @@ function buildTools(ctx: AgentCtx, dims: { width: number; height: number }, canE
         let pageId: string | undefined;
         if (page !== undefined) {
           const all = (await db.collection(COL.pages).find({ magazineId: ctx.magazineId })) as { _id: string; index: number }[];
-          const resolved = resolvePageOrdinal(all, page, ctx.pageIndex);
+          // ctx.readable: a page-scoped contributor may only aim at pages shared with them.
+          const resolved = resolvePageOrdinal(all, page, ctx.pageIndex, ctx.readable);
           if (!resolved.ok) return { ok: false, error: resolved.error };
           pageId = resolved.pageId;
         }
@@ -626,7 +627,7 @@ function buildTools(ctx: AgentCtx, dims: { width: number; height: number }, canE
         let pageId: string | undefined;
         if (page !== undefined) {
           const all = (await db.collection(COL.pages).find({ magazineId: ctx.magazineId })) as { _id: string; index: number }[];
-          const resolved = resolvePageOrdinal(all, page, ctx.pageIndex);
+          const resolved = resolvePageOrdinal(all, page, ctx.pageIndex, ctx.readable);
           if (!resolved.ok) return { ok: false, error: resolved.error };
           pageId = resolved.pageId;
         }

@@ -17,14 +17,14 @@
  */
 import { useCallback, useEffect, useMemo } from 'react';
 import { Link, useParams, useSearchParams } from 'react-router-dom';
-import { ArrowLeft, ChevronRight, Info, Loader2 } from 'lucide-react';
+import { ArrowLeft, ChevronRight, Loader2 } from 'lucide-react';
 
 import { cn } from '@/lib/utils';
 import { PS_BASE } from '../../newsroom/constants';
 import { Empty, Panel, SegmentedControl, StatTile } from '../emoji-analytics/parts';
 import { useSurfaceDetail, useSurfaces, type Scope, type SurfaceRow, type SurfacesResponse } from '../ai-activity/api';
 import { Sparkline } from '../ai-activity/charts';
-import { ago, cacheLine, count, fullDay, tokens, usd } from '../ai-activity/format';
+import { ago, cacheLine, count, tokens, usd } from '../ai-activity/format';
 import SurfaceDetail, { Breakdowns } from '../ai-activity/SurfaceDetail';
 import { SURFACES, isSurfaceId, surfaceMeta, type SurfaceMeta } from '../ai-activity/surfaces';
 import StablehandActivityScreen from './StablehandActivityScreen';
@@ -208,8 +208,6 @@ function Overview({
   }
 
   const t = data?.totals;
-  // Metering started after the window opened: say why the early days are empty.
-  const startedInWindow = !!data?.meteredSince && data.meteredSince.slice(0, 10) > data.from;
 
   return (
     <div className="space-y-6">
@@ -235,16 +233,6 @@ function Overview({
           }
         />
       </div>
-
-      {startedInWindow && (
-        <p className="flex items-start gap-2 rounded-sm border border-border/60 bg-muted/50 px-3 py-2 text-[12px] leading-relaxed text-muted-foreground">
-          <Info size={14} className="mt-0.5 flex-shrink-0" aria-hidden="true" />
-          <span>
-            AI usage has been recorded since {fullDay(data!.meteredSince!)}, so earlier days are empty here. The Stable
-            Hand kept its own run log before then — open it to see those runs.
-          </span>
-        </p>
-      )}
 
       <section aria-label="AI surfaces">
         <ul className="grid gap-4 sm:grid-cols-2 xl:grid-cols-3">

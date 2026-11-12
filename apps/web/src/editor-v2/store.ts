@@ -1055,7 +1055,10 @@ export const useEditorStore = create<EditorState>((set, get) => ({
     // PAGE, too: from chat you may not be looking at the page you are about to replace —
     // and now that the assistant can target a page you are NOT looking at, that naming
     // is the only thing standing between "do page 2" and a rebuilt page 5.
-    const n = s.pages.findIndex((p) => p.id === pageId) + 1;
+    // The REAL page number (index + 1), as the canvas prints it — not the position in
+    // `pages`. A contributor shared only page 3 has a one-item list, and the position
+    // made this confirm ask "Rebuild page 1…?" about the page captioned "Page 3".
+    const n = summary ? summary.index + 1 : 0;
     const where = n > 0 ? `page ${n}` : 'this page';
     const ok = window.confirm(
       `Rebuild ${where} to match that reference?\n\nThe page is cleared and recreated in the image's design — fresh words are written for your magazine, and the page's photos are re-used where the layout wants pictures. Its current ${count} item${count === 1 ? '' : 's'} are replaced and cannot be brought back with undo.`,
@@ -1467,8 +1470,21 @@ export const useEditorStore = create<EditorState>((set, get) => ({
         if (sameIssue()) set({ chatBusy: false });
         return;
       }
-      set((st) => ({ chat: [...st.chat, { role: 'assistant', content: 'Sorry — I hit a snag just then. Please try again.' }], chatBusy: false }));
+      // A REFUSAL is not a snag. 403/409 carry a sentence written for the person
+      // ("This page is submitted for review — ask the owner to reopen it.", "You can
+      // only edit the pages shared with you."), and "try again" over one of those
+      // sends them round in a loop that can never succeed. Say what the server said.
+      const refusal = e instanceof ApiError && (e.status === 403 || e.status === 409) && e.message ? e.message : '';
+      set((st) => ({
+        chat: [...st.chat, { role: 'assistant', content: refusal || 'Sorry — I hit a snag just then. Please try again.' }],
+        chatBusy: false,
+      }));
       toast.error(e instanceof Error ? e.message : 'Assistant failed');
+      // The page was locked (submitted/approved) since this screen last looked — pull
+      // the summaries so the lock banner and the disabled composer catch up with it.
+      if (e instanceof ApiError && e.status === 409 && (e.body?.reason === 'page-submitted' || e.body?.reason === 'page-approved')) {
+        void get().refreshIssue();
+      }
     }
   },
 

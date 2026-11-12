@@ -20,6 +20,25 @@ export function isoTimestamp(raw: unknown): string | null {
   return Number.isFinite(t) ? new Date(t).toISOString() : null
 }
 
+/**
+ * The activity pages (AI Activity, The Stable Hand's run log) count from this
+ * moment on; older records stay stored but are not shown. AI_ACTIVITY_SINCE (an
+ * ISO timestamp) moves it; AI_ACTIVITY_SINCE=none shows everything.
+ */
+const DEFAULT_ACTIVITY_SINCE = '2026-11-12T15:30:00.000Z'
+
+export function activitySince(): string | null {
+  const raw = (process.env.AI_ACTIVITY_SINCE ?? '').trim()
+  if (raw.toLowerCase() === 'none') return null
+  return (raw && isoTimestamp(raw)) || DEFAULT_ACTIVITY_SINCE
+}
+
+/** An ISO lower bound, raised to activitySince() when that is later. */
+export function notBeforeActivitySince(iso: string): string {
+  const since = activitySince()
+  return since && since > iso ? since : iso
+}
+
 /** UTC YYYY-MM-DD of the first day in a window of `days` days ending today. */
 export function windowStart(days: number, now = new Date()): string {
   return new Date(now.getTime() - (days - 1) * DAY_MS).toISOString().slice(0, 10)

@@ -524,7 +524,7 @@ export default function MagazineV2Home() {
     if (pubBusy) return;
     if (
       !window.confirm(
-        `Delete “${it.title}”?${it.publishedIssueId ? ' Its published edition will also be removed from Bulletins.' : ''} This cannot be undone.`,
+        `Delete “${it.title}”?${it.publishedIssueId && it.status === 'published' ? ' Its published edition will also be removed from Bulletins.' : ''} This cannot be undone.`,
       )
     )
       return;
@@ -1152,7 +1152,10 @@ export default function MagazineV2Home() {
             {mayCreate && <h2 className="mb-3 text-ui font-semibold text-muted-foreground">Your magazines</h2>}
             <div className="grid grid-cols-2 gap-3 sm:grid-cols-3">
               {issues.map((it) => {
-                const published = !!it.publishedIssueId;
+                // LIVE = has a published edition AND is still published. Unpublish keeps
+                // publishedIssueId (so re-publish is one click) but sets status back to
+                // 'ready' — the same rule the editor uses (MagazineEditorV2 isPublished).
+                const published = !!it.publishedIssueId && it.status === 'published';
                 const busy = pubBusy === it.id;
                 const when = cardDates(it);
                 return (

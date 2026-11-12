@@ -265,10 +265,11 @@ export interface StaffEntry { userId: string; name: string; email: string }
  *  path died with the v1 magazines router. */
 export const staffDirectory = () => authFetchRetry('/api/staff/directory').then(parse<StaffEntry[]>);
 /** `emailed` reports whether the deep-link share email actually went out;
- *  `emailError` carries the concrete reason when it didn't. */
+ *  `emailError` carries the concrete reason when it didn't. `warning` is set when the
+ *  person's staff ROLE cannot use the share (no Magazine Builder view/edit). */
 export const addCollaborator = (id: string, body: { email: string; pageIds: string[] | 'all' }) =>
   authFetch(`${BASE}/issues/${id}/collaborators`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) }).then(
-    parse<{ issue: IssueMeta; emailed?: boolean; emailError?: string }>,
+    parse<{ issue: IssueMeta; emailed?: boolean; emailError?: string; warning?: string }>,
   );
 export const removeCollaborator = (id: string, userId: string) =>
   authFetch(`${BASE}/issues/${id}/collaborators/${userId}`, { method: 'DELETE' }).then(parse<{ issue: IssueMeta }>);
@@ -499,20 +500,19 @@ export function putToS3WithProgress(
         resolve();
         return;
       }
-      reject(new Error(`Upload failed (HTTP ${xhr.status}). Check the storage bucket's CORS policy.`));
+      // An HTTP status means CORS let the request through, so CORS is not the advice.
+      reject(new Error(`Storage refused the upload (HTTP ${xhr.status}) — please try again.`));
     };
     // A CORS-blocked PUT lands here with no status, exactly as it rejects in fetch.
     // Don't fail: send the same bytes through our API (lib/storageRelay), which
     // stores them on the presigned key server-side, where CORS doesn't apply.
     xhr.onerror = () => {
-      relayUpload(uploadUrl, file, file.type || 'application/pdf', onProgress).then(resolve, (e: unknown) =>
-        reject(
-          new Error(
-            `Upload could not reach storage, and the server relay failed too (${e instanceof Error ? e.message : 'error'}). ` +
-              `Check the bucket's CORS policy allows ${window.location.origin}.`,
-          ),
-        ),
-      );
+      relayUpload(uploadUrl, file, file.type || 'application/pdf', onProgress).then(resolve, (e: unknown) => {
+        // The person gets the RELAY's reason (already written for them: too large, link
+        // expired, no connection); the bucket-CORS hint is for whoever reads the console.
+        console.warn(`[upload] direct PUT and server relay both failed — if this is a new host, check the bucket's CORS policy allows ${window.location.origin}.`, e);
+        reject(new Error(e instanceof Error && e.message ? e.message : "Couldn't upload that file — check your connection and try again."));
+      });
     };
     xhr.onabort = () => reject(new Error('Upload cancelled.'));
     xhr.send(file);
@@ -533,21 +533,27 @@ export async function putToS3(uploadUrl: string, file: File): Promise<void> {
       await relayUpload(uploadUrl, file, file.type || 'application/pdf');
       return;
     } catch (relayErr) {
-      console.warn('[upload] direct PUT and server relay both failed', e, relayErr);
+      // A CORS-BLOCKED PUT REJECTS HERE, IT DOES NOT RETURN A RESPONSE — and the browser
+      // talks straight to S3, so the API server logs nothing either. The commonest cause
+      // (an origin missing from the bucket's CORS rules — a new host, a preview URL) is
+      // named here, in the console, for whoever is debugging.
+      console.warn(
+        `[upload] direct PUT (${e instanceof Error ? e.message : 'network error'}) and the server relay both failed — ` +
+          `if this is a new host, check the bucket's CORS policy allows ${window.location.origin}.`,
+        relayErr,
+      );
+      // The PERSON gets the relay's reason, which is written for them ("too large",
+      // "link expired — try again", "check your connection"). This used to be the CORS
+      // advice above, which surfaced in the studio as "Couldn't store photo.png —
+      // Upload could not reach storage (Failed to fetch). If this is a new host…": a
+      // deployment note shown to a contributor who can do nothing with it.
+      throw new Error(
+        relayErr instanceof Error && relayErr.message ? relayErr.message : "Couldn't upload that file — check your connection and try again.",
+      );
     }
-    // A CORS-BLOCKED PUT REJECTS HERE, IT DOES NOT RETURN A RESPONSE — so the `!res.ok`
-    // branch below never sees it and the caller got a bare "Failed to fetch". This is
-    // the browser talking straight to S3, so the API server logs nothing either: with
-    // both ends silent, the commonest deployment mistake there is (an origin missing
-    // from the bucket's CORS rules — a new dev host, a preview URL) presented as an
-    // unexplained failure. The one thing we can state for certain is that the request
-    // never got an answer, and where to look.
-    throw new Error(
-      `Upload could not reach storage (${e instanceof Error ? e.message : 'network error'}). ` +
-        `If this is a new host, check the bucket's CORS policy allows ${window.location.origin}.`,
-    );
   }
-  if (!res.ok) throw new Error(`Upload failed (HTTP ${res.status}). Check the storage bucket's CORS policy.`);
+  // An HTTP status means CORS let the request through, so CORS is not the advice.
+  if (!res.ok) throw new Error(`Storage refused the upload (HTTP ${res.status}) — please try again.`);
 }
 
 /** 3) Confirm the upload landed → server verifies + enqueues extraction (202). */
