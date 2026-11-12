@@ -22,6 +22,8 @@ import type { UIMessage } from 'ai';
 import { useAgentAction } from '@/agent/operator/runtime/registry';
 import type { UiDriver } from '@/agent/operator/contracts';
 import { useProfileAgentUi, type Proposal } from '@/stores/profileAgentUiStore';
+import { humanizeKey } from '@/agent/operator/runtime/humanRef';
+import { PARTY_ROLE_LABELS } from '@/types/party';
 import {
   anchor,
   firstError,
@@ -52,7 +54,10 @@ function proposalJson(p: Proposal) {
       };
 }
 
-const proposalName = (p: Proposal) => (p.kind === 'field' ? p.field : `${p.role}: ${p.partyName}`);
+/** A staged suggestion as the confirm card names it: 'dateOfBirth' → 'date of
+ *  birth', 'trainer' → 'Trainer' — the words a person reads, not field keys. */
+const proposalName = (p: Proposal) =>
+  p.kind === 'field' ? humanizeKey(p.field) : `${PARTY_ROLE_LABELS[p.role] ?? p.role}: ${p.partyName}`;
 
 /** Open the Stable Studio chat (drawer or onboarding popover) if it is closed. */
 async function ensureStudioOpen(ui: UiDriver) {

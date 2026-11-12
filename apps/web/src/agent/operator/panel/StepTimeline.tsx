@@ -18,6 +18,7 @@ import { MarkdownMessage } from '@/components/MarkdownMessage';
 import { ChoiceCard } from '@/agent/choices/ChoiceCard';
 import { choicesOfPart, isChoicesPart, type ChoiceQuestion } from '@/agent/choices/choices';
 import { useOperator, type OperatorStep } from '@/agent/operator/operatorStore';
+import { scrubIds } from '@/agent/operator/runtime/humanRef';
 import { stepLabel, truncate } from './toolLabels';
 import type { SubStepMap } from './useOperatorChat';
 
@@ -89,7 +90,7 @@ function userFacingError(raw: string | undefined): string {
   if (/\b(403|forbidden|not permitted|permission)\b/i.test(e)) return 'Your role doesn’t allow this.';
   if (/\b(401|sign in)\b/i.test(e)) return 'Please sign in again.';
   // A short, human server message is fine to show; anything long is noise.
-  return e.length <= 120 ? e : 'That step didn’t work.';
+  return e.length <= 120 ? scrubIds(e) : 'That step didn’t work.';
 }
 
 function StateIcon({ state }: { state: RowState }) {

@@ -21,6 +21,7 @@
 
 import { z } from 'zod';
 import { useAgentAction } from '@/agent/operator/runtime/registry';
+import { actionError, quoteRef } from '@/agent/operator/runtime/humanRef';
 import type { UiDriver } from '@/agent/operator/contracts';
 import { useAuthStore } from '@/stores/authStore';
 import { useHorseStore } from '@/stores/horseStore';
@@ -118,7 +119,10 @@ export function useMemberOperatorActions(state: MemberDashState): void {
         }
         // NOTE: the entry is not pre-checked here — run() resolves it only after
         // switching the role chip, so a "no match" here could be stale; keep the card.
-        return `Claim “${a.entry}” as your ${role.toLowerCase()} entry? It takes effect straight away and links your account to that register entry and its horses.`;
+        // The model may pass the entry's id: name it as the shortlist does.
+        const listed = live.current.claimable.find((p) => p.id === a.entry.trim());
+        const entry = listed?.name ? `“${listed.name}”` : quoteRef(a.entry, 'this register entry');
+        return `Claim ${entry} as your ${role.toLowerCase()} entry? It takes effect straight away and links your account to that register entry and its horses.`;
       },
       run: async (a, ui) => {
         const role = partyRole(a.role);
@@ -168,7 +172,12 @@ export function useMemberOperatorActions(state: MemberDashState): void {
           };
         }
         const dupe = (useHorseStore.getState().horses ?? []).find((h) => normKey(h.name) === normKey(a.name));
-        if (dupe) throw new Error(`"${dupe.name}" is already in the register — open /horses/${dupe.id}.`);
+        if (dupe) {
+          throw actionError(`“${dupe.name}” is already in the register — open their page instead (see detail).`, {
+            horseId: dupe.id,
+            path: `/horses/${dupe.id}`,
+          });
+        }
 
         await ui.waitFor('reg.add-horse-quick', 4000);
         await ui.click('reg.add-horse-quick', 'Quick form');

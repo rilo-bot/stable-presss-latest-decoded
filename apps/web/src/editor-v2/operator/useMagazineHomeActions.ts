@@ -20,6 +20,7 @@
 import { useRef } from 'react';
 import { z } from 'zod';
 import { useAgentAction } from '@/agent/operator/runtime/registry';
+import { actionError, quoteRef } from '@/agent/operator/runtime/humanRef';
 import type { IssueSummary } from '../api';
 import { anchor, assertEnabled, waitUntil } from './shared';
 import { JOB_STARTED_NOTE, startMagazineBuildJob } from './magazineJobs';
@@ -87,11 +88,15 @@ export function useMagazineHomeActions(state: HomeState): void {
       if (!hit) {
         const partial = list.filter((it) => it.title.toLowerCase().includes(q));
         if (partial.length > 1) {
-          throw new Error(`“${magazine}” matches ${partial.length} magazines: ${partial.map((p) => `“${p.title}” (${p.id})`).join('; ')}. Pass the id.`);
+          // Titles for the person; the ids ride in the model-only detail.
+          throw actionError(
+            `${quoteRef(magazine, 'That reference')} matches ${partial.length} magazines: ${partial.map((p) => `“${p.title}”`).join('; ')}. Pass the id (see detail).`,
+            { candidates: partial.map((p) => ({ id: p.id, title: p.title })) },
+          );
         }
         hit = partial[0];
       }
-      if (!hit) throw new Error(`No magazine in the library matches “${magazine}”. Call magazine.list to see them.`);
+      if (!hit) throw new Error(`No magazine in the library matches ${quoteRef(magazine)}. Call magazine.list to see them.`);
       ui.step(`Opening “${hit.title}”`);
       await ui.click(`mag.card-${hit.id}`, `Open “${hit.title}”`);
       await ui.waitForRoute(editorRoute(hit.id), 20_000);
@@ -160,7 +165,7 @@ export function useMagazineHomeActions(state: HomeState): void {
       run: async ({ magazineId }, ui) => {
         await waitUntil(() => !live.current.loading, { signal: ui.signal, what: 'the library to load' });
         const it = live.current.issues.find((x) => x.id === magazineId);
-        if (!it) throw new Error(`No magazine with id ${magazineId} in the library.`);
+        if (!it) throw new Error('No magazine with that id is in the library. Call magazine.list to see them.');
         if (!anchor(`mag.card-${it.id}-reuse`)) throw new Error('Reuse template is not available for this magazine.');
         ui.step(`Copying the layout of “${it.title}”`);
         await ui.click(`mag.card-${it.id}-reuse`, 'Reuse template');

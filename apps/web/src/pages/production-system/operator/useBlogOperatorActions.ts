@@ -27,6 +27,7 @@ import { useAgentAction } from '@/agent/operator/runtime/registry';
 import { applyInsert, applyReplaceBody, applySetField } from '@/agent/blog/blogEditorBridge';
 import { markdownToBodyItems, paragraphsToBodyItems } from '@/agent/blog/markdownBodyItems';
 import { useComposerStore } from '@/pages/blog-composer/composerStore';
+import { authFetchRetry } from '@/lib/api';
 import { can } from '@/lib/permissions';
 import { useBlogStore } from '@/stores/blogStore';
 import { useBlogStudioUi } from '@/stores/blogStudioUiStore';
@@ -47,17 +48,43 @@ function rememberTitles(items: BlogSummary[]): void {
   for (const i of items) if (i?.id) knownTitles.set(i.id, i.title || 'Untitled post');
 }
 
-/** Title of a post for a confirm line — list row, then the open editor. */
-function blogTitle(id: string | undefined): string {
-  if (!id) {
-    const open = useComposerStore.getState().blog;
-    return open?.title || 'this post';
-  }
+/** Title of a post from what is loaded — list row, the open editor, titles seen
+ *  this session — or null when nothing names it. */
+function knownBlogTitle(id: string | undefined): string | null {
+  const open = useComposerStore.getState().blog;
+  if (!id) return open ? open.title || 'Untitled post' : null;
   const row = useBlogStore.getState().items.find((i) => i.id === id);
   if (row) return row.title || 'Untitled post';
-  const open = useComposerStore.getState().blog;
   if (open?.id === id) return open.title || 'Untitled post';
-  return knownTitles.get(id) ?? id;
+  return knownTitles.get(id) ?? null;
+}
+
+/** Title of a post for results — never its raw id (unknown → "this post"). */
+function blogTitle(id: string | undefined): string {
+  return knownBlogTitle(id) ?? 'this post';
+}
+
+/** A post as a confirm card / step line names it: “Title”, or "this post". */
+function blogRef(id: string | undefined): string {
+  const t = knownBlogTitle(id);
+  return t ? `“${t}”` : 'this post';
+}
+
+/** blogRef, looking the post up (the same GET the editor makes) when nothing
+ *  loaded names it — a post filtered out of the list, or never listed.
+ *  Reported shape: "Publish “6650f1a2…” to the live site?". Never throws. */
+async function blogRefAsync(id: string | undefined): Promise<string> {
+  if (knownBlogTitle(id) || !id) return blogRef(id);
+  try {
+    const res = await authFetchRetry(`/api/blogs/${encodeURIComponent(id)}`);
+    if (res.ok) {
+      const post = (await res.json()) as { title?: unknown };
+      if (typeof post?.title === 'string') knownTitles.set(id, post.title || 'Untitled post');
+    }
+  } catch {
+    /* fall back to "this post" */
+  }
+  return blogRef(id);
 }
 
 function summarise(p: BlogSummary) {
@@ -352,7 +379,7 @@ async function publishFromList(id: string, published: boolean, ui: UiDriver) {
 
   await revealRow(id, ui);
   if (row()?.status === want) return { ok: true, unchanged: true, blogId: id, title, status: want };
-  ui.step(`${published ? 'Publishing' : 'Unpublishing'} “${title}”`);
+  ui.step(`${published ? 'Publishing' : 'Unpublishing'} ${blogRef(id)}`);
   const btn = `blog.row-${id}.${verb}`;
   if (hasAnchor(btn)) {
     await ui.click(btn, published ? 'Publish' : 'Unpublish');
@@ -376,7 +403,7 @@ function publishDef(published: boolean, where: 'list' | 'editor') {
       ? 'Publish a blog post to the live site.'
       : 'Unpublish a live blog post (back to draft).',
     args: publishArgs,
-    confirm: (a: z.infer<typeof publishArgs>) => {
+    confirm: async (a: z.infer<typeof publishArgs>) => {
       // Already there — run() reports "unchanged"; nothing for the user to OK.
       // No blogId on the list — run() refuses and says why.
       // No blogs.publish, or no post loaded in the editor — run() refuses too,
@@ -390,9 +417,8 @@ function publishDef(published: boolean, where: 'list' | 'editor') {
         ? open?.status
         : useBlogStore.getState().items.find((i) => i.id === a.blogId)?.status;
       if (status === (published ? 'published' : 'draft')) return null;
-      return published
-        ? `Publish “${blogTitle(a.blogId)}” to the live site?`
-        : `Unpublish “${blogTitle(a.blogId)}”? Readers will no longer see it.`;
+      const post = await blogRefAsync(inEditor ? open?.id : a.blogId);
+      return published ? `Publish ${post} to the live site?` : `Unpublish ${post}? Readers will no longer see it.`;
     },
     run: async (a: z.infer<typeof publishArgs>, ui: UiDriver) => {
       if (!can('blogs.publish')) throw new Error(`Your role cannot ${verb} blog posts (needs blogs.publish).`);
@@ -484,7 +510,7 @@ export function useBlogListActions(): void {
     run: async (a, ui) => {
       const path = `/production-system/blogs/${a.blogId}`;
       const link = `blog.row-${a.blogId}.edit`;
-      if (hasAnchor(link)) await ui.click(link, `Edit ${blogTitle(a.blogId)}`);
+      if (hasAnchor(link)) await ui.click(link, `Edit ${blogRef(a.blogId)}`);
       else await ui.navigate(path);
       await ui.waitForRoute(path, 10_000);
       await ui.waitFor('blog.title-input', 10_000);
@@ -508,11 +534,11 @@ export function useBlogListActions(): void {
     description: 'Delete a blog post permanently.',
     args: z.object({ blogId: z.string().min(1) }),
     // No blogs.delete: run() refuses — no card for something that cannot happen.
-    confirm: (a) => (can('blogs.delete') ? `Delete the blog post “${blogTitle(a.blogId)}”? This cannot be undone.` : null),
+    confirm: async (a) => (can('blogs.delete') ? `Delete the blog post ${await blogRefAsync(a.blogId)}? This cannot be undone.` : null),
     run: async (a, ui) => {
       if (!can('blogs.delete')) throw new Error('Your role cannot delete blog posts (needs blogs.delete).');
       const title = blogTitle(a.blogId);
-      ui.step(`Deleting “${title}”`);
+      ui.step(`Deleting ${blogRef(a.blogId)}`);
       // The row's bin button stops on a native window.confirm(), which would
       // freeze the page. The user has already OK'd the Operator's card, so point
       // at the button and make the same store call it makes.

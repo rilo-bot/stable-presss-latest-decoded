@@ -48,6 +48,7 @@ import { choiceCardState, lastStepOfferedChoices, messageChoices } from '@/agent
 import { describePage } from '@/agent/operator/panel/pageContext';
 import { StablehandLauncher } from '@/agent/operator/panel/Launcher';
 import { OperatorPanel } from '@/agent/operator/panel/OperatorPanel';
+import { GreetingBubble, useLandingGreeting } from '@/components/StablehandGreeting';
 
 /** Mode switch — see the header. */
 export function AgentWidget() {
@@ -55,15 +56,6 @@ export function AgentWidget() {
   const userId = useAuthStore((s) => s.currentUser?.id);
   if (isAdmin && userId) return <OperatorPanel key={userId} userId={userId} />;
   return <ConciergeWidget />;
-}
-
-/** sessionStorage flag: the chat already greeted this visitor in this browser session. */
-const AUTO_OPEN_KEY = 'sp-stablehand-greeted';
-
-/** The public site — everything outside the staff areas and the sign-in/invite flows. */
-function isPublicSitePath(pathname: string): boolean {
-  const root = pathname.split('/').filter(Boolean)[0] ?? '';
-  return !['production-system', 'newsroom', 'login', 'signup', 'invite'].includes(root);
 }
 
 // Suggested openers tailored to where the reader is.
@@ -267,29 +259,8 @@ function ConciergeWidget() {
     if (open) scrollRef.current?.scrollTo({ top: scrollRef.current.scrollHeight, behavior: 'smooth' });
   }, [messages, open, status]);
 
-  // Greet visitors when they land on the public site (user request 2026-11-12):
-  // the chat opens by itself, once per browser session — close it and it stays
-  // closed until the next visit. On phones the panel would cover most of the page,
-  // so they get a small "What can I do for you?" bubble on the launcher instead.
-  const [nudge, setNudge] = useState(false);
-  useEffect(() => {
-    if (suppressGlobal || !isPublicSitePath(location.pathname)) return;
-    let seen = false;
-    try {
-      seen = sessionStorage.getItem(AUTO_OPEN_KEY) === '1';
-      sessionStorage.setItem(AUTO_OPEN_KEY, '1');
-    } catch {
-      /* storage blocked (private mode) — still greet, just not remembered */
-    }
-    if (seen || useAgentUi.getState().open) return;
-    if (window.matchMedia('(min-width: 768px)').matches) setOpen(true);
-    else setNudge(true);
-    // Landing only: navigating around the site must not re-open a closed chat.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
-  useEffect(() => {
-    if (open) setNudge(false);
-  }, [open]);
+  // Greet everyone landing on the public site — see components/StablehandGreeting.tsx.
+  const { nudge, dismissNudge } = useLandingGreeting(suppressGlobal);
 
   const starters = contextStarters(location.pathname);
 
@@ -301,28 +272,8 @@ function ConciergeWidget() {
       {/* Floating launcher — The Stable Hand mascot (gold horse), gamified */}
       <StablehandLauncher open={open} onClick={toggle} />
 
-      {/* Phone greeting bubble (see the auto-open effect): tap to chat, × to dismiss. */}
-      <AnimatePresence>
-        {nudge && !open && (
-          <motion.div
-            initial={{ opacity: 0, y: 8 }}
-            animate={{ opacity: 1, y: 0 }}
-            exit={{ opacity: 0, y: 8 }}
-            className="fixed bottom-[5.25rem] right-5 z-50 flex max-w-[min(80vw,260px)] items-center gap-1 rounded-2xl rounded-br-sm border border-border bg-card py-1 pl-3.5 pr-1 shadow-xl print:hidden"
-          >
-            <button onClick={() => setOpen(true)} className="py-1.5 text-left text-sm font-medium text-foreground">
-              Hi! What can I do for you?
-            </button>
-            <button
-              onClick={() => setNudge(false)}
-              aria-label="Dismiss"
-              className="flex h-7 w-7 flex-shrink-0 items-center justify-center rounded-full text-muted-foreground hover:bg-muted"
-            >
-              <X className="h-3.5 w-3.5" />
-            </button>
-          </motion.div>
-        )}
-      </AnimatePresence>
+      {/* Phone greeting bubble: tap to chat, × to dismiss. */}
+      <GreetingBubble show={nudge && !open} onOpen={() => setOpen(true)} onDismiss={dismissNudge} />
 
       <AnimatePresence>
         {open && (

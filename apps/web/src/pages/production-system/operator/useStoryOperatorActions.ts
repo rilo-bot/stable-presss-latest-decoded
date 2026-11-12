@@ -18,6 +18,7 @@ import { z } from 'zod';
 
 import type { UiDriver } from '@/agent/operator/contracts';
 import { useAgentAction } from '@/agent/operator/runtime/registry';
+import { quoteRef } from '@/agent/operator/runtime/humanRef';
 import { can, canAnyones, canEditArticle } from '@/lib/permissions';
 import { findMove, movesFrom } from '@/lib/workflow';
 import { useArticleStore } from '@/stores/articleStore';
@@ -53,8 +54,8 @@ function resolveStory(ref: string): Article {
   const q = ref.trim().toLowerCase();
   const byTitle = list.filter((a) => a.title.trim().toLowerCase() === q);
   if (byTitle.length === 1) return byTitle[0];
-  if (byTitle.length > 1) throw new Error(`More than one story is titled "${ref}". Use stories.list and pass the id.`);
-  throw new Error(`No story "${ref}" is visible to you. Use stories.list to find its id.`);
+  if (byTitle.length > 1) throw new Error(`More than one story is titled ${quoteRef(ref)}. Use stories.list and pass the id.`);
+  throw new Error(`No story ${quoteRef(ref, 'with that id')} is visible to you. Use stories.list to find its id.`);
 }
 
 function summarise(a: Article) {
@@ -446,7 +447,7 @@ export function useStoryOperatorActions(s: ProductionSystemState, enabled: boole
         const card = `story.card-${story.id}`;
         const itemId = `story.card-${story.id}.move-${a.stage}`;
         const sendBack = !!move.back && a.stage === 'draft';
-        ui.step(`${move.label}: “${story.title}”`);
+        ui.step(`${move.label}: “${story.title || 'Untitled story'}”`);
         if (hasAnchor(card)) await ui.point(card, story.title);
 
         let drove = false;
@@ -484,7 +485,7 @@ export function useStoryOperatorActions(s: ProductionSystemState, enabled: boole
       const st = resolveStory(a.storyId);
       // Not editable by this user: run() refuses — no card first.
       if (!canEditArticle(st.author, me())) return null;
-      return st.status === 'published' ? `Edit the LIVE story “${st.title}”? Readers see the change as soon as it saves.` : null;
+      return st.status === 'published' ? `Edit the LIVE story “${st.title || 'Untitled story'}”? Readers see the change as soon as it saves.` : null;
     } catch {
       return null;
     }
@@ -495,7 +496,7 @@ export function useStoryOperatorActions(s: ProductionSystemState, enabled: boole
     if (!canEditArticle(story.author, me())) throw new Error('You cannot edit this story.');
     if (hasAnchor('story.title-input')) throw new Error('The story form is already open. Close it first.');
 
-    ui.step(`Opening “${story.title}” for revision`);
+    ui.step(`Opening “${story.title || 'Untitled story'}” for revision`);
     let opened = false;
     if (hasAnchor(`story.card-${story.id}`)) {
       opened = await clickCardMenuItem(ui, story.id, `story.card-${story.id}.edit`, 'Edit story');
@@ -586,7 +587,7 @@ export function useStoryOperatorActions(s: ProductionSystemState, enabled: boole
       run: async (a, ui) => {
         const story = resolveStory(a.storyId);
         if (!canEditArticle(story.author, me())) throw new Error('You cannot delete this story.');
-        ui.step(`Deleting “${story.title}”`);
+        ui.step(`Deleting “${story.title || 'Untitled story'}”`);
         if (hasAnchor(`story.card-${story.id}`)) await ui.point(`story.card-${story.id}`, story.title);
         const opened =
           hasAnchor(`story.card-${story.id}`) &&

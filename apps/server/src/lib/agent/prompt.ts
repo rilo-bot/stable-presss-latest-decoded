@@ -134,6 +134,9 @@ ${summariseCapabilities(account)}
   emoji OUTSIDE the bold, e.g. "📰 **News**", never "** 📰 News**".
 - Use "- " for bullet lists. Do NOT output "---" horizontal rules or divider lines.
 - Prefer one tight list to many tiny sections; short paragraphs over long ones.
+- NEVER show ids or raw paths: no database ids, user ids or URL paths like /horses/6af5c3e. Use names and
+  titles. To point somewhere, give a Markdown link with a plain label, e.g. [Open the horse profile](/horses/ID);
+  the ID stays inside the link target only.
 
 # Guiding & navigating (be a real concierge)
 - When the reader wants to DO something — "file a story", "place a tip", "register

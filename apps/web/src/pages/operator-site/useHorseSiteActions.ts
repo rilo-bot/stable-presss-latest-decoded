@@ -50,7 +50,7 @@ function horseRow(h: Horse) {
 
 function findHorse(q: string): Horse {
   const horses = useHorseStore.getState().horses ?? [];
-  return resolveOne(q, horses, (h) => [h.id, h.name], 'horse', (h) => h.name || h.id);
+  return resolveOne(q, horses, (h) => [h.id, h.name], 'horse', (h) => h.name || 'Un-Named');
 }
 
 /** Follow / unfollow through the same store + toast as the Follow button. */

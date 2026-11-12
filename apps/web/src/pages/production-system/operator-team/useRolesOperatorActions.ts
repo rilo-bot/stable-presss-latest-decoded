@@ -103,10 +103,23 @@ function moduleViews(modules: string[], screens: ScreenMeta[]): { ids: string[] 
 const permBox = (id: string) => `roles.perm-${id}`;
 const isTicked = (id: string) => !!(anchor(permBox(id)) as HTMLInputElement | null)?.checked;
 
+/** Mirrors VERB_LABEL in RolesPermissionsView (the grid's column headings). */
+const VERB_WORD: Record<string, string> = { view: 'View', create: 'Create', edit: 'Edit', delete: 'Delete', publish: 'Publish' };
+
+/** 'stories.edit' → 'Stories: Edit' — the grid's own words, for confirm cards
+ *  and step lines (the model keeps using the ids). */
+function permLabel(id: string, screens: ScreenMeta[]): string {
+  const dot = id.lastIndexOf('.');
+  const screen = screens.find((s) => s.id === id.slice(0, dot));
+  const verb = id.slice(dot + 1);
+  return screen ? `${screen.label}: ${VERB_WORD[verb] ?? verb}` : id;
+}
+const permList = (ids: string[], screens: ScreenMeta[]) => ids.map((p) => permLabel(p, screens)).join(', ');
+
 /** Tick/untick one grid box so it ends in `want`, then wait for React. */
-async function setBox(ui: UiDriver, id: string, want: boolean) {
+async function setBox(ui: UiDriver, id: string, want: boolean, screens: ScreenMeta[] = []) {
   if (isTicked(id) === want) return;
-  await ui.click(permBox(id), `${want ? 'Grant' : 'Remove'} ${id}`);
+  await ui.click(permBox(id), `${want ? 'Grant' : 'Remove'} ${permLabel(id, screens)}`);
   await waitUntil(() => isTicked(id) === want, { timeoutMs: 1500, signal: ui.signal });
 }
 
@@ -287,9 +300,9 @@ export function useRolesOperatorActions(input: RolesOperatorInput): void {
       const danger = p.perms.filter((x) => DANGEROUS.has(x));
       return noteDiscard(
         `Create the role "${a.label}" with ${p.perms.length} permission(s)` +
-        (p.perms.length ? `: ${p.perms.join(', ')}` : '') +
+        (p.perms.length ? `: ${permList(p.perms, s.screens)}` : '') +
         (p.scopes.length ? `; scope ${scopeLine(p.scopes)}` : '') +
-        (danger.length ? `. Warning: ${danger.join(', ')} lets holders change who works here.` : '') +
+        (danger.length ? `. Warning: ${permList(danger, s.screens)} lets holders change who works here.` : '') +
         '?',
       );
     },
@@ -309,7 +322,7 @@ export function useRolesOperatorActions(input: RolesOperatorInput): void {
       // Verbs first, then the bare '.view's: ticking a verb ticks (and locks)
       // its View, and clicking a locked View would toggle the whole row.
       const order = [...p.perms].sort((x, y) => Number(x.endsWith('.view')) - Number(y.endsWith('.view')));
-      for (const id of order) await setBox(ui, id, true);
+      for (const id of order) await setBox(ui, id, true, s.screens);
       for (const [screen, scope] of p.scopes) await setScopeToggle(ui, screen, scope);
       await save(ui);
       const created = useRoleStore.getState().roles.find((r) => normKey(r.label) === normKey(a.label));
@@ -341,13 +354,13 @@ export function useRolesOperatorActions(input: RolesOperatorInput): void {
       const removes = [...expandRevoke(a.revoke, s.screens)].filter((p) => held.has(p));
       if (!adds.length && !removes.length) return null;
       const bits = [
-        adds.length && `grant ${adds.join(', ')}`,
-        removes.length && `revoke ${removes.join(', ')}`,
+        adds.length && `grant ${permList(adds, s.screens)}`,
+        removes.length && `revoke ${permList(removes, s.screens)}`,
       ].filter(Boolean);
       const danger = adds.filter((p) => DANGEROUS.has(p));
       return noteDiscard(
         `Change the "${r.hit.label}" role (${r.hit.assigneeCount ?? 0} holder(s)): ${bits.join('; ')}` +
-        (danger.length ? `. Warning: ${danger.join(', ')} lets holders change who works here.` : '') +
+        (danger.length ? `. Warning: ${permList(danger, s.screens)} lets holders change who works here.` : '') +
         '?',
       );
     },
@@ -373,9 +386,9 @@ export function useRolesOperatorActions(input: RolesOperatorInput): void {
       ui.step(`Editing the "${role.label}" role`);
       await openForEdit(ui, role);
 
-      for (const id of a.grant) await setBox(ui, id, true);
+      for (const id of a.grant) await setBox(ui, id, true, s.screens);
       const order = [...revoke].sort((x, y) => Number(x.endsWith('.view')) - Number(y.endsWith('.view')));
-      for (const id of order) await setBox(ui, id, false);
+      for (const id of order) await setBox(ui, id, false, s.screens);
 
       await save(ui);
       const after = useRoleStore.getState().roles.find((x) => x.name === role.name);

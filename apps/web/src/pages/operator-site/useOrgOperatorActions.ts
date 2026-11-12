@@ -20,6 +20,8 @@ import type { Horse } from '@/types/horse';
 import type { OrgDetail } from '@/stores/orgStore';
 import type { OrgRole } from '@/rbac/roles';
 import { useOrgStore } from '@/stores/orgStore';
+import { findPerson, personDisplay, personDisplayWithEmail } from '@/agent/operator/runtime/humanRef';
+import { knownPeople } from '@/agent/operator/runtime/people';
 import { anchor, firstError, normKey, resolveOne, sleep, useLive, waitUntil, watchToasts } from './siteUtils';
 
 export interface OrgPageState {
@@ -74,11 +76,13 @@ export function useOrgOperatorActions(state: OrgPageState): void {
         const role = a.role ?? 'member';
         if (role !== 'member' && !live.current.isOwner) return null;
         if (detailNow()?.members.some((m) => normKey(m.email) === normKey(a.email))) return null;
+        // Named when the app already knows them (staff directory), else the email.
+        const who = personDisplayWithEmail(findPerson(a.email, knownPeople()) ?? { email: a.email });
         // POST /members with role 'owner' MOVES ownership (server demotes you to manager).
         if (role === 'owner') {
-          return `Make ${a.email} the OWNER of ${orgName()}? This transfers ownership — you become a manager and can no longer remove members.`;
+          return `Make ${who} the OWNER of ${orgName()}? This transfers ownership — you become a manager and can no longer remove members.`;
         }
-        return `Add ${a.email} to ${orgName()} as ${role}? They get access to the organisation's entries and horses.`;
+        return `Add ${who} to ${orgName()} as ${role}? They get access to the organisation's entries and horses.`;
       },
       run: async (a, ui) => {
         const role = a.role ?? 'member';
@@ -120,7 +124,7 @@ export function useOrgOperatorActions(state: OrgPageState): void {
         try {
           const m = resolveOne(a.member, d.members, (x) => [x.userId, x.email, x.name], 'member', (x) => x.email);
           if (m.userId === live.current.myUserId) return null;
-          return `Remove ${m.name} (${m.email}) from ${orgName()}? They lose access to its entries and horses.`;
+          return `Remove ${personDisplayWithEmail(m)} from ${orgName()}? They lose access to its entries and horses.`;
         } catch {
           return null; // run() reports the bad name
         }
@@ -128,10 +132,10 @@ export function useOrgOperatorActions(state: OrgPageState): void {
       run: async (a, ui) => {
         const d = detailNow();
         if (!d) throw new Error('The organisation has not loaded.');
-        const m = resolveOne(a.member, d.members, (x) => [x.userId, x.email, x.name], 'member', (x) => `${x.name} <${x.email}>`);
+        const m = resolveOne(a.member, d.members, (x) => [x.userId, x.email, x.name], 'member', (x) => personDisplayWithEmail(x));
         if (m.userId === live.current.myUserId) throw new Error('You cannot remove yourself here.');
         const toasts = watchToasts();
-        await ui.click(`member.org-member-remove-${m.userId}`, `Remove ${m.name}`);
+        await ui.click(`member.org-member-remove-${m.userId}`, `Remove ${personDisplay(m)}`);
         const ok = await waitUntil(
           () => !detailNow()?.members.some((x) => x.userId === m.userId) || !!firstError(toasts.collect()),
           { timeoutMs: 15_000, signal: ui.signal },

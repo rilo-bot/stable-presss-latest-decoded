@@ -15,6 +15,7 @@
 import { useOperator } from '../operatorStore';
 import { presence } from '../presence/presenceApi';
 import { attachmentToFile, resolveOperatorAttachment, type OperatorAttachment } from './attachmentsStore';
+import { nameFromAgentId } from './humanRef';
 import {
   abortError,
   fileInputProxy,
@@ -82,7 +83,7 @@ export async function uploadToInput(
   const resolved = resolveFileInput(el);
   if ('error' in resolved) throw new Error(resolved.error);
   const input = resolved;
-  if (input.disabled) throw new Error(`“${labelOf(el) || agentId}” is disabled right now.`);
+  if (input.disabled) throw new Error(`“${labelOf(el) || nameFromAgentId(agentId)}” is disabled right now.`);
 
   const file = await attachmentToFile(att);
   if (input.accept && !accepts(input.accept, file)) {

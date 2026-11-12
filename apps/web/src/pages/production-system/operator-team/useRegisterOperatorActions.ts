@@ -23,6 +23,7 @@
 import { z } from 'zod';
 import { useAgentAction } from '@/agent/operator/runtime/registry';
 import type { UiDriver } from '@/agent/operator/contracts';
+import { actionError } from '@/agent/operator/runtime/humanRef';
 import type { ProductionSystemState } from '../useProductionSystemState';
 import { useHorseStore } from '@/stores/horseStore';
 import { usePartyStore } from '@/stores/partyStore';
@@ -86,7 +87,7 @@ function personJson(p: RegisterPerson) {
 }
 
 function resolveHorse(query: string, horses: Horse[]) {
-  return resolveOne(query, horses, (h) => [h.id, h.name], 'horse', (h) => h.name || `Unnamed (${h.id})`);
+  return resolveOne(query, horses, (h) => [h.id, h.name], 'horse', (h) => h.name || 'Un-Named');
 }
 
 /** Pick an option from a fixed list case/spacing-insensitively. */
@@ -197,7 +198,12 @@ export function useHorseRegisterActions(ps: PS): void {
       const colour = pickOption(a.colour, COLOUR_OPTIONS, 'colour');
       const country = pickOption(a.country, COUNTRY_OPTIONS, 'country');
       const dupe = (s.horses ?? []).find((h) => normKey(h.name) === normKey(a.name));
-      if (dupe) throw new Error(`"${dupe.name}" is already in the register (id ${dupe.id}). Open /studio/horse/${dupe.id} to edit it.`);
+      if (dupe) {
+        throw actionError(`“${dupe.name}” is already in the register — edit that record instead (see detail).`, {
+          horseId: dupe.id,
+          studioPath: `/studio/horse/${dupe.id}`,
+        });
+      }
 
       const wanted: Array<[PartyRole, string[]]> = [
         ['owner', a.owners],

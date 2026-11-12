@@ -25,6 +25,7 @@ import { z } from 'zod';
 
 import type { UiDriver } from '@/agent/operator/contracts';
 import { useAgentAction } from '@/agent/operator/runtime/registry';
+import { authFetchRetry } from '@/lib/api';
 import { can } from '@/lib/permissions';
 import { EMOJI_SCALE, SIDE_LABEL, sideOf, type EmojiKey } from '@/types/reactions';
 
@@ -105,10 +106,25 @@ function rowJson(r: ModerationRow) {
   };
 }
 
-/** "the comment by Jo Bloggs on “Title” (“first words…”)" — for confirm cards. */
-function describe(r: ModerationRow | undefined, id: string): string {
-  if (!r) return `comment ${id}`;
-  return `the comment by ${r.authorName} on “${excerpt(r.targetTitle, 60)}” (“${excerpt(r.body, 80)}”)`;
+/** "the comment by Jo Bloggs on “Title” (“first words…”)" — for confirm cards.
+ *  Never the comment's id: unknown → "this comment". */
+function describe(r: ModerationRow | undefined): string {
+  if (!r) return 'this comment';
+  const on = r.targetTitle ? ` on “${excerpt(r.targetTitle, 60)}”` : '';
+  return `the comment by ${r.authorName || 'a reader'}${on} (“${excerpt(r.body, 80)}”)`;
+}
+
+/** A comment not on screen (another tab, not loaded yet), for its confirm card:
+ *  the SAME read the screen makes (GET /api/comments/moderation). Never throws. */
+async function lookupRow(id: string): Promise<ModerationRow | undefined> {
+  try {
+    const res = await authFetchRetry('/api/comments/moderation?filter=all');
+    if (!res.ok) return undefined;
+    const data = (await res.json()) as { items?: unknown };
+    return Array.isArray(data.items) ? (data.items as ModerationRow[]).find((r) => r?.id === id) : undefined;
+  } catch {
+    return undefined;
+  }
 }
 
 const idArg = z.object({ id: z.string().min(1).describe('Comment id, from community.listComments') });
@@ -189,7 +205,7 @@ export function useCommentsOperatorActions(input: CommentsOperatorInput): void {
     }
     if (!row) {
       throw new Error(
-        `No comment with id "${id}" in the ${FILTER_LABEL[live.current.filter]} list. Call community.listComments (filter "all") for the ids.`,
+        `No comment with that id in the ${FILTER_LABEL[live.current.filter]} list. Call community.listComments (filter "all") for the ids.`,
       );
     }
     await ui.point(commentAnchor.card(id), row.authorName);
@@ -228,11 +244,11 @@ export function useCommentsOperatorActions(input: CommentsOperatorInput): void {
       name: 'community.removeComment',
       description: 'Remove (hide) a comment with a reason: readers see "removed by an editor". Reversible.',
       args: removeArg,
-      confirm: (a) => {
+      confirm: async (a) => {
         // Already removed (as listed now) → run() is a no-op: no card.
         if (settledRow(a.id)?.hidden) return null;
-        const row = known(a.id);
-        return `Remove ${describe(row, a.id)}? Readers will see a note that an editor removed it. Reason (staff only): “${a.reason}”.`;
+        const row = known(a.id) ?? (await lookupRow(a.id));
+        return `Remove ${describe(row)}? Readers will see a note that an editor removed it. Reason (staff only): “${a.reason}”.`;
       },
       run: async (a, ui) => {
         const row = await findRow(ui, a.id, 'all');
@@ -261,12 +277,12 @@ export function useCommentsOperatorActions(input: CommentsOperatorInput): void {
       name: 'community.restoreComment',
       description: 'Restore a removed comment (puts it back in the thread and clears the reason).',
       args: idArg,
-      confirm: (a) => {
+      confirm: async (a) => {
         // Not removed (as listed now) → run() is a no-op: no card.
         const listed = settledRow(a.id);
         if (listed && !listed.hidden) return null;
-        const row = known(a.id);
-        return `Restore ${describe(row, a.id)}? It goes back on the public thread straight away.`;
+        const row = known(a.id) ?? (await lookupRow(a.id));
+        return `Restore ${describe(row)}? It goes back on the public thread straight away.`;
       },
       run: async (a, ui) => {
         const row = await findRow(ui, a.id, 'hidden');
@@ -287,9 +303,9 @@ export function useCommentsOperatorActions(input: CommentsOperatorInput): void {
       name: 'community.deleteComment',
       description: 'Delete a comment entirely (no note in the thread, cannot be restored). Prefer removeComment.',
       args: idArg,
-      confirm: (a) => {
-        const row = known(a.id);
-        return `Delete ${describe(row, a.id)} permanently? Unlike removing, it leaves no note in the thread and cannot be put back.`;
+      confirm: async (a) => {
+        const row = known(a.id) ?? (await lookupRow(a.id));
+        return `Delete ${describe(row)} permanently? Unlike removing, it leaves no note in the thread and cannot be put back.`;
       },
       run: async (a, ui) => {
         const row = await findRow(ui, a.id, 'all');

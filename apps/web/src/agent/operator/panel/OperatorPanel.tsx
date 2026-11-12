@@ -42,6 +42,7 @@ import { isJobUpdateMessage } from './jobUpdates';
 import { choiceCardState, messageChoices } from '@/agent/choices/choices';
 import { ConfirmCard, PausedBanner } from './ConfirmCard';
 import { StablehandLauncher } from './Launcher';
+import { GreetingBubble, useLandingGreeting } from '@/components/StablehandGreeting';
 
 const FOREST = 'linear-gradient(180deg, var(--forest-light) 0%, var(--forest-deep) 100%)';
 const GOLD = 'hsl(var(--brand-accent))';
@@ -131,6 +132,10 @@ export function OperatorPanel({ userId }: { userId: string }) {
     if (open) scrollRef.current?.scrollTo({ top: scrollRef.current.scrollHeight, behavior: reduce ? 'auto' : 'smooth' });
   }, [messages, open, chatBusy, stepLabel, pendingConfirm, opStatus, reduce]);
 
+  // Staff landing on the public site are greeted too, the same way as visitors
+  // (once per browser session; a bubble on phones) — components/StablehandGreeting.tsx.
+  const { nudge, dismissNudge } = useLandingGreeting(inStudio);
+
   // The confirm card only renders inside the open panel. A run the user hid
   // the panel on ("Hide — The Stable Hand keeps working") otherwise stalled
   // on an invisible card with nothing on screen to answer it — bring it back.
@@ -160,6 +165,8 @@ export function OperatorPanel({ userId }: { userId: string }) {
         />
       )}
       {!open && <JobChips variant="floating" />}
+      {/* Phone greeting bubble on the public site (see useLandingGreeting above). */}
+      <GreetingBubble show={nudge && !open} onOpen={() => setOpen(true)} onDismiss={dismissNudge} />
 
       <AnimatePresence>
         {open && (
@@ -267,9 +274,10 @@ export function OperatorPanel({ userId }: { userId: string }) {
             <div ref={scrollRef} className="min-h-0 flex-1 space-y-3 overflow-y-auto px-4 py-4">
               {messages.length === 0 && (
                 <div className="space-y-3">
+                  <p className="text-sm font-medium text-foreground">Hi, I’m The Stable Hand. What can I do for you?</p>
                   <p className="text-sm text-muted-foreground">
                     I can work in Stable Press for you — open screens, fill in forms and run actions while you
-                    watch. I’ll always ask before anything that publishes, shares or sends. What shall we do?
+                    watch. I’ll always ask before anything that publishes, shares or sends.
                   </p>
                   <div className="flex flex-wrap gap-2">
                     {OPERATOR_STARTERS.map((s) => (

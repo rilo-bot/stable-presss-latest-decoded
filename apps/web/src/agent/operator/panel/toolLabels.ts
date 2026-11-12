@@ -12,6 +12,7 @@
 
 import { shortPageName } from './pageContext';
 import { humanizeActionName } from '../contracts';
+import { looksLikeId, nameFromAgentId, scrubIds } from '../runtime/humanRef';
 
 type Input = Record<string, unknown> | undefined;
 
@@ -33,17 +34,12 @@ export function humanise(name: string): string {
 
 // Words that describe the KIND of control, not what it is. Dropped so
 // "mag.share-button" reads as “Share”, not “Share button”.
-const CONTROL_WORDS = new Set(['button', 'btn', 'input', 'field', 'link', 'tab', 'toggle', 'select', 'menu', 'item']);
 
 /** A data-agent-id → a short human name: "mag.share-button" → "Share". */
 export function anchorName(agentId: string | undefined, fallbackLabel?: string): string {
-  if (fallbackLabel) return fallbackLabel;
-  if (!agentId) return 'an element';
-  const last = agentId.split('.').pop() ?? agentId;
-  const words = last.split(/[-_]+/).filter(Boolean);
-  const kept = words.filter((w, i) => !(CONTROL_WORDS.has(w.toLowerCase()) && words.length > 1 && i === words.length - 1));
-  const s = kept.join(' ');
-  return s ? s[0].toUpperCase() + s.slice(1) : agentId;
+  if (fallbackLabel) return scrubIds(fallbackLabel, 'this item');
+  // Ids inside the anchor ("team.remove-6650f1a2…") never reach the step line.
+  return nameFromAgentId(agentId, 'an element');
 }
 
 /** The label an output may carry back (runtime echoes the element label). */
@@ -115,7 +111,10 @@ export function stepLabel(toolName: string, input: unknown, output: unknown, run
       return running ? `Typing into “${into}”` : text ? `Typed “${text}”` : `Cleared “${into}”`;
     }
     case 'select': {
-      const value = truncate(str(a?.value) ?? '', 40);
+      // An option's VALUE is often a user/horse id — name it only when it reads as text.
+      const raw = str(a?.value) ?? '';
+      const value = raw && !looksLikeId(raw) ? truncate(raw, 40) : '';
+      if (!value) return running ? 'Choosing an option' : 'Chose an option';
       return running ? `Choosing “${value}”` : `Chose “${value}”`;
     }
     case 'waitFor': {

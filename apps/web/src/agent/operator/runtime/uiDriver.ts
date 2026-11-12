@@ -509,7 +509,7 @@ export function createUiDriver(): UiDriver {
         timeoutMs,
         () =>
           findAgentEl(agentId)
-            ? new Error(`“${agentId}” is on the page but stayed hidden for ${Math.round(timeoutMs / 1000)}s.`)
+            ? new Error(`“${labelOf(findAgentEl(agentId)!) || nameFromAgentId(agentId)}” is on the page but stayed hidden for ${Math.round(timeoutMs / 1000)}s.`)
             : notFoundError(agentId, `Timed out after ${Math.round(timeoutMs / 1000)}s: no visible element`),
       );
     },
