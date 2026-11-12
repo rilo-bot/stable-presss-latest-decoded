@@ -12,8 +12,9 @@
 // several requests: `$inc` / `$push` keep that atomic without a read-modify-
 // write. The soft-delete convention is kept (filter + insert on deletedAt: null).
 //
-// costUsd is an ESTIMATE from list prices (cache writes billed as plain input);
-// it exists to cap runaway spend, not to reconcile an invoice.
+// costUsd is what OpenRouter BILLED for each step (reported because usage accounting is
+// on); a list-price estimate (cache writes as plain input) only when no cost comes back.
+// Same figure the AI Activity meter records, so the two pages agree.
 // ---------------------------------------------------------------------------
 
 import { randomUUID } from 'node:crypto'
@@ -106,7 +107,12 @@ export interface RunMeta {
 export async function recordStep(meta: RunMeta, step: StepResult<ToolSet>): Promise<void> {
   try {
     const totals = usageTotals(step.usage)
-    const cost = estimateCostUsd(meta.model, totals)
+    // What OpenRouter actually billed for this step (it reports it because the model
+    // is created with usage accounting on — lib/agent/provider.ts). The same figure
+    // the AI Activity meter records, so the run log and AI Activity agree; the list-
+    // price estimate (which leaves out the cache-write premium) is only the fallback.
+    const billed = (step.providerMetadata as { openrouter?: { usage?: { cost?: unknown } } } | undefined)?.openrouter?.usage?.cost
+    const cost = typeof billed === 'number' && Number.isFinite(billed) ? billed : estimateCostUsd(meta.model, totals)
     const now = new Date().toISOString()
     // Typed loosely, as lib/db.ts types its own $pull update: the driver's
     // UpdateFilter<Document> rejects $push/$each on an untyped document.

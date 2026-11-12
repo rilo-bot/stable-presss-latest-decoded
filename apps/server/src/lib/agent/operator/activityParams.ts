@@ -25,7 +25,7 @@ export function isoTimestamp(raw: unknown): string | null {
  * moment on; older records stay stored but are not shown. AI_ACTIVITY_SINCE (an
  * ISO timestamp) moves it; AI_ACTIVITY_SINCE=none shows everything.
  */
-const DEFAULT_ACTIVITY_SINCE = '2026-11-12T15:30:00.000Z'
+const DEFAULT_ACTIVITY_SINCE = '2026-11-12T16:00:00.000Z' // 9:30 pm India time
 
 export function activitySince(): string | null {
   const raw = (process.env.AI_ACTIVITY_SINCE ?? '').trim()

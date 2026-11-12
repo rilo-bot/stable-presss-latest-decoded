@@ -86,9 +86,9 @@ test('usageMatch: never reaches before the activity start (AI_ACTIVITY_SINCE)', 
     assert.deepEqual(usageMatch({ from: '2026-11-20' }).createdAt, { $gte: '2026-11-20T00:00:00.000Z' })
     // Unset → the built-in default start applies; junk → also the default.
     delete process.env.AI_ACTIVITY_SINCE
-    assert.deepEqual(usageMatch({ from: '2026-11-01' }).createdAt, { $gte: '2026-11-12T15:30:00.000Z' })
+    assert.deepEqual(usageMatch({ from: '2026-11-01' }).createdAt, { $gte: '2026-11-12T16:00:00.000Z' })
     process.env.AI_ACTIVITY_SINCE = 'not a date'
-    assert.deepEqual(usageMatch({ from: '2026-11-01' }).createdAt, { $gte: '2026-11-12T15:30:00.000Z' })
+    assert.deepEqual(usageMatch({ from: '2026-11-01' }).createdAt, { $gte: '2026-11-12T16:00:00.000Z' })
   } finally {
     if (saved === undefined) delete process.env.AI_ACTIVITY_SINCE
     else process.env.AI_ACTIVITY_SINCE = saved

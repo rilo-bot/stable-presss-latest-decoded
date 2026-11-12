@@ -209,7 +209,7 @@ export default function StablehandActivityScreen({
           </h1>
           <p className="mt-1 max-w-2xl text-[13px] leading-relaxed text-muted-foreground">
             Every run of The Stable Hand — what it was asked, the steps it took, the tokens it used and what that
-            cost. Costs are estimates from list prices, kept to cap runaway spend.
+            cost, as billed by OpenRouter.
           </p>
         </div>
         {(usage.state === 'loading' || list.state === 'loading') && (
@@ -261,7 +261,7 @@ export default function StablehandActivityScreen({
           <StatTile
             label="Average per run"
             value={usage.data && usage.data.totals.runs > 0 ? usd(usage.data.totals.costUsd / usage.data.totals.runs) : '—'}
-            detail="Estimated, list prices"
+            detail="Billed cost"
           />
         </div>
       )}
@@ -270,7 +270,7 @@ export default function StablehandActivityScreen({
       {usage.state !== 'error' && (
         <Panel
           title="Daily spend"
-          subtitle={`Estimated cost per UTC day${everyone ? ', all staff' : ''}. Hover a bar for runs and tokens.`}
+          subtitle={`Cost per UTC day${everyone ? ', all staff' : ''}. Hover a bar for runs and tokens.`}
         >
           {usage.data ? (
             <DailyChart
