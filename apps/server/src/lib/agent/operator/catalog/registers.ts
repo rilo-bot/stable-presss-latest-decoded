@@ -17,7 +17,7 @@ export const SURFACES: CatalogSurface[] = [
       {
         name: 'registers.searchHorses',
         description: 'Type a query into the horse search box (name, trainer, owner, jockey, country) and return matching rows with ids, connections, profilePath and studioPath. query "" lists all.',
-        args: '{ query: string }',
+        args: '{ query?: string }',
       },
       {
         name: 'registers.addHorse',
@@ -58,7 +58,7 @@ export const SURFACES: CatalogSurface[] = [
       {
         name: 'registers.searchPeople',
         description: 'Type a query into the people search box (name, profession, location) and return matching rows (id, name, roles, profilePath, studioPath). Optional role narrows the result.',
-        args: "{ query: string; role?: 'owner'|'trainer'|'jockey'|'breeder'|'bloodstock agent'|'syndicate manager'|'personnel' }",
+        args: "{ query?: string; role?: 'owner'|'trainer'|'jockey'|'breeder'|'bloodstock agent'|'syndicate manager'|'personnel' }",
       },
       {
         name: 'registers.addPerson',

@@ -20,7 +20,7 @@ export const SURFACES: CatalogSurface[] = [
     route: '/production-system/podcast',
     who: 'podcast.view; create needs podcast.create, workflow steps podcast.edit on your own episodes (or Everyone scope), scheduling/publishing podcast.publish',
     purpose:
-      'Episode cards + a drawer per episode. Workflow: draft → audio_uploaded (needs audio) → guests_added (needs ≥1 guest) → description_written → scheduled (needs a date) → in_review → published. `episode` = id, title or "s1e3".',
+      'Episode cards + a drawer per episode. Workflow: draft → audio_uploaded (needs audio) → guests_added (needs ≥1 guest) → description_written → scheduled (needs a date) → in_review → published. episode = id, title or "s1e3".',
     actions: [
       { name: 'podcast.list', description: 'Episodes with stage, producer, guests, channels and the next step.', args: '{ status?: string }' },
       {
@@ -65,7 +65,7 @@ export const SURFACES: CatalogSurface[] = [
       {
         name: 'instant.editDraft',
         description: 'Edit the draft under review (story: title/body/category/tags; blog: title/subtitle/excerpt/tags).',
-        args: '{ title?: string; body?: string; category?: string; tags?: string[]; subtitle?: string; excerpt?: string }',
+        args: '{ title?: string; body?: string; category?: string; tags?: string[] /* max 6 */; subtitle?: string; excerpt?: string }',
       },
       { name: 'instant.file', description: 'Save the reviewed draft as a DRAFT (a post opens in the composer).', args: '{}', confirms: true },
     ],
@@ -77,7 +77,7 @@ export const SURFACES: CatalogSurface[] = [
     route: '/site-content',
     who: 'staff (admin)',
     purpose:
-      "The public landing page's breaking-news ticker (every live headline shows) and sponsors strip. Changes are live at once. `headline` / `sponsor` = id or text / name.",
+      "The public landing page's breaking-news ticker (every live headline shows) and sponsors strip. Changes are live at once. headline / sponsor = id or text / name.",
     actions: [
       { name: 'site.readContent', description: 'Ticker headlines (live or hidden) and sponsors.', args: '{}' },
       { name: 'site.addSponsor', description: 'Add a sponsor via the form.', args: '{ name: string; category?: string; tagline?: string; websiteUrl?: string }', confirms: true },

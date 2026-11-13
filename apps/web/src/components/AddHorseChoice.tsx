@@ -5,6 +5,7 @@
  * Presentational: the caller wires what each choice does (onGuided / onQuick).
  */
 import { X, Zap, Sparkles, ArrowRight } from 'lucide-react';
+import { STABLEHAND_INSET } from '@/lib/stablehandDock';
 
 const serif: React.CSSProperties = { fontFamily: "Georgia, 'Times New Roman', serif" };
 
@@ -39,7 +40,7 @@ export function AddHorseChoice({ open, onClose, onGuided, onQuick }: {
 }) {
   if (!open) return null;
   return (
-    <div role="dialog" aria-modal="true" aria-label="Add a horse" style={{ position: 'fixed', inset: 0, zIndex: 90, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 16 }}>
+    <div role="dialog" aria-modal="true" aria-label="Add a horse" style={{ position: 'fixed', inset: STABLEHAND_INSET, zIndex: 90, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 16 }}>
       <div onClick={onClose} aria-hidden style={{ position: 'absolute', inset: 0, background: 'rgba(10,20,14,0.55)', backdropFilter: 'blur(3px)' }} />
       <div className="sku-gold-card" style={{ position: 'relative', zIndex: 1, width: 'min(94vw, 560px)', overflow: 'hidden', ...serif }}>
         <div className="sku-green-header" style={{ padding: '10px 14px', display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>

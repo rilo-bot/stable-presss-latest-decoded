@@ -13,7 +13,7 @@
 // ---------------------------------------------------------------------------
 
 import type { CSSProperties } from 'react';
-import { sanitizeRichText } from '@/lib/htmlInline';
+import { pageTextHtml } from '@/lib/htmlInline';
 import { resolveIcon } from '@/lib/iconRegistry';
 import type { IssuePageData, MagazineElement } from './model';
 import { pctRect, pxCqw } from './geometry';
@@ -70,7 +70,7 @@ function TextElement({ el, page }: { el: MagazineElement; page: IssuePageData })
   // defense-in-depth (same trust model as the v1 read-only views).
   return (
     <div style={box} data-role={el.text.role}>
-      <div style={textStyle} dangerouslySetInnerHTML={{ __html: sanitizeRichText(el.text.content) }} />
+      <div style={textStyle} dangerouslySetInnerHTML={{ __html: pageTextHtml(el.text.content) }} />
     </div>
   );
 }
@@ -162,7 +162,9 @@ export function IssuePageCanvas({ page, hideElementId, lazyImages }: { page: Iss
   return (
     <div
       data-magazine-page={page.index}
-      className="relative w-full overflow-hidden bg-white shadow-sm"
+      // `isolate`: the elements' own z-indexes stay inside the page, so a page never
+      // draws over the site header or the editor's chrome when it scrolls under them.
+      className="relative isolate w-full overflow-hidden bg-white shadow-sm"
       style={{ containerType: 'inline-size', paddingBottom: `${(pageH / pageW) * 100}%` }}
     >
       {page.background.type === 'image' && page.background.value ? (

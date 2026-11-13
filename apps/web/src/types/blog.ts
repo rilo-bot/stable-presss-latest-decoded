@@ -396,6 +396,8 @@ export interface Blog {
  */
 export interface BlogSummary {
   id: string;
+  /** Who created the post (the list projects it) — the ownership the server checks. */
+  createdByUserId?: string;
   slug: string;
   title: string;
   subtitle?: string;

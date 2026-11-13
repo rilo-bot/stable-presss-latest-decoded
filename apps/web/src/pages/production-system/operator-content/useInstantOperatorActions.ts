@@ -240,15 +240,20 @@ export function useInstantOperatorActions(allowedModes: InstantMode[]): void {
         if (s.step !== 'review') throw new Error(`There is no draft to file (step: ${s.step}). Run instant.capture first.`);
         const toasts = watchToasts();
         // A saved POST hands off to the composer at once, and leaving Instant
-        // resets its store — so catch `saved` the moment it appears.
+        // resets its store — `saved` can appear and be wiped again between two
+        // polls. So catch it the moment it is set: subscribe, never poll.
         let saved = S().saved;
-        const seen = () => {
-          saved ??= S().saved;
-          return saved;
-        };
-        await ui.click('instant.save', s.mode === 'story' ? 'Confirm & save draft' : 'Save & open in composer');
-        await waitUntil(() => S().saving || !!seen() || !!firstError(toasts.collect()), { timeoutMs: 3000, signal: ui.signal });
-        const ok = await waitUntil(() => !!seen() || (!S().saving && !!firstError(toasts.collect())), { timeoutMs: 30_000, signal: ui.signal });
+        const unsub = useInstantStore.subscribe((st) => {
+          saved ??= st.saved;
+        });
+        let ok = false;
+        try {
+          await ui.click('instant.save', s.mode === 'story' ? 'Confirm & save draft' : 'Save & open in composer');
+          await waitUntil(() => S().saving || !!saved || !!firstError(toasts.collect()), { timeoutMs: 3000, signal: ui.signal });
+          ok = await waitUntil(() => !!saved || (!S().saving && !!firstError(toasts.collect())), { timeoutMs: 30_000, signal: ui.signal });
+        } finally {
+          unsub();
+        }
         if (!saved) {
           if (!ok && S().saving) throw new Error('Saving is taking too long — check the screen.');
           throw new Error(firstError(toasts.collect()) ?? 'The draft was not saved — check the screen for what is missing.');

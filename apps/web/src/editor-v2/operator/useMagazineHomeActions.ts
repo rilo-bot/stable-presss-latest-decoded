@@ -22,7 +22,7 @@ import { z } from 'zod';
 import { useAgentAction } from '@/agent/operator/runtime/registry';
 import { actionError, quoteRef } from '@/agent/operator/runtime/humanRef';
 import type { IssueSummary } from '../api';
-import { anchor, assertEnabled, waitUntil } from './shared';
+import { anchor, assertEnabled, errorToasts, waitUntil, watchToasts } from './shared';
 import { JOB_STARTED_NOTE, startMagazineBuildJob } from './magazineJobs';
 
 const HOME = '/production-system/magazine-v2';
@@ -128,6 +128,11 @@ export function useMagazineHomeActions(state: HomeState): void {
         await ui.type('mag.brief-input', text, { clear: true });
         assertEnabled('mag.generate-submit', 'Generate is not available right now.');
         ui.step('Pressing Generate');
+        // An error line from an EARLIER attempt (or a failed library load) stays on
+        // screen until Generate clears it, so it only counts once this attempt has
+        // been seen starting — otherwise the old message read as this run failing.
+        const clickedAt = Date.now();
+        let sawStarting = false;
         await ui.click('mag.generate-submit', 'Generate');
 
         // Either the studio opens (the screen navigates to /magazine-v2/:id) or the
@@ -136,10 +141,12 @@ export function useMagazineHomeActions(state: HomeState): void {
           () => {
             const id = idFromPath(window.location.pathname);
             if (id) return { id };
-            if (!live.current.starting && live.current.error) return { error: live.current.error };
+            if (live.current.starting) sawStarting = true;
+            const fresh = sawStarting || Date.now() - clickedAt > 2000;
+            if (fresh && !live.current.starting && live.current.error) return { error: live.current.error };
             return null;
           },
-          { signal: ui.signal, timeoutMs: 180_000, intervalMs: 300, what: 'the new magazine to open' },
+          { signal: ui.signal, timeoutMs: 180_000, intervalMs: 150, what: 'the new magazine to open' },
         );
         if ('error' in outcome) throw new Error(outcome.error);
         // The build runs on the server for minutes. Watch it in the background
@@ -169,20 +176,27 @@ export function useMagazineHomeActions(state: HomeState): void {
         if (!it) throw new Error('No magazine with that id is in the library. Call magazine.list to see them.');
         if (!anchor(`mag.card-${it.id}-reuse`)) throw new Error('Reuse template is not available for this magazine.');
         ui.step(`Copying the layout of “${it.title}”`);
-        await ui.click(`mag.card-${it.id}-reuse`, 'Reuse template');
-        const clickedAt = Date.now();
-        // Navigates on success; on failure the card stops being busy and a toast
-        // says why — so "not busy, still here" after a beat is the failure signal.
-        const out = await waitUntil(
-          () => {
-            const id = idFromPath(window.location.pathname);
-            if (id && id !== magazineId) return { id };
-            if (Date.now() - clickedAt > 800 && live.current.pubBusy === null) return { failed: true as const };
-            return null;
-          },
-          { signal: ui.signal, timeoutMs: 60_000, what: 'the copy to open' },
-        );
-        if (!out.id) throw new Error('The template could not be copied — see the message on screen.');
+        const toasts = watchToasts();
+        let out: { id?: string; failed?: true };
+        try {
+          await ui.click(`mag.card-${it.id}-reuse`, 'Reuse template');
+          const clickedAt = Date.now();
+          // Navigates on success; on failure the card stops being busy and a toast
+          // says why — so "not busy, still here" after a beat is the failure signal.
+          out = await waitUntil<{ id?: string; failed?: true }>(
+            () => {
+              const id = idFromPath(window.location.pathname);
+              if (id && id !== magazineId) return { id };
+              if (errorToasts(toasts.peek()).length > 0) return { failed: true };
+              if (Date.now() - clickedAt > 800 && live.current.pubBusy === null) return { failed: true };
+              return null;
+            },
+            { signal: ui.signal, timeoutMs: 60_000, what: 'the copy to open' },
+          );
+        } finally {
+          toasts.stop();
+        }
+        if (!out.id) throw new Error(errorToasts(toasts.peek())[0]?.text || 'The template could not be copied — see the message on screen.');
         return { magazineId: out.id, route: editorRoute(out.id), copiedFrom: { id: it.id, title: it.title } };
       },
     },

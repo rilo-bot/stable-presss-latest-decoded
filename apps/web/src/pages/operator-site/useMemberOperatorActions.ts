@@ -21,11 +21,12 @@
 
 import { z } from 'zod';
 import { useAgentAction } from '@/agent/operator/runtime/registry';
-import { actionError, quoteRef } from '@/agent/operator/runtime/humanRef';
+import { actionError } from '@/agent/operator/runtime/humanRef';
 import type { UiDriver } from '@/agent/operator/contracts';
 import { useAuthStore } from '@/stores/authStore';
 import { useHorseStore } from '@/stores/horseStore';
 import { useFollowStore } from '@/stores/followStore';
+import { usePartyStore } from '@/stores/partyStore';
 import { PARTY_ROLE_LABELS, type PartyRole } from '@/types/party';
 import type { Horse } from '@/types/horse';
 import type { PartyRow } from '@/stores/authStore';
@@ -51,6 +52,41 @@ function pickOption(value: string | undefined, options: string[], what: string):
   const hit = options.find((o) => normKey(o) === normKey(value));
   if (!hit) throw new Error(`"${value}" is not a ${what}. Choose one of: ${options.join(', ')}.`);
   return hit;
+}
+
+/** "Chris Waller (Winx Junior)" / "Chris Waller (no horse)": the shortlist lists
+ *  one row per register EDGE, so one person can appear twice — the horse is what
+ *  tells the rows apart (and claiming a horse's row links that horse). */
+const horseNameOf = (p: PartyRow): string | null =>
+  p.horseId ? (useHorseStore.getState().horses ?? []).find((h) => h.id === p.horseId)?.name || 'a horse' : null;
+function entryLabel(p: PartyRow): string {
+  return `“${p.name}” (${horseNameOf(p) ?? 'no horse'})`;
+}
+
+/**
+ * The unclaimed register entry `entry` means, for `role` — from the same list the
+ * dashboard's shortlist renders for that role chip (unclaimed edges with that
+ * role). An exact entry id wins; then a name. Throws a person-readable reason;
+ * when several rows fit, the model gets them (with ids) in `detail` to ask which.
+ */
+function pickClaimEntry(entry: string, role: PartyRole): PartyRow {
+  const label = PARTY_ROLE_LABELS[role].toLowerCase();
+  const pool = (usePartyStore.getState().parties ?? []).filter((p) => !p.taken && p.role === role);
+  if (!pool.length) throw new Error(`No unclaimed ${label} entries — an administrator has to add you to the register first.`);
+  const byId = pool.find((p) => p.id === entry.trim());
+  if (byId) return byId;
+  try {
+    return resolveOne(entry, pool, (p) => [p.name], `unclaimed ${label} entry`, (p) => entryLabel(p).replace(/“|”/g, ''));
+  } catch (e) {
+    const k = normKey(entry);
+    const fits = pool.filter((p) => normKey(p.name) === k || normKey(p.name).includes(k));
+    if (fits.length > 1) {
+      throw actionError(`${(e as Error).message} Ask the user which one, then pass that entry's id.`, {
+        candidates: fits.map((p) => ({ entry: p.id, name: p.name, horse: horseNameOf(p) })),
+      });
+    }
+    throw e;
+  }
 }
 
 const ensureOpen = async (ui: UiDriver, toggleId: string) => {
@@ -96,7 +132,9 @@ export function useMemberOperatorActions(state: MemberDashState): void {
         followedHorses: horses.filter((h) => followed.includes(h.id)).map((h) => ({ name: h.name, path: `/horses/${h.id}` })),
         organisations: s.orgs.map((o) => ({ name: o.name, myRole: o.myRole, path: `/orgs/${o.id}` })),
         canClaimRole: !s.admin && !s.myPartyId,
-        claimShortlist: !s.admin && !s.myPartyId ? { role: s.claimRole, entries: s.claimable.map((p) => p.name) } : null,
+        // One row per register edge — the same person can be listed twice (with and
+        // without a horse), so each carries its horse and the entry id to claim by.
+        claimShortlist: !s.admin && !s.myPartyId ? { role: s.claimRole, entries: s.claimable.map((p) => ({ entry: p.id, name: p.name, horse: horseNameOf(p) })) } : null,
         canRegisterHorse: !!s.myPartyId,
         ...(s.admin && !s.myPartyId
           ? { note: 'Staff accounts do not see "Find yourself in the register", and "Add a horse" needs a claimed entry.' }
@@ -111,28 +149,26 @@ export function useMemberOperatorActions(state: MemberDashState): void {
       description: 'Claim your entry in the register under a racing role (asks to confirm; takes effect at once).',
       args: z.object({ role: z.string().min(1).max(40), entry: z.string().min(1).max(120) }),
       confirm: (a) => {
-        let role: string;
+        // Resolved against the SAME list run() claims from (the store, for the
+        // asked role — what the shortlist shows once its chip is picked), so the
+        // card names the real entry, and anything run() would refuse (not a role,
+        // no match, two entries that both fit) gets no card.
         try {
-          role = PARTY_ROLE_LABELS[partyRole(a.role)];
+          const role = partyRole(a.role);
+          const hit = pickClaimEntry(a.entry, role);
+          return `Claim ${entryLabel(hit)} as your ${PARTY_ROLE_LABELS[role].toLowerCase()} entry? It takes effect straight away and links your account to that register entry and its horses.`;
         } catch {
-          return null; // not a role: run() throws on its first line, before any click
+          return null;
         }
-        // NOTE: the entry is not pre-checked here — run() resolves it only after
-        // switching the role chip, so a "no match" here could be stale; keep the card.
-        // The model may pass the entry's id: name it as the shortlist does.
-        const listed = live.current.claimable.find((p) => p.id === a.entry.trim());
-        const entry = listed?.name ? `“${listed.name}”` : quoteRef(a.entry, 'this register entry');
-        return `Claim ${entry} as your ${role.toLowerCase()} entry? It takes effect straight away and links your account to that register entry and its horses.`;
       },
       run: async (a, ui) => {
         const role = partyRole(a.role);
+        // Every refusal before anything on screen is touched.
+        const hit = pickClaimEntry(a.entry, role);
         if (live.current.claimRole !== role) {
           await ui.click(claimRoleChipId(role), PARTY_ROLE_LABELS[role]);
           await waitUntil(() => live.current.claimRole === role, { timeoutMs: 1500, signal: ui.signal });
         }
-        const pool = live.current.claimable;
-        if (!pool.length) throw new Error(`No unclaimed ${PARTY_ROLE_LABELS[role].toLowerCase()} entries — an administrator has to add you to the register first.`);
-        const hit = resolveOne(a.entry, pool, (p) => [p.id, p.name], `unclaimed ${PARTY_ROLE_LABELS[role].toLowerCase()} entry`, (p) => p.name);
         const toasts = watchToasts();
         await ui.click(`member.claim-${hit.id}`, `This is me — ${hit.name}`);
         const done = await waitUntil(
@@ -173,7 +209,8 @@ export function useMemberOperatorActions(state: MemberDashState): void {
         }
         const dupe = (useHorseStore.getState().horses ?? []).find((h) => normKey(h.name) === normKey(a.name));
         if (dupe) {
-          throw actionError(`“${dupe.name}” is already in the register — open their page instead (see detail).`, {
+          // The line is read by the user too; the id + path go to the model only.
+          throw actionError(`“${dupe.name}” is already in the register — nothing was added. Open that horse's page instead.`, {
             horseId: dupe.id,
             path: `/horses/${dupe.id}`,
           });
@@ -183,9 +220,17 @@ export function useMemberOperatorActions(state: MemberDashState): void {
         await ui.click('reg.add-horse-quick', 'Quick form');
         await ui.waitFor('reg.horse-form', 5000);
         // A half-filled Quick-form draft (localStorage) would leak its other fields
-        // into this horse, so it is discarded — and reported, so it is no surprise.
+        // into this horse — but it is the USER's unsaved work, so it is never
+        // thrown away unasked (same rule as registers.addHorse). No → stop, with
+        // the form and their draft left open.
         const discardedDraft = !!anchor('reg.horse-discard-draft');
-        if (discardedDraft) await ui.click('reg.horse-discard-draft', 'Discard the old draft');
+        if (discardedDraft) {
+          const ok = await ui.confirm(
+            'The horse form has an unsaved draft from an earlier session. Discard that draft so I can fill the form from scratch?',
+          );
+          if (!ok) throw new Error('Stopped: the user chose to keep their unsaved horse draft. The form is left open with it.');
+          await ui.click('reg.horse-discard-draft', 'Discard the old draft');
+        }
         await typeField(ui, 'reg.horse-name', a.name);
         if (sex) await ui.select('reg.horse-sex', sex);
         if (a.dob) await typeField(ui, 'reg.horse-dob', a.dob);
@@ -210,7 +255,7 @@ export function useMemberOperatorActions(state: MemberDashState): void {
           mode: 'quick',
           horse: created ? { id: created.id, name: created.name, studioPath: `/studio/horse/${created.id}`, publicPath: `/horses/${created.id}` } : a.name,
           inMyStable: !!created && live.current.stableHorses.some((h) => h.id === created.id),
-          ...(discardedDraft ? { discardedDraft: true, note: 'An unsaved Quick-form draft was discarded to start this horse clean — tell the user.' } : {}),
+          ...(discardedDraft ? { discardedDraft: true, note: 'With the user\'s OK, an unsaved Quick-form draft was discarded to start this horse clean.' } : {}),
         };
       },
     },

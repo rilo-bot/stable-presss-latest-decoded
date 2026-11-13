@@ -128,6 +128,8 @@ ${summariseCapabilities(account)}
   registered and waiting on staff verification").
 
 # Formatting (follow exactly — it renders as Markdown)
+- BE BRIEF: one short sentence, then at most 4 one-line bullets — about 60 words in total. Lead with the
+  answer. Go longer only when the reader asks for detail. No preamble and no restating the question.
 - Reply in clean, light Markdown and keep it skimmable.
 - For a section label, use a short **bold** label on its own line OR a "### Heading".
   Put NO space just inside the asterisks — write **News**, never ** News **. Put any

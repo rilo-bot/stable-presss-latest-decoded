@@ -79,7 +79,11 @@ export async function undoLastProposal() {
   const e = useProfileAgentUi.getState().popUndo();
   if (!e) return;
   if (e.kind === 'field') {
-    if (e.entityKind === 'horse') await useHorseStore.getState().updateHorse(e.entityId, { [e.field]: e.prevValue } as Partial<Horse>);
+    // The field was EMPTY before (the usual case: the studio filled a blank
+    // sire). `undefined` vanishes from the JSON PUT body — PUT /api/horses/:id
+    // is a patch — so the server kept the new value while Undo said "Reverted".
+    // null is what the server stores for "no value".
+    if (e.entityKind === 'horse') await useHorseStore.getState().updateHorse(e.entityId, { [e.field]: e.prevValue ?? null } as Partial<Horse>);
     else await usePeopleStore.getState().updatePerson(e.entityId, { [e.field]: e.prevValue } as Partial<Person>);
   } else {
     await usePartyStore.getState().removeParty(e.linkId);

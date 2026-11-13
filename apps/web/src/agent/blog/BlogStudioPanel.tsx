@@ -280,7 +280,7 @@ export function BlogStudioPanel() {
   // inset-y-0, not h-screen: on iOS Safari 100vh is taller than the visible
   // area, so the composer at the bottom of the drawer sat under the toolbar.
   return (
-    <div data-agent-id="blog.studio-panel" data-agent-label="Blog Studio AI drawer" aria-label="Blog Studio AI" className="fixed inset-y-0 right-0 z-[80] flex w-[380px] max-w-[94vw] flex-col bg-[#0d1626] text-white shadow-[-8px_0_30px_rgba(0,0,0,0.5)]">
+    <div data-agent-id="blog.studio-panel" data-agent-label="Blog Studio AI drawer" aria-label="Blog Studio AI" className="fixed inset-y-0 right-stablehand z-[80] flex w-[380px] max-w-[94vw] flex-col bg-[#0d1626] text-white shadow-[-8px_0_30px_rgba(0,0,0,0.5)]">
       {/* Header */}
       <div
         className="flex items-center gap-2 border-b border-white/10 px-3 py-2.5"

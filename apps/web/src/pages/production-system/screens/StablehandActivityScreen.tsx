@@ -487,7 +487,7 @@ function RunDrawer({ summary, onClose }: { summary: RunSummary; onClose: () => v
   // Portalled to <body>: the layout's own stacking contexts would otherwise
   // leave the sidebar and top bar above the backdrop.
   return createPortal(
-    <div className="fixed inset-0 z-[60] flex justify-end">
+    <div className="fixed inset-stablehand z-[60] flex justify-end">
       <button type="button" aria-label="Close run details" className="absolute inset-0 bg-black/30" onClick={onClose} />
       <aside
         role="dialog"

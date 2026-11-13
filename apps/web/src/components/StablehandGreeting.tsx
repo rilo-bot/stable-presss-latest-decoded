@@ -1,25 +1,39 @@
 // ---------------------------------------------------------------------------
-// The Stable Hand greets everyone who lands on the public site (user request
-// 2026-11-12: "when any person land on public site by default stable hand ai
-// chat window remain open and ask what can i do for you").
+// When The Stable Hand opens by itself.
 //
-// Shared by both modes of the assistant (components/AgentWidget.tsx): the
-// visitor/member Concierge and the staff Operator panel. Both read the same
-// open flag (agentUiStore), so this only decides WHEN to open:
+// History: 2026-11-12 it greeted EVERYONE landing on the public site. After the
+// live demo the user narrowed it (2026-11-13): "When user is signed out don't
+// open stable hand automatically … Only when the user is signed in then it opens
+// automatically; when signed out then not." So:
+//   - signed-in accounts only (staff and members alike — both modes of the
+//     assistant read the same agentUiStore, so this one hook serves both and is
+//     mounted once, in components/AgentWidget.tsx);
+//   - signed-out visitors: never, and no greeting bubble — the launcher is theirs;
 //   - once per browser session, on the first page of the visit — close it and it
-//     stays closed while they browse; the next visit greets them again;
+//     stays closed while they browse; the next visit greets them again. Someone
+//     who signs in during the visit is greeted on the page they land on after
+//     signing in;
 //   - only on the public site (not sign-in / invite flows or the Campaign Engine);
-//   - desktop/tablet: the chat opens; phones (where the panel would cover the
-//     page): a small "What can I do for you?" bubble on the launcher instead.
+//   - desktop (≥1024px, where the panel docks beside the site and covers nothing):
+//     the assistant opens, in the user's remembered state (panel or rail);
+//     tablets / phones (where it would be a sheet over the page): a small
+//     "What can I do for you?" bubble on the launcher instead.
+// Signing out (or a stale session dropping on load) puts the assistant away.
 // ---------------------------------------------------------------------------
 
-import { useEffect, useState } from 'react';
+import { useEffect, useRef } from 'react';
+import { useLocation } from 'react-router-dom';
 import { AnimatePresence, motion } from 'framer-motion';
 import { X } from 'lucide-react';
 import { useAgentUi } from '@/stores/agentUiStore';
+import { useAuthStore } from '@/stores/authStore';
+import { useStudioChrome } from '@/stores/studioChromeStore';
 
-/** sessionStorage flag: the assistant already greeted this visitor in this browser session. */
+/** sessionStorage flag: the assistant already greeted this user in this browser session. */
 const GREETED_KEY = 'sp-stablehand-greeted';
+
+/** Where the panel docks beside the site (StablehandShell's breakpoint). */
+const DOCK_QUERY = '(min-width: 1024px)';
 
 /** The public site — everything outside the staff areas and the sign-in/invite flows. */
 export function isPublicSitePath(pathname: string): boolean {
@@ -27,36 +41,71 @@ export function isPublicSitePath(pathname: string): boolean {
   return !['production-system', 'newsroom', 'login', 'signup', 'invite'].includes(root);
 }
 
+function isAuthFlowPath(pathname: string): boolean {
+  const root = pathname.split('/').filter(Boolean)[0] ?? '';
+  return ['login', 'signup', 'invite'].includes(root);
+}
+
+/** Greet once: open (desktop) or show the bubble (smaller screens). */
+function greet(pathname: string): void {
+  if (!isPublicSitePath(pathname)) return;
+  // A full-screen Studio with its own assistant is on screen (the profile
+  // onboarding guide, the magazine editor) — don't stack a second one on it.
+  if (useStudioChrome.getState().suppressGlobal) return;
+  let seen = false;
+  try {
+    seen = sessionStorage.getItem(GREETED_KEY) === '1';
+    sessionStorage.setItem(GREETED_KEY, '1');
+  } catch {
+    /* storage blocked (private mode) — still greet, just not remembered */
+  }
+  const ui = useAgentUi.getState();
+  if (seen || ui.open) return;
+  if (window.matchMedia(DOCK_QUERY).matches) ui.openRemembered();
+  else ui.setGreetingBubble(true);
+}
+
 /**
- * Open the assistant (or show the phone bubble) on the visit's landing page.
- * Call once from the mounted assistant; `suppressed` skips it (e.g. the editor
- * has its own assistant).
+ * Open the assistant (or show the phone bubble) for a signed-in user's first
+ * page of the visit. Mount ONCE (AgentWidget) — it serves both modes.
  */
-export function useLandingGreeting(suppressed = false): { nudge: boolean; dismissNudge: () => void } {
-  const open = useAgentUi((s) => s.open);
-  const [nudge, setNudge] = useState(false);
+export function useLandingGreeting(): void {
+  const signedIn = useAuthStore((s) => !!s.currentUser && !!s.token);
+  const { pathname } = useLocation();
+  // 'landing'   the first page of this load — greet if signed in
+  // 'signin'    a signed-out visitor; waiting to see if they sign in
+  // 'after'     they just signed in — greet on the page they land on next
+  // 'done'      this page load's chance has been used
+  const stage = useRef<'landing' | 'signin' | 'after' | 'done'>('landing');
+  const wasSignedIn = useRef(signedIn);
 
   useEffect(() => {
-    if (suppressed || !isPublicSitePath(window.location.pathname)) return;
-    let seen = false;
-    try {
-      seen = sessionStorage.getItem(GREETED_KEY) === '1';
-      sessionStorage.setItem(GREETED_KEY, '1');
-    } catch {
-      /* storage blocked (private mode) — still greet, just not remembered */
+    if (wasSignedIn.current && !signedIn) {
+      // Signed out, or a persisted session the server just refused: the
+      // assistant was opened for a signed-in user — put it away.
+      const ui = useAgentUi.getState();
+      ui.setOpen(false);
+      ui.setGreetingBubble(false);
     }
-    if (seen || useAgentUi.getState().open) return;
-    if (window.matchMedia('(min-width: 768px)').matches) useAgentUi.getState().setOpen(true);
-    else setNudge(true);
-    // Landing only: navigating around the site must not re-open a closed chat.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+    if (!wasSignedIn.current && signedIn && stage.current === 'signin') stage.current = 'after';
+    wasSignedIn.current = signedIn;
 
-  useEffect(() => {
-    if (open) setNudge(false);
-  }, [open]);
-
-  return { nudge, dismissNudge: () => setNudge(false) };
+    if (stage.current === 'landing') {
+      if (!signedIn) {
+        stage.current = 'signin';
+        return;
+      }
+      stage.current = 'done';
+      greet(pathname);
+      return;
+    }
+    if (stage.current === 'after' && signedIn) {
+      // Still on the sign-in form: the redirect to their page is a beat away.
+      if (isAuthFlowPath(pathname)) return;
+      stage.current = 'done';
+      greet(pathname);
+    }
+  }, [signedIn, pathname]);
 }
 
 /** The phone greeting bubble above the launcher: tap to chat, × to dismiss. */

@@ -96,7 +96,9 @@ export function JobChips({ variant }: { variant: 'panel' | 'floating' }) {
     const j = jobs[jobs.length - 1]!;
     const more = jobs.length - 1;
     return (
-      <div className="pointer-events-auto fixed left-1/2 top-2.5 z-[84] -translate-x-1/2 print:hidden sm:top-3" {...uiAttr}>
+      // Centred over the site — with the panel collapsed to its rail on desktop,
+      // the rail takes the right edge (index.css, "THE STABLE HAND DOCK").
+      <div className="pointer-events-auto fixed left-mid-stablehand top-2.5 z-[84] -translate-x-1/2 print:hidden sm:top-3" {...uiAttr}>
         <button
           type="button"
           onClick={() => j.href && navigate(j.href)}

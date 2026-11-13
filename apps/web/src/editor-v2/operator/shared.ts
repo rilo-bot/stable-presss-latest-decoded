@@ -4,8 +4,9 @@
 //
 // Nothing here writes anything. These are the small waits and lookups an action
 // needs between driving the real UI (ui.click / ui.type) and reporting what
-// happened: "is this anchor on screen right now", "wait until the store says the
-// share landed", "who is 'Ahmed' in the staff directory".
+// happened: "is this anchor on screen right now", "open page 3 and let the canvas
+// settle", "wait until the store says the share landed", "who is 'Ahmed' in the
+// staff directory".
 //
 // The staff directory is fetched through the SAME GET the Share dialog makes
 // (/api/staff/directory) and cached in agent/operator/runtime/people.ts, shared
@@ -22,7 +23,24 @@ import {
   personLabel as resolvePersonLabel,
   personLabelNow,
 } from '@/agent/operator/runtime/people';
+import { useAuthStore } from '@/stores/authStore';
+import { useEditorStore } from '../store';
 import type { StaffEntry, V2Collaborator, PageSummary } from '../api';
+
+/**
+ * Staff permission `magazine.edit` (fails open when the access payload is
+ * missing, exactly like the studio's own "view only" label and the AI Studio's
+ * lock). The server gates EVERY write in the Magazine Builder on it — a share, a
+ * rename, a page, a publish, a studio turn — so without it the magazine is
+ * view-only even for its owner or a collaborator, and the write actions are not
+ * offered. (Deleting the whole magazine needs `magazine.delete` instead.)
+ */
+export function useRoleCanEditMagazines(): boolean {
+  return useAuthStore((st) => {
+    const held = st.currentUser?.access?.permissions;
+    return !held || held.includes('magazine.edit');
+  });
+}
 
 /** The anchored element, if it is in the DOM right now (no waiting). */
 export function anchor(agentId: string): HTMLElement | null {
@@ -162,6 +180,11 @@ export function watchToasts(intervalMs = 150): { peek: () => SeenToast[]; stop: 
 }
 
 export const errorToasts = (ts: SeenToast[]) => ts.filter((t) => t.type === 'error');
+/** Errors AND warnings — several store paths report a refusal as a warning
+ *  ("Couldn't undo that — the page has changed since."). */
+export const problemToasts = (ts: SeenToast[]) => ts.filter((t) => t.type === 'error' || t.type === 'warning');
+/** The first error toast's text, if one has appeared. */
+export const firstError = (ts: SeenToast[]): string | undefined => errorToasts(ts)[0]?.text;
 
 // ── Pages ────────────────────────────────────────────────────────────────────
 
@@ -204,6 +227,51 @@ export function pageAt(pages: PageSummary[], n: number): PageSummary {
     );
   }
   return p;
+}
+
+/**
+ * Count how often the store's page list is REPLACED from now on. A publish tick
+ * (store.setPageSelected) replaces it twice: the optimistic list at once, then the
+ * server's reply (or the rollback that comes with an error toast). Comparing array
+ * identity after the click raced a fast reply — counting the replacements cannot.
+ */
+export function watchPageList(): { count: () => number; stop: () => void } {
+  let n = 0;
+  const unsub = useEditorStore.subscribe((s, prev) => {
+    if (s.pages !== prev.pages) n++;
+  });
+  return { count: () => n, stop: unsub };
+}
+
+/** Open the page rail if it is collapsed (it starts collapsed). */
+export async function ensureRail(ui: UiDriver): Promise<void> {
+  if (anchor('mag.pages-rail')) return;
+  await ui.click('mag.pages-show', 'Show the pages');
+  await ui.waitFor('mag.pages-rail', 5000);
+}
+
+/**
+ * Open page n (its REAL number) through the rail, skipped when it is already the
+ * open page, and let the canvas settle. The canvas's scroll-settle picker makes
+ * whichever page is nearest the middle the active one ~120ms after a scroll
+ * stops, so right after the rail's smooth scroll it can still land on a
+ * neighbour — and everything that acts on "the open page" (the studio, Use these
+ * changes, Copy a page exactly) would then act on the wrong one. So: wait for the
+ * scroll to settle, CHECK the open page again, and re-open it once if it moved.
+ */
+export async function openPageN(ui: UiDriver, n: number): Promise<PageSummary> {
+  const st = () => useEditorStore.getState();
+  const target = pageAt(st().pages, n);
+  const isOpen = () => st().currentPageId === target.id && st().page?.id === target.id;
+  // Already open (nothing scrolls, nothing to settle), else up to two tries.
+  for (let attempt = 0; attempt < 2 && !isOpen(); attempt++) {
+    await ensureRail(ui);
+    await ui.click(`mag.page-${n}`, `Page ${n}`);
+    await waitUntil(isOpen, { signal: ui.signal, what: `page ${n} to open` });
+    await sleep(700, ui.signal);
+  }
+  if (!isOpen()) throw new Error(`Page ${n} would not stay open — the canvas kept moving to another page. Try again.`);
+  return target;
 }
 
 /** A collaborator's scope as real page numbers (or 'all'), for results. */

@@ -22,29 +22,54 @@ import { z } from 'zod'
 
 export const OFFER_CHOICES_TOOL = 'offer_choices'
 
-export const offerChoicesInputSchema = z.object({
-  questions: z
-    .array(
-      z.object({
-        id: z.string().optional().describe('Optional short key, e.g. "title".'),
-        question: z
-          .string()
-          .describe('Short label shown above the answers, e.g. "Title", "Audience" or "Next step" (not the full question).'),
-        options: z
-          .array(z.string())
-          .describe('2–6 short likely answers, each at most 60 characters, e.g. ["Go ahead", "Change something"].'),
-        multiple: z.boolean().optional().describe('true = the user may pick several answers.'),
-      }),
-    )
-    .describe('1–4 questions. One question with single choice sends the tapped answer at once.'),
-})
+// DELIBERATELY FORGIVING. A call the schema rejects never reaches the screen: the
+// user saw a bare "Offer choices" step and no buttons while the model, told its call
+// failed, carried on with "pick your options above" (live demo, 2026-11-13). So the
+// shape the model is ASKED for is described exactly, but near-misses (an option
+// written as {label}, a `label` instead of `question`, extra keys) are accepted and
+// the web card (apps/web/src/agent/choices/choices.ts) normalises them.
+// Numbers too ("How many pages?" → [4, 6, 8]): the web card shows them, and a
+// rejected call here would show the model an error for buttons the user can see.
+const optionInput = z.union([z.string(), z.number(), z.object({}).passthrough()])
+
+export const offerChoicesInputSchema = z
+  .object({
+    questions: z
+      .array(
+        z
+          .object({
+            id: z.string().optional().describe('Optional short key, e.g. "title".'),
+            question: z
+              .string()
+              .optional()
+              .describe('Short label shown above the answers, e.g. "Title", "Audience" or "Next step" (not the full question).'),
+            options: z
+              .array(optionInput)
+              .describe('2–6 short likely answers as plain strings, each at most 60 characters, e.g. ["Go ahead", "Change something"].'),
+            multiple: z.boolean().optional().describe('true = the user may pick several answers.'),
+          })
+          .passthrough(),
+      )
+      .describe('1–4 questions. One question with single choice sends the tapped answer at once.'),
+  })
+  .passthrough()
 
 export type OfferChoicesInput = z.infer<typeof offerChoicesInputSchema>
+
+const optionLabel = (o: unknown): string => {
+  if (typeof o === 'string') return o.trim()
+  if (typeof o === 'number' && Number.isFinite(o)) return String(o)
+  if (o && typeof o === 'object') {
+    const r = o as Record<string, unknown>
+    for (const k of ['label', 'text', 'value', 'title', 'option', 'name', 'answer']) if (typeof r[k] === 'string' && (r[k] as string).trim()) return (r[k] as string).trim()
+  }
+  return ''
+}
 
 /** How many questions carry at least one usable answer (mirrors the web card's clamp). */
 export function countUsableQuestions(input: OfferChoicesInput): number {
   const qs = Array.isArray(input?.questions) ? input.questions.slice(0, 4) : []
-  return qs.filter((q) => Array.isArray(q?.options) && q.options.some((o) => typeof o === 'string' && o.trim())).length
+  return qs.filter((q) => Array.isArray(q?.options) && q.options.some((o) => !!optionLabel(o))).length
 }
 
 export const offerChoicesTool = tool({

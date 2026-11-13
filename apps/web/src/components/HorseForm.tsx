@@ -278,7 +278,7 @@ export function HorseForm({ open, onClose, editHorse, defaultOwnerId, defaultCon
 
   return (
     <div
-      className="fixed inset-0 z-50 flex items-end sm:items-center justify-center"
+      className="fixed inset-stablehand z-50 flex items-end sm:items-center justify-center"
       role="dialog"
       aria-modal="true"
       aria-label={editHorse ? 'Edit horse profile' : 'Add horse profile'}

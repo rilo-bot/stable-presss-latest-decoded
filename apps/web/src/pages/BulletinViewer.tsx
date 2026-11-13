@@ -76,7 +76,10 @@ function ReadonlyPage({ page, maxWidth, agentId }: { page: IssuePageData; maxWid
   const inches = pageInches(page);
   return (
     <div
-      className="bulletin-print-page shadow-[0_10px_40px_rgba(0,0,0,0.18)] ring-1 ring-black/10"
+      // `relative isolate`: a page's elements carry their own z-indexes (often above
+      // 50); without a stacking context of their own they rose ABOVE the sticky site
+      // header (z-50) while scrolling — the page's text slid over the menu.
+      className="bulletin-print-page relative isolate shadow-[0_10px_40px_rgba(0,0,0,0.18)] ring-1 ring-black/10"
       data-agent-id={agentId}
       // `--page-w/h` are consumed only inside @media print; on screen the explicit
       // width governs and the canvas resolves its own height from the page aspect.

@@ -11,7 +11,7 @@ import { Router } from 'express'
 import { streamText, convertToModelMessages, stepCountIs, hasToolCall, type UIMessage } from 'ai'
 import { attachAccountOptional } from '../../lib/auth.js'
 import { getAgentModel, isAgentConfigured } from '../../lib/agent/provider.js'
-import { repairToolResults } from '../../lib/agent/repairMessages.js'
+import { repairToolNames, repairToolResults } from '../../lib/agent/repairMessages.js'
 import { buildSystemPrompt, type PageContext } from '../../lib/agent/prompt.js'
 import { buildTools } from '../../lib/agent/tools.js'
 import { OFFER_CHOICES_TOOL, offerChoicesTool } from '../../lib/agent/offerChoices.js'
@@ -54,18 +54,23 @@ router.post('/chat', attachAccountOptional, rateLimit('agent-chat', 20, 60_000),
   }
 
   try {
+    // Forward the caller's Bearer token so ACTION tools proxy to our own gated
+    // endpoints AS this user — the route enforces RBAC, not the agent.
+    // + offer_choices: clickable answer pills (lib/agent/offerChoices.ts). Kept
+    // out of buildTools, which the Blog Studio and the operator also reuse.
+    const conciergeTools = { ...buildTools(req.account, req.headers.authorization), [OFFER_CHOICES_TOOL]: offerChoicesTool }
     const result = streamText({
       model: getAgentModel(),
       system: buildSystemPrompt(req.account, body.pageContext),
       messages: await convertToModelMessages(repaired.messages),
-      // Forward the caller's Bearer token so ACTION tools proxy to our own gated
-      // endpoints AS this user — the route enforces RBAC, not the agent.
-      // + offer_choices: clickable answer pills (lib/agent/offerChoices.ts). Kept
-      // out of buildTools, which the Blog Studio and the operator also reuse.
-      tools: { ...buildTools(req.account, req.headers.authorization), [OFFER_CHOICES_TOOL]: offerChoicesTool },
+      tools: conciergeTools,
       // Let the model read a few tools then answer (tool → result → answer loops).
       // offer_choices ends the turn: the user's pick arrives as their next message.
       stopWhen: [stepCountIs(6), hasToolCall(OFFER_CHOICES_TOOL)],
+      // A near-miss tool NAME (offerChoices, search_horses) is renamed to the real tool
+      // (lib/agent/repairMessages.ts), so a misspelt offer_choices still shows the
+      // buttons and ends the turn — same as the operator route.
+      repairToolCall: repairToolNames(conciergeTools),
     })
 
     result.pipeUIMessageStreamToResponse(res, {

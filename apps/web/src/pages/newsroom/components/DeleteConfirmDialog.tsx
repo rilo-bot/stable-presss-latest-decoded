@@ -22,7 +22,7 @@ export function DeleteConfirmDialog({
   if (!open) return null;
 
   return (
-    <div role="dialog" aria-modal="true" aria-label="Confirm delete" className="fixed inset-0 z-[90] flex items-center justify-center p-4">
+    <div role="dialog" aria-modal="true" aria-label="Confirm delete" className="fixed inset-stablehand z-[90] flex items-center justify-center p-4">
       <div aria-hidden onClick={onCancel} className="absolute inset-0 bg-foreground/40 backdrop-blur-[2px]" />
       <div className="relative z-[1] w-[min(94vw,440px)] rounded-sm border border-destructive/30 bg-card shadow-xl">
         <div className="flex items-center gap-2 px-5 py-3 border-b border-border/50">

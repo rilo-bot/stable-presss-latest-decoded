@@ -24,12 +24,28 @@
 import { useRef } from 'react';
 import { z } from 'zod';
 import { useAgentAction } from '@/agent/operator/runtime/registry';
+import { actionError } from '@/agent/operator/runtime/humanRef';
 import type { UiDriver } from '@/agent/operator/contracts';
 import { useEditorStore } from '../store';
-import { anchor, assertEnabled, clickIfPresent, errorToasts, pageAt, pageNo, pageNoOf, sleep, waitUntil, watchToasts, type SeenToast } from './shared';
+import {
+  anchor,
+  assertEnabled,
+  clickIfPresent,
+  errorToasts,
+  openPageN,
+  pageAt,
+  pageNo,
+  pageNoOf,
+  sleep,
+  useRoleCanEditMagazines,
+  waitUntil,
+  watchToasts,
+  type SeenToast,
+} from './shared';
 
 const get = () => useEditorStore.getState();
 const LIBRARY = '/production-system/magazine-v2';
+const isBuilding = () => get().generating || get().issue?.status === 'processing';
 
 const DECLINED = 'The user declined — do not retry unless they ask.';
 const toastLines = (ts: SeenToast[]) => ts.map((t) => `${t.type}: ${t.text}`);
@@ -50,26 +66,6 @@ async function openMore(ui: UiDriver, item: string) {
   if (anchor(item)) return;
   await ui.click('mag.more-button', 'More');
   await ui.waitFor(item, 4000);
-}
-
-/** Open page n through the rail (skipped when it is already open). */
-async function openPageN(ui: UiDriver, n: number) {
-  const s = get();
-  const target = pageAt(s.pages, n);
-  if (s.currentPageId !== target.id || s.page?.id !== target.id) {
-    if (!anchor('mag.pages-rail')) {
-      await ui.click('mag.pages-show', 'Show the pages');
-      await ui.waitFor('mag.pages-rail', 5000);
-    }
-    await ui.click(`mag.page-${n}`, `Page ${n}`);
-    await waitUntil(() => get().currentPageId === target.id && get().page?.id === target.id, {
-      signal: ui.signal,
-      what: `page ${n} to open`,
-    });
-    // Let the canvas's scroll-settle picker land before acting on "this page".
-    await sleep(700, ui.signal);
-  }
-  return target;
 }
 
 const currentPageNumber = () => {
@@ -132,7 +128,14 @@ interface DangerPerms {
 export function useMagazineDangerActions(perms: DangerPerms): void {
   const live = useRef(perms);
   live.current = perms;
-  const { isOwner, mayDelete } = perms;
+  // Deleting the MAGAZINE is gated on `magazine.delete` alone (server: the one
+  // DELETE /issues/:id route); every other action here is a write gated on
+  // `magazine.edit` — without it the owner's Start over / Copy / Match a layout
+  // would only be refused.
+  const roleCanEdit = useRoleCanEditMagazines();
+  const { mayDelete } = perms;
+  const isOwner = perms.isOwner;
+  const ownerCanEdit = perms.isOwner && roleCanEdit;
 
   // ── Delete the whole magazine ────────────────────────────────────────────
   useAgentAction(
@@ -143,6 +146,8 @@ export function useMagazineDangerActions(perms: DangerPerms): void {
       args: z.object({}),
       confirm: () => {
         const issue = get().issue;
+        // The button is disabled while a publish runs — run() refuses; no card.
+        if (get().publishing) return null;
         const title = issue?.title ? `“${issue.title}”` : 'this magazine';
         const isLive = !!issue?.publishedIssueId && issue.status === 'published';
         return (
@@ -186,11 +191,14 @@ export function useMagazineDangerActions(perms: DangerPerms): void {
       args: z.object({}),
       confirm: () => {
         const s = get();
+        // The server refuses a reset while pages are being built — run() says so; no card.
+        if (isBuilding()) return null;
         const title = s.issue?.title ? `“${s.issue.title}”` : 'this magazine';
         return `Start ${title} over? All ${s.pages.length} page${s.pages.length === 1 ? '' : 's'} and everything on them are deleted and it is reset to one blank page — this cannot be undone.`;
       },
       run: async (_a, ui) => {
         const before = (await ready(ui)).pages.length;
+        if (isBuilding()) throw new Error('Pages are still being built — start over once the build finishes (a [job-update] message arrives when it does).');
         ui.step('Opening More ▸ Start over…');
         await openMore(ui, 'mag.start-over');
         const toasts = watchToasts();
@@ -211,7 +219,7 @@ export function useMagazineDangerActions(perms: DangerPerms): void {
         }
       },
     },
-    isOwner,
+    ownerCanEdit,
   );
 
   // ── Copy a PDF page exactly onto a page ──────────────────────────────────
@@ -238,9 +246,10 @@ export function useMagazineDangerActions(perms: DangerPerms): void {
           found = await appears(ui, 'mag.copy-pdf-go', 8000);
         }
         if (!found) {
-          throw new Error(
-            'This magazine has no PDF attached. Attach the PDF first (upload { agentId: "mag.ai-attach" } with the user\'s file, or the AI Studio Uploads tab), then call magazine.copyPdfPage again.',
-          );
+          // The sentence is for the person; the how-to rides in the model-only detail.
+          throw actionError('This magazine has no PDF attached yet — attach the PDF first, then copy its page.', {
+            next: 'Attach the user\'s PDF with upload { agentId: "mag.ai-attach", attachment } (or the AI Studio Uploads tab), then call magazine.copyPdfPage again.',
+          });
         }
 
         // Which PDF.
@@ -290,24 +299,36 @@ export function useMagazineDangerActions(perms: DangerPerms): void {
           );
           const errs = errorToasts(seen);
           if (errs.length) throw new Error(errs.map((t) => t.text).join(' '));
-          // The rebuild runs in the worker; give the studio's poll a moment to bring it in.
-          let rebuilt = false;
-          try {
-            await waitUntil(() => get().pages.find((p) => p.id === target.id)?.rev !== revBefore, {
-              signal: ui.signal,
-              timeoutMs: 30_000,
-            });
-            rebuilt = true;
-          } catch (e) {
-            if (ui.signal.aborted) throw e;
+          // The rebuild runs in the worker (the page goes 'pending', then comes back
+          // with a new rev). Nothing in the studio polls for that outside a build, so
+          // waiting on the store alone ALWAYS sat out the full wait and reported
+          // "still rebuilding" — and left the old page on the canvas. Re-read the
+          // magazine through the store's own refresh until the page is back, then
+          // reload it on the canvas so the user (and readScreen) see the copy.
+          const summary = () => get().pages.find((p) => p.id === target.id);
+          const isBack = () => {
+            const p = summary();
+            return !!p && p.status !== 'pending' && (p.rev !== revBefore || p.status === 'failed');
+          };
+          ui.step(`Copying the PDF page onto page ${n}`);
+          const end = Date.now() + 90_000;
+          while (!isBack() && Date.now() < end) {
+            await sleep(2500, ui.signal);
+            await get().refreshIssue();
           }
+          const back = isBack();
+          if (back && summary()?.status === 'failed') {
+            throw new Error(`The copy onto page ${n} failed — the page could not be rebuilt from that PDF page.`);
+          }
+          if (back && get().currentPageId === target.id) await get().openPage(target.id, true);
           return {
             started: true,
             page: n,
             pdf: chosen?.text,
             docPage: a.docPage,
-            rebuilt,
-            note: rebuilt ? undefined : 'Still rebuilding in the background — it appears on the page shortly; check with magazine.status.',
+            rebuilt: back,
+            elements: back ? summary()?.elementCount : undefined,
+            note: back ? undefined : 'Still rebuilding in the background — check the page again in a minute (magazine.status).',
             toasts: toastLines(toasts.stop()),
           };
         } finally {
@@ -315,7 +336,7 @@ export function useMagazineDangerActions(perms: DangerPerms): void {
         }
       },
     },
-    isOwner,
+    ownerCanEdit,
   );
 
   // ── Rebuild a page in an uploaded reference's layout ─────────────────────
@@ -350,11 +371,12 @@ export function useMagazineDangerActions(perms: DangerPerms): void {
         }
         if (!anchor('mag.layout-apply')) {
           await ui.point('mag.layout-upload', 'Upload the reference here');
-          throw new Error(
-            `No layout reference has been read for page ${n} yet. The panel is open now: upload the user's reference image with ` +
-              'upload { agentId: "mag.layout-upload", attachment: <0 or its file name> }, then call magazine.applyLayout again ' +
+          // The sentence is for the person; the next steps ride in the model-only detail.
+          throw actionError(`No layout reference has been read for page ${n} yet — the Match a layout panel is open, ready for the picture.`, {
+            next:
+              "Upload the user's reference image with upload { agentId: \"mag.layout-upload\", attachment: <0 or its file name> }, then call magazine.applyLayout again " +
               '(it waits for the reading). If the upload fails to read, the error toast says why.',
-          );
+          });
         }
 
         // Choose the fit (radio), then ask.
@@ -397,6 +419,6 @@ export function useMagazineDangerActions(perms: DangerPerms): void {
         }
       },
     },
-    isOwner,
+    ownerCanEdit,
   );
 }

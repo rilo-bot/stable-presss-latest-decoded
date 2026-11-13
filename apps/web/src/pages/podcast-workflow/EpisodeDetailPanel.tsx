@@ -284,7 +284,7 @@ export function EpisodeDetailPanel({
   ];
 
   return (
-    <div className="fixed inset-0 z-50 flex">
+    <div className="fixed inset-stablehand z-50 flex">
       {/* Backdrop */}
       <div className="flex-1 bg-foreground/30" onClick={onClose} />
 

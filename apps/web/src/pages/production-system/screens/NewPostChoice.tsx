@@ -40,7 +40,7 @@ export function NewPostChoice({ open, onClose, onAI, onManual }: NewPostChoicePr
       role="dialog"
       aria-modal="true"
       aria-label="New blog post"
-      className="fixed inset-0 z-[90] flex items-center justify-center p-4"
+      className="fixed inset-stablehand z-[90] flex items-center justify-center p-4"
     >
       <div aria-hidden onClick={onClose} className="absolute inset-0 bg-foreground/40 backdrop-blur-[2px]" />
 

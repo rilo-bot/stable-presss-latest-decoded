@@ -41,7 +41,7 @@ export function FileStoryChoice({ open, onClose, onAI, onManual }: FileStoryChoi
       role="dialog"
       aria-modal="true"
       aria-label="File a story"
-      className="fixed inset-0 z-[90] flex items-center justify-center p-4"
+      className="fixed inset-stablehand z-[90] flex items-center justify-center p-4"
     >
       <div aria-hidden onClick={onClose} className="absolute inset-0 bg-foreground/40 backdrop-blur-[2px]" />
 

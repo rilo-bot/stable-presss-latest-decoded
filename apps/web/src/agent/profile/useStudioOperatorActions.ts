@@ -208,12 +208,18 @@ export function useStudioOperatorActions(input: StudioOperatorInput): void {
       });
       const left = useProfileAgentUi.getState().staged.filter((x) => ids.has(x.id));
       const err = firstError(toasts.collect());
-      return {
-        ok: left.length === 0 && !err,
-        applied: pick.filter((p) => !left.some((x) => x.id === p.id)).map(proposalJson),
-        notApplied: left.map(proposalJson),
-        error: err,
-      };
+      const applied = pick.filter((p) => !left.some((x) => x.id === p.id)).map(proposalJson);
+      // A returned ok:false is reported as a failed step (runtime/clientTools), so
+      // it carries a line the user can read.
+      if (left.length || err) {
+        return {
+          ok: false,
+          error: err ?? `Not saved: ${left.map(proposalName).join(', ')}.`,
+          applied,
+          notApplied: left.map(proposalJson),
+        };
+      }
+      return { ok: true, applied, notApplied: [] };
     },
   });
 
@@ -245,7 +251,10 @@ export function useStudioOperatorActions(input: StudioOperatorInput): void {
       await ensureStudioOpen(ui);
       await ui.click('profile.studio-undo', 'Undo');
       await waitUntil(() => useProfileAgentUi.getState().undo.length < n, { timeoutMs: 15_000, signal: ui.signal });
-      return { ok: useProfileAgentUi.getState().undo.length < n, remainingUndo: useProfileAgentUi.getState().undo.length };
+      const remainingUndo = useProfileAgentUi.getState().undo.length;
+      return remainingUndo < n
+        ? { ok: true, remainingUndo }
+        : { ok: false, error: 'The undo did not finish — check the profile before trying again.', remainingUndo };
     },
   });
 }

@@ -131,6 +131,87 @@
   --studio-select-wash: rgb(212 168 67 / 0.08);
 }
 
+/* ─────────────────────────────────────────────────────────────────────────────
+   THE STABLE HAND DOCK — the site moves over; the assistant never covers it.
+   Like Claude in Chrome's side panel: on desktop (≥1024px) the open assistant is
+   docked on the right, the full height of the window, and the SITE is pushed
+   left to make room — nothing sits under it. Collapsed, it is a slim rail and
+   the site gets its space back (apart from the rail).
+
+   components/StablehandShell.tsx marks <html> while it is on screen:
+     data-stablehand-dock="panel" | "rail"     (absent when closed)
+     data-stablehand-size="wide"               (the wider panel)
+   and everything else follows ONE variable, --stablehand-w: the width the dock
+   takes from the right edge. It is 0 when closed, below 1024px (there the
+   assistant is a bottom sheet over the page — nothing can be pushed) and in
+   print (`screen` below: a printed page reserves nothing, and the panel itself
+   is print:hidden).
+
+   Who reads it:
+     #root                 padding-right — every in-flow page reflows (the
+                           sticky site header, the Campaign Engine shell…)
+     fixed layouts         can't be padded, so each one uses the helpers below
+                           (`inset-stablehand` instead of `inset-0`,
+                           `right-stablehand` instead of `right-0`,
+                           `left-mid-stablehand` instead of `left-1/2` for
+                           things centred on screen): modals and their
+                           backdrops, the magazine editor, the studio drawers,
+                           Operator presence, toasts (App.tsx).
+
+   Registered with @property so the LENGTH animates: one transition here moves
+   the page padding and every fixed layout in step with the panel sliding in.
+   Browsers without @property simply snap.
+   ───────────────────────────────────────────────────────────────────────────── */
+@property --stablehand-w {
+  syntax: '<length>';
+  inherits: true;
+  initial-value: 0px;
+}
+:root {
+  --stablehand-w: 0px;
+  /* ≈420px; the 38vw cap keeps a 1024px laptop's page usable. */
+  --stablehand-panel-w: min(420px, 38vw);
+  --stablehand-rail-w: 52px;
+}
+:root[data-stablehand-size='wide'] {
+  --stablehand-panel-w: min(640px, 50vw);
+}
+@media screen and (min-width: 1024px) {
+  :root[data-stablehand-dock='panel'] {
+    --stablehand-w: var(--stablehand-panel-w);
+  }
+  :root[data-stablehand-dock='rail'] {
+    --stablehand-w: var(--stablehand-rail-w);
+  }
+  :root {
+    /* Same curve + duration as the panel's slide (StablehandShell.tsx). */
+    transition: --stablehand-w 260ms cubic-bezier(0.2, 0.8, 0.2, 1);
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  :root {
+    transition: none;
+  }
+}
+#root {
+  padding-right: var(--stablehand-w);
+}
+
+@layer utilities {
+  /* Fixed layouts that must stop at The Stable Hand dock (see the block above). */
+  .inset-stablehand {
+    inset: 0 var(--stablehand-w, 0px) 0 0;
+  }
+  .right-stablehand {
+    right: var(--stablehand-w, 0px);
+  }
+  /* `left-1/2` for something centred on screen (pair with -translate-x-1/2):
+     the centre of what the dock leaves, not of the window. */
+  .left-mid-stablehand {
+    left: calc(50% - var(--stablehand-w, 0px) / 2);
+  }
+}
+
 @layer utilities {
   /* ── Waiting states: shimmer, not spin ───────────────────────────────────
      A spinner says "something is happening". Text that shimmers says the same

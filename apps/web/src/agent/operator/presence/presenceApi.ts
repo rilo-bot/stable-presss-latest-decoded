@@ -19,6 +19,7 @@
 // ---------------------------------------------------------------------------
 
 import { animate } from 'framer-motion';
+import { stablehandReserve } from '@/lib/stablehandDock';
 import type { PresenceApi } from '../contracts';
 import { useOperator } from '../operatorStore';
 import { cursorX, cursorY, glide, prefersReducedMotion, usePresenceOverlay } from './presenceStore';
@@ -49,7 +50,11 @@ const instant = () => prefersReducedMotion() || (typeof document !== 'undefined'
 function scrollPlan(el: Element): ScrollIntoViewOptions | null {
   const r = el.getBoundingClientRect();
   if (r.width === 0 && r.height === 0) return null; // not rendered — scrolling won't help
-  const vw = window.innerWidth;
+  // The site's own width: the docked Stable Hand takes the right edge. A grid
+  // cell scrolled out of its overflow-x container to the right (Roles &
+  // Permissions on a laptop) is NOT on screen just because it is < innerWidth —
+  // it sits under the panel; scrollIntoView brings it into the container's view.
+  const vw = Math.max(320, window.innerWidth - stablehandReserve());
   const vh = window.innerHeight;
 
   const fitsV = r.height <= vh - TOP_PAD - EDGE_PAD;

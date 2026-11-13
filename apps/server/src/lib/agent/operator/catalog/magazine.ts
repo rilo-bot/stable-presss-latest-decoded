@@ -61,7 +61,7 @@ export const SURFACES: CatalogSurface[] = [
     id: 'magazine-editor',
     title: 'Magazine Builder — studio',
     route: '/production-system/magazine-v2/:id',
-    who: "the magazine's owner (everything), collaborators it was shared with (their pages + the AI Studio), other staff view-only; publishing also needs Magazine publish",
+    who: "the magazine's owner (everything), collaborators it was shared with (their pages + the AI Studio), other staff view-only; every change needs Magazine edit, publishing also Magazine publish",
     purpose:
       'Edit one magazine: page rail (thumbnails, add/duplicate/delete/reorder), the canvas (every page stacked; above EACH page a header with a "publish" tick and two AI wand buttons, Fill and Adjust), the Magazine AI Studio chat on the left that stages edits to the open page, the inspector on the right (owner: add text/photo/shape/QR/icon, style the selected element, Assets), Share (who may edit which pages), the review board, and Publish to the public Bulletins newsstand. Call magazine.status first to learn page numbers, collaborators and your role. PAGE NUMBERS everywhere are the REAL numbers printed on the canvas ("Page 3") — a contributor shared only page 3 still calls it page 3, never 1. When writing to the AI Studio, say "this page" (it works on the open page), never a page number. When the user says "fill" or "adjust" a page, use magazine.fillPage / magazine.adjustPage directly — those ARE the Fill/Adjust buttons above the page; do not route it through the AI Studio chat.',
     actions: [
@@ -90,8 +90,8 @@ export const SURFACES: CatalogSurface[] = [
       {
         name: 'magazine.addAiPages',
         description:
-          'Owner only. Have the AI design and append on-theme pages (count 1 to 12, optionally on a topic; the builder adds 1, 2, 3, 4 or 6 per build, so a larger or odd count starts the biggest batch that fits and the result gives the number remaining: add those with a second call after the [job-update]). Starts the build and returns AT ONCE with { jobId, started:true } — a [job-update] message arrives when the pages are done; do not wait or poll.',
-        args: '{ count: 1 | 2 | 3 | 4 | 6; topic?: string }',
+          'Owner only. Have the AI design and append on-theme pages (optionally on a topic). The builder makes 1, 2, 3, 4 or 6 per build, so a larger or odd count starts the biggest batch that fits and the result gives remaining: after the [job-update], call again with count = remaining (the user approved them all at once, no second question). Returns AT ONCE with { jobId, started:true }; do not wait or poll.',
+        args: '{ count: number /* 1–12 */; topic?: string }',
         confirms: true,
       },
       {
@@ -179,7 +179,7 @@ export const SURFACES: CatalogSurface[] = [
       {
         name: 'magazine.adjustPage',
         description:
-          'Owner or collaborator. Press the Adjust wand above that page on the canvas: tightens crowded / overflowing text only (no new copy in empty boxes). Use it directly when the user says "adjust page N" / "fix the overflowing text". Returns what changed + the toast text. Undoable (magazine.undo).',
+          'Owner or collaborator. Press the Adjust wand above that page on the canvas: tightens crowded / overflowing text and re-balances an AI-built layout (box sizes, empty bands, sliver photos); no new copy in empty boxes. Use it directly when the user says "adjust page N" / "fix the overflowing text". Returns what changed + the toast text. Undoable (magazine.undo).',
         args: '{ page: number }',
       },
       {
@@ -225,8 +225,8 @@ export const SURFACES: CatalogSurface[] = [
       {
         name: 'magazine.addMorePages',
         description:
-          'Owner only. Press "Add more pages" (the gold banner after a first build, else the rail\'s AI button) to open the add-AI-pages popover; with count (1 to 12, batched the same way) and optional topic it also starts the build like magazine.addAiPages and returns AT ONCE with { jobId, started:true } — a [job-update] message arrives when the pages are done.',
-        args: '{ count?: 1 | 2 | 3 | 4 | 6; topic?: string }',
+          'Owner only. Press "Add more pages" (the gold banner after a first build, else the rail\'s AI button) to open the add-AI-pages popover; with count (batched like magazine.addAiPages) and optional topic it also starts the build and returns AT ONCE with { jobId, started:true } — a [job-update] message arrives when the pages are done.',
+        args: '{ count?: number /* 1–12 */; topic?: string }',
         confirms: true,
       },
       // Danger actions — web twin: apps/web/src/editor-v2/operator/useMagazineDangerActions.ts.
@@ -249,14 +249,14 @@ export const SURFACES: CatalogSurface[] = [
       {
         name: 'magazine.copyPdfPage',
         description:
-          'Owner only. "Copy a page exactly": reproduce page docPage of a PDF already attached to this magazine (its own words, pictures, colours) onto `page` (default: the open page), replacing everything there; the page takes the PDF page\'s shape. Cannot be undone. doc = part of the PDF file name when several are attached. To use a PDF the user sent in this chat, first attach it to the magazine: upload { agentId: "mag.ai-attach" }. For a layout only (fresh copy), use magazine.applyLayout.',
+          'Owner only. "Copy a page exactly": reproduce page docPage of a PDF already attached to this magazine (its own words, pictures, colours) onto page (default: the open page), replacing everything there; the page takes the PDF page\'s shape. Cannot be undone. doc = part of the PDF file name when several are attached. To use a PDF the user sent in this chat, first attach it to the magazine: upload { agentId: "mag.ai-attach" }. For a layout only (fresh copy), use magazine.applyLayout.',
         args: '{ page?: number; docPage: number; doc?: string }',
         confirms: true,
       },
       {
         name: 'magazine.applyLayout',
         description:
-          'Owner only. "Match a layout": rebuild `page` (default: the open page) in the ARRANGEMENT of a reference picture the user sent — fresh copy is written, nothing is copied from it. fit "exact" = every box where the reference had it; "adapt" = re-composed around this page\'s content. Replaces everything on the page; cannot be undone. Flow: call it once (opens the page + panel), then upload { agentId: "mag.layout-upload", attachment } with the user\'s image, then call it again (waits for the reading, asks the user, rebuilds, returns the measured verdict).',
+          'Owner only. "Match a layout": rebuild page (default: the open page) in the ARRANGEMENT of a reference picture the user sent — fresh copy is written, nothing is copied from it. fit "exact" = every box where the reference had it; "adapt" = re-composed around this page\'s content. Replaces everything on the page; cannot be undone. Flow: call it once (opens the page + panel), then upload { agentId: "mag.layout-upload", attachment } with the user\'s image, then call it again (waits for the reading, asks the user, rebuilds, returns the measured verdict).',
         args: "{ page?: number; fit: 'exact' | 'adapt' }",
         confirms: true,
       },

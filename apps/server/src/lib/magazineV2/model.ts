@@ -136,7 +136,42 @@ function str(v: unknown, max: number): string {
   return typeof v === 'string' ? v.slice(0, max) : '';
 }
 function hex(v: unknown, fallback: string): string {
-  return typeof v === 'string' && HEX_RE.test(v) ? v : fallback;
+  return parseColor(v)?.hex ?? fallback;
+}
+
+const to2 = (n: number) => Math.round(Math.min(255, Math.max(0, n))).toString(16).padStart(2, '0');
+
+/**
+ * Read a colour the way a designer (or a model) writes it — #rgb, #rgba, #rrggbb,
+ * #rrggbbaa, rgb(…), rgba(…) — into the stored #rrggbb plus its alpha (0–1).
+ *
+ * Stored colours are #rrggbb only, so anything else used to fall back to a default.
+ * For a shape that default is black: a model asking for "rgba(0,0,0,0.4)" — a
+ * see-through scrim over a photo — got a SOLID black band that hid the photo, and
+ * reported success. Now the alpha becomes the shape's opacity instead.
+ */
+export function parseColor(v: unknown): { hex: string; alpha: number } | null {
+  if (typeof v !== 'string') return null;
+  const s = v.trim().toLowerCase();
+  if (HEX_RE.test(s)) return { hex: s, alpha: 1 };
+  let m = /^#([0-9a-f])([0-9a-f])([0-9a-f])([0-9a-f])?$/.exec(s);
+  if (m) {
+    const h = `#${m[1]}${m[1]}${m[2]}${m[2]}${m[3]}${m[3]}`;
+    return { hex: h, alpha: m[4] ? parseInt(m[4] + m[4], 16) / 255 : 1 };
+  }
+  m = /^#([0-9a-f]{6})([0-9a-f]{2})$/.exec(s);
+  if (m) return { hex: `#${m[1]}`, alpha: parseInt(m[2]!, 16) / 255 };
+  m = /^rgba?\(\s*([\d.]+%?)[\s,]+([\d.]+%?)[\s,]+([\d.]+%?)(?:\s*[,/]\s*([\d.]+%?))?\s*\)$/.exec(s);
+  if (m) {
+    const ch = (c: string) => (c.endsWith('%') ? (parseFloat(c) / 100) * 255 : parseFloat(c));
+    const a = m[4] === undefined ? 1 : m[4].endsWith('%') ? parseFloat(m[4]) / 100 : parseFloat(m[4]);
+    if (![m[1], m[2], m[3]].every((c) => Number.isFinite(ch(c!))) || !Number.isFinite(a)) return null;
+    return { hex: `#${to2(ch(m[1]!))}${to2(ch(m[2]!))}${to2(ch(m[3]!))}`, alpha: Math.min(1, Math.max(0, a)) };
+  }
+  if (s === 'black') return { hex: '#000000', alpha: 1 };
+  if (s === 'white') return { hex: '#ffffff', alpha: 1 };
+  if (s === 'transparent') return { hex: '#000000', alpha: 0 };
+  return null;
 }
 function genId(): string {
   try {
@@ -208,10 +243,13 @@ function coerceImage(o: Record<string, unknown>): ElementImageData {
 
 function coerceShape(o: Record<string, unknown>): ElementShapeData {
   const s = (o.shape && typeof o.shape === 'object' ? o.shape : {}) as Record<string, unknown>;
-  const out: ElementShapeData = { fill: hex(s.fill, '#000000') };
-  if (typeof s.opacity === 'number' && Number.isFinite(s.opacity) && s.opacity < 1) {
-    out.opacity = Math.max(0, s.opacity);
-  }
+  const color = parseColor(s.fill);
+  const out: ElementShapeData = { fill: color?.hex ?? '#000000' };
+  // A colour's own alpha ("rgba(0,0,0,0.4)", "#00000066") and an explicit opacity
+  // combine, exactly as they would on screen.
+  const explicit = typeof s.opacity === 'number' && Number.isFinite(s.opacity) ? s.opacity : 1;
+  const opacity = Math.max(0, Math.min(1, explicit * (color?.alpha ?? 1)));
+  if (opacity < 1) out.opacity = Math.round(opacity * 1000) / 1000;
   return out;
 }
 

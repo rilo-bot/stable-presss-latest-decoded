@@ -19,14 +19,15 @@ import { z } from 'zod';
 import type { UiDriver } from '@/agent/operator/contracts';
 import { useAgentAction } from '@/agent/operator/runtime/registry';
 import { quoteRef } from '@/agent/operator/runtime/humanRef';
-import { can, canAnyones, canEditArticle } from '@/lib/permissions';
-import { findMove, movesFrom } from '@/lib/workflow';
+import { can, canAnyones, canEditArticle, canOn } from '@/lib/permissions';
+import { findMove, movesFrom, stageMeta } from '@/lib/workflow';
 import { useArticleStore } from '@/stores/articleStore';
 import { useAuthStore } from '@/stores/authStore';
 import { useStoryStudioUi } from '@/stores/storyStudioUiStore';
 import { ARTICLE_STATUSES } from '@/types/article';
 import type { Article, ArticleStatus } from '@/types/article';
 
+import { firstError, watchToasts } from '../operator-team/opUtils';
 import type { ProductionSystemState } from '../useProductionSystemState';
 import { anchorEl, clip, hasAnchor, sleep, typeAndSend, waitForStudioTurn, waitUntil } from './studioTurn';
 
@@ -151,6 +152,56 @@ async function waitForFormClosed(ui: UiDriver, timeoutMs = 20_000): Promise<bool
   return !!(await waitUntil(() => !hasAnchor('story.title-input'), { signal: ui.signal, timeoutMs }));
 }
 
+/**
+ * After pressing the form's save: it closed (saved), or the app raised an error
+ * toast (the server refused, or a required field is missing) and the form stays
+ * open with the work in it. The toast's text is the reason, for the model.
+ */
+async function waitForFormOutcome(
+  ui: UiDriver,
+  toasts: ReturnType<typeof watchToasts>,
+  timeoutMs = 20_000,
+): Promise<{ closed: true } | { closed: false; error: string | null }> {
+  const out = await waitUntil(
+    () => (!hasAnchor('story.title-input') ? 'closed' : firstError(toasts.collect()) ? 'refused' : null),
+    { signal: ui.signal, timeoutMs },
+  );
+  if (out === 'closed') return { closed: true };
+  return { closed: false, error: firstError(toasts.collect()) ?? null };
+}
+
+/**
+ * May the user delete THIS story? The server's rule (rbac articlesWriteGate):
+ * DELETE needs stories.delete — not stories.edit, which is all the board's
+ * menu item checks — and, with 'own' scope, a story they own.
+ */
+function canDeleteStory(story: Article): boolean {
+  const name = me();
+  return canOn('stories.delete', !!name && story.author === name);
+}
+
+/**
+ * articleStore moves a story OPTIMISTICALLY (setStatus / updateArticle) and
+ * puts the old copy back when the server refuses — so a status that "landed"
+ * proves nothing until the request has answered. Watch every copy of the story
+ * the store holds from before the click: the write has settled once the
+ * optimistic copy has itself been replaced (by the server's copy, or by the
+ * rollback). Subscribed, not polled — both swaps can land inside one poll.
+ */
+function watchStoryWrite(id: string): { settled: () => boolean; stop: () => void } {
+  const find = (list: Article[] | undefined) => (list ?? []).find((x) => x.id === id);
+  let last = find(useArticleStore.getState().articles);
+  let swaps = 0;
+  const stop = useArticleStore.subscribe((st) => {
+    const cur = find(st.articles);
+    if (cur !== last) {
+      last = cur;
+      swaps += 1;
+    }
+  });
+  return { settled: () => swaps >= 2, stop };
+}
+
 // ── The hook ────────────────────────────────────────────────────────────────
 
 export function useStoryOperatorActions(s: ProductionSystemState, enabled: boolean): void {
@@ -166,6 +217,12 @@ export function useStoryOperatorActions(s: ProductionSystemState, enabled: boole
       }),
       run: async (a, ui) => {
         if (!(useArticleStore.getState().articles ?? []).length) await useArticleStore.getState().fetchArticles();
+        // fetchArticles returns at once while the screen's own first load is in
+        // flight — an empty list then would read as "no stories".
+        await waitUntil(() => !useArticleStore.getState().loading, { signal: ui.signal, timeoutMs: 15_000 });
+        if (!useArticleStore.getState().loaded && !(useArticleStore.getState().articles ?? []).length) {
+          throw new Error('The stories did not load — reload the page and try again.');
+        }
         // On All Stories the search box is right there — use it, so the user
         // sees the same filter the answer is based on.
         if (a.query && hasAnchor('story.search-input')) {
@@ -327,7 +384,7 @@ export function useStoryOperatorActions(s: ProductionSystemState, enabled: boole
       run: async (a, ui) => {
         if (!can('stories.create')) throw new Error('Your role cannot file stories (needs stories.create).');
         if (hasAnchor('story.title-input')) {
-          throw new Error('The story form is already open. Close it (story.form-cancel) first.');
+          throw new Error('The story form is already open — close it with its Cancel button first.');
         }
         ui.step('Opening the File a Story form');
         if (hasAnchor('story.file-button')) {
@@ -341,6 +398,11 @@ export function useStoryOperatorActions(s: ProductionSystemState, enabled: boole
         // A half-typed story from an earlier session is restored into the form —
         // that is the USER's unsaved work (useFormDraft), and this action has no
         // confirm card: ask before discarding it, and on No leave it open.
+        // The form restores it in an effect that can run AFTER the inputs mount
+        // (always so when the form was opened by the handler, outside a click),
+        // so give the "restored" banner a moment — otherwise the old draft's
+        // category, byline, stage and tags would ride along into this story.
+        await waitUntil(() => hasAnchor('story.form-discard-draft'), { signal: ui.signal, timeoutMs: 500, intervalMs: 100 });
         if (hasAnchor('story.form-discard-draft')) {
           const ok = await ui.confirm('The File a Story form has an unsaved draft from an earlier session. Discard that draft so I can write this story from scratch?');
           if (!ok) throw new Error('Stopped: the user chose to keep their unsaved story draft. The form is left open with it.');
@@ -366,15 +428,19 @@ export function useStoryOperatorActions(s: ProductionSystemState, enabled: boole
         }
 
         const before = new Set((useArticleStore.getState().articles ?? []).map((x) => x.id));
+        const findCreated = () =>
+          (useArticleStore.getState().articles ?? []).find((x) => !before.has(x.id) && x.title === a.title.trim());
+        const toasts = watchToasts();
         await ui.click('story.form-submit', 'Save Draft');
-        const created = await waitUntil(
-          () => (useArticleStore.getState().articles ?? []).find((x) => !before.has(x.id) && x.title === a.title.trim()),
-          { signal: ui.signal, timeoutMs: 20_000 },
-        );
+        // Saved (the new story is in the store), or refused (an error toast; the
+        // form stays open with the text in it).
+        await waitUntil(() => findCreated() || firstError(toasts.collect()), { signal: ui.signal, timeoutMs: 20_000 });
+        const created = findCreated();
         if (!created) {
+          const why = firstError(toasts.collect());
           throw new Error(
             hasAnchor('story.title-input')
-              ? 'The form did not save (the server refused it — see the toast). It is still open.'
+              ? `The story was not saved${why ? `: ${why}` : ''}. The form is still open with your text.`
               : 'The form closed but the new story was not found.',
           );
         }
@@ -415,6 +481,9 @@ export function useStoryOperatorActions(s: ProductionSystemState, enabled: boole
         }
         const move = findMove(story.status, a.stage);
         if (story.status === a.stage || !move || !can(move.permission)) return null;
+        // Every move is a PUT, which the server gates on stories.edit for this
+        // story as well as the move's own permission — run() refuses without it.
+        if (!canEditArticle(story.author, me())) return null;
         const title = story.title || 'Untitled story';
         if (a.stage === 'published') return `Publish “${title}” to the live site now?`;
         if (a.stage === 'scheduled') {
@@ -435,6 +504,9 @@ export function useStoryOperatorActions(s: ProductionSystemState, enabled: boole
           throw new Error(`A story cannot go from ${from} to ${a.stage}. From ${from} it can go to: ${legal}.`);
         }
         if (!can(move.permission)) throw new Error(`You cannot ${move.label.toLowerCase()} this story (needs ${move.permission}).`);
+        // The move is a PUT on the story: the server also wants stories.edit on
+        // it (scope 'own' = your own stories), whatever the move's permission.
+        if (!canEditArticle(story.author, me())) throw new Error('Your role cannot change this story (needs stories.edit on it).');
 
         let scheduledFor: string | undefined;
         if (a.stage === 'scheduled') {
@@ -447,29 +519,46 @@ export function useStoryOperatorActions(s: ProductionSystemState, enabled: boole
         const card = `story.card-${story.id}`;
         const itemId = `story.card-${story.id}.move-${a.stage}`;
         const sendBack = !!move.back && a.stage === 'draft';
-        ui.step(`${move.label}: “${story.title || 'Untitled story'}”`);
+        const title = story.title || 'Untitled story';
+        ui.step(`${move.label}: “${title}”`);
         if (hasAnchor(card)) await ui.point(card, story.title);
 
-        let drove = false;
-        if (hasAnchor(card) && a.stage !== 'scheduled') {
-          // The board's own buttons — the same click a person makes.
-          drove = await clickCardMenuItem(ui, story.id, itemId, move.label);
-          if (drove && sendBack) {
-            await ui.waitFor('story.sendback-note', 4_000);
-            if (a.note) await ui.type('story.sendback-note', a.note, { clear: true });
-            await ui.click('story.sendback-confirm', 'Send back');
+        // The store flips the status at once and rolls it back if the server
+        // refuses — so wait for the SERVER's answer, not the first flip.
+        const toasts = watchToasts();
+        const write = watchStoryWrite(story.id);
+        let answered = false;
+        try {
+          let drove = false;
+          if (hasAnchor(card) && a.stage !== 'scheduled') {
+            // The board's own buttons — the same click a person makes.
+            drove = await clickCardMenuItem(ui, story.id, itemId, move.label);
+            if (drove && sendBack) {
+              await ui.waitFor('story.sendback-note', 4_000);
+              if (a.note) await ui.type('story.sendback-note', a.note, { clear: true });
+              await ui.click('story.sendback-confirm', 'Send back');
+            }
           }
+          // Scheduling needs a date-time picker typed precisely, and some screens
+          // have no card — the same handler the board calls. Awaited, so the
+          // request has answered when it returns.
+          if (!drove) await s.handleMove(story, move, { note: a.note, scheduledFor });
+          answered = !drove || !!(await waitUntil(() => write.settled() || !!firstError(toasts.collect()), {
+            signal: ui.signal,
+            timeoutMs: 20_000,
+          }));
+        } finally {
+          write.stop();
         }
-        // Scheduling needs a date-time picker typed precisely, and some screens
-        // have no card — use the same handler the board calls.
-        if (!drove) await s.handleMove(story, move, { note: a.note, scheduledFor });
-
-        const landed = await waitUntil(() => currentStatus(story.id) === a.stage, { signal: ui.signal, timeoutMs: 15_000 });
         await sleep(150, ui.signal);
         if (hasAnchor(card)) ui.flash(card);
         const final = currentStatus(story.id) ?? from;
-        if (!landed) {
-          return { ok: false, storyId: story.id, title: story.title, from, stage: final, error: 'The move did not stick — the server refused it (see the toast).' };
+        const refused = firstError(toasts.collect());
+        if (refused || final !== a.stage) {
+          throw new Error(refused ?? `The move did not go through — “${title}” is still in ${stageMeta(final).label}.`);
+        }
+        if (!answered) {
+          throw new Error(`The server has not confirmed the move of “${title}” yet — check the board in a moment.`);
         }
         return { ok: true, storyId: story.id, title: story.title, from, stage: final, ...(scheduledFor ? { scheduledFor } : {}) };
       },
@@ -519,9 +608,11 @@ export function useStoryOperatorActions(s: ProductionSystemState, enabled: boole
       ui.step(`Choosing the category “${a.category.trim()}”`);
       category = await chooseCategory(ui, a.category);
     }
+    const toasts = watchToasts();
     await ui.click('story.form-submit', 'Save Revision');
-    if (!(await waitForFormClosed(ui))) {
-      throw new Error('The revision did not save (the server refused it — see the toast). The form is still open.');
+    const saved = await waitForFormOutcome(ui, toasts);
+    if (!saved.closed) {
+      throw new Error(`The revision was not saved${saved.error ? `: ${saved.error}` : ''}. The form is still open.`);
     }
     const after = (useArticleStore.getState().articles ?? []).find((x) => x.id === story.id);
     if (hasAnchor(`story.card-${story.id}`)) ui.flash(`story.card-${story.id}`);
@@ -581,25 +672,37 @@ export function useStoryOperatorActions(s: ProductionSystemState, enabled: boole
         } catch {
           return null;
         }
-        if (!canEditArticle(story.author, me())) return null;
+        if (!canDeleteStory(story)) return null;
         return `Delete the story “${story.title || 'Untitled story'}”? It leaves the board (an administrator can restore it).`;
       },
       run: async (a, ui) => {
         const story = resolveStory(a.storyId);
-        if (!canEditArticle(story.author, me())) throw new Error('You cannot delete this story.');
+        if (!canDeleteStory(story)) {
+          throw new Error(
+            can('stories.delete') ? 'You can only delete your own stories.' : 'Your role cannot delete stories (needs stories.delete).',
+          );
+        }
         ui.step(`Deleting “${story.title || 'Untitled story'}”`);
         if (hasAnchor(`story.card-${story.id}`)) await ui.point(`story.card-${story.id}`, story.title);
         const opened =
           hasAnchor(`story.card-${story.id}`) &&
           (await clickCardMenuItem(ui, story.id, `story.card-${story.id}.delete`, 'Delete'));
-        if (!opened) s.handleDelete(story);
+        // Not on screen, or the card offers no Delete (its menu item is gated on
+        // stories.edit): open the same confirm dialog the item opens.
+        if (!opened) s.setDeleteTarget(story);
         await ui.waitFor('story.delete-confirm', 4_000);
+        const toasts = watchToasts();
         await ui.click('story.delete-confirm', 'Delete');
-        const gone = await waitUntil(
-          () => !(useArticleStore.getState().articles ?? []).some((x) => x.id === story.id) && !hasAnchor('story.delete-confirm'),
-          { signal: ui.signal, timeoutMs: 15_000 },
-        );
-        if (!gone) throw new Error('The delete did not go through (the server refused it — see the toast).');
+        // The row leaves the store at once (optimistic) and comes back if the
+        // server refuses; the dialog only closes once the delete succeeded.
+        const gone = () =>
+          !(useArticleStore.getState().articles ?? []).some((x) => x.id === story.id) && !hasAnchor('story.delete-confirm');
+        await waitUntil(() => gone() || firstError(toasts.collect()), { signal: ui.signal, timeoutMs: 15_000 });
+        if (!gone()) {
+          const why = firstError(toasts.collect());
+          if (hasAnchor('story.delete-cancel')) await ui.click('story.delete-cancel', 'Cancel');
+          throw new Error(why ? `The story was not deleted: ${why}` : 'The delete did not go through — the story is still on the board.');
+        }
         return { deleted: true, storyId: story.id, title: story.title };
       },
     },

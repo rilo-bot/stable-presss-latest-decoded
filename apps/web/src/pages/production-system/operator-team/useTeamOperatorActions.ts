@@ -39,7 +39,10 @@ const NO_MANAGE =
 
 // ── Resolvers (pure; read the live stores so confirm() can name people) ──────
 
-function resolveRole(query: string, roles: Role[]) {
+function resolveRole(query: string, roles: Role[]): ReturnType<typeof resolveOne<Role>> {
+  // Roles load on this screen a moment after it opens. "No role matches
+  // “Editor”" (with no list) read as "that role does not exist".
+  if (!roles.length) return { error: 'The role list has not loaded yet — try again in a moment.' };
   return resolveOne(query, roles, (r) => [r.name, r.label], 'role', (r) => `${r.label} (${r.name})`);
 }
 
@@ -184,13 +187,26 @@ export function useTeamOperatorActions(input: TeamOperatorInput): void {
         const member = st.staff.find((u) => u.email.toLowerCase() === email);
         const pending = st.pending.find((p) => p.email.toLowerCase() === email);
         const cleared = live.current.teamEmail === '';
+        // The box is cleared only on success. An ERROR toast with it still full is
+        // a refusal even when an older invite for this email is on the list (the
+        // server's "A pending invite for this role already exists" 409) — that old
+        // row must not be reported as this invite having gone out.
+        const refused = !cleared ? firstError(msgs) : undefined;
+        if (refused) throw new Error(refused);
         if (!cleared && !pending && !(member && member.role?.name === role.name)) {
-          throw new Error(firstError(msgs) ?? msgs[0]?.text ?? 'The invite did not go through.');
+          throw new Error(msgs[0]?.text ?? 'The invite did not go through.');
         }
         if (member) ui.flash(`team.member-${member.userId}`);
         else if (pending) ui.flash(`team.pending-${pending.id}`);
+        // Past this point the invite / role IS saved. A warning toast ("saved, but
+        // the email failed / email is not configured") is a partial success —
+        // reported as such, not as ok:false (which reads as "nothing happened").
+        const warned = msgs.some((t) => t.type === 'warning');
         return {
-          ok: cleared,
+          ok: true,
+          saved: true,
+          emailed: !warned,
+          ...(warned ? { note: 'Saved, but no email went out — tell the user; team.resendEmail sends it again.' } : {}),
           email: a.email,
           role: role.name,
           status: member ? 'member — role active now' : 'invited — pending sign-in',
@@ -347,7 +363,8 @@ export function useTeamOperatorActions(input: TeamOperatorInput): void {
         const p = resolvePending(a.who, s.teamPending);
         if (p.hit) return `Email a fresh invitation link to ${p.hit.email}? The previous link stops working.`;
         const m = resolveMember(a.who, s.teamStaff);
-        return m.hit ? `Email ${personDisplay(m.hit)} their access details again?` : null;
+        // No role → their Resend button is disabled and run() refuses: no card.
+        return m.hit && m.hit.role ? `Email ${personDisplay(m.hit)} their access details again?` : null;
       },
       run: async (a, ui) => {
         const s = live.current;
@@ -355,10 +372,13 @@ export function useTeamOperatorActions(input: TeamOperatorInput): void {
         const p = resolvePending(a.who, s.teamPending);
         const m = p.hit ? undefined : resolveMember(a.who, s.teamStaff);
         if (!p.hit && !m?.hit) throw new Error(m?.error ?? p.error);
+        if (!p.hit && !m!.hit!.role) {
+          throw new Error(`${personDisplay(m!.hit!)} holds no role, so there is no access email to send — give them a role first (team.changeRole).`);
+        }
         const target = p.hit ? `team.pending-resend-${p.hit.id}` : `team.resend-${m!.hit!.userId}`;
         const btn = anchor(target);
         if (btn && (btn as HTMLButtonElement).disabled) {
-          throw new Error('Resend is unavailable for them right now (no role, or a send is already in progress).');
+          throw new Error('Resend is unavailable for them right now (a send is already in progress) — try again in a moment.');
         }
         const toasts = watchToasts();
         await ui.click(target, 'Resend email');

@@ -73,7 +73,7 @@ const STORY_ACTIONS: CatalogAction[] = [
   },
   {
     name: 'stories.delete',
-    description: 'Delete a story from the board (an administrator can restore it).',
+    description: 'Delete a story from the board (an administrator can restore it). Needs stories.delete.',
     args: '{ storyId: string }',
     confirms: true,
   },

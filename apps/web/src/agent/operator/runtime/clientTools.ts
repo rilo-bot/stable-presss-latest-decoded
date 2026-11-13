@@ -17,7 +17,8 @@
 // ---------------------------------------------------------------------------
 
 import { z } from 'zod';
-import { AGENT_CONFIRM_ATTR, OPERATOR_CLIENT_TOOLS, humanizeActionName, type ActionOutcome, type UiDriver } from '../contracts';
+import { apiUrl } from '@/lib/api';
+import { AGENT_CONFIRM_ATTR, OPERATOR_CLIENT_TOOLS, OPERATOR_UI_ATTR, humanizeActionName, type ActionOutcome, type UiDriver } from '../contracts';
 // Pure path → "Magazine Builder" naming (no imports of its own), shared with the
 // panel so the pill and the step list name a screen the same way.
 import { shortPageName } from '../panel/pageContext';
@@ -26,7 +27,7 @@ import { getAction, listActions } from './registry';
 import { createUiDriver } from './uiDriver';
 import { readScreen, pageTitle } from './snapshot';
 import { chosenContext, findAgentEl, formControlOf, isAbortError, labelForId, labelOf, optionTextFor } from './dom';
-import { errorDetail, nameFromAgentId, settleQuestion } from './humanRef';
+import { errorDetail, looksLikeId, nameFromAgentId, scrubIds, settleQuestion } from './humanRef';
 import {
   beginToolScope,
   controlKeys,
@@ -129,6 +130,20 @@ async function enter(): Promise<Fail | null> {
   return useOperator.getState().abortSignal().aborted ? STOPPED : null;
 }
 
+/** An action finished: its own line AND the sub-step lines its run() pushed
+ *  with ui.step() ("Inviting … as Editor") are done — the last of those was
+ *  left spinning until the model's next tool call. */
+function completeSteps(stepId: string): void {
+  const st = useOperator.getState();
+  const steps = st.steps;
+  const startIdx = steps.findIndex((s) => s.id === stepId);
+  st.finishStep(stepId, 'done');
+  if (startIdx < 0) return;
+  for (let i = startIdx + 1; i < steps.length; i++) {
+    if (steps[i].status === 'running') st.finishStep(steps[i].id, 'done');
+  }
+}
+
 /** Mark a failed step — plus whatever step the failure actually happened in,
  *  since a later ui.step() auto-completes the earlier one. */
 function failSteps(stepId: string, detail: string): void {
@@ -214,6 +229,22 @@ function isSensitiveControl(el: HTMLElement): boolean {
   return SENSITIVE_LABEL.test(label);
 }
 
+/**
+ * The record a row-level control acts on: the label of the nearest anchored
+ * ancestor that names one (`data-agent-label` — "Ahmed Khan" on his roster row).
+ * A raw click on that row's "Remove" asked "Click “Remove” on Team Members?" —
+ * remove WHOM? '' when no row names itself (or the name is an id).
+ */
+function rowOf(el: HTMLElement, name: string): string {
+  let p = el.parentElement;
+  for (let i = 0; p && i < 8; i++, p = p.parentElement) {
+    if (p.matches(`[${OPERATOR_UI_ATTR}], [role="dialog"], [role="alertdialog"], dialog, form, main, body`)) return '';
+    const lab = (p.getAttribute('data-agent-label') ?? '').replace(/\s+/g, ' ').trim();
+    if (lab) return lab !== name && lab.length <= 80 && !looksLikeId(lab) ? lab : '';
+  }
+  return '';
+}
+
 function whereOf(el: HTMLElement): string {
   const dlg = el.closest<HTMLElement>('[role="dialog"], [role="alertdialog"], dialog');
   const t = dlg?.querySelector('h1, h2, h3, h4')?.textContent?.trim() || dlg?.getAttribute('aria-label');
@@ -233,9 +264,11 @@ function sensitiveQuestion(tool: GenericTool, agentId: string, extra?: boolean |
     const picker = OPTION_ROLES.has(el.getAttribute('role') ?? '') ? pickerOf(el) : null;
     // A marker on an opener (the role pill's trigger) guards its CHOICES, not the opening.
     const declared = isOpener(el) ? null : declaredQuestion(el) ?? declaredQuestion(picker?.owner ?? null);
-    // "Share" alone doesn't say with whom — name what is chosen in its dialog / form.
+    // "Share" alone doesn't say with whom — name what is chosen in its dialog / form,
+    // or the record whose row the control sits in ("Remove" for “Ahmed Khan”).
     const chosen = chosenContext(el);
-    const ask = `Click “${name}”${whereOf(el)}${chosen ? ` (${chosen})` : ''}?`;
+    const row = chosen ? '' : rowOf(el, name);
+    const ask = `Click “${name}”${row ? ` for “${row}”` : ''}${whereOf(el)}${chosen ? ` (${chosen})` : ''}?`;
     if (declared !== null) return declared || ask;
     if (isSensitiveControl(el)) return ask;
     if (picker && isSensitivePicker(picker.label)) return `Choose “${name}” — ${picker.label}${whereOf(el)}?`;
@@ -318,8 +351,43 @@ function unhold(keys: string[]): void {
   for (const k of keys) held.delete(k);
 }
 
+/**
+ * Where a link would take the tab if it LEAVES Stable Press: another site, or an
+ * email / phone app. null = it stays in the app (or is a file download). A
+ * synthetic click follows a link like a real one, so clicking a sponsor's or a
+ * social link navigated the user's tab away mid-run and the run died with it.
+ */
+function offSiteTarget(el: Element): string | null {
+  const a = el.closest<HTMLAnchorElement>('a[href]');
+  if (!a || a.hasAttribute('download')) return null;
+  let url: URL;
+  try {
+    url = new URL(a.getAttribute('href') ?? '', window.location.href);
+  } catch {
+    return null;
+  }
+  if (/^(mailto|tel|sms):$/i.test(url.protocol)) return `the user's ${url.protocol === 'mailto:' ? 'email' : 'phone'} app`;
+  if (!/^https?:$/i.test(url.protocol) || url.origin === window.location.origin) return null;
+  let api = '';
+  try {
+    api = new URL(apiUrl('/'), window.location.href).origin;
+  } catch {
+    /* no separate API origin */
+  }
+  return url.origin === api ? null : url.host;
+}
+
 async function clickTool(agentId: string, scope: ToolScope): Promise<unknown> {
   const el0 = findAgentEl(agentId);
+  const leaves = el0 ? offSiteTarget(el0) : null;
+  if (leaves) {
+    return {
+      ok: false,
+      error:
+        `“${labelOf(el0!) || nameFromAgentId(agentId)}” is a link to ${leaves}, outside Stable Press — clicking it would take the user's tab away and end this run. ` +
+        'Do not click it: give the user the link (or the name of the site) in your reply instead.',
+    };
+  }
   const keys = controlKeys(agentId, el0 ? labelOf(el0) : '');
   scope.keys = keys;
   const asked = declinedMessagesFor(el0, keys);
@@ -419,6 +487,27 @@ function parse<S extends z.ZodType>(schema: S, input: unknown, tool: string): z.
 const isFail = (v: unknown): v is Fail =>
   typeof v === 'object' && v !== null && (v as { ok?: unknown }).ok === false;
 
+/**
+ * A run() that RETURNED a failure instead of throwing it: { ok:false, error }
+ * at the top level, or { result: { ok:false … } } one level down. It used to go
+ * out as { ok:true, result:{ ok:false } } — a green tick for something that did
+ * not happen. `declined` / `cancelled` keep the declined meaning (the user said
+ * no), so the model stops instead of retrying. null = a real success.
+ */
+function returnedFailure(result: unknown): { error: string; declined: boolean } | null {
+  const pick = (v: unknown): Record<string, unknown> | null =>
+    v && typeof v === 'object' && !Array.isArray(v) && (v as { ok?: unknown }).ok === false ? (v as Record<string, unknown>) : null;
+  const top = result && typeof result === 'object' ? (result as Record<string, unknown>) : null;
+  const f = pick(result) ?? pick(top?.result);
+  if (!f) return null;
+  const declined = f.declined === true || f.cancelled === true;
+  const text = [f.error, f.message, f.note].find((x): x is string => typeof x === 'string' && x.trim() !== '');
+  return {
+    declined,
+    error: text ?? (declined ? 'The user declined — do not retry unless they ask.' : 'The action did not complete.'),
+  };
+}
+
 // ── tool input schemas (mirror the server declarations) ──────────────────────
 
 const S = {
@@ -433,13 +522,34 @@ const S = {
     submit: z.boolean().optional(),
   }),
   select: z.object({ agentId: z.string().min(1), value: z.string() }),
-  waitFor: z.object({ agentId: z.string().min(1), timeoutMs: z.number().int().positive().max(60_000).optional() }),
+  // The server declares a plain optional number; an out-of-range wait is clamped
+  // (see WAIT_MS), not refused — "90000" should wait the max, not fail the call.
+  waitFor: z.object({ agentId: z.string().min(1), timeoutMs: z.number().optional() }),
   scrollTo: z.object({ agentId: z.string().min(1) }),
   upload: z.object({
     agentId: z.string().min(1),
-    attachment: z.union([z.number().int().min(0), z.string().min(1)]).optional(),
+    // '' = the default (the most recent attachment), as resolveOperatorAttachment reads it.
+    attachment: z.union([z.number().int().min(0), z.string()]).optional(),
   }),
 };
+
+/** waitFor's timeout, clamped to what the driver supports. */
+const WAIT_MS = { min: 250, max: 60_000 };
+const clampWait = (ms: number | undefined) =>
+  ms === undefined || !Number.isFinite(ms) ? undefined : Math.min(WAIT_MS.max, Math.max(WAIT_MS.min, Math.round(ms)));
+
+/** "https://<this site>/news?x=1" → "/news?x=1": the model sometimes copies the
+ *  full address of a page on THIS site. Anything else is returned unchanged. */
+function inAppPath(raw: string): string {
+  const p = raw.trim();
+  if (!/^https?:\/\//i.test(p)) return p;
+  try {
+    const u = new URL(p);
+    return u.origin === window.location.origin ? `${u.pathname}${u.search}${u.hash}` || '/' : p;
+  } catch {
+    return p;
+  }
+}
 
 // ── runAction ────────────────────────────────────────────────────────────────
 
@@ -447,7 +557,14 @@ async function runAction(input: unknown): Promise<ActionOutcome> {
   const p = parse(S.runAction, input, 'runAction');
   if (isFail(p)) return p;
 
-  const def = getAction(p.name);
+  // A screen registers its actions only once it has loaded (the magazine editor
+  // after the magazine arrives), so a runAction straight after `navigate` could
+  // find nothing yet. Give a just-loading screen a moment before saying no.
+  let def = getAction(p.name);
+  for (let waited = 0; !def && waited < 4000; waited += 200) {
+    await new Promise((r) => setTimeout(r, 200));
+    def = getAction(p.name);
+  }
   if (!def) {
     const names = listActions().map((a) => a.name);
     return {
@@ -482,7 +599,24 @@ async function runAction(input: unknown): Promise<ActionOutcome> {
     }
     stepId = useOperator.getState().pushStep(`${humanizeActionName(def.name)}…`);
     const result = await def.run(args, ui());
-    useOperator.getState().finishStep(stepId, 'done');
+    const failed = returnedFailure(result);
+    if (failed) {
+      // The line the user reads is id-free; the whole returned object goes to
+      // the model as `detail`, exactly as a thrown actionError's would.
+      const line = scrubIds(failed.error);
+      if (failed.declined) {
+        completeSteps(stepId); // its sub-step lines stop spinning
+        useOperator.getState().finishStep(stepId, 'declined', line);
+      } else failSteps(stepId, line);
+      const detail = jsonSafe(result);
+      return {
+        ok: false,
+        error: failed.error,
+        ...(failed.declined ? { declined: true } : {}),
+        ...(detail === undefined ? {} : { detail }),
+      };
+    }
+    completeSteps(stepId);
     const safe = jsonSafe(result);
     return safe === undefined ? { ok: true } : { ok: true, result: safe };
   } catch (e) {
@@ -547,14 +681,15 @@ async function runTool(name: string, input: unknown, scope: ToolScope): Promise<
       case 'navigate': {
         const p = parse(S.navigate, input, 'navigate');
         if (isFail(p)) return p;
-        if (!p.path.startsWith('/') || p.path.startsWith('//')) {
-          return { ok: false, error: `Only in-app paths starting with "/" can be opened (got "${p.path}").` };
+        const path = inAppPath(p.path);
+        if (!path.startsWith('/') || path.startsWith('//')) {
+          return { ok: false, error: `Only in-app paths starting with "/" can be opened (got "${p.path}"). Other sites are off limits.` };
         }
-        return asStep(`Opening ${shortPageName(p.path)}`, async () => {
+        return asStep(`Opening ${shortPageName(path)}`, async () => {
           // The cursor pointed at an element of the PREVIOUS screen — park it out
           // of sight so it doesn't hover over the new page (or the panel).
           useOperator.getState().setCursor({ visible: false, label: undefined });
-          await ui().navigate(p.path);
+          await ui().navigate(path);
           return {
             ok: true as const,
             path: window.location.pathname + window.location.search,
@@ -619,7 +754,7 @@ async function runTool(name: string, input: unknown, scope: ToolScope): Promise<
         const p = parse(S.waitFor, input, 'waitFor');
         if (isFail(p)) return p;
         return asStep(`Waiting for “${labelForId(p.agentId)}”`, async () => {
-          await ui().waitFor(p.agentId, p.timeoutMs);
+          await ui().waitFor(p.agentId, clampWait(p.timeoutMs));
           return { ok: true as const };
         });
       }

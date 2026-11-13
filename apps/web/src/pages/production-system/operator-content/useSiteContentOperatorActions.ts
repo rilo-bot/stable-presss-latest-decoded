@@ -23,7 +23,7 @@ import { useSponsorStore } from '@/stores/sponsorStore';
 import type { BreakingNewsItem } from '@/types/breakingNews';
 import type { Sponsor } from '@/types/sponsor';
 
-import { clip, has, listWords, resolveOne, settleOptimistic, useLive, waitUntil, watchToasts } from './contentUtils';
+import { clip, has, listWords, resolveOne, settleOptimistic, useLive, waitUntil, watchRecord, watchToasts } from './contentUtils';
 
 const news = () => useBreakingNewsStore.getState().items;
 const sponsors = () => useSponsorStore.getState().sponsors;
@@ -60,12 +60,27 @@ function mustSponsor(q: string): Sponsor {
   return r.hit;
 }
 
-/** Both lists load on mount; an action that runs first waits for them. */
+/** Both lists load on mount; an action that runs first waits for them. A
+ *  list that failed to load must not read as "no headlines" / "no sponsors". */
 async function loaded(ui: UiDriver) {
-  await waitUntil(() => useBreakingNewsStore.getState().loaded && useSponsorStore.getState().loaded, {
+  const ok = await waitUntil(() => useBreakingNewsStore.getState().loaded && useSponsorStore.getState().loaded, {
     timeoutMs: 8000,
     signal: ui.signal,
   });
+  if (!ok) {
+    const failed = [
+      !useBreakingNewsStore.getState().loaded ? 'the ticker' : '',
+      !useSponsorStore.getState().loaded ? 'the sponsors' : '',
+    ].filter(Boolean);
+    throw new Error(`Site Content could not load ${listWords(failed)} — reload the page and try again.`);
+  }
+}
+
+/** A write's server answer, for settleOptimistic: the record was swapped back
+ *  or replaced (watchRecord), or — for a removal, which changes nothing more
+ *  in the store when it succeeds — the store's own success toast showed. */
+function answeredBy(rec: { answered: () => boolean }, toasts: ReturnType<typeof watchToasts>) {
+  return () => rec.answered() || toasts.collect().some((t) => t.type === 'success');
 }
 
 /** Click a headline's eye so it ends up shown (true) or hidden. */
@@ -73,8 +88,13 @@ async function setActive(ui: UiDriver, item: BreakingNewsItem, active: boolean) 
   const cur = news().find((i) => i.id === item.id);
   if (!cur || cur.active === active) return;
   const toasts = watchToasts();
-  await ui.click(`site.headline-toggle-${item.id}`, `${active ? 'Show' : 'Hide'} “${clip(item.text, 40)}”`);
-  await settleOptimistic(ui, () => news().find((i) => i.id === item.id)?.active === active, 'The ticker change', toasts, 500);
+  const rec = watchRecord(useBreakingNewsStore, (st) => st.items.find((i) => i.id === item.id));
+  try {
+    await ui.click(`site.headline-toggle-${item.id}`, `${active ? 'Show' : 'Hide'} “${clip(item.text, 40)}”`);
+    await settleOptimistic(ui, () => news().find((i) => i.id === item.id)?.active === active, 'The ticker change', toasts, 500, rec.answered);
+  } finally {
+    rec.stop();
+  }
 }
 
 export function useSiteContentOperatorActions(input: { editingId: string | null }): void {
@@ -166,17 +186,23 @@ export function useSiteContentOperatorActions(input: { editingId: string | null 
         tagline: a.tagline?.trim() ?? sp.tagline ?? '',
       };
       const toasts = watchToasts();
-      await ui.click('site.sponsor-save', 'Save');
-      await settleOptimistic(
-        ui,
-        () => {
-          const s = sponsors().find((x) => x.id === sp.id);
-          return !!s && s.name === want.name && (s.category ?? '') === want.category && (s.tagline ?? '') === want.tagline;
-        },
-        `Saving ${sp.name}`,
-        toasts,
-        400,
-      );
+      const rec = watchRecord(useSponsorStore, (st) => st.sponsors.find((x) => x.id === sp.id));
+      try {
+        await ui.click('site.sponsor-save', 'Save');
+        await settleOptimistic(
+          ui,
+          () => {
+            const s = sponsors().find((x) => x.id === sp.id);
+            return !!s && s.name === want.name && (s.category ?? '') === want.category && (s.tagline ?? '') === want.tagline;
+          },
+          `Saving ${sp.name}`,
+          toasts,
+          400,
+          rec.answered,
+        );
+      } finally {
+        rec.stop();
+      }
       ui.flash(`site.sponsor-${sp.id}`);
       return { ok: true, sponsor: readContent().sponsors.find((s) => s.id === sp.id) };
     },
@@ -195,8 +221,13 @@ export function useSiteContentOperatorActions(input: { editingId: string | null 
       await loaded(ui);
       const sp = mustSponsor(a.sponsor);
       const toasts = watchToasts();
-      await ui.click(`site.sponsor-remove-${sp.id}`, `Delete ${sp.name}`);
-      await settleOptimistic(ui, () => !sponsors().some((s) => s.id === sp.id), `Removing ${sp.name}`, toasts);
+      const rec = watchRecord(useSponsorStore, (st) => st.sponsors.find((s) => s.id === sp.id));
+      try {
+        await ui.click(`site.sponsor-remove-${sp.id}`, `Delete ${sp.name}`);
+        await settleOptimistic(ui, () => !sponsors().some((s) => s.id === sp.id), `Removing ${sp.name}`, toasts, 1200, answeredBy(rec, toasts));
+      } finally {
+        rec.stop();
+      }
       return { ok: true, removed: sp.name, sponsors: readContent().sponsors.map((s) => s.name) };
     },
   });
@@ -268,8 +299,13 @@ export function useSiteContentOperatorActions(input: { editingId: string | null 
       await loaded(ui);
       const item = mustHeadline(a.headline);
       const toasts = watchToasts();
-      await ui.click(`site.headline-remove-${item.id}`, 'Delete');
-      await settleOptimistic(ui, () => !news().some((i) => i.id === item.id), 'Deleting the headline', toasts);
+      const rec = watchRecord(useBreakingNewsStore, (st) => st.items.find((i) => i.id === item.id));
+      try {
+        await ui.click(`site.headline-remove-${item.id}`, 'Delete');
+        await settleOptimistic(ui, () => !news().some((i) => i.id === item.id), 'Deleting the headline', toasts, 1200, answeredBy(rec, toasts));
+      } finally {
+        rec.stop();
+      }
       return { ok: true, removed: item.text, ...readContent() };
     },
   });

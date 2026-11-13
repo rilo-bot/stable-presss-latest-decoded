@@ -13,6 +13,7 @@
 import { shortPageName } from './pageContext';
 import { humanizeActionName } from '../contracts';
 import { looksLikeId, nameFromAgentId, scrubIds } from '../runtime/humanRef';
+import { findAgentEl, labelOf } from '../runtime/dom';
 
 type Input = Record<string, unknown> | undefined;
 
@@ -38,8 +39,12 @@ export function humanise(name: string): string {
 /** A data-agent-id → a short human name: "mag.share-button" → "Share". */
 export function anchorName(agentId: string | undefined, fallbackLabel?: string): string {
   if (fallbackLabel) return scrubIds(fallbackLabel, 'this item');
+  // The element's own label while it is on screen ("Team Members" for ref:8,
+  // "Remove" for team.remove-<id>) — the same words the runtime's step uses.
   // Ids inside the anchor ("team.remove-6650f1a2…") never reach the step line.
-  return nameFromAgentId(agentId, 'an element');
+  const el = agentId && typeof document !== 'undefined' ? findAgentEl(agentId) : null;
+  const live = el ? labelOf(el) : '';
+  return live ? scrubIds(live, 'this item') : nameFromAgentId(agentId, 'an element');
 }
 
 /** The label an output may carry back (runtime echoes the element label). */

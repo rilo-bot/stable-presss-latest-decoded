@@ -60,6 +60,23 @@ function installHook() {
 const _cache = new Map<string, string>();
 const _CACHE_MAX = 1000;
 
+// Markdown emphasis in AI-written magazine copy ("Behind the *Thoroughbred*") printed
+// as literal asterisks. Same rule as the server's write path
+// (apps/server/src/lib/magazineV2/sanitize.ts): a run wrapped tight on both sides
+// becomes <em>/<strong>; a footnote star or "5*" is left alone.
+const MD_STRONG = /(^|[\s(“"'‘>])\*\*([^*\s](?:[^*\n]*?[^*\s])?)\*\*(?=$|[\s).,;:!?”"'’<])/g;
+const MD_EM = /(^|[\s(“"'‘>])\*([^*\s](?:[^*\n]*?[^*\s])?)\*(?=$|[\s).,;:!?”"'’<])/g;
+
+export function markdownEmphasisToHtml(s: string): string {
+  if (!s || !s.includes('*')) return s;
+  return s.replace(MD_STRONG, '$1<strong>$2</strong>').replace(MD_EM, '$1<em>$2</em>');
+}
+
+/** A magazine text element's HTML, ready to render: emphasis converted, then sanitized. */
+export function pageTextHtml(content: string): string {
+  return sanitizeRichText(markdownEmphasisToHtml(content ?? ''));
+}
+
 /** Sanitize inline rich text down to the safe formatting allowlist. */
 export function sanitizeRichText(html: string): string {
   const key = html ?? '';

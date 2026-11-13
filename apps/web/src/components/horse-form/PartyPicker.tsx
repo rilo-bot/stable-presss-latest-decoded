@@ -160,7 +160,7 @@ export function PartyPicker({
         {/* Click-away dismissal */}
         {open && (
           <div
-            className="fixed inset-0 z-40"
+            className="fixed inset-stablehand z-40"
             onClick={() => setOpen(false)}
             aria-hidden="true"
           />

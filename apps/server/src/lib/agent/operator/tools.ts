@@ -114,12 +114,25 @@ export function buildOperatorTools(account: AccountUser, authHeader?: string): T
   async function selfApi(method: string, path: string, payload?: unknown) {
     const headers: Record<string, string> = { 'content-type': 'application/json' }
     if (authHeader) headers.authorization = authHeader
-    const r = await fetch(`${SELF_BASE}${path}`, {
-      method,
-      headers,
-      body: payload === undefined ? undefined : JSON.stringify(payload),
-      signal: AbortSignal.timeout(20_000),
-    })
+    let r: Response
+    try {
+      r = await fetch(`${SELF_BASE}${path}`, {
+        method,
+        headers,
+        body: payload === undefined ? undefined : JSON.stringify(payload),
+        signal: AbortSignal.timeout(20_000),
+      })
+    } catch (err) {
+      // A timeout / refused loopback used to throw out of execute, and the model
+      // read a bare "fetch failed". Answer like a route would, so every tool's
+      // `!res.ok` branch reports it in words.
+      const timedOut = err instanceof Error && (err.name === 'TimeoutError' || err.name === 'AbortError')
+      return {
+        ok: false,
+        status: 0,
+        data: { error: timedOut ? 'The app server took too long to answer — try again in a moment.' : 'Could not reach the app server — try again in a moment.' } as unknown,
+      }
+    }
     let data: unknown = null
     const text = await r.text()
     try {

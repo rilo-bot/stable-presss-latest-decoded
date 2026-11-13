@@ -14,7 +14,8 @@
 
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
-import { hasToolCall, stepCountIs } from 'ai'
+import { hasToolCall, stepCountIs, NoSuchToolError, InvalidToolInputError } from 'ai'
+import { repairToolNames } from '../src/lib/agent/repairMessages.js'
 import {
   OFFER_CHOICES_TOOL,
   offerChoicesInputSchema,
@@ -117,7 +118,7 @@ test('parseChoices keeps the plan as asked', () => {
 test('parseChoices cleans and clamps whatever the model sends', () => {
   assert.deepEqual(parseChoices(undefined), [])
   assert.deepEqual(parseChoices({ questions: 'x' }), [])
-  assert.deepEqual(parseChoices({ questions: [{ question: 'Empty', options: ['', '   ', 7] }] }), [])
+  assert.deepEqual(parseChoices({ questions: [{ question: 'Empty', options: ['', '   ', null] }] }), [])
   const qs = parseChoices({
     questions: [
       { id: 'a', question: '  Pick   one ', options: [' Yes ', 'yes', 'No', 'A', 'B', 'C', 'D', 'E'] },
@@ -217,4 +218,54 @@ test('the chat must not auto-continue after a turn that ended on pills', () => {
   }
   assert.equal(lastStepOfferedChoices([later]), false)
   assert.equal(lastStepOfferedChoices([]), false)
+})
+
+test('near-miss shapes from the model still become buttons (live demo, 2026-11-13)', () => {
+  // options written as objects, `label` instead of `question`, numbers as answers
+  const qs = parseChoices({
+    questions: [
+      { label: 'Title', options: [{ label: 'Turf & Terrace' }, { text: 'Pick one for me' }] },
+      { question: 'Pages', options: [4, 6, 8] },
+    ],
+  })
+  assert.deepEqual(qs.map((q) => [q.label, q.options]), [
+    ['Title', ['Turf & Terrace', 'Pick one for me']],
+    ['Pages', ['4', '6', '8']],
+  ])
+  // a single flat question, and a bare array of questions
+  assert.deepEqual(parseChoices({ question: 'Next step', options: ['Go ahead', 'Change something'] })[0]?.options, ['Go ahead', 'Change something'])
+  assert.equal(parseChoices([{ question: 'Next step', choices: ['Go ahead'] }])[0]?.options[0], 'Go ahead')
+  // the tool however it is spelled is never a plain step row
+  assert.equal(isChoicesPart({ type: 'tool-offerChoices' }), true)
+  assert.equal(isChoicesPart({ type: 'dynamic-tool', toolName: 'Offer-Choices' }), true)
+})
+
+test('the server tool accepts the same near-misses instead of failing the call', () => {
+  const r = offerChoicesInputSchema.safeParse({
+    questions: [{ label: 'Title', options: [{ label: 'Turf & Terrace' }, 'Pick one for me'], extra: true }],
+  })
+  assert.equal(r.success, true)
+  assert.equal(countUsableQuestions(r.data!), 1)
+  // numbers as answers ("How many pages?") — the web card shows them, so the call must not fail
+  const n = offerChoicesInputSchema.safeParse({ questions: [{ question: 'Pages', options: [4, 6, 8] }] })
+  assert.equal(n.success, true)
+  assert.equal(countUsableQuestions(n.data!), 1)
+})
+
+test('a misspelt tool NAME is renamed, so a misspelt offer_choices still ends the turn', async () => {
+  const tools = { offer_choices: {}, readScreen: {}, runAction: {}, findStaff: {} } as never
+  const repair = repairToolNames(tools)
+  const call = (toolName: string) => ({ type: 'tool-call', toolCallId: 'c1', toolName, input: '{}' }) as never
+  const noSuch = (toolName: string) => new NoSuchToolError({ toolName, availableTools: Object.keys(tools) })
+  const run = (toolName: string, error: unknown = noSuch(toolName)) =>
+    repair({ toolCall: call(toolName), error, tools, messages: [], system: undefined, instructions: undefined, inputSchema: async () => ({}) } as never)
+  assert.equal((await run('offerChoices'))?.toolName, OFFER_CHOICES_TOOL)
+  assert.equal((await run('Offer-Choices'))?.toolName, OFFER_CHOICES_TOOL)
+  assert.equal((await run('read_screen'))?.toolName, 'readScreen')
+  // the renamed call now satisfies the route's stop condition
+  const renamed = await run('offerChoices')
+  assert.equal(hasToolCall(OFFER_CHOICES_TOOL)({ steps: [{ toolCalls: [renamed] }] } as never), true)
+  // anything that is not a near miss stays invalid, exactly as before
+  assert.equal(await run('deleteEverything'), null)
+  assert.equal(await run('offer_choices', new InvalidToolInputError({ toolName: 'offer_choices', toolInput: '{}', cause: new Error('x') })), null)
 })

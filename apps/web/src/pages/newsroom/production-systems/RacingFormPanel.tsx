@@ -12,7 +12,7 @@ export function RacingFormPanel({ racingFormOpen, editRacing, onClose, onSaved }
   if (!racingFormOpen) return null;
   return (
     <div
-      className="fixed inset-0 z-50 flex"
+      className="fixed inset-stablehand z-50 flex"
       role="dialog"
       aria-modal="true"
       aria-label={editRacing ? 'Edit Racing Record' : 'Add Racing Record'}

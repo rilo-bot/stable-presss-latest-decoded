@@ -23,7 +23,8 @@ import {
 import { cn } from '@/lib/utils';
 import { Button } from '@/components/ui/button';
 import { EmptyState } from '@/components/EmptyState';
-import { useCan } from '@/lib/permissions';
+import { canOn, useCan } from '@/lib/permissions';
+import { useAuthStore } from '@/stores/authStore';
 import { useBlogStore, type BlogListFilters } from '@/stores/blogStore';
 import { useBlogStudioUi } from '@/stores/blogStudioUiStore';
 import type { BlogSummary } from '@/types/blog';
@@ -235,6 +236,11 @@ export default function BlogsScreen() {
   const canCreate = useCan('blogs.create');
   const canDelete = useCan('blogs.delete');
   const canPublish = useCan('blogs.publish');
+  const myId = useAuthStore((s) => s.currentUser?.id);
+  // The server's blog write gate: with 'own' scope only posts this user created
+  // (createdByUserId). Publishing goes through the edit gate. Unknown creator →
+  // the role alone decides here and the server has the last word.
+  const ownsPost = (post: BlogSummary) => post.createdByUserId === undefined || post.createdByUserId === myId;
 
   const [tab, setTab] = useState<Tab>('all');
   const [search, setSearch] = useState('');
@@ -284,8 +290,8 @@ export default function BlogsScreen() {
   const actionsFor = (post: BlogSummary) => (
     <RowActions
       post={post}
-      canPublish={canPublish}
-      canDelete={canDelete}
+      canPublish={canPublish && canOn('blogs.edit', ownsPost(post))}
+      canDelete={canDelete && canOn('blogs.delete', ownsPost(post))}
       busy={busyId === post.id}
       onTogglePublish={() => void togglePublish(post)}
       onDelete={() => void confirmDelete(post)}

@@ -18,7 +18,7 @@ import { db } from '../db.js';
 import { COL } from './collections.js';
 import { safeUrl } from './url.js';
 import { normalizeElements } from './writePipeline.js';
-import { MAX_ELEMENTS_PER_PAGE, type MagazineElement } from './model.js';
+import { MAX_ELEMENTS_PER_PAGE, parseColor, type MagazineElement } from './model.js';
 import { fetchAndStoreStock, isStockConfigured } from './stock.js';
 // The other half of the photo ladder: FIND one (above) or MAKE one (here).
 import { generateAndStoreImage, isImageGenConfigured, orientationForBox } from './imagegen.js';
@@ -83,7 +83,8 @@ function describeElement(e: MagazineElement, selectedId?: string): string {
     const plain = e.text.content.replace(/<[^>]+>/g, '').trim().slice(0, 60);
     detail = `${e.text.role} "${plain}" ${e.text.color} ${Math.round(e.text.fontSize)}px`;
   } else if (e.type === 'image' && e.image) detail = `img ${e.image.url ? 'set' : 'empty'} fit:${e.image.fit}`;
-  else if (e.type === 'shape' && e.shape) detail = `fill ${e.shape.fill}`;
+  else if (e.type === 'shape' && e.shape)
+    detail = `fill ${e.shape.fill}${typeof e.shape.opacity === 'number' && e.shape.opacity < 1 ? ` at ${Math.round(e.shape.opacity * 100)}% opacity` : ' (solid)'}`;
   else if (e.type === 'qr' && e.qr) detail = `qr ${e.qr.url || '(no link)'}`;
   return `- #${e.id} ${e.type} ${detail} ${box}${tag}`;
 }
@@ -393,7 +394,9 @@ function buildTools(ctx: AgentCtx, dims: { width: number; height: number }, canE
     }),
 
     set_element_style: tool({
-      description: 'Change a text element\'s typography (fontSize/fontWeight/color hex/align/lineHeight) or a shape element\'s fill (hex).',
+      description:
+        "Change a text element's typography (fontSize/fontWeight/color hex/align/lineHeight), or a shape element's fill (#rrggbb) and opacity. " +
+        'For a see-through overlay or scrim over a photo use a dark fill with opacity 0.35–0.6 — never a solid band over the photo.',
       inputSchema: z.object({
         elementId: z.string(),
         fontSize: z.number().optional(),
@@ -401,12 +404,24 @@ function buildTools(ctx: AgentCtx, dims: { width: number; height: number }, canE
         color: z.string().optional(),
         align: z.enum(['left', 'center', 'right']).optional(),
         lineHeight: z.number().optional(),
-        fill: z.string().optional(),
+        fill: z.string().optional().describe('shapes: #rrggbb'),
+        opacity: z.number().min(0).max(1).optional().describe('shapes: 0 = invisible, 1 = solid; 0.35–0.6 for a scrim over a photo'),
       }),
-      execute: async ({ elementId, fill, ...text }) => {
+      execute: async ({ elementId, fill, opacity, ...text }) => {
         const el = find(ctx, elementId);
         if (!el) return { ok: false, error: `No element #${elementId}.` };
-        if (el.type === 'shape' && fill) return stageUpdate(elementId, { shape: { fill } }, 'Recoloured the shape');
+        if (el.type === 'shape' && (fill || opacity !== undefined)) {
+          // Both fields, so neither is lost when the shape is restyled. A fill written
+          // with its own alpha ("rgba(0,0,0,0.4)") also becomes opacity (model.ts).
+          const shape: Record<string, unknown> = { fill: fill ?? el.shape?.fill ?? '#000000' };
+          // A fill that carries its own alpha sets the transparency by itself (reset the
+          // stored opacity to 1 so the two don't multiply); a plain #rrggbb recolour
+          // keeps whatever opacity the shape already had.
+          const fillAlpha = fill ? (parseColor(fill)?.alpha ?? 1) : 1;
+          const keep = opacity ?? (fill && fillAlpha < 1 ? 1 : fill ? undefined : el.shape?.opacity);
+          if (keep !== undefined) shape.opacity = keep;
+          return stageUpdate(elementId, { shape }, opacity !== undefined && !fill ? 'Changed the shape opacity' : 'Recoloured the shape');
+        }
         if (el.type === 'text') {
           const t: Record<string, unknown> = {};
           for (const [k, v] of Object.entries(text)) if (v !== undefined) t[k] = v;
@@ -471,14 +486,15 @@ function buildTools(ctx: AgentCtx, dims: { width: number; height: number }, canE
         x: z.number(), y: z.number(), w: z.number(), h: z.number(),
         content: z.string().optional().describe('text elements: the copy'),
         color: z.string().optional().describe('text color / shape fill, hex'),
+        opacity: z.number().min(0).max(1).optional().describe('shapes: 0–1; 0.35–0.6 for a see-through scrim over a photo'),
         url: z.string().optional().describe('qr destination'),
       }),
-      execute: async ({ type, x, y, w, h, content, color, url }) => {
+      execute: async ({ type, x, y, w, h, content, color, opacity, url }) => {
         if (hasLayout(ctx)) return { ok: false, error: LAYOUT_CLASH };
         if (ctx.working.length >= MAX_ELEMENTS_PER_PAGE) return { ok: false, error: 'The page is full.' };
         const partial: Record<string, unknown> = { type, x, y, w, h, source: 'ai-agent' };
         if (type === 'text') partial.text = { content: (content ?? 'Text').slice(0, 8000), color: color || '#111111', fontSize: 40, maxFontSize: 40, autoFit: 'shrink' };
-        if (type === 'shape') partial.shape = { fill: color || '#0a2342' };
+        if (type === 'shape') partial.shape = { fill: color || '#0a2342', ...(opacity !== undefined ? { opacity } : {}) };
         if (type === 'qr') partial.qr = { url: safeUrl(url ?? '') };
         const [clean] = normalizeElements([partial], dims);
         if (!clean) return { ok: false, error: 'Could not build that element.' };

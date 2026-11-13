@@ -228,3 +228,22 @@ test('freeBands reports zero, not a negative, for content that escapes the page'
   const b = freeBands([{ id: 'x', type: 'shape', x: -10, y: -10, w: PAGE_W + 20, h: PAGE_H + 20, rotation: 0, zIndex: 0, locked: false, source: 'manual' } as MagazineElement]);
   assert.deepEqual(b, { top: 0, bottom: 0, left: 0, right: 0 });
 });
+
+test('a SHORT page keeps its folio at the foot of the page, not under the last line', () => {
+  // Content ends at ~80% of the height (user report 2026-11-13: the rule and page
+  // number floated mid-page, straight under the editor's sign-off).
+  const p = page([{ x: 80, y: 120, w: PAGE_W - 160, h: Math.round(PAGE_H * 0.8) - 120 }]);
+  const furniture = pageFurniture(p, ctx());
+  const folio = furniture.find((e) => e.id === FOLIO_ELEMENT_ID);
+  assert.ok(folio, 'the page still gets a folio');
+  assert.ok(folio!.y + folio!.h > PAGE_H - 120, `folio ends near the page foot (ends at ${folio!.y + folio!.h} of ${PAGE_H})`);
+  assert.ok(folio!.y + folio!.h <= PAGE_H, 'and stays on the page');
+});
+
+test('a page whose content runs to the margin keeps the folio hugging the content', () => {
+  const contentBottom = PAGE_H - 70;
+  const p = page([{ x: 80, y: 120, w: PAGE_W - 160, h: contentBottom - 120 }]);
+  const rule = pageFurniture(p, ctx()).find((e) => e.type === 'shape' && e.y >= contentBottom);
+  assert.ok(rule, 'a footer rule exists below the content');
+  assert.ok(rule!.y - contentBottom < 20, `the rule sits right under the content (gap ${rule!.y - contentBottom}px)`);
+});

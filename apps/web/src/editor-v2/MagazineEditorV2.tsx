@@ -256,6 +256,37 @@ export default function MagazineEditorV2() {
     return () => window.removeEventListener('resize', fit);
   }, [isPhone, s.loading]);
 
+  // Tablet / desktop: when the canvas gets NARROWER than the page — The Stable
+  // Hand docking beside the studio (it pushes the studio left), a side pane
+  // opening, the window shrinking — zoom out just enough to keep the whole page
+  // in view (it is centred, so an overflowing page lost its left edge). When the
+  // room comes back, return to the zoom the user had. Width changes only, so a
+  // manual zoom is never fought.
+  useEffect(() => {
+    const el = canvasRef.current;
+    if (isPhone || !el || typeof ResizeObserver === 'undefined') return;
+    const MARGIN = 48;
+    let lastW = 0;
+    let restoreTo: number | null = null;
+    const ro = new ResizeObserver(() => {
+      const w = el.clientWidth;
+      if (!w || w === lastW) return;
+      const grew = w > lastW;
+      lastW = w;
+      const room = w - MARGIN;
+      const st = useEditorStore.getState();
+      if (st.zoomWidth > room) {
+        if (restoreTo === null) restoreTo = st.zoomWidth;
+        st.setZoomWidth(room);
+      } else if (grew && restoreTo !== null) {
+        st.setZoomWidth(Math.min(restoreTo, room));
+        if (restoreTo <= room) restoreTo = null;
+      }
+    });
+    ro.observe(el);
+    return () => ro.disconnect();
+  }, [isPhone, s.loading]);
+
   // Hide the global Stablehand launcher while the v2 editor is open — it has
   // its own docked assistant (AiPanel). Same pattern as the v1 MagazineEditor.
   useEffect(() => {
@@ -300,7 +331,12 @@ export default function MagazineEditorV2() {
   const onBodyMove = (e: React.PointerEvent) => {
     if (!dragging.current) return;
     if (dragging.current === 'left') setPanes((p) => ({ ...p, leftW: Math.max(PANE_MIN, Math.min(PANE_MAX, e.clientX)) }));
-    else setPanes((p) => ({ ...p, rightW: Math.max(PANE_MIN, Math.min(PANE_MAX, window.innerWidth - e.clientX)) }));
+    // From the studio's own right edge, not the window's: The Stable Hand can be
+    // docked to the right of the studio (index.css, "THE STABLE HAND DOCK").
+    else {
+      const right = (e.currentTarget as HTMLElement).getBoundingClientRect().right;
+      setPanes((p) => ({ ...p, rightW: Math.max(PANE_MIN, Math.min(PANE_MAX, right - e.clientX)) }));
+    }
   };
   const endDivider = () => { dragging.current = null; };
   const divider = 'w-1 flex-shrink-0 cursor-col-resize bg-studio-raise hover:bg-[var(--gold-bright)]/60';
@@ -399,14 +435,14 @@ export default function MagazineEditorV2() {
     // 'finishing' lines, and the INDETERMINATE track. A determinate bar here
     // would be inventing a proportion out of nothing.
     return (
-      <div className="fixed inset-0 z-[60] bg-studio-bg text-studio-ink">
+      <div className="fixed inset-stablehand z-[60] bg-studio-bg text-studio-ink">
         <BuildProgress issue={null} title="Opening the studio" />
       </div>
     );
   }
   if (s.error) {
     return (
-      <div className="fixed inset-0 z-[60] flex items-center justify-center bg-studio-bg text-red-300">
+      <div className="fixed inset-stablehand z-[60] flex items-center justify-center bg-studio-bg text-red-300">
         {s.error}
         <button onClick={() => navigate('/production-system/magazine-v2')} className="ml-3 underline">Back</button>
       </div>
@@ -464,7 +500,7 @@ export default function MagazineEditorV2() {
   const phoneSheet = 'absolute inset-x-0 bottom-0 flex flex-col overflow-hidden rounded-t-xl border-t border-studio-edge shadow-[0_-12px_32px_rgba(0,0,0,0.45)]';
 
   return (
-    <div className="fixed inset-0 z-[60] flex flex-col bg-studio-bg">
+    <div className="fixed inset-stablehand z-[60] flex flex-col bg-studio-bg">
       {/* ── Toolbar: THREE ZONES, not one row of everything ──────────────────
           It was 33 controls in a single undifferentiated strip, which put Delete
           magazine four buttons from Undo — destructive, routine and rare all

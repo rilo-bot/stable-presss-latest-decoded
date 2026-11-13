@@ -102,7 +102,7 @@ export function ReviewBoard({ onClose }: { onClose: () => void }) {
   const nothingToReview = isOwner && columns.submitted.length === 0 && !pages.some((p) => p.approvalStale);
 
   return (
-    <div className="fixed inset-0 z-[70] flex items-center justify-center bg-black/60 p-4" onMouseDown={onClose}>
+    <div className="fixed inset-stablehand z-[70] flex items-center justify-center bg-black/60 p-4" onMouseDown={onClose}>
       <div
         className="flex max-h-[88vh] w-full max-w-5xl flex-col overflow-hidden rounded-md border border-studio-hair bg-studio-panel text-studio-ink shadow-2xl"
         onMouseDown={(e) => e.stopPropagation()}

@@ -224,7 +224,7 @@ export default function ArticleDetail() {
 
       {/* ── Inline-edit toolbar (admins) ──────────────── */}
       {editing && (
-        <div className="fixed bottom-6 left-1/2 z-50 -translate-x-1/2">
+        <div className="fixed bottom-6 left-mid-stablehand z-50 -translate-x-1/2">
           <div className="flex items-center gap-3 rounded-full border border-border/60 bg-background/95 px-3 py-2 shadow-xl backdrop-blur">
             <span className="hidden sm:flex items-center gap-1.5 pl-2 text-[11px] font-semibold uppercase tracking-[0.1em] text-primary">
               <Pencil size={12} />

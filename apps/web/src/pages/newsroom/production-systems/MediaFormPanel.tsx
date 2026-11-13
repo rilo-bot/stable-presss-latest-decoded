@@ -13,7 +13,7 @@ export function MediaFormPanel({ mediaFormOpen, editMedia, onClose, onSaved }: M
   if (!mediaFormOpen) return null;
   return (
     <div
-      className="fixed inset-0 z-50 flex"
+      className="fixed inset-stablehand z-50 flex"
       role="dialog"
       aria-modal="true"
       aria-label={editMedia ? 'Edit Media Record' : 'Add Media Record'}

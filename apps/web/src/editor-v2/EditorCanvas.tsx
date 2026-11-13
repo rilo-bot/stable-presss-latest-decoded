@@ -14,7 +14,7 @@
 
 import React, { useEffect, useRef, useState, type CSSProperties } from 'react';
 import { Move, Wand2, WandSparkles } from 'lucide-react';
-import { sanitizeRichText } from '@/lib/htmlInline';
+import { pageTextHtml } from '@/lib/htmlInline';
 import { useEditorStore } from './store';
 import { ShimmerText } from './BuildProgress';
 import { IssuePageCanvas } from './IssuePageCanvas';
@@ -130,7 +130,7 @@ function TextEditingOverlay({
     if (html == null) return;
     const cur = useEditorStore.getState().page?.elements.find((x) => x.id === element.id);
     if (!cur || cur.type !== 'text' || !cur.text) return;
-    if (sanitizeRichText(cur.text.content) !== html) void commit(element.id, { text: { ...cur.text, content: html } }, before.current);
+    if (pageTextHtml(cur.text.content) !== html) void commit(element.id, { text: { ...cur.text, content: html } }, before.current);
   };
 
   // Seed the DOM once, focus, drop the caret at the end. Never write innerHTML
@@ -138,7 +138,7 @@ function TextEditingOverlay({
   useEffect(() => {
     const el = ref.current;
     if (!el) return;
-    el.innerHTML = sanitizeRichText(t.content);
+    el.innerHTML = pageTextHtml(t.content);
     el.focus();
     const r = document.createRange();
     r.selectNodeContents(el);

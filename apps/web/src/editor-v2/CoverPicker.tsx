@@ -83,7 +83,7 @@ export function CoverPicker({ open, onClose }: { open: boolean; onClose: () => v
     >{label}</button>;
 
   return (
-    <div className="fixed inset-0 z-[70] flex items-center justify-center bg-black/60 p-4" onClick={onClose}>
+    <div className="fixed inset-stablehand z-[70] flex items-center justify-center bg-black/60 p-4" onClick={onClose}>
       <div
         className="flex max-h-[80vh] w-[560px] max-w-full flex-col overflow-hidden rounded-lg border border-studio-edge bg-studio-panel shadow-2xl"
         onClick={(e) => e.stopPropagation()}

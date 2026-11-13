@@ -14,7 +14,7 @@
 // sets processingError — same rule as store.generatePages).
 // ---------------------------------------------------------------------------
 
-import { registerJobKind, startJob, type JobPollResult, type OperatorJob } from '@/agent/operator/runtime/jobs';
+import { getJobById, registerJobKind, startJob, type JobPollResult, type OperatorJob } from '@/agent/operator/runtime/jobs';
 import * as api from '../api';
 import { buildStatus } from '../buildStatus';
 
@@ -72,6 +72,28 @@ registerJobKind(MAGAZINE_BUILD_JOB, (raw, job) => {
   };
 });
 
+/** The background watch's id for a magazine (one watch per magazine at a time). */
+export const magazineBuildJobId = (magazineId: string) => `${MAGAZINE_BUILD_JOB}:${magazineId}`;
+
+/**
+ * Wait (briefly) until the watch of this magazine's PREVIOUS build has noticed
+ * that build ended. The watch polls every few seconds, so right after a build
+ * finishes it can still read "running" — and startJob() re-joins a running job
+ * of the same id instead of starting a new one. A new build started in that gap
+ * was silently adopted by the old watch: its params (the old page count) and,
+ * when magazine.waitForGeneration had already marked it delivered, NO
+ * [job-update] at all for the new pages (seen in the 7-page batch flow).
+ * Call it BEFORE starting the next build — once the server is building again,
+ * the old watch would read the new build as its own.
+ */
+export async function settlePreviousBuildJob(magazineId: string, signal?: AbortSignal, timeoutMs = 9000): Promise<void> {
+  const end = Date.now() + timeoutMs;
+  while (getJobById(magazineBuildJobId(magazineId))?.status === 'running' && Date.now() < end) {
+    if (signal?.aborted) throw new DOMException('The Stable Hand was stopped.', 'AbortError');
+    await new Promise((r) => setTimeout(r, 250));
+  }
+}
+
 /** Start (or re-join) the background watch of a magazine's build. */
 export function startMagazineBuildJob(opts: {
   magazineId: string;
@@ -87,7 +109,7 @@ export function startMagazineBuildJob(opts: {
     requested: opts.requested,
   };
   return startJob({
-    id: `${MAGAZINE_BUILD_JOB}:${opts.magazineId}`,
+    id: magazineBuildJobId(opts.magazineId),
     kind: MAGAZINE_BUILD_JOB,
     label: opts.title?.trim() || 'New magazine',
     verb: opts.mode === 'add' ? 'Adding pages' : 'Building pages',

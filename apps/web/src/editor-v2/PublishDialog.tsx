@@ -46,7 +46,7 @@ export function PublishDialog({ onClose, onPublished }: { onClose: () => void; o
   };
 
   return (
-    <div className="fixed inset-0 z-[70] flex items-center justify-center bg-black/60 p-4" onMouseDown={onClose}>
+    <div className="fixed inset-stablehand z-[70] flex items-center justify-center bg-black/60 p-4" onMouseDown={onClose}>
       <div
         className="flex max-h-[85vh] w-full max-w-md flex-col overflow-hidden rounded-md border border-studio-hair bg-studio-panel text-studio-ink shadow-2xl"
         onMouseDown={(e) => e.stopPropagation()}

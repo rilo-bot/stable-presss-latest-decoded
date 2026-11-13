@@ -24,6 +24,7 @@ import { useCallback, useEffect, useId, useLayoutEffect, useRef, useState } from
 import { createPortal } from 'react-dom';
 import { Check, ChevronDown, Loader2 } from 'lucide-react';
 import { roleIcon } from '@/lib/roleDisplay';
+import { stablehandReserve } from '@/lib/stablehandDock';
 import { cn } from '@/lib/utils';
 
 export interface RoleOption {
@@ -113,12 +114,14 @@ export function RoleSelect({
       setOpen(false);
       return;
     }
-    const width = Math.min(Math.max(r.width, MIN_WIDTH), window.innerWidth - GUTTER * 2);
+    // The site's right edge: The Stable Hand may be docked beside it.
+    const viewW = window.innerWidth - stablehandReserve();
+    const width = Math.min(Math.max(r.width, MIN_WIDTH), viewW - GUTTER * 2);
     const height = list?.offsetHeight ?? 0;
     const roomBelow = window.innerHeight - r.bottom - GAP - GUTTER;
     const roomAbove = r.top - GAP - GUTTER;
     const above = height > roomBelow && roomAbove > roomBelow;
-    const left = Math.min(Math.max(GUTTER, r.left), window.innerWidth - width - GUTTER);
+    const left = Math.min(Math.max(GUTTER, r.left), viewW - width - GUTTER);
     const top = above ? Math.max(GUTTER, r.top - GAP - height) : r.bottom + GAP;
     setPos({ top, left, width, above });
   }, []);

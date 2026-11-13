@@ -8,6 +8,7 @@ import { DraftRestoredHint } from './DraftRestoredHint';
 import type { RacingEntry, RaceStatus } from '@/types/racingEntry';
 import { RACE_STATUSES } from '@/types/racingEntry';
 import { Flag, ChevronDown, X, AlertCircle } from 'lucide-react';
+import { STABLEHAND_INSET } from '@/lib/stablehandDock';
 
 interface RacingDraft {
   selectedHorseId: string;
@@ -528,7 +529,7 @@ export function RacingDataForm({ horseId, initial, compact = false, onSave, onCa
 
   /* Full-screen dialog mode */
   return (
-    <div style={{ position: 'fixed', inset: 0, background: 'rgba(10,24,15,0.88)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 1000, padding: '20px' }}>
+    <div style={{ position: 'fixed', inset: STABLEHAND_INSET, background: 'rgba(10,24,15,0.88)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 1000, padding: '20px' }}>
       <div data-agent-id="reg.racing-form" style={{ width: '100%', maxWidth: 720, maxHeight: '92vh', display: 'flex', flexDirection: 'column', border: '2px solid var(--gold-mid)', borderRadius: 4, overflow: 'hidden', boxShadow: '0 0 0 1px var(--gold-dark), 0 20px 60px rgba(0,0,0,0.9)', ...serifStyle }}>
         {formHeader}
         {formBody}

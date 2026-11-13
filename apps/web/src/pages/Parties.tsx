@@ -1,4 +1,4 @@
-import { useState, useMemo, useEffect } from 'react'
+import { useState, useMemo } from 'react'
 import { useNavigate } from 'react-router-dom';
 import { Plus, Search, User, Edit, Trash, Users, MapPin, Globe, CalendarDays } from 'lucide-react';
 import { motion } from 'framer-motion';
@@ -202,12 +202,11 @@ const FILTER_ROLES: Array<{ value: PartyRole | 'all'; label: string }> = [
 
 /* ── Page ─────────────────────────────────────── */
 export default function Parties() {
-  // === auto fetch-on-mount (backend planner) ===
-  const fetchParties = usePartyStore((s) => s.fetchParties);
-  useEffect(() => {
-    fetchParties();
-  }, [fetchParties]);
-  // === end auto fetch-on-mount ===
+  // Both halves of the register: `people` (who someone is) AND `parties` (their
+  // role edges). Fetching only the edges left the join empty on a direct visit
+  // or reload — the whole directory (and The Stable Hand's site.searchDirectory)
+  // showed nobody until some other page had happened to load the people.
+  useLoadRegister();
 
   const parties = useRegister();
   const removeParty = usePartyStore((s) => s.removeParty);

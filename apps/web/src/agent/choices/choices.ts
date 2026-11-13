@@ -49,19 +49,60 @@ const clip = (s: string, n: number): string => (s.length > n ? `${s.slice(0, n -
  * unusable (no options, blanks, duplicates) and clamps counts and lengths.
  * Returns [] when nothing is left to show.
  */
+/** The first string-ish field of an object, in the order given. */
+const pick = (o: Record<string, unknown>, keys: string[]): unknown => {
+  for (const k of keys) if (o[k] !== undefined && o[k] !== null && o[k] !== '') return o[k];
+  return undefined;
+};
+const LABEL_KEYS = ['question', 'label', 'title', 'text', 'prompt', 'header', 'name'];
+const OPTIONS_KEYS = ['options', 'choices', 'answers', 'values', 'buttons'];
+const OPTION_TEXT_KEYS = ['label', 'text', 'value', 'title', 'option', 'name', 'answer'];
+
+/** An option as a model may write it: "Go ahead" or { label: "Go ahead", value: "go" }. */
+function optionText(o: unknown): string {
+  if (typeof o === 'string' || typeof o === 'number') return clean(String(o));
+  if (o && typeof o === 'object') return clean(pick(o as Record<string, unknown>, OPTION_TEXT_KEYS));
+  return '';
+}
+
+/**
+ * The question list, whatever shape the model used: { questions: [...] } (the
+ * contract), { choices | items: [...] }, a bare array, or one flat question
+ * { question, options }. A demo showed the card missing when the shape drifted.
+ */
+function rawQuestions(input: unknown): unknown[] {
+  if (Array.isArray(input)) return input;
+  if (!input || typeof input !== 'object') return [];
+  const o = input as Record<string, unknown>;
+  for (const k of ['questions', 'choices', 'items']) {
+    const v = o[k];
+    // `choices` may itself be the options of ONE question (an array of strings).
+    if (Array.isArray(v) && v.length && v.every((x) => x && typeof x === 'object' && !Array.isArray(x) && OPTIONS_KEYS.some((ok) => ok in (x as object)))) return v;
+  }
+  if (OPTIONS_KEYS.some((k) => Array.isArray(o[k]))) return [o];
+  const q = o.questions;
+  return Array.isArray(q) ? q : [];
+}
+
 export function parseChoices(input: unknown): ChoiceQuestion[] {
-  const raw = input && typeof input === 'object' ? (input as { questions?: unknown }).questions : undefined;
-  if (!Array.isArray(raw)) return [];
+  const raw = rawQuestions(input);
+  if (!raw.length) return [];
   const out: ChoiceQuestion[] = [];
   const ids = new Set<string>();
   for (const q of raw) {
     if (out.length >= MAX_QUESTIONS) break;
     if (!q || typeof q !== 'object') continue;
-    const r = q as { id?: unknown; question?: unknown; options?: unknown; multiple?: unknown };
+    const o = q as Record<string, unknown>;
+    const r = {
+      id: o.id,
+      question: pick(o, LABEL_KEYS),
+      options: pick(o, OPTIONS_KEYS),
+      multiple: pick(o, ['multiple', 'multi', 'multiSelect', 'allowMultiple']),
+    };
     const seen = new Set<string>();
     const options: string[] = [];
-    for (const o of Array.isArray(r.options) ? r.options : []) {
-      const text = clip(clean(o), MAX_OPTION_CHARS);
+    for (const opt of Array.isArray(r.options) ? r.options : []) {
+      const text = clip(optionText(opt), MAX_OPTION_CHARS);
       const key = text.toLowerCase();
       if (!text || seen.has(key)) continue;
       seen.add(key);
@@ -79,9 +120,16 @@ export function parseChoices(input: unknown): ChoiceQuestion[] {
   return out;
 }
 
+/** A part's tool name: "tool-<name>" for static tools, toolName for dynamic ones. */
+function toolNameOfPart(p: PartLike): string {
+  if (p.type === 'dynamic-tool') return p.toolName ?? '';
+  return p.type.startsWith('tool-') ? p.type.slice(5) : '';
+}
+
+/** offer_choices however it is spelled (offerChoices, Offer-Choices…) — never a plain step row. */
 export function isChoicesPart(p: PartLike | null | undefined): boolean {
   if (!p) return false;
-  return p.type === `tool-${OFFER_CHOICES_TOOL}` || (p.type === 'dynamic-tool' && p.toolName === OFFER_CHOICES_TOOL);
+  return toolNameOfPart(p).replace(/[^a-z]/gi, '').toLowerCase() === 'offerchoices';
 }
 
 /** A choices part's questions — null while its input is still streaming in (or nothing usable). */

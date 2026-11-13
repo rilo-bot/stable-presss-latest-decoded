@@ -8,6 +8,7 @@ import { DraftRestoredHint } from './DraftRestoredHint';
 import type { Sale, SaleType } from '@/types/sale';
 import { SALE_TYPES } from '@/types/sale';
 import { ShoppingCart, ChevronDown, X, AlertCircle } from 'lucide-react';
+import { STABLEHAND_INSET } from '@/lib/stablehandDock';
 
 interface SaleDraft {
   selectedHorseId: string;
@@ -185,7 +186,7 @@ export function SalesDataForm({ horseId, initial, compact = false, onSave, onCan
     return <div style={{ ...serifStyle, display: 'flex', flexDirection: 'column', background: 'var(--parchment)' }}>{header}{body}{footer}</div>;
   }
   return (
-    <div style={{ position: 'fixed', inset: 0, background: 'rgba(10,24,15,0.88)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 1000, padding: 20 }}>
+    <div style={{ position: 'fixed', inset: STABLEHAND_INSET, background: 'rgba(10,24,15,0.88)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 1000, padding: 20 }}>
       <div style={{ width: '100%', maxWidth: 640, maxHeight: '92vh', display: 'flex', flexDirection: 'column', border: '2px solid var(--gold-mid)', borderRadius: 4, overflow: 'hidden', boxShadow: '0 20px 60px rgba(0,0,0,0.9)', ...serifStyle }}>{header}{body}{footer}</div>
     </div>
   );

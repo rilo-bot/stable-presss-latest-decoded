@@ -139,6 +139,19 @@ async function discardRestoredDraft(ui: UiDriver, agentId: string, what: string)
   await ui.click(agentId, 'Discard the old draft');
 }
 
+/**
+ * The error toast a Save produced, said so the model can act on it. The stores
+ * toast a bare "HTTP 403" when the server refuses — that is the role, not a
+ * glitch to retry.
+ */
+function saveError(msgs: Array<{ type: string; text: string }>): string | undefined {
+  const err = firstError(msgs);
+  if (!err) return undefined;
+  if (/\bHTTP 403\b/.test(err)) return `${err} — the server refused: this role may not add records here (it needs that register's Create permission).`;
+  if (/\bHTTP 401\b/.test(err)) return `${err} — the session has expired; the user must sign in again.`;
+  return err;
+}
+
 /** Type a search query into a register's search box and let the list filter. */
 async function typeSearch(ui: UiDriver, agentId: string, query: string, applied: () => boolean) {
   await ui.type(agentId, query, { clear: true });
@@ -170,7 +183,8 @@ export function useHorseRegisterActions(ps: PS): void {
   useAgentAction<{ query: string }>({
     name: 'registers.searchHorses',
     description: 'Search the Thoroughbred register (name, trainer, owner, jockey, country) and return the matching rows.',
-    args: z.object({ query: z.string().max(120) }),
+    // Omitted = "" = list all (as the catalog says), not an invalid-arguments failure.
+    args: z.object({ query: z.string().max(120).default('') }),
     run: async (a, ui) => {
       const s = live.current;
       if ((s.horses ?? []).length === 0) return { query: a.query, total: 0, rows: [], note: 'The horse register is empty.' };
@@ -199,7 +213,8 @@ export function useHorseRegisterActions(ps: PS): void {
       const country = pickOption(a.country, COUNTRY_OPTIONS, 'country');
       const dupe = (s.horses ?? []).find((h) => normKey(h.name) === normKey(a.name));
       if (dupe) {
-        throw actionError(`“${dupe.name}” is already in the register — edit that record instead (see detail).`, {
+        // The line is read by the user too; the record's id + path go to the model only.
+        throw actionError(`“${dupe.name}” is already in the register — nothing was added. Edit that horse instead of adding a duplicate.`, {
           horseId: dupe.id,
           studioPath: `/studio/horse/${dupe.id}`,
         });
@@ -270,12 +285,12 @@ export function useHorseRegisterActions(ps: PS): void {
       );
       const msgs = toasts.collect();
       if (!closed || anchor('reg.horse-form')) {
-        throw new Error(firstError(msgs) ?? 'The horse form did not save — it is still open for you to check.');
+        throw new Error(saveError(msgs) ?? 'The horse form did not save — it is still open for you to check.');
       }
       const created = (useHorseStore.getState().horses ?? []).find(
         (h) => !before.has(h.id) && normKey(h.name) === normKey(a.name),
       );
-      if (!created) throw new Error(firstError(msgs) ?? 'Saved, but the new horse is not in the register yet — refresh to check.');
+      if (!created) throw new Error(saveError(msgs) ?? 'Saved, but the new horse is not in the register yet — refresh to check.');
       await waitUntil(() => !!anchor(`reg.horse-row-${created.id}`), { timeoutMs: 2000, signal: ui.signal });
       ui.flash(`reg.horse-row-${created.id}`);
       return {
@@ -306,7 +321,7 @@ export function usePeopleRegisterActions(ps: PS): void {
   useAgentAction<{ query: string; role?: (typeof PARTY_ROLE_IDS)[number] }>({
     name: 'registers.searchPeople',
     description: 'Search the People register (owners, trainers, jockeys, breeders …) by name, profession or location.',
-    args: z.object({ query: z.string().max(120), role: z.enum(PARTY_ROLE_IDS).optional() }),
+    args: z.object({ query: z.string().max(120).default(''), role: z.enum(PARTY_ROLE_IDS).optional() }),
     run: async (a, ui) => {
       if (live.current.safeParties.length === 0) return { query: a.query, total: 0, rows: [], note: 'The People register is empty.' };
       await typeSearch(ui, 'reg.person-search', a.query, () => live.current.partySearch === a.query);
@@ -329,10 +344,19 @@ export function usePeopleRegisterActions(ps: PS): void {
     run: async (a, ui) => {
       const dupe = live.current.safeParties.find((p) => normKey(p.name) === normKey(a.name));
       if (dupe) {
-        throw new Error(
-          `${dupe.name} is already in the register (id ${dupe.id}, roles: ${dupe.roles.join(', ') || 'none'}). Edit them instead of adding a duplicate.`,
+        // Never the id in the line the user reads — it goes to the model in `detail`.
+        throw actionError(
+          `${dupe.name} is already in the register (roles: ${dupe.roles.join(', ') || 'none'}) — nothing was added. Edit them instead of adding a duplicate.`,
+          { personId: dupe.id, roles: dupe.roles, studioPath: `/studio/${dupe.id}` },
         );
       }
+      // The form refuses these on Save with a generic "Please fix the errors"
+      // toast — say exactly what is wrong before touching the screen.
+      const thisYear = new Date().getFullYear();
+      if (a.startedYear !== undefined && a.startedYear > thisYear) {
+        throw new Error(`startedYear ${a.startedYear} is in the future — use a year up to ${thisYear}.`);
+      }
+      if (a.dob && new Date(a.dob) > new Date()) throw new Error(`dob ${a.dob} is in the future.`);
       const before = new Set(live.current.safeParties.map((p) => p.id));
       ui.step(`Adding ${a.name} to the People register`);
       await ui.click('reg.add-person', 'Add to the register');
@@ -360,7 +384,7 @@ export function usePeopleRegisterActions(ps: PS): void {
       );
       const msgs = toasts.collect();
       if (!closed || anchor('reg.person-form')) {
-        throw new Error(firstError(msgs) ?? 'The form did not save — it is still open for you to check.');
+        throw new Error(saveError(msgs) ?? 'The form did not save — it is still open for you to check.');
       }
       let created: RegisterPerson | undefined;
       await waitUntil(
@@ -589,7 +613,7 @@ export function useMediaRegisterActions(ps: PS): void {
       );
       const msgs = toasts.collect();
       if (!closed || anchor('reg.media-form')) {
-        throw new Error(firstError(msgs) ?? 'The media form did not save — it is still open for you to check.');
+        throw new Error(saveError(msgs) ?? 'The media form did not save — it is still open for you to check.');
       }
       let created: MediaItem | undefined;
       await waitUntil(
@@ -704,7 +728,7 @@ export function useRacingRegisterActions(ps: PS): void {
       );
       const msgs = toasts.collect();
       if (!closed || anchor('reg.racing-form')) {
-        throw new Error(firstError(msgs) ?? 'The racing form did not save — it is still open for you to check.');
+        throw new Error(saveError(msgs) ?? 'The racing form did not save — it is still open for you to check.');
       }
       let created: RacingEntry | undefined;
       await waitUntil(

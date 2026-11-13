@@ -28,11 +28,13 @@ import { applyInsert, applyReplaceBody, applySetField } from '@/agent/blog/blogE
 import { markdownToBodyItems, paragraphsToBodyItems } from '@/agent/blog/markdownBodyItems';
 import { useComposerStore } from '@/pages/blog-composer/composerStore';
 import { authFetchRetry } from '@/lib/api';
-import { can } from '@/lib/permissions';
+import { can, canOn } from '@/lib/permissions';
+import { useAuthStore } from '@/stores/authStore';
 import { useBlogStore } from '@/stores/blogStore';
 import { useBlogStudioUi } from '@/stores/blogStudioUiStore';
 import type { BlogSummary } from '@/types/blog';
 
+import { firstError, watchToasts } from '../operator-team/opUtils';
 import { anchorEl, clip, hasAnchor, sleep, typeAndSend, waitForStudioTurn, waitUntil } from './studioTurn';
 
 // ── Helpers ─────────────────────────────────────────────────────────────────
@@ -87,6 +89,38 @@ async function blogRefAsync(id: string | undefined): Promise<string> {
   return blogRef(id);
 }
 
+/**
+ * Who created the post, when something loaded says so: the open editor has the
+ * whole post, and list rows carry createdByUserId at runtime (the list
+ * projection sends it; BlogSummary does not declare it). undefined = unknown.
+ */
+function blogCreator(id: string | undefined): string | undefined {
+  const open = useComposerStore.getState().blog;
+  if (open && (!id || open.id === id)) return open.createdByUserId;
+  const row = useBlogStore.getState().items.find((i) => i.id === id) as (BlogSummary & { createdByUserId?: string }) | undefined;
+  return row?.createdByUserId;
+}
+
+/**
+ * The server's blogWriteGate: the verb, and — with 'own' scope — a post this
+ * user created (ownership is createdByUserId, never the free-text byline).
+ * Publishing goes through the same gate as an edit. When nothing loaded names
+ * the creator, the verb alone decides here and the server has the last word.
+ */
+function mayOnPost(verb: 'blogs.edit' | 'blogs.delete', id: string | undefined): boolean {
+  if (!can(verb)) return false;
+  const creator = blogCreator(id);
+  if (creator === undefined) return true;
+  return canOn(verb, creator === useAuthStore.getState().currentUser?.id);
+}
+
+/** Refuse an edit run() cannot complete — before typing anything into the post. */
+function assertMayEdit(id: string): void {
+  if (!mayOnPost('blogs.edit', id)) {
+    throw new Error(can('blogs.edit') ? 'You can only edit your own blog posts.' : 'Your role cannot edit blog posts (needs blogs.edit).');
+  }
+}
+
 function summarise(p: BlogSummary) {
   return {
     id: p.id,
@@ -124,7 +158,12 @@ function bodyItemsFrom(a: { markdown?: string; paragraphs?: string[] }) {
   return a.markdown?.trim() ? markdownToBodyItems(a.markdown) : paragraphsToBodyItems(a.paragraphs ?? []);
 }
 
-/** Let the composer's 1.5s autosave run, then report how it went. */
+/**
+ * Let the composer's 1.5s autosave run, then report how it went. A change the
+ * editor holds but the server refused (a save error, or a conflict with an
+ * edit made elsewhere) is NOT done: throw, so the step fails and the model
+ * does not report it as saved. The change stays in the editor (Ctrl+Z works).
+ */
 async function settleSave(ui: UiDriver): Promise<string> {
   await sleep(250, ui.signal);
   await waitUntil(
@@ -134,7 +173,14 @@ async function settleSave(ui: UiDriver): Promise<string> {
     },
     { signal: ui.signal, timeoutMs: 15_000 },
   );
-  return useComposerStore.getState().saveState;
+  const { saveState, saveError } = useComposerStore.getState();
+  if (saveState === 'conflict') {
+    throw new Error('The change is in the editor but NOT saved: this post was changed elsewhere. Resolve the conflict banner first.');
+  }
+  if (saveState === 'error') {
+    throw new Error(`The change is in the editor but NOT saved: ${saveError ?? 'the save failed'}.`);
+  }
+  return saveState;
 }
 
 /**
@@ -145,6 +191,7 @@ async function settleSave(ui: UiDriver): Promise<string> {
 async function writeBodyInEditor(a: BodyArgs, ui: UiDriver) {
   const open = useComposerStore.getState().blog;
   if (!open) throw new Error('No post is open in the editor. Open one with blog.open, or create one with blog.create.');
+  assertMayEdit(open.id);
   const items = bodyItemsFrom(a);
   if (items.length === 0) throw new Error('The body had no text after formatting was removed. Send plain paragraphs.');
 
@@ -312,9 +359,16 @@ async function runBlogCreate(a: CreateArgs, ui: UiDriver) {
   if (a.category) await ui.type('blog.new-category-input', a.category, { clear: true });
   if (a.summary) await ui.type('blog.new-summary-input', a.summary, { clear: true });
 
+  const toasts = watchToasts();
   await ui.click('blog.create-submit', 'Create and start writing');
-  const id = await waitUntil(editorRouteId, { signal: ui.signal, timeoutMs: 20_000 });
-  if (!id) throw new Error('The post was not created (the server refused it — see the toast). The form is still open.');
+  // Created (the editor route opens), or refused (an error toast; the form
+  // stays open with what was typed).
+  await waitUntil(() => editorRouteId() || firstError(toasts.collect()), { signal: ui.signal, timeoutMs: 20_000 });
+  const id = editorRouteId();
+  if (!id) {
+    const why = firstError(toasts.collect());
+    throw new Error(`The post was not created${why ? `: ${why}` : ''}. The form is still open.`);
+  }
   await ui.waitFor('blog.title-input', 10_000).catch(() => undefined);
   const out = { created: true, blogId: id, title: a.title, status: 'draft', path: `/production-system/blogs/${id}` };
   if (!a.markdown?.trim()) return out;
@@ -382,9 +436,13 @@ async function publishFromList(id: string, published: boolean, ui: UiDriver) {
   ui.step(`${published ? 'Publishing' : 'Unpublishing'} ${blogRef(id)}`);
   const btn = `blog.row-${id}.${verb}`;
   if (hasAnchor(btn)) {
+    const toasts = watchToasts();
     await ui.click(btn, published ? 'Publish' : 'Unpublish');
-    const done = await waitUntil(() => row()?.status === want, { signal: ui.signal, timeoutMs: 15_000 });
-    if (!done) throw new Error(`Could not ${verb} the post (the server refused it — see the toast).`);
+    await waitUntil(() => row()?.status === want || firstError(toasts.collect()), { signal: ui.signal, timeoutMs: 15_000 });
+    if (row()?.status !== want) {
+      const why = firstError(toasts.collect());
+      throw new Error(why ? `Could not ${verb} the post: ${why}` : `Could not ${verb} the post — it is still ${row()?.status ?? 'unchanged'}.`);
+    }
   } else {
     // Not in the visible list (filtered or paged out) — the same store call
     // the row button makes.
@@ -413,6 +471,7 @@ function publishDef(published: boolean, where: 'list' | 'editor') {
       const inEditor = where === 'editor' && (!a.blogId || a.blogId === open?.id);
       if (inEditor && !open) return null;
       if (!inEditor && !a.blogId) return null;
+      if (!mayOnPost('blogs.edit', inEditor ? open?.id : a.blogId)) return null;
       const status = inEditor
         ? open?.status
         : useBlogStore.getState().items.find((i) => i.id === a.blogId)?.status;
@@ -423,6 +482,10 @@ function publishDef(published: boolean, where: 'list' | 'editor') {
     run: async (a: z.infer<typeof publishArgs>, ui: UiDriver) => {
       if (!can('blogs.publish')) throw new Error(`Your role cannot ${verb} blog posts (needs blogs.publish).`);
       const open = useComposerStore.getState().blog;
+      const target = where === 'list' || (a.blogId && a.blogId !== open?.id) ? a.blogId : open?.id;
+      if (target && !mayOnPost('blogs.edit', target)) {
+        throw new Error(can('blogs.edit') ? `You can only ${verb} your own blog posts.` : `Your role cannot ${verb} blog posts (needs blogs.edit).`);
+      }
 
       if (where === 'list' || (a.blogId && a.blogId !== open?.id)) {
         if (!a.blogId) throw new Error('Pass blogId (use blog.list to find it).');
@@ -434,12 +497,16 @@ function publishDef(published: boolean, where: 'list' | 'editor') {
       const want = published ? 'published' : 'draft';
       if (open.status === want) return { ok: true, unchanged: true, blogId: open.id, title: open.title, status: want };
       ui.step(`${published ? 'Publishing' : 'Unpublishing'} “${open.title || 'Untitled post'}”`);
+      const toasts = watchToasts();
       await ui.click('blog.publish-button', published ? 'Publish' : 'Unpublish');
-      const done = await waitUntil(() => useComposerStore.getState().blog?.status === want, {
+      await waitUntil(() => useComposerStore.getState().blog?.status === want || firstError(toasts.collect()), {
         signal: ui.signal,
         timeoutMs: 20_000,
       });
-      if (!done) throw new Error(`Could not ${verb} the post (a save conflict or the server refused it — see the toast).`);
+      if (useComposerStore.getState().blog?.status !== want) {
+        const why = firstError(toasts.collect());
+        throw new Error(why ? `Could not ${verb} the post: ${why}` : `Could not ${verb} the post (a save conflict or the server refused it).`);
+      }
       ui.flash('blog.publish-button');
       return { ok: true, blogId: open.id, title: open.title, status: want };
     },
@@ -534,9 +601,12 @@ export function useBlogListActions(): void {
     description: 'Delete a blog post permanently.',
     args: z.object({ blogId: z.string().min(1) }),
     // No blogs.delete: run() refuses — no card for something that cannot happen.
-    confirm: async (a) => (can('blogs.delete') ? `Delete the blog post ${await blogRefAsync(a.blogId)}? This cannot be undone.` : null),
+    confirm: async (a) =>
+      mayOnPost('blogs.delete', a.blogId) ? `Delete the blog post ${await blogRefAsync(a.blogId)}? This cannot be undone.` : null,
     run: async (a, ui) => {
-      if (!can('blogs.delete')) throw new Error('Your role cannot delete blog posts (needs blogs.delete).');
+      if (!mayOnPost('blogs.delete', a.blogId)) {
+        throw new Error(can('blogs.delete') ? 'You can only delete your own blog posts.' : 'Your role cannot delete blog posts (needs blogs.delete).');
+      }
       const title = blogTitle(a.blogId);
       ui.step(`Deleting ${blogRef(a.blogId)}`);
       // The row's bin button stops on a native window.confirm(), which would
@@ -563,22 +633,24 @@ export function useBlogEditorActions(): void {
     args: z.object({ title: z.string().min(1).max(300) }),
     confirm: (a) => {
       const open = useComposerStore.getState().blog;
-      return open?.status === 'published'
+      return open?.status === 'published' && mayOnPost('blogs.edit', open.id)
         ? `Retitle the LIVE post “${open.title}” to “${a.title}”? Readers see it once it saves.`
         : null;
     },
     run: async (a, ui) => {
       const open = useComposerStore.getState().blog;
       if (!open) throw new Error('No post is open in the editor.');
+      assertMayEdit(open.id);
       await ui.type('blog.title-input', a.title, { clear: true });
       ui.flash('blog.title-input');
-      return { blogId: open.id, title: useComposerStore.getState().blog?.title ?? a.title, saveState: useComposerStore.getState().saveState };
+      const saveState = await settleSave(ui);
+      return { blogId: open.id, title: useComposerStore.getState().blog?.title ?? a.title, saveState };
     },
   });
 
   const liveConfirm = (what: string) => {
     const open = useComposerStore.getState().blog;
-    return open?.status === 'published'
+    return open?.status === 'published' && mayOnPost('blogs.edit', open.id)
       ? `${what} of the LIVE post “${open.title || 'Untitled post'}”? Readers see it once it saves.`
       : null;
   };
@@ -599,6 +671,7 @@ export function useBlogEditorActions(): void {
     run: async (a, ui) => {
       const open = useComposerStore.getState().blog;
       if (!open) throw new Error('No post is open in the editor.');
+      assertMayEdit(open.id);
       if (hasAnchor('blog.standfirst-input')) await ui.point('blog.standfirst-input', 'Standfirst');
       const r = applySetField(open.id, 'subtitle', a.standfirst);
       if (!r.ok) throw new Error(r.error);
@@ -624,6 +697,7 @@ export function useBlogEditorActions(): void {
     run: async (a, ui) => {
       const open = useComposerStore.getState().blog;
       if (!open) throw new Error('No post is open in the editor.');
+      assertMayEdit(open.id);
       ui.step('Updating the post details');
       const writes: Array<[string, string]> = [];
       if (a.summary !== undefined) writes.push(['excerpt', a.summary]);

@@ -41,6 +41,7 @@ import {
   sleep,
   useLive,
   waitUntil,
+  watchRecord,
   watchToasts,
 } from './contentUtils';
 
@@ -57,6 +58,29 @@ const live = (id: string) => episodes().find((e) => e.id === id);
 const me = () => useAuthStore.getState().currentUser?.name;
 const isOwn = (ep: PodcastEpisode) => canEditEpisode(ep.producedBy, me());
 const tag = (ep: PodcastEpisode) => `“${ep.title}” (S${ep.season} E${ep.episodeNumber})`;
+
+/**
+ * Every podcastStore write is OPTIMISTIC (the episode changes at once, and is
+ * put back with an error toast if the server refuses). Run `write`, then wait
+ * for the SERVER's answer to land on this episode before reporting — a fixed
+ * pause after the optimistic change could report a refused write as done.
+ */
+async function settleEpisodeWrite(
+  ui: UiDriver,
+  id: string,
+  write: () => Promise<unknown>,
+  done: () => boolean,
+  what: string,
+): Promise<void> {
+  const toasts = watchToasts();
+  const rec = watchRecord(usePodcastStore, (st) => st.episodes.find((e) => e.id === id));
+  try {
+    await write();
+    await settleOptimistic(ui, done, what, toasts, 1200, rec.answered);
+  } finally {
+    rec.stop();
+  }
+}
 
 function resolveEpisode(query: string) {
   return resolveOne(
@@ -154,9 +178,13 @@ export function usePodcastOperatorActions(input: PodcastOperatorInput): void {
   }
 
   async function statusMove(ui: UiDriver, ep: PodcastEpisode, agentId: string, label: string, to: EpisodeStatus, why: string) {
-    const toasts = watchToasts();
-    await press(ui, agentId, label, why);
-    await settleOptimistic(ui, () => live(ep.id)?.status === to, `Moving ${tag(ep)} to ${stageLabel(to)}`, toasts);
+    await settleEpisodeWrite(
+      ui,
+      ep.id,
+      () => press(ui, agentId, label, why),
+      () => live(ep.id)?.status === to,
+      `Moving ${tag(ep)} to ${stageLabel(to)}`,
+    );
   }
 
   useAgentAction(
@@ -164,7 +192,15 @@ export function usePodcastOperatorActions(input: PodcastOperatorInput): void {
       name: 'podcast.list',
       description: 'List podcast episodes with their stage, owner and the next workflow step.',
       args: z.object({ status: z.string().optional() }),
-      run: async (a) => {
+      run: async (a, ui) => {
+        // The screen's first load may still be in flight — an empty list then
+        // would read as "no episodes".
+        const pod = usePodcastStore.getState;
+        if (!pod().loaded) {
+          if (!pod().loading) await pod().fetchPodcastEpisodes();
+          await waitUntil(() => !pod().loading, { timeoutMs: 15_000, signal: ui.signal });
+          if (!pod().loaded) throw new Error('The episodes did not load — reload the Podcast screen and try again.');
+        }
         const want = a.status ? normKey(a.status) : '';
         const list = episodes()
           .filter((e) => !want || normKey(e.status) === want || normKey(stageLabel(e.status)) === want)
@@ -249,6 +285,9 @@ export function usePodcastOperatorActions(input: PodcastOperatorInput): void {
       confirm: (a) => {
         const r = resolveEpisode(a.episode);
         if (!r.hit || r.hit.status !== 'description_written' || !a.publishDate) return null;
+        // The drawer offers Schedule only with podcast.publish on an episode you
+        // may edit — otherwise run() refuses, so no card first.
+        if (!can('podcast.publish') || !isOwn(r.hit)) return null;
         return `Schedule ${tag(r.hit)} for ${a.publishDate}? This locks in its go-live date.`;
       },
       run: async (a, ui) => {
@@ -271,9 +310,13 @@ export function usePodcastOperatorActions(input: PodcastOperatorInput): void {
               // box makes — after pointing at it.
               await ui.click('podcast.audio-mode-url', 'Paste URL');
               await ui.point('podcast.audio-url', 'Audio URL');
-              const toasts = watchToasts();
-              void usePodcastStore.getState().updateEpisode(ep.id, { audioUrl: a.audioUrl });
-              await settleOptimistic(ui, () => live(ep.id)?.audioUrl === a.audioUrl, 'Attaching the audio', toasts);
+              await settleEpisodeWrite(
+                ui,
+                ep.id,
+                async () => void usePodcastStore.getState().updateEpisode(ep.id, { audioUrl: a.audioUrl }),
+                () => live(ep.id)?.audioUrl === a.audioUrl,
+                'Attaching the audio',
+              );
               ui.flash('podcast.audio-url');
             }
             await statusMove(ui, ep, 'podcast.confirm-audio', 'Confirm Audio & Continue', 'audio_uploaded', noPower('Confirm Audio & Continue'));
@@ -377,9 +420,13 @@ export function usePodcastOperatorActions(input: PodcastOperatorInput): void {
         if (ep.status !== 'published') return { ok: true, unchanged: true, note: `${tag(ep)} is not published.`, episode: episodeJson(ep) };
         await openEpisode(ui, ep);
         await ui.point('podcast.drawer-stages', 'Back to In Review');
-        const toasts = watchToasts();
-        void usePodcastStore.getState().advanceStatus(ep.id, 'in_review');
-        await settleOptimistic(ui, () => live(ep.id)?.status === 'in_review', `Unpublishing ${tag(ep)}`, toasts);
+        await settleEpisodeWrite(
+          ui,
+          ep.id,
+          async () => void usePodcastStore.getState().advanceStatus(ep.id, 'in_review'),
+          () => live(ep.id)?.status === 'in_review',
+          `Unpublishing ${tag(ep)}`,
+        );
         ui.flash('podcast.drawer-stages');
         return { ok: true, unpublished: true, episode: episodeJson(live(ep.id)!) };
       },
@@ -410,9 +457,13 @@ export function usePodcastOperatorActions(input: PodcastOperatorInput): void {
         await ui.type('podcast.guest-name', a.name, { clear: true });
         if (a.title) await ui.type('podcast.guest-title', a.title, { clear: true });
         if (a.bio) await ui.type('podcast.guest-bio', a.bio, { clear: true });
-        const toasts = watchToasts();
-        await ui.click('podcast.add-guest', 'Add Guest');
-        await settleOptimistic(ui, () => (live(ep.id)?.guests ?? []).length > n0, `Adding ${a.name}`, toasts);
+        await settleEpisodeWrite(
+          ui,
+          ep.id,
+          () => ui.click('podcast.add-guest', 'Add Guest'),
+          () => (live(ep.id)?.guests ?? []).length > n0,
+          `Adding ${a.name}`,
+        );
         return { ok: true, episode: episodeJson(live(ep.id)!) };
       },
     },
@@ -438,9 +489,13 @@ export function usePodcastOperatorActions(input: PodcastOperatorInput): void {
           if (!btn || btn.disabled) {
             throw new Error(`You cannot change channels on ${tag(ep)}${ep.status === 'published' ? ' while it is published' : ' (needs podcast.edit on an episode you can edit)'}.`);
           }
-          const toasts = watchToasts();
-          await ui.click(`podcast.channel-${ch.id}`, `${want.has(ch.id) ? 'Add' : 'Remove'} ${ch.label}`);
-          await settleOptimistic(ui, () => (live(ep.id)?.distributionChannels ?? []).includes(ch.id) === want.has(ch.id), ch.label, toasts, 400);
+          await settleEpisodeWrite(
+            ui,
+            ep.id,
+            () => ui.click(`podcast.channel-${ch.id}`, `${want.has(ch.id) ? 'Add' : 'Remove'} ${ch.label}`),
+            () => (live(ep.id)?.distributionChannels ?? []).includes(ch.id) === want.has(ch.id),
+            ch.label,
+          );
         }
         return { ok: true, episode: episodeJson(live(ep.id)!) };
       },

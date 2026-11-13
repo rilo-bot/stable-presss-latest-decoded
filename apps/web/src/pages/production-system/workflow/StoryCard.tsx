@@ -4,7 +4,7 @@ import {
 } from 'lucide-react';
 
 import { cn } from '@/lib/utils';
-import { can, canEditArticle } from '@/lib/permissions';
+import { can, canEditArticle, canOn } from '@/lib/permissions';
 import { FORWARD_MOVE, OTHER_MOVES } from '@/lib/workflow';
 import type { Move } from '@/lib/workflow';
 import type { Article } from '@/types/article';
@@ -87,8 +87,11 @@ export function StoryCard({
   const canForward = !!forward && can(forward.permission);
   const others = OTHER_MOVES[article.status].filter((m) => can(m.permission));
   const editable = canEditArticle(article.author, currentUserDisplayName ?? undefined);
+  // Delete is its own permission (stories.delete) — gating it on edit offered Delete to
+  // roles the server then refused with a 403. Ownership is the byline, as on the server.
+  const deletable = canOn('stories.delete', !!currentUserDisplayName && article.author === currentUserDisplayName);
   const scheduled = scheduleLabel(article.scheduledFor);
-  const hasMenu = others.length > 0 || editable;
+  const hasMenu = others.length > 0 || editable || deletable;
 
   return (
     <article
@@ -143,26 +146,26 @@ export function StoryCard({
                   </button>
                 ))}
                 {editable && (
-                  <>
-                    <button
-                      role="menuitem"
-                      data-agent-id={`story.card-${article.id}.edit`}
-                      onClick={() => { setMenuOpen(false); onEdit(article); }}
-                      className="flex w-full items-center gap-2 border-t border-border/60 px-3 py-2 text-left text-[13px] font-medium text-foreground transition-colors hover:bg-muted/70"
-                    >
-                      <Pencil size={13} className="flex-shrink-0 text-muted-foreground" />
-                      Edit story
-                    </button>
-                    <button
-                      role="menuitem"
-                      data-agent-id={`story.card-${article.id}.delete`}
-                      onClick={() => { setMenuOpen(false); onDelete(article); }}
-                      className="flex w-full items-center gap-2 border-t border-border/60 px-3 py-2 text-left text-[13px] font-medium text-destructive transition-colors hover:bg-destructive/10"
-                    >
-                      <Trash2 size={13} className="flex-shrink-0" />
-                      Delete
-                    </button>
-                  </>
+                  <button
+                    role="menuitem"
+                    data-agent-id={`story.card-${article.id}.edit`}
+                    onClick={() => { setMenuOpen(false); onEdit(article); }}
+                    className="flex w-full items-center gap-2 border-t border-border/60 px-3 py-2 text-left text-[13px] font-medium text-foreground transition-colors hover:bg-muted/70"
+                  >
+                    <Pencil size={13} className="flex-shrink-0 text-muted-foreground" />
+                    Edit story
+                  </button>
+                )}
+                {deletable && (
+                  <button
+                    role="menuitem"
+                    data-agent-id={`story.card-${article.id}.delete`}
+                    onClick={() => { setMenuOpen(false); onDelete(article); }}
+                    className="flex w-full items-center gap-2 border-t border-border/60 px-3 py-2 text-left text-[13px] font-medium text-destructive transition-colors hover:bg-destructive/10"
+                  >
+                    <Trash2 size={13} className="flex-shrink-0" />
+                    Delete
+                  </button>
                 )}
               </div>
             )}

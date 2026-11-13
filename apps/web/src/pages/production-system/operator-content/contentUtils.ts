@@ -23,9 +23,13 @@ export async function clickIf(ui: UiDriver, agentId: string, label?: string): Pr
 
 /**
  * After a click that fires an OPTIMISTIC store write: wait for the store to
- * show the change, then give the request a moment to come back — the stores
- * roll the change back and raise an error toast when the server refuses it.
- * Throws with the app's own error text.
+ * show the change, then for the request to come back — the stores roll the
+ * change back and raise an error toast when the server refuses it. Throws with
+ * the app's own error text.
+ *
+ * `answered` (from watchRecord) says when the server's reply has landed in the
+ * store; without it a fixed grace period stands in for that, which a slow
+ * request can outlast.
  */
 export async function settleOptimistic(
   ui: UiDriver,
@@ -33,15 +37,44 @@ export async function settleOptimistic(
   what: string,
   toasts: ReturnType<typeof watchToasts>,
   graceMs = 1200,
+  answered?: () => boolean,
 ): Promise<void> {
   const ok = await waitUntil(() => done() || !!firstError(toasts.collect()), { timeoutMs: 8_000, signal: ui.signal });
   const err = firstError(toasts.collect());
   if (err) throw new Error(err);
   if (!ok) throw new Error(`${what} did not take effect — check the screen.`);
-  await sleep(graceMs, ui.signal);
+  if (answered) {
+    const back = await waitUntil(() => answered() || !!firstError(toasts.collect()), { timeoutMs: 20_000, signal: ui.signal });
+    if (!back && !firstError(toasts.collect())) throw new Error(`${what}: the server has not answered yet — check the screen in a moment.`);
+  } else {
+    await sleep(graceMs, ui.signal);
+  }
   const late = firstError(toasts.collect());
   if (late) throw new Error(late);
   if (!done()) throw new Error(`${what} was rolled back (the server refused it).`);
+}
+
+/**
+ * Watch one record's copy in a zustand store, from BEFORE an optimistic write.
+ * The write swaps the record twice — the optimistic copy, then the server's
+ * copy (or the rollback to the old one) — so `answered()` turns true once the
+ * optimistic copy has itself been replaced. Subscribed, not polled: both swaps
+ * can land inside one poll. Call `stop()` when done.
+ */
+export function watchRecord<S, T>(
+  store: { getState: () => S; subscribe: (listener: (state: S) => void) => () => void },
+  pick: (state: S) => T | undefined,
+): { answered: () => boolean; stop: () => void } {
+  let last = pick(store.getState());
+  let swaps = 0;
+  const stop = store.subscribe((state) => {
+    const cur = pick(state);
+    if (cur !== last) {
+      last = cur;
+      swaps += 1;
+    }
+  });
+  return { answered: () => swaps >= 2, stop };
 }
 
 /** "a, b and c" for confirm cards. */

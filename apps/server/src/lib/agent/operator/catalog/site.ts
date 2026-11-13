@@ -23,7 +23,7 @@ const onboarding: CatalogSurface['actions'] = [
   { name: 'onboarding.read', description: 'Step on screen: title, fields + values, controls.', args: '{}' },
   {
     name: 'onboarding.completeStep',
-    description: 'Fill the step: fields by label ({"Sex":"Mare","Foaled":"2021-09-01"}), or name = person to link. Auto-advances when done. Photo: upload to onboarding.photo-input.',
+    description: 'Fill the step: ALL fields in one call, by label ({"Sire":"X","Dam":"Y"}), or name = person to link. Advances once all are saved. Photo: upload to onboarding.photo-input.',
     args: '{ fields?: Record<string,string>; name?: string }',
   },
   { name: 'onboarding.next', description: 'Skip the current step (press Skip).', args: '{}' },

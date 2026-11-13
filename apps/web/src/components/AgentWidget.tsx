@@ -11,24 +11,28 @@
 //              another's thread or run.
 //
 //   Concierge  (guests and members — everyone else)
-//              The original guide: a floating chat that streams from
-//              /api/agent/chat, which runs the model server-side and scopes
-//              every read to the user's role. This component only:
+//              The original guide: a chat that streams from /api/agent/chat,
+//              which runs the model server-side and scopes every read to the
+//              user's role. This component only:
 //                - injects the session Bearer token,
 //                - attaches the current page as context ("this horse" works),
 //                - renders the streaming conversation,
 //                - runs the one client tool (navigateTo),
 //                - can be opened / seeded by inline "Ask" buttons via the shared
 //                  agentUiStore.
-//              Its behaviour is unchanged by the Operator work.
+//
+// Both modes sit in the SAME frame — components/StablehandShell.tsx: docked on
+// the right with the site pushed left on desktop (collapsible to a rail,
+// widenable), a bottom sheet on smaller screens. When it opens by itself (only
+// for signed-in users, once per visit) is components/StablehandGreeting.tsx,
+// mounted here once for both modes.
 // ---------------------------------------------------------------------------
 
 import { useMemo, useRef, useState, useEffect } from 'react';
 import { useLocation, useNavigate } from 'react-router-dom';
 import { useChat } from '@ai-sdk/react';
 import { DefaultChatTransport, lastAssistantMessageIsCompleteWithToolCalls, type UIMessage } from 'ai';
-import { AnimatePresence, motion } from 'framer-motion';
-import { X, Send, Square, Maximize2, Minimize2, Mic, Volume2, VolumeX, Loader2, Paperclip } from 'lucide-react';
+import { Send, Square, Mic, Volume2, VolumeX, Loader2, Paperclip } from 'lucide-react';
 
 import { apiUrl } from '@/lib/api';
 import { can } from '@/lib/permissions';
@@ -46,14 +50,16 @@ import { AttachmentBar, MessageAttachments } from '@/agent/attachments/Attachmen
 import { ChoiceCard } from '@/agent/choices/ChoiceCard';
 import { choiceCardState, lastStepOfferedChoices, messageChoices } from '@/agent/choices/choices';
 import { describePage } from '@/agent/operator/panel/pageContext';
-import { StablehandLauncher } from '@/agent/operator/panel/Launcher';
 import { OperatorPanel } from '@/agent/operator/panel/OperatorPanel';
-import { GreetingBubble, useLandingGreeting } from '@/components/StablehandGreeting';
+import { useLandingGreeting } from '@/components/StablehandGreeting';
+import { StablehandShell, stablehandHeaderBtn } from '@/components/StablehandShell';
 
 /** Mode switch — see the header. */
 export function AgentWidget() {
   const isAdmin = useAuthStore((s) => s.currentUser?.isAdmin === true);
   const userId = useAuthStore((s) => s.currentUser?.id);
+  // Opens by itself only for signed-in users — the same rule in both modes.
+  useLandingGreeting();
   if (isAdmin && userId) return <OperatorPanel key={userId} userId={userId} />;
   return <ConciergeWidget />;
 }
@@ -97,7 +103,6 @@ function messageText(m: UIMessage): string {
     .join('\n\n');
 }
 
-const FOREST = 'linear-gradient(180deg, var(--forest-light) 0%, var(--forest-deep) 100%)';
 const GOLD = 'hsl(var(--brand-accent))';
 
 // Map a navigateTo destination (+ optional entity id / Production System
@@ -138,14 +143,13 @@ function navPathFor(to: string, id?: string, screen?: string): string | null {
 }
 
 function ConciergeWidget() {
-  const open = useAgentUi((s) => s.open);
-  const setOpen = useAgentUi((s) => s.setOpen);
-  const toggle = useAgentUi((s) => s.toggle);
+  // "Open" here = the full panel is showing (not the rail / closed).
+  const open = useAgentUi((s) => s.open && !s.collapsed);
   const pendingPrompt = useAgentUi((s) => s.pendingPrompt);
-  // Hidden while the magazine editor is open (it has its own Studio Assistant).
+  // Hidden while a Studio with its own assistant is open (the magazine editor,
+  // the profile studio's AI drawer, the onboarding guide).
   const suppressGlobal = useStudioChrome((s) => s.suppressGlobal);
 
-  const [expanded, setExpanded] = useState(false);
   const [input, setInput] = useState('');
   const location = useLocation();
   const scrollRef = useRef<HTMLDivElement>(null);
@@ -263,279 +267,214 @@ function ConciergeWidget() {
     if (open) scrollRef.current?.scrollTo({ top: scrollRef.current.scrollHeight, behavior: 'smooth' });
   }, [messages, open, status]);
 
-  // Greet everyone landing on the public site — see components/StablehandGreeting.tsx.
-  const { nudge, dismissNudge } = useLandingGreeting(suppressGlobal);
-
   const starters = contextStarters(location.pathname);
 
-  // The editor mounts its own assistant; don't show two launchers.
+  // A Studio with its own assistant is open; don't show two.
   if (suppressGlobal) return null;
 
   return (
-    <>
-      {/* Floating launcher — The Stable Hand mascot (gold horse), gamified */}
-      <StablehandLauncher open={open} onClick={toggle} />
+    <StablehandShell
+      subtitle="Your Stable Press guide"
+      headerActions={
+        voiceReady && (
+          <button
+            type="button"
+            onClick={() => setVoiceMode((v) => !v)}
+            aria-label={voiceMode ? 'Turn off spoken replies' : 'Read replies aloud'}
+            title={voiceMode ? 'Spoken replies on' : 'Read replies aloud'}
+            className={stablehandHeaderBtn}
+            style={{ color: voiceMode ? 'var(--gold-bright)' : 'var(--gold-mid)' }}
+          >
+            {voiceMode ? <Volume2 className="h-4 w-4" /> : <VolumeX className="h-4 w-4" />}
+          </button>
+        )
+      }
+    >
+      {/* Messages */}
+      <div ref={scrollRef} className="min-h-0 flex-1 space-y-3 overflow-y-auto px-4 py-4">
+        {messages.length === 0 && (
+          <div className="space-y-3">
+            {/* The greeting, set as The Stable Hand's first message (static — no model call). */}
+            <div className="flex justify-start">
+              <div className="max-w-[85%] rounded-2xl rounded-bl-sm bg-muted px-3 py-2 text-sm text-foreground">
+                <p className="font-medium">Hi, I’m The Stable Hand. What can I do for you?</p>
+                <p className="mt-1 text-muted-foreground">
+                  I can find horses, people and bulletins, explain tipping, and help with your own stable.
+                </p>
+              </div>
+            </div>
+            <div className="flex flex-wrap gap-2">
+              {starters.map((s) => (
+                <button
+                  key={s}
+                  onClick={() => send(s)}
+                  className="rounded-full border px-3 py-1.5 text-xs text-foreground transition-colors hover:bg-muted"
+                  style={{ borderColor: 'hsl(var(--primary) / 0.25)' }}
+                >
+                  {s}
+                </button>
+              ))}
+            </div>
+          </div>
+        )}
 
-      {/* Phone greeting bubble: tap to chat, × to dismiss. */}
-      <GreetingBubble show={nudge && !open} onOpen={() => setOpen(true)} onDismiss={dismissNudge} />
+        {messages.map((m, i) => {
+          const text = messageText(m);
+          const mine = m.role === 'user';
+          // Answer pills the assistant offered (offer_choices) — see agent/choices.
+          const questions = mine ? null : messageChoices(m);
+          if (!text && !mine && !questions) return null; // tool-only step, nothing to show yet
+          const bubble = (
+            <div
+              className={
+                mine
+                  ? 'max-w-[85%] whitespace-pre-wrap rounded-2xl rounded-br-sm bg-primary px-3 py-2 text-sm text-primary-foreground'
+                  : 'max-w-[85%] rounded-2xl rounded-bl-sm bg-muted px-3 py-2 text-sm text-foreground'
+              }
+            >
+              {mine && <MessageAttachments message={m} tone="light" />}
+              {mine ? text : <MarkdownMessage text={text} />}
+            </div>
+          );
+          if (!questions) {
+            return (
+              <div key={m.id} className={mine ? 'flex justify-end' : 'flex justify-start'}>
+                {bubble}
+              </div>
+            );
+          }
+          const card = choiceCardState(messages, i);
+          return (
+            <div key={m.id} className="flex flex-col items-start gap-2">
+              {text && bubble}
+              <ChoiceCard
+                questions={questions}
+                active={card.active}
+                answer={card.answer}
+                disabled={busy || attach.busy}
+                onSubmit={send}
+                tone="concierge"
+              />
+            </div>
+          );
+        })}
 
-      <AnimatePresence>
-        {open && (
-          <motion.div
-            initial={{ opacity: 0, y: 24, scale: 0.97 }}
-            animate={{ opacity: 1, y: 0, scale: 1 }}
-            exit={{ opacity: 0, y: 24, scale: 0.97 }}
-            transition={{ type: 'spring', stiffness: 320, damping: 30 }}
+        {busy && (
+          <div className="flex justify-start">
+            <div className="rounded-2xl rounded-bl-sm bg-muted px-3 py-2 text-sm text-muted-foreground">
+              <span className="inline-flex gap-1">
+                <span className="animate-bounce">•</span>
+                <span className="animate-bounce [animation-delay:120ms]">•</span>
+                <span className="animate-bounce [animation-delay:240ms]">•</span>
+              </span>
+            </div>
+          </div>
+        )}
+
+        {error && (
+          <p className="text-xs text-destructive">
+            {error.message?.includes('resting')
+              ? 'The assistant isn’t switched on yet — an OpenRouter key needs to be set on the server.'
+              : 'I had trouble just then. Please try again in a moment.'}
+          </p>
+        )}
+      </div>
+
+      {/* Live caption while recording (interim words from the browser; the
+          authoritative transcript still comes from OpenAI on stop) */}
+      {(recording || transcribing) && (
+        <div className="flex items-center gap-2 border-t border-border bg-muted/40 px-3 py-1.5 text-xs text-muted-foreground">
+          <span className={'inline-block h-2 w-2 rounded-full ' + (recording ? 'animate-pulse bg-red-500' : 'bg-muted-foreground/50')} />
+          <span className="line-clamp-2 italic">
+            {caption || (transcribing ? 'Transcribing…' : 'Listening… speak now')}
+          </span>
+        </div>
+      )}
+
+      {/* Composer */}
+      <div className="flex-shrink-0 border-t border-border bg-card pb-[env(safe-area-inset-bottom)]">
+      <AttachmentBar attachments={attach.attachments} onRemove={attach.remove} busy={attach.busy} tone="light" />
+      <form
+        onSubmit={(e) => {
+          e.preventDefault();
+          send(input);
+        }}
+        className="flex items-center gap-2 px-3 py-2.5"
+      >
+        <input
+          ref={fileRef}
+          type="file"
+          multiple
+          accept={CHAT_ATTACH_ACCEPT}
+          className="hidden"
+          onChange={(e) => { void attach.addFiles(e.target.files); if (fileRef.current) fileRef.current.value = ''; }}
+        />
+        <button
+          type="button"
+          onClick={() => fileRef.current?.click()}
+          disabled={recording || transcribing}
+          aria-label="Attach an image or PDF"
+          title="Attach an image or PDF (or paste one)"
+          className="flex h-9 w-9 flex-shrink-0 items-center justify-center rounded-full border border-border text-muted-foreground transition-colors hover:bg-muted disabled:opacity-50"
+        >
+          <Paperclip className="h-4 w-4" />
+        </button>
+        <textarea
+          ref={inputRef}
+          value={input}
+          rows={1}
+          onChange={(e) => setInput(e.target.value)}
+          onPaste={attach.onPaste}
+          onKeyDown={(e) => {
+            if (e.key === 'Enter' && !e.shiftKey && !e.nativeEvent.isComposing && e.nativeEvent.keyCode !== 229) {
+              e.preventDefault();
+              send(input);
+            }
+          }}
+          placeholder={recording ? 'Listening…' : transcribing ? 'Transcribing…' : 'Ask me anything…'}
+          disabled={recording || transcribing}
+          // iOS Safari zooms the page into any field under 16px on focus
+          // (and stays zoomed) — touch devices get 16px.
+          className="flex-1 resize-none rounded-2xl border border-border bg-background px-3 py-2 text-sm leading-snug outline-none focus:ring-2 disabled:opacity-70 [@media(pointer:coarse)]:text-[16px]"
+          style={{ ['--tw-ring-color' as string]: GOLD }}
+        />
+        {voiceReady && !busy && (
+          <button
+            type="button"
+            onClick={() => void toggleMic()}
+            disabled={transcribing}
+            aria-label={recording ? 'Stop recording' : 'Speak to The Stable Hand'}
+            title={recording ? 'Stop & send' : 'Speak'}
             className={
-              // max-h keeps the panel within the viewport so the header is never
-              // clipped at the top, regardless of the bottom anchor / expanded size.
-              // print:hidden for the same reason as the launcher — an open panel
-              // would print an entire chat transcript over the page.
-              'fixed bottom-24 right-5 z-50 flex max-h-[calc(100dvh-7rem)] flex-col overflow-hidden rounded-xl border border-border bg-card shadow-2xl print:hidden ' +
-              (expanded ? 'h-[min(88dvh,820px)] w-[min(96vw,640px)]' : 'h-[min(70dvh,560px)] w-[min(92vw,400px)]')
+              'flex h-9 w-9 items-center justify-center rounded-full border transition-colors disabled:opacity-50 ' +
+              (recording ? 'animate-pulse border-red-500 bg-red-500/15 text-red-500' : 'border-border text-muted-foreground hover:bg-muted')
             }
           >
-            {/* Header (forest green band, gold accents) */}
-            <div
-              className="flex items-center gap-2 px-4 py-3"
-              style={{ background: FOREST, borderBottom: '2px solid var(--gold-dark)' }}
-            >
-              <img
-                src="/images/favicon-gold.png"
-                alt=""
-                className="h-7 w-7 flex-shrink-0 object-contain"
-                style={{ filter: 'drop-shadow(0 1px 1px rgba(0,0,0,0.4))' }}
-              />
-              <div className="leading-tight">
-                <div
-                  className="font-[family-name:var(--font-display)] text-sm font-bold"
-                  style={{ color: 'var(--parchment)' }}
-                >
-                  The Stable Hand
-                </div>
-                <div className="text-[11px]" style={{ color: 'var(--gold-mid)' }}>
-                  Your Stable Press guide
-                </div>
-              </div>
-              <div className="ml-auto flex items-center gap-1">
-                {voiceReady && (
-                  <button
-                    onClick={() => setVoiceMode((v) => !v)}
-                    aria-label={voiceMode ? 'Turn off spoken replies' : 'Read replies aloud'}
-                    title={voiceMode ? 'Spoken replies on' : 'Read replies aloud'}
-                    className="flex h-7 w-7 items-center justify-center rounded-md transition-opacity hover:opacity-80"
-                    style={{ color: voiceMode ? 'var(--gold-bright)' : 'var(--gold-mid)' }}
-                  >
-                    {voiceMode ? <Volume2 className="h-4 w-4" /> : <VolumeX className="h-4 w-4" />}
-                  </button>
-                )}
-                <button
-                  onClick={() => setExpanded((v) => !v)}
-                  aria-label={expanded ? 'Shrink chat' : 'Expand chat'}
-                  className="flex h-7 w-7 items-center justify-center rounded-md transition-opacity hover:opacity-80"
-                  style={{ color: 'var(--gold-bright)' }}
-                >
-                  {expanded ? <Minimize2 className="h-4 w-4" /> : <Maximize2 className="h-4 w-4" />}
-                </button>
-                <button
-                  onClick={() => setOpen(false)}
-                  aria-label="Close chat"
-                  className="flex h-7 w-7 items-center justify-center rounded-md transition-opacity hover:opacity-80"
-                  style={{ color: 'var(--gold-bright)' }}
-                >
-                  <X className="h-4 w-4" />
-                </button>
-              </div>
-            </div>
-
-            {/* Messages */}
-            <div ref={scrollRef} className="flex-1 space-y-3 overflow-y-auto px-4 py-4">
-              {messages.length === 0 && (
-                <div className="space-y-3">
-                  {/* The greeting, set as The Stable Hand's first message (static — no model call). */}
-                  <div className="flex justify-start">
-                    <div className="max-w-[85%] rounded-2xl rounded-bl-sm bg-muted px-3 py-2 text-sm text-foreground">
-                      <p className="font-medium">Hi, I’m The Stable Hand. What can I do for you?</p>
-                      <p className="mt-1 text-muted-foreground">
-                        I can find horses, people and bulletins, explain tipping, and help with your own stable.
-                      </p>
-                    </div>
-                  </div>
-                  <div className="flex flex-wrap gap-2">
-                    {starters.map((s) => (
-                      <button
-                        key={s}
-                        onClick={() => send(s)}
-                        className="rounded-full border px-3 py-1.5 text-xs text-foreground transition-colors hover:bg-muted"
-                        style={{ borderColor: 'hsl(var(--primary) / 0.25)' }}
-                      >
-                        {s}
-                      </button>
-                    ))}
-                  </div>
-                </div>
-              )}
-
-              {messages.map((m, i) => {
-                const text = messageText(m);
-                const mine = m.role === 'user';
-                // Answer pills the assistant offered (offer_choices) — see agent/choices.
-                const questions = mine ? null : messageChoices(m);
-                if (!text && !mine && !questions) return null; // tool-only step, nothing to show yet
-                const bubble = (
-                  <div
-                    className={
-                      mine
-                        ? 'max-w-[85%] whitespace-pre-wrap rounded-2xl rounded-br-sm bg-primary px-3 py-2 text-sm text-primary-foreground'
-                        : 'max-w-[85%] rounded-2xl rounded-bl-sm bg-muted px-3 py-2 text-sm text-foreground'
-                    }
-                  >
-                    {mine && <MessageAttachments message={m} tone="light" />}
-                    {mine ? text : <MarkdownMessage text={text} />}
-                  </div>
-                );
-                if (!questions) {
-                  return (
-                    <div key={m.id} className={mine ? 'flex justify-end' : 'flex justify-start'}>
-                      {bubble}
-                    </div>
-                  );
-                }
-                const card = choiceCardState(messages, i);
-                return (
-                  <div key={m.id} className="flex flex-col items-start gap-2">
-                    {text && bubble}
-                    <ChoiceCard
-                      questions={questions}
-                      active={card.active}
-                      answer={card.answer}
-                      disabled={busy || attach.busy}
-                      onSubmit={send}
-                      tone="concierge"
-                    />
-                  </div>
-                );
-              })}
-
-              {busy && (
-                <div className="flex justify-start">
-                  <div className="rounded-2xl rounded-bl-sm bg-muted px-3 py-2 text-sm text-muted-foreground">
-                    <span className="inline-flex gap-1">
-                      <span className="animate-bounce">•</span>
-                      <span className="animate-bounce [animation-delay:120ms]">•</span>
-                      <span className="animate-bounce [animation-delay:240ms]">•</span>
-                    </span>
-                  </div>
-                </div>
-              )}
-
-              {error && (
-                <p className="text-xs text-destructive">
-                  {error.message?.includes('resting')
-                    ? 'The assistant isn’t switched on yet — an OpenRouter key needs to be set on the server.'
-                    : 'I had trouble just then. Please try again in a moment.'}
-                </p>
-              )}
-            </div>
-
-            {/* Live caption while recording (interim words from the browser; the
-                authoritative transcript still comes from OpenAI on stop) */}
-            {(recording || transcribing) && (
-              <div className="flex items-center gap-2 border-t border-border bg-muted/40 px-3 py-1.5 text-xs text-muted-foreground">
-                <span className={'inline-block h-2 w-2 rounded-full ' + (recording ? 'animate-pulse bg-red-500' : 'bg-muted-foreground/50')} />
-                <span className="line-clamp-2 italic">
-                  {caption || (transcribing ? 'Transcribing…' : 'Listening… speak now')}
-                </span>
-              </div>
-            )}
-
-            {/* Composer */}
-            <div className="border-t border-border bg-card">
-            <AttachmentBar attachments={attach.attachments} onRemove={attach.remove} busy={attach.busy} tone="light" />
-            <form
-              onSubmit={(e) => {
-                e.preventDefault();
-                send(input);
-              }}
-              className="flex items-center gap-2 px-3 py-2.5"
-            >
-              <input
-                ref={fileRef}
-                type="file"
-                multiple
-                accept={CHAT_ATTACH_ACCEPT}
-                className="hidden"
-                onChange={(e) => { void attach.addFiles(e.target.files); if (fileRef.current) fileRef.current.value = ''; }}
-              />
-              <button
-                type="button"
-                onClick={() => fileRef.current?.click()}
-                disabled={recording || transcribing}
-                aria-label="Attach an image or PDF"
-                title="Attach an image or PDF (or paste one)"
-                className="flex h-9 w-9 flex-shrink-0 items-center justify-center rounded-full border border-border text-muted-foreground transition-colors hover:bg-muted disabled:opacity-50"
-              >
-                <Paperclip className="h-4 w-4" />
-              </button>
-              <textarea
-                ref={inputRef}
-                value={input}
-                rows={1}
-                onChange={(e) => setInput(e.target.value)}
-                onPaste={attach.onPaste}
-                onKeyDown={(e) => {
-                  if (e.key === 'Enter' && !e.shiftKey && !e.nativeEvent.isComposing && e.nativeEvent.keyCode !== 229) {
-                    e.preventDefault();
-                    send(input);
-                  }
-                }}
-                placeholder={recording ? 'Listening…' : transcribing ? 'Transcribing…' : 'Ask me anything…'}
-                disabled={recording || transcribing}
-                // iOS Safari zooms the page into any field under 16px on focus
-                // (and stays zoomed) — touch devices get 16px.
-                className="flex-1 resize-none rounded-2xl border border-border bg-background px-3 py-2 text-sm leading-snug outline-none focus:ring-2 disabled:opacity-70 [@media(pointer:coarse)]:text-[16px]"
-                style={{ ['--tw-ring-color' as string]: GOLD }}
-              />
-              {voiceReady && !busy && (
-                <button
-                  type="button"
-                  onClick={() => void toggleMic()}
-                  disabled={transcribing}
-                  aria-label={recording ? 'Stop recording' : 'Speak to The Stable Hand'}
-                  title={recording ? 'Stop & send' : 'Speak'}
-                  className={
-                    'flex h-9 w-9 items-center justify-center rounded-full border transition-colors disabled:opacity-50 ' +
-                    (recording ? 'animate-pulse border-red-500 bg-red-500/15 text-red-500' : 'border-border text-muted-foreground hover:bg-muted')
-                  }
-                >
-                  {transcribing ? <Loader2 className="h-4 w-4 animate-spin" /> : recording ? <Square className="h-4 w-4" /> : <Mic className="h-4 w-4" />}
-                </button>
-              )}
-              {busy ? (
-                <button
-                  type="button"
-                  onClick={() => stop()}
-                  aria-label="Stop"
-                  className="flex h-9 w-9 items-center justify-center rounded-full bg-muted text-foreground"
-                >
-                  <Square className="h-4 w-4" />
-                </button>
-              ) : (
-                <button
-                  type="submit"
-                  aria-label="Send"
-                  disabled={!input.trim() && !attach.hasAttachments}
-                  className="flex h-9 w-9 items-center justify-center rounded-full text-primary-foreground disabled:opacity-40"
-                  style={{ background: GOLD }}
-                >
-                  <Send className="h-4 w-4" />
-                </button>
-              )}
-            </form>
-            </div>
-          </motion.div>
+            {transcribing ? <Loader2 className="h-4 w-4 animate-spin" /> : recording ? <Square className="h-4 w-4" /> : <Mic className="h-4 w-4" />}
+          </button>
         )}
-      </AnimatePresence>
-    </>
+        {busy ? (
+          <button
+            type="button"
+            onClick={() => stop()}
+            aria-label="Stop"
+            className="flex h-9 w-9 items-center justify-center rounded-full bg-muted text-foreground"
+          >
+            <Square className="h-4 w-4" />
+          </button>
+        ) : (
+          <button
+            type="submit"
+            aria-label="Send"
+            disabled={!input.trim() && !attach.hasAttachments}
+            className="flex h-9 w-9 items-center justify-center rounded-full text-primary-foreground disabled:opacity-40"
+            style={{ background: GOLD }}
+          >
+            <Send className="h-4 w-4" />
+          </button>
+        )}
+      </form>
+      </div>
+    </StablehandShell>
   );
 }

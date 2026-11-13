@@ -111,7 +111,7 @@ export const SURFACES: CatalogSurface[] = [
     id: 'blog-editor',
     title: 'Blog post editor',
     route: '/production-system/blogs/:id',
-    who: 'staff with the Blogs module who may edit the post',
+    who: 'staff with the Blogs module who may edit the post (blogs.edit, own posts only with an own scope); publishing or unpublishing also needs blogs.publish',
     purpose:
       "Edit one post: title, cover, standfirst, block body, parts and settings rail; autosaves. Header has Studio AI (opens Blog Studio scoped to THIS post — so blog.askStudio here means 'this post'), View, Save and Publish/Unpublish.",
     actions: [

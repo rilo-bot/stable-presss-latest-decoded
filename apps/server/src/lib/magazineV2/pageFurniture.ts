@@ -281,8 +281,10 @@ export function pageFurniture(page: FurnishablePage, ctx: FurnitureContext): Mag
 
   if (band.top >= BAND_MIN) {
     // Anchored to the band's INNER edge, so the head sits with the content rather
-    // than drifting to the paper edge as the margin grows.
-    const ruleY = band.top - EDGE_GAP - RULE_H;
+    // than drifting to the paper edge as the margin grows — but never further in than
+    // the page's top margin: when the content starts low, the band is empty paper and
+    // a head hugging the content would float down the page (see the folio below).
+    const ruleY = Math.min(band.top - EDGE_GAP - RULE_H, inset + TEXT_H + RULE_GAP);
     const textY = ruleY - RULE_GAP - TEXT_H;
     // WORDS ALREADY ON THE PAGE ARE NOT A RUNNING HEAD.
     //
@@ -341,7 +343,13 @@ export function pageFurniture(page: FurnishablePage, ctx: FurnitureContext): Mag
   }
 
   if (band.bottom >= BAND_MIN) {
-    const ruleY = PAGE_H - band.bottom + EDGE_GAP;
+    // A folio belongs at the FOOT of the page. Hugging the content is right while the
+    // bottom band is a margin; on a short page (content ending at 80% of the height)
+    // the band is empty paper and the rule + page number floated mid-page (user
+    // report 2026-11-13). So: hug the content, but never sit higher than the page's
+    // bottom margin.
+    const footerH = RULE_H + RULE_GAP + TEXT_H;
+    const ruleY = Math.max(PAGE_H - band.bottom + EDGE_GAP, PAGE_H - inset - footerH);
     const textY = ruleY + RULE_H + RULE_GAP;
     raw.push(rule(FOLIO_RULE_ID, { x: inset, y: ruleY, w: contentW, h: RULE_H }, ink));
     // Full content width at every parity, so re-stamping after a reorder only ever

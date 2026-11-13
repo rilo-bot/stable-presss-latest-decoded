@@ -9,8 +9,9 @@
 //                            field, types (or picks) the value and commits it
 //                            (the same InlineEditRow → store update → PUT the UI
 //                            makes); on a connection step, types the name and
-//                            presses Link. The guide moves on by itself once the
-//                            step's own "done" rule is met.
+//                            presses Link. The step is held on screen until every
+//                            field given is saved (useOnboardingHold), then the
+//                            guide moves on once the step's own "done" rule is met.
 //   onboarding.next          presses Skip (the step is remembered as skipped).
 //   onboarding.close         closes the guided journey (anything entered is
 //                            already saved; the checklist stays).
@@ -23,13 +24,29 @@
 // Catalog: apps/server/src/lib/agent/operator/catalog/site.ts — keep in step.
 // ---------------------------------------------------------------------------
 
+import { useEffect } from 'react';
 import { z } from 'zod';
+import { create } from 'zustand';
 import { useAgentAction } from '@/agent/operator/runtime/registry';
 import type { UiDriver } from '@/agent/operator/contracts';
 import { AGENT_ID_ATTR, AGENT_LABEL_ATTR } from '@/agent/operator/contracts';
 import { anchor, firstError, normKey, sleep, useLive, waitUntil, watchToasts } from './siteUtils';
 
 export const ONB_CARD = 'onboarding.card';
+
+/**
+ * The step The Stable Hand is filling right now. Each step counts as done on its
+ * own rule (horse pedigree = sire OR dam; basics = sex + colour + foaled; party
+ * details = profession + base), and the guide moves on the moment that flips —
+ * which used to drop every field asked for after it. While a step is held, the
+ * profile (HorseProfile / PartyProfile) keeps that step's card on screen even
+ * once it is done; completeStep releases it when every field is saved.
+ */
+export const useOnboardingHold = create<{ held: string | null; hold: (key: string | null) => void }>((set) => ({
+  held: null,
+  hold: (key) => set({ held: key }),
+}));
+
 const slug = (label: string) => label.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '');
 
 function setId(el: Element | null | undefined, id: string, label?: string) {
@@ -165,6 +182,9 @@ export interface OnboardingFocusState {
 
 export function useOnboardingOperatorActions(state: OnboardingFocusState): void {
   const live = useLive(state);
+  // The card is going away (guide closed / finished / left the page): never leave
+  // a step pinned on screen behind it.
+  useEffect(() => () => useOnboardingHold.getState().hold(null), []);
 
   const stepInfo = () => {
     const s = live.current;
@@ -221,18 +241,25 @@ export function useOnboardingOperatorActions(state: OnboardingFocusState): void 
         const labels = cardFields().filter((f) => f.kind !== 'readonly').map((f) => f.label);
         // Validate every name before touching the screen.
         const plan = Object.entries(a.fields).map(([k, v]) => ({ label: matchLabel(k, labels), value: v }));
-        for (const p of plan) {
-          if (live.current.stepKey !== from || !anchor(ONB_CARD)) {
-            notApplied.push(p.label); // the step completed and the card moved on
-            continue;
+        // Keep this step's card up until EVERY field is saved — filling the sire
+        // alone already counts the pedigree step as done (see useOnboardingHold).
+        useOnboardingHold.getState().hold(from);
+        try {
+          for (const p of plan) {
+            if (live.current.stepKey !== from || !anchor(ONB_CARD)) {
+              notApplied.push(p.label); // the card went away (the guide was closed)
+              continue;
+            }
+            const info = cardFields().find((f) => f.label === p.label);
+            if (!info) {
+              notApplied.push(p.label);
+              continue;
+            }
+            await fillField(ui, p.label, p.value, info.kind);
+            applied.push(`${p.label} = ${p.value}`);
           }
-          const info = cardFields().find((f) => f.label === p.label);
-          if (!info) {
-            notApplied.push(p.label);
-            continue;
-          }
-          await fillField(ui, p.label, p.value, info.kind);
-          applied.push(`${p.label} = ${p.value}`);
+        } finally {
+          useOnboardingHold.getState().hold(null); // now the guide may move on
         }
       }
 
@@ -252,7 +279,14 @@ export function useOnboardingOperatorActions(state: OnboardingFocusState): void 
         ok: true,
         step: from,
         applied,
-        ...(notApplied.length ? { notApplied, note: 'The step completed before these were entered; they belong to a later step or the profile.' } : {}),
+        // The step is held until every field is in, so this only happens when the
+        // card went away mid-fill (the guide was closed). Say how to finish.
+        ...(notApplied.length
+          ? {
+              notApplied,
+              note: `Not saved: ${notApplied.join(', ')} — the onboarding card closed before they could be filled. Set them with profile.askStudio (e.g. "set the ${notApplied[0]!.toLowerCase()} to …") or tell the user.`,
+            }
+          : {}),
         stepComplete: live.current.stepKey !== from || next.finished,
         ...next,
       };
@@ -266,6 +300,11 @@ export function useOnboardingOperatorActions(state: OnboardingFocusState): void 
     run: async (_a, ui) => {
       requireCard();
       const from = live.current.stepKey;
+      // No Skip on this step (the card has none to press): say so, rather than
+      // "no element onboarding.skip on this screen".
+      if (!live.current.skippable || !anchor('onboarding.skip')) {
+        throw new Error(`“${live.current.title}” cannot be skipped — fill it with onboarding.completeStep${live.current.canClose ? ', or close the guide (onboarding.close)' : ''}.`);
+      }
       await ui.click('onboarding.skip', 'Skip');
       return { skipped: from, ...(await advanced(ui, from)) };
     },

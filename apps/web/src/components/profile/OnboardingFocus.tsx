@@ -16,6 +16,7 @@ import { Sparkles, SkipForward, X } from 'lucide-react';
 import { serifStyle, displayStyle, goldStyle } from '@/components/profile/kit';
 import { useProfileAgentUi } from '@/stores/profileAgentUiStore';
 import { ONB_CARD, tagCard, useOnboardingOperatorActions } from '@/pages/operator-site/useOnboardingOperatorActions';
+import { STABLEHAND_INSET } from '@/lib/stablehandDock';
 
 export interface OnboardingFocusProps {
   /** Show the overlay. False → render nothing (e.g. chat open, or onboarding done). */
@@ -91,7 +92,7 @@ function FocusCard({ stepKey, originId, reduce, children }: {
       : { opacity: 0, scale: 0.96, transition: { duration: 0.18 } };
 
   return (
-    <div style={{ position: 'fixed', inset: 0, zIndex: 85, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 16, pointerEvents: 'none' }}>
+    <div style={{ position: 'fixed', inset: STABLEHAND_INSET, zIndex: 85, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 16, pointerEvents: 'none' }}>
       <motion.div
         ref={cardRef}
         initial={false}
@@ -135,7 +136,7 @@ export function OnboardingFocus({ open, stepKey, stepIndex, total, title, tips, 
             animate={{ opacity: 1 }}
             exit={{ opacity: 0 }}
             transition={{ duration: 0.2 }}
-            style={{ position: 'fixed', inset: 0, zIndex: 84, background: 'rgba(10,20,14,0.55)', backdropFilter: 'blur(3px)' }}
+            style={{ position: 'fixed', inset: STABLEHAND_INSET, zIndex: 84, background: 'rgba(10,20,14,0.55)', backdropFilter: 'blur(3px)' }}
           />
         )}
       </AnimatePresence>

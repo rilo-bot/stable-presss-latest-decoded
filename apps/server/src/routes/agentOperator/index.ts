@@ -27,7 +27,7 @@ import {
   OPERATOR_HEAVY_MODEL,
   OPERATOR_MODEL,
 } from '../../lib/agent/provider.js'
-import { repairToolResults } from '../../lib/agent/repairMessages.js'
+import { repairToolNames, repairToolResults } from '../../lib/agent/repairMessages.js'
 import { buildOperatorSystem, type OperatorPageContext } from '../../lib/agent/operator/prompt.js'
 import { buildOperatorTools } from '../../lib/agent/operator/tools.js'
 import { OFFER_CHOICES_TOOL } from '../../lib/agent/offerChoices.js'
@@ -196,16 +196,20 @@ async function operatorTurn(req: Request, res: Response): Promise<void> {
 
   try {
     await withAiUsage(usage, async () => {
+      // Forward the caller's Bearer token: data tools call our own routes AS
+      // this user, so the route — not the agent — enforces RBAC.
+      const tools = buildOperatorTools(account, req.headers.authorization)
       const result = streamText({
         model: getOperatorModel(heavy),
         system: buildOperatorSystem(account, pageContext),
         messages: await convertToModelMessages(labelJobUpdates(repaired.messages)),
-        // Forward the caller's Bearer token: data tools call our own routes AS
-        // this user, so the route — not the agent — enforces RBAC.
-        tools: buildOperatorTools(account, req.headers.authorization),
+        tools,
         // offer_choices ends the turn: the answer pills are on screen and the
         // user's pick arrives as their next message — no extra model call.
         stopWhen: [stepCountIs(30), hasToolCall(OFFER_CHOICES_TOOL)],
+        // A near-miss tool NAME is renamed (lib/agent/repairMessages.ts) — so a
+        // misspelt offer_choices still ends the turn, and a misspelt client tool runs.
+        repairToolCall: repairToolNames(tools),
         abortSignal: abort.signal,
         // Fire-and-forget: the log must never slow or break the stream.
         onStepFinish: (step) => {

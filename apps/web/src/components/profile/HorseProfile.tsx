@@ -33,6 +33,7 @@ import { OnboardingSteps, type OnbStep } from '@/components/profile/OnboardingSt
 import { OnboardingGuide, type GuideStep } from '@/components/profile/OnboardingGuide';
 import { OnboardingComplete } from '@/components/profile/OnboardingComplete';
 import { OnboardingFocus } from '@/components/profile/OnboardingFocus';
+import { useOnboardingHold } from '@/pages/operator-site/useOnboardingOperatorActions';
 import { StudioField } from '@/components/profile/StudioField';
 import { RoleConnectionBox, roleDefByRole } from '@/components/profile/RoleConnectionBox';
 import { useRoleConnections } from '@/components/profile/useRoleConnections';
@@ -138,6 +139,8 @@ export function HorseProfile({ horseId, mode, onBack }: HorseProfileProps) {
   const setAgentContext = useProfileAgentUi((s) => s.setContext);
   const askAgent = useProfileAgentUi((s) => s.ask);
   const chatOpen = useProfileAgentUi((s) => s.open);
+  // The step The Stable Hand is mid-way through filling (kept on screen until done).
+  const heldStep = useOnboardingHold((s) => s.held);
   useEffect(() => {
     if (mode === 'edit' && horse) setAgentContext(buildHorseContext(horse, horseLinks));
     return () => setAgentContext(null);
@@ -284,10 +287,13 @@ export function HorseProfile({ horseId, mode, onBack }: HorseProfileProps) {
       tips: [`Type a name to link or create the ${c.noun}`, 'Optional — tap Skip if it doesn’t apply'],
     }])),
   };
-  const activeStep = onbSteps.find((s) => !s.done && !s.skipped);
+  // While The Stable Hand fills a step, that step stays up even once it counts as
+  // done (pedigree = sire OR dam), so the dam it was also given gets saved too.
+  const heldActive = heldStep ? onbSteps.find((s) => s.key === heldStep && !s.skipped) : undefined;
+  const activeStep = heldActive ?? onbSteps.find((s) => !s.done && !s.skipped);
   const activeKey = activeStep?.key;
   const activeIdx = onbSteps.findIndex((s) => s.key === activeKey);
-  const showGuide = editableHorse && !onbAllDone && !guideDismissed;
+  const showGuide = editableHorse && (!onbAllDone || !!heldActive) && !guideDismissed;
   // Close the whole guided journey (data already saved); persisted per horse.
   const dismissGuide = () => { setGuideDismissed(true); persistGuideDismissed(horseId, true); };
   const isActive = (key: string) => showGuide && activeKey === key;

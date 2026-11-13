@@ -42,6 +42,7 @@ import { OnboardingSteps, type OnbStep } from '@/components/profile/OnboardingSt
 import { OnboardingGuide, type GuideStep } from '@/components/profile/OnboardingGuide';
 import { OnboardingComplete } from '@/components/profile/OnboardingComplete';
 import { OnboardingFocus } from '@/components/profile/OnboardingFocus';
+import { useOnboardingHold } from '@/pages/operator-site/useOnboardingOperatorActions';
 import { ProfileAgentPanel, StudioLauncher } from '@/agent/profile/ProfileAgentPanel';
 import { useProfileAgentUi, type ProfileContext } from '@/stores/profileAgentUiStore';
 import { DossierMeter } from '@/components/DossierMeter';
@@ -148,6 +149,8 @@ export function PartyProfile({ partyId, mode, onBack }: PartyProfileProps) {
   const setAgentContext = useProfileAgentUi((s) => s.setContext);
   const askAgent = useProfileAgentUi((s) => s.ask);
   const chatOpen = useProfileAgentUi((s) => s.open);
+  // The step The Stable Hand is mid-way through filling (kept on screen until done).
+  const heldStep = useOnboardingHold((s) => s.held);
   useEffect(() => {
     if (mode === 'edit' && party) setAgentContext(buildPartyContext(party, myHorses.length));
     return () => setAgentContext(null);
@@ -295,10 +298,13 @@ export function PartyProfile({ partyId, mode, onBack }: PartyProfileProps) {
     details: { title: 'Add your details', tips: ['Your profession & base location'] },
     horses: { title: 'Add your horses', tips: ['Register the horses in your stable'] },
   };
-  const activeStep = onbSteps.find((s) => !s.done && !s.skipped);
+  // While The Stable Hand fills a step, that step stays up even once it counts as
+  // done (profession + base), so any other field it was given is saved too.
+  const heldActive = heldStep ? onbSteps.find((s) => s.key === heldStep && !s.skipped) : undefined;
+  const activeStep = heldActive ?? onbSteps.find((s) => !s.done && !s.skipped);
   const activeKey = activeStep?.key;
   const activeIdx = onbSteps.findIndex((s) => s.key === activeKey);
-  const showGuide = isEdit && editable && !onbAllDone && !guideDismissed;
+  const showGuide = isEdit && editable && (!onbAllDone || !!heldActive) && !guideDismissed;
   // Close the whole guided journey (data already saved); persisted per party.
   const dismissGuide = () => { setGuideDismissed(true); persistGuideDismissed(`party:${partyId}`, true); };
   const isActive = (key: string) => showGuide && activeKey === key;

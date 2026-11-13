@@ -209,6 +209,8 @@ const CONTROL_WORDS = new Set(['button', 'btn', 'input', 'field', 'link', 'tab',
  * "mag.page-3-delete" → "Page 3 delete". `fallback` when nothing is left.
  */
 export function nameFromAgentId(agentId: string | null | undefined, fallback = 'this control'): string {
+  // A generic ref ("ref:12") is a counter, not a name — never "Ref:12".
+  if (/^\s*ref:\d+\s*$/i.test(agentId ?? '')) return fallback;
   const last = (agentId ?? '').split('.').pop() ?? '';
   const words = stripIdTokens(last)
     .split(/[-_\s]+/)

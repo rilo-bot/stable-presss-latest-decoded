@@ -5,7 +5,8 @@
 // forest/gold brand (the same palette as The Stable Hand panel in
 // components/AgentWidget.tsx):
 //
-//   GoldenFrame    a gold border around the viewport with a slow moving sheen
+//   GoldenFrame    a gold border around the site (the viewport, less The Stable
+//                  Hand dock on desktop — index.css) with a slow moving sheen
 //                  and a soft breathing inner glow (dim + static when paused)
 //   WorkingPill    top-centre "The Stable Hand is working here" + current step +
 //                  optional progress bar + Stop / Resume — the ONLY part that
@@ -32,6 +33,7 @@ import { AnimatePresence, animate, motion, useAnimationControls, useReducedMotio
 import { Pause, Play, Sparkles, Square } from 'lucide-react';
 
 import { useAgentUi } from '@/stores/agentUiStore';
+import { stablehandReserve } from '@/lib/stablehandDock';
 import { OPERATOR_UI_ATTR } from '../contracts';
 import { useOperator } from '../operatorStore';
 import { presence } from './presenceApi';
@@ -87,7 +89,8 @@ export function OperatorPresence() {
   const stepLabel = useOperator((s) => s.stepLabel);
   const progress = useOperator((s) => s.progress);
   const panelYield = useOperator((s) => s.panelYield);
-  const panelOpen = useAgentUi((s) => s.open);
+  // The full panel (the sheet, below lg) — not the desktop rail / closed.
+  const panelOpen = useAgentUi((s) => s.open && !s.collapsed);
   const sheetLayout = useMediaQuery(SHEET_QUERY);
   // On a phone / tablet the open bottom sheet already shows "Working" + Stop,
   // and the pill would only sit on the page's top toolbar (Back, Review,
@@ -155,7 +158,8 @@ function GoldenFrame({ paused }: { paused: boolean }) {
     <motion.div
       {...UI}
       aria-hidden
-      className="pointer-events-none fixed inset-0 print:hidden"
+      // Frames the SITE: on desktop it stops at The Stable Hand dock (index.css).
+      className="pointer-events-none fixed inset-stablehand print:hidden"
       style={{ zIndex: Z.frame }}
       initial={{ opacity: 0 }}
       animate={{ opacity: paused ? 0.5 : 1 }}
@@ -224,7 +228,8 @@ function WorkingPill({ paused, pauseReason, stepLabel, progress }: PillProps) {
     <motion.div
       {...UI}
       data-operator-pill=""
-      className="fixed left-1/2 top-2.5 print:hidden sm:top-3"
+      // Centred over the site, not the window (the dock takes the right edge).
+      className="fixed left-mid-stablehand top-2.5 print:hidden sm:top-3"
       style={{ zIndex: Z.pill, x: '-50%', pointerEvents: pillYield ? 'none' : 'auto' }}
       initial={reduce ? { opacity: 0 } : { opacity: 0, y: -18, scale: 0.96 }}
       animate={{ opacity: pillYield ? 0.12 : 1, y: 0, scale: 1 }}
@@ -599,8 +604,9 @@ function GhostCursor() {
   }, [clickSeq, visible, reduce, press]);
   const dropRipple = (k: number) => setRipples((r) => r.filter((v) => v !== k));
 
-  // Keep the bubble on screen near the right / bottom edges.
-  const vw = typeof window !== 'undefined' ? window.innerWidth : 1024;
+  // Keep the bubble on screen near the right / bottom edges — the site's right
+  // edge, which is The Stable Hand dock's left edge while it is docked.
+  const vw = typeof window !== 'undefined' ? window.innerWidth - stablehandReserve() : 1024;
   const vh = typeof window !== 'undefined' ? window.innerHeight : 768;
   const flipX = x > vw - 260;
   const flipY = y > vh - 64;

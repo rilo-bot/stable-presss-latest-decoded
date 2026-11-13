@@ -99,7 +99,7 @@ export function AiComposeButton({ label, fieldKey, entityKind, getContext, getCu
 
       {open && (
         <>
-          <div className="fixed inset-0 z-40" onClick={close} />
+          <div className="fixed inset-stablehand z-40" onClick={close} />
           <div
             className="absolute bottom-full right-0 z-50 mb-2 w-72 rounded-md border border-border bg-card p-3 text-foreground shadow-xl"
             onClick={(e) => e.stopPropagation()}

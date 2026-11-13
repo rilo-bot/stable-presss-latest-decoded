@@ -164,8 +164,24 @@ const PHOTO_ASSUMED = '#1a1a1a';
  */
 export function isScrimLeaf(leaf: SolvedLeaf, all: SolvedLeaf[]): boolean {
   if (leaf.node.role !== 'shape') return false;
-  if (leaf.stackIndex === 0 || isRuleLeaf(leaf.node)) return false;
+  if (isRuleLeaf(leaf.node)) return false;
+  if (leaf.stackIndex === 0) {
+    // A stack's own panel stays opaque — a card, a sidebar — UNLESS it would bury a
+    // photograph. Covering most of a photo beneath it, an opaque panel hides the
+    // picture entirely: a generated cover shipped as a flat green page with its hero
+    // photo underneath (user report 2026-11-13). Then it is a scrim, so the photo shows.
+    return all.some(
+      (o) => o !== leaf && o.z < leaf.z && o.node.role === 'image' && overlapArea(leaf.box, o.box) > 0.5 * o.box.w * o.box.h,
+    );
+  }
   return all.some((o) => o !== leaf && o.z < leaf.z && o.node.role === 'image' && rectsOverlap(leaf.box, o.box));
+}
+
+/** Area of the intersection of two boxes (0 when they don't meet). */
+function overlapArea(a: Rect, b: Rect): number {
+  const w = Math.min(a.x + a.w, b.x + b.w) - Math.max(a.x, b.x);
+  const h = Math.min(a.y + a.h, b.y + b.h) - Math.max(a.y, b.y);
+  return w > 0 && h > 0 ? w * h : 0;
 }
 
 /** The colour a panel / block shape paints (before any translucency). */

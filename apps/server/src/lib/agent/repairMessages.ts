@@ -32,7 +32,7 @@
 // come back — a closed laptop can't send anything — so the server must cope.
 // ---------------------------------------------------------------------------
 
-import type { UIMessage } from 'ai'
+import { NoSuchToolError, type ToolCallRepairFunction, type ToolSet, type UIMessage } from 'ai'
 
 /** A tool part in either of the two shapes v6 uses (typed `tool-<name>`, or dynamic). */
 interface ToolPartLike {
@@ -104,4 +104,30 @@ export function repairToolResults(messages: UIMessage[]): RepairResult {
   })
 
   return { messages: repaired > 0 ? next : messages, repaired, tools }
+}
+
+
+// ---------------------------------------------------------------------------
+// Repair a tool call whose NAME is a near miss.
+//
+// "offerChoices" / "Offer-Choices" for offer_choices, "read_screen" for
+// readScreen. An unknown name is an invalid call: the model is told it failed —
+// and for offer_choices the turn did NOT end (hasToolCall matches the exact name
+// only), so the web drew the buttons from the raw call while the model carried
+// on talking ("pick your options above"). A name that matches exactly ONE tool
+// once case and punctuation are ignored is renamed to it (its input is then
+// validated as usual); anything else stays invalid, exactly as before.
+// Pass it as streamText's repairToolCall option.
+// ---------------------------------------------------------------------------
+
+const toolKey = (name: string) => name.replace(/[^a-z0-9]/gi, '').toLowerCase()
+
+export function repairToolNames(tools: ToolSet): ToolCallRepairFunction<ToolSet> {
+  const byKey = new Map<string, string[]>()
+  for (const name of Object.keys(tools)) byKey.set(toolKey(name), [...(byKey.get(toolKey(name)) ?? []), name])
+  return async ({ toolCall, error }) => {
+    if (!NoSuchToolError.isInstance(error)) return null
+    const hits = byKey.get(toolKey(toolCall.toolName)) ?? []
+    return hits.length === 1 && hits[0] !== toolCall.toolName ? { ...toolCall, toolName: hits[0]! } : null
+  }
 }

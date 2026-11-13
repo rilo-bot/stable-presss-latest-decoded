@@ -142,7 +142,7 @@ export function ArticleStudioPanel() {
   // inset-y-0, not h-screen: on iOS Safari 100vh is taller than the visible
   // area, so the composer at the bottom of the drawer sat under the toolbar.
   return (
-    <div className="fixed inset-y-0 right-0 z-[80] flex w-[380px] max-w-[94vw] flex-col bg-[#160d26] text-white shadow-[-8px_0_30px_rgba(0,0,0,0.5)]">
+    <div className="fixed inset-y-0 right-stablehand z-[80] flex w-[380px] max-w-[94vw] flex-col bg-[#160d26] text-white shadow-[-8px_0_30px_rgba(0,0,0,0.5)]">
       {/* Header */}
       <div className="flex items-center gap-2 border-b border-white/10 px-3 py-2.5 bg-gradient-to-b from-purple-900 to-[#160d26]">
         <Sparkles size={16} className="text-purple-300" />
